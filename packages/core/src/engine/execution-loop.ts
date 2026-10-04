@@ -6243,26 +6243,23 @@ export function bareStepOutput(
 }
 
 /**
- * The ONE pick of the next step the engine runs (issue #625 PR-2a, law L8): the first eligible
- * `auto` step, in definition order, that this call has not attempted and that the pre-claim view
- * does not refuse for this caller's registry (`describePending`'s own judgement — so the act and
- * the pick agree by construction, and a refused step is never retried in a loop).
+ * The ONE pick of the next step the engine runs (issue #625 PR-2a, law L8; decision C13): the first
+ * entry of the run's view (`describePending(definition, run, registry).engine_runnable`, definition
+ * order) that the view does not refuse — so the act and the pick agree by construction and a refused
+ * step is never re-attempted in a loop. One exception: a step refused for `capability` that carries
+ * no `capability_blocks` marker yet is picked ONCE, so its post-claim dispatch failure writes the
+ * marker `blocked_on_capability` and the finding read (decision C4). A step refused for any other
+ * reason is never picked.
  */
 function pickNextEngineStep(
   definition: WorkflowDefinition,
   run: RunRecord,
-  attempted: ReadonlySet<string>,
   registry: ExtensionRegistry | undefined,
 ): string | undefined {
   const pending = describePending(definition, run, registry);
-  // A capability refusal is the ONE refusal still attempted, once: the dispatch failure is what
-  // writes the `capability_blocks` marker `blocked_on_capability` and the finding read (decision
-  // C4). A step already carrying a marker is skipped, so a later call runs the other owed steps.
   const marked = new Set(findCapabilityBlockedSteps(run).map((b) => b.step));
   return pending.engine_runnable.find(
-    (e) =>
-      !attempted.has(e.step) &&
-      (e.runnable_here !== false || (e.refused_by === 'capability' && !marked.has(e.step))),
+    (e) => e.runnable_here !== false || (e.refused_by === 'capability' && !marked.has(e.step)),
   )?.step;
 }
 
@@ -6276,16 +6273,20 @@ interface AdvanceLoopContext {
   driver?: Attributed;
   now?: Date;
   onStep?: (step: string) => void;
+  onTaken?: (step: string, run: RunRecord) => void;
   /** The step `executeChain` ran before the loop (its warnings are rescued); absent for advanceRun. */
   namedStep?: string;
 }
 
 /**
  * The loop both `advanceRun` and `executeChain` use (issue #625 PR-2a). Iterative: settle every
- * eligible guard, then run the next eligible `auto` step this call has not attempted — through
- * `executeStep`, with the engine's own input and the bare-step dispatcher — until a question opens,
- * only agent steps remain, the run ends, a step's reply is not `ok` (returned as is), or nothing is
- * left to run. At most one execution per step of the definition per call.
+ * eligible guard, then run the step {@link pickNextEngineStep} picks — through `executeStep`, with
+ * the engine's own input and the bare-step dispatcher — until a question opens, only agent steps
+ * remain, the run ends, a step's reply is not `ok` (returned as is), or nothing is left to pick. A
+ * step another process holds is not run here: the record is re-read and the loop continues.
+ *
+ * Defensive bound: at most one execution per step of the definition per call. Nothing reaches it —
+ * every step the loop runs (or finds taken) leaves eligibility, so each pick is a different step.
  */
 async function advanceLoop(
   store: RunStore,
@@ -6300,7 +6301,6 @@ async function advanceLoop(
 ): Promise<ResponseEnvelope> {
   const { chainedSteps, depth0Warnings } = state;
   let { run, result } = state;
-  const attempted = new Set<string>();
   const budget = Object.keys(definition.steps).length;
   let executions = 0;
   let resultIsNamedStep = options.namedStep !== undefined;
@@ -6735,7 +6735,7 @@ async function advanceLoop(
       return result;
     }
 
-    const nextAutoStep = pickNextEngineStep(definition, run, attempted, options.registry);
+    const nextAutoStep = pickNextEngineStep(definition, run, options.registry);
     if (nextAutoStep === undefined || executions >= budget) {
       // Only agent steps, a refused step, or nothing — the reply is composed from this record.
       return {
@@ -6759,7 +6759,6 @@ async function advanceLoop(
     resultIsNamedStep = false;
 
     options.onStep?.(nextAutoStep);
-    attempted.add(nextAutoStep);
     executions += 1;
     const stepResult = await executeStep(store, definition, {
       runId: options.runId,
@@ -6777,6 +6776,17 @@ async function advanceLoop(
       ...(options.driver !== undefined ? { driver: options.driver } : {}),
       ...(options.now !== undefined ? { now: options.now } : {}),
     });
+    if (stepResult.status === 'blocked' && stepResult.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
+      // Another process holds the step (decision C14's code): it is not run here and not counted
+      // as run. Re-read the record and continue — the step is in flight, so it is not picked again.
+      try {
+        run = await store.get(options.runId);
+      } catch {
+        return stepResult;
+      }
+      options.onTaken?.(nextAutoStep, run);
+      continue;
+    }
     if (stepResult.status !== 'ok') {
       return stepResult;
     }
@@ -6814,6 +6824,13 @@ export interface AdvanceRunOptions {
   now?: Date;
   /** Called with each `auto` step's name just before it runs. */
   onStep?: (step: string) => void;
+  /**
+   * Called with the name of a step another process held when this call tried to claim it
+   * (`STATE_STEP_ALREADY_CLAIMED`), with the record re-read after the refusal; the loop then
+   * continues, and the step is not in `chained_auto_steps`. A driver prints its past-tense line
+   * from the re-read record's claim.
+   */
+  onTaken?: (step: string, run: RunRecord) => void;
   /** Labels the reply only. Default `'advance_run'`. */
   command?: string;
 }
@@ -6855,6 +6872,7 @@ export async function advanceRun(
       ...(options.driver !== undefined ? { driver: options.driver } : {}),
       ...(options.now !== undefined ? { now: options.now } : {}),
       ...(options.onStep !== undefined ? { onStep: options.onStep } : {}),
+      ...(options.onTaken !== undefined ? { onTaken: options.onTaken } : {}),
     },
     {
       run: stored,

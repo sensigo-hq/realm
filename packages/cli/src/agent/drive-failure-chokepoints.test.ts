@@ -650,12 +650,18 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
+    const logSpy = vi.mocked(console.log);
     await runAgent(deps, { definition: wf, params: {} });
 
+    // issue #625 PR-2a (C16/C17): the run's view refuses the step before its claim (its input
+    // schema refuses the run's params), so it is never submitted. It is named on the screen and in
+    // the view (`engine_runnable`, `inspect`'s `Cannot run` line) — and, being nothing the drive
+    // tried, it mints no drive failure.
     const run = await onlyRun(store);
-    expect(run.drive_failures?.entries).toHaveLength(1);
-    expect(run.drive_failures!.entries[0]!.error_class).toBe('validation_rejected');
-    expect(run.drive_failures!.entries[0]!.step).toBe('enrich');
+    expect(logSpy.mock.calls.flat().join('\n')).toContain(
+      "• Step 'enrich' cannot run here (input_schema): Invalid input for step 'enrich'",
+    );
+    expect(run.drive_failures?.entries ?? []).toHaveLength(0);
     vi.restoreAllMocks();
   });
 

@@ -45,6 +45,43 @@ export function describeProgram(a: Attributed): string {
   return `${a.by} (${BY_SOURCE_WORDS[a.by_source]}, via ${a.channel})`;
 }
 
+/**
+ * issue #625 PR-2a (decision C22): the ONE phrase for who took a step, as a past-tense fact read off
+ * its claim — `taken by <program>`, or the words for why no program can be named. A template takes
+ * this whole phrase; a cause word is never spliced into a sentence.
+ */
+export function takenPhrase(
+  described:
+    | { holder: Attributed; since?: string }
+    | { by: null; absent_cause: ClaimHolderAbsentCause; since?: string },
+): string {
+  if ('holder' in described) return `taken by ${describeProgram(described.holder)}`;
+  switch (described.absent_cause) {
+    case 'holder_not_recorded':
+      return 'taken by a program whose name was not recorded';
+    case 'pre_lease_claim':
+      return 'taken before program names were recorded';
+    case 'name_unreadable':
+      return `taken by ${UNSHOWABLE_NAME}`;
+    case 'store_keeps_no_claims':
+      return 'taken by another process (this run store keeps no claims)';
+    case 'no_claim':
+      // Not in decision C22's list: the claim is gone by the time the record is re-read (the other
+      // process already settled the step). Past tense, and nothing claimed that is not known.
+      return 'taken by another process, whose claim is no longer on the record';
+  }
+}
+
+/**
+ * issue #625 PR-2a (D6.1): the line a driver prints for a step another process took —
+ * `• Step '<s>' was <taken phrase> at <since>; not run here.` (no ` at <since>` when the claim has
+ * none). The same line for an agent step and an engine step.
+ */
+export function takenLine(step: string, described: Parameters<typeof takenPhrase>[0]): string {
+  const at = described.since !== undefined ? ` at ${described.since}` : '';
+  return `• Step '${step}' was ${takenPhrase(described)}${at}; not run here.`;
+}
+
 /** The proof part of an answer line, in words — never a code. */
 export const PROOF_WORDS = {
   matched: 'matched the claim_token of the reply that opened this question',

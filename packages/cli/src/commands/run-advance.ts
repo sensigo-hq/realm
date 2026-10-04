@@ -10,12 +10,14 @@ import {
   getWorkflowForRun,
   deriveRunPhase,
   describeEndedBy,
+  describeClaimHolder,
+  guardPassedLine,
   type PendingView,
   type ProgramFit,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
-import { BY_SOURCE_WORDS } from '../lib/holder-render.js';
+import { BY_SOURCE_WORDS, describeProgram, takenLine } from '../lib/holder-render.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
 export const FIT_WORDS: Record<ProgramFit, string> = {
@@ -32,37 +34,49 @@ function identityWords(driver: Attributed | undefined): string {
     : `${driver.by} (${BY_SOURCE_WORDS[driver.by_source]})`;
 }
 
-/** The last recorded driver, in words. */
-function driverWords(run: Parameters<typeof describeRunDriver>[0]): string {
-  const d = describeRunDriver(run);
+/** The last recorded driver, in words (D8). */
+function driverWords(
+  run: Parameters<typeof describeRunDriver>[0],
+  workflow: Parameters<typeof describeRunDriver>[1],
+): string {
+  const d = describeRunDriver(run, workflow);
   if (d.driver.by === null) return 'none recorded';
+  const n = d.newer_without_driver;
   const newer =
-    d.newer_without_driver > 0 ? `; ${d.newer_without_driver} newer entries record no driver` : '';
-  return `${d.driver.by} (${BY_SOURCE_WORDS[d.driver.by_source]}) at step '${d.step}', ${d.at}${newer}`;
+    n === 1
+      ? '; 1 newer entry records no driver'
+      : n > 1
+        ? `; ${n} newer entries record no driver`
+        : '';
+  return `${describeProgram(d.driver)} at step '${d.step}', ${d.at}${newer}`;
 }
 
 /**
- * Why nothing more runs, from the record and the view (D4.4's `Stopped:` reasons, without running).
- * `undefined` only when something is still owed.
+ * Every reason that holds for the run to stop where it is, in D4.4's order (a failed step is the
+ * caller's to add, first): the run ended · a question is open · each refused step · agent steps
+ * ready · and, when none of these holds, `nothing is ready to run now`.
  */
-export function stoppedReason(
+export function stoppedReasons(
   runId: string,
   run: Parameters<typeof deriveRunPhase>[0],
   pending: PendingView,
-): string {
-  if (run.terminal_state) return `the run has ended (${deriveRunPhase(run)})`;
+): string[] {
+  if (run.terminal_state) return [`the run has ended (${deriveRunPhase(run)})`];
   const gate = run.pending_gate;
   if (gate !== undefined) {
-    return `a question is open — realm run respond ${runId} --gate ${gate.gate_id} --choice <one of: ${gate.choices.join(', ')}>`;
+    return [
+      `a question is open — realm run respond ${runId} --gate ${gate.gate_id} --choice <one of: ${gate.choices.join(', ')}>`,
+    ];
   }
-  const refused = pending.engine_runnable.find((e) => e.runnable_here === false);
-  if (refused !== undefined) {
-    return `'${refused.step}' cannot run here (${refused.refused_by}): ${refused.refusal}`;
-  }
+  const reasons = pending.engine_runnable
+    .filter((e) => e.runnable_here === false)
+    .map((e) => `'${e.step}' cannot run here (${e.refused_by}): ${e.refusal}`);
   if (pending.agent_steps.length > 0) {
-    return `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them with realm agent --run-id ${runId}`;
+    reasons.push(
+      `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them with realm agent --run-id ${runId}`,
+    );
   }
-  return 'nothing is ready to run now';
+  return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
 }
 
 /** What `advanceRunCommand` returns to the action (and to tests). */
@@ -104,9 +118,9 @@ export async function advanceRunFromShell(
   print(
     `This program: ${identityWords(driver)} · project code: ${FIT_WORDS[judgeProgramFit(run, registry.identity)]}.`,
   );
-  print(`Last recorded driver: ${driverWords(run)}.`);
+  print(`Last recorded driver: ${driverWords(run, workflow)}.`);
   if (pending.act === undefined) {
-    print(`Nothing is owed to the engine: ${stoppedReason(runId, run, pending)}.`);
+    print(`Nothing is owed to the engine: ${stoppedReasons(runId, run, pending).join('; ')}.`);
     return 0;
   }
   print(`Owed to the engine: ${owedList(pending)}.`);
@@ -121,28 +135,53 @@ export async function advanceRunFromShell(
       lastStep = step;
       print(`→ ${step}`);
     },
+    // D6.1: a step another process took is said as a past-tense fact — never "cannot run here".
+    onTaken: (step, record) => {
+      print(
+        takenLine(
+          step,
+          describeClaimHolder(record.claims?.[step], runStore.persistsClaims === true),
+        ),
+      );
+    },
   });
-  for (const line of describeEndedBy(result)) print(line);
 
+  // PR-1's lines for the guards this call settled: the ending (and its reason) when one ended the
+  // run, otherwise one passed line per guard.
+  const endingLines = describeEndedBy(result);
+  const chainedGuards = (result.chained_auto_steps ?? [])
+    .map((c) => c.step)
+    .filter((step) => workflow.steps[step]?.execution === 'guard');
   const after = await runStore.get(runId);
-  const afterView = describePending(workflow, after, registry);
-  let exitCode: 0 | 1 = 0;
-  let reason: string;
-  if (result.status === 'error') {
-    exitCode = 1;
-    reason = `'${lastStep ?? result.command}' failed: ${result.errors.join(', ')}`;
-  } else if (result.status === 'blocked') {
-    exitCode = 1;
-    reason = `'${lastStep ?? result.command}' cannot run here: ${result.context_hint}`;
+  if (endingLines.length > 0) {
+    for (const line of endingLines) print(line);
   } else {
-    reason = stoppedReason(runId, after, afterView);
-    if (afterView.engine_runnable.some((e) => e.runnable_here === false) && !after.terminal_state) {
-      exitCode = 1;
-    }
+    chainedGuards.forEach((guard, index) => {
+      const endedTheRun = index === chainedGuards.length - 1 && after.terminal_state;
+      print(endedTheRun ? result.context_hint : guardPassedLine(guard));
+    });
   }
-  print(`Stopped: ${reason}`);
+
+  const afterView = describePending(workflow, after, registry);
+  const isCapabilityBlock =
+    result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+    result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
+  const reasons: string[] = [];
+  // A failed step is first. A capability block is not a failure (the run is NOT failed): the step
+  // is named below as a step that cannot run here, from the view after the call.
+  if (result.status === 'error' && !isCapabilityBlock) {
+    reasons.push(`'${lastStep ?? result.command}' failed: ${result.errors.join(', ')}`);
+  }
+  reasons.push(...stoppedReasons(runId, after, afterView));
+  if (reasons.length > 1) {
+    const none = reasons.indexOf('nothing is ready to run now');
+    if (none >= 0) reasons.splice(none, 1);
+  }
+  for (const reason of reasons) print(`Stopped: ${reason}`);
   print(`Run ${runId}: phase '${deriveRunPhase(after)}'`);
-  return exitCode;
+  const refused =
+    !after.terminal_state && afterView.engine_runnable.some((e) => e.runnable_here === false);
+  return (result.status === 'error' && !isCapabilityBlock) || refused ? 1 : 0;
 }
 
 export const runAdvanceCommand = new Command('advance')

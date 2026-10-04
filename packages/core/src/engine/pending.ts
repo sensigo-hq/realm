@@ -220,11 +220,15 @@ export function describePending(
 /** The `next_actions_status` word for a run whose only next work is the engine's. */
 export const ADVANCE_OWED = 'advance_owed' as const;
 
-/** `advance_owed` exactly when the act is present and no agent action is. */
+/**
+ * `advance_owed` exactly when the act is present and no agent step is ready. When every owed engine
+ * step is refused and no agent step is ready there is no act: the status is `ok`, and
+ * `engine_runnable` says why.
+ */
 export function composeNextActionsStatusWord(
   pending: PendingView,
 ): typeof ADVANCE_OWED | undefined {
-  return pending.act !== undefined && pending.agent_actions.length === 0 ? ADVANCE_OWED : undefined;
+  return pending.act !== undefined && pending.agent_steps.length === 0 ? ADVANCE_OWED : undefined;
 }
 
 /** The one sentence after `Step 'X' completed.` / `Gate 'G' resolved with choice 'c'.` */
@@ -262,8 +266,17 @@ export function judgeProgramFit(
   return extensionIdentityDiffers(recorded, registryIdentity) ? 'differs' : 'same';
 }
 
-/** The newest evidence entry that names its driver, and how many newer entries name none. */
-export function describeRunDriver(run: RunRecord): {
+/**
+ * The newest evidence entry that names its driver, and how many NEWER entries of the kinds the holder
+ * slice stamps with `driven_by` name none (decision C21). Only a step's own execution entry and a
+ * cleanup step's entry can carry `driven_by`; a person's answer (`kind: 'gate_response'`) and the
+ * entry the engine writes for a guard never do, so they are never counted. The definition is what
+ * tells a guard's entry from a step's: an entry carries no marker of its own.
+ */
+export function describeRunDriver(
+  run: RunRecord,
+  definition: WorkflowDefinition,
+): {
   driver: Attributed | ActorAbsent;
   step?: string;
   at?: string;
@@ -281,7 +294,9 @@ export function describeRunDriver(run: RunRecord): {
         newer_without_driver: newer,
       };
     }
-    newer++;
+    const canCarry =
+      entry.kind !== 'gate_response' && definition.steps[entry.step_id]?.execution !== 'guard';
+    if (canCarry) newer++;
   }
   return { driver: { by: null, absent_cause: 'driver_not_recorded' }, newer_without_driver: 0 };
 }

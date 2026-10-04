@@ -12,7 +12,6 @@ import {
   describeClaimHolder,
   buildNextActions,
   findCapabilityBlockedSteps,
-  requirementForStep,
   unmetCapabilities,
   capabilityWarning,
   buildFailedAttemptRecord,
@@ -46,7 +45,7 @@ import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensio
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
 import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js';
-import { describeProgram, ABSENCE_WORDS } from '../lib/holder-render.js';
+import { takenLine, takenPhrase } from '../lib/holder-render.js';
 
 export type AgentRunResult = 'completed' | 'failed';
 
@@ -457,103 +456,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     }
 
     try {
-      // issue #625 PR-2a (D6.1): ONE mint of the line for a step another process took.
-      const lostClaimLine = (step: string, record: RunRecord): string => {
-        const described = describeClaimHolder(
-          record.claims?.[step],
-          deps.store.persistsClaims === true,
-        );
-        const holder =
-          'holder' in described
-            ? describeProgram(described.holder)
-            : ABSENCE_WORDS[described.absent_cause];
-        return `  • Step '${step}' was taken by ${holder} at ${described.since ?? 'an unrecorded time'}; not run here.`;
-      };
-
-      // issue #625 PR-2a: today's dispositions for a step reply with `status: 'error'` — for the step
-      // this loop drove, and for an engine step `advanceRun` ran at the loop top (D4.2). ONE copy:
-      // the capability-block sentence, `✗ Step 'X' failed`, chokepoint 4.
-      const disposeErrorResult = async (
-        stepName: string,
-        result: { error_code?: string; errors: string[] },
-        repairsUsed: number,
-      ): Promise<'failed'> => {
-        // #134: a NOT-REGISTERED handler/adapter settles RECOVERABLY — the run is NOT failed, the step
-        // is parked awaiting a capable runner. Detect structurally via error_code (not message text) and
-        // print capability-aware guidance instead of a bare `✗ Step failed`. The return stays 'failed'
-        // (no 'blocked' AgentRunResult variant, by design) — the distinction lives in the message.
-        // issue #401: a capability block mints NO drive-failure entry — the `capability_block`
-        // finding already owns this disclosure, and two findings for one fact is noise.
-        const isCapabilityBlock =
-          result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
-          result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
-        // issue #217: append the repair count ONLY when at least one repair actually ran — never
-        // "after 0 schema-repair attempts".
-        const repairSuffix = repairsUsed > 0 ? ` after ${repairsUsed} schema-repair attempts` : '';
-        if (isCapabilityBlock) {
-          currentRun = await deps.store.get(runId);
-          const block = findCapabilityBlockedSteps(currentRun).find((b) => b.step === stepName);
-          // issue #625 PR-2a: a step the view refused before any attempt carries no marker — its
-          // requirement is read off the definition by the same function dispatch mirrors.
-          const required =
-            block?.requirement ??
-            (definition.steps[stepName] !== undefined
-              ? requirementForStep(stepName, definition.steps[stepName], definition)
-              : undefined);
-          const need =
-            required !== undefined
-              ? `${required.kind} '${required.name}'`
-              : result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED'
-                ? 'the missing handler'
-                : 'the missing adapter';
-          console.error(
-            `\n⚠ Step '${stepName}' is blocked: ${need} is not registered in this runner. ` +
-              `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId}\`).`,
-          );
-        } else {
-          console.error(
-            `\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}${repairSuffix}`,
-          );
-          // ═══ issue #401, CHOKEPOINT (4) — the disposition table, KEYED ON ERROR CODE ═══
-          //
-          // A validation rejection that reaches here has WEDGED the run: it settles nothing, so
-          // there is no seal to carry the news and no evidence to read. Every OTHER
-          // non-capability code SETTLES THE STEP — `failed_steps` plus the step's evidence are
-          // the visibility, so recording those would duplicate a fact the run already tells.
-          // (Not "either seals or is capability-owned": non-sealing envelopes exist, and a
-          // settled step on a still-live run is the common case.)
-          //
-          // Deliberately NOT keyed on `repairsUsed`: every bypass of the repair gate — a
-          // tools-path rejection, a concurrent writer's version bump, `schemaRetries: 0`, an
-          // AUTO step — arrives here with `repairsUsed === 0` and wedges just the same.
-          //
-          // Applies to ALL execution kinds. An auto step's validation exit is write-free and
-          // pre-claim, which wedges the run identically to an agent step's.
-          if (
-            result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
-            result.error_code === 'VALIDATION_INPUT_SCHEMA'
-          ) {
-            await recordDriveFailure(deps.store, runId, {
-              at: new Date().toISOString(),
-              step: stepName,
-              provider: providerForEvidence ?? 'unknown',
-              error_class: 'validation_rejected',
-              message: sanitizeError(result.errors.join(', ')).slice(0, MESSAGE_CAP),
-              elapsed_ms: Date.now() - attemptStartedAt,
-              // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
-              // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
-              // when the rejection belongs to a step `executeChain` ran AFTER this one: this step
-              // then saved first, with its calls, and attaching them here would count them twice.
-              ...(usageForStep !== undefined &&
-              usageForStep.length > 0 &&
-              !(await callsAlreadyRecorded(stepName, usageForStep))
-                ? { usage: usageForStep }
-                : {}),
-            });
-          }
-        }
-        return 'failed';
-      };
+      // issue #625 PR-2a (C17): an engine step refused before its claim is named once per drive.
+      const reportedRefusals = new Set<string>();
+      const keepsClaims = deps.store.persistsClaims === true;
 
       while (!currentRun.terminal_state) {
         // --- Gate handling ---
@@ -623,82 +528,54 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
           onStep: (step) => {
             console.log(`→ [auto] ${step}`);
-            // issue #401: a throw from here on mints with this engine step's name.
+            // issue #401: a throw from here on mints with this engine step's name, and its
+            // elapsed time is measured from this step's start.
             currentStepName = step;
+            attemptStartedAt = Date.now();
             engineStep = step;
+          },
+          // D6.1: another process took an engine step — the same past-tense line as for an agent
+          // step; `advanceRun` re-reads and continues.
+          onTaken: (step, record) => {
+            console.log(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
           },
         });
         if (advanced.status === 'confirm_required') {
           currentRun = await deps.store.get(runId);
           continue;
         }
-        if (
-          advanced.status === 'blocked' &&
-          advanced.error_code === 'STATE_STEP_ALREADY_CLAIMED' &&
-          engineStep !== undefined
-        ) {
-          // Another process took the engine step this call was about to run (the two-process
-          // attended case): the same fact as for an agent step, then re-read and continue.
-          currentRun = await deps.store.get(runId);
-          console.log(lostClaimLine(engineStep, currentRun));
-          continue;
-        }
-        if (advanced.status === 'error' && engineStep !== undefined) {
-          usageForStep = undefined;
-          return disposeErrorResult(engineStep, advanced, 0);
-        }
+        // A non-`ok` reply from an engine step goes into the dispositions below (decision C15):
+        // the step name and the reply are set as the agent path sets them, and nothing is moved.
+        let engineReply: typeof advanced | undefined;
         if (advanced.status !== 'ok') {
-          // A refusal before any step ran (a guard refusal, a store failure): today's failed exit.
-          console.error(`\n✗ ${advanced.errors.join(', ') || advanced.context_hint}`);
-          return 'failed';
-        }
-        currentRun = await deps.store.get(runId);
-        if (currentRun.terminal_state) break;
-        if (currentRun.pending_gate !== undefined) continue;
-        // An engine step this program cannot run is never followed by a model call: it is named, and
-        // the drive stops as it did when the loop itself hit the step (law L7).
-        const refusedHere = describePending(
-          definition,
-          currentRun,
-          deps.registry,
-        ).engine_runnable.filter((e) => e.runnable_here === false);
-        if (refusedHere.length > 0) {
-          const r = refusedHere[0]!;
-          // The step's own disposition, as when the loop attempted it: a missing handler or adapter
-          // is the capability block (#134); an input the step's schema refuses is the validation
-          // wedge (chokepoint 4, which records the drive failure); the other two are named.
-          if (r.refused_by === 'capability') {
-            const req = requirementForStep(r.step, definition.steps[r.step]!, definition);
-            return disposeErrorResult(
-              r.step,
-              {
-                error_code:
-                  req?.kind === 'adapter'
-                    ? 'ENGINE_ADAPTER_NOT_REGISTERED'
-                    : 'ENGINE_HANDLER_NOT_REGISTERED',
-                errors: [r.refusal ?? ''],
-              },
-              0,
-            );
+          if (engineStep === undefined) {
+            // A refusal before any step ran (a guard refusal, a store failure): today's failed exit.
+            console.error(`\n✗ ${advanced.errors.join(', ') || advanced.context_hint}`);
+            return 'failed';
           }
-          if (r.refused_by === 'input_schema') {
-            usageForStep = undefined;
-            currentStepName = r.step;
-            return disposeErrorResult(
-              r.step,
-              { error_code: 'VALIDATION_INPUT_SCHEMA', errors: [r.refusal ?? ''] },
-              0,
-            );
+          engineReply = advanced;
+        } else {
+          currentRun = await deps.store.get(runId);
+          if (currentRun.terminal_state) break;
+          if (currentRun.pending_gate !== undefined) continue;
+          // C17: an engine step refused before its claim (nothing changed; the act is withdrawn)
+          // is named once per drive, and the loop goes on with the ready agent steps.
+          for (const e of describePending(definition, currentRun, deps.registry).engine_runnable) {
+            if (e.runnable_here === false && !reportedRefusals.has(e.step)) {
+              reportedRefusals.add(e.step);
+              console.log(`• Step '${e.step}' cannot run here (${e.refused_by}): ${e.refusal}`);
+            }
           }
-          console.error(`\n✗ Step '${r.step}' cannot run here (${r.refused_by}): ${r.refusal}`);
-          return 'failed';
         }
 
         // --- Step execution: agent steps only ---
-        const eligible = findEligibleSteps(definition, currentRun).filter(
-          (name) => definition.steps[name]?.execution === 'agent',
-        );
-        if (eligible.length === 0) {
+        const eligible =
+          engineReply !== undefined
+            ? []
+            : findEligibleSteps(definition, currentRun).filter(
+                (name) => definition.steps[name]?.execution === 'agent',
+              );
+        if (engineReply === undefined && eligible.length === 0) {
           // issue #625 PR-2a (D6.2): a step in flight elsewhere (the open gate's own step is not "in
           // flight" — it holds a claim while it waits) — watch the record and re-enter on any change.
           const inFlight = currentRun.in_progress_steps.filter(
@@ -723,17 +600,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             const states = new Map(
               classifyInProgressClaims(currentRun).map((c) => [c.step, c.state]),
             );
-            const keepsClaims = deps.store.persistsClaims === true;
             for (const step of inFlight) {
               const described = describeClaimHolder(currentRun.claims?.[step], keepsClaims);
-              const holder =
-                'holder' in described
-                  ? describeProgram(described.holder)
-                  : ABSENCE_WORDS[described.absent_cause];
               const since = described.since ?? 'an unrecorded time';
               const stale = states.get(step) === 'claim_stale';
               console.log(
-                `   • Step '${step}' has been in flight since ${since} (taken by ${holder}); the record has not changed for ${Math.round(watchMs / 1000)}s.` +
+                `• Step '${step}' has been in flight since ${since} (${takenPhrase(described)}); the record has not changed for ${Math.round(watchMs / 1000)}s.` +
                   (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
                   ` If the program that took it is gone: realm run reclaim ${runId} --step ${step} --force`,
               );
@@ -742,7 +614,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           break;
         }
 
-        const stepName = eligible[0]!;
+        const stepName =
+          engineReply !== undefined && engineStep !== undefined ? engineStep : eligible[0]!;
         // issue #401: never cleared. A throw AFTER this step settles mints with this step's name,
         // and conjunct (iv) of the drive_failing predicate then suppresses the finding — because
         // progress DID happen. Chosen, not incidental.
@@ -798,6 +671,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         let lastRejection: { kind: 'output' | 'input'; summary: string } | undefined;
 
         for (;;) {
+          if (engineReply !== undefined) {
+            // An engine step `advanceRun` ran at the loop top: its reply takes the dispositions
+            // below, exactly as this step's own reply would (decision C15). No model call.
+            result = engineReply;
+            break;
+          }
           // issue #401: re-stamped per repair attempt, so `elapsed_ms` measures THIS attempt
           // rather than the whole step.
           attemptStartedAt = Date.now();
@@ -1533,7 +1412,75 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         stepUsageSaved = true;
 
         if (result.status === 'error') {
-          return disposeErrorResult(stepName, result, repairsUsed);
+          // #134: a NOT-REGISTERED handler/adapter settles RECOVERABLY — the run is NOT failed, the step
+          // is parked awaiting a capable runner. Detect structurally via error_code (not message text) and
+          // print capability-aware guidance instead of a bare `✗ Step failed`. The return stays 'failed'
+          // (no 'blocked' AgentRunResult variant, by design) — the distinction lives in the message.
+          // issue #401: a capability block mints NO drive-failure entry — the `capability_block`
+          // finding already owns this disclosure, and two findings for one fact is noise.
+          const isCapabilityBlock =
+            result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+            result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
+          // issue #217: append the repair count ONLY when at least one repair actually ran — never
+          // "after 0 schema-repair attempts".
+          const repairSuffix =
+            repairsUsed > 0 ? ` after ${repairsUsed} schema-repair attempts` : '';
+          if (isCapabilityBlock) {
+            currentRun = await deps.store.get(runId);
+            const block = findCapabilityBlockedSteps(currentRun).find((b) => b.step === stepName);
+            const need =
+              block !== undefined
+                ? `${block.requirement.kind} '${block.requirement.name}'`
+                : result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED'
+                  ? 'the missing handler'
+                  : 'the missing adapter';
+            console.error(
+              `\n⚠ Step '${stepName}' is blocked: ${need} is not registered in this runner. ` +
+                `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId}\`).`,
+            );
+          } else {
+            console.error(
+              `\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}${repairSuffix}`,
+            );
+            // ═══ issue #401, CHOKEPOINT (4) — the disposition table, KEYED ON ERROR CODE ═══
+            //
+            // A validation rejection that reaches here has WEDGED the run: it settles nothing, so
+            // there is no seal to carry the news and no evidence to read. Every OTHER
+            // non-capability code SETTLES THE STEP — `failed_steps` plus the step's evidence are
+            // the visibility, so recording those would duplicate a fact the run already tells.
+            // (Not "either seals or is capability-owned": non-sealing envelopes exist, and a
+            // settled step on a still-live run is the common case.)
+            //
+            // Deliberately NOT keyed on `repairsUsed`: every bypass of the repair gate — a
+            // tools-path rejection, a concurrent writer's version bump, `schemaRetries: 0`, an
+            // AUTO step — arrives here with `repairsUsed === 0` and wedges just the same.
+            //
+            // Applies to ALL execution kinds. An auto step's validation exit is write-free and
+            // pre-claim, which wedges the run identically to an agent step's.
+            if (
+              result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
+              result.error_code === 'VALIDATION_INPUT_SCHEMA'
+            ) {
+              await recordDriveFailure(deps.store, runId, {
+                at: new Date().toISOString(),
+                step: stepName,
+                provider: providerForEvidence ?? 'unknown',
+                error_class: 'validation_rejected',
+                message: sanitizeError(result.errors.join(', ')).slice(0, MESSAGE_CAP),
+                elapsed_ms: Date.now() - attemptStartedAt,
+                // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
+                // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
+                // when the rejection belongs to a step `executeChain` ran AFTER this one: this step
+                // then saved first, with its calls, and attaching them here would count them twice.
+                ...(usageForStep !== undefined &&
+                usageForStep.length > 0 &&
+                !(await callsAlreadyRecorded(stepName, usageForStep))
+                  ? { usage: usageForStep }
+                  : {}),
+              });
+            }
+          }
+          return 'failed';
         }
 
         if (result.status === 'confirm_required') {
@@ -1546,7 +1493,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         if (result.status === 'blocked' && result.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
           // issue #625 PR-2a (D6.1): another process took the step — say who and when, as past-tense
           // facts read off its claim, never `✓ → running`; then re-read and continue.
-          console.log(lostClaimLine(stepName, currentRun));
+          console.log(
+            takenLine(stepName, describeClaimHolder(currentRun.claims?.[stepName], keepsClaims)),
+          );
           continue;
         }
         console.log(`  ✓ → ${currentRun.run_phase}`);

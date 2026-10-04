@@ -504,6 +504,76 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       expect((await store.get(run.id)).completed_steps).toContain('check');
     });
   });
+
+  const refusedStep: Record<'trust' | 'precondition' | 'input_schema', StepDefinition> = {
+    trust: { description: 'X', execution: 'auto', depends_on: [], trust: 'not_a_level' as never },
+    precondition: {
+      description: 'X',
+      execution: 'auto',
+      depends_on: [],
+      preconditions: ['missing.ok == true'],
+    },
+    input_schema: {
+      description: 'X',
+      execution: 'auto',
+      depends_on: [],
+      input_schema: { type: 'object', required: ['needed'] },
+    },
+  };
+  for (const member of ['trust', 'precondition', 'input_schema'] as const) {
+    it(`L5 ${member}: after advance_run, nothing ran and the act is withdrawn for that caller`, async () => {
+      const d = def({ x: refusedStep[member] });
+      await withStore(async (store) => {
+        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const before = describePending(d, await store.get(run.id));
+        expect(before.act).toBeUndefined();
+        expect(before.engine_runnable).toEqual([
+          expect.objectContaining({ step: 'x', runnable_here: false, refused_by: member }),
+        ]);
+        const steps: string[] = [];
+        const reply = await advanceRun(store, d, { runId: run.id, onStep: (s) => steps.push(s) });
+        expect(steps).toEqual([]);
+        expect(reply.status).toBe('ok');
+        expect(reply.next_actions).toEqual([]);
+        expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran. No step is ready.`);
+        expect(describePending(d, await store.get(run.id)).act).toBeUndefined();
+      });
+    });
+  }
+
+  it('D3.2: an engine step another process holds is not run here — onTaken, re-read, continue', async () => {
+    const d = def({
+      x: { description: 'X', execution: 'auto', depends_on: [] },
+      y: { description: 'Y', execution: 'auto', depends_on: [] },
+    });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const other = { by: 'other@host', by_source: 'derived', channel: 'agent' } as const;
+      const realClaim = store.claimStep.bind(store);
+      let first = true;
+      store.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
+        if (first && args[1] === 'x') {
+          first = false;
+          await realClaim(args[0], args[1], args[2], other);
+        }
+        return realClaim(...args);
+      };
+      const taken: Array<{ step: string; holder: unknown }> = [];
+      const steps: string[] = [];
+      const reply = await advanceRun(store, d, {
+        runId: run.id,
+        onStep: (s) => steps.push(s),
+        onTaken: (s, record) => taken.push({ step: s, holder: record.claims?.[s]?.holder }),
+      });
+      expect(steps).toEqual(['x', 'y']);
+      expect(taken).toEqual([{ step: 'x', holder: other }]);
+      expect(reply.status).toBe('ok');
+      expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['y']);
+      const after = await store.get(run.id);
+      expect(after.completed_steps).toEqual(['y']);
+      expect(after.in_progress_steps).toEqual(['x']);
+    });
+  });
 });
 
 describe('#625 PR-2a — decision C3: the output of a bare step the engine runs', () => {
@@ -648,6 +718,13 @@ describe('#625 PR-2a — judgeProgramFit, D-8 table row by row', () => {
 });
 
 describe('#625 PR-2a — describeRunDriver', () => {
+  const driverDef = def({
+    a: { description: 'A', execution: 'agent', depends_on: [] },
+    b: { description: 'B', execution: 'agent', depends_on: ['a'] },
+    c: { description: 'C', execution: 'auto', depends_on: ['b'] },
+    d: { description: 'D', execution: 'auto', depends_on: ['c'] },
+    g: { description: 'G', execution: 'guard', depends_on: ['d'] },
+  });
   it('the newest entry that names its driver, and how many newer entries name none', () => {
     const run = {
       evidence: [
@@ -665,15 +742,56 @@ describe('#625 PR-2a — describeRunDriver', () => {
         { step_id: 'd', completed_at: 't4' },
       ],
     } as unknown as RunRecord;
-    expect(describeRunDriver(run)).toEqual({
+    expect(describeRunDriver(run, driverDef)).toEqual({
       driver: { by: 'me', by_source: 'ambient', channel: 'agent' },
       step: 'b',
       at: 't2',
       newer_without_driver: 2,
     });
-    expect(describeRunDriver({ evidence: [] } as unknown as RunRecord)).toEqual({
+    expect(describeRunDriver({ evidence: [] } as unknown as RunRecord, driverDef)).toEqual({
       driver: { by: null, absent_cause: 'driver_not_recorded' },
       newer_without_driver: 0,
+    });
+  });
+  it('C21: an answer entry and a guard entry are never counted (they never carry driven_by)', () => {
+    const run = {
+      evidence: [
+        {
+          step_id: 'b',
+          completed_at: 't2',
+          driven_by: { by: 'me', by_source: 'ambient', channel: 'agent' },
+        },
+        { step_id: 'confirm', kind: 'gate_response', completed_at: 't3' },
+        { step_id: 'g', completed_at: 't4' },
+      ],
+    } as unknown as RunRecord;
+    expect(describeRunDriver(run, driverDef).newer_without_driver).toBe(0);
+  });
+  it('C21, end to end: after an answered gate the count is 0', async () => {
+    await withStore(async (store) => {
+      const { run } = await store.create({
+        workflowId: gateThenAuto.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const driver = { by: 'tester', by_source: 'ambient', channel: 'agent' } as const;
+      await executeStep(store, gateThenAuto, {
+        runId: run.id,
+        command: 'confirm',
+        input: {},
+        dispatcher: echo,
+        driver,
+      });
+      const gate = (await store.get(run.id)).pending_gate!;
+      await submitHumanResponse(store, gateThenAuto, {
+        runId: run.id,
+        gateId: gate.gate_id,
+        choice: 'approve',
+      });
+      const d = describeRunDriver(await store.get(run.id), gateThenAuto);
+      expect(d.driver).toEqual(driver);
+      expect(d.step).toBe('confirm');
+      expect(d.newer_without_driver).toBe(0);
     });
   });
 });
@@ -686,22 +804,47 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     expect(el.match(/function pickNextEngineStep\(/g)).toHaveLength(1);
     expect(el.match(/pickNextEngineStep\(/g)).toHaveLength(2); // the declaration and its one call
   });
+  // Comments stripped, whitespace collapsed: the witnesses read code, never prose.
+  const code = (rel: string) =>
+    read(rel)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/\s+/g, ' ');
   it('run-agent.ts names no auto step in its pick', () => {
-    const ra = read('cli/src/agent/run-agent.ts');
+    const ra = code('cli/src/agent/run-agent.ts');
     expect(ra).toContain(
-      ".filter(\n          (name) => definition.steps[name]?.execution === 'agent',\n        )",
+      "findEligibleSteps(definition, currentRun).filter( (name) => definition.steps[name]?.execution === 'agent', )",
     );
-    expect(ra).not.toContain("execution === 'auto')");
+    expect(ra).not.toContain("execution === 'auto'");
+    expect(ra).not.toContain('executeStep(');
   });
-  it('the status word is declared in core only', () => {
-    const hits: string[] = [];
-    for (const rel of [
-      'core/src/engine/pending.ts',
-      'mcp-server/src/tools/get-run-state.ts',
-      'cli/src/commands/inspect.ts',
+  it('no disposition sentence in run-agent.ts appears twice', () => {
+    const ra = code('cli/src/agent/run-agent.ts');
+    for (const sentence of [
+      'is not registered in this runner.',
+      'The run is NOT failed',
+      "failed: ${result.errors.join(', ')}${repairSuffix}",
+      'CHOKEPOINT (4)',
+      "error_class: 'validation_rejected'",
     ]) {
-      if (read(rel).includes("'advance_owed'")) hits.push(rel);
+      expect(read('cli/src/agent/run-agent.ts').split(sentence).length - 1, sentence).toBe(1);
     }
+    expect(ra.split("result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||").length - 1).toBe(1);
+  });
+  it('the literal advance_owed appears in core only (code, comments stripped)', async () => {
+    const { readdirSync } = await import('node:fs');
+    const hits: string[] = [];
+    const walk = (rel: string): void => {
+      for (const e of readdirSync(join(root, rel), { withFileTypes: true })) {
+        const child = `${rel}/${e.name}`;
+        if (e.isDirectory()) {
+          if (e.name !== 'node_modules' && e.name !== 'dist') walk(child);
+        } else if (/\.ts$/.test(e.name) && !/\.test\.ts$/.test(e.name)) {
+          if (code(child).includes("'advance_owed'")) hits.push(child);
+        }
+      }
+    };
+    for (const pkg of ['core/src', 'mcp-server/src', 'cli/src', 'testing/src']) walk(pkg);
     expect(hits).toEqual(['core/src/engine/pending.ts']);
   });
   it('executeStep calls checkPreClaim for its three checks (no inline copy of their predicates)', () => {

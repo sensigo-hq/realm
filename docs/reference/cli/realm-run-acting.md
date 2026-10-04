@@ -108,7 +108,7 @@ Stopped: agent steps are ready: 'finish' — drive them with realm agent --run-i
 Run <id>: phase 'running'
 ```
 
-`Stopped:` names where it stopped: a question opened (with the `realm run respond` command), agent steps ready, a step that cannot run here (the check and why), a step that failed, or the run ended. When nothing is owed, the last preview line is `Nothing is owed to the engine: <reason>.` and nothing runs. Exit code 1 when a step failed or was refused, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
+`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run here (`'<step>' cannot run here (<check>): <why>`), agent steps ready (with the `realm agent --run-id` command), and otherwise `nothing is ready to run now`. A step another process took while this one was about to run it is said as a fact, `• Step '<step>' was taken by <program> at <time>; not run here.`, and the command goes on with what is left. When nothing is owed, the last preview line is `Nothing is owed to the engine: <reasons>.` and nothing runs. Exit code 1 when a step failed or was refused, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
 
 ## `resume`
 

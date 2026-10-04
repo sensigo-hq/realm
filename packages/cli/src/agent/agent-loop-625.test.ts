@@ -6,9 +6,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
+  submitHumanResponse,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
   type RunStore,
+  type PendingGate,
 } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
@@ -165,5 +167,267 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect(out).toContain('→ [auto] boom');
     expect(err).toContain("✗ Step 'boom' failed:");
     expect(provider.callStep).not.toHaveBeenCalled();
+  });
+
+  it('L7 / D6.1: an ENGINE step another process took is said with the same line, and the loop goes on', async () => {
+    const def: WorkflowDefinition = {
+      id: 'engine-taken-wf',
+      name: 'engine taken',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        x: { description: 'X', execution: 'auto', depends_on: [] },
+        review: { description: 'Review.', execution: 'agent', depends_on: [] },
+      },
+    };
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const realClaim = store.claimStep.bind(store);
+    let first = true;
+    (store as unknown as RunStore).claimStep = async (
+      ...args: Parameters<RunStore['claimStep']>
+    ) => {
+      if (first && args[1] === 'x') {
+        first = false;
+        await realClaim(args[0], args[1], args[2], {
+          by: 'other@host',
+          by_source: 'derived',
+          channel: 'agent',
+        });
+      }
+      return realClaim(...args);
+    };
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({});
+    })();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(
+      { store, workflowStore: workflowStore(def), provider, registry: createDefaultRegistry() },
+      {
+        definition: def,
+        existingRunId: run.id,
+        params: {},
+        inFlightPollMs: 5,
+        inFlightWatchMs: 30,
+      },
+    );
+    const out = logSpy.mock.calls.flat().join('\n');
+    vi.restoreAllMocks();
+    const since = (await store.get(run.id)).claims?.['x']?.since;
+    expect(out).toContain('→ [auto] x');
+    expect(out).toContain(
+      `• Step 'x' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
+    );
+    // The loop went on to the ready agent step.
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    expect((await store.get(run.id)).completed_steps).toEqual(['review']);
+  });
+
+  it('L7: an engine step that is capability-blocked at the loop top is named; no model call follows', async () => {
+    const def: WorkflowDefinition = {
+      id: 'loop-cap-wf',
+      name: 'loop cap',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
+        review: { description: 'Review.', execution: 'agent', depends_on: ['x'] },
+      },
+    };
+    const store = new InMemoryStore();
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({});
+    })();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await runAgent(
+      { store, workflowStore: workflowStore(def), provider, registry: createDefaultRegistry() },
+      { definition: def, params: {} },
+    );
+    const err = errorSpy.mock.calls.flat().join('\n');
+    vi.restoreAllMocks();
+    expect(result).toBe('failed');
+    const runId = (await store.list())[0]!.id;
+    expect(err).toContain(
+      `⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (\`realm agent --run-id ${runId}\`).`,
+    );
+    expect(provider.callStep).not.toHaveBeenCalled();
+  });
+
+  it('L7: an engine step whose settle write throws at the loop top is named; no model call follows', async () => {
+    const def: WorkflowDefinition = {
+      id: 'loop-throw-wf',
+      name: 'loop throw',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        x: { description: 'X', execution: 'auto', depends_on: [] },
+        review: { description: 'Review.', execution: 'agent', depends_on: ['x'] },
+      },
+    };
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    // The step's own settle write throws (not a WorkflowError): the throw leaves advanceRun.
+    const realSettle = store.settleStep!.bind(store);
+    (store as unknown as RunStore).settleStep = async (
+      ...args: Parameters<NonNullable<RunStore['settleStep']>>
+    ) => {
+      if (args[1].kind === 'settle_step' && args[1].step === 'x') throw new Error('disk gone');
+      return realSettle(...args);
+    };
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({});
+    })();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let outcome: string;
+    try {
+      outcome = await runAgent(
+        { store, workflowStore: workflowStore(def), provider, registry: createDefaultRegistry() },
+        { definition: def, existingRunId: run.id, params: {} },
+      );
+    } catch (err) {
+      outcome = `threw: ${(err as Error).message}`;
+    }
+    const out = logSpy.mock.calls.flat().join('\n');
+    const err = errorSpy.mock.calls.flat().join('\n');
+    vi.restoreAllMocks();
+    expect(out).toContain('→ [auto] x');
+    // executeStep turns the throw into the step's error reply, which takes today's disposition.
+    expect(outcome).toBe('failed');
+    expect(err).toContain("✗ Step 'x' failed:");
+    expect(provider.callStep).not.toHaveBeenCalled();
+  });
+
+  const gated = (guard: boolean): WorkflowDefinition => ({
+    id: guard ? 'attended-guard-wf' : 'attended-auto-wf',
+    name: 'attended',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      confirm: {
+        description: 'Confirm',
+        execution: 'auto',
+        trust: 'human_confirmed',
+        depends_on: [],
+        gate: { choices: ['approve', 'reject'] },
+      },
+      ...(guard
+        ? {
+            check: {
+              description: 'Check',
+              execution: 'guard' as const,
+              depends_on: ['confirm'],
+              abort_unless: ["confirm.choice == 'approve'"],
+            },
+            after: { description: 'After', execution: 'auto' as const, depends_on: ['check'] },
+          }
+        : { after: { description: 'After', execution: 'auto' as const, depends_on: ['confirm'] } }),
+      finish: { description: 'Finish.', execution: 'agent', depends_on: ['after'] },
+    },
+  });
+
+  for (const guard of [false, true]) {
+    it(`L7 attended: gate→${guard ? 'guard→auto' : 'auto'} — the agent answers, advances and finishes`, async () => {
+      const def = gated(guard);
+      const store = new InMemoryStore();
+      const provider = new (class extends LlmProvider {
+        callStep = vi.fn().mockResolvedValue({ done: true });
+      })();
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const result = await runAgent(
+        {
+          store,
+          workflowStore: workflowStore(def),
+          provider,
+          registry: createDefaultRegistry(),
+          gateHandler: async (runId: string, gate: PendingGate) => {
+            await submitHumanResponse(store, def, {
+              runId,
+              gateId: gate.gate_id,
+              choice: 'approve',
+            });
+          },
+        },
+        { definition: def, params: {} },
+      );
+      const out = logSpy.mock.calls.flat().join('\n');
+      const err = errorSpy.mock.calls.flat().join('\n');
+      vi.restoreAllMocks();
+      expect(err).not.toContain('Run ended in phase: running');
+      expect(result).toBe('completed');
+      expect(out).toContain('→ [auto] after');
+      const done = (await store.list())[0]!;
+      expect(done.completed_steps).toEqual(
+        guard ? ['confirm', 'check', 'after', 'finish'] : ['confirm', 'after', 'finish'],
+      );
+    });
+  }
+
+  it('L7 two processes attending one run: each step runs once, the run completes, neither exits silently', async () => {
+    const def: WorkflowDefinition = {
+      id: 'two-process-wf',
+      name: 'two process',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        slow: { description: 'Slow', execution: 'auto', depends_on: [], handler: 'slow' },
+        review: { description: 'Review.', execution: 'agent', depends_on: ['slow'] },
+      },
+    };
+    const registry = createDefaultRegistry();
+    registry.register('handler', 'slow', {
+      id: 'slow',
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return { data: { ok: true } };
+      },
+    });
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return { reviewed: true };
+      });
+    })();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const drive = (name: string) =>
+      runAgent(
+        {
+          store,
+          workflowStore: workflowStore(def),
+          provider,
+          registry,
+          driver: { by: name, by_source: 'stated', channel: 'agent' },
+        },
+        {
+          definition: def,
+          existingRunId: run.id,
+          params: {},
+          inFlightPollMs: 5,
+          inFlightWatchMs: 2000,
+        },
+      );
+    const results = await Promise.all([drive('one'), drive('two')]);
+    const out = logSpy.mock.calls.flat().join('\n');
+    const err = errorSpy.mock.calls.flat().join('\n');
+    vi.restoreAllMocks();
+    const done = await store.get(run.id);
+    expect(done.terminal_state).toBe(true);
+    expect(done.completed_steps).toEqual(['slow', 'review']);
+    for (const step of ['slow', 'review']) {
+      expect(
+        done.evidence.filter((e) => e.step_id === step && e.status === 'success'),
+      ).toHaveLength(1);
+    }
+    expect(results).toEqual(['completed', 'completed']);
+    expect(err).not.toContain('Run ended in phase: running');
+    // The loser of each race said who took the step.
+    expect(out).toMatch(/• Step 'slow' was taken by (one|two) \(as stated, via agent\)/);
   });
 });

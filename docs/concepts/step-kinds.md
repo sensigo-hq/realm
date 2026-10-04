@@ -41,6 +41,8 @@ The engine runs an auto step itself. No model is involved. An auto step does one
 - It calls an outside **service** through an adapter, named with `uses_service:`.
 - It does nothing of its own. A step with neither records an output it did not compute: when the engine runs it, the recorded output of its one `depends_on` step (with no `depends_on`, the run's params; with several, `{}`); when a caller names it, what the caller's dispatcher returned. Its evidence says which (`output_source`). This is useful as a place to put a human gate.
 
+An auto step the run's view refuses before it is claimed — an invalid `trust`, a failed precondition, an input its schema rejects, or a handler or adapter this program has not registered — is never submitted, so it never fails. It is named instead: `get_run_state` lists it under `engine_runnable` with the check that refused it, `realm run inspect` prints `Cannot run '<step>' (<check>): <why>`, and `realm agent` prints it once and goes on with any agent step that is ready. The `advance_run` act stops naming it. (A handler or adapter that is not registered is still attempted once, so the run records which one is missing.)
+
 ```yaml
 pay:
   description: Pay the refund.

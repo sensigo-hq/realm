@@ -5,13 +5,15 @@
 // Every server child gets a scratch HOME; nothing here reads or writes the real `~/.realm`.
 // `FOLLOWER_SERVER_ENTRY` points the cells at another build's `dist/server.js` (the red-first run).
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  applyResume,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
   type StepDefinition,
@@ -37,9 +39,36 @@ type Reply = Record<string, unknown> & {
   errors?: string[];
 };
 
+/**
+ * A server child that is realm's own `createRealmMcpServer`, over stdio, with ONE handler registered
+ * (`stamp`) — the shape an embedding host has. Used where a workflow needs a handler the default
+ * registry does not hold (realm ships none).
+ */
+function handlerEntry(home: string): string {
+  const req = createRequire(import.meta.url);
+  const stdio = pathToFileURL(req.resolve('@modelcontextprotocol/sdk/server/stdio.js')).href;
+  const mcp = pathToFileURL(fileURLToPath(new URL('../../dist/index.js', import.meta.url))).href;
+  const core = new URL('../../../core/dist/index.js', import.meta.url).href;
+  const entry = join(home, 'handler-entry.mjs');
+  writeFileSync(
+    entry,
+    [
+      `import { StdioServerTransport } from '${stdio}';`,
+      `import { createRealmMcpServer } from '${mcp}';`,
+      `import { createDefaultRegistry } from '${core}';`,
+      `const registry = createDefaultRegistry();`,
+      `registry.register('handler', 'stamp', { id: 'stamp', execute: async () => ({ data: { stamped: true } }) });`,
+      `const server = createRealmMcpServer({ registry });`,
+      `await server.connect(new StdioServerTransport());`,
+    ].join('\n'),
+  );
+  return entry;
+}
+
 async function withServer<T>(
   defs: WorkflowDefinition[],
   fn: (client: Client, home: string) => Promise<T>,
+  opts: { withHandler?: boolean } = {},
 ): Promise<T> {
   const home = mkdtempSync(join(tmpdir(), 'realm-follower-625-'));
   const workflows = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
@@ -48,7 +77,7 @@ async function withServer<T>(
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
-      args: [SERVER_ENTRY],
+      args: [opts.withHandler === true ? handlerEntry(home) : SERVER_ENTRY],
       env: { ...process.env, HOME: home } as Record<string, string>,
     }),
   );
@@ -276,6 +305,117 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       await follow(client, s);
       expect(await phaseOf(home, s.run_id!)).toBe('failed');
+    });
+  }, 30000);
+
+  it('expiry→default→auto: a late answer after the default settled names the owed step, and the follower finishes', async () => {
+    const d = wf('f-expiry-default', {
+      write: { description: 'Write.', execution: 'agent', depends_on: [] },
+      confirm: {
+        description: 'Confirm.',
+        execution: 'auto',
+        trust: 'human_confirmed',
+        depends_on: ['write'],
+        gate: {
+          choices: ['approve', 'reject'],
+          timeout_seconds: 1,
+          on_expiry: 'settle_default',
+          default_choice: 'approve',
+        },
+      },
+      after: { description: 'After.', execution: 'auto', depends_on: ['confirm'] },
+    });
+    await withServer([d], async (client, home) => {
+      const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
+      const opened = await call(client, 'execute_step', {
+        run_id: started.run_id!,
+        command: 'write',
+        params: {},
+      });
+      expect(opened.status).toBe('confirm_required');
+      // The person answers after the gate's time is up (a late human, not a poll).
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      const { calls } = await follow(client, opened);
+      expect(calls).toContain('advance_run');
+      expect(await phaseOf(home, started.run_id!)).toBe('completed');
+    });
+  }, 30000);
+
+  it('a handler auto step after a gate: the act names it (never the handler as a tool), and the follower finishes', async () => {
+    const d = wf('f-gate-handler', {
+      write: { description: 'Write.', execution: 'agent', depends_on: [] },
+      confirm: gate(['write']),
+      stamp_it: {
+        description: 'Stamp.',
+        execution: 'auto',
+        depends_on: ['confirm'],
+        handler: 'stamp',
+      },
+    });
+    await withServer(
+      [d],
+      async (client, home) => {
+        const started = await call(client, 'start_run', { workflow_id: d.id, params: {} });
+        const { calls } = await follow(client, started);
+        expect(calls).toEqual(['execute_step', 'submit_human_response', 'advance_run']);
+        expect(calls).not.toContain('stamp');
+        const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(started.run_id!);
+        expect(run.run_phase).toBe('completed');
+        expect(run.completed_steps).toContain('stamp_it');
+      },
+      { withHandler: true },
+    );
+  }, 30000);
+
+  it('resume --from <failed guard>: the resumed run names the act, and advance_run settles the guard', async () => {
+    const d = wf('f-resume-guard', {
+      g: {
+        description: 'G.',
+        execution: 'guard',
+        depends_on: [],
+        abort_unless: ['nothing.ok == true'],
+      },
+      after: { description: 'After.', execution: 'agent', depends_on: ['g'] },
+    });
+    await withServer([d], async (client, home) => {
+      const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
+      await follow(client, s);
+      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      const failed = await runs.get(s.run_id!);
+      expect(failed.failed_steps).toEqual(['g']);
+      // What `realm run resume --from g` writes (the core transform, then one update).
+      await runs.update(applyResume(failed, 'g', d).run);
+      const state = await call(client, 'get_run_state', { run_id: s.run_id! });
+      expect(state['next_actions_status']).toBe('advance_owed');
+      const { calls, last } = await follow(client, state);
+      expect(calls).toEqual(['advance_run']);
+      expect(last.chained_auto_steps).toEqual([expect.objectContaining({ step: 'g' })]);
+      expect(await phaseOf(home, s.run_id!)).toBe('failed');
+    });
+  }, 30000);
+
+  it('capability-blocked: the first advance attempts it once (the marker), then the act is withdrawn and the refusal named', async () => {
+    const d = wf('f-capability', {
+      write: { description: 'Write.', execution: 'agent', depends_on: [] },
+      x: { description: 'X.', execution: 'auto', depends_on: ['write'], handler: 'missing_h' },
+    });
+    await withServer([d], async (client, home) => {
+      const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
+      const { calls, last } = await follow(client, s);
+      expect(calls.filter((c) => c === 'advance_run').length).toBeLessThanOrEqual(2);
+      expect(last.next_actions).toEqual([]);
+      const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
+      expect(run.capability_blocks?.['x']).toBeDefined();
+      const state = await call(client, 'get_run_state', { run_id: s.run_id! });
+      expect(state['engine_runnable']).toEqual([
+        {
+          step: 'x',
+          runnable_here: false,
+          refused_by: 'capability',
+          refusal: "handler 'missing_h' is not registered here",
+        },
+      ]);
+      expect(state['next_actions']).toEqual([]);
     });
   }, 30000);
 

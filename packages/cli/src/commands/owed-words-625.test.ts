@@ -15,7 +15,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { FIT_WORDS, stoppedReason, advanceRunFromShell } from './run-advance.js';
+import { FIT_WORDS, stoppedReasons, advanceRunFromShell } from './run-advance.js';
 import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
 
@@ -46,7 +46,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
     });
   });
 
-  it('stoppedReason, every member', () => {
+  it('stoppedReasons, every member, one reason each and both when a refused step and agent steps hold', () => {
     const base = {
       id: 'r',
       params: {},
@@ -59,7 +59,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
     } as unknown as RunRecord;
     const none = { agent_actions: [], agent_steps: [], pending_guards: [], engine_runnable: [] };
     expect(
-      stoppedReason(
+      stoppedReasons(
         'r',
         {
           ...base,
@@ -69,9 +69,9 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         } as RunRecord,
         none,
       ),
-    ).toBe('the run has ended (completed)');
+    ).toEqual(['the run has ended (completed)']);
     expect(
-      stoppedReason(
+      stoppedReasons(
         'r',
         {
           ...base,
@@ -85,19 +85,78 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         } as RunRecord,
         none,
       ),
-    ).toBe('a question is open — realm run respond r --gate g1 --choice <one of: a, b>');
+    ).toEqual(['a question is open — realm run respond r --gate g1 --choice <one of: a, b>']);
     expect(
-      stoppedReason('r', base, {
+      stoppedReasons('r', base, {
         ...none,
+        engine_runnable: [
+          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
+          { step: 'y', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
+        ],
+      }),
+    ).toEqual(["'x' cannot run here (trust): bad trust", "'y' cannot run here (precondition): no"]);
+    expect(stoppedReasons('r', base, { ...none, agent_steps: ['a', 'b'] })).toEqual([
+      "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r",
+    ]);
+    expect(
+      stoppedReasons('r', base, {
+        ...none,
+        agent_steps: ['a'],
         engine_runnable: [
           { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
         ],
       }),
-    ).toBe("'x' cannot run here (trust): bad trust");
-    expect(stoppedReason('r', base, { ...none, agent_steps: ['a', 'b'] })).toBe(
-      "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r",
-    );
-    expect(stoppedReason('r', base, none)).toBe('nothing is ready to run now');
+    ).toEqual([
+      "'x' cannot run here (trust): bad trust",
+      "agent steps are ready: 'a' — drive them with realm agent --run-id r",
+    ]);
+    expect(stoppedReasons('r', base, none)).toEqual(['nothing is ready to run now']);
+  });
+
+  it('C21: the driver line counts in the plural, and says nothing when no newer entry lacks a driver', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('plural-wf', {
+        a: { description: 'A', execution: 'agent', depends_on: [] },
+        b: { description: 'B', execution: 'agent', depends_on: ['a'] },
+        c: { description: 'C', execution: 'auto', depends_on: ['b'] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const echo = async (_s: string, i: Record<string, unknown>) => i;
+      const one = { by: 'one@host', by_source: 'derived', channel: 'agent' } as const;
+      await executeStep(runs, d, {
+        runId: run.id,
+        command: 'a',
+        input: {},
+        dispatcher: echo,
+        driver: one,
+      });
+      const at = (await runs.get(run.id)).evidence.find((e) => e.step_id === 'a')!.completed_at;
+      const preview = async (): Promise<string> => {
+        const lines: string[] = [];
+        await advanceRunFromShell(
+          run.id,
+          { project: home },
+          runs,
+          workflows,
+          undefined,
+          (l) => lines.push(l),
+          new ExtensionRegistry(),
+        );
+        return lines[2]!;
+      };
+      expect(await preview()).toBe(
+        `Last recorded driver: one@host (from the OS user, via agent) at step 'a', ${at}.`,
+      );
+      await executeStep(runs, d, { runId: run.id, command: 'b', input: {}, dispatcher: echo });
+      await executeStep(runs, d, { runId: run.id, command: 'c', input: {}, dispatcher: echo });
+      expect(await preview()).toBe(
+        `Last recorded driver: one@host (from the OS user, via agent) at step 'a', ${at}; 2 newer entries record no driver.`,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it('no derivable name, a driver with newer entries that record none: the preview says both', async () => {
@@ -134,7 +193,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         'This program: no name could be recorded · project code: neither side records project code.',
       );
       expect(lines[2]).toBe(
-        `Last recorded driver: one@host (from the OS user) at step 'a', ${at}; 1 newer entries record no driver.`,
+        `Last recorded driver: one@host (from the OS user, via agent) at step 'a', ${at}; 1 newer entry records no driver.`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

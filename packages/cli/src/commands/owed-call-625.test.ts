@@ -124,7 +124,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       const again = realm(home, ['run', 'advance', run.id]);
       expect(again.status).toBe(0);
       expect(again.stdout.trim().split('\n').slice(2)).toEqual([
-        "Last recorded driver: tester (from REALM_OPERATOR) at step 'after', " +
+        "Last recorded driver: tester (from REALM_OPERATOR, via advance) at step 'after', " +
           (again.stdout.match(/at step 'after', (\S+)\./)?.[1] ?? '') +
           '.',
         `Nothing is owed to the engine: agent steps are ready: 'finish' — drive them with realm agent --run-id ${run.id}.`,

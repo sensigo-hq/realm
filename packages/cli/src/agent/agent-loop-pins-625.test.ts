@@ -61,11 +61,11 @@ describe('#625 PR-2a — realm agent loop words', () => {
     const out = logSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     expect(out).toContain(
-      `• Step 'review' has been in flight since 1999-12-31T23:59:00.000Z (taken by no program name was recorded on this claim); the record has not changed for 0s. Its claim is past its deadline (its runner likely died). If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
+      `• Step 'review' has been in flight since 1999-12-31T23:59:00.000Z (taken by a program whose name was not recorded); the record has not changed for 0s. Its claim is past its deadline (its runner likely died). If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
     );
   });
 
-  it('an engine step refused before its claim (precondition): named, no model call', async () => {
+  it('C17: an engine step refused before its claim is named once, and the loop runs the agent step on the other branch', async () => {
     const def: WorkflowDefinition = {
       id: 'refused-wf',
       name: 'refused',
@@ -85,22 +85,29 @@ describe('#625 PR-2a — realm agent loop words', () => {
       callStep = vi.fn().mockResolvedValue({});
     })();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const store = new InMemoryStore();
     const result = await runAgent(
       {
-        store: new InMemoryStore(),
+        store,
         workflowStore: workflowStore(def),
         provider,
         registry: createDefaultRegistry(),
       },
       { definition: def, params: {} },
     );
+    const out = logSpy.mock.calls.flat().join('\n');
     const err = errorSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
+    const line =
+      "• Step 'x' cannot run here (precondition): Precondition failed for step 'x'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.";
+    expect(out.split(line).length - 1).toBe(1);
+    // The agent step on the other branch ran; the drive ends failed only because nothing else can run.
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    const runs = await store.list();
+    expect(runs[0]!.completed_steps).toEqual(['review']);
     expect(result).toBe('failed');
-    expect(err).toContain(
-      "✗ Step 'x' cannot run here (precondition): Precondition failed for step 'x'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
-    );
-    expect(provider.callStep).not.toHaveBeenCalled();
+    expect(err).toContain('Run ended in phase: running');
+    expect(err).not.toContain("✗ Step 'x'");
   });
 });
