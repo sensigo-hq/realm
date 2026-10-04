@@ -410,7 +410,7 @@ export async function handleGetRunState(
 
     // Wedge detection (issue #101) — definition-free (reads the stored per-claim deadline), so it
     // also refines the `workflow_unresolved` path. Carves the wedge states OUT of the
-    // 'ok'/'advance_owed'/'workflow_unresolved' fall-through:
+    // ok / advance_owed / workflow_unresolved fall-through:
     //  - a `claim_stale` claim (past deadline → likely-dead runner) is surfaced even mid-fan-out;
     //  - when only unknown-age claims remain and there is nothing else to do, surface
     //    `claim_unknown_age` (detect-only). A `healthy` in-flight claim (a live runner) stays 'ok'.
