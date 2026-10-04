@@ -639,8 +639,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           const view = describePending(definition, currentRun, deps.registry);
           const cannotRun = view.engine_runnable.filter((e) => e.runnable_here === false);
           if (cannotRun.length > 0 && view.act === undefined) {
-            const first = cannotRun[0]!.step;
-            const preClaim = cannotRun[0]!.refused_by !== 'capability';
+            const stop = cannotRun[0]!;
+            const first = stop.step;
+            const preClaim = stop.refused_by !== 'capability';
             // capability (decision C23): the block's own exit — the capability block this drive
             // holds for the step, otherwise one attempt after the claim (`→ [auto]`, then the block's
             // `⚠ … re-attach` line). A refusal before the claim (decision C31) takes no attempt line
@@ -686,7 +687,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               }
               currentRun = await deps.store.get(runId);
               console.error(
-                `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${cannotRun[0]!.refused_by}). ` +
+                `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
                   `Run ${runId} stays open (phase '${deriveRunPhase(currentRun)}'); to end it: realm run abandon ${runId}.`,
               );
               return 'failed';
