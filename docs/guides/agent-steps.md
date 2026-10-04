@@ -1,5 +1,7 @@
 # Write an agent step
 
+<!-- description: Write an agent step that hands work to a model and accepts the answer only if it has the right shape: the task, the schema, a profile and the closing text. -->
+
 An agent step hands a piece of work to a model and accepts the answer only if it has the right shape. This guide shows how to write the four parts of one: the task, the answer's schema, a reusable profile, and the text shown when it finishes.
 
 ## Before you start

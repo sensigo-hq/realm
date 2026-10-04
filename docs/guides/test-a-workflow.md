@@ -1,5 +1,7 @@
 # Test a workflow
 
+<!-- description: Test a workflow's logic without a model, real services or a person: small files that say how a run should end, run by one command locally and in CI. -->
+
 This guide shows how to check a workflow's logic without a model, without real services and without a person at the gate. You write small files that say "given these inputs, the run should end like this", and one command runs them all. At the end you have tests you can run after every change and in CI.
 
 ## Before you start

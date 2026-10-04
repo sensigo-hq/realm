@@ -1,5 +1,7 @@
 # Workflows, steps and the run record
 
+<!-- description: The workflow file, the registered copy, the run and the run record: what each one is, how they relate, and which one a command reads or changes. -->
+
 Realm has four things you will meet in every command: the workflow file, the registered copy, the run, and the run record. This page explains what each one is and how they relate, so that you know which one a command is reading or changing.
 
 ## The workflow file

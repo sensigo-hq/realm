@@ -1,5 +1,7 @@
 # Command-line reference
 
+<!-- description: This page was replaced. It links to the command-line reference pages for realm workflow, realm run, realm agent, realm listen, realm mcp and realm serve. -->
+
 This page has been replaced. Its contents are now on these pages:
 
 - [`realm workflow`](cli/realm-workflow.md)

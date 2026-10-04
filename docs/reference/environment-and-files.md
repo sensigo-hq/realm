@@ -1,5 +1,7 @@
 # Environment variables and files on disk
 
+<!-- description: Every environment variable Realm reads, and every file and folder it reads or writes, both under ~/.realm and in a project. -->
+
 This page lists every environment variable Realm reads, and every file and folder it reads or writes: under `~/.realm`, and in a project. The variable list comes from a search of Realm's code for each place it reads the environment. The file list comes from the code and from the folders left by the runs made for these docs.
 
 ## Environment variables

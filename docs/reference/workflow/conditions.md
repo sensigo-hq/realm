@@ -1,5 +1,7 @@
 # Conditions: `when`, `preconditions`, `abort_unless`
 
+<!-- description: How conditions are written for when, preconditions and abort_unless: the operators, how values of different kinds compare, and where the three fields differ. -->
+
 Three step fields take conditions: `when`, `preconditions` and `abort_unless`. This page gives the one way conditions are written, the operators, what each comparison does with values of different kinds, and where the three fields differ. Every result in the tables comes from a run.
 
 ## The three fields

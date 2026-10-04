@@ -1,0 +1,32 @@
+---
+// The description, canonical link and link-preview tags of a page that is not a docs page
+// (Starlight writes these for the docs pages). The home page also passes its structured data.
+import { HOME_DESCRIPTION, jsonLdText, previewTags } from '../lib/site-meta.mjs';
+
+interface Props {
+  title: string;
+  description: string;
+  /** The page's address on the site, e.g. '/how-it-works/'. */
+  path: string;
+  /** schema.org objects, written as one <script type="application/ld+json"> each. */
+  structuredData?: object[];
+}
+const { title, description, path, structuredData = [] } = Astro.props;
+const tags = previewTags({
+  title,
+  description,
+  path,
+  imageKey: 'site',
+  // the image of /og/site.png, drawn from the home page's description (src/pages/og/)
+  imageAlt: `The Realm logo and the words: ${HOME_DESCRIPTION}`,
+});
+---
+
+<title>{title}</title>
+<meta name="description" content={description} />
+{tags.map(({ tag: Tag, attrs }) => <Tag {...attrs} />)}
+{
+  structuredData.map((data) => (
+    <script is:inline type="application/ld+json" set:html={jsonLdText(data)} />
+  ))
+}

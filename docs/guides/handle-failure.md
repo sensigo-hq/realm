@@ -1,5 +1,7 @@
 # Handle failure
 
+<!-- description: Make a workflow retry what is worth retrying, give up within a limit and clean up when a run ends badly, and see what each kind of failure looks like. -->
+
 Steps fail: a service is down, a call takes too long, a model keeps answering wrongly. This guide shows how to make a workflow retry what is worth retrying, give up within a limit, and clean up when a run ends badly. At the end you know what each kind of failure looks like in the record.
 
 ## Before you start

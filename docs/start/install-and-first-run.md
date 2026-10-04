@@ -1,5 +1,7 @@
 # Install and first run
 
+<!-- description: Install Realm and finish a first run with no AI model and no account: you play the model, watch Realm refuse a wrong answer, and read the record. -->
+
 At the end of this page you have a finished Realm run on your machine and you have read the record it left behind. On the way, you watch Realm refuse a wrong answer. You need no AI model and no account: you play the part of the model yourself.
 
 ## Before you start

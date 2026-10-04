@@ -1,5 +1,7 @@
 # Core library: stores and the store contract
 
+<!-- description: Use @sensigo/realm as a library: the functions that run a workflow, the stores Realm ships, the store interfaces, and how to check a store of your own. -->
+
 `@sensigo/realm` is the engine as a library. A program of your own can use it to run workflows without the `realm` command, and to keep runs somewhere other than files on disk. This page covers the functions that run a workflow, the stores Realm ships, the store interfaces, what a store of your own must do, and how to check that it does. Every output shown came from a program run against the built packages.
 
 The package exports more than 200 values. This page covers the ones named above. Most of the rest are the parts the `realm` command is built from.

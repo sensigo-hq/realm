@@ -1,5 +1,7 @@
 # Project extensions
 
+<!-- description: How a project gives Realm its own adapters, handlers and processors: what each file must export, every refusal, when the code loads, and what a run records. -->
+
 A project gives Realm its own code in files that a workflow names with `extensions`. A file can provide 3 kinds of thing: adapters, handlers and processors. This page gives what a file must export, what each kind must have, every refusal, which commands load the code and when, and what a run records about the code that ran it. Every message shown came from a run of `realm` against a project at `/srv/shop`.
 
 The same 3 kinds can also be built from settings in `realm.yaml`. See [Deployment manifest](deployment-manifest.md).

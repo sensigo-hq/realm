@@ -5875,7 +5875,12 @@ test('RL76 — the abandon keeps commits of yours made after the release own on 
       runPrinted(fx, `rm -f ${removeJournal}`);
       const kept = `release/test-kept-${head}`;
       const keptLine = `A branch kept for this release is waiting: ${kept} holds ${n === 1 ? '1 commit' : `${n} commits`} after ${dev} "${DEV_SUBJECT}", the last commit of the release abandoned before this one. Bring ${them} back now (git rebase --rebase-merges --onto release/test ${dev} ${kept}, then git switch release/test and git merge --ff-only ${kept}), then delete the branch (git branch -D ${kept}).`;
-      const ok = fx.version();
+      // The re-run starts from the same commit as the abandoned run. If both ran within one clock
+      // second, git would give the re-run's commits the abandoned commits' ids, HEAD would already
+      // hold them, and the script would rightly print a different text. So the re-run's commits are
+      // dated one second after the abandoned development commit: they differ by construction.
+      const later = `${Number(fx.git('log', '-1', '--format=%ct', dev)) + 1} +0000`;
+      const ok = fx.version('0.46.0', { GIT_AUTHOR_DATE: later, GIT_COMMITTER_DATE: later });
       assert.equal(ok.status, 0, ok.stderr);
       assert.deepEqual(stdoutFrom(ok, 'Prepared'), successLines(fx, { extra: [keptLine] }));
       const newDev = fx.short('HEAD');

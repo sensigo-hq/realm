@@ -1,5 +1,7 @@
 # What the loader refuses and warns about
 
+<!-- description: What realm workflow validate reports when it reads a workflow.yaml: accepted, accepted with warnings, or refused. Every warning code and the JSON output. -->
+
 When Realm reads a `workflow.yaml`, it either accepts the file, accepts it with warnings, or refuses it. This page describes the three outcomes as `realm workflow validate` prints them, lists all 18 warning codes, and gives the machine-readable form of the result.
 
 `realm workflow register` applies the same checks before it stores anything.

@@ -1,5 +1,7 @@
 # `realm listen`
 
+<!-- description: Reference for realm listen, the web server that starts a run for each accepted HTTP request: its flags, its startup, every line it logs, and how it stops. -->
+
 `realm listen` is a web server that starts a run for each HTTP request a workflow's `trigger` block accepts. This page lists its argument and 9 flags, what it does when it starts, each line it logs, and how it stops. Every output shown came from a running `realm listen`.
 
 The `trigger` block, the checks made on a request and the reply for each are in [Webhook trigger](../workflow/webhook-trigger.md). For a walk through one webhook, see [Start runs from webhooks](../../guides/webhooks.md).

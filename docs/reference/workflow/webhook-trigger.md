@@ -1,5 +1,7 @@
 # Webhook trigger
 
+<!-- description: Reference for the trigger block that lets an HTTP request start a run: every key, the ways a request can be checked, and the reply to each kind. -->
+
 The `trigger` block of `workflow.yaml` lets an HTTP request start a run. `realm listen` reads it. This page lists every key of the block, the five ways a request can be checked, and the reply for each kind of request. Every reply shown came from a running `realm listen`.
 
 For a walk through one webhook, see [Start runs from webhooks](../../guides/webhooks.md).

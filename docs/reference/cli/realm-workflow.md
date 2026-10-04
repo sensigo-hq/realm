@@ -1,5 +1,7 @@
 # `realm workflow`
 
+<!-- description: Reference for the realm workflow subcommands, which work on workflow files and registered workflows: their arguments, flags, output and exit codes. -->
+
 `realm workflow` has eight subcommands that work on workflow files and on the workflows registered in `~/.realm/workflows/`. This page gives the arguments, flags, output and exit code of each. Every output shown came from a run of the command.
 
 | Subcommand              | What it does                                                |

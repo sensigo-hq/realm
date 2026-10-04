@@ -1,5 +1,7 @@
 # Start runs safely
 
+<!-- description: Make a request that arrives twice start one run, not two. Also how to start a fresh run on purpose, and how to start many runs at once. -->
+
 When a program starts runs, the same request can arrive twice: a retry after a timeout, a webhook delivered again, a script run a second time. This guide shows how to make sure one piece of work gets one run, how to start a fresh run on purpose, and how to start many runs at once.
 
 ## Before you start

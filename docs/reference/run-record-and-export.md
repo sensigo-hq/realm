@@ -1,5 +1,7 @@
 # Run record and export bundle format
 
+<!-- description: Every field of a run record and of an evidence entry, the objects inside them, and the fields of the file that realm run export writes. -->
+
 A run's record is one JSON object that holds everything Realm knows about the run. This page lists the record's 34 fields, the 27 fields of an evidence entry, the smaller objects inside them, and the 9 fields of the file that `realm run export` writes. The field lists come from Realm's types. All 34 record fields, and 26 of the 27 evidence fields, were seen in the 312 run records and 519 evidence entries written while these docs were made. The example at the end is one real run.
 
 ## Where the record is

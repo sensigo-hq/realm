@@ -1,5 +1,7 @@
 # Input maps, template expressions and filters
 
+<!-- description: How a workflow file refers to values that exist only during a run: input_map and template expressions, where values come from, and every filter. -->
+
 This page covers the two ways a workflow file refers to values that exist only when a run is under way: `input_map`, which builds the input of an `auto` step, and `{{ … }}` expressions in text fields. It lists where values can come from, where each form is allowed, what happens when a value is missing, and all 34 filters.
 
 ## Where values come from

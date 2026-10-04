@@ -1,5 +1,7 @@
 # Retry and timeouts
 
+<!-- description: How long a step may take and how often it is tried again: timeout_seconds, the keys of the retry block, and how they combine, with measured delays. -->
+
 This page lists the settings that limit how long a step may take and how often it is tried again: `timeout_seconds`, the six keys of the `retry` block, and how they combine. The delays and results shown were measured in runs.
 
 For a walk through the common cases, see [Handle failure](../../guides/handle-failure.md).

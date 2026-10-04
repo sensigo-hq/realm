@@ -1,5 +1,7 @@
 # Agent-step controls
 
+<!-- description: The settings that limit a model on an agent step: how many wrong answers are allowed, schema enforcement by the provider, request time and tool calls. -->
+
 This page covers the settings that limit and shape what a model does on an `agent` step: how many wrong answers are allowed, whether the model provider is asked to hold answers to the schema, how long a model request may take, and how many tools the model may call. Each setting is shown with a result from a run.
 
 | Setting                                           | Controls                                                      | Applies when                  |
