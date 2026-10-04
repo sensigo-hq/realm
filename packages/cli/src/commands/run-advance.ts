@@ -21,6 +21,7 @@ import {
   guardEndingOfRun,
   cannotRunClause,
   cannotRunWayOut,
+  cannotRunWayOutApplies,
   withFullStop,
   type PendingView,
   type ProgramFit,
@@ -36,6 +37,18 @@ export const FIT_WORDS: Record<ProgramFit, string> = {
   not_comparable: "not comparable with the run's last record",
   none: 'neither side records project code',
 };
+
+/**
+ * The fit words for the preview. `not_comparable` on a run that has recorded no project code yet
+ * says why (decision C56): a fresh run from the same project is not a mismatch. Otherwise
+ * {@link FIT_WORDS}.
+ */
+export function fitWords(fit: ProgramFit, run: Pick<RunRecord, 'extension_identity'>): string {
+  if (fit === 'not_comparable' && run.extension_identity?.at(-1) === undefined) {
+    return 'not comparable — the run has recorded no project code yet';
+  }
+  return FIT_WORDS[fit];
+}
 
 /** `<by> (<class words>)` — this program's name in the house words. */
 function identityWords(driver: Attributed | undefined): string {
@@ -101,7 +114,8 @@ export function stoppedReasons(runId: string, run: RunForReasons, pending: Pendi
     .map((e) => cannotRunClause(e));
   if (pending.agent_steps.length > 0) {
     reasons.push(
-      `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them with realm agent --run-id ${runId}`,
+      // decision C55: the count words agree with how many agent steps are ready.
+      `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive ${pending.agent_steps.length === 1 ? 'it' : 'them'} with realm agent --run-id ${runId}`,
     );
   }
   reasons.push(
@@ -131,22 +145,6 @@ function engineWorkOwed(
       const kind = workflow.steps[step]?.execution;
       return kind === 'auto' || kind === 'guard';
     })
-  );
-}
-
-/**
- * Decision C44: nothing else is ready — no act, no agent step, nothing in flight, no question open
- * — and an engine step is refused before its claim (trust, precondition, input schema). The way out
- * is then to correct the workflow (or end the run).
- */
-function wayOutApplies(run: RunForReasons, pending: PendingView): boolean {
-  return (
-    !run.terminal_state &&
-    run.pending_gate === undefined &&
-    pending.act === undefined &&
-    pending.agent_steps.length === 0 &&
-    inFlightSteps(run).length === 0 &&
-    pending.engine_runnable.some((e) => e.runnable_here === false && e.refused_by !== 'capability')
   );
 }
 
@@ -188,7 +186,7 @@ export async function advanceRunFromShell(
   const keepsClaims = runStore.persistsClaims === true;
   print(`Advancing run ${runId} (workflow '${workflow.id}') from ${projectDir}.`);
   print(
-    `This program: ${identityWords(driver)} · project code: ${FIT_WORDS[judgeProgramFit(run, registry.identity)]}.`,
+    `This program: ${identityWords(driver)} · project code: ${fitWords(judgeProgramFit(run, registry.identity), run)}.`,
   );
   print(`Last recorded driver: ${driverWords(run, workflow)}.`);
   // decision C37: a step another process holds is named before anything runs — so a second program
@@ -202,7 +200,7 @@ export async function advanceRunFromShell(
       ? 'The engine can run nothing now'
       : 'Nothing is owed to the engine';
     print(`${opening}: ${withFullStop(stoppedReasons(runId, run, pending).join('; '))}`);
-    if (wayOutApplies(run, pending)) print(cannotRunWayOut(run));
+    if (cannotRunWayOutApplies(run, pending)) print(cannotRunWayOut(run));
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
@@ -275,7 +273,7 @@ export async function advanceRunFromShell(
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
   // last line is the way out (it carries the phase); otherwise the phase line.
   print(
-    wayOutApplies(after, afterView)
+    cannotRunWayOutApplies(after, afterView)
       ? cannotRunWayOut(after)
       : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
   );

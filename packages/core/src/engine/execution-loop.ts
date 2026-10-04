@@ -101,6 +101,8 @@ import {
   describePending,
   describeNext,
   engineStepInput,
+  cannotRunWayOutApplies,
+  cannotRunWayOutTools,
   type PreClaimRefused,
 } from './pending.js';
 import {
@@ -6948,9 +6950,14 @@ function nothingRanHint(
   run: RunRecord,
   registry: ExtensionRegistry,
 ): string {
-  return run.terminal_state
-    ? `Run '${run.id}' is already terminal (${deriveRunPhase(run)}); nothing ran.`
-    : `Run '${run.id}': nothing ran.${describeNext(describePending(definition, run, registry))}`;
+  if (run.terminal_state) {
+    return `Run '${run.id}' is already terminal (${deriveRunPhase(run)}); nothing ran.`;
+  }
+  const pending = describePending(definition, run, registry);
+  // decision C51: when the run cannot go on until its workflow is corrected, the reply ends with the
+  // way out in the tools' words — the same condition `realm run advance` prints its own form under.
+  const wayOut = cannotRunWayOutApplies(run, pending) ? ` ${cannotRunWayOutTools()}` : '';
+  return `Run '${run.id}': nothing ran.${describeNext(pending)}${wayOut}`;
 }
 
 /** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */

@@ -24,6 +24,9 @@ import {
   CAPABILITY_BASES,
   PRE_CLAIM_REFUSALS,
   cannotRunWords,
+  cannotRunClause,
+  cannotRunWayOutApplies,
+  cannotRunWayOutTools,
   checkPreClaim,
   composeNextActionsStatusWord,
   describeNext,
@@ -238,7 +241,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     // A server that lacks it: no act, the step named as one this server cannot run.
     const lacking = await answer(new ExtensionRegistry());
     expect(lacking.context_hint).toBe(
-      "Gate 'b' resolved with choice 'approve'. 'act' cannot run here (capability): handler 'note' is not registered here.",
+      "Gate 'b' resolved with choice 'approve'. 'act' cannot run here (capability): handler 'note' is not registered here — load the missing extension, or run the step on a runner that has it.",
     );
     expect(lacking.next_actions).toEqual([]);
     // A caller with no registry: the run's own marker is the freshest fact — past tense, since no
@@ -725,8 +728,9 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
         // decision C34: the reply names the step that cannot run instead of `No step is ready.`;
         // decision C37: one full stop, never two (the precondition refusal ends with its own).
         const refusal = before.engine_runnable[0]!.refusal!;
+        // decision C51: nothing else is ready, so the reply ends with the way out in the tools' words.
         expect(reply.context_hint).toBe(
-          `Run '${run.id}': nothing ran. 'x' cannot run (${member}): ${refusal}${refusal.endsWith('.') ? '' : '.'}`,
+          `Run '${run.id}': nothing ran. 'x' cannot run (${member}): ${refusal}${refusal.endsWith('.') ? '' : '.'} Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`,
         );
         expect(reply.context_hint).not.toContain('..');
         expect(describePending(d, await store.get(run.id)).act).toBeUndefined();
@@ -1293,7 +1297,7 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
     expect(cannotRunWords(byRegistry)).toBe('cannot run here (capability)');
     expect(cannotRunWords(byMarker)).toBe('could not run (capability)');
     expect(describeNext(describePending(d, live, new ExtensionRegistry()))).toBe(
-      " 'x' cannot run here (capability): handler 'h' is not registered here.",
+      " 'x' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.",
     );
     expect(describeNext(describePending(d, marked))).toBe(
       " 'x' could not run (capability): handler 'h' was not registered in the runner that last attempted it.",
@@ -1380,3 +1384,134 @@ function hasNote2(): ExtensionRegistry {
   r.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) } as never);
   return r;
 }
+
+describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way out (C51), the capability way out (C53)", () => {
+  const FINDING_VOICE =
+    "'trust: \"nope\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
+  const DISPATCH_VOICE =
+    "Step 'work': 'trust: \"nope\"' is not a recognized value — refused at dispatch: no gate opens and this step does not run; this run is now parked, non-terminal, until the value is corrected, and any step depending on this one returns 'blocked' in the meantime. A step's 'trust' accepts auto, human_confirmed, human_reviewed. Correct the value, then 'realm workflow register <path>' and retry this step — this run picks up the corrected definition.";
+  const TOOLS_WAY_OUT =
+    'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
+
+  it("C49: the view's trust refusal is #508's read-time voice; executeStep's reply keeps the dispatch voice, byte for byte", async () => {
+    const d = def({
+      work: { description: 'w', execution: 'auto', depends_on: [], trust: 'nope' as never },
+      ask: { description: 'Ask', execution: 'agent', depends_on: [] },
+    });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      // The view: the read-time voice — nothing was dispatched, and the agent step beside it runs.
+      const entry = describePending(d, run).engine_runnable[0]!;
+      expect(entry).toEqual({
+        step: 'work',
+        runnable_here: false,
+        refused_by: 'trust',
+        refusal: FINDING_VOICE,
+      });
+      expect(entry.refusal).not.toContain('parked');
+      expect(describeNext(describePending(d, run))).toBe(
+        ` Ready for the agent: 'ask'. 'work' cannot run (trust): ${FINDING_VOICE}`,
+      );
+      // checkPreClaim carries both: the view's words, and the error executeStep returns.
+      const verdict = checkPreClaim({ definition: d, run, step: 'work', input: {} });
+      expect(verdict && 'refused_by' in verdict ? verdict.refusal : undefined).toBe(FINDING_VOICE);
+      expect(verdict && 'refused_by' in verdict ? verdict.error?.message : undefined).toBe(
+        DISPATCH_VOICE,
+      );
+      // executeStep's reply: the dispatch voice, as on d2f0b3cf (errors and context_hint).
+      const reply = await executeStep(store, d, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echo,
+      });
+      expect(reply.status).toBe('error');
+      expect(reply.error_code).toBe('VALIDATION_TRUST_VALUE');
+      expect(reply.errors).toEqual([DISPATCH_VOICE]);
+      expect(reply.context_hint).toBe("Error during 'work'. Run phase: 'running'.");
+      expect(reply.next_actions).toEqual([]);
+    });
+  });
+
+  it("C51: advance_run's nothing-ran reply ends with the tools' way out only when nothing else is ready and a step is refused before its claim", async () => {
+    expect(cannotRunWayOutTools()).toBe(TOOLS_WAY_OUT);
+    // Present: covered member by member by the three L5 cells (trust, precondition, input schema).
+    // Absent when an agent step is ready beside the refused step.
+    const withAgent = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: { type: 'object', required: ['needed'] },
+      },
+      ask: { description: 'Ask', execution: 'agent', depends_on: [] },
+    });
+    await withStore(async (store) => {
+      const { run } = await store.create({
+        workflowId: withAgent.id,
+        workflowVersion: 1,
+        params: {},
+      });
+      const reply = await advanceRun(store, withAgent, { runId: run.id });
+      expect(reply.context_hint).toBe(
+        `Run '${run.id}': nothing ran. Ready for the agent: 'ask'. 'x' cannot run (input_schema): Invalid input for step 'x': the input must have required property 'needed'.`,
+      );
+      expect(cannotRunWayOutApplies(run, describePending(withAgent, run))).toBe(false);
+    });
+    // Absent for capability: another runner can run the step.
+    const cap = def({ x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: cap.id, workflowVersion: 1, params: {} });
+      const lacking = new ExtensionRegistry();
+      const first = await advanceRun(store, cap, { runId: run.id, registry: lacking });
+      expect(first.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
+      const second = await advanceRun(store, cap, { runId: run.id, registry: lacking });
+      expect(second.context_hint).toBe(
+        `Run '${run.id}': nothing ran. 'x' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.`,
+      );
+      expect(second.context_hint).not.toContain(TOOLS_WAY_OUT);
+    });
+    // Absent while a step is in flight elsewhere (the CLI's condition, shared).
+    const refused = def({
+      x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
+    });
+    const live = {
+      id: 'r',
+      params: {},
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+      terminal_state: false,
+    } as unknown as RunRecord;
+    expect(cannotRunWayOutApplies(live, describePending(refused, live))).toBe(true);
+    const inFlight = { ...live, in_progress_steps: ['other'] } as unknown as RunRecord;
+    expect(cannotRunWayOutApplies(inFlight, describePending(refused, inFlight))).toBe(false);
+  });
+
+  it("C53: a capability refusal judged from the caller's registry ends with its way out; one judged from the marker does not", () => {
+    expect(
+      cannotRunClause({
+        step: 'x',
+        runnable_here: false,
+        refused_by: 'capability',
+        refusal: "handler 'h' is not registered here",
+        basis: 'registry',
+      }),
+    ).toBe(
+      "'x' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it",
+    );
+    expect(
+      cannotRunClause({
+        step: 'x',
+        runnable_here: false,
+        refused_by: 'capability',
+        refusal: "handler 'h' was not registered in the runner that last attempted it",
+        basis: 'marker',
+      }),
+    ).toBe(
+      "'x' could not run (capability): handler 'h' was not registered in the runner that last attempted it",
+    );
+  });
+});

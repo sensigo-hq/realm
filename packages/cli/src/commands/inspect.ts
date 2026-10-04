@@ -633,7 +633,11 @@ export async function inspectRun(
         // decision C41: a capability refusal judged from the run's marker (inspect passes no
         // registry) is past tense — no runner was consulted here.
         const verb = e.basis === 'marker' ? 'Could not run' : 'Cannot run';
-        lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}`);
+        // decision C53: the marker line ends with its way out — a program that has the extension
+        // runs the step.
+        const wayOut =
+          e.basis === 'marker' ? ` — from a program that has it: realm run advance ${run.id}` : '';
+        lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}${wayOut}`);
       }
     }
   }

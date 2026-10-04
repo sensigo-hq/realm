@@ -137,6 +137,8 @@ export {
   cannotRunWords,
   cannotRunClause,
   cannotRunWayOut,
+  cannotRunWayOutTools,
+  cannotRunWayOutApplies,
   withFullStop,
   ADVANCE_OWED,
   composeNextActionsStatusWord,

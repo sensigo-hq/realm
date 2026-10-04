@@ -71,6 +71,15 @@ export function checkPreClaim(args: {
   let stage: PreClaimRefusal = 'trust';
   try {
     if (classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
+      // decision C49: the view's `refusal` is #508's read-time voice (`finding`) — a step not yet
+      // dispatched, shown beside other steps that run — while the `error` `executeStep` returns
+      // stays the dispatch voice, so its reply is byte-identical.
+      const refusal = buildTrustRefusal({
+        kind: stepDef!.execution,
+        value: stepDef!.trust,
+        step,
+        surface: 'finding',
+      });
       const message = buildTrustRefusal({
         kind: stepDef!.execution,
         value: stepDef!.trust,
@@ -79,7 +88,7 @@ export function checkPreClaim(args: {
       });
       return {
         refused_by: 'trust',
-        refusal: message,
+        refusal,
         error: new WorkflowError(message, {
           code: 'VALIDATION_TRUST_VALUE',
           category: 'VALIDATION',
@@ -232,9 +241,16 @@ export function cannotRunWords(entry: EngineRunnable): string {
   return `cannot run (${entry.refused_by ?? 'unknown'})`;
 }
 
-/** `'<s>' cannot run (<check>): <refusal>` — one engine step that cannot run, as every line names it. */
+/**
+ * `'<s>' cannot run (<check>): <refusal>` — one engine step that cannot run, as every line names it.
+ * A capability refusal judged from the caller's own registry ends with its way out (decision C53):
+ * load the missing extension, or run the step on a runner that has it.
+ */
 export function cannotRunClause(entry: EngineRunnable): string {
-  return `'${entry.step}' ${cannotRunWords(entry)}: ${entry.refusal ?? ''}`;
+  const clause = `'${entry.step}' ${cannotRunWords(entry)}: ${entry.refusal ?? ''}`;
+  return entry.refused_by === 'capability' && entry.basis === 'registry'
+    ? `${clause} — load the missing extension, or run the step on a runner that has it`
+    : clause;
 }
 
 /**
@@ -247,6 +263,32 @@ export function cannotRunWayOut(run: RunRecord): string {
   return (
     `Run ${run.id} stays open (phase '${deriveRunPhase(run)}'): correct the workflow, register it ` +
     `again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`
+  );
+}
+
+/**
+ * The same way out for a caller that speaks the tools (decision C51): `advance_run`'s nothing-ran
+ * reply ends with it under {@link cannotRunWayOutApplies}, as `realm run advance` prints
+ * {@link cannotRunWayOut} under the same condition.
+ */
+export function cannotRunWayOutTools(): string {
+  return 'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
+}
+
+/**
+ * When the run cannot go on until its workflow is corrected (decisions C44, C51): nothing else is
+ * ready — no act, no agent step, nothing in flight, no question open — and an engine step is
+ * refused before its claim (trust, precondition, input schema). A capability refusal is not one:
+ * another runner can run that step.
+ */
+export function cannotRunWayOutApplies(run: RunRecord, pending: PendingView): boolean {
+  return (
+    !run.terminal_state &&
+    run.pending_gate === undefined &&
+    pending.act === undefined &&
+    pending.agent_steps.length === 0 &&
+    run.in_progress_steps.length === 0 &&
+    pending.engine_runnable.some((e) => e.runnable_here === false && e.refused_by !== 'capability')
   );
 }
 

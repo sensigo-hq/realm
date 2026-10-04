@@ -38,8 +38,10 @@ const MEMBERS: Member[] = [
   'capability_later',
 ];
 
+// decision C49: the view's trust refusal is #508's read-time voice (`finding`), never the dispatch
+// voice — nothing was dispatched, and the agent step beside it runs.
 const TRUST_REFUSAL =
-  "Step 'x': 'trust: \"bogus_value\"' is not a recognized value — refused at dispatch: no gate opens and this step does not run; this run is now parked, non-terminal, until the value is corrected, and any step depending on this one returns 'blocked' in the meantime. A step's 'trust' accepts auto, human_confirmed, human_reviewed. Correct the value, then 'realm workflow register <path>' and retry this step — this run picks up the corrected definition.";
+  "'trust: \"bogus_value\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
 const PRECONDITION_REFUSAL =
   "Precondition failed for step 'x'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.";
 // decision C37: the view's input-schema refusal names the field and what it must be; the engine's own
@@ -56,9 +58,9 @@ const CANNOT_LINE: Record<Member, string> = {
   precondition: `log: • Step 'x' cannot run (precondition): ${PRECONDITION_REFUSAL}`,
   input_schema: `log: • Step 'x' cannot run (input_schema): ${INPUT_REFUSAL}`,
   capability_first:
-    "log: • Step 'x' cannot run here (capability): handler 'missing_h' is not registered here",
+    "log: • Step 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it",
   capability_later:
-    "log: • Step 'x' cannot run here (capability): handler 'missing_h' is not registered here",
+    "log: • Step 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it",
 };
 
 const HEADER = ['log: \nRealm Agent — c23 v1', 'log: Run ID: <run>\n'];

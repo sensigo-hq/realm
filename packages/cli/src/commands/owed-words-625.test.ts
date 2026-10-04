@@ -15,8 +15,9 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunRecord,
   type WorkflowDefinition,
+  type ExtensionIdentityEntry,
 } from '@sensigo/realm';
-import { FIT_WORDS, stoppedReasons, advanceRunFromShell } from './run-advance.js';
+import { FIT_WORDS, fitWords, stoppedReasons, advanceRunFromShell } from './run-advance.js';
 import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
 
@@ -109,7 +110,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       }),
     ).toEqual([
       "'x' cannot run (trust): bad trust",
-      "agent steps are ready: 'a' — drive them with realm agent --run-id r",
+      "agent steps are ready: 'a' — drive it with realm agent --run-id r",
     ]);
     expect(stoppedReasons('r', base, none)).toEqual(['nothing is ready to run now']);
   });
@@ -144,7 +145,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       expect(lines.slice(4)).toEqual([
         '→ x',
         "Stopped: 'x' failed: Handler 'boom' threw: handler blew up",
-        `Stopped: agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}`,
+        `Stopped: agent steps are ready: 'y' — drive it with realm agent --run-id ${run.id}`,
         `Run ${run.id}: phase 'running'`,
       ]);
     } finally {
@@ -176,7 +177,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       // exit 1, as after a call that ran.
       expect(code).toBe(1);
       expect(lines.slice(3)).toEqual([
-        `The engine can run nothing now: 'x' cannot run here (capability): handler 'missing_h' is not registered here; agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}.`,
+        `The engine can run nothing now: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it; agent steps are ready: 'y' — drive it with realm agent --run-id ${run.id}.`,
       ]);
       expect(lines.join('\n')).not.toContain('failed');
     } finally {
@@ -210,8 +211,8 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         // Every owed step runs first; then the one capability attempt (the marker) stops the call.
         '→ b',
         '→ x',
-        "Stopped: 'x' cannot run here (capability): handler 'missing_h' is not registered here",
-        `Stopped: agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}`,
+        "Stopped: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it",
+        `Stopped: agent steps are ready: 'y' — drive it with realm agent --run-id ${run.id}`,
         `Run ${run.id}: phase 'running'`,
       ]);
       expect(lines.join('\n')).not.toContain('failed');
@@ -675,7 +676,8 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
     [
       'trust',
       { description: 'X', execution: 'auto', depends_on: [], trust: 'not_a_level' as never },
-      "Step 'x': 'trust: \"not_a_level\"' is not a recognized value",
+      // decision C49: the view's read-time voice, never the dispatch voice (nothing was dispatched).
+      "'trust: \"not_a_level\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.",
     ],
     [
       'precondition',
@@ -801,8 +803,118 @@ describe('#625 PR-2a, C46 — inspect reads the record alone', () => {
       expect(lines).toContain('Run Health (1 finding(s)):');
       expect(lines).toContain('  capability_block [x]: ENGINE_HANDLER_NOT_REGISTERED');
       expect(lines).toContain(
-        "Could not run 'x' (capability): handler 'missing_h' was not registered in the runner that last attempted it",
+        `Could not run 'x' (capability): handler 'missing_h' was not registered in the runner that last attempted it — from a program that has it: realm run advance ${run.id}`,
       );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), and the trust voice and the capability way out on inspect (C49, C53)', () => {
+  const identity = (rules = 'r1'): ExtensionIdentityEntry =>
+    ({
+      captured_at: 't',
+      modules: [{ declared: 'x', resolved: '/x', entry_hash: 'h', format: 'esm' }],
+      tree: {
+        roots: ['/'],
+        rules,
+        file_count: 1,
+        total_bytes: 1,
+        tree_hash: 'T',
+        truncated: false,
+      },
+      coverage: 'dir_tree_v1',
+    }) as ExtensionIdentityEntry;
+  const preview = async (
+    runs: JsonFileStore,
+    workflows: JsonWorkflowStore,
+    home: string,
+    runId: string,
+    registry: ExtensionRegistry,
+  ): Promise<string[]> => {
+    const lines: string[] = [];
+    await advanceRunFromShell(
+      runId,
+      { project: home },
+      runs,
+      workflows,
+      undefined,
+      (l) => lines.push(l),
+      registry,
+    );
+    return lines;
+  };
+
+  it("C56: not_comparable says why when the run has recorded no project code yet; the table's words otherwise", () => {
+    expect(fitWords('not_comparable', {})).toBe(
+      'not comparable — the run has recorded no project code yet',
+    );
+    expect(fitWords('not_comparable', { extension_identity: [identity()] })).toBe(
+      "not comparable with the run's last record",
+    );
+    for (const fit of ['same', 'differs', 'none'] as const) {
+      expect(fitWords(fit, {})).toBe(FIT_WORDS[fit]);
+    }
+  });
+
+  it('C56 on the preview: a fresh run from a program with project code, then a run whose record was taken under other rules', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('c56', { ask: { description: 'Ask', execution: 'agent', depends_on: [] } });
+      await workflows.register(d);
+      const registry = new ExtensionRegistry();
+      registry.setIdentity(identity());
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      expect((await preview(runs, workflows, home, run.id, registry))[1]).toBe(
+        'This program: no name could be recorded · project code: not comparable — the run has recorded no project code yet.',
+      );
+      const stored = await runs.get(run.id);
+      await runs.update({ ...stored, extension_identity: [identity('r2')] });
+      expect((await preview(runs, workflows, home, run.id, registry))[1]).toBe(
+        "This program: no name could be recorded · project code: not comparable with the run's last record.",
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('C55: `drive it` for one ready agent step, `drive them` for two', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const one = wf('c55-one', { a: { description: 'A', execution: 'agent', depends_on: [] } });
+      const two = wf('c55-two', {
+        a: { description: 'A', execution: 'agent', depends_on: [] },
+        b: { description: 'B', execution: 'agent', depends_on: [] },
+      });
+      for (const d of [one, two]) await workflows.register(d);
+      const r1 = (await runs.create({ workflowId: one.id, workflowVersion: 1, params: {} })).run;
+      const r2 = (await runs.create({ workflowId: two.id, workflowVersion: 1, params: {} })).run;
+      expect((await preview(runs, workflows, home, r1.id, new ExtensionRegistry())).at(-1)).toBe(
+        `Nothing is owed to the engine: agent steps are ready: 'a' — drive it with realm agent --run-id ${r1.id}.`,
+      );
+      expect((await preview(runs, workflows, home, r2.id, new ExtensionRegistry())).at(-1)).toBe(
+        `Nothing is owed to the engine: agent steps are ready: 'a', 'b' — drive them with realm agent --run-id ${r2.id}.`,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('C49 on inspect: a trust-refused step is named in the read-time voice', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('c49-inspect', {
+        x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      // eslint-disable-next-line no-control-regex
+      const screen = (await inspectRun(run.id, runs, workflows)).replace(/\x1b\[[0-9;]*m/g, '');
+      expect(screen.split('\n')).toContain(
+        "Cannot run 'x' (trust): 'trust: \"nope\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.",
+      );
+      expect(screen).not.toContain('parked');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

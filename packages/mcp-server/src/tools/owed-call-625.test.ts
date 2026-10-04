@@ -17,6 +17,7 @@ import { handleStartRun } from './start-run.js';
 import { handleStartRunBatch } from './start-run-batch.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleAdvanceRun } from './advance-run.js';
+import { handleSubmitHumanResponse } from './submit-human-response.js';
 
 const owedDef: WorkflowDefinition = {
   id: 'owed-wf',
@@ -354,5 +355,157 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     const reply = await handleAdvanceRun({ run_id: run.id }, { runStore, workflowStore });
     expect(reply.continued_by).toEqual({ by: null, absent_cause: 'driver_not_recorded' });
     expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['head']);
+  });
+
+  // decision C52: on a CREATED run, a capability block from advanceRun is not the call's failure.
+  const capHeadDef: WorkflowDefinition = {
+    id: 'cap-head-wf',
+    name: 'cap head',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      enrich: { description: 'Enrich.', execution: 'auto', depends_on: [], handler: 'h' },
+      ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+    },
+  };
+  const BLOCK =
+    "Step 'enrich' is blocked: its handler 'h' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. Provision this runner (or re-run on a capable one), then follow next_actions.";
+
+  it('C52: start_run on a created run whose engine attempt is capability-blocked returns the creation reply — ok, the step named, the block in warnings', async () => {
+    await workflowStore.register(capHeadDef);
+    const r = await handleStartRun(
+      { workflow_id: capHeadDef.id, params: {} },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(r.status).toBe('ok');
+    expect(r.error_code).toBeUndefined();
+    expect(r.agent_action).toBeUndefined();
+    expect(r.errors).toEqual([]);
+    expect(r.context_hint).toBe(
+      `Run '${r.run_id}' created for workflow 'cap-head-wf'. Ready for the agent: 'ask'. 'enrich' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.`,
+    );
+    expect(r.warnings).toEqual([
+      "Step 'enrich' needs handler 'h', which is not registered in this runner. If reached it will block recoverably (not fail) until a runner that provides this handler executes it — load the missing extension or run on a capable runner.",
+      BLOCK,
+    ]);
+    expect(r.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
+    // The attempt was made and recorded: the marker is on the record, and the reply's version is
+    // the record's.
+    const after = await runStore.get(r.run_id);
+    expect(after.capability_blocks?.['enrich']).toBeDefined();
+    expect(r.run_version).toBe(after.version);
+    expect(r.run_phase).toBe('running');
+  });
+
+  it('C52 control: advance_run on the same capability case still returns the error — its own attempt failed', async () => {
+    await workflowStore.register(capHeadDef);
+    const { run } = await runStore.create({
+      workflowId: capHeadDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const reply = await handleAdvanceRun(
+      { run_id: run.id },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(reply.status).toBe('error');
+    expect(reply.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
+    expect(reply.context_hint).toBe(BLOCK);
+  });
+
+  it('C52 control: a FAILED engine step on a created run still returns the error reply', async () => {
+    const failDef: WorkflowDefinition = {
+      id: 'fail-head-wf',
+      name: 'fail head',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        boom: { description: 'Boom.', execution: 'auto', depends_on: [], handler: 'boom' },
+        ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+      },
+    };
+    await workflowStore.register(failDef);
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'boom', {
+      id: 'boom',
+      execute: async () => {
+        throw new Error('boom failed');
+      },
+    } as never);
+    const r = await handleStartRun(
+      { workflow_id: failDef.id, params: {} },
+      { runStore, workflowStore, registry },
+    );
+    expect(r.status).toBe('error');
+    expect(r.error_code).not.toBe('ENGINE_HANDLER_NOT_REGISTERED');
+    expect(r.context_hint).not.toContain(`created for workflow`);
+  });
+
+  it('C53: an answer on a server without the handler names the way out (registry basis)', async () => {
+    const gateDef: WorkflowDefinition = {
+      id: 'gate-cap-wf',
+      name: 'gate cap',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        review: {
+          description: 'Review.',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          depends_on: [],
+          gate: { choices: ['approve', 'reject'] },
+        },
+        process: {
+          description: 'Process.',
+          execution: 'auto',
+          depends_on: ['review'],
+          handler: 'p',
+        },
+      },
+    };
+    await workflowStore.register(gateDef);
+    const lacking = new ExtensionRegistry();
+    const s = await handleStartRun(
+      { workflow_id: gateDef.id, params: {} },
+      { runStore, workflowStore, registry: lacking },
+    );
+    const gate = (await runStore.get(s.run_id)).pending_gate!;
+    const answer = await handleSubmitHumanResponse(
+      { run_id: s.run_id, gate_id: gate.gate_id, choice: 'approve' },
+      { runStore, workflowStore, registry: lacking },
+    );
+    expect(answer.status).toBe('ok');
+    expect(answer.context_hint).toBe(
+      "Gate 'review' resolved with choice 'approve'. 'process' cannot run here (capability): handler 'p' is not registered here — load the missing extension, or run the step on a runner that has it.",
+    );
+    expect(answer.next_actions).toEqual([]);
+  });
+
+  it("C49: start_run's hint names a trust-refused step in the read-time voice", async () => {
+    const trustDef: WorkflowDefinition = {
+      id: 'trust-head-wf',
+      name: 'trust head',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        compute: { description: 'Compute.', execution: 'auto', depends_on: [] },
+        ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+      },
+    };
+    await workflowStore.register(trustDef);
+    // The loader refuses an invalid trust value in a file; a registered copy written by an older
+    // version can carry one. Planted here through the store's own write.
+    const stored = await workflowStore.get(trustDef.id);
+    (stored.steps['compute'] as { trust?: unknown }).trust = 'human_confimred';
+    await workflowStore.register(stored);
+    const r = await handleStartRun(
+      { workflow_id: trustDef.id, params: {} },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(r.status).toBe('ok');
+    expect(r.context_hint).toBe(
+      `Run '${r.run_id}' created for workflow 'trust-head-wf'. Ready for the agent: 'ask'. 'compute' cannot run (trust): 'trust: "human_confimred"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed; did you mean 'human_confirmed'? — correct the value and 'realm workflow register <path>'.`,
+    );
+    expect(r.context_hint).not.toContain('parked');
   });
 });

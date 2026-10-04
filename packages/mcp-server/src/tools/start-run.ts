@@ -169,6 +169,10 @@ export async function handleStartRun(
   // issue #625 PR-2a (decision C1): ONLY the creating call runs work. A deduped match runs nothing
   // — an idempotent create has no side effect on a match — and its reply names what the run owes
   // (the agent steps, the advance act) through `buildNextActions` below.
+  // decision C52: the record the creation reply is composed from — the created record, or the one a
+  // capability block left (its attempt wrote the marker and an entry).
+  let createdRun = run;
+  let capabilityBlock: ResponseEnvelope | undefined;
   if (!deduped) {
     const result = await advanceRun(runStore, definition, {
       runId: run.id,
@@ -183,7 +187,19 @@ export async function handleStartRun(
       result.status !== 'ok' ||
       result.chained_auto_steps !== undefined ||
       result.run_version !== run.version;
-    if (ranSomething) {
+    // decision C52: a capability block is not this call's failure — the run was created and is
+    // healthy; a runner with the extension runs the step. The reply is the creation reply (status
+    // ok), its hint names the step through describeNext, and the block's message (its own
+    // `context_hint`: "Step '<s>' is blocked: …") rides in `warnings`. A failed step is returned
+    // as is.
+    if (
+      result.status === 'error' &&
+      (result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+        result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED')
+    ) {
+      capabilityBlock = result;
+      createdRun = await runStore.get(run.id).catch(() => run);
+    } else if (ranSomething) {
       // decision C10: the phase is derived from the record advanceRun leaves.
       const finalRun = await runStore.get(run.id).catch(() => run);
       return {
@@ -209,27 +225,35 @@ export async function handleStartRun(
     }
   }
 
-  const nextActions = run.terminal_state ? [] : buildNextActions(definition, run, registry);
+  const nextActions = createdRun.terminal_state
+    ? []
+    : buildNextActions(definition, createdRun, registry);
   // issue #625 PR-2a (decision C45): a run this call created on which nothing ran says what comes
   // next in its own hint — the agent steps ready, the engine's owed work, and each engine step that
   // cannot run — so a step that cannot run is named on the reply that created the run.
   const next =
-    !deduped && !run.terminal_state ? describeNext(describePending(definition, run, registry)) : '';
+    !deduped && !createdRun.terminal_state
+      ? describeNext(describePending(definition, createdRun, registry))
+      : '';
   return {
     command: 'start_run',
     run_id: run.id,
-    run_version: run.version,
+    run_version: createdRun.version,
     status: 'ok',
     data: {},
     evidence: [],
-    warnings,
+    warnings:
+      capabilityBlock !== undefined ? [...warnings, capabilityBlock.context_hint] : warnings,
     errors: [],
+    ...(capabilityBlock?.chained_auto_steps !== undefined
+      ? { chained_auto_steps: capabilityBlock.chained_auto_steps }
+      : {}),
     context_hint: deduped
       ? `Matched existing run '${run.id}' (idempotent) in phase '${derivedPhase}'; no new run created.`
       : run.rerun_of !== undefined
         ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
         : `Run '${run.id}' created for workflow '${definition.id}'.${next}`,
-    run_phase: derivedPhase,
+    run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
     deduped,
     next_actions: nextActions,
