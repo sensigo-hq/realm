@@ -409,6 +409,11 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
 
 ### Fixed
 
+- **A tool-using step on a Claude model that thinks by default (Claude Sonnet 5.5) no longer fails
+  with a 400 about a thinking block's signature** when it runs out of tool calls or corrections, or
+  when strict tool arguments are dropped after the provider refuses them. Realm now leaves out of
+  what it sends the thinking of the earlier turns made under a different list of tools; every other
+  request is unchanged. (#677)
 - **With two copies of one realm version in a process, `realm run gc`, `purge` and `reclaim`
   classify the other copy's refusals correctly.** Before: gc reaped no orphaned trace file
   (`Run not found`), purge filed a resumed run under `failed` instead of `blocked`, and reclaim
