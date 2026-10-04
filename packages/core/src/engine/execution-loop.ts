@@ -95,7 +95,7 @@ import {
   armToOutcome,
   assertSealMarkersAgree,
 } from './eligibility.js';
-import { requirementForStep } from './capability.js';
+import { requirementForStep, findCapabilityBlockedSteps } from './capability.js';
 import {
   checkPreClaim,
   describePending,
@@ -2077,6 +2077,9 @@ export async function executeStep(
           evidence: [],
           warnings: claimedAdvisory !== undefined ? [claimedAdvisory] : [],
           errors: [],
+          // issue #625 PR-2a (D6.1): the code a driver keys on (never the sentence) when another
+          // process took the step it was about to run.
+          error_code: 'STATE_STEP_ALREADY_CLAIMED',
           agent_action: 'resolve_precondition' as const,
           context_hint: `Step '${options.command}' was already claimed by another process.`,
           run_phase: freshRun.run_phase,
@@ -6252,8 +6255,15 @@ function pickNextEngineStep(
   registry: ExtensionRegistry | undefined,
 ): string | undefined {
   const pending = describePending(definition, run, registry);
-  return pending.engine_runnable.find((e) => e.runnable_here !== false && !attempted.has(e.step))
-    ?.step;
+  // A capability refusal is the ONE refusal still attempted, once: the dispatch failure is what
+  // writes the `capability_blocks` marker `blocked_on_capability` and the finding read (decision
+  // C4). A step already carrying a marker is skipped, so a later call runs the other owed steps.
+  const marked = new Set(findCapabilityBlockedSteps(run).map((b) => b.step));
+  return pending.engine_runnable.find(
+    (e) =>
+      !attempted.has(e.step) &&
+      (e.runnable_here !== false || (e.refused_by === 'capability' && !marked.has(e.step))),
+  )?.step;
 }
 
 /** What the advance loop is given (issue #625 PR-2a). */

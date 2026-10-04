@@ -333,7 +333,9 @@ describe('#401 chokepoint (3) — the mid-loop throw carries the current step', 
     let reads = 0;
     store.get = async (id: string) => {
       reads++;
-      if (reads === 3) throw new Error('store read exploded mid-loop');
+      // issue #625 PR-2a: the loop top now reads twice more before selecting (advanceRun's own
+      // read, then the loop's re-read of what it left) — the per-attempt read is the 4th.
+      if (reads === 4) throw new Error('store read exploded mid-loop');
       return original(id);
     };
 

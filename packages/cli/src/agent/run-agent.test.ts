@@ -479,12 +479,22 @@ describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
     };
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runAgent(deps, { definition: wedgeWf, existingRunId: run.id, params: {} });
+    // issue #625 PR-2a (D6.2): the loop first watches the record (injected short windows here).
+    await runAgent(deps, {
+      definition: wedgeWf,
+      existingRunId: run.id,
+      params: {},
+      inFlightPollMs: 5,
+      inFlightWatchMs: 20,
+    });
     const out = logSpy.mock.calls.flat().join('\n');
     logSpy.mockRestore();
 
-    expect(out).toContain('wedged');
-    expect(out).toContain('review: claim_unknown_age');
+    // An unknown-age claim: never "its runner likely died" (that is said only past a deadline).
+    expect(out).toContain(
+      "• Step 'review' has been in flight since an unrecorded time (taken by claimed before program names were recorded); the record has not changed for 0s.",
+    );
+    expect(out).not.toContain('likely died');
     expect(out).toContain(`realm run reclaim ${run.id} --step review --force`);
     expect(provider.callStep).not.toHaveBeenCalled(); // detect-only — attach does NOT execute
   });
@@ -1158,8 +1168,11 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     const autoLines = logSpy.mock.calls
       .flat()
       .filter((l) => typeof l === 'string' && l.includes('→ [auto] finalize'));
-    expect(autoLines).toHaveLength(1);
+    // issue #625 PR-2a: the run's view refuses the step before any attempt (its input schema
+    // refuses the run's params), so it is never submitted — and it is named, as a validation wedge.
+    expect(autoLines).toHaveLength(0);
     const printed = errorSpy.mock.calls.flat().join('\n');
+    expect(printed).toContain("✗ Step 'finalize' failed: Invalid input for step 'finalize'");
     expect(printed).not.toContain('repairing');
     expect(printed).not.toContain('schema-repair');
 
