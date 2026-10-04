@@ -14,6 +14,11 @@ export const HOW_IT_WORKS_DESCRIPTION =
 
 export const SOURCE_URL = 'https://github.com/sensigo-hq/realm';
 
+// The sitemap's one address. Written there by src/integrations/sitemap-at-root.mjs, named by
+// robots.txt and by every docs page's <link rel="sitemap">. The old addresses redirect to it in
+// website/deploy/nginx-site.conf, which cannot import this, so change both together.
+export const SITEMAP_PATH = '/sitemap.xml';
+
 // The publisher named in the home page's structured data. Sensigo Software owns the Realm name and
 // logo (README, "Trademarks"); its website and its GitHub organisation identify it. No logo is
 // given: the R is Realm's mark, not Sensigo Software's.

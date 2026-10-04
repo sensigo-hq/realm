@@ -6,7 +6,7 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm as
 
 ## Start here
 
-- [What Realm is, and when to use it](start/what-realm-is.md)
+- [What is Realm, and when to use it?](start/what-is-realm.md)
 - [Install and first run](start/install-and-first-run.md)
 - [How a run moves](start/how-a-run-moves.md)
 

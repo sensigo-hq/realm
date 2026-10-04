@@ -189,7 +189,7 @@ Run `realm <command> --help` for full options on any command.
 
 Start at the [documentation index](docs/README.md). The main entry points:
 
-- [What Realm is, and when to use it](docs/start/what-realm-is.md) and [Install and first run](docs/start/install-and-first-run.md)
+- [What is Realm, and when to use it?](docs/start/what-is-realm.md) and [Install and first run](docs/start/install-and-first-run.md)
 - [Concepts](docs/concepts/workflows-steps-and-runs.md) — workflows, steps, gates, evidence, and who drives a run
 - [Guides](docs/guides/first-workflow.md) — one task each, from a first workflow to deploying a project
 - [Workflow file reference](docs/reference/workflow/top-level-fields.md) — every field of `workflow.yaml`
