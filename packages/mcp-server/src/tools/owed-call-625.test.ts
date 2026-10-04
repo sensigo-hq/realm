@@ -290,6 +290,22 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     expect(deduped.context_hint).toBe(
       `Matched existing run '${again.run_id}' (idempotent) in phase 'running'; no new run created.`,
     );
+    // A superseding run (on_terminal_match: rerun) on which nothing ran names what comes next too.
+    const { abandonRun } = await import('@sensigo/realm');
+    await abandonRun(runStore, again.run_id);
+    const rerun = await handleStartRun(
+      {
+        workflow_id: refusedDef.id,
+        params: { text: 'x' },
+        idempotency_key: 'c45',
+        on_terminal_match: 'rerun',
+      },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(rerun.deduped).toBe(false);
+    expect(rerun.context_hint).toBe(
+      `Run '${rerun.run_id}' created for workflow 'refused-head-wf'; it supersedes run '${again.run_id}' under the same idempotency key (on_terminal_match). Ready for the agent: 'summarize'. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.`,
+    );
   });
 
   it('start_run_batch: each started entry carries next_actions; no step runs', async () => {
