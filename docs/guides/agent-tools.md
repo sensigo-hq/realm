@@ -1,5 +1,7 @@
 # Give an agent step tools
 
+<!-- description: Give an agent step tools from a tool server, limit how much it may use them, and read what Realm records about each call. -->
+
 An agent step can look things up before it answers: read a file, query an API, search a ticket system. This guide gives a step two tools from a tool server, limits how much it may use them, and shows what Realm records about each call. At the end you have a step that answers a question from a folder of notes.
 
 ## Before you start

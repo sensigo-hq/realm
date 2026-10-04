@@ -1,5 +1,7 @@
 # Handlers
 
+<!-- description: Reference for handlers: the interface, what execute receives, what each return value and thrown error does, registration, and the helper functions. -->
+
 A handler is code from your project that an `auto` step or a finalizer runs. This page gives the handler interface, what `execute` receives, what each return value and each thrown error does, how a handler is registered, and the 5 helper functions that `@sensigo/realm` exports for handlers. Every output shown came from a run.
 
 Realm has no handlers of its own. Every handler a workflow names comes from the project. For a walk through a first handler, see [Write a step handler](../guides/step-handlers.md).

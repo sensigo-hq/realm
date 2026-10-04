@@ -1,5 +1,7 @@
 # MCP tools
 
+<!-- description: The tools of Realm's MCP server, which an AI assistant calls to find a workflow, start a run, do its steps and read its state, with parameters and replies. -->
+
 Realm's MCP server has 10 tools. An AI assistant calls them to find a workflow, start a run, do its steps and read its state. This page gives each tool's parameters and its reply. The tools and their parameters were read from the server's own `tools/list` reply, and every reply shown came from a call.
 
 | Tool                                              | What it does                                                  |

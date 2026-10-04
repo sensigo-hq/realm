@@ -1,5 +1,7 @@
 # Operate runs
 
+<!-- description: For the person who looks after runs: find the runs that need attention, get each kind moving again or end it, and keep the store tidy. -->
+
 This guide is for the person who looks after runs once workflows are in use. It shows how to find the runs that need attention, how to get each kind moving again or end it, and how to keep the store tidy. Every output shown is from a real run of the command.
 
 ## Find the runs that need attention

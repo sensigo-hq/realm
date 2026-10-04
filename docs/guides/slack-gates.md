@@ -1,5 +1,7 @@
 # Answer gates from Slack
 
+<!-- description: Make realm agent post each human gate to a Slack channel and take the answer from a reply in the thread, so a person approves or rejects from Slack. -->
+
 This guide makes `realm agent` post each human gate to a Slack channel and take the answer from a reply in the thread. At the end, a person approves or rejects from Slack and the run carries on within a second or two.
 
 ## Before you start

@@ -1,5 +1,7 @@
 # Gates: `trust` and the `gate` block
 
+<!-- description: Reference for trust and the gate block: the trust values, every gate key, the rules the loader applies, and what is stored when a gate opens. -->
+
 A step stops for a person when its `trust` says so. The `gate` block on the same step sets what the person is asked, what they can answer, and what happens if nobody answers. This page lists the three `trust` values and the nine `gate` keys, the rules the loader applies to them, and what is stored when a gate opens.
 
 For a walk through one gate, see [Add a human gate](../../guides/human-gates.md).
