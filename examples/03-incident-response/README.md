@@ -5,7 +5,7 @@
 A four-step incident triage workflow. When an alert fires, an agent analyzes the root cause
 and drafts an oncall channel message. The run cannot post until an engineer explicitly approves
 it at a human gate. If the engineer rejects the draft, the run ends immediately — nothing is
-sent, and the decision is recorded. Every step is captured in an immutable evidence chain.
+sent, and the decision is recorded. Every step is captured in the run's evidence chain.
 
 This example builds on the chained data-flow pattern from [Example 2](../02-ticket-classifier/)
 — `draft_response` reads validated fields from `analyze_cause` via `context.resources`, so
