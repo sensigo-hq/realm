@@ -46,7 +46,7 @@ await server.connect(transport);
 
 | Symbol                             | Description                                                                     |
 | ---------------------------------- | ------------------------------------------------------------------------------- |
-| `createRealmMcpServer(options?)`   | Creates the MCP server with all 10 tools pre-registered. Returns `McpServer`.   |
+| `createRealmMcpServer(options?)`   | Creates the MCP server with all 11 tools pre-registered. Returns `McpServer`.   |
 | `createDefaultRegistry()`          | Returns an `ExtensionRegistry` pre-populated with built-in adapters.            |
 | `generateProtocol(workflow)`       | Generates a structured protocol description for a workflow.                     |
 | `RealmMcpServerOptions`            | Type — optional config: `registry?`, `secrets?`, `workflowStore?`, `runStore?`. |

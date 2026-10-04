@@ -39,7 +39,7 @@ The engine runs an auto step itself. No model is involved. An auto step does one
 
 - It calls a **handler**, a function from your project, named with `handler:`.
 - It calls an outside **service** through an adapter, named with `uses_service:`.
-- It does nothing of its own. A step with neither passes along the output it received. This is useful as a place to put a human gate.
+- It does nothing of its own. A step with neither records an output it did not compute: when the engine runs it, the recorded output of its one `depends_on` step (with no `depends_on`, the run's params; with several, `{}`); when a caller names it, what the caller's dispatcher returned. Its evidence says which (`output_source`). This is useful as a place to put a human gate.
 
 ```yaml
 pay:

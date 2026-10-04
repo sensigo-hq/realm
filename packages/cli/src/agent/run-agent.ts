@@ -457,6 +457,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     }
 
     try {
+      // issue #625 PR-2a (D6.1): ONE mint of the line for a step another process took.
+      const lostClaimLine = (step: string, record: RunRecord): string => {
+        const described = describeClaimHolder(
+          record.claims?.[step],
+          deps.store.persistsClaims === true,
+        );
+        const holder =
+          'holder' in described
+            ? describeProgram(described.holder)
+            : ABSENCE_WORDS[described.absent_cause];
+        return `  • Step '${step}' was taken by ${holder} at ${described.since ?? 'an unrecorded time'}; not run here.`;
+      };
+
       // issue #625 PR-2a: today's dispositions for a step reply with `status: 'error'` — for the step
       // this loop drove, and for an engine step `advanceRun` ran at the loop top (D4.2). ONE copy:
       // the capability-block sentence, `✗ Step 'X' failed`, chokepoint 4.
@@ -617,6 +630,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         });
         if (advanced.status === 'confirm_required') {
           currentRun = await deps.store.get(runId);
+          continue;
+        }
+        if (
+          advanced.status === 'blocked' &&
+          advanced.error_code === 'STATE_STEP_ALREADY_CLAIMED' &&
+          engineStep !== undefined
+        ) {
+          // Another process took the engine step this call was about to run (the two-process
+          // attended case): the same fact as for an agent step, then re-read and continue.
+          currentRun = await deps.store.get(runId);
+          console.log(lostClaimLine(engineStep, currentRun));
           continue;
         }
         if (advanced.status === 'error' && engineStep !== undefined) {
@@ -1522,17 +1546,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         if (result.status === 'blocked' && result.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
           // issue #625 PR-2a (D6.1): another process took the step — say who and when, as past-tense
           // facts read off its claim, never `✓ → running`; then re-read and continue.
-          const described = describeClaimHolder(
-            currentRun.claims?.[stepName],
-            deps.store.persistsClaims === true,
-          );
-          const holder =
-            'holder' in described
-              ? describeProgram(described.holder)
-              : ABSENCE_WORDS[described.absent_cause];
-          console.log(
-            `  • Step '${stepName}' was taken by ${holder} at ${described.since ?? 'an unrecorded time'}; not run here.`,
-          );
+          console.log(lostClaimLine(stepName, currentRun));
           continue;
         }
         console.log(`  ✓ → ${currentRun.run_phase}`);

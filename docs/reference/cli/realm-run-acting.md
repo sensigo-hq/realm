@@ -94,6 +94,22 @@ The refusals:
 | The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.` Then what the guard did, if this answer carried out the expiry, and the `Not recorded:` line. |
 | The run has ended                                              | `Run '00b33778-…' is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.`               |
 
+## `advance`
+
+Runs the guards and `auto` steps a run owes, from this shell — no model provider, no key. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`), names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
+
+```text
+Advancing run <id> (workflow 'cli-owed-wf') from /home/me/project.
+This program: tester (from REALM_OPERATOR) · project code: neither side records project code.
+Last recorded driver: none recorded.
+Owed to the engine: 'after'.
+→ after
+Stopped: agent steps are ready: 'finish' — drive them with realm agent --run-id <id>
+Run <id>: phase 'running'
+```
+
+`Stopped:` names where it stopped: a question opened (with the `realm run respond` command), agent steps ready, a step that cannot run here (the check and why), a step that failed, or the run ended. When nothing is owed, the last preview line is `Nothing is owed to the engine: <reason>.` and nothing runs. Exit code 1 when a step failed or was refused, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
+
 ## `resume`
 
 ```text

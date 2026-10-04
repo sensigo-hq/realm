@@ -33,7 +33,7 @@ Restart the assistant, or reload its MCP servers.
 
 ## 2. Check what the assistant sees
 
-The assistant now has ten tools:
+The assistant now has eleven tools:
 
 | Tool                    | What it does                                                         |
 | ----------------------- | -------------------------------------------------------------------- |
@@ -42,6 +42,7 @@ The assistant now has ten tools:
 | `start_run`             | Starts a run.                                                        |
 | `start_run_batch`       | Starts several runs of one workflow at once.                         |
 | `execute_step`          | Submits the answer to an agent step, or runs an automatic step.      |
+| `advance_run`           | Runs the guards and automatic steps a run owes (when named).         |
 | `submit_human_response` | Records a person's answer to a gate.                                 |
 | `get_run_state`         | Returns where a run stands and what to do next.                      |
 | `abandon_run`           | Ends a run that should not continue.                                 |

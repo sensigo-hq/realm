@@ -37,13 +37,13 @@ start_run     →  Step 'fetch_pr' completed. 1 step(s) now available.
 
 The reply then names the one step the agent may run, `write_review`, with its task and its schema.
 
-One case needs care. When a gate is answered, the answer is recorded, and a `guard` step that the answer makes ready is decided in the same call. The `auto` steps after the gate do not start by themselves. They run on the next call. In the same example, after the reviewer approved:
+One case needs care. When a gate is answered, the answer is recorded, and a `guard` step that the answer makes ready is decided in the same call. The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them. In the same example, after the reviewer approved:
 
 ```text
-submit_human_response  →  Gate 'confirm_review' resolved with choice 'approve'. 0 step(s) now available.
+submit_human_response  →  Gate 'confirm_review' resolved with choice 'approve'. Owed to the engine: 'post_approval' — call advance_run.
 ```
 
-The run was then waiting for a call to run its last `auto` step. `realm agent` makes that call for you. A client that drives the run itself must call `execute_step` for that step.
+`next_actions` then holds `advance_run`. `realm agent` makes that call for you; a client that drives the run itself calls `advance_run`; from a shell, `realm run advance <run-id>` runs the owed steps without a model.
 
 ## Three ways to drive a run
 

@@ -7,7 +7,7 @@
 | `realm mcp`   | Over the standard input and output of the process. | The assistant's client, on your machine. | The client that started it. |
 | `realm serve` | Over HTTP.                                         | You.                                     | Anyone who has the token.   |
 
-Both serve the 10 tools listed in [MCP tools](../mcp/tools.md), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
+Both serve the 11 tools listed in [MCP tools](../mcp/tools.md), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
 
 ## `realm mcp`
 

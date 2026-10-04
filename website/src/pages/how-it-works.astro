@@ -209,7 +209,7 @@ import Logo from '../components/Logo.astro';
       <div class="kind"><b>finalizer</b><span>Cleanup the engine runs after the run ends.</span></div>
     </div>
     <p>A gate is not a fifth kind: a step can carry a gate, and the run then parks until a person answers.</p>
-    <p>After every result, the engine validates and records it, then runs every <code>auto</code> and <code>guard</code> step it can reach. It stops at the next <code>agent</code> step, at a gate, or at the end. Step order comes from the definition (<code>depends_on</code>, <code>when</code>, <code>trigger_rule</code>), never from the LLM.</p>
+    <p>After every result, the engine validates and records it, then runs every <code>auto</code> and <code>guard</code> step it can reach. It stops at the next <code>agent</code> step, at a gate, or at the end. After a person answers a gate, the steps the engine owes are named in <code>next_actions</code> as one call, <code>advance_run</code> (or <code>realm run advance</code> from a shell). Step order comes from the definition (<code>depends_on</code>, <code>when</code>, <code>trigger_rule</code>), never from the LLM.</p>
   </section>
 
   <section>

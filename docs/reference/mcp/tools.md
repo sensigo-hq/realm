@@ -1,6 +1,6 @@
 # MCP tools
 
-Realm's MCP server has 10 tools. An AI assistant calls them to find a workflow, start a run, do its steps and read its state. This page gives each tool's parameters and its reply. The tools and their parameters were read from the server's own `tools/list` reply, and every reply shown came from a call.
+Realm's MCP server has 11 tools. An AI assistant calls them to find a workflow, start a run, do its steps and read its state. This page gives each tool's parameters and its reply. The tools and their parameters were read from the server's own `tools/list` reply, and every reply shown came from a call.
 
 | Tool                                              | What it does                                                  |
 | ------------------------------------------------- | ------------------------------------------------------------- |
@@ -10,6 +10,7 @@ Realm's MCP server has 10 tools. An AI assistant calls them to find a workflow, 
 | [`start_run_batch`](#start_run_batch)             | Starts several runs of one workflow.                          |
 | [`execute_step`](#execute_step)                   | Does one step, with the assistant's answer.                   |
 | [`submit_human_response`](#submit_human_response) | Passes on a person's choice at a gate.                        |
+| [`advance_run`](#advance_run)                     | Runs the guards and automatic steps a run owes.               |
 | [`get_run_state`](#get_run_state)                 | Returns where a run stands.                                   |
 | [`abandon_run`](#abandon_run)                     | Ends an open run.                                             |
 | [`create_workflow`](#create_workflow)             | Makes a workflow from a list of steps and starts a run of it. |
@@ -568,3 +569,29 @@ The entries are kept until `execute_step` is called for the step, and are then r
 - [Error codes](../error-codes.md)
 - [Connect an MCP client](../../guides/connect-an-mcp-client.md)
 - [`realm mcp` and `realm serve`](../cli/realm-mcp-and-serve.md)
+
+## advance_run
+
+Runs the guards and `auto` steps a run owes, in the environment of the server that receives the call (its extensions, its environment variables). Call it when `next_actions` names it: every reply and `get_run_state` end `next_actions` with this act whenever engine work is owed and nobody is running it — after a gate is answered, after an expiry settles a default, after `resume`, and for a run `start_run_batch` created.
+
+| Parameter | Type   | Required | Meaning  |
+| --------- | ------ | -------- | -------- |
+| `run_id`  | string | yes      | The run. |
+
+The reply has the same shape as a step's: `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled, and when a step opens a question the reply is `confirm_required` with the gate. It also carries `continued_by`: the name of the program that ran the steps (`{ by: null, absent_cause: 'driver_not_recorded' }` when the host passed none). A call with nothing owed runs nothing and returns the run's view — never an error. A step this server cannot run (a missing handler or adapter, an invalid `trust`, a failed precondition, an input its schema refuses) is not run; `get_run_state`'s `engine_runnable` names it and why, and the act is no longer offered for it. An unknown argument is named in `warnings` (`advance_run: unknown argument 'x' was ignored.`).
+
+The act in `next_actions` reads:
+
+```json
+{
+  "instruction": {
+    "tool": "advance_run",
+    "params": { "run_id": "<run>" },
+    "call_with": { "run_id": "<run>" }
+  },
+  "human_readable": "Call advance_run to run the steps the engine owes: 'post_approval'. It runs them with this server's extensions and environment.",
+  "orientation": "Run is active. Engine work is owed: 'post_approval'."
+}
+```
+
+It is always LAST: `next_actions[0]` stays the agent step when one is ready.

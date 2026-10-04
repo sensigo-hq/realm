@@ -8,6 +8,8 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **The owed call (issue #625, PR-2a).** When engine work — a guard, an `auto` step — can run and nobody is running it, every read surface and every reply whose writer loads the definition names ONE call that runs it. `next_actions` ends (always last, so `next_actions[0]` stays the agent step) with the act `advance_run {run_id}`. A new MCP tool **`advance_run`** runs it in the receiving server's environment (its reply carries `continued_by`, the program that ran the steps); a new CLI command **`realm run advance <run-id>`** runs it from a shell with no model provider and no key, after printing what it will run, from which project folder, how this program's project code compares with the run's last record, and the run's last recorded driver. Core exports the view (`describePending`, `checkPreClaim`, `engineStepInput`, `PRE_CLAIM_REFUSALS`, `ADVANCE_OWED`, `composeNextActionsStatusWord`, `describeNext`, `owedList`/`owedNames`), `judgeProgramFit`/`PROGRAM_FITS`, `describeRunDriver`, `bareStepOutput` and the new `advanceRun(store, definition, { runId, registry?, traceBufferStore?, driver?, now?, onStep?, command? })`. `get_run_state` gains `pending_guards` and `engine_runnable` (each eligible `auto` step judged for the server's registry, with `refused_by` and `refusal` when it cannot run here). A bare `auto` step's evidence gains `output_source` (`driven_step` · `dependency` · `run_params` · `none`).
+
 - **The release mark: `brandClass`, `createRealmBrand`, `RELEASE_LINE_KEY`, `REALM_BRAND` and the
   type `RealmBrand`, exported from `@sensigo/realm`.** Realm's own packages mark every class they
   export with them, so that copies of one realm version recognise each other's objects. (Issue
@@ -169,6 +171,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`.
 
 ### Changed
+
+- **BREAKING — the owed call replaces three silent states (issue #625, PR-2a).** `get_run_state`'s `next_actions_status` value `auto_pending` (documented as "not awaiting the agent") is removed and replaced by `advance_owed`, set exactly when the act is present and no agent step is ready; with an agent step ready the status is `ok` and the act is in the list. An `auto` step with a `handler` is no longer turned into a next action naming the handler (no client can call it). A deduped `start_run` (an idempotency-key match) runs nothing — only the creating call runs work; the match's reply names what the run owes. A bare `auto` step the ENGINE runs records the output of its single `depends_on` step (no `depends_on`: the run's params; several: `{}`) instead of a copy of whatever the driven step's caller returned — identical for every bare step in the examples, different for a bare step two hops from the driven step and for realm-testing's runner, whose dispatcher returns `{}` for a bare step. The four "N step(s) now available." sentences now name what is next (`Ready for the agent: …`, `Owed to the engine: … — call advance_run.`, or `No step is ready.`). `start_run_batch`'s `started` entries carry `next_actions`. `realm run respond` prints the derived phase, the stated answerer (`answered by <name> (as stated)` with `--by`), and the owed line; `realm run inspect`, `realm run drain` (its no-gate way out names `realm run advance` before `abandon`) and `realm run resume` name the owed steps too. `realm agent` runs the engine's steps through `advanceRun` at the top of each iteration and picks only agent steps itself; an engine step this program cannot run stops the drive before any model call. The auto-step chain has no depth limit (each step runs at most once per call). Pre-claim refusals (trust, precondition, input schema) are one function shared by `executeStep` and the view.
 
 - **BREAKING —** **Every store realm runs against must carry its release line (issue #620).**
   `createRealmMcpServer`, every published tool handler (`@sensigo/realm-mcp/dist/tools/*.js`), the
@@ -408,6 +412,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   `claim_token`.
 
 ### Fixed
+
+- **`realm agent` no longer misreads another process's work (issue #625, PR-2a).** A step another process took between the loop's pick and its claim printed `✓ → running`; it now prints `• Step '<s>' was taken by <holder> at <since>; not run here.` and continues. With nothing eligible and a step in flight, the loop watches the record and re-enters on any change; after 60 s with no change it names `realm run reclaim <id> --step <s> --force`, and says "its runner likely died" only for a claim past its deadline — never for a live holder or an unknown-age claim. `start_run`'s chained reply now reports the derived phase.
 
 - **With two copies of one realm version in a process, `realm run gc`, `purge` and `reclaim`
   classify the other copy's refusals correctly.** Before: gc reaped no orphaned trace file

@@ -36,7 +36,8 @@ const response = await executeStep(store, definition, {
 });
 
 console.log(response.status);
-// response.next_actions[0] carries the next step to execute — repeat until next_actions is empty
+// response.next_actions[0] carries the next step to execute; when it names advance_run, call advanceRun —
+// repeat until next_actions is empty
 ```
 
 ## Usage — Custom Service Adapter

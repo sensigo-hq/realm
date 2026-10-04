@@ -120,7 +120,7 @@ const server = createRealmMcpServer({
 await server.connect(transport);
 ```
 
-`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with the 10 tools. Every option can be left out:
+`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with the 11 tools. Every option can be left out:
 
 | Option               | Default                                       | Holds                                                                                               |
 | -------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |

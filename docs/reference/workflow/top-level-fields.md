@@ -111,7 +111,7 @@ protocol:
 Without `protocol`, the opening instruction is:
 
 ```text
-Call start_run with workflow_id 'review-note'. The engine will run auto steps automatically and return control at the first step requiring agent action. Follow the next_action in each response until the workflow completes.
+Call start_run with workflow_id 'review-note'. The engine runs the steps it owns and returns control at the first step requiring agent action; when next_actions names advance_run, call it. Follow the next_action in each response until the workflow completes.
 ```
 
 and the four standard rules are:
