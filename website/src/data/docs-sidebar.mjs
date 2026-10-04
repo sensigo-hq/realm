@@ -5,7 +5,7 @@ export const DOCS_SIDEBAR = [
   {
     label: 'Start here',
     items: [
-      'docs/start/what-realm-is',
+      'docs/start/what-is-realm',
       'docs/start/install-and-first-run',
       'docs/start/how-a-run-moves',
     ],
