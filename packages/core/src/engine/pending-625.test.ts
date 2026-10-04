@@ -193,6 +193,86 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     expect(describeNext({ ...base })).toBe(' No step is ready.');
   });
 
+  it("C33 at the reply sites: an answer judges the capability check with the CALL's registry, as get_run_state does", async () => {
+    const d = def({
+      act: { description: 'Act', execution: 'auto', depends_on: [], handler: 'note' },
+      b: {
+        description: 'B',
+        execution: 'agent',
+        depends_on: [],
+        trust: 'human_confirmed',
+        gate: { choices: ['approve', 'reject'] },
+      },
+    });
+    const has = new ExtensionRegistry();
+    has.register('handler', 'note', { id: 'note', execute: async () => ({ data: {} }) } as never);
+    const answer = async (registry: ExtensionRegistry | undefined) =>
+      withStore(async (store) => {
+        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        // A runner that lacked the handler attempted the step: the marker is on the record.
+        await advanceRun(store, d, { runId: run.id, registry: new ExtensionRegistry() });
+        expect((await store.get(run.id)).capability_blocks?.['act']).toBeDefined();
+        await executeStep(store, d, {
+          runId: run.id,
+          command: 'b',
+          input: {},
+          dispatcher: echo,
+          registry: has,
+        });
+        const gate = (await store.get(run.id)).pending_gate!;
+        return submitHumanResponse(store, d, {
+          runId: run.id,
+          gateId: gate.gate_id,
+          choice: 'approve',
+          ...(registry !== undefined ? { registry } : {}),
+        });
+      });
+    // A server that HAS the handler: the act, whatever the old marker says.
+    const capable = await answer(has);
+    expect(capable.context_hint).toBe(
+      "Gate 'b' resolved with choice 'approve'. Owed to the engine: 'act' — call advance_run.",
+    );
+    expect(capable.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
+    // A server that lacks it: no act, the step named as one this server cannot run.
+    const lacking = await answer(new ExtensionRegistry());
+    expect(lacking.context_hint).toBe(
+      "Gate 'b' resolved with choice 'approve'. 'act' cannot run here (capability): handler 'note' is not registered here.",
+    );
+    expect(lacking.next_actions).toEqual([]);
+    // A caller with no registry: the run's own marker is the freshest fact.
+    const none = await answer(undefined);
+    expect(none.context_hint).toBe(
+      "Gate 'b' resolved with choice 'approve'. 'act' cannot run here (capability): handler 'note' was not registered in the runner that last attempted it.",
+    );
+    expect(none.next_actions).toEqual([]);
+  });
+
+  it('C34 at the step sites: a completed step names a next step that cannot run, never "Waiting for other steps"', async () => {
+    const d = def({
+      w: { description: 'W', execution: 'agent', depends_on: [] },
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: ['w'],
+        preconditions: ['w.ok == true'],
+      },
+    });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const reply = await executeStep(store, d, {
+        runId: run.id,
+        command: 'w',
+        input: { ok: false },
+        dispatcher: echo,
+      });
+      expect(reply.status).toBe('ok');
+      expect(reply.next_actions).toEqual([]);
+      expect(reply.context_hint).toBe(
+        "Step 'w' completed. 'x' cannot run (precondition): Precondition failed for step 'x'. Precondition failed: 'w.ok == true'. Resolved value: false.",
+      );
+    });
+  });
+
   it('C37: the act and the owed words agree with the count — the step / it, the steps / them', () => {
     const d = def({
       a: { description: 'A', execution: 'auto', depends_on: [] },

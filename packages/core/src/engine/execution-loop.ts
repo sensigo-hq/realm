@@ -4138,13 +4138,17 @@ export async function executeStep(
         ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
         : undefined;
 
+    // issue #625 PR-2a (decisions C33, C34): the reply's view is judged with the CALL's registry —
+    // the same fact `get_run_state` reads on this server — and a step that cannot run is named, never
+    // passed over as "waiting for other steps".
     const migratedNextActions = finalRun.terminal_state
       ? []
-      : buildNextActions(definition, finalRun);
+      : buildNextActions(definition, finalRun, options.registry);
+    const migratedPending = describePending(definition, finalRun, options.registry);
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-      : migratedNextActions.length > 0
-        ? `Step '${options.command}' completed.${describeNext(describePending(definition, finalRun))}`
+      : migratedNextActions.length > 0 || hasCannotRun(migratedPending)
+        ? `Step '${options.command}' completed.${describeNext(migratedPending)}`
         : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
     // issue #625: this step's own write settled every guard it made eligible. When one of them
@@ -4325,11 +4329,16 @@ export async function executeStep(
   }
 
   // Step 7: Build and return ResponseEnvelope.
-  const nextActions = savedRun.terminal_state ? [] : buildNextActions(definition, savedRun);
+  // issue #625 PR-2a (decisions C33, C34): judged with the call's registry; a step that cannot run is
+  // named, never passed over as "waiting for other steps".
+  const nextActions = savedRun.terminal_state
+    ? []
+    : buildNextActions(definition, savedRun, options.registry);
+  const stepPending = describePending(definition, savedRun, options.registry);
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-    : nextActions.length > 0
-      ? `Step '${options.command}' completed.${describeNext(describePending(definition, savedRun))}`
+    : nextActions.length > 0 || hasCannotRun(stepPending)
+      ? `Step '${options.command}' completed.${describeNext(stepPending)}`
       : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
   return {
@@ -5341,10 +5350,10 @@ export async function submitHumanResponse(
 
     const migratedNextActions = finalRun.terminal_state
       ? []
-      : buildNextActions(definition, finalRun);
+      : buildNextActions(definition, finalRun, options.registry);
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun))}`;
+      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun, options.registry))}`;
 
     // issue #625: the answer's own write settled every guard the answer made eligible, so no guard
     // is left "eligible, to be decided by some later call" — the reply lists them in `guards`, and
@@ -5641,10 +5650,12 @@ export async function submitHumanResponse(
 
   // 6. Build response.
   const data = { ...run.pending_gate.preview, choice: options.choice };
-  const nextActions = savedRun.terminal_state ? [] : buildNextActions(definition, savedRun);
+  const nextActions = savedRun.terminal_state
+    ? []
+    : buildNextActions(definition, savedRun, options.registry);
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun))}`;
+    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun, options.registry))}`;
 
   return withGateClaim(
     {
@@ -6922,6 +6933,13 @@ function withTakenClauses(hint: string, takenSteps: readonly string[]): string {
       .map((s) => ` '${s}' was claimed by another process, so it did not run here.`)
       .join('')
   );
+}
+
+/** Whether the view names an engine step that cannot run (decision C34). */
+function hasCannotRun(pending: {
+  engine_runnable: Array<{ runnable_here: boolean | 'unknown' }>;
+}): boolean {
+  return pending.engine_runnable.some((e) => e.runnable_here === false);
 }
 
 /** The reply text of an `advanceRun` call that ran nothing, from the record it ends on (M10). */
