@@ -1,5 +1,7 @@
 # Testing package
 
+<!-- description: Reference for @sensigo/realm-testing, the package for testing workflows, handlers, adapters and stores: every value and type it exports. -->
+
 `@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 25 values and 23 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
 
 ```bash

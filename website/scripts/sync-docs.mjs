@@ -2,6 +2,17 @@
 // The engine's docs stay free of frontmatter so they read cleanly on GitHub;
 // this derives the title from the first H1, strips it (Starlight renders its own),
 // and writes into src/content/docs/docs/** which is gitignored.
+//
+// Each page carries its own description for search results and link previews, as a comment on the
+// line after the H1, which GitHub does not show:
+//
+//   # Add a human gate
+//
+//   <!-- description: Add a point where a person must decide before anything takes effect: ... -->
+//
+// The build stops, naming every page at fault, when a page has no H1, has no such line, has an empty
+// description or one containing "--" (which would end the comment), or shares its description with
+// another page.
 import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, relative, posix, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,20 +58,58 @@ function rewriteLinks(body, relFile) {
     .join('\n');
 }
 
-await rm(OUT, { recursive: true, force: true });
-const files = await walk(SRC);
+const DESCRIPTION = /^<!-- description: (.+) -->$/;
 
-for (const file of files) {
-  const raw = await readFile(file, 'utf8');
+// Reads one page: its title, its description and the rest of its text. Returns problems instead of
+// throwing, so one build run can name every page at fault.
+function readPage(raw) {
   const lines = raw.split('\n');
   const i = lines.findIndex((l) => /^#\s+/.test(l));
-  if (i === -1) {
-    console.warn(`  skip (no H1): ${relative(SRC, file)}`);
-    continue;
+  if (i === -1) return { problem: 'no H1 heading' };
+  // A title is plain text on the site: in the browser tab, search results, link previews, the page heading
+  // and the sidebar. The backticks that mark code in the H1 on GitHub would show there as backticks.
+  const title = lines[i].replace(/^#\s+/, '').replaceAll('`', '').trim();
+  let j = i + 1;
+  while (j < lines.length && lines[j].trim() === '') j++;
+  const match = DESCRIPTION.exec(lines[j] ?? '');
+  if (!match) {
+    return { problem: 'no "<!-- description: ... -->" line after the H1 heading' };
   }
-  const title = lines[i].replace(/^#\s+/, '').trim();
-  const body = [...lines.slice(0, i), ...lines.slice(i + 1)].join('\n').replace(/^\n+/, '');
+  const description = match[1].trim();
+  if (description === '' || description.includes('--')) {
+    return { problem: 'the description is empty or contains "--", which ends an HTML comment' };
+  }
+  const body = [...lines.slice(0, i), ...lines.slice(j + 1)].join('\n').replace(/^\n+/, '');
+  return { title, description, body };
+}
+
+const files = await walk(SRC);
+
+const pages = [];
+const problems = [];
+for (const file of files) {
   const rel = relative(SRC, file);
+  const page = readPage(await readFile(file, 'utf8'));
+  if (page.problem) problems.push(`docs/${rel}: ${page.problem}`);
+  else pages.push({ rel, ...page });
+}
+// Search engines treat one description on many pages as no description (Google: identical
+// descriptions "aren't helpful").
+const byDescription = new Map();
+for (const { rel, description } of pages) {
+  byDescription.set(description, [...(byDescription.get(description) ?? []), `docs/${rel}`]);
+}
+for (const [description, rels] of byDescription) {
+  if (rels.length > 1) problems.push(`${rels.join(', ')}: the same description "${description}"`);
+}
+if (problems.length > 0) {
+  console.error(`sync-docs: ${problems.length} problem(s) in ../docs:\n  ${problems.join('\n  ')}`);
+  process.exit(1);
+}
+
+// Only after every page passed, so a mistake leaves the last good output in place.
+await rm(OUT, { recursive: true, force: true });
+for (const { rel, title, description, body } of pages) {
   // docs/README.md is the index on GitHub; on the site it is /docs/.
   const dest = join(
     OUT,
@@ -69,7 +118,10 @@ for (const file of files) {
   await mkdir(dirname(dest), { recursive: true });
   // JSON.stringify gives a valid YAML double-quoted string: it escapes backslashes, quotes and control
   // characters (a hand-written quote-only replace broke on a title with a backslash).
-  await writeFile(dest, `---\ntitle: ${JSON.stringify(title)}\n---\n\n${rewriteLinks(body, rel)}`);
+  await writeFile(
+    dest,
+    `---\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(description)}\n---\n\n${rewriteLinks(body, rel)}`,
+  );
 }
 
 console.log(`sync-docs: ${files.length} files -> src/content/docs/docs/`);

@@ -1,5 +1,7 @@
 # JSON Schema blocks
 
+<!-- description: The JSON Schema fields of workflow.yaml: what each is checked against, which parts of JSON Schema Realm accepts, and what the loader refuses or warns about. -->
+
 Four fields of `workflow.yaml` hold a JSON Schema: `params_schema`, `input_schema`, `output_schema` and `trace_schema`. This page says what each one is checked against, which parts of JSON Schema Realm accepts, and what the loader refuses or warns about. Every message shown came from the loader or from a run.
 
 ## The four blocks

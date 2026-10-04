@@ -1,5 +1,7 @@
 # Evidence, and how a run ends
 
+<!-- description: What a run's record holds: each step's input and output, why a step was skipped, and what ended the run. How to read it, and what it does and does not prove. -->
+
 Every run leaves a record: what each step received, what it produced, why a step was skipped, and what ended the run. This page explains what is in that record, how to read it, and what it does and does not prove.
 
 ## One entry per step that ran

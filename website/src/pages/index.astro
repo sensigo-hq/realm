@@ -6,6 +6,28 @@ import { THEME_INIT } from '../lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Logo from '../components/Logo.astro';
 import Replay from '../components/Replay.astro';
+import PageMeta from '../components/PageMeta.astro';
+import { HOME_DESCRIPTION, PUBLISHER, SITE_NAME, absolute } from '../lib/site-meta.mjs';
+
+// Structured data for search engines: the site's name (Google takes it from WebSite on the home page)
+// and who publishes it.
+const organization = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  '@id': absolute('/#publisher'),
+  name: PUBLISHER.name,
+  url: PUBLISHER.url,
+  sameAs: PUBLISHER.sameAs,
+};
+const website = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  '@id': absolute('/#website'),
+  name: SITE_NAME,
+  url: absolute('/'),
+  description: HOME_DESCRIPTION,
+  publisher: { '@id': organization['@id'] },
+};
 ---
 
 <!doctype html>
@@ -16,8 +38,12 @@ import Replay from '../components/Replay.astro';
 {ICON_LINKS.map((a) => <link {...a} />)}
 <meta name="theme-color" content={THEME_COLOR} />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Realm — wrong behaviour becomes impossible</title>
-<meta name="description" content="A workflow state machine that agents call. The state cannot change until valid output is submitted." />
+<PageMeta
+  title="Realm — wrong behaviour becomes impossible"
+  description={HOME_DESCRIPTION}
+  path="/"
+  structuredData={[website, organization]}
+/>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />

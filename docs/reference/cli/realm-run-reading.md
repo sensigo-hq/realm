@@ -1,5 +1,7 @@
 # `realm run`: commands that read
 
+<!-- description: Reference for the realm run subcommands that only read (list, inspect, attempts, diff, replay and export): their flags, output and exit codes. -->
+
 `realm run` has sixteen subcommands. This page covers the six that only read: they change no run. The other ten are in [`realm run`: commands that act](realm-run-acting.md). Every output shown came from a run of the command.
 
 | Subcommand              | What it does                                                  |

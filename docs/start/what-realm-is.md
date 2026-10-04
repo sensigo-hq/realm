@@ -1,5 +1,7 @@
 # What Realm is, and when to use it
 
+<!-- description: Realm is a workflow engine that an AI agent calls, and it accepts each result only if it fits the step's rules. What that gives you, and when to use it. -->
+
 Realm is a workflow engine that an AI agent calls. You describe a job as a list of steps. The agent asks Realm for the next step, does it, and hands back the result. Realm accepts the result only if it fits the rules of that step. This page explains what that gives you, what it does not give you, and when it is the right tool.
 
 ## The problem it solves

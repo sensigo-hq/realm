@@ -1,5 +1,7 @@
 # Glossary
 
+<!-- description: The words these docs use with a meaning of their own, each explained in one or two sentences with a link to the page that covers it. -->
+
 The words these docs use with a meaning of their own, in alphabetical order. Each has one or two sentences and a link to the page that covers it. There are 64 terms.
 
 | Term                | Meaning                                                                                                                                                                                                         |

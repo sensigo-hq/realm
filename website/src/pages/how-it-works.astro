@@ -5,6 +5,8 @@ import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT } from '../lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Logo from '../components/Logo.astro';
+import PageMeta from '../components/PageMeta.astro';
+import { HOW_IT_WORKS_DESCRIPTION } from '../lib/site-meta.mjs';
 ---
 
 <!doctype html>
@@ -15,8 +17,7 @@ import Logo from '../components/Logo.astro';
 {ICON_LINKS.map((a) => <link {...a} />)}
 <meta name="theme-color" content={THEME_COLOR} />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>How a run moves — Realm</title>
-<meta name="description" content="How a Realm run passes between the engine, an MCP client, realm agent and realm listen — four diagrams." />
+<PageMeta title="How a run moves — Realm" description={HOW_IT_WORKS_DESCRIPTION} path="/how-it-works/" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />

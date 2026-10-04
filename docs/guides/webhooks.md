@@ -1,5 +1,7 @@
 # Start runs from webhooks
 
+<!-- description: Start a workflow from an HTTP request: accept a webhook, check that it is genuine, turn its contents into run parameters, and ignore repeats. -->
+
 This guide makes a workflow start by itself when another system sends an HTTP request: a new ticket, a pushed commit, a paid invoice. At the end you have a workflow that accepts a webhook, checks that it is genuine, turns its contents into run parameters, and ignores repeats.
 
 ## Before you start

@@ -1,5 +1,7 @@
 # Call a service with an adapter
 
+<!-- description: Make an auto step do real work through an adapter, such as reading a file or calling an API, pass the result to a later step, and place the credentials. -->
+
 This guide shows how to make an `auto` step do real work: read a file, call an API, post a message. At the end you have a step that reads a file through Realm's built-in file adapter, a later step that uses what it read, and you know where the credentials go for a service that needs them.
 
 ## Before you start

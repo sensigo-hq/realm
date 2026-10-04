@@ -55,6 +55,18 @@ jobs:
       - run: npm run build
       # issue #620 PR-B — every class a package exports carries the release mark. Needs the built packages.
       - run: npm run check:brands
+      # The website (realmengine.dev) is built from docs/. Its build stops on a docs page with no
+      # description, a description shared with another page, a page left out of the sidebar, or a
+      # title the page's preview image cannot draw. Building it here stops such a page on its pull
+      # request instead of at the next deploy. website/ is not an npm workspace: it has its own
+      # lockfile. Install scripts are skipped, as the repository's .npmrc skips them for the root.
+      - name: Build the website
+        working-directory: website
+        env:
+          ASTRO_TELEMETRY_DISABLED: '1'
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
       # issue #337 — type-check the test files. `tsconfig.eslint.json` is the only project that
       # includes `*.test.ts` (the per-package build tsconfigs exclude them), so until now tsc never
       # saw them and 351 type errors had accumulated unseen — including assertions that could not

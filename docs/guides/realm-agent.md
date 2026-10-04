@@ -1,5 +1,7 @@
 # Run a workflow with `realm agent`
 
+<!-- description: Run a workflow from start to end with realm agent and a model provider: a full run, what happens when the model answers wrongly, and resuming a stopped run. -->
+
 `realm agent` runs a workflow from start to end with a model doing the agent steps. You give it a workflow and a model provider; it calls the model, hands each answer to Realm, and carries on until the run ends or needs a person. This guide shows a run, what happens when the model answers wrongly, and how to pick up a run that stopped.
 
 The outputs on this page come from real runs of `realm agent` against a local stand-in for the model, which returned answers chosen for the test. Everything on the Realm side is real.

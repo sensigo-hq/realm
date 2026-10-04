@@ -1,5 +1,7 @@
 # `realm agent`
 
+<!-- description: Reference for realm agent, which drives one run from the command line with a model doing the agent steps: its flags, its output and its exit codes. -->
+
 `realm agent` drives one run from the command line. It asks a model for the answer to each agent step, runs each `auto` step itself, and waits at each human gate. This page lists its 14 flags, what it prints, and its exit codes.
 
 The outputs on this page come from runs of `realm agent` against a local stand-in for the model, which returned answers chosen for the test. Everything on the Realm side is real. For a walk through a first run, see [Run a workflow with `realm agent`](../../guides/realm-agent.md).

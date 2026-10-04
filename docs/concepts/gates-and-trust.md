@@ -1,5 +1,7 @@
 # Human gates and trust levels
 
+<!-- description: How a human gate stops a run until someone answers: how it opens, what the agent can do while it is open, who can answer, and what happens if nobody does. -->
+
 A human gate stops a run until someone answers. It is how you make sure a person sees something before it takes effect. This page explains how a gate opens, what the agent can and cannot do while it is open, who can answer, and what happens if nobody does.
 
 ## A gate is set with `trust`

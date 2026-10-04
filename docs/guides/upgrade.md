@@ -1,5 +1,7 @@
 # Upgrade Realm
 
+<!-- description: Upgrade Realm without surprises: read what changed, upgrade every Realm package together, and check your workflows and runs against the new version. -->
+
 This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.43.0 to 0.45.0.
 
 ## What an upgrade can change

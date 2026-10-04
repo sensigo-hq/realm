@@ -1,5 +1,7 @@
 # `realm run`: commands that act
 
+<!-- description: Reference for the realm run subcommands that change a run or the store: their arguments, flags, output and exit codes. -->
+
 `realm run` has sixteen subcommands. This page covers the ten that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
 
 | Subcommand                | What it does                                                  | Acts when                   |

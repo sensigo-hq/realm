@@ -1,5 +1,7 @@
 # Error codes
 
+<!-- description: Every error code Realm defines: when each one is raised and what it tells the caller to do, and the codes that nothing raises. -->
+
 Every error Realm raises on purpose has a code. This page lists all 86 codes that Realm defines: the 71 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
 
 ## Where a code appears

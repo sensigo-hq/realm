@@ -1,5 +1,7 @@
 # Workflow file: step fields
 
+<!-- description: Every field a step can have in workflow.yaml: which step kinds can use it, its type and default, what it does, and one example that uses them all. -->
+
 This page lists every field a step can have. There are 36, taken from the list the loader checks steps against. For each one it says which kinds of step can use it, its type and default, and what it does. One example file that uses all of them is at the end.
 
 For the fields at the top of the file, see [Top-level fields](top-level-fields.md).
