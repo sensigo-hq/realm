@@ -402,7 +402,9 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
     await withServer([d], async (client, home) => {
       const s = await call(client, 'start_run', { workflow_id: d.id, params: {} });
       const { calls, last } = await follow(client, s);
-      expect(calls.filter((c) => c === 'advance_run').length).toBeLessThanOrEqual(2);
+      // decision C24: the attempt's reply is rebuilt with the server's registry, so it offers no act
+      // for the step that just failed to dispatch — the follower spends no call to learn it.
+      expect(calls).toEqual(['execute_step']);
       expect(last.next_actions).toEqual([]);
       const run = await new JsonFileStore(join(home, '.realm', 'runs')).get(s.run_id!);
       expect(run.capability_blocks?.['x']).toBeDefined();

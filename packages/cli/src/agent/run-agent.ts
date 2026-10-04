@@ -523,6 +523,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // Guards, then every runnable `auto` step, through the ONE core call every driver uses. The
         // loop below never names an `auto` step itself.
         let engineStep: string | undefined;
+        // The step `advanceRun` started last and has not yet been seen to complete: its `✓ → <phase>`
+        // line is printed when the next step starts, or after the call returns `ok` — the same line
+        // the agent path prints for a step it completes (`realm agent`'s documented screen).
+        let startedNotDone: string | undefined;
         const advanced = await advanceRun(deps.store, definition, {
           runId,
           command: 'agent',
@@ -532,6 +536,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             : {}),
           ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
           onStep: (step) => {
+            if (startedNotDone !== undefined) console.log('  ✓ → running');
+            startedNotDone = step;
             console.log(`→ [auto] ${step}`);
             // issue #401: a throw from here on mints with this engine step's name, and its
             // elapsed time is measured from this step's start.
@@ -542,6 +548,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // D6.1: another process took an engine step — the same past-tense line as for an agent
           // step; `advanceRun` re-reads and continues.
           onTaken: (step, record) => {
+            startedNotDone = undefined;
             console.log(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
           },
         });
@@ -573,6 +580,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         }
         if (engineReply === undefined) {
           currentRun = await deps.store.get(runId);
+          if (advanced.status === 'ok' && startedNotDone !== undefined) {
+            console.log(`  ✓ → ${currentRun.run_phase}`);
+          }
           if (currentRun.terminal_state) break;
           if (currentRun.pending_gate !== undefined) continue;
           // decisions C17, C23: an engine step that cannot run here (refused before its claim, or

@@ -6861,6 +6861,11 @@ async function advanceLoop(
       options.onTaken?.(nextAutoStep, run);
       continue;
     }
+    if (stepResult.status === 'confirm_required') {
+      // A question opened: the gate reply's own next actions (the answer instruction and its
+      // claim token, the holder slice's one door) are returned as they are.
+      return stepResult;
+    }
     if (stepResult.status !== 'ok') {
       // decision C24: the step's own reply built its next actions with no registry (the capability
       // check reports 'unknown', so the act stayed offered for the step that just failed to

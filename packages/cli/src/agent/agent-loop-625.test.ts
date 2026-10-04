@@ -134,6 +134,43 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect(provider.callStep).not.toHaveBeenCalled();
   });
 
+  it('the screen keeps `✓ → <phase>` under each auto step the loop top ran, as realm-agent.md documents', async () => {
+    const def: WorkflowDefinition = {
+      id: 'loop-check-wf',
+      name: 'loop check',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        a: { description: 'A.', execution: 'auto', depends_on: [] },
+        b: { description: 'B.', execution: 'auto', depends_on: ['a'] },
+        review: { description: 'Review.', execution: 'agent', depends_on: ['b'] },
+        c: { description: 'C.', execution: 'auto', depends_on: ['review'] },
+      },
+    };
+    const store = new InMemoryStore();
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({});
+    })();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await runAgent(
+      { store, workflowStore: workflowStore(def), provider, registry: createDefaultRegistry() },
+      { definition: def, params: {} },
+    );
+    const out = logSpy.mock.calls.flat().filter((l) => typeof l === 'string' && /→/.test(l));
+    vi.restoreAllMocks();
+    expect(result).toBe('completed');
+    expect(out).toEqual([
+      '→ [auto] a',
+      '  ✓ → running',
+      '→ [auto] b',
+      '  ✓ → running',
+      '\n→ [agent] review',
+      // `c` runs inside the agent step's own call (executeChain's loop), silently, as before #625.
+      '  ✓ → completed',
+    ]);
+  });
+
   it('L7: an owed auto step that fails at the loop top is named; no model call follows', async () => {
     const def: WorkflowDefinition = {
       id: 'loop-fail-wf',
