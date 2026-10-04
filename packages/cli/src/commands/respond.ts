@@ -15,6 +15,7 @@ import {
   deriveRunPhase,
   describePending,
   owedList,
+  owedWords,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -163,7 +164,7 @@ export async function respondToGate(
     lastLine:
       `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'` +
       (pending.act !== undefined
-        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs them from this shell.`
+        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them} from this shell.`
         : ''),
   };
 }

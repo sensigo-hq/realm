@@ -19,6 +19,7 @@ import type {
 import {
   describePending,
   owedList,
+  owedWords,
   type PendingView,
   WorkflowError,
   applySettlement,
@@ -61,7 +62,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingVie
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
     return pending?.act !== undefined
-      ? `To run the steps the engine owes (${owedList(pending)}): realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`
+      ? `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}): realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`
       : `To end the run: realm run abandon ${runId}.`;
   }
   const expiry = classifyGateExpiry(run, now);
@@ -797,7 +798,7 @@ export async function runDrainAction(
       const owed = await ownedWork(workingRun);
       if (owed?.act !== undefined) {
         console.log(
-          `To run the steps the engine owes (${owedList(owed)}): realm run advance ${runId}.`,
+          `To run ${owedWords(owed).steps} the engine owes (${owedList(owed)}): realm run advance ${runId}.`,
         );
       }
       return;

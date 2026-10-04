@@ -29,6 +29,7 @@ import {
   describeRunDriver,
   engineStepInput,
   judgeProgramFit,
+  owedWords,
 } from './pending.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -118,7 +119,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         call_with: { run_id: run.id },
       });
       expect(act.human_readable).toBe(
-        "Call advance_run to run the steps the engine owes: 'after'. It runs them with this server's extensions and environment.",
+        "Call advance_run to run the step the engine owes: 'after'. It runs it with this server's extensions and environment.",
       );
       expect(act.orientation).toBe("Run is active. Engine work is owed: 'after'.");
       const pending = describePending(gateThenAuto, await store.get(run.id));
@@ -150,6 +151,76 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         act,
       }),
     ).toBe(" Ready for the agent: 'a'. Owed to the engine: 'x' — call advance_run.");
+  });
+
+  it('C34: describeNext names each engine step that cannot run, one cell per member, after the other clauses', () => {
+    const base = { agent_actions: [], agent_steps: [], pending_guards: [], engine_runnable: [] };
+    const act = { instruction: null, human_readable: '', orientation: '' };
+    const refused = (
+      check: 'trust' | 'precondition' | 'input_schema' | 'capability',
+      refusal: string,
+    ) => ({
+      ...base,
+      engine_runnable: [{ step: 'x', runnable_here: false as const, refused_by: check, refusal }],
+    });
+    // decision C36: `here` for capability only — a runner with the handler could run it.
+    expect(describeNext(refused('capability', "handler 'h' is not registered here"))).toBe(
+      " 'x' cannot run here (capability): handler 'h' is not registered here.",
+    );
+    expect(describeNext(refused('trust', 'bad trust'))).toBe(" 'x' cannot run (trust): bad trust.");
+    // decision C37: a refusal that ends with a full stop gets no second one.
+    expect(describeNext(refused('precondition', 'Resolved value: undefined.'))).toBe(
+      " 'x' cannot run (precondition): Resolved value: undefined.",
+    );
+    expect(describeNext(refused('input_schema', "'n' must be number"))).toBe(
+      " 'x' cannot run (input_schema): 'n' must be number.",
+    );
+    // After the agent and the owed clauses, in that order; `No step is ready.` never beside them.
+    expect(
+      describeNext({
+        ...base,
+        agent_steps: ['a'],
+        engine_runnable: [
+          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad' },
+          { step: 'y', runnable_here: true },
+        ],
+        act,
+      }),
+    ).toBe(
+      " Ready for the agent: 'a'. Owed to the engine: 'y' — call advance_run. 'x' cannot run (trust): bad.",
+    );
+    // Nothing else is said: only then `No step is ready.`
+    expect(describeNext({ ...base })).toBe(' No step is ready.');
+  });
+
+  it('C37: the act and the owed words agree with the count — the step / it, the steps / them', () => {
+    const d = def({
+      a: { description: 'A', execution: 'auto', depends_on: [] },
+      b: { description: 'B', execution: 'auto', depends_on: [] },
+    });
+    const fresh = {
+      id: 'r',
+      params: {},
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+      terminal_state: false,
+    } as unknown as RunRecord;
+    const two = describePending(d, fresh);
+    expect(owedWords(two)).toEqual({ steps: 'the steps', them: 'them' });
+    expect(two.act!.human_readable).toBe(
+      "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment.",
+    );
+    const one = describePending(
+      def({ a: { description: 'A', execution: 'auto', depends_on: [] } }),
+      fresh,
+    );
+    expect(owedWords(one)).toEqual({ steps: 'the step', them: 'it' });
+    expect(one.act!.human_readable).toBe(
+      "Call advance_run to run the step the engine owes: 'a'. It runs it with this server's extensions and environment.",
+    );
   });
 
   it('with an agent step ready AND engine work owed: the agent action first, the act last, status ok', async () => {
@@ -283,8 +354,29 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       step: 'x',
       runnable_here: false,
       refused_by: 'input_schema',
-      refusal: "Invalid input for step 'x'",
+      // decision C37: the field and what it must be (the first validation message).
+      refusal: "Invalid input for step 'x': the input must have required property 'alpha'",
     });
+    // ...while the engine's own error — what `executeStep` returns — stays byte-identical (D1.2).
+    const verdict = checkPreClaim({ definition: d, run: live([], {}), step: 'x', input: {} });
+    expect(verdict !== undefined && 'error' in verdict ? verdict.error?.message : undefined).toBe(
+      "Invalid input for step 'x'",
+    );
+    // A nested field is named by its path.
+    const nested = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: {
+          type: 'object',
+          properties: { n: { type: 'object', properties: { m: { type: 'number' } } } },
+        },
+      },
+    });
+    expect(describePending(nested, live([], { n: { m: 'one' } })).engine_runnable[0]?.refusal).toBe(
+      "Invalid input for step 'x': 'n.m' must be number",
+    );
     expect(describePending(d, live([], { alpha: 'a' })).engine_runnable[0]?.runnable_here).toBe(
       true,
     );
@@ -546,7 +638,13 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
         expect(steps).toEqual([]);
         expect(reply.status).toBe('ok');
         expect(reply.next_actions).toEqual([]);
-        expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran. No step is ready.`);
+        // decision C34: the reply names the step that cannot run instead of `No step is ready.`;
+        // decision C37: one full stop, never two (the precondition refusal ends with its own).
+        const refusal = before.engine_runnable[0]!.refusal!;
+        expect(reply.context_hint).toBe(
+          `Run '${run.id}': nothing ran. 'x' cannot run (${member}): ${refusal}${refusal.endsWith('.') ? '' : '.'}`,
+        );
+        expect(reply.context_hint).not.toContain('..');
         expect(describePending(d, await store.get(run.id)).act).toBeUndefined();
       });
     });

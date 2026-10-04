@@ -91,7 +91,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(responded.status).toBe(0);
       expect(responded.stdout.trim()).toBe(
         `Responded: ${run.id} | choice 'approve' | answered by alice (as stated) | new state 'running'\n` +
-          `Owed to the engine: 'after' — realm run advance ${run.id} runs them from this shell.`,
+          `Owed to the engine: 'after' — realm run advance ${run.id} runs it from this shell.`,
       );
 
       const inspected = realm(home, ['run', 'inspect', run.id]);
@@ -102,7 +102,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       const drained = realm(home, ['run', 'drain', run.id]);
       expect(drained.stdout.trim()).toBe(
         `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-          `To run the steps the engine owes ('after'): realm run advance ${run.id}. To end the run instead: realm run abandon ${run.id}.`,
+          `To run the step the engine owes ('after'): realm run advance ${run.id}. To end the run instead: realm run abandon ${run.id}.`,
       );
 
       const advanced = realm(home, ['run', 'advance', run.id]);
@@ -159,7 +159,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(advanced.status).toBe(1);
       expect(advanced.stdout).toContain('→ b');
       expect(advanced.stdout).toContain(
-        "Stopped: 'a' cannot run here (precondition): Precondition failed for step 'a'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
+        "Stopped: 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
       );
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -222,7 +222,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(drained.status).toBe(0);
       expect(drained.stdout).toContain(
         `Run '${run.id}' is not terminal (phase: 'running') — nothing further to drain.\n` +
-          `To run the steps the engine owes ('after'): realm run advance ${run.id}.`,
+          `To run the step the engine owes ('after'): realm run advance ${run.id}.`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

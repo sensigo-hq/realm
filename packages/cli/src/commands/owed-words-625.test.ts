@@ -95,7 +95,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
           { step: 'y', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
         ],
       }),
-    ).toEqual(["'x' cannot run here (trust): bad trust", "'y' cannot run here (precondition): no"]);
+    ).toEqual(["'x' cannot run (trust): bad trust", "'y' cannot run (precondition): no"]);
     expect(stoppedReasons('r', base, { ...none, agent_steps: ['a', 'b'] })).toEqual([
       "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r",
     ]);
@@ -108,7 +108,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         ],
       }),
     ).toEqual([
-      "'x' cannot run here (trust): bad trust",
+      "'x' cannot run (trust): bad trust",
       "agent steps are ready: 'a' — drive them with realm agent --run-id r",
     ]);
     expect(stoppedReasons('r', base, none)).toEqual(['nothing is ready to run now']);
@@ -256,7 +256,8 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       expect(lines.slice(4)).toEqual([
         '→ x',
         `• Step 'x' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
-        'Stopped: nothing is ready to run now',
+        // decision C37: the step the other process holds is the reason — not "nothing is ready".
+        `Stopped: 'x' is in flight, taken by other@host (from the OS user, via agent) since ${since}`,
         `Run ${run.id}: phase 'running'`,
       ]);
     } finally {
@@ -481,6 +482,150 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
       expect(describePending(d, await runs.get(run.id)).act).toBeDefined();
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('#625 PR-2a, C37 — realm run advance and respond: the words after the walk', () => {
+  it('a run the call completes gets no `Stopped:` line — the phase line says it', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('completes-wf', {
+        a: { description: 'A', execution: 'auto', depends_on: [] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      expect(code).toBe(0);
+      expect(lines.slice(3)).toEqual([
+        "Owed to the engine: 'a'.",
+        '→ a',
+        `Run ${run.id}: phase 'completed'`,
+      ]);
+      expect(lines.some((l) => l.startsWith('Stopped:'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a step another program holds: the preview says `In flight:`, and the reason replaces "nothing is ready"', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('held-wf', { x: { description: 'X', execution: 'auto', depends_on: [] } });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      await runs.claimStep(run.id, 'x', d, {
+        by: 'other@host',
+        by_source: 'derived',
+        channel: 'advance',
+      });
+      const since = (await runs.get(run.id)).claims?.['x']?.since;
+      expect(since).toBeDefined();
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      expect(code).toBe(0);
+      expect(lines.slice(3)).toEqual([
+        `In flight: 'x' is in flight, taken by other@host (from the OS user, via advance) since ${since}.`,
+        `Nothing is owed to the engine: 'x' is in flight, taken by other@host (from the OS user, via advance) since ${since}.`,
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a reason that ends with a full stop gets no second one', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('stop-wf', {
+        a: {
+          description: 'A',
+          execution: 'auto',
+          depends_on: [],
+          preconditions: ['nothing.ok == true'],
+        },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      expect(code).toBe(1);
+      expect(lines.at(-1)).toBe(
+        "Nothing is owed to the engine: 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
+      );
+      expect(lines.join('\n')).not.toContain('..');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("respond's owed line: `runs it` for one step, `runs them` for two", async () => {
+    const { respondToGate } = await import('./respond.js');
+    for (const [owed, them] of [
+      [['after'], 'it'],
+      [['after', 'also'], 'them'],
+    ] as const) {
+      const { home, runs, workflows } = stores();
+      try {
+        const steps: WorkflowDefinition['steps'] = {
+          confirm: {
+            description: 'C',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            gate: { choices: ['approve', 'reject'] },
+          },
+        };
+        for (const name of owed) {
+          steps[name] = { description: name, execution: 'auto', depends_on: ['confirm'] };
+        }
+        const d = wf(`respond-${owed.length}`, steps);
+        await workflows.register(d);
+        const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        await executeStep(runs, d, {
+          runId: run.id,
+          command: 'confirm',
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        const gate = (await runs.get(run.id)).pending_gate!;
+        const out = await respondToGate(
+          run.id,
+          { gate: gate.gate_id, choice: 'approve' },
+          runs,
+          workflows,
+          new ExtensionRegistry(),
+        );
+        expect(out.lastLine.split('\n')[1]).toBe(
+          `Owed to the engine: ${owed.map((n) => `'${n}'`).join(', ')} — realm run advance ${run.id} runs ${them} from this shell.`,
+        );
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
     }
   });
 });

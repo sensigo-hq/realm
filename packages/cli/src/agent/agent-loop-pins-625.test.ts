@@ -100,14 +100,18 @@ describe('#625 PR-2a — realm agent loop words', () => {
     const err = errorSpy.mock.calls.flat().join('\n');
     vi.restoreAllMocks();
     const line =
-      "• Step 'x' cannot run here (precondition): Precondition failed for step 'x'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.";
+      "• Step 'x' cannot run (precondition): Precondition failed for step 'x'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.";
     expect(out.split(line).length - 1).toBe(1);
     // The agent step on the other branch ran; the drive ends failed only because nothing else can run.
     expect(provider.callStep).toHaveBeenCalledTimes(1);
     const runs = await store.list();
     expect(runs[0]!.completed_steps).toEqual(['review']);
     expect(result).toBe('failed');
-    expect(err).toContain('Run ended in phase: running');
+    // decision C31: the stop's own line — the run did not end, so no `Run ended in phase:` line.
+    expect(err).toContain(
+      `✗ The drive stops: nothing else can run, and 'x' cannot run (precondition). Run ${runs[0]!.id} stays open (phase 'running'); to end it: realm run abandon ${runs[0]!.id}.`,
+    );
+    expect(err).not.toContain('Run ended in phase:');
     expect(err).not.toContain("✗ Step 'x'");
   });
 });

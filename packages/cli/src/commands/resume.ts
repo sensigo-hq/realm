@@ -232,7 +232,8 @@ export const resumeCommand = new Command('resume')
       // issue #625 PR-2a (D7.5): the resumed run's engine work, and the call that runs it without a
       // model. A JSON read of the registered copy; nothing is added when it cannot be read.
       try {
-        const { describePending, owedList, getWorkflowForRun } = await import('@sensigo/realm');
+        const { describePending, owedList, owedWords, getWorkflowForRun } =
+          await import('@sensigo/realm');
         const resumed = await runStore.get(runId);
         const wf = await getWorkflowForRun(workflowStore, resumed, {
           retryVerb: 'resume again',
@@ -241,7 +242,7 @@ export const resumeCommand = new Command('resume')
         const pending = describePending(wf, resumed);
         if (pending.act !== undefined) {
           console.log(
-            `To run the steps the engine owes (${owedList(pending)}) without a model: realm run advance ${runId}.`,
+            `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}) without a model: realm run advance ${runId}.`,
           );
         }
       } catch {

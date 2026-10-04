@@ -620,7 +620,9 @@ export async function inspectRun(
     lines.push(`Cause: ${run.terminal_reason}`);
   }
   // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
-  // engine step this record shows cannot run (no registry here, so a capability need is unknown).
+  // engine step this record shows cannot run. No registry here: a capability need is judged by the
+  // run's own marker (what the runner that last attempted the step lacked), else is unknown
+  // (decision C33).
   if (definition !== undefined && !run.terminal_state && run.pending_gate === undefined) {
     const pending = describePending(definition, run);
     if (pending.act !== undefined) {

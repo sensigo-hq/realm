@@ -1,6 +1,12 @@
 // run advance command — runs the guards and automatic steps a run owes, from this shell (issue #625 PR-2a).
 import { Command } from 'commander';
-import type { RunStore, WorkflowRegistrar, ExtensionRegistry, Attributed } from '@sensigo/realm';
+import type {
+  RunStore,
+  RunRecord,
+  WorkflowRegistrar,
+  ExtensionRegistry,
+  Attributed,
+} from '@sensigo/realm';
 import {
   advanceRun,
   describePending,
@@ -13,12 +19,14 @@ import {
   describeClaimHolder,
   guardPassedLine,
   guardEndingOfRun,
+  cannotRunClause,
+  withFullStop,
   type PendingView,
   type ProgramFit,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
-import { BY_SOURCE_WORDS, describeProgram, takenLine } from '../lib/holder-render.js';
+import { BY_SOURCE_WORDS, describeProgram, takenLine, takenPhrase } from '../lib/holder-render.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
 export const FIT_WORDS: Record<ProgramFit, string> = {
@@ -52,15 +60,34 @@ function driverWords(
   return `${describeProgram(d.driver)} at step '${d.step}', ${d.at}${newer}`;
 }
 
+type RunForReasons = Parameters<typeof deriveRunPhase>[0] &
+  Pick<RunRecord, 'in_progress_steps' | 'claims'>;
+
+/**
+ * The steps in flight elsewhere (the open gate's own step holds a claim while it waits and is not
+ * in flight), each as `'<s>', <taken phrase>[ since <since>]` (decision C37).
+ */
+export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[] {
+  return run.in_progress_steps
+    .filter((step) => step !== run.pending_gate?.step_name)
+    .map((step) => {
+      const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+      const since = described.since !== undefined ? ` since ${described.since}` : '';
+      return `'${step}' is in flight, ${takenPhrase(described)}${since}`;
+    });
+}
+
 /**
  * Every reason that holds for the run to stop where it is, in D4.4's order (a failed step is the
- * caller's to add, first): the run ended · a question is open · each refused step · agent steps
- * ready · and, when none of these holds, `nothing is ready to run now`.
+ * caller's to add, first): the run ended · a question is open · each step that cannot run · agent
+ * steps ready · each step in flight elsewhere (decision C37) · and, when none of these holds,
+ * `nothing is ready to run now`.
  */
 export function stoppedReasons(
   runId: string,
-  run: Parameters<typeof deriveRunPhase>[0],
+  run: RunForReasons,
   pending: PendingView,
+  keepsClaims = false,
 ): string[] {
   if (run.terminal_state) return [`the run has ended (${deriveRunPhase(run)})`];
   const gate = run.pending_gate;
@@ -71,12 +98,13 @@ export function stoppedReasons(
   }
   const reasons = pending.engine_runnable
     .filter((e) => e.runnable_here === false)
-    .map((e) => `'${e.step}' cannot run here (${e.refused_by}): ${e.refusal}`);
+    .map((e) => cannotRunClause(e));
   if (pending.agent_steps.length > 0) {
     reasons.push(
       `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them with realm agent --run-id ${runId}`,
     );
   }
+  reasons.push(...inFlightItems(run, keepsClaims));
   return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
 }
 
@@ -115,13 +143,20 @@ export async function advanceRunFromShell(
     ).registry;
 
   const pending = describePending(workflow, run, registry);
+  const keepsClaims = runStore.persistsClaims === true;
   print(`Advancing run ${runId} (workflow '${workflow.id}') from ${projectDir}.`);
   print(
     `This program: ${identityWords(driver)} · project code: ${FIT_WORDS[judgeProgramFit(run, registry.identity)]}.`,
   );
   print(`Last recorded driver: ${driverWords(run, workflow)}.`);
+  // decision C37: a step another process holds is named before anything runs — so a second program
+  // is told why it may find nothing to run.
+  const inFlight = run.terminal_state ? [] : inFlightItems(run, keepsClaims);
+  if (inFlight.length > 0) print(`In flight: ${withFullStop(inFlight.join('; '))}`);
   if (pending.act === undefined) {
-    print(`Nothing is owed to the engine: ${stoppedReasons(runId, run, pending).join('; ')}.`);
+    print(
+      `Nothing is owed to the engine: ${withFullStop(stoppedReasons(runId, run, pending, keepsClaims).join('; '))}`,
+    );
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
@@ -143,12 +178,7 @@ export async function advanceRunFromShell(
     },
     // D6.1: a step another process took is said as a past-tense fact — never "cannot run here".
     onTaken: (step, record) => {
-      print(
-        takenLine(
-          step,
-          describeClaimHolder(record.claims?.[step], runStore.persistsClaims === true),
-        ),
-      );
+      print(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
     },
   });
 
@@ -187,12 +217,15 @@ export async function advanceRunFromShell(
   if (result.status === 'error' && !isCapabilityBlock) {
     reasons.push(`'${lastStep ?? result.command}' failed: ${result.errors.join(', ')}`);
   }
-  reasons.push(...stoppedReasons(runId, after, afterView));
+  reasons.push(...stoppedReasons(runId, after, afterView, keepsClaims));
   if (reasons.length > 1) {
     const none = reasons.indexOf('nothing is ready to run now');
     if (none >= 0) reasons.splice(none, 1);
   }
-  for (const reason of reasons) print(`Stopped: ${reason}`);
+  // decision C37: a run that completed is not a stop — the phase line below says it, so its ending
+  // gets no `Stopped:` line (any other reason that holds still does).
+  const completedEnding = 'the run has ended (completed)';
+  for (const reason of reasons.filter((r) => r !== completedEnding)) print(`Stopped: ${reason}`);
   print(`Run ${runId}: phase '${deriveRunPhase(after)}'`);
   const refused =
     !after.terminal_state && afterView.engine_runnable.some((e) => e.runnable_here === false);

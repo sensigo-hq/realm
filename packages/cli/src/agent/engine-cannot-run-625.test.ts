@@ -1,18 +1,22 @@
-// engine-cannot-run-625.test.ts — issue #625 PR-2a, decision C23: ONE class, "an engine step that
-// cannot run HERE" — refused before its claim (trust, precondition, input schema) or
-// capability-blocked. In `realm agent` it is named once per drive and the loop goes on with the ready
-// agent steps, on every drive (a capability block's reply from the loop-top `advanceRun` is HELD).
-// When no agent step is ready, no engine step can run, and an owed engine step cannot run here, the
-// drive's exit is today's: the first such step takes the existing dispositions with the engine's own
-// reply. Two cells per member:
-//   - the other branch: the step is named once, the agent step on the other branch runs, then today's
-//     exit;
-//   - a single branch: after the new `cannot run here` line, the drive's screen and its
-//     `drive_failures` entries equal what `d2f0b3cf` (before #625) printed and recorded on the SAME
-//     fixture. The base lines below were captured by running `d2f0b3cf`'s built `runAgent` on these
-//     fixtures (`.claude/worktrees/wt-pr2a-base`); the precondition member is the exception — before
-//     #625 the drive re-ran that step forever (`→ [auto] x` / `✓ → running`, repeated), so there is no
-//     base exit to equal, and the cell pins the build's.
+// engine-cannot-run-625.test.ts — issue #625 PR-2a, decisions C23 and C31: ONE class, "an engine
+// step that cannot run" — refused before its claim (trust, precondition, input schema; `cannot run`)
+// or capability-blocked (`cannot run here`, decision C36). In `realm agent` it is named once per drive
+// and the loop goes on with the ready agent steps, on every drive (a capability block's reply from the
+// loop-top `advanceRun` is HELD). When no agent step is ready, no engine step can run, and an owed
+// engine step cannot run, the drive stops on the FIRST such step (definition order):
+//   - a refusal before the claim (decision C31) prints no `→ [auto]` line and never enters the
+//     dispositions: one write-free call reads the engine's refusal, the drive failure is recorded as
+//     #401's chokepoint 4 records it (input schema only), and ONE closing line names the stop;
+//   - a capability block keeps the block's own exit (`→ [auto]`, then `⚠ … re-attach`).
+// Two cells per member:
+//   - the other branch: the step is named once, the agent step on the other branch runs, then the exit;
+//   - a single branch: the screen after the named line, the result, and the `drive_failures` entries.
+//     The record equals what `d2f0b3cf` (before #625) recorded on the SAME fixture, and so does the
+//     capability member's screen (captured by running `d2f0b3cf`'s built `runAgent` on these fixtures,
+//     `.claude/worktrees/wt-pr2a-base`). Before #625 a refusal before the claim printed
+//     `→ [auto] x` / `✗ Step 'x' failed` (trust, input schema) or re-ran the step forever
+//     (precondition); none of those lines is true of a step that does not run.
+// Plus MR-14: with two such steps the exit names the first in definition order.
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
@@ -38,16 +42,19 @@ const TRUST_REFUSAL =
   "Step 'x': 'trust: \"bogus_value\"' is not a recognized value — refused at dispatch: no gate opens and this step does not run; this run is now parked, non-terminal, until the value is corrected, and any step depending on this one returns 'blocked' in the meantime. A step's 'trust' accepts auto, human_confirmed, human_reviewed. Correct the value, then 'realm workflow register <path>' and retry this step — this run picks up the corrected definition.";
 const PRECONDITION_REFUSAL =
   "Precondition failed for step 'x'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.";
+// decision C37: the view's input-schema refusal names the field and what it must be; the engine's own
+// message (the drive failure's) stays `Invalid input for step 'x'`.
+const INPUT_REFUSAL = "Invalid input for step 'x': the input must have required property 'must'";
 const CAPABILITY_WARN =
   "warn: ⚠ Step 'x' needs handler 'missing_h', which is not registered in this runner. If reached it will block recoverably (not fail) until a runner that provides this handler executes it — load the missing extension or run on a capable runner.";
 const CAPABILITY_EXIT =
   "error: \n⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (`realm agent --run-id <run>`).";
 
-/** The `cannot run here` line each member prints, once per drive. */
+/** The line each member prints, once per drive (decision C36: `here` for capability only). */
 const CANNOT_LINE: Record<Member, string> = {
-  trust: `log: • Step 'x' cannot run here (trust): ${TRUST_REFUSAL}`,
-  precondition: `log: • Step 'x' cannot run here (precondition): ${PRECONDITION_REFUSAL}`,
-  input_schema: "log: • Step 'x' cannot run here (input_schema): Invalid input for step 'x'",
+  trust: `log: • Step 'x' cannot run (trust): ${TRUST_REFUSAL}`,
+  precondition: `log: • Step 'x' cannot run (precondition): ${PRECONDITION_REFUSAL}`,
+  input_schema: `log: • Step 'x' cannot run (input_schema): ${INPUT_REFUSAL}`,
   capability_first:
     "log: • Step 'x' cannot run here (capability): handler 'missing_h' is not registered here",
   capability_later:
@@ -56,14 +63,15 @@ const CANNOT_LINE: Record<Member, string> = {
 
 const HEADER = ['log: \nRealm Agent — c23 v1', 'log: Run ID: <run>\n'];
 
-/** `d2f0b3cf`'s screen on the single-branch fixture (captured; the run id normalised to `<run>`). */
-const BASE_LINES: Record<Exclude<Member, 'precondition'>, string[]> = {
-  trust: [...HEADER, 'log: → [auto] x', `error: \n✗ Step 'x' failed: ${TRUST_REFUSAL}`],
-  input_schema: [
-    ...HEADER,
-    'log: → [auto] x',
-    "error: \n✗ Step 'x' failed: Invalid input for step 'x'",
-  ],
+type PreClaimMember = 'trust' | 'precondition' | 'input_schema';
+const PRE_CLAIM: readonly Member[] = ['trust', 'precondition', 'input_schema'];
+
+/** decision C31: the ONE closing line of a drive that stops on a step refused before its claim. */
+const stopLine = (check: PreClaimMember | string, step = 'x'): string =>
+  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'); to end it: realm run abandon <run>.`;
+
+/** `d2f0b3cf`'s screen for a capability block on the single-branch fixture (captured). */
+const BASE_CAPABILITY_LINES: Record<'capability_first' | 'capability_later', string[]> = {
   capability_first: [CAPABILITY_WARN, ...HEADER, 'log: → [auto] x', CAPABILITY_EXIT],
   capability_later: [...HEADER, 'log: → [auto] x', CAPABILITY_EXIT],
 };
@@ -199,16 +207,17 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
         expect(d.calls).toBe(1);
         const run = await d.store.get(d.runId);
         expect(run.completed_steps).toEqual(['review']);
-        // The exit is the first such step's own reply through the existing dispositions.
         const tail = d.lines.slice(d.lines.indexOf('log: \n→ [agent] review') + 1);
-        if (member === 'trust') {
-          expect(tail).toContain(`error: \n✗ Step 'x' failed: ${TRUST_REFUSAL}`);
-        } else if (member === 'input_schema') {
-          expect(tail).toContain("error: \n✗ Step 'x' failed: Invalid input for step 'x'");
-        } else if (member === 'precondition') {
-          expect(tail.at(-1)).toBe('error: \nRun ended in phase: running');
-          expect(tail.join('\n')).not.toContain("✗ Step 'x'");
+        if (PRE_CLAIM.includes(member)) {
+          // decision C31: the drive stops with ONE line — no attempt line, no `failed`, no
+          // `Run ended in phase:` (the run did not end), and the step was never taken up again.
+          expect(tail.at(-1)).toBe(stopLine(member));
+          const all = d.lines.join('\n');
+          expect(all).not.toContain('→ [auto] x');
+          expect(all).not.toContain("✗ Step 'x' failed");
+          expect(all).not.toContain('Run ended in phase:');
         } else {
+          // capability: the block's own exit (decision C23), which is true.
           expect(tail).toContain(CAPABILITY_EXIT);
         }
         // #401's chokepoint-4 record and the drive_failing finding: as before, for the input-schema
@@ -231,17 +240,17 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
         expect(d.result).toBe('failed');
         expect(d.calls).toBe(0);
         expect(d.lines.filter((l) => l === CANNOT_LINE[member])).toHaveLength(1);
-        const rest = d.lines.filter((l) => l !== CANNOT_LINE[member]);
-        if (member === 'precondition') {
-          // d2f0b3cf re-ran this step forever (`→ [auto] x` then `✓ → running`, repeated): its
-          // `blocked` reply has no exit in the dispositions. The drive now ends after its one attempt.
-          expect(rest).toEqual([
-            ...HEADER,
-            'log: → [auto] x',
-            'error: \nRun ended in phase: running',
-          ]);
+        if (PRE_CLAIM.includes(member)) {
+          // decision C31: after the named line, ONE closing line and nothing else.
+          expect(d.lines).toEqual([...HEADER, CANNOT_LINE[member], stopLine(member)]);
+          // The one write-free call claimed nothing and wrote nothing but the drive failure.
+          const run = await d.store.get(d.runId);
+          expect(run.in_progress_steps).toEqual([]);
+          expect(run.completed_steps).toEqual([]);
+          expect(run.evidence).toEqual([]);
         } else {
-          expect(rest).toEqual(BASE_LINES[member]);
+          const rest = d.lines.filter((l) => l !== CANNOT_LINE[member]);
+          expect(rest).toEqual(BASE_CAPABILITY_LINES[member as 'capability_first']);
         }
         const run = await d.store.get(d.runId);
         expect(withoutTimes(run.drive_failures?.entries as never)).toEqual(
@@ -249,5 +258,73 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
         );
       });
     }
+  });
+
+  it('MR-14: two steps that cannot run — the drive stops on the FIRST in definition order', async () => {
+    // `zeta` comes first in the definition and last by name, so neither the name order nor the
+    // order the checks run in can pass for definition order.
+    const def: WorkflowDefinition = {
+      id: 'c23-wf',
+      name: 'c23',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        zeta: {
+          description: 'Z',
+          execution: 'auto',
+          depends_on: [],
+          preconditions: ['nothing.ok == true'],
+        },
+        alpha: {
+          description: 'A',
+          execution: 'auto',
+          depends_on: [],
+          input_schema: {
+            type: 'object',
+            required: ['must'],
+            properties: { must: { type: 'string' } },
+          },
+        },
+        review: { description: 'Review.', execution: 'agent', depends_on: ['zeta', 'alpha'] },
+      },
+    };
+    const store = new InMemoryStore();
+    const lines: string[] = [];
+    for (const kind of ['log', 'error', 'warn'] as const) {
+      vi.spyOn(console, kind).mockImplementation((...a: unknown[]) => {
+        lines.push(`${kind}: ${a.join(' ')}`);
+      });
+    }
+    const result = await runAgent(
+      {
+        store,
+        workflowStore: {
+          async register() {},
+          async get() {
+            return def;
+          },
+          async list() {
+            return [def];
+          },
+        },
+        provider: new (class extends LlmProvider {
+          callStep = vi.fn().mockResolvedValue({});
+        })(),
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {}, inFlightPollMs: 5, inFlightWatchMs: 20 },
+    );
+    vi.restoreAllMocks();
+    const runId = (await store.list())[0]!.id;
+    expect(result).toBe('failed');
+    expect(lines.at(-1)!.split(runId).join('<run>')).toBe(stopLine('precondition', 'zeta'));
+    // Both are named, in definition order; only the first is the stop.
+    const named = lines.filter((l) => l.startsWith('log: • Step '));
+    expect(named.map((l) => l.slice('log: • Step '.length).split(' ')[0])).toEqual([
+      "'zeta'",
+      "'alpha'",
+    ]);
+    // The stop is zeta's: a precondition records no drive failure (alpha's input refusal would).
+    expect((await store.get(runId)).drive_failures?.entries ?? []).toEqual([]);
   });
 });

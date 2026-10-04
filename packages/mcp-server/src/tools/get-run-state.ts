@@ -99,9 +99,12 @@ export interface HandleRunStateStores {
  *   runner / the after-claim wedge, issue #101). Surfaced even when a healthy sibling is in flight.
  * - `claim_unknown_age` — a non-terminal run's only in-progress claims have no deadline (agent /
  *   finalizer-bearing / legacy) and there is nothing else to do — detect-only, human-judged.
- * - `blocked_on_capability` — a non-terminal run has a step parked by a not-registered handler/adapter
- *   (issue #134): the step settled recoverably and is eligible again, awaiting a runner that provides
- *   the missing capability. Computed definition-free, so it also refines the `workflow_unresolved` path.
+ * - `blocked_on_capability` — an owed step needs a handler or an adapter that this server does not
+ *   have (issue #134), and nothing else is owed to the engine: the view, judged with this server's
+ *   registry — or, when it has none, with the run's own `capability_blocks` marker — refuses the
+ *   step for capability and offers no act (issue #625 PR-2a, decision C33). A server that HAS the
+ *   handler reports `advance_owed` instead; the old marker stays visible in `capability_blocks`.
+ *   Without the definition the marker alone decides, so it also refines `workflow_unresolved`.
  *   Outranks `claim_stale` (a more specific, actionable diagnosis); ranks below `awaiting_human`.
  */
 export type NextActionsStatus =
@@ -426,7 +429,18 @@ export async function handleGetRunState(
     // #134 capability block outranks the claim-wedge states (a missing capability is a more specific,
     // actionable diagnosis than a stale/unknown-age claim) but ranks below `awaiting_human` — the gate
     // path returns above without entering this else block, so it wins naturally.
-    if (capabilityBlocks.length > 0) {
+    //
+    // issue #625 PR-2a (decision C33): with the definition, the status reads the VIEW — this
+    // server's registry, or the run's marker when it has none — so a server that can run the step
+    // says `advance_owed`, and one that cannot says `blocked_on_capability` before any attempt.
+    // It is reported exactly when the view refuses an owed step for capability and offers no act.
+    // Without the definition there is no view; the marker is then the only fact (the #134 rule).
+    const blockedOnCapability =
+      pending !== undefined
+        ? pending.act === undefined &&
+          pending.engine_runnable.some((e) => e.refused_by === 'capability')
+        : capabilityBlocks.length > 0;
+    if (blockedOnCapability) {
       nextActionsStatus = 'blocked_on_capability';
     }
   }

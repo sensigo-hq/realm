@@ -3,7 +3,13 @@
 // present — and the two read surfaces agree. A refused step is named, never owed.
 import { describe, it, expect } from 'vitest';
 import type { RunStore, WorkflowDefinition, StepDefinition } from '@sensigo/realm';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION, executeStep, submitHumanResponse } from '@sensigo/realm';
+import {
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  ExtensionRegistry,
+  advanceRun,
+  executeStep,
+  submitHumanResponse,
+} from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.js';
 import { declared } from '../test-support/declared.js';
@@ -47,6 +53,8 @@ interface Fixture {
   build: () => Promise<{ store: RunStore; d: WorkflowDefinition; runId: string }>;
   owed?: string;
   cannot?: string[];
+  /** get_run_state's `next_actions_status`, when the fixture pins it. */
+  status?: string;
 }
 
 const fixtures: Fixture[] = [
@@ -110,6 +118,25 @@ const fixtures: Fixture[] = [
     ],
   },
   {
+    // decision C33: with no registry the run's own marker is the freshest fact — the step is named
+    // with what the runner that last attempted it lacked, and no act is offered (an `advance` from
+    // here would find nothing it may run — the walk's J9b dead end).
+    name: 'a capability-blocked auto step (marker), no registry: no act, the step named in the past tense',
+    build: async () => {
+      const d = wf('l6-capability', {
+        x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
+      });
+      const store = new InMemoryStore();
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      await advanceRun(store, d, { runId: run.id, registry: new ExtensionRegistry() });
+      return { store, d, runId: run.id };
+    },
+    cannot: [
+      "Cannot run 'x' (capability): handler 'missing_h' was not registered in the runner that last attempted it",
+    ],
+    status: 'blocked_on_capability',
+  },
+  {
     name: 'an agent step only: nothing owed to the engine',
     build: async () => {
       const d = wf('l6-agent', { a: { description: 'A', execution: 'agent', depends_on: [] } });
@@ -165,6 +192,7 @@ describe('#625 PR-2a — L6 Ownership on inspect and get_run_state', () => {
         expect(actOffered).toBe(false);
       }
       expect(lines.filter((l) => l.startsWith('Cannot run'))).toEqual(f.cannot ?? []);
+      if (f.status !== undefined) expect(summary.next_actions_status).toBe(f.status);
     });
   }
 });

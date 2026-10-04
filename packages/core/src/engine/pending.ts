@@ -89,7 +89,13 @@ export function checkPreClaim(args: {
         validateInputSchema(input, stepDef.input_schema, step);
       } catch (err) {
         if (err instanceof WorkflowError) {
-          return { refused_by: 'input_schema', refusal: err.message, error: err };
+          // decision C37: the refusal names the field and what it must be (the first validation
+          // message). `error` is the engine's own error, unchanged — `executeStep` returns it.
+          return {
+            refused_by: 'input_schema',
+            refusal: withFirstValidationMessage(err),
+            error: err,
+          };
         }
         throw err;
       }
@@ -98,7 +104,17 @@ export function checkPreClaim(args: {
     if (stepDef !== undefined) {
       const requirement = requirementForStep(step, stepDef, definition);
       if (requirement !== undefined) {
-        if (registry === undefined) return { unknown: 'capability' };
+        // decision C33: the freshest fact the caller has — its registry when it passes one; else
+        // the run's own `capability_blocks` marker for this step (history: what the runner that
+        // last attempted it lacked); else unknown.
+        if (registry === undefined) {
+          const marker = run.capability_blocks?.[step];
+          if (marker === undefined) return { unknown: 'capability' };
+          return {
+            refused_by: 'capability',
+            refusal: `${marker.requirement.kind} '${marker.requirement.name}' was not registered in the runner that last attempted it`,
+          };
+        }
         if (!registry.has(requirement.kind, requirement.name)) {
           return {
             refused_by: 'capability',
@@ -116,6 +132,23 @@ export function checkPreClaim(args: {
       ? { refused_by: stage, refusal, error: err as WorkflowError }
       : { refused_by: stage, refusal };
   }
+}
+
+/**
+ * `Invalid input for step 'x': 'n' must be number` — the engine's message, then the FIRST validation
+ * message with the field it names (decision C37). Total: an error with no usable detail keeps the
+ * engine's message alone. Never a submitted value — Ajv's `message` names only the rule.
+ */
+function withFirstValidationMessage(err: WorkflowError): string {
+  const errors = (err.details as { errors?: unknown } | undefined)?.errors;
+  const first = Array.isArray(errors)
+    ? (errors[0] as Record<string, unknown> | undefined)
+    : undefined;
+  const message = typeof first?.['message'] === 'string' ? first['message'] : undefined;
+  if (message === undefined) return err.message;
+  const path = typeof first?.['instancePath'] === 'string' ? first['instancePath'] : '';
+  const field = path === '' ? 'the input' : `'${path.slice(1).split('/').join('.')}'`;
+  return `${err.message}: ${field} ${message}`;
 }
 
 /**
@@ -150,6 +183,27 @@ export interface PendingView {
 
 const quoteList = (names: readonly string[]): string => names.map((n) => `'${n}'`).join(', ');
 
+/** `text.` — a full stop only when the text does not already end with one (decision C37). */
+export function withFullStop(text: string): string {
+  return text.endsWith('.') ? text : `${text}.`;
+}
+
+/**
+ * The words for an engine step that cannot run (decision C36): `cannot run here (capability)` — a
+ * runner with the handler or adapter could run it — and `cannot run (<check>)` for trust,
+ * precondition and input schema, which refuse it everywhere. Every surface prints these words.
+ */
+export function cannotRunWords(entry: EngineRunnable): string {
+  return entry.refused_by === 'capability'
+    ? 'cannot run here (capability)'
+    : `cannot run (${entry.refused_by ?? 'unknown'})`;
+}
+
+/** `'<s>' cannot run (<check>): <refusal>` — one engine step that cannot run, as every line names it. */
+export function cannotRunClause(entry: EngineRunnable): string {
+  return `'${entry.step}' ${cannotRunWords(entry)}: ${entry.refusal ?? ''}`;
+}
+
 /** The names the act stands for: guards first, then every `auto` step not refused. */
 export function owedNames(pending: PendingView): string[] {
   return [
@@ -161,6 +215,16 @@ export function owedNames(pending: PendingView): string[] {
 /** `'a', 'b'` — the owed names as every surface prints them. */
 export function owedList(pending: PendingView): string {
   return quoteList(owedNames(pending));
+}
+
+/**
+ * The words that agree with how many steps are owed (decision C37): `the step` / `the steps`, and
+ * `it` / `them` — so no surface says "runs them" of one step.
+ */
+export function owedWords(pending: PendingView): { steps: string; them: string } {
+  return owedNames(pending).length === 1
+    ? { steps: 'the step', them: 'it' }
+    : { steps: 'the steps', them: 'them' };
 }
 
 /**
@@ -204,13 +268,14 @@ export function describePending(
   const names = owedNames(view);
   if (names.length > 0) {
     const list = quoteList(names);
+    const { steps, them } = owedWords(view);
     view.act = {
       instruction: {
         tool: 'advance_run',
         params: { run_id: run.id },
         call_with: { run_id: run.id },
       },
-      human_readable: `Call advance_run to run the steps the engine owes: ${list}. It runs them with this server's extensions and environment.`,
+      human_readable: `Call advance_run to run ${steps} the engine owes: ${list}. It runs ${them} with this server's extensions and environment.`,
       orientation: `Run is active. Engine work is owed: ${list}.`,
     };
   }
@@ -231,7 +296,11 @@ export function composeNextActionsStatusWord(
   return pending.act !== undefined && pending.agent_steps.length === 0 ? ADVANCE_OWED : undefined;
 }
 
-/** The one sentence after `Step 'X' completed.` / `Gate 'G' resolved with choice 'c'.` */
+/**
+ * The one sentence after `Step 'X' completed.` / `Gate 'G' resolved with choice 'c'.`, and the
+ * nothing-ran reply: the agent steps ready, the engine's owed work, then each engine step that
+ * cannot run (decision C34); ` No step is ready.` only when nothing else is said.
+ */
 export function describeNext(pending: PendingView): string {
   let sentence = '';
   if (pending.agent_steps.length > 0) {
@@ -239,6 +308,9 @@ export function describeNext(pending: PendingView): string {
   }
   if (pending.act !== undefined) {
     sentence += ` Owed to the engine: ${owedList(pending)} — call advance_run.`;
+  }
+  for (const entry of pending.engine_runnable) {
+    if (entry.runnable_here === false) sentence += ` ${withFullStop(cannotRunClause(entry))}`;
   }
   return sentence.length > 0 ? sentence : ' No step is ready.';
 }

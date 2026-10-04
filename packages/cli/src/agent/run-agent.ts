@@ -11,6 +11,8 @@ import {
   executeEngineStep,
   describePending,
   describeClaimHolder,
+  cannotRunClause,
+  deriveRunPhase,
   buildNextActions,
   findCapabilityBlockedSteps,
   unmetCapabilities,
@@ -30,7 +32,13 @@ import {
   type TraceBufferStore,
   type StructuredOutputMeta,
 } from '@sensigo/realm';
-import type { RunRecord, WorkflowRegistrar, UsageRecord, Attributed } from '@sensigo/realm';
+import type {
+  RunRecord,
+  WorkflowRegistrar,
+  UsageRecord,
+  Attributed,
+  DriveFailureRecord,
+} from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
@@ -54,6 +62,27 @@ export type AgentRunResult = 'completed' | 'failed';
 export const IN_FLIGHT_POLL_MS = 1000;
 /** issue #625 PR-2a (D6.2): how long the loop watches an unchanged record before naming reclaim. */
 export const IN_FLIGHT_WATCH_MS = 60000;
+
+/**
+ * issue #401 chokepoint 4's wedge record for a validation rejection — ONE mint, used by the
+ * dispositions and by the drive's exit for an engine step refused on its input before its claim
+ * (issue #625 PR-2a, decision C31), so the two can never record the wedge differently.
+ */
+function validationWedgeEntry(
+  step: string,
+  provider: string,
+  errors: readonly string[],
+  attemptStartedAt: number,
+): DriveFailureRecord {
+  return {
+    at: new Date().toISOString(),
+    step,
+    provider,
+    error_class: 'validation_rejected',
+    message: sanitizeError(errors.join(', ')).slice(0, MESSAGE_CAP),
+    elapsed_ms: Date.now() - attemptStartedAt,
+  };
+}
 
 export interface AgentDeps {
   store: RunStore;
@@ -585,13 +614,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           }
           if (currentRun.terminal_state) break;
           if (currentRun.pending_gate !== undefined) continue;
-          // decisions C17, C23: an engine step that cannot run here (refused before its claim, or
-          // capability-blocked; nothing changed and the act is withdrawn) is named once per drive,
-          // and the loop goes on with the ready agent steps.
+          // decisions C17, C23: an engine step that cannot run (refused before its claim) or cannot
+          // run here (capability-blocked) — nothing changed and the act is withdrawn — is named once
+          // per drive, and the loop goes on with the ready agent steps. The words are core's
+          // (decision C36).
           for (const e of describePending(definition, currentRun, deps.registry).engine_runnable) {
             if (e.runnable_here === false && !reportedRefusals.has(e.step)) {
               reportedRefusals.add(e.step);
-              console.log(`• Step '${e.step}' cannot run here (${e.refused_by}): ${e.refusal}`);
+              console.log(`• Step ${cannotRunClause(e)}`);
             }
           }
         }
@@ -604,19 +634,20 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 (name) => definition.steps[name]?.execution === 'agent',
               );
         if (engineReply === undefined && eligible.length === 0) {
-          // decision C23: no agent step is ready, no engine step can run, and an owed engine step
-          // cannot run here — the drive's exit is today's. The first such step (definition order)
-          // takes the dispositions below with the engine's own reply: the capability block this
-          // drive holds for it, otherwise one attempt (write-free for the three checks before the
-          // claim; for capability, today's attempt after it). So the exit line, #401's chokepoint-4
-          // record and the `drive_failing` finding are what they were before #625.
+          // decisions C23, C31: no agent step is ready, no engine step can run, and an owed engine
+          // step cannot run — the drive stops on the FIRST such step (definition order).
           const view = describePending(definition, currentRun, deps.registry);
           const cannotRun = view.engine_runnable.filter((e) => e.runnable_here === false);
           if (cannotRun.length > 0 && view.act === undefined) {
             const first = cannotRun[0]!.step;
-            let exitReply = heldCapabilityReplies.get(first);
+            const preClaim = cannotRun[0]!.refused_by !== 'capability';
+            // capability (decision C23): the block's own exit — the capability block this drive
+            // holds for the step, otherwise one attempt after the claim (`→ [auto]`, then the block's
+            // `⚠ … re-attach` line). A refusal before the claim (decision C31) takes no attempt line
+            // and never enters the dispositions: the engine's refusal is read with one write-free call.
+            let exitReply = preClaim ? undefined : heldCapabilityReplies.get(first);
             if (exitReply === undefined) {
-              console.log(`→ [auto] ${first}`);
+              if (!preClaim) console.log(`→ [auto] ${first}`);
               currentStepName = first;
               attemptStartedAt = Date.now();
               exitReply = await executeEngineStep(deps.store, definition, {
@@ -630,13 +661,39 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
               });
             }
+            const refusedBeforeClaim =
+              preClaim &&
+              (exitReply.error_code === 'VALIDATION_TRUST_VALUE' ||
+                exitReply.error_code === 'VALIDATION_INPUT_SCHEMA' ||
+                (exitReply.status === 'blocked' &&
+                  exitReply.error_code !== 'STATE_STEP_ALREADY_CLAIMED'));
+            if (refusedBeforeClaim) {
+              // decision C31: the drive failure, recorded exactly as chokepoint 4 records it — an input
+              // schema refusal wedges the run with nothing on its record, so it is `validation_rejected`
+              // with the engine's own message and the step; trust and precondition record nothing, as
+              // before #625. No model call was made, so no usage rides along.
+              if (exitReply.error_code === 'VALIDATION_INPUT_SCHEMA') {
+                await recordDriveFailure(
+                  deps.store,
+                  runId,
+                  validationWedgeEntry(
+                    first,
+                    providerForEvidence ?? 'unknown',
+                    exitReply.errors,
+                    attemptStartedAt,
+                  ),
+                );
+              }
+              currentRun = await deps.store.get(runId);
+              console.error(
+                `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${cannotRun[0]!.refused_by}). ` +
+                  `Run ${runId} stays open (phase '${deriveRunPhase(currentRun)}'); to end it: realm run abandon ${runId}.`,
+              );
+              return 'failed';
+            }
             if (exitReply.status === 'error') {
               engineReply = exitReply;
               engineStep = first;
-            } else if (exitReply.status !== 'blocked') {
-              // The step became runnable between the view and the attempt, and ran: go on.
-              currentRun = await deps.store.get(runId);
-              continue;
             } else if (exitReply.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
               currentRun = await deps.store.get(runId);
               console.log(
@@ -644,10 +701,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               );
               continue;
             } else {
-              // A precondition refusal replies `blocked`, which the dispositions below pass over (a
-              // `blocked` reply prints `✓ → <phase>` and loops — before #625 this drive re-ran the
-              // step forever). The step is already named above; the drive ends here.
-              break;
+              // The step became runnable between the view and the attempt, and ran: go on.
+              currentRun = await deps.store.get(runId);
+              continue;
             }
           }
         }
@@ -1528,22 +1584,23 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // settled step on a still-live run is the common case.)
             //
             // Deliberately NOT keyed on `repairsUsed`: every bypass of the repair gate — a
-            // tools-path rejection, a concurrent writer's version bump, `schemaRetries: 0`, an
-            // AUTO step — arrives here with `repairsUsed === 0` and wedges just the same.
+            // tools-path rejection, a concurrent writer's version bump, `schemaRetries: 0` —
+            // arrives here with `repairsUsed === 0` and wedges just the same.
             //
-            // Applies to ALL execution kinds. An auto step's validation exit is write-free and
-            // pre-claim, which wedges the run identically to an agent step's.
+            // An auto step refused on its input before its claim no longer arrives here (issue #625
+            // PR-2a, decision C31): the drive's exit for a step that cannot run records that wedge
+            // itself, with the same fields, before this block.
             if (
               result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ||
               result.error_code === 'VALIDATION_INPUT_SCHEMA'
             ) {
               await recordDriveFailure(deps.store, runId, {
-                at: new Date().toISOString(),
-                step: stepName,
-                provider: providerForEvidence ?? 'unknown',
-                error_class: 'validation_rejected',
-                message: sanitizeError(result.errors.join(', ')).slice(0, MESSAGE_CAP),
-                elapsed_ms: Date.now() - attemptStartedAt,
+                ...validationWedgeEntry(
+                  stepName,
+                  providerForEvidence ?? 'unknown',
+                  result.errors,
+                  attemptStartedAt,
+                ),
                 // issue #600: a wedge carries every call of the exhausted repair budget. Nothing is
                 // attached when no call reported usage — the same rule as `attachBilledUsage`. Nor
                 // when the rejection belongs to a step `executeChain` ran AFTER this one: this step

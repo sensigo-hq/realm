@@ -1129,7 +1129,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     expect(secondPrompt).toContain('rejected by the input schema validator');
   });
 
-  it('test 5: auto-step never repairs — exactly one executeChain submission (one auto-banner print), no repair message', async () => {
+  it('test 5: auto-step never repairs — refused once before its claim (one cannot-run line, no attempt banner), no repair message', async () => {
     const def: WorkflowDefinition = {
       id: 'auto-repair-wf',
       name: 'Auto Repair WF',
@@ -1165,10 +1165,18 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     expect(result).toBe('failed');
     expect(provider.callStep).not.toHaveBeenCalled();
+    // issue #625 PR-2a (decision C31): a step refused before its claim is named once and never
+    // attempted — no `→ [auto]` banner (the step does not run); the one write-free read is not shown.
     const autoLines = logSpy.mock.calls
       .flat()
       .filter((l) => typeof l === 'string' && l.includes('→ [auto] finalize'));
-    expect(autoLines).toHaveLength(1);
+    expect(autoLines).toHaveLength(0);
+    const cannotLines = logSpy.mock.calls
+      .flat()
+      .filter(
+        (l) => typeof l === 'string' && l.startsWith("• Step 'finalize' cannot run (input_schema)"),
+      );
+    expect(cannotLines).toHaveLength(1);
     const printed = errorSpy.mock.calls.flat().join('\n');
     expect(printed).not.toContain('repairing');
     expect(printed).not.toContain('schema-repair');

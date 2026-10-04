@@ -1640,7 +1640,7 @@ describe('executeStep', () => {
       expect(actions).toHaveLength(1);
       expect(actions[0]!.instruction!.tool).toBe('advance_run');
       expect(actions[0]!.human_readable).toBe(
-        "Call advance_run to run the steps the engine owes: 'fetch-data'. It runs them with this server's extensions and environment.",
+        "Call advance_run to run the step the engine owes: 'fetch-data'. It runs it with this server's extensions and environment.",
       );
     });
   });

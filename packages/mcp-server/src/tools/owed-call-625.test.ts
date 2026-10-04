@@ -144,7 +144,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       },
     ]);
     expect(refused.next_actions).toEqual([]);
-    expect(refused.next_actions_status).toBe('ok');
+    // decision C33: this server cannot run the only owed step — said before any attempt.
+    expect(refused.next_actions_status).toBe('blocked_on_capability');
     // A registry provider that throws falls back to none — never a new failure on a poll.
     const fallback = await handleGetRunState(
       { run_id: run.id },
@@ -157,6 +158,58 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       },
     );
     expect(fallback.engine_runnable?.[0]?.runnable_here).toBe('unknown');
+  });
+
+  it('C33: the capability check reads the freshest fact — this registry, else the run marker, else unknown', async () => {
+    const { advanceRun } = await import('@sensigo/realm');
+    const { run } = await runStore.create({
+      workflowId: handlerDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    // An earlier runner that lacked the handler attempted the step: the marker is on the record.
+    await advanceRun(runStore, handlerDef, { runId: run.id, registry: new ExtensionRegistry() });
+    expect((await runStore.get(run.id)).capability_blocks?.['enrich']).toBeDefined();
+
+    // No registry: the marker is the freshest fact — refused, in the past tense, and no act.
+    const noRegistry = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
+    expect(noRegistry.engine_runnable).toEqual([
+      {
+        step: 'enrich',
+        runnable_here: false,
+        refused_by: 'capability',
+        refusal: "handler 'h' was not registered in the runner that last attempted it",
+      },
+    ]);
+    expect(noRegistry.next_actions).toEqual([]);
+    expect(noRegistry.next_actions_status).toBe('blocked_on_capability');
+
+    // A registry that HAS the handler wins over the old marker: runnable, the act, advance_owed.
+    const capable = new ExtensionRegistry();
+    capable.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) } as never);
+    const canRun = await handleGetRunState(
+      { run_id: run.id },
+      { runStore, workflowStore, registry: capable },
+    );
+    expect(canRun.engine_runnable).toEqual([{ step: 'enrich', runnable_here: true }]);
+    expect(canRun.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
+    expect(canRun.next_actions_status).toBe('advance_owed');
+    // The marker stays visible as history.
+    expect(canRun.capability_blocks?.map((b) => b.step)).toEqual(['enrich']);
+
+    // A registry that lacks it: refused here, no act, blocked_on_capability.
+    const lacks = await handleGetRunState(
+      { run_id: run.id },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(lacks.engine_runnable?.[0]).toEqual({
+      step: 'enrich',
+      runnable_here: false,
+      refused_by: 'capability',
+      refusal: "handler 'h' is not registered here",
+    });
+    expect(lacks.next_actions).toEqual([]);
+    expect(lacks.next_actions_status).toBe('blocked_on_capability');
   });
 
   it('start_run_batch: each started entry carries next_actions; no step runs', async () => {
