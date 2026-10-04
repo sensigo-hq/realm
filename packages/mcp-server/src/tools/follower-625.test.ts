@@ -5,7 +5,7 @@
 // Every server child gets a scratch HOME; nothing here reads or writes the real `~/.realm`.
 // `FOLLOWER_SERVER_ENTRY` points the cells at another build's `dist/server.js` (the red-first run).
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -452,6 +452,13 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       );
       expect(d['start_run_batch']).toBe(
         "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",
+      );
+      // decision C30.15: the package's own description counts the tools the server lists.
+      const pkg = JSON.parse(
+        readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+      ) as { description: string };
+      expect(pkg.description).toBe(
+        `MCP server for Realm — exposes ${tools.length} tools for AI agent connections over stdio or HTTP.`,
       );
     });
   }, 30000);
