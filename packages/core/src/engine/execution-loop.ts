@@ -6331,10 +6331,14 @@ function pickNextEngineStep(
   registry: ExtensionRegistry | undefined,
 ): string | undefined {
   const pending = describePending(definition, run, registry);
+  // Every step the view lets run comes first, so a call that names the owed steps runs all of them
+  // before it makes the one capability attempt that stops it (decision C23: a capability block is a
+  // step that cannot run here, like a refusal — it must not leave the act's own steps unrun).
+  const runnable = pending.engine_runnable.find((e) => e.runnable_here !== false);
+  if (runnable !== undefined) return runnable.step;
   const marked = new Set(findCapabilityBlockedSteps(run).map((b) => b.step));
-  return pending.engine_runnable.find(
-    (e) => e.runnable_here !== false || (e.refused_by === 'capability' && !marked.has(e.step)),
-  )?.step;
+  return pending.engine_runnable.find((e) => e.refused_by === 'capability' && !marked.has(e.step))
+    ?.step;
 }
 
 /** What the advance loop is given (issue #625 PR-2a). */
@@ -6920,6 +6924,17 @@ function withTakenClauses(hint: string, takenSteps: readonly string[]): string {
   );
 }
 
+/** The reply text of an `advanceRun` call that ran nothing, from the record it ends on (M10). */
+function nothingRanHint(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  registry: ExtensionRegistry,
+): string {
+  return run.terminal_state
+    ? `Run '${run.id}' is already terminal (${deriveRunPhase(run)}); nothing ran.`
+    : `Run '${run.id}': nothing ran.${describeNext(describePending(definition, run, registry))}`;
+}
+
 /** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */
 export interface AdvanceRunOptions {
   runId: string;
@@ -6963,7 +6978,6 @@ export async function advanceRun(
   const command = options.command ?? 'advance_run';
   const stored = await store.get(options.runId);
   const registry = options.registry ?? createDefaultRegistry();
-  const pending = describePending(definition, stored, registry);
   const chained: ChainedStepEntry[] = [];
   const depth0Warnings: string[] = [];
   const takenSteps: string[] = [];
@@ -6993,9 +7007,7 @@ export async function advanceRun(
         evidence: [],
         warnings: [],
         errors: [],
-        context_hint: stored.terminal_state
-          ? `Run '${options.runId}' is already terminal (${deriveRunPhase(stored)}); nothing ran.`
-          : `Run '${options.runId}': nothing ran.${describeNext(pending)}`,
+        context_hint: nothingRanHint(definition, stored, registry),
         run_phase: deriveRunPhase(stored),
         next_actions: stored.terminal_state ? [] : buildNextActions(definition, stored, registry),
       },
@@ -7007,17 +7019,15 @@ export async function advanceRun(
   // When nothing ran (no step, no guard), the hint is composed from the record the loop ends on:
   // a step another process took in the meantime (D3.2) is no longer owed here, and the reply's
   // `next_actions` already say so — the hint must not still name it.
-  let nothingRanHint: string | undefined;
+  let endHint: string | undefined;
   if (chained.length === 0 && advanced.status === 'ok') {
     const end = await store.get(options.runId).catch(() => stored);
-    nothingRanHint = end.terminal_state
-      ? `Run '${options.runId}' is already terminal (${deriveRunPhase(end)}); nothing ran.`
-      : `Run '${options.runId}': nothing ran.${describeNext(describePending(definition, end, registry))}`;
+    endHint = nothingRanHint(definition, end, registry);
   }
   const chainWarnings = [...depth0Warnings, ...chained.flatMap((c) => c.warnings ?? [])];
   const envelope = {
     ...advanced,
-    context_hint: withTakenClauses(nothingRanHint ?? advanced.context_hint, takenSteps),
+    context_hint: withTakenClauses(endHint ?? advanced.context_hint, takenSteps),
     command,
     ...(chainWarnings.length > 0
       ? { warnings: [...(advanced.warnings ?? []), ...chainWarnings] }

@@ -435,7 +435,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
     });
   });
 
-  it('capability with a registry: the first call attempts it once (the marker); the second skips it and runs the rest', async () => {
+  it('capability with a registry: the call runs every step the view lets run first, then attempts the unmarked capability step ONCE (the marker); the next call skips it', async () => {
     const d = def({
       a: { description: 'A', execution: 'auto', depends_on: [], handler: 'h' },
       b: { description: 'B', execution: 'auto', depends_on: [] },
@@ -443,16 +443,27 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
     await withStore(async (store) => {
       const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
       const reg = new ExtensionRegistry();
-      const first = await advanceRun(store, d, { runId: run.id, registry: reg });
-      expect(first.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
-      expect((await store.get(run.id)).capability_blocks?.['a']).toBeDefined();
+      // The act names only `b` (the view refuses `a` for capability)…
+      expect(describePending(d, run, reg).act?.human_readable).toContain("'b'");
       const steps: string[] = [];
-      const second = await advanceRun(store, d, {
+      const first = await advanceRun(store, d, {
         runId: run.id,
         registry: reg,
         onStep: (s) => steps.push(s),
       });
-      expect(steps).toEqual(['b']);
+      // …so the call runs `b` first, then makes the one attempt that writes `a`'s marker (C4, C23).
+      expect(steps).toEqual(['b', 'a']);
+      expect(first.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
+      const after = await store.get(run.id);
+      expect(after.completed_steps).toEqual(['b']);
+      expect(after.capability_blocks?.['a']).toBeDefined();
+      const again: string[] = [];
+      const second = await advanceRun(store, d, {
+        runId: run.id,
+        registry: reg,
+        onStep: (s) => again.push(s),
+      });
+      expect(again).toEqual([]);
       expect(second.status).toBe('ok');
       expect(describePending(d, await store.get(run.id), reg).act).toBeUndefined();
     });

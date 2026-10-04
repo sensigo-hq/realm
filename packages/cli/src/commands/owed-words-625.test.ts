@@ -183,6 +183,42 @@ describe('#625 PR-2a — realm run advance: the words', () => {
     }
   });
 
+  it('C23: the capability-once attempt during an advance is named as a step that cannot run here (capability), never "failed"; exit 1', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('cap-attempt-wf', {
+        x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
+        b: { description: 'B', execution: 'auto', depends_on: [] },
+        y: { description: 'Y', execution: 'agent', depends_on: [] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      expect(code).toBe(1);
+      expect(lines.slice(3)).toEqual([
+        "Owed to the engine: 'b'.",
+        // Every owed step runs first; then the one capability attempt (the marker) stops the call.
+        '→ b',
+        '→ x',
+        "Stopped: 'x' cannot run here (capability): handler 'missing_h' is not registered here",
+        `Stopped: agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}`,
+        `Run ${run.id}: phase 'running'`,
+      ]);
+      expect(lines.join('\n')).not.toContain('failed');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('C25: a step another process claimed during advance is said with the D6.1 line, never "cannot run here"', async () => {
     const { home, runs, workflows } = stores();
     try {
