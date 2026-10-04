@@ -19,7 +19,7 @@ describe('generateProtocol', () => {
     expect(protocol.steps.length).toBe(4);
 
     const fetchDoc = protocol.steps.find((s) => s.id === 'fetch_document')!;
-    expect(fetchDoc.agent_involvement).toContain('automatically');
+    expect(fetchDoc.agent_involvement).toContain('advance_run');
 
     const extractFields = protocol.steps.find((s) => s.id === 'extract_fields')!;
     expect(extractFields.agent_involvement).toContain('YOU execute');
@@ -52,7 +52,7 @@ describe('generateProtocol', () => {
   // default — `??` treats '' as "present," this must not.
   describe('quick_start — empty/whitespace-only falls back to the generated default (issue #178)', () => {
     const GENERATED_DEFAULT =
-      "Call start_run with workflow_id 'test-wf'. The engine handles all steps automatically. " +
+      "Call start_run with workflow_id 'test-wf'. The engine runs every step; when next_actions names advance_run, call it. " +
       'Follow the next_action in each response until the workflow completes.';
 
     it('protocol.quick_start: "" falls back to the generated default', () => {
@@ -235,7 +235,7 @@ describe('generateProtocol', () => {
 });
 
 // issue #425 — the summary sentence has three counts and three things that must agree with them.
-// It used to read "1 of 1 steps require agent action. 0 are handled automatically." Each cell
+// It used to read "1 of 1 steps require agent action. 0 are run by the engine." Each cell
 // below pins the WHOLE field, because a substring pin cannot see which count a verb agreed with.
 describe('generateProtocol — the summary agrees with its own counts (issue #425)', () => {
   function makeDef(steps: WorkflowDefinition['steps']): WorkflowDefinition {
@@ -257,7 +257,7 @@ describe('generateProtocol — the summary agrees with its own counts (issue #42
   it('1 of 1, zero auto — every singular in place, and the plural for zero', () => {
     const protocol = generateProtocol(makeDef({ a: agent('a') }));
     expect(protocol.agent_steps_summary).toBe(
-      '1 of 1 step requires agent action. 0 are handled automatically.',
+      '1 of 1 step requires agent action. 0 are run by the engine.',
     );
   });
 
@@ -265,14 +265,14 @@ describe('generateProtocol — the summary agrees with its own counts (issue #42
     // The plausible wrong fix keys the verb on totalSteps and produces "1 of 3 steps require".
     const protocol = generateProtocol(makeDef({ a: agent('a'), b: auto('b'), c: auto('c') }));
     expect(protocol.agent_steps_summary).toBe(
-      '1 of 3 steps requires agent action. 2 are handled automatically.',
+      '1 of 3 steps requires agent action. 2 are run by the engine.',
     );
   });
 
   it('2 of 3 with 1 auto — the second clause goes singular on its own count', () => {
     const protocol = generateProtocol(makeDef({ a: agent('a'), b: agent('b'), c: auto('c') }));
     expect(protocol.agent_steps_summary).toBe(
-      '2 of 3 steps require agent action. 1 is handled automatically.',
+      '2 of 3 steps require agent action. 1 is run by the engine.',
     );
   });
 });
@@ -425,7 +425,7 @@ describe('generateProtocol — trust value refusal (issue #508)', () => {
     );
     // 0 agent steps, 1 auto step (the refused one does not count toward either).
     expect(protocol.agent_steps_summary).toBe(
-      '0 of 2 steps require agent action. 1 is handled automatically.',
+      '0 of 2 steps require agent action. 1 is run by the engine.',
     );
   });
 

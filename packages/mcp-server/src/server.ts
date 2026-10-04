@@ -26,6 +26,7 @@ import { registerListWorkflows } from './tools/list-workflows.js';
 import { registerGetWorkflowProtocol } from './tools/get-workflow-protocol.js';
 import { registerStartRun } from './tools/start-run.js';
 import type { FailedAttemptStoreLike } from './tools/start-run.js';
+import { registerAdvanceRun } from './tools/advance-run.js';
 import { registerExecuteStep } from './tools/execute-step.js';
 import { registerSubmitHumanResponse } from './tools/submit-human-response.js';
 import { registerGetRunState } from './tools/get-run-state.js';
@@ -229,6 +230,8 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   registerStartRun(server, effectiveOptions);
   registerStartRunBatch(server, effectiveOptions);
   registerExecuteStep(server, { ...effectiveOptions, traceBufferStore, failedAttemptStore });
+  // issue #625 PR-2a: the one call that runs what the engine owes — beside execute_step, with its stores.
+  registerAdvanceRun(server, { ...effectiveOptions, traceBufferStore });
   registerSubmitHumanResponse(server, effectiveOptions);
   registerGetRunState(server, effectiveOptions);
   registerAbandonRun(server, effectiveOptions);

@@ -1,13 +1,12 @@
-// start-run tool — creates a new run and chains through initial auto steps.
+// start-run tool — creates a new run and runs its first automatic steps (advanceRun).
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   validateRunParams,
   JsonWorkflowStore,
   JsonFileStore,
-  executeChain,
+  advanceRun,
   buildNextActions,
-  findEligibleSteps,
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -15,7 +14,6 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
-  type StepDispatcher,
   type ResponseEnvelope,
   type RunStore,
   type TraceBufferStore,
@@ -70,9 +68,6 @@ export interface HandleRunStores {
    */
   driver?: Attributed;
 }
-
-// Fallback dispatcher for agent steps and auto steps without a registry entry.
-const passthroughDispatcher: StepDispatcher = async () => ({});
 
 /**
  * Business logic for the start_run tool.
@@ -169,42 +164,50 @@ export async function handleStartRun(
     });
   }
 
-  const eligible = findEligibleSteps(definition, run);
-  const firstAutoStep = eligible.find((name) => definition.steps[name]?.execution === 'auto');
-
-  if (firstAutoStep !== undefined) {
-    const result = await executeChain(runStore, definition, {
+  // issue #625 PR-2a (decision C1): ONLY the creating call runs work. A deduped match runs nothing
+  // — an idempotent create has no side effect on a match — and its reply names what the run owes
+  // (the agent steps, the advance act) through `buildNextActions` below.
+  if (!deduped) {
+    const result = await advanceRun(runStore, definition, {
       runId: run.id,
-      command: firstAutoStep,
-      input: params,
-      dispatcher: passthroughDispatcher,
+      command: 'start_run',
       ...(registry !== undefined ? { registry } : {}),
+      ...(stores?.traceBufferStore !== undefined
+        ? { traceBufferStore: stores.traceBufferStore }
+        : {}),
       ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
     });
-    // Source run_phase from the final run so the spread can't drop it.
-    const finalRun = await runStore.get(run.id).catch(() => run);
-    return {
-      ...result,
-      run_id: run.id,
-      data: {},
-      evidence: [],
-      run_phase: finalRun.run_phase,
-      warnings: [...result.warnings, ...warnings],
-      // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
-      // agent should not need a second call to learn that `on_terminal_match: 'rerun'` replaced a run.
-      ...(finalRun.rerun_of !== undefined
-        ? {
-            rerun_of: finalRun.rerun_of,
-            // walk 2: the hint is what an agent reads first; a supersede must be said there, not
-            // only carried as a key below the next_actions block.
-            context_hint: `${result.context_hint} This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`,
-          }
-        : {}),
-      deduped,
-    };
+    const ranSomething =
+      result.status !== 'ok' ||
+      result.chained_auto_steps !== undefined ||
+      result.run_version !== run.version;
+    if (ranSomething) {
+      // decision C10: the phase is derived from the record advanceRun leaves.
+      const finalRun = await runStore.get(run.id).catch(() => run);
+      return {
+        ...result,
+        run_id: run.id,
+        data: {},
+        evidence: [],
+        run_phase: deriveRunPhase(finalRun),
+        warnings: [...result.warnings, ...warnings],
+        // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
+        // agent should not need a second call to learn that `on_terminal_match: 'rerun'` replaced
+        // a run.
+        ...(finalRun.rerun_of !== undefined
+          ? {
+              rerun_of: finalRun.rerun_of,
+              // walk 2: the hint is what an agent reads first; a supersede must be said there, not
+              // only carried as a key below the next_actions block.
+              context_hint: `${result.context_hint} This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`,
+            }
+          : {}),
+        deduped,
+      };
+    }
   }
 
-  const nextActions = buildNextActions(definition, run);
+  const nextActions = run.terminal_state ? [] : buildNextActions(definition, run, registry);
   return {
     command: 'start_run',
     run_id: run.id,
@@ -231,7 +234,7 @@ export function registerStartRun(server: McpServer, opts?: HandleRunStores): voi
   markServedByTool(opts);
   server.tool(
     'start_run',
-    'Create a new workflow run and chain through initial auto steps.',
+    'Create a new workflow run and run its first automatic steps.',
     {
       workflow_id: z.string(),
       params: z.record(z.unknown()).optional().default({}),

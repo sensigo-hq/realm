@@ -15,7 +15,8 @@ import {
   WorkflowError,
 } from '@sensigo/realm';
 import { createRealmMcpServer } from './server.js';
-import { handleGetRunState } from './tools/get-run-state.js';
+import { handleGetRunState, registerGetRunState } from './tools/get-run-state.js';
+import { handleAdvanceRun, registerAdvanceRun } from './tools/advance-run.js';
 import { handleStartRun, registerStartRun } from './tools/start-run.js';
 import { handleAbandonRun } from './tools/abandon-run.js';
 import { handleListWorkflows } from './tools/list-workflows.js';
@@ -178,7 +179,7 @@ describe('H1 createRealmMcpServer', () => {
 });
 
 describe('a registry the server’s registry provider returned is named by the tool (round 4, walk Y6)', () => {
-  it('over MCP, the four tools that resolve a registry: each reply names its tool and the provider, never the handler', async () => {
+  it('over MCP, the six tools that resolve a registry: each reply names its tool and the provider, never the handler', async () => {
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
     const runStore = new JsonFileStore(dir);
@@ -216,6 +217,9 @@ describe('a registry the server’s registry provider returned is named by the t
         ['start_run_batch', { workflow_id: 'w', items: [{ params: {} }] }],
         ['execute_step', { run_id: started.run_id, command: 'a', params: {} }],
         ['submit_human_response', { run_id: started.run_id, gate_id: 'g', choice: 'x' }],
+        // issue #625 PR-2a: the two tools that now resolve a registry too.
+        ['get_run_state', { run_id: started.run_id }],
+        ['advance_run', { run_id: started.run_id }],
       ] as const) {
         const role = `the registry the server's registry provider returned for ${tool}`;
         const reply = await call(tool, args);
@@ -256,6 +260,8 @@ describe('a registry the server’s registry provider returned is named by the t
         registerSubmitHumanResponse,
         { run_id: started.run_id, gate_id: 'g', choice: 'x' },
       ],
+      ['get_run_state', registerGetRunState, { run_id: started.run_id }],
+      ['advance_run', registerAdvanceRun, { run_id: started.run_id }],
     ] as const) {
       // A fresh stores object per tool, registered with that tool alone: its own mark names it.
       const server = new McpServer({ name: 'host', version: '0.0.0' });
@@ -308,7 +314,7 @@ describe('H3 JsonTraceBufferStore', () => {
   });
 });
 
-describe('the registry rule at the four handlers that resolve a registry, the whole messages', () => {
+describe('the registry rule at the six handlers that resolve a registry, the whole messages', () => {
   it('handleStartRun, handleStartRunBatch, handleExecuteStep, handleSubmitHumanResponse', async () => {
     const runStore = new JsonFileStore(dir);
     const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
@@ -351,6 +357,13 @@ describe('the registry rule at the four handlers that resolve a registry, the wh
       ),
     ).toBe(
       mismatchText('The registry handed to handleSubmitHumanResponse', 'class ExtensionRegistry'),
+    );
+    // issue #625 PR-2a: get_run_state and advance_run resolve a registry too.
+    expect(await refusal(handleGetRunState({ run_id: started.run_id }, stores))).toBe(
+      mismatchText('The registry handed to handleGetRunState', 'class ExtensionRegistry'),
+    );
+    expect(await refusal(handleAdvanceRun({ run_id: started.run_id }, stores))).toBe(
+      mismatchText('The registry handed to handleAdvanceRun', 'class ExtensionRegistry'),
     );
     expect((await runStore.listRunIds()).size).toBe(1);
   });

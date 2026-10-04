@@ -12,8 +12,10 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
+  buildNextActions,
   type ResponseEnvelope,
   type RunPhase,
+  type NextAction,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
@@ -38,6 +40,11 @@ export interface StartRunBatchResult {
     terminal_reason?: string;
     /** Observational warnings (active-match / param-mismatch) — identical field name to the single-run path. */
     warnings: string[];
+    /**
+     * issue #625 PR-2a: what this run owes first — its agent steps, then the `advance_run` act when
+     * engine work is owed (`buildNextActions`). No step runs in this tool; empty for a terminal run.
+     */
+    next_actions: NextAction[];
   }>;
   /**
    * Items rejected by the idempotency policy (`on_terminal_match: 'reject'` / `on_live_match: 'fail'`).
@@ -201,6 +208,7 @@ export async function handleStartRunBatch(
       run_phase: derivedPhase,
       ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
       warnings,
+      next_actions: run.terminal_state ? [] : buildNextActions(definition, run, registry),
     });
   }
   if (dedupHits > 0) {
@@ -218,7 +226,7 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
   markServedByTool(opts);
   server.tool(
     'start_run_batch',
-    'Atomically enqueue multiple runs of the same workflow. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.',
+    "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",
     {
       workflow_id: z.string(),
       items: z.array(

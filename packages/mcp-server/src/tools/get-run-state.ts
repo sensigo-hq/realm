@@ -10,7 +10,6 @@ import {
   getWorkflowForRun,
   resolvePreExecutionAgentAction,
   buildNextActions,
-  findEligibleSteps,
   classifyInProgressClaims,
   findCapabilityBlockedSteps,
   classifyRunHealth,
@@ -20,6 +19,12 @@ import {
   describeClaimHolder,
   composeStepViews,
   composeDriveFailureCosts,
+  describePending,
+  composeNextActionsStatusWord,
+  assertRegistryLine,
+  ExtensionRegistry,
+  type ADVANCE_OWED,
+  type EngineRunnable,
   type RunPhase,
   type NextAction,
   type ClaimState,
@@ -33,7 +38,12 @@ import {
   type ActorAbsent,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
-import { assertToolStores, isReleaseLineRefusal } from './assert-tool-stores.js';
+import {
+  assertToolStores,
+  isReleaseLineRefusal,
+  markServedByTool,
+  registryRole,
+} from './assert-tool-stores.js';
 
 /** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
 function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
@@ -64,14 +74,24 @@ export interface HandleRunStateStores {
    * fresh JsonWorkflowStore so the function stays hermetic for tests/programmatic callers.
    */
   workflowStore?: JsonWorkflowStore;
+  /**
+   * issue #625 PR-2a (decision C8): the server's registry, so the run's view can judge the
+   * capability check (`describePending`). Absent ⇒ the capability check is `'unknown'` and the act
+   * stays offered.
+   */
+  registry?: ExtensionRegistry;
+  /** Per-definition registry resolution; wins over `registry`. A failure falls back to none. */
+  registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
 }
 
 /**
  * Diagnostic classification of `next_actions`:
- * - `ok` — next_actions reflects what to do next (may be empty for a healthy run with only
- *   downstream auto work that hasn't been triggered).
- * - `auto_pending` — eligible steps exist but are all `auto` (buildNextActions drops them); the run
- *   is making engine-side progress, not awaiting the agent.
+ * - `ok` — next_actions reflects what to do next (agent steps, then the `advance_run` act when
+ *   engine work is also owed); empty when nothing can run here (`engine_runnable` names each
+ *   refused step and why).
+ * - `advance_owed` — the only next work is the engine's: a guard is pending or an `auto` step can
+ *   run, and no agent step is ready. `next_actions` holds the one act, `advance_run` — call it.
+ *   (issue #625 PR-2a; replaces `auto_pending`, which told the caller the opposite.)
  * - `awaiting_human` — a human gate is open.
  * - `workflow_unresolved` — no workflow store provided, or the workflow is not registered.
  * - `skipped_terminal` — the run is terminal; nothing to do.
@@ -86,7 +106,7 @@ export interface HandleRunStateStores {
  */
 export type NextActionsStatus =
   | 'ok'
-  | 'auto_pending'
+  | typeof ADVANCE_OWED
   | 'awaiting_human'
   | 'workflow_unresolved'
   | 'skipped_terminal'
@@ -276,6 +296,14 @@ export interface RunStateSummary {
    * `drive_failures.entries` — see `composeDriveFailureCosts`'s own doc.
    */
   drive_failure_costs?: DriveFailureCost[];
+  /** issue #625 PR-2a: guards the engine owes (a call to `advance_run` settles them); absent when none. */
+  pending_guards?: string[];
+  /**
+   * issue #625 PR-2a: each eligible `auto` step the engine could run, judged for this server's
+   * registry — `runnable_here` false names the check that refuses it (`refused_by`, `refusal`);
+   * `'unknown'` when the server has no registry to judge the capability check. Absent when none.
+   */
+  engine_runnable?: EngineRunnable[];
 }
 
 /**
@@ -323,7 +351,7 @@ export async function handleGetRunState(
 
   // Compute next_actions + diagnostic status (read-only). Precedence:
   // terminal → skipped_terminal; gate open → awaiting_human; no/unresolved workflow →
-  // workflow_unresolved; else buildNextActions/findEligibleSteps → ok | auto_pending.
+  // workflow_unresolved; else describePending → ok | advance_owed (issue #625 PR-2a).
   // `definition` is hoisted (issue #221) so classifyRunHealth below can reuse it when resolved —
   // scoping/resolution logic here is otherwise UNCHANGED.
   let nextActions: NextAction[] = [];
@@ -331,6 +359,7 @@ export async function handleGetRunState(
   let definition: WorkflowDefinition | undefined;
   // issue #558 PR-T — the failure the definition read produced, when it produced one.
   let definitionError: { code: string; message: string; class?: string } | undefined;
+  let pending: ReturnType<typeof describePending> | undefined;
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
   } else if (run.pending_gate !== undefined) {
@@ -356,22 +385,32 @@ export async function handleGetRunState(
     if (definition === undefined) {
       nextActionsStatus = 'workflow_unresolved';
     } else {
-      const na = buildNextActions(definition, run);
-      const eligible = findEligibleSteps(definition, run);
-      if (na.length > 0) {
-        nextActions = na;
-        nextActionsStatus = 'ok';
-      } else if (eligible.length > 0) {
-        // Eligible steps exist but are all auto (buildNextActions drops them).
-        nextActionsStatus = 'auto_pending';
-      } else {
-        nextActionsStatus = 'ok';
+      // issue #625 PR-2a (decision C8): the registry the server resolves for every other tool, so
+      // the capability check is judged; a failure falls back to none (`'unknown'`), except a
+      // release-line refusal, which every registry-resolving tool raises.
+      let registry: ExtensionRegistry | undefined;
+      try {
+        registry =
+          stores?.registryProvider !== undefined
+            ? await stores.registryProvider(definition)
+            : stores?.registry;
+        assertRegistryLine(
+          registry,
+          registryRole(stores, 'get_run_state', 'handleGetRunState'),
+          ExtensionRegistry,
+        );
+      } catch (err) {
+        if (isReleaseLineRefusal(err)) throw err;
+        registry = undefined;
       }
+      pending = describePending(definition, run, registry);
+      nextActions = buildNextActions(definition, run, registry);
+      nextActionsStatus = composeNextActionsStatusWord(pending) ?? 'ok';
     }
 
     // Wedge detection (issue #101) — definition-free (reads the stored per-claim deadline), so it
     // also refines the `workflow_unresolved` path. Carves the wedge states OUT of the
-    // 'ok'/'auto_pending'/'workflow_unresolved' fall-through:
+    // 'ok'/'advance_owed'/'workflow_unresolved' fall-through:
     //  - a `claim_stale` claim (past deadline → likely-dead runner) is surfaced even mid-fan-out;
     //  - when only unknown-age claims remain and there is nothing else to do, surface
     //    `claim_unknown_age` (detect-only). A `healthy` in-flight claim (a live runner) stays 'ok'.
@@ -558,12 +597,19 @@ export async function handleGetRunState(
     ...(args.include_steps === true && run.drive_failures !== undefined
       ? { drive_failure_costs: composeDriveFailureCosts(run) }
       : {}),
+    ...(pending !== undefined && pending.pending_guards.length > 0
+      ? { pending_guards: pending.pending_guards }
+      : {}),
+    ...(pending !== undefined && pending.engine_runnable.length > 0
+      ? { engine_runnable: pending.engine_runnable }
+      : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
 /** Registers the get_run_state MCP tool on the server. */
 export function registerGetRunState(server: McpServer, opts?: HandleRunStateStores): void {
+  markServedByTool(opts);
   server.tool(
     'get_run_state',
     'Get the current state summary of a workflow run. Pass include_steps: true for each ' +
@@ -593,6 +639,12 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
                 evidence: [],
                 warnings: [],
                 errors: [message],
+                // issue #625 PR-2a: the code and details, as every other tool's error reply — a
+                // release-line refusal from the registry this tool now resolves names its role there.
+                ...(err instanceof WorkflowError ? { error_code: err.code } : {}),
+                ...(err instanceof WorkflowError && Object.keys(err.details).length > 0
+                  ? { error_details: err.details }
+                  : {}),
                 agent_action: agentAction,
                 context_hint: contextHint,
                 next_actions: [],
