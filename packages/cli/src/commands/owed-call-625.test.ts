@@ -182,4 +182,50 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 60000);
+
+  it('drain --expired --force that leaves the run open names the owed call after its line', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'realm-owed-cli-625-'));
+    try {
+      const d: WorkflowDefinition = {
+        id: 'cli-expiry-owed-wf',
+        name: 'cli expiry owed',
+        version: 1,
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+        steps: {
+          confirm: {
+            description: 'Confirm.',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            gate: {
+              choices: ['approve', 'reject'],
+              timeout_seconds: 1,
+              on_expiry: 'settle_default',
+              default_choice: 'approve',
+            },
+          },
+          after: { description: 'After.', execution: 'auto', depends_on: ['confirm'] },
+          finish: { description: 'Finish.', execution: 'agent', depends_on: ['after'] },
+        },
+      };
+      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(d);
+      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      await executeStep(runs, d, {
+        runId: run.id,
+        command: 'confirm',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+      await new Promise((r) => setTimeout(r, 1300));
+      const drained = realm(home, ['run', 'drain', run.id, '--expired', '--force']);
+      expect(drained.status).toBe(0);
+      expect(drained.stdout).toContain(
+        `Run '${run.id}' is not terminal (phase: 'running') — nothing further to drain.\n` +
+          `To run the steps the engine owes ('after'): realm run advance ${run.id}.`,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 60000);
 });
