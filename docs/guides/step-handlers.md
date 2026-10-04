@@ -111,7 +111,7 @@ realm workflow register ./
 Start a run with a quantity of 4, with whichever driver you use. The engine runs `total` in the first call, and the next step's prompt shows the result:
 
 ```text
-Step 'total' completed. 1 step(s) now available.
+Step 'total' completed. Ready for the agent: 'confirm'.
 
 The total is 50. Does that look right?
 ```

@@ -121,20 +121,20 @@ A run ID that is not in the store gets a reply with `status: "error"` and the me
 
 ## `next_actions_status`
 
-| Value                   | Means                                                                                                  | `next_actions`                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| `ok`                    | `next_actions` says what to do next.                                                                   | The steps that can be called. It can be empty. |
-| `awaiting_human`        | A gate is open.                                                                                        | Empty.                                         |
-| `skipped_terminal`      | The run has ended.                                                                                     | Empty.                                         |
-| `advance_owed`          | The only work that can run is the engine's: a guard is pending or an `auto` step can run here.         | The one act, `advance_run`.                    |
-| `blocked_on_capability` | A step needs a handler or an adapter that this server does not have.                                   | Empty, or the agent steps that are ready.      |
-| `claim_stale`           | A step was started, did not finish, and is past its time. The process running it has probably died.    | Any other steps that can be called.            |
-| `claim_unknown_age`     | A step was started and did not finish, Realm has no time limit for it, and nothing else can be called. | Empty.                                         |
-| `workflow_unresolved`   | The run's workflow cannot be read, so Realm cannot work out the next step.                             | Empty.                                         |
+| Value                   | Means                                                                                                                                                                                                                          | `next_actions`                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `ok`                    | `next_actions` says what to do next.                                                                                                                                                                                           | The steps that can be called. It can be empty. |
+| `awaiting_human`        | A gate is open.                                                                                                                                                                                                                | Empty.                                         |
+| `skipped_terminal`      | The run has ended.                                                                                                                                                                                                             | Empty.                                         |
+| `advance_owed`          | The only work that can run is the engine's: a guard is pending or an `auto` step can run here.                                                                                                                                 | The one act, `advance_run`.                    |
+| `blocked_on_capability` | An owed step needs a handler or an adapter that this server does not have, and nothing else is owed to the engine. Without extensions, the run's record of its last attempt decides. A server that has it says `advance_owed`. | Empty, or the agent steps that are ready.      |
+| `claim_stale`           | A step was started, did not finish, and is past its time. The process running it has probably died.                                                                                                                            | Any other steps that can be called.            |
+| `claim_unknown_age`     | A step was started and did not finish, Realm has no time limit for it, and nothing else can be called.                                                                                                                         | Empty.                                         |
+| `workflow_unresolved`   | The run's workflow cannot be read, so Realm cannot work out the next step.                                                                                                                                                     | Empty.                                         |
 
 When more than one applies, `awaiting_human` comes first, then `blocked_on_capability`, then `claim_stale`.
 
-`ok` with an empty `next_actions` on an open run means nothing can be called here at the moment: a step is in flight elsewhere, or every step the engine owes is refused on this server — `engine_runnable` names each with `refused_by` and `refusal`. A guard that is ready and that no write has decided is owed work: the status is `advance_owed` and `next_actions` holds `advance_run` (see `guard_awaiting_settlement` below).
+`ok` with an empty `next_actions` on an open run means nothing can be called here at the moment: a step is in flight elsewhere, or every step the engine owes cannot run (an invalid `trust`, a failed precondition, an input its schema refuses) — `engine_runnable` names each with `refused_by` and `refusal`. The capability check reads the freshest fact the server has: its own extensions; with none, the run's `capability_blocks` record of the last attempt (`refusal`: `handler '<name>' was not registered in the runner that last attempted it`); otherwise `runnable_here: "unknown"`. A guard that is ready and that no write has decided is owed work: the status is `advance_owed` and `next_actions` holds `advance_run` (see `guard_awaiting_settlement` below).
 
 ## `include_steps`
 

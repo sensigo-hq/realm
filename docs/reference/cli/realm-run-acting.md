@@ -108,7 +108,18 @@ Stopped: agent steps are ready: 'finish' — drive them with realm agent --run-i
 Run <id>: phase 'running'
 ```
 
-`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run here (`'<step>' cannot run here (<check>): <why>`), agent steps ready (with the `realm agent --run-id` command), and otherwise `nothing is ready to run now`. A step another process took while this one was about to run it is said as a fact, `• Step '<step>' was taken by <program> at <time>; not run here.`, and the command goes on with what is left. When nothing is owed, the last preview line is `Nothing is owed to the engine: <reasons>.` and nothing runs. Exit code 1 when a step failed or was refused, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
+The preview's `project code` words compare the code this program loaded with what the run last recorded:
+
+| Words                                       | Means                                                                                                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `same as the run's last record`             | The same files with the same hashes.                                                                                                                                         |
+| `differs from the run's last record`        | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override changed.                                                     |
+| `not comparable with the run's last record` | One side records project code and the other does not, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |
+| `neither side records project code`         | Neither the run nor this program loaded project code.                                                                                                                        |
+
+When another program holds an owed step, the preview says so before anything runs: `In flight: '<step>' is in flight, taken by <program> since <time>.`
+
+`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks), agent steps ready (with the `realm agent --run-id` command), each step another program holds (`'<step>' is in flight, taken by <program> since <time>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. A step another process took while this one was about to run it is said as a fact, `• Step '<step>' was taken by <program> at <time>; not run here.`, and the command goes on with what is left. When nothing is owed, the last preview line is `Nothing is owed to the engine: <reasons>.` and nothing runs. Exit code 1 when a step failed or cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
 
 ## `resume`
 

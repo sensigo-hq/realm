@@ -100,28 +100,33 @@ Result (classify):
 | `Run ID`                                              | At the start                                         | The run, new or continued.                                                                             |
 | `→ [agent] <step>` or `→ [auto] <step>`               | A step starts                                        | The step, and under an agent step its `description`.                                                   |
 | `✓ → <phase>`                                         | A step completes                                     | The run's phase after it.                                                                              |
+| `• Step '<step>' cannot run (<check>): <why>`         | An `auto` step cannot run                            | Printed once per drive; the drive goes on with any agent step that is ready. See below.                |
 | `⚠ output rejected (<code>); repairing (attempt n/m)` | The model's answer was refused and it is asked again | The error code, and which of the `--schema-retries` attempts this is.                                  |
 | `⏸  Gate: <step> \| ID: <gate-id>`                    | The run reaches a human gate                         | The answer waiting for approval, then one `realm run respond` command for each choice.                 |
 | `Run complete: <run-id>`                              | The run completes                                    | The run.                                                                                               |
 | `Result (<step>)`                                     | The run completes                                    | The last agent step's answer, through that step's `display` template if it has one, otherwise as JSON. |
 | `✗ Step '<step>' …`                                   | The run cannot go on                                 | The reason. See [When it stops](#when-it-stops).                                                       |
 
-At a gate, `realm agent` waits until the gate is answered, by `realm run respond` from another terminal or by any other means, and then carries on. If the project's `realm.yaml` sets up Slack, the gate is also posted there. See [Answer gates from Slack](../../guides/slack-gates.md).
+At a gate, `realm agent` waits until the gate is answered, by `realm run respond` from another terminal or by any other means, and then carries on: it runs the guards and `auto` steps the answer leaves owed (`→ [auto] <step>`), then the next agent step.
+
+An `auto` step that cannot run is named once with the check that refused it: `• Step '<step>' cannot run (<check>): <why>` for an invalid `trust`, a failed precondition or an input its schema rejects (the refusal names the field and what it must be), and `• Step '<step>' cannot run here (capability): <why>` for a handler or adapter this program has not registered. The step is not run, and the drive goes on with any agent step that is ready. If the project's `realm.yaml` sets up Slack, the gate is also posted there. See [Answer gates from Slack](../../guides/slack-gates.md).
 
 When the `@sensigo/realm` the workflow's code imports is not the version the command runs, the command prints [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and goes on. This was added after version 0.45.0.
 
 ## When it stops
 
-`realm agent` stops with exit code 1 when a step cannot be completed. The line that starts with `✗` gives the reason:
+`realm agent` stops with exit code 1 when a step cannot be completed. The line that starts with `✗` (`⚠` for a missing handler or adapter) gives the reason:
 
-| Case                                       | Line                                                                                         | The run afterwards  |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------- |
-| The model's answer was refused every time  | `✗ Step 'classify' failed: Invalid input for step 'classify' after 1 schema-repair attempts` | Open, in `running`. |
-| The same, with `--schema-retries 0`        | `✗ Step 'classify' failed: Invalid input for step 'classify'`                                | Open, in `running`. |
-| The provider could not be reached          | `✗ Step 'classify' LLM call failed: Connection error.`                                       | Open, in `running`. |
-| A request took longer than `--llm-timeout` | `✗ Step 'classify' LLM call failed: Request timed out.`                                      | Open, in `running`. |
-| The provider refused the request           | `✗ Step 'classify' LLM call failed: 401 Incorrect API key provided: …`                       | Open, in `running`. |
-| An `auto` step failed                      | `✗ Step 'file' failed: Handler 'file_ticket' threw: the filing system is down`               | Ended, in `failed`. |
+| Case                                                                        | Line                                                                                                                                                                                       | The run afterwards  |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
+| The model's answer was refused every time                                   | `✗ Step 'classify' failed: Invalid input for step 'classify' after 1 schema-repair attempts`                                                                                               | Open, in `running`. |
+| The same, with `--schema-retries 0`                                         | `✗ Step 'classify' failed: Invalid input for step 'classify'`                                                                                                                              | Open, in `running`. |
+| The provider could not be reached                                           | `✗ Step 'classify' LLM call failed: Connection error.`                                                                                                                                     | Open, in `running`. |
+| A request took longer than `--llm-timeout`                                  | `✗ Step 'classify' LLM call failed: Request timed out.`                                                                                                                                    | Open, in `running`. |
+| The provider refused the request                                            | `✗ Step 'classify' LLM call failed: 401 Incorrect API key provided: …`                                                                                                                     | Open, in `running`. |
+| An `auto` step failed                                                       | `✗ Step 'file' failed: Handler 'file_ticket' threw: the filing system is down`                                                                                                             | Ended, in `failed`. |
+| Nothing else can run, and an `auto` step is refused before it is claimed    | `✗ The drive stops: nothing else can run, and 'file' cannot run (input_schema). Run 50e31961-… stays open (phase 'running'); to end it: realm run abandon 50e31961-….`                     | Open, in `running`. |
+| Nothing else can run, and an `auto` step needs a handler this program lacks | ``⚠ Step 'file' is blocked: handler 'file_ticket' is not registered in this runner. The run is NOT failed — add handler 'file_ticket' and re-attach (`realm agent --run-id 50e31961-…`).`` | Open, in `running`. |
 
 In the first five cases nothing was recorded as the step's answer. The run's record keeps the failure under `Drive failures`, and `realm run list --stuck` lists the run with `drive_failing` and the kind of failure. Continue the run with `--run-id` when the cause is fixed.
 

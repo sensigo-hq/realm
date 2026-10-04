@@ -32,7 +32,7 @@ A run moves only when something calls the engine. On each call the engine does t
 Here is the start of a real run of the pull-request review example. The first step is `auto`, so the engine ran it inside the very first call:
 
 ```text
-start_run     →  Step 'fetch_pr' completed. 1 step(s) now available.
+start_run     →  Step 'fetch_pr' completed. Ready for the agent: 'write_review'.
 ```
 
 The reply then names the one step the agent may run, `write_review`, with its task and its schema.

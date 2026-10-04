@@ -329,7 +329,7 @@ A step with a gate:
   "run_id": "7da561ee-5987-497d-83a5-1eded6dc9b63",
   "run_version": 6,
   "status": "ok",
-  "context_hint": "Gate 'draft' resolved with choice 'send'. 1 step(s) now available.",
+  "context_hint": "Gate 'draft' resolved with choice 'send'. Owed to the engine: 'send' — call advance_run.",
   "run_phase": "running",
   "next_actions": ["…"]
 }
@@ -578,7 +578,7 @@ Runs the guards and `auto` steps a run owes, in the environment of the server th
 | --------- | ------ | -------- | -------- |
 | `run_id`  | string | yes      | The run. |
 
-The reply has the same shape as a step's: `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled, and when a step opens a question the reply is `confirm_required` with the gate. It also carries `continued_by`: the name of the program that ran the steps (`{ by: null, absent_cause: 'driver_not_recorded' }` when the host passed none). A call with nothing owed runs nothing and returns the run's view — never an error. A step another process holds when this call tries to claim it is not run here, and the reply's `context_hint` ends with `'<step>' was claimed by another process, so it did not run here.` A step this server cannot run (a missing handler or adapter, an invalid `trust`, a failed precondition, an input its schema refuses) is not run; `get_run_state`'s `engine_runnable` names it and why, and the act is no longer offered for it. A handler or adapter that is not registered is attempted once, after every other owed step, so the run records which one is missing; that reply is an error, and its `next_actions` no longer offer the act for that step. An unknown argument is named in `warnings` (`advance_run: unknown argument 'x' was ignored.`).
+The reply has the same shape as a step's: `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled, and when a step opens a question the reply is `confirm_required` with the gate. It also carries `continued_by`: the name of the program that ran the steps (`{ by: null, absent_cause: 'driver_not_recorded' }` when the host passed none). A call with nothing owed runs nothing and returns the run's view — never an error. Its `context_hint` says why: `Run '<id>': nothing ran.`, then the agent steps that are ready, the work still owed, and each step that cannot run (`'<step>' cannot run (<check>): <why>.`, or `cannot run here (capability)` for a handler or adapter this server lacks); `No step is ready.` only when none of these holds. A step another process holds when this call tries to claim it is not run here, and the reply's `context_hint` ends with `'<step>' was claimed by another process, so it did not run here.` A step that cannot run (an invalid `trust`, a failed precondition, an input its schema refuses — the refusal names the field and what it must be) or cannot run here (a handler or adapter this server lacks) is not run; `get_run_state`'s `engine_runnable` names it and why, and the act is no longer offered for it. A handler or adapter that is not registered is attempted once, after every other owed step, so the run records which one is missing; that reply is an error, and its `next_actions` no longer offer the act for that step. An unknown argument is named in `warnings` (`advance_run: unknown argument 'x' was ignored.`).
 
 The act in `next_actions` reads:
 
@@ -589,7 +589,7 @@ The act in `next_actions` reads:
     "params": { "run_id": "<run>" },
     "call_with": { "run_id": "<run>" }
   },
-  "human_readable": "Call advance_run to run the steps the engine owes: 'post_approval'. It runs them with this server's extensions and environment.",
+  "human_readable": "Call advance_run to run the step the engine owes: 'post_approval'. It runs it with this server's extensions and environment.",
   "orientation": "Run is active. Engine work is owed: 'post_approval'."
 }
 ```
