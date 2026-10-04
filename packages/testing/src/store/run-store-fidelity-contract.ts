@@ -16,20 +16,35 @@ import { crossCopyNote } from './cross-copy-note.js';
 import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
   WorkflowError,
+  type Attributed,
+  type EvidenceSnapshot,
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 
-/** One of the two laws every `RunStore` implementation should be run against (issue #188). */
-export type RunStoreFidelityLaw =
-  | 'FIDELITY_HONESTY'
-  | 'CLAIM_SINGLE_OWNER'
-  /** issue #367 — the seal arm survives a proper terminal write byte-for-byte. */
-  | 'SEALED_BY_ROUNDTRIP'
-  /** issue #620 PR-C — the store's declared release line is its errors' line. */
-  | 'STORE_RELEASE_LINE_TRUE';
+/**
+ * The laws every `RunStore` implementation should be run against — EXPORTED as a const so a wiring
+ * file can derive the list it runs from it (issue #625): a law added here then runs everywhere the
+ * contract is wired, or is named, with a reason, in that file's `NOT_RUN` list. The members, in
+ * order: `FIDELITY_HONESTY` and `CLAIM_SINGLE_OWNER` (issue #188), `SEALED_BY_ROUNDTRIP` (issue
+ * #367 — the seal arm survives a proper terminal write byte-for-byte), `CLAIM_NAMES_HOLDER` (issue
+ * #625 — a claim reads back with the program that took the step and when),
+ * `EVIDENCE_KEEPS_DRIVER_AND_PROOF` (issue #625 — the program that did a step's work and the proof
+ * on an answer's entry survive a round trip) and `STORE_RELEASE_LINE_TRUE` (issue #620 PR-C — the
+ * store's declared release line is its errors' line).
+ */
+export const RUN_STORE_FIDELITY_LAWS = [
+  'FIDELITY_HONESTY',
+  'CLAIM_SINGLE_OWNER',
+  'SEALED_BY_ROUNDTRIP',
+  'CLAIM_NAMES_HOLDER',
+  'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
+  'STORE_RELEASE_LINE_TRUE',
+] as const;
+
+export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -53,6 +68,61 @@ export interface RunStoreFidelityContractAdapter {
    */
   definition: WorkflowDefinition;
   stepName: string;
+}
+
+/** The program the holder laws name — a synthetic label, never a real host or user. */
+const TCK_CLAIMANT: Attributed = { by: 'tck-program', by_source: 'stated', channel: 'tck' };
+
+/**
+ * `CLAIM_NAMES_HOLDER`'s one assertion: the step's claim carries a `since` inside the bracket
+ * [before, after] taken around the claiming call (`since` is the STORE's own act, at the write that
+ * creates the claim), and carries the claimant as `holder` — or, when none was passed, no `holder`
+ * key at all.
+ */
+function assertClaimNames(
+  record: RunRecord,
+  stepName: string,
+  claimant: Attributed | undefined,
+  before: number,
+  after: number,
+  where: string,
+): void {
+  const claim = record.claims?.[stepName];
+  if (claim === undefined) {
+    throw new Error(
+      `CLAIM_NAMES_HOLDER (${where}): the store wrote no claim for step '${stepName}'`,
+    );
+  }
+  if (typeof claim.since !== 'string') {
+    throw new Error(
+      `CLAIM_NAMES_HOLDER (${where}): the claim carries no 'since' — a store stamps it on EVERY ` +
+        `claim, in the write that creates it (got ${JSON.stringify(claim.since)})`,
+    );
+  }
+  const at = Date.parse(claim.since);
+  if (!(at >= before && at <= after)) {
+    throw new Error(
+      `CLAIM_NAMES_HOLDER (${where}): 'since' ${claim.since} is outside the bracket around the ` +
+        `claiming call (${new Date(before).toISOString()} .. ${new Date(after).toISOString()}) — ` +
+        "it is the store's own act, stamped at the claim write",
+    );
+  }
+  if (claimant === undefined) {
+    if ('holder' in claim) {
+      throw new Error(
+        `CLAIM_NAMES_HOLDER (${where}): a claim made with no claimant must carry no 'holder' ` +
+          `(got ${JSON.stringify(claim.holder)})`,
+      );
+    }
+    return;
+  }
+  if (JSON.stringify(claim.holder) !== JSON.stringify(claimant)) {
+    throw new Error(
+      `CLAIM_NAMES_HOLDER (${where}): expected holder ${JSON.stringify(claimant)}, got ` +
+        `${JSON.stringify(claim.holder)} — claimStep's fourth argument must be written as ` +
+        '`claims[step].holder`',
+    );
+  }
 }
 
 /**
@@ -208,6 +278,128 @@ export function runStoreFidelityContract(
       },
     });
   }
+
+  // issue #625 (the holder slice) — CLAIM_NAMES_HOLDER. Active only for a store that keeps claims
+  // (`persistsClaims === true`): a store that keeps none has nothing to name a holder ON, and says
+  // so by name rather than passing silently. The case name follows the fenced trace-buffer
+  // contract's skip idiom — `SKIPPED — <reason>: <name>` — so a wiring run lists it.
+  if (adapter.store.persistsClaims === true) {
+    cases.push(
+      {
+        law: 'CLAIM_NAMES_HOLDER',
+        name: 'a claim made with a claimant reads back with that holder and a since — returned and re-read',
+        run: async () => {
+          const { run } = await adapter.store.create({
+            workflowId: `tck-holder-${Math.random().toString(36).slice(2)}`,
+            workflowVersion: 1,
+            params: {},
+          });
+          const before = Date.now();
+          const claimed = await adapter.store.claimStep(
+            run.id,
+            adapter.stepName,
+            adapter.definition,
+            TCK_CLAIMANT,
+          );
+          const after = Date.now();
+          assertClaimNames(
+            claimed,
+            adapter.stepName,
+            TCK_CLAIMANT,
+            before,
+            after,
+            'the returned record',
+          );
+          assertClaimNames(
+            await adapter.store.get(run.id),
+            adapter.stepName,
+            TCK_CLAIMANT,
+            before,
+            after,
+            'a re-read of the stored record',
+          );
+        },
+      },
+      {
+        law: 'CLAIM_NAMES_HOLDER',
+        name: 'a claim made WITHOUT a claimant reads back with a since and NO holder',
+        run: async () => {
+          const { run } = await adapter.store.create({
+            workflowId: `tck-holder-${Math.random().toString(36).slice(2)}`,
+            workflowVersion: 1,
+            params: {},
+          });
+          const before = Date.now();
+          await adapter.store.claimStep(run.id, adapter.stepName, adapter.definition);
+          const after = Date.now();
+          assertClaimNames(
+            await adapter.store.get(run.id),
+            adapter.stepName,
+            undefined,
+            before,
+            after,
+            'a re-read of the stored record',
+          );
+        },
+      },
+    );
+  } else {
+    cases.push({
+      law: 'CLAIM_NAMES_HOLDER',
+      name: "SKIPPED — store does not declare 'persistsClaims': claim holder round-trip",
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    });
+  }
+
+  // issue #625 — EVIDENCE_KEEPS_DRIVER_AND_PROOF. Always active: every store round-trips evidence.
+  cases.push({
+    law: 'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
+    name: 'an entry written with driven_by and a gate_response entry written with claim_proof read back with both',
+    run: async () => {
+      const { run } = await adapter.store.create({
+        workflowId: `tck-evidence-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base: EvidenceSnapshot = {
+        step_id: adapter.stepName,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'tck-evidence',
+      };
+      const proof = { proof: 'unverifiable', cause: 'claim_has_no_token' } as const;
+      await adapter.store.update({
+        ...run,
+        evidence: [
+          { ...base, driven_by: TCK_CLAIMANT },
+          { ...base, kind: 'gate_response', claim_proof: proof },
+        ],
+      });
+      const reread = await adapter.store.get(run.id);
+      const wroteDriver = JSON.stringify(TCK_CLAIMANT);
+      const readDriver = JSON.stringify(reread.evidence[0]?.driven_by);
+      if (readDriver !== wroteDriver) {
+        throw new Error(
+          `a store must round-trip an evidence entry's driven_by (issue #625): wrote ${wroteDriver}, ` +
+            `read back ${readDriver}`,
+        );
+      }
+      const wroteProof = JSON.stringify(proof);
+      const readProof = JSON.stringify(reread.evidence[1]?.claim_proof);
+      if (readProof !== wroteProof) {
+        throw new Error(
+          `a store must round-trip a gate_response entry's claim_proof (issue #625): wrote ` +
+            `${wroteProof}, read back ${readProof}`,
+        );
+      }
+    },
+  });
 
   cases.push({
     law: 'CLAIM_SINGLE_OWNER',

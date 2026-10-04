@@ -19,33 +19,21 @@ import {
 import {
   fencedTraceBufferContract,
   createFenceRunSource,
+  FENCED_TRACE_BUFFER_LAWS,
   type FencedTraceBufferLaw,
 } from '@sensigo/realm-testing';
 
-const LAWS: FencedTraceBufferLaw[] = [
-  'STRUCTURAL',
-  'FENCE_REFUSES',
-  // issue #616 PR-0: each of the five FencePredicate members — true, false, and a racer, through
-  // every method that carries it — plus the malformed fences.
-  'FENCE_DATA',
-  'CS_OCCUPANCY',
-  'PER_KEY_INDEPENDENCE',
-  'NO_SILENT_LOSS',
-  // issue #197 PR-1: InMemoryTraceBufferStore declares both capability-ladder rungs (`seal` and
-  // `writer_nonce_carriage`), so every one of these five laws has real (non-skip) cases here —
-  // the PER_WRITER_BUDGET byte-exactness and VERBATIM raw-byte sub-cases are the ONLY ones that
-  // render as a visible skip (no `bytesOracle`/`rawWalAccess` supplied below — see their own doc:
-  // "bytes" for an in-memory structure has no independent ground truth to check against the way a
-  // physical file's on-disk size does, so a pseudo-oracle here would just re-derive the same
-  // formula and verify nothing new).
-  'CARRIAGE_ROUND_TRIP',
-  'SEAL',
-  'SEAL_BUDGET',
-  'PER_WRITER_BUDGET',
-  'VERBATIM',
-  // issue #620 PR-C
-  'STORE_RELEASE_LINE_TRUE',
-];
+/**
+ * The laws of this contract that THIS file deliberately does not run, each with its reason
+ * (issue #625). Empty: InMemoryTraceBufferStore declares the fenced trio and both capability-ladder rungs, so every law applies.
+ */
+const NOT_RUN: Partial<Record<FencedTraceBufferLaw, string>> = {};
+
+/** The laws this file runs: every exported law, minus the ones named in NOT_RUN above. A law added
+ *  to the contract therefore runs here without this file being touched. */
+const LAWS: readonly FencedTraceBufferLaw[] = FENCED_TRACE_BUFFER_LAWS.filter(
+  (law) => !(law in NOT_RUN),
+);
 
 /** A store whose `appendFenced` checks the fence's shape but never reads the run — so it can never
  *  hold a key, and every case that holds one through it must fail by name (issue #616 PR-0). */
@@ -191,5 +179,17 @@ describe('InMemoryTraceBufferStore — fenced-trio TCK conformance (issue #207)'
         'SKIPPED — adapter did not supply rawWalAccess (the shape-tolerant sibling case above still ran): byte-for-byte raw comparison against an adapter-supplied rawWalAccess hook',
       ].sort(),
     );
+  });
+});
+
+describe('InMemoryTraceBufferStore fenced wiring — the run list is derived from the contract', () => {
+  // (a) red when a law is dropped from the run list WITHOUT being named in NOT_RUN, or NOT_RUN
+  //     names a law the contract no longer exports; (b) prints the unaccounted / unknown laws.
+  it('every exported law is either run or named in NOT_RUN, and NOT_RUN names only exported laws (issue #625)', () => {
+    const exported: readonly string[] = FENCED_TRACE_BUFFER_LAWS;
+    const named = Object.keys(NOT_RUN);
+    expect(named.filter((law) => !exported.includes(law))).toEqual([]);
+    expect([...LAWS, ...named].sort()).toEqual([...exported].sort());
+    for (const reason of Object.values(NOT_RUN)) expect(reason).not.toBe('');
   });
 });

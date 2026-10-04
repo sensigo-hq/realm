@@ -8,6 +8,7 @@ import { JsonWorkflowStore } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
+import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
 
 /**
@@ -27,6 +28,10 @@ export const mcpCommand = new Command('mcp')
     'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root. NO default: the mcp stdio cwd is CLIENT-controlled, so the manifest loads ONLY when --project is typed by the operator (in the MCP client config).',
   )
   .action(async (options: { extensionsModule?: string; project?: string }) => {
+    // issue #625 (holder slice): this program's name, made once, before the transport opens. A name
+    // that cannot be used prints one line to stderr and exits 1 — a stdio server prints nothing on
+    // stdout before the client's first message, and this does not either.
+    const driver = resolveProgramIdentity('mcp-stdio');
     const workflowStore = new JsonWorkflowStore();
     // SECURITY (recorded decision): unlike serve/agent/run there is NO cwd default here —
     // an MCP client opening a cloned repo must not cause its realm.yaml to resolve secrets
@@ -39,6 +44,7 @@ export const mcpCommand = new Command('mcp')
       server = createRealmMcpServer({
         workflowStore,
         registryProvider: makeRegistryProvider(options.extensionsModule, options.project),
+        ...(driver !== undefined ? { driver } : {}),
       });
     } catch (err) {
       console.error(hostRefusalLine('mcp', err));

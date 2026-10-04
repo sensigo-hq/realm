@@ -136,6 +136,38 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   at all) and `drive_failure_costs: DriveFailureCost[]` (present iff `drive_failures` is). (Issue
   #600 PR 1b.)
 
+- **Who took a step, and whether an answer comes from the conversation that opened the question
+  (issue #625).** A step's claim now carries `holder` — the PROGRAM that took it:
+  its name, how the name is known (`stated`, `ambient` for the `REALM_OPERATOR` variable, or
+  `derived` from the OS user and host name) and the door it came through (`agent`, `run`,
+  `mcp-stdio`, `mcp-http`) — and `since`, when the claim was made. The evidence entries written
+  where a program's code ran carry `driven_by` the same way, and a cleanup step names the program
+  that ran it (`realm run respond` and `realm run drain` write their name on those entries only,
+  never as the person who answered). The reply that opens a gate hands out the claim's token as
+  `gate.claim_token` (and in both forms of the answer instruction); `submit_human_response` takes it
+  back as the optional `claim_token`, and every `ok` reply carries `gate_claim`: `proof` (`matched`,
+  `absent`, `mismatch`, `unverifiable` or `spent`, with a `cause` for the last two) and `opened_by`.
+  The same verdict is stored on the answer's evidence entry as `claim_proof`. **Nothing here changes
+  what an answer does**: the answer is decided by the gate ID alone, and a missing or wrong token is
+  recorded, never refused. A run still does not carry on after an answer (#625 stays open for that).
+  `get_run_state` gains `step_claims` and, under `include_steps`, `steps[].answers` and `driven_by`
+  on each attempt; `realm run inspect` prints the program on the `In Progress` lines and the attempt
+  lines and one `Answer:` line for each answer; `realm run respond` gains `--by <name>`, the
+  answerer's own stated name; and `VALIDATION_ACTOR_INVALID` refuses a stated name that is empty and
+  any name longer than 200 characters or with a control character, before anything starts or is
+  recorded (no name is shown with spaces at either end, and realm's own commands and tools store it
+  without them; an empty or blank `REALM_OPERATOR` counts as unset). The engine functions that take a
+  `driver` (`executeStep`, `executeChain`, `advanceRun`, `submitHumanResponse` and
+  `drainFinalizers`) throw that refusal, after the checks of the store and the registry, the same
+  way they refuse a store from another realm version. New exports from `@sensigo/realm`: `composeProgramIdentity`, `boundStated`,
+  `boundStatedName`, `identityRefusalLine`, `describeClaimHolder`, `judgeGateProof`,
+  `composeGateClaimSentence`, the vocabularies `BY_SOURCE_CLASSES`, `ACTOR_ABSENT_CAUSES`,
+  `GATE_PROOFS`, `GATE_PROOF_CAUSES` and `CLAIM_PROOF_ABSENT_CAUSES`, and the types `Attributed`,
+  `ActorAbsent`, `ClaimHolderAbsentCause` and `GateClaimVerdict`. `@sensigo/realm-testing` gains the
+  laws `CLAIM_NAMES_HOLDER`, `EVIDENCE_KEEPS_DRIVER_AND_PROOF` and
+  `GATE_PROOF_NEVER_GATES_THE_ANSWER`, and the lists `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`,
+  `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`.
+
 ### Changed
 
 - **BREAKING —** **Every store realm runs against must carry its release line (issue #620).**
@@ -338,6 +370,42 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
     `--expired`, it prints
     `Its gate expired <age> ago. To see what the expiry will do: realm run drain <run> --expired;`
     `add --force to carry it out.` Scripts that match the old line must be updated.
+
+- **BREAKING —** **Store implementers: the published conformance contracts gained laws, and two
+  store methods gained a contract (issue #625).** `RunStore.claimStep` takes an
+  optional fourth argument, `claimant`, and a store must write it as the claim's `holder` and stamp
+  `since` on every claim it makes. A store that implements `settleStep` must return the `gateClaim`
+  that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true`
+  to it. `runStoreFidelityContract` gains `CLAIM_NAMES_HOLDER` (skipped, by name, for a store that
+  does not declare `persistsClaims`) and `EVIDENCE_KEEPS_DRIVER_AND_PROOF` (always on: a store that
+  drops `driven_by` or `claim_proof` fails it); `settlementContract` gains
+  `GATE_PROOF_NEVER_GATES_THE_ANSWER`. A test file that keeps its own list of laws runs no new law
+  until it runs the exported list (`RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`,
+  `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS`) and names, with a reason, each law it leaves
+  out. For realm-cloud this is two changes: declare `persistsClaims: false` on its production
+  stores, and have its conformance wiring run the exported lists. Nothing changes for it at run
+  time: every answer there reads `unverifiable` with the cause `store_keeps_no_claims`.
+- **`submit_human_response` names the arguments it does not take, and bounds `responded_by`.** An
+  unknown argument used to be dropped without a word, so a misnamed `claimToken` read as an answer
+  with no token. It is now named in `warnings`, with the nearest argument it has when there is one.
+  `responded_by` is held to the bound `realm run respond --by` has — at most 200 characters, no
+  control characters, not empty — and an answer that breaks it is refused with
+  `VALIDATION_ACTOR_INVALID` and not recorded. The other nine tools still drop unknown arguments
+  without saying so (#438).
+- **`realm run inspect` prints every answer of a step.** A step with a gate and one execution entry
+  — the common shape — showed no answer at all; the choice was only in the run's record. It now
+  prints one `Answer:` line for each answer: the choice, who answered (the name the caller gave,
+  labelled as not verified, or `(not stated)`; an answer the gate's expiry wrote with its default choice reads `settled by the gate's expiry (no one answered)`; an `on_expiry: abort` expiry is not an answer and prints none), and the proof in words. On every
+  layout an answer prints as the question its person read (`Message:`, when the gate has one)
+  and then its `Answer:` line, so the choice prints once: the `Choice:` line and the gate entry's
+  own `Output:` line (the step's output plus the choice) are gone. The question is printed as a
+  quoted string, so a newline or control character in it stays on one line. An
+  `on_expiry: abort` expiry's entry prints no lines at all (the run's `Cause:` line and the step's
+  `Skipped:` line say what it did).
+- **The protocol text tells a model to copy the answer call.** Rule 2 and the per-step gate text of
+  `get_workflow_protocol` now say to copy the call in `next_actions[0].instruction.call_with` and
+  fill in the choice, instead of naming the tool and its arguments. `call_with` carries the
+  `claim_token`.
 
 ### Fixed
 

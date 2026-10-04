@@ -19,7 +19,8 @@ import {
   unbrandedClause,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
-import type { RunStore, WorkflowDefinition, ExtensionRegistry } from '@sensigo/realm';
+import { resolveProgramIdentity } from '../lib/program-identity.js';
+import type { RunStore, WorkflowDefinition, ExtensionRegistry, Attributed } from '@sensigo/realm';
 import { LlmProvider, resolveProvider } from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
@@ -45,6 +46,8 @@ export function buildManifestGateHandler(
     definition: WorkflowDefinition;
     provider: LlmProvider;
     registry?: ExtensionRegistry;
+    /** Issue #625: the program this command runs in — forwarded to the Slack attendant. */
+    driver?: Attributed;
   },
 ): ((runId: string, gate: import('@sensigo/realm').PendingGate) => Promise<void>) | undefined {
   const slack = notifiers?.slack_gate;
@@ -54,6 +57,7 @@ export function buildManifestGateHandler(
     definition: deps.definition,
     provider: deps.provider,
     ...(deps.registry !== undefined ? { registry: deps.registry } : {}),
+    ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
     ...(slack.webhook_url !== undefined && { webhookUrl: slack.webhook_url }),
     ...(slack.bot_token !== undefined && { botToken: slack.bot_token }),
     ...(slack.channel_id !== undefined && { channelId: slack.channel_id }),
@@ -179,6 +183,9 @@ export const agentCommand = new Command('agent')
       llmTimeout: number;
       releaseLineAdvisory: boolean;
     }) => {
+      // issue #625 (holder slice): this program's name, made once, before any other output. A name
+      // that cannot be used prints one line and exits 1 here; nothing has been started.
+      const driver = resolveProgramIdentity('agent');
       if (!opts.workflow && !opts.runId) {
         console.error('Error: one of --workflow or --run-id is required');
         process.exit(1);
@@ -296,6 +303,7 @@ export const agentCommand = new Command('agent')
             definition,
             provider,
             registry: loaded.registry,
+            ...(driver !== undefined ? { driver } : {}),
           });
 
           result = await runAgent(
@@ -306,6 +314,7 @@ export const agentCommand = new Command('agent')
               ...(moduleProviderId !== undefined ? { providerId: moduleProviderId } : {}),
               registry: loaded.registry,
               traceBufferStore,
+              ...(driver !== undefined ? { driver } : {}),
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
               // enables minting even without the flag — resolved once in run-agent.ts's loop.
               mintWriterNonce: opts.mintWriterNonce === true,
@@ -364,6 +373,7 @@ export const agentCommand = new Command('agent')
             definition,
             provider,
             registry: loaded.registry,
+            ...(driver !== undefined ? { driver } : {}),
           });
 
           result = await runAgent(
@@ -374,6 +384,7 @@ export const agentCommand = new Command('agent')
               ...(moduleProviderId !== undefined ? { providerId: moduleProviderId } : {}),
               registry: loaded.registry,
               traceBufferStore,
+              ...(driver !== undefined ? { driver } : {}),
               // issue #197 PR-2: default OFF; the strict-flip (REALM_REQUIRE_WRITER_NONCE) force-
               // enables minting even without the flag — resolved once in run-agent.ts's loop.
               mintWriterNonce: opts.mintWriterNonce === true,

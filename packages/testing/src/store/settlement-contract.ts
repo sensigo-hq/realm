@@ -30,100 +30,103 @@ import {
   type SettlementResult,
   type EvidenceSnapshot,
   type PendingGate,
+  type Attributed,
 } from '@sensigo/realm';
 
-/** One of the PR-A-runnable settlement laws (design record §8, narrowed to the PR-A subset named
- *  in the hand-off prompt's D4 section — see this module's own header). */
-export type SettlementLaw =
-  | 'FRESH_APPLICATION' // L1
-  | 'CONDITIONAL_NOOP' // L2
-  | 'CONDITIONAL_NOOP_GRANDFATHERED'
-  | 'OWNERSHIP_REFUSAL' // L3
-  | 'LEDGER_MINT_ATOMICITY' // L4
-  | 'DRAIN_MARK_DEDUP' // L5
-  | 'TERMINAL_REFUSAL' // L6
-  | 'TERMINAL_STATE_ONLY' // PR-A correction (architect novel probe): pins isTerminal's adjudication
-  | 'CS_PURITY' // L7
-  | 'NEVER_DOWNGRADE' // L8
-  | 'SETTLE_OUTCOME_INTEGRITY' // L9
-  | 'SETTLED_ORPHAN_OVERWRITE' // L10
-  | 'TRANSFORM_FIDELITY' // L11
-  | 'RESULT_AS_APPLIED'
-  | 'MARK_MEMBERSHIP' // L12
-  | 'REFUSAL_SWEEP' // L13
-  | 'MINT_FRESH' // L14 (PR-A form)
-  | 'SELF_IMAGE_IDEMPOTENCE' // L21
-  | 'TERMINAL_GATE_EXCLUSION'
-  | 'COMPLETE_SEAL_PHASE'
-  | 'WHEN_ROUTED_TERMINALIZATION'
-  | 'G1_GATE_COEXISTENCE'
+/** The settlement laws (design record §8, narrowed to the PR-A subset named in the hand-off
+ *  prompt's D4 section — see this module's own header, plus every law added since). EXPORTED as a
+ *  const (issue #625) so a wiring file derives the list it runs from it: a law added here then runs
+ *  everywhere the contract is wired, or is named, with a reason, in that file's `NOT_RUN` list. */
+export const SETTLEMENT_LAWS = [
+  'FRESH_APPLICATION', // L1
+  'CONDITIONAL_NOOP', // L2
+  'CONDITIONAL_NOOP_GRANDFATHERED',
+  'OWNERSHIP_REFUSAL', // L3
+  'LEDGER_MINT_ATOMICITY', // L4
+  'DRAIN_MARK_DEDUP', // L5
+  'TERMINAL_REFUSAL', // L6
+  'TERMINAL_STATE_ONLY', // PR-A correction (architect novel probe): pins isTerminal's adjudication
+  'CS_PURITY', // L7
+  'NEVER_DOWNGRADE', // L8
+  'SETTLE_OUTCOME_INTEGRITY', // L9
+  'SETTLED_ORPHAN_OVERWRITE', // L10
+  'TRANSFORM_FIDELITY', // L11
+  'RESULT_AS_APPLIED',
+  'MARK_MEMBERSHIP', // L12
+  'REFUSAL_SWEEP', // L13
+  'MINT_FRESH', // L14 (PR-A form)
+  'SELF_IMAGE_IDEMPOTENCE', // L21
+  'TERMINAL_GATE_EXCLUSION',
+  'COMPLETE_SEAL_PHASE',
+  'WHEN_ROUTED_TERMINALIZATION',
+  'G1_GATE_COEXISTENCE',
   // issue #279, increment 2 (PR-C — design record design-d5-increment2.md §8): gate/guard/release
   // laws.
-  | 'GATE_OPEN_IDEMPOTENT'
-  | 'GATE_RESOLUTION_CONFLICT'
-  | 'GATE_MISMATCH'
-  | 'GUARD_OUTCOME_DIVERGENCE'
-  | 'GUARD_WAITS_ON_OPEN_GATE'
-  | 'GUARD_PASS_COMPLETE_OUTCOME'
-  | 'GUARD_ABORT_CASCADE'
-  | 'GUARD_NO_ENTRY'
-  | 'RELEASE_IDEMPOTENT'
+  'GATE_OPEN_IDEMPOTENT',
+  'GATE_RESOLUTION_CONFLICT',
+  'GATE_MISMATCH',
+  'GUARD_OUTCOME_DIVERGENCE',
+  'GUARD_WAITS_ON_OPEN_GATE',
+  'GUARD_PASS_COMPLETE_OUTCOME',
+  'GUARD_ABORT_CASCADE',
+  'GUARD_NO_ENTRY',
+  'RELEASE_IDEMPOTENT',
   /** A NEW universal TCK law (lane-C steal 1 — the PG "generated columns cannot be written to
    *  directly" invariant, quantified): after EVERY store mutation op, persisted `run_phase ≡
    *  deriveRunPhase(record)`. */
-  | 'PHASE_IS_GENERATED'
+  'PHASE_IS_GENERATED',
   // issue #302 (finalizer outcome×trigger matrix) — the completed_with_failed_steps trigger laws.
   /** Mixed-complete (a `complete` seal with `failed_steps ≠ ∅`) mints the declared
    *  `completed_with_failed_steps` finalizer, discriminated per-arm — VIA `settle_step`, VIA
    *  `settle_gate` resolution, and VIA `settle_guard` pass all independently reach `mintFresh`'s
    *  one chokepoint (design record S3). */
-  | 'CWFS_FIRES_PER_ARM'
+  'CWFS_FIRES_PER_ARM',
   /** The new trigger never over-fires: a CLEAN complete (no `failed_steps`) does not select it;
    *  a PURE fail seal (never reaches `complete`) does not select it either. */
-  | 'CWFS_NEGATIVES'
+  'CWFS_NEGATIVES',
   /** issue #367 — a fresh seal (non-terminal → terminal write) that names no arm is REFUSED
    *  (`STATE_SEAL_UNSTAMPED`). Transition-scoped: re-writing an already-terminal legacy record
    *  passes untouched, which is what keeps the pre-#367 population usable. */
-  | 'SEAL_FRESH_WRITE_REFUSED'
+  'SEAL_FRESH_WRITE_REFUSED',
   /** issue #367 — a terminal → live write that RETAINS the seal is REFUSED
    *  (`STATE_SEAL_ORPHANED`): every resume/strip path must drop the fact in the same write. */
-  | 'SEAL_ORPHAN_REFUSED'
+  'SEAL_ORPHAN_REFUSED',
   /** issue #367 — a terminal rewrite that DROPS a stored seal is REFUSED (`STATE_SEAL_ERASED`),
    *  so a field-enumerating rewriter cannot silently drain the stamped population back to prose. */
-  | 'SEAL_ERASE_REFUSED'
+  'SEAL_ERASE_REFUSED',
   /** issue #367 — an arm outside `SEAL_ARMS` never persists (`STATE_SEAL_UNKNOWN_ARM`). */
-  | 'SEAL_UNKNOWN_ARM_REFUSED'
+  'SEAL_UNKNOWN_ARM_REFUSED',
   /** issue #367 part 3 — `stampSeal` leaves `updated_at` byte-identical. Stamping is not
    *  activity, and the retention clock must not move because a migration ran. */
-  | 'STAMP_PRESERVES_UPDATED_AT'
+  'STAMP_PRESERVES_UPDATED_AT',
   /** issue #367 part 3 — `stampSeal` bumps `version` exactly once, so a writer holding a
    *  pre-stamp snapshot loses its CAS instead of silently erasing the stamp. */
-  | 'STAMP_BUMPS_VERSION_ONCE'
+  'STAMP_BUMPS_VERSION_ONCE',
   /** issue #367 part 3 — a stale `expectedVersion` THROWS `STATE_SNAPSHOT_MISMATCH`. */
-  | 'STAMP_REFUSES_ON_VERSION_MOVE'
+  'STAMP_REFUSES_ON_VERSION_MOVE',
   /** issue #367 part 3 — predicate refusals RETURN. A throw-shaped implementation fails. */
-  | 'STAMP_RETURNS_NOT_THROWS_PREDICATES'
+  'STAMP_RETURNS_NOT_THROWS_PREDICATES',
   /** issue #367 part 3 — re-stamping is byte-identical: no second write, no clock move. */
-  | 'STAMP_IDEMPOTENT'
+  'STAMP_IDEMPOTENT',
   /** issue #367 part 3 — a `classified: true` stamp survives write → read byte-for-byte, so a
    *  classifier-minted stamp stays distinguishable from a writer-asserted one forever. */
-  | 'STAMP_CLASSIFIED_ROUNDTRIP'
+  'STAMP_CLASSIFIED_ROUNDTRIP',
   /** issue #367 part 3 — a stored arm may not be CHANGED while the run stays terminal. */
-  | 'SEAL_REWRITE_REFUSED'
+  'SEAL_REWRITE_REFUSED',
   /** Uniform-predicate pin (design record M1): a second-epoch complete seal whose ONLY
    *  `failed_steps` scar is a PRIOR epoch's finalizer self-failure (unresumable, so it never
    *  leaves `failed_steps`) still fires — no exclusion of finalizer-declared step names. */
-  | 'CWFS_SECOND_EPOCH'
+  'CWFS_SECOND_EPOCH',
   /** A finalizer never fires twice for one seal: the array form
    *  (`on_outcome: [complete, completed_with_failed_steps]`) fires EXACTLY once on mixed-complete
    *  (Group A, single push despite a multi-element intersection); `always` fires EXACTLY once on
    *  mixed-complete too (Group B, once — never double-counted alongside a Group A hit). */
-  | 'CWFS_ARRAY_ONCE'
+  'CWFS_ARRAY_ONCE',
   /** The REJECTED design alternative (D-C: auto-firing `fail` on mixed-complete) never happens,
    *  pinned both ways: clean-complete × a `fail`-only finalizer ⇒ not selected (unsurprising);
    *  mixed-complete × a `fail`-only finalizer ⇒ ALSO not selected (`fail`-only genuinely requires
    *  a `fail` seal — a `complete` seal carrying `failed_steps` is not a backdoor into it). */
-  | 'CURRENT_BEHAVIOR_PINNED'
+  'CURRENT_BEHAVIOR_PINNED',
   // issue #291 (gate-timeout-291-correction, Leg 2 — ported from the dedicated core-only
   // gate-expiry-tck-laws.test.ts, per the PR-C precedent that new delta kinds' laws join this
   // shared, cross-store conformance kit): the `expire_gate` delta's own arm matrix + its two
@@ -133,18 +136,18 @@ export type SettlementLaw =
    *  run_terminal (never resurrecting/re-terminalizing), an unknown/superseded gateId refuses
    *  gate_mismatch, finding-only (expires_at present, on_expiry absent) refuses no_disposition
    *  arm-level before APPLY. */
-  | 'EXPIRE_ARM_MATRIX'
+  'EXPIRE_ARM_MATRIX',
   /** The abort disposition's full postcondition shape: pending_gate + claim cleared, aborted_at +
    *  skip_details `{kind:'gate_expired', gate_id}` (day-one) + finalizers minted in ONE write;
    *  the D-4 discriminator (never mistaken for `gate_cancelled_by_abort`); never stamps
    *  `defaulted_steps` on the abort edge (the FM-5/#232 guard). */
-  | 'EXPIRE_ABORT_CASCADE'
+  'EXPIRE_ABORT_CASCADE',
   /** The settle_default disposition's full postcondition shape: `resolved_by:'timeout'`
    *  attribution + both isComplete legs (terminalizing/non-terminalizing); FROZEN-BEATS-
    *  DEFINITION (enactment reads the RECORD-frozen `default_choice`, never a re-registered
    *  definition's drifted value); the evidence `gate_response` snapshot's `responded_by`/
    *  `resolution` fields. */
-  | 'EXPIRE_DEFAULT_RESOLVE'
+  'EXPIRE_DEFAULT_RESOLVE',
   // issue #625 — a store that declares `settleStep` settles guards in the SAME write.
   /** After an APPLIED `settle_step` / `settle_gate` / `expire_gate` / `settle_guard`, every guard
    *  that write made eligible is settled on the returned (and persisted) record and listed in
@@ -152,16 +155,28 @@ export type SettlementLaw =
    *  results carry no `guards`; `applySettlement` called WITHOUT `cascadeGuards` cascades nothing
    *  (so a store that does not pass the option — one that settles guards in a separate write —
    *  fails this law). */
-  | 'GUARD_CASCADE_ONE_WRITE'
+  'GUARD_CASCADE_ONE_WRITE',
   /** The cascade never makes a write unrecordable: a guard whose `abort_unless` or whose `when`
    *  cannot be evaluated is settled `resolution_error`, and the delta still applies. */
-  | 'GUARD_CASCADE_TOTAL'
+  'GUARD_CASCADE_TOTAL',
+  // issue #625 (the holder slice) — the proof an answer carries is judged inside the answer's
+  // write and decides NOTHING.
+  /** For every member of `GATE_PROOFS` and of `GATE_PROOF_CAUSES` the answer's record equals the
+   *  same answer's record with no token except for the answer entry's `claim_proof`; the verdict
+   *  rides the result (`gateClaim`) with the claim's `holder` and `since` and never its token; it
+   *  survives a guard settled in the same write; a question already settled is `spent`. A store
+   *  that refuses, delays or alters an answer on a wrong token — or that does not return the
+   *  verdict — fails this law. */
+  'GATE_PROOF_NEVER_GATES_THE_ANSWER',
   /** Not a real settlement law — a wiring-gap sentinel (see `settlementContract`'s own doc: a
    *  store declaring `settleStep` with no `settlementFixture` supplied gets ONE failing case
    *  tagged with this, never a silent zero-cases pass). */
-  | 'ADAPTER_WIRING'
+  'ADAPTER_WIRING',
   /** issue #620 PR-C — the store's declared release line is the line of its own refusal. */
-  | 'STORE_RELEASE_LINE_TRUE';
+  'STORE_RELEASE_LINE_TRUE',
+] as const;
+
+export type SettlementLaw = (typeof SETTLEMENT_LAWS)[number];
 
 /**
  * A single, framework-agnostic contract case. `run()` throws (rejects) on failure — any test
@@ -1838,7 +1853,13 @@ function transformFidelityCases(adapter: SettlementContractAdapter): SettlementC
     const freshRead = await adapter.store.get(run.id);
     // issue #625: the harness applies the transform exactly as a conforming store's `settleStep`
     // must — WITH `cascadeGuards` — so the comparison below covers the guards too.
-    const expected = applySettlement(freshRead, delta, def, { now, cascadeGuards: true });
+    const expected = applySettlement(freshRead, delta, def, {
+      now,
+      cascadeGuards: true,
+      // issue #625: a conforming `settleStep` passes this too — it is the transform's only way to
+      // know the store keeps no claims, and it decides the proof verdict's `store_keeps_no_claims`.
+      storeKeepsClaims: adapter.store.persistsClaims === true,
+    });
     const actual = await settleStep(run.id, delta, def, { now });
     if (outcome !== 'abort') {
       // Non-vacuity: on the complete and fail legs the harness's own output settled the guard.
@@ -5679,6 +5700,360 @@ function expireDefaultResolveCases(adapter: SettlementContractAdapter): Settleme
  *   conformance must not be able to pass this TCK by accident of an unwired adapter.
  * - Both present ⇒ the full law set below.
  */
+// ---------------------------------------------------------------------------
+// GATE_PROOF_NEVER_GATES_THE_ANSWER (issue #625, the holder slice)
+// ---------------------------------------------------------------------------
+
+/** The program the proof laws name as the claim's holder — a synthetic label. */
+const PROOF_CLAIMANT: Attributed = { by: 'tck-program', by_source: 'stated', channel: 'tck' };
+
+function gateProofCases(adapter: SettlementContractAdapter): SettlementContractCase[] {
+  const { minimalDefinition } = adapter.settlementFixture!;
+  const settleStep = requireSettleStep(adapter.store);
+  const GATE_ID = 'tck-proof-gate';
+  const NOW = new Date('2026-06-01T00:00:00.000Z');
+  const EXPIRED_AT = '2026-01-01T00:00:01.000Z';
+
+  /** A run with step 'gated' claimed BY a named program and its gate open. */
+  async function openGate(
+    def: WorkflowDefinition,
+    gateOpts?: Parameters<typeof makePendingGate>[1],
+  ): Promise<{ runId: string; token: string }> {
+    const { run } = await adapter.store.create({
+      workflowId: def.id,
+      workflowVersion: def.version,
+      params: {},
+    });
+    const claimed = await adapter.store.claimStep(run.id, 'gated', def, PROOF_CLAIMANT);
+    const token = claimed.claims?.['gated']?.token;
+    if (token === undefined) {
+      throw new Error("fixture setup failed: claimStep did not mint a token for step 'gated'");
+    }
+    const opened = await settleStep(
+      run.id,
+      {
+        kind: 'open_gate',
+        step: 'gated',
+        claimToken: token,
+        pendingGate: makePendingGate('gated', { gateId: GATE_ID, ...gateOpts }),
+        evidence: [],
+      },
+      def,
+    );
+    assertApplied(opened, 'open_gate on gated');
+    return { runId: run.id, token };
+  }
+
+  const answerEvidence = (): EvidenceSnapshot[] => [
+    makeEvidence('gated', {
+      kind: 'gate_response',
+      input_summary: { choice: 'approve' },
+      output_summary: { choice: 'approve' },
+    }),
+  ];
+  const answerDelta = (claimToken: string | undefined): SettlementDelta => ({
+    kind: 'settle_gate',
+    gateId: GATE_ID,
+    choice: 'approve',
+    evidence: answerEvidence(),
+    ...(claimToken !== undefined ? { claimToken } : {}),
+  });
+
+  /** The record minus what differs between two runs by construction, and minus `claim_proof`. */
+  async function comparable(runId: string): Promise<string> {
+    const {
+      id: _id,
+      created_at: _c,
+      updated_at: _u,
+      version: _v,
+      ...rest
+    } = await adapter.store.get(runId);
+    return JSON.stringify({
+      ...rest,
+      evidence: rest.evidence.map((e) => {
+        const { claim_proof: _p, ...noProof } = e;
+        return noProof;
+      }),
+    });
+  }
+
+  function proofOf(run: RunRecord): unknown {
+    return run.evidence.filter((e) => e.kind === 'gate_response').map((e) => e.claim_proof);
+  }
+
+  function assertNoToken(result: SettlementResult, token: string, label: string): void {
+    if (JSON.stringify(result.gateClaim).includes(token)) {
+      throw new Error(`${label}: the settlement result's gateClaim carries the claim's TOKEN`);
+    }
+  }
+
+  interface Scenario {
+    name: string;
+    /** Prepares the record just before the answer (e.g. removes the claim by hand). */
+    prepare?: (runId: string, token: string) => Promise<void>;
+    /** The token the answer passes, given the real one. */
+    present: (token: string) => string | undefined;
+    expect: { proof: string; cause?: string };
+    /** Whether the verdict result copies the claim's holder and since. */
+    claimCopied: boolean;
+  }
+
+  async function dropGatedClaim(runId: string): Promise<void> {
+    const fresh = await adapter.store.get(runId);
+    const { gated: _g, ...rest } = fresh.claims ?? {};
+    await adapter.store.update({ ...fresh, claims: rest });
+  }
+
+  async function dropGatedToken(runId: string): Promise<void> {
+    const fresh = await adapter.store.get(runId);
+    const { token: _t, ...noToken } = fresh.claims!['gated']!;
+    await adapter.store.update({ ...fresh, claims: { ...fresh.claims, gated: noToken } });
+  }
+
+  const SCENARIOS: Scenario[] = [
+    {
+      name: 'matched (the right token)',
+      present: (t) => t,
+      expect: { proof: 'matched' },
+      claimCopied: true,
+    },
+    {
+      name: 'absent (no token passed)',
+      present: () => undefined,
+      expect: { proof: 'absent' },
+      claimCopied: true,
+    },
+    {
+      name: 'mismatch (a wrong token)',
+      present: () => 'tck-wrong-token',
+      expect: { proof: 'mismatch' },
+      claimCopied: true,
+    },
+    {
+      name: 'mismatch (the EMPTY string is a wrong value, not no value)',
+      present: () => '',
+      expect: { proof: 'mismatch' },
+      claimCopied: true,
+    },
+    {
+      name: 'unverifiable / no_claim (the gate step has no claim on the record)',
+      prepare: (runId) => dropGatedClaim(runId),
+      present: () => undefined,
+      expect: {
+        proof: 'unverifiable',
+        cause: adapter.store.persistsClaims === true ? 'no_claim' : 'store_keeps_no_claims',
+      },
+      claimCopied: false,
+    },
+    {
+      name: 'unverifiable / claim_has_no_token (a claim written without a token)',
+      prepare: (runId) => dropGatedToken(runId),
+      present: () => undefined,
+      expect: { proof: 'unverifiable', cause: 'claim_has_no_token' },
+      claimCopied: true,
+    },
+  ];
+
+  const cases: SettlementContractCase[] = [];
+
+  for (const scenario of SCENARIOS) {
+    // A store that keeps no claims cannot hold the "wrong token"/"claim without token" fixtures at
+    // all (it never wrote a claim) — those scenarios would not test what they name. They are run
+    // for a store that keeps claims; the `no_claim` scenario maps to `store_keeps_no_claims` on a
+    // store that keeps none (below).
+    if (
+      adapter.store.persistsClaims !== true &&
+      scenario.expect.cause !== 'store_keeps_no_claims'
+    ) {
+      continue;
+    }
+    cases.push({
+      law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
+      name: `[${adapter.storeName}] ${scenario.name}: the answer applies, its record differs from the token-less answer's ONLY in claim_proof, and the verdict rides the result without the token`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        // Run A: the answer with no token. Run B: the same answer, with this scenario's token.
+        const a = await openGate(def);
+        const b = await openGate(def);
+        if (scenario.prepare !== undefined) {
+          await scenario.prepare(a.runId, a.token);
+          await scenario.prepare(b.runId, b.token);
+        }
+        const baseline = await settleStep(a.runId, answerDelta(undefined), def, { now: NOW });
+        assertApplied(baseline, 'the token-less answer');
+        const result = await settleStep(b.runId, answerDelta(scenario.present(b.token)), def, {
+          now: NOW,
+        });
+        // The answer applies whatever the proof says — the answer is decided by the gate id alone.
+        assertApplied(result, `the answer carrying ${scenario.name}`);
+        if (result.gateClaim?.proof !== scenario.expect.proof) {
+          throw new Error(
+            `${scenario.name}: expected proof '${scenario.expect.proof}', got ${JSON.stringify(result.gateClaim)}`,
+          );
+        }
+        const cause =
+          result.gateClaim !== undefined && 'cause' in result.gateClaim
+            ? result.gateClaim.cause
+            : undefined;
+        if (cause !== scenario.expect.cause) {
+          throw new Error(
+            `${scenario.name}: expected cause ${scenario.expect.cause}, got ${cause}`,
+          );
+        }
+        const recorded = proofOf(await adapter.store.get(b.runId));
+        const wanted = [
+          scenario.expect.cause !== undefined
+            ? { proof: scenario.expect.proof, cause: scenario.expect.cause }
+            : { proof: scenario.expect.proof },
+        ];
+        if (JSON.stringify(recorded) !== JSON.stringify(wanted)) {
+          throw new Error(
+            `${scenario.name}: the answer's entry must carry claim_proof ${JSON.stringify(wanted)} ` +
+              `(the same verdict the result reports), got ${JSON.stringify(recorded)}`,
+          );
+        }
+        if ((await comparable(a.runId)) !== (await comparable(b.runId))) {
+          throw new Error(
+            `${scenario.name}: the record after the answer differs from the token-less answer's ` +
+              'in more than claim_proof — a proof must never change what an answer does',
+          );
+        }
+        assertNoToken(result, b.token, scenario.name);
+        const claim = result.gateClaim?.claim;
+        if (scenario.claimCopied) {
+          if (
+            JSON.stringify(claim?.holder) !== JSON.stringify(PROOF_CLAIMANT) ||
+            typeof claim?.since !== 'string'
+          ) {
+            throw new Error(
+              `${scenario.name}: gateClaim.claim must copy the claim's holder and since as stored, ` +
+                `got ${JSON.stringify(claim)}`,
+            );
+          }
+        } else if (claim !== undefined) {
+          throw new Error(
+            `${scenario.name}: there was no claim, so gateClaim.claim must be absent`,
+          );
+        }
+      },
+    });
+  }
+
+  if (adapter.store.persistsClaims !== true) {
+    // (covered above: the `no_claim` scenario maps to store_keeps_no_claims for this store)
+  } else {
+    cases.push({
+      law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
+      name: `SKIPPED — store keeps claims (store_keeps_no_claims is minted for a store declaring persistsClaims: false): [${adapter.storeName}] unverifiable / store_keeps_no_claims`,
+      run: async () => {
+        // Intentional no-op — see the case name for why.
+      },
+    });
+  }
+
+  cases.push(
+    {
+      law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
+      name: `[${adapter.storeName}] spent / answered: a replay of the answer NOOPs as already_settled carrying the verdict (no claim — it is gone), writing nothing`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { runId, token } = await openGate(def);
+        const first = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        assertApplied(first, 'the first answer');
+        const before = await adapter.store.get(runId);
+        const replay = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        assertRefused(replay, 'already_settled', 'the replayed answer');
+        if (
+          JSON.stringify(replay.gateClaim) !== JSON.stringify({ proof: 'spent', cause: 'answered' })
+        ) {
+          throw new Error(
+            `expected spent/answered with NO claim, got ${JSON.stringify(replay.gateClaim)}`,
+          );
+        }
+        assertNoToken(replay, token, 'spent / answered');
+        const after = await adapter.store.get(runId);
+        if (after.version !== before.version) {
+          throw new Error('a replayed answer must write nothing (the version moved)');
+        }
+      },
+    },
+    {
+      law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
+      name: `[${adapter.storeName}] spent / expired: an answer to a question the clock already settled NOOPs as already_settled carrying spent/expired`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { runId, token } = await openGate(def, {
+          expiresAt: EXPIRED_AT,
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const enacted = await settleStep(runId, { kind: 'expire_gate', gateId: GATE_ID }, def, {
+          now: NOW,
+        });
+        assertApplied(enacted, 'the expiry');
+        const late = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        assertRefused(late, 'already_settled', 'the answer after the expiry');
+        if (
+          JSON.stringify(late.gateClaim) !== JSON.stringify({ proof: 'spent', cause: 'expired' })
+        ) {
+          throw new Error(`expected spent/expired, got ${JSON.stringify(late.gateClaim)}`);
+        }
+      },
+    },
+    {
+      law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
+      name: `[${adapter.storeName}] the write-free gate_expired_pending refusal carries the verdict too, and writes nothing`,
+      run: async () => {
+        const def = minimalDefinition(['gated']);
+        const { runId, token } = await openGate(def, {
+          expiresAt: EXPIRED_AT,
+          onExpiry: 'settle_default',
+          defaultChoice: 'approve',
+        });
+        const before = await adapter.store.get(runId);
+        const refused = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        assertRefused(refused, 'gate_expired_pending', 'the answer to an expired, unenacted gate');
+        if (refused.gateClaim?.proof !== 'matched') {
+          throw new Error(
+            `expected the verdict matched on the refusal, got ${JSON.stringify(refused.gateClaim)}`,
+          );
+        }
+        assertNoToken(refused, token, 'gate_expired_pending');
+        if ((await adapter.store.get(runId)).version !== before.version) {
+          throw new Error('a gate_expired_pending refusal must write nothing');
+        }
+      },
+    },
+    {
+      law: 'GATE_PROOF_NEVER_GATES_THE_ANSWER',
+      name: `[${adapter.storeName}] the verdict survives a guard settled in the answer's own write (the cascade)`,
+      run: async () => {
+        const base = minimalDefinition(['gated']);
+        const def = withGuardStep(base, 'check', {
+          depends_on: ['gated'],
+          abort_unless: ["gated.choice == 'approve'"],
+        });
+        const { runId, token } = await openGate(def);
+        const result = await settleStep(runId, answerDelta(token), def, { now: NOW });
+        assertApplied(result, 'the answer with a guard behind it');
+        if (result.guards?.[0]?.step !== 'check') {
+          throw new Error(
+            `fixture premise violated: the guard was not settled in the answer's write (${JSON.stringify(result.guards)})`,
+          );
+        }
+        if (result.gateClaim?.proof !== 'matched') {
+          throw new Error(
+            "the cascade dropped the answer's verdict — a guard after a gate loses gateClaim when the " +
+              `result is rebuilt from its parts (got ${JSON.stringify(result.gateClaim)})`,
+          );
+        }
+      },
+    },
+  );
+
+  return cases;
+}
+
 export function settlementContract(adapter: SettlementContractAdapter): SettlementContractCase[] {
   if (adapter.store.settleStep === undefined) {
     // A store that declares NEITHER verb genuinely has nothing here to conform to — the
@@ -5771,5 +6146,7 @@ export function settlementContract(adapter: SettlementContractAdapter): Settleme
     ...expireArmMatrixCases(adapter),
     ...expireAbortCascadeCases(adapter),
     ...expireDefaultResolveCases(adapter),
+    // issue #625 (the holder slice).
+    ...gateProofCases(adapter),
   ];
 }

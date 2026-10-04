@@ -13,6 +13,7 @@ import type {
   PendingGate,
   ExtensionRegistry,
   SettlementResult,
+  Attributed,
 } from '@sensigo/realm';
 
 /** Node's `setTimeout` delay is a 32-bit signed int; a delay exceeding 2^31-1 ms (~24.8 days)
@@ -27,6 +28,11 @@ export interface GateExpiryTimerDeps {
   store: RunStore;
   definition: WorkflowDefinition;
   registry?: ExtensionRegistry;
+  /**
+   * Issue #625 (holder slice): the program whose timer enacts the expiry — named on the cleanup
+   * steps its drain runs (`driven_by`).
+   */
+  driver?: Attributed;
 }
 
 /**
@@ -86,6 +92,7 @@ export function scheduleGateExpiryTimer(
             deps.definition,
             deps.registry,
             runId,
+            deps.driver,
           );
           for (const w of drainOutcome.warnings) console.warn(`⚠ ${w}`);
         }

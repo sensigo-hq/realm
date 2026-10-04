@@ -1,7 +1,12 @@
 // step-view.test.ts — issue #600 PR 1b (D7): the one place "how do you sum a per-request counter
 // honestly" lives, and the one place a step's cost is classified when there is none to sum.
 import { describe, it, expect } from 'vitest';
-import { composeCostView, composeStepViews, composeDriveFailureCosts } from './step-view.js';
+import {
+  composeCostView,
+  composeStepViews,
+  composeDriveFailureCosts,
+  isAnswerEntry,
+} from './step-view.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -108,9 +113,22 @@ describe('composeStepViews — rule 3: shape and totality', () => {
     ).toEqual({});
   });
 
-  it('gate_response entries are never attempts and, alone, mint no StepView', () => {
+  // issue #625 (holder slice): a gate_response entry is still never an attempt, but it is an ANSWER —
+  // a fact the step's view must carry — so it creates the step's view with `attempts: []`. This cell
+  // was `toEqual({})` ("... alone, mint no StepView") before the holder slice.
+  it('gate_response entries are never attempts and, alone, mint a StepView with attempts: [] and one answer', () => {
     const run = makeRun([{ step_id: 'gate_step', kind: 'gate_response', status: 'success' }]);
-    expect(composeStepViews(run)).toEqual({});
+    expect(composeStepViews(run)).toEqual({
+      gate_step: {
+        attempts: [],
+        answers: [
+          {
+            answered_by: { by: null, absent_cause: 'not_stated' },
+            claim_proof_absent: 'proof_not_recorded',
+          },
+        ],
+      },
+    });
   });
 
   it('gate_response entries are excluded even when the step also has an execution entry', () => {
@@ -274,6 +292,226 @@ describe('composeDriveFailureCosts', () => {
     expect(composeDriveFailureCosts(run)[0]!.cost).toEqual({
       requests: 1,
       prompt: { value: 5, reported: 1, of: 1, only_request_index: 0 },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// issue #625 (the holder slice): the program that did an attempt's work, and a step's answers.
+// ---------------------------------------------------------------------------------------------
+
+describe('composeStepViews — issue #625: driven_by on every attempt', () => {
+  const PROGRAM = { by: 'mihai@host', by_source: 'derived', channel: 'agent' };
+
+  it("an attempt reads the entry's driven_by through the one stored-name reader", () => {
+    const run = makeRun([{ step_id: 's', status: 'success', driven_by: PROGRAM }]);
+    expect(composeStepViews(run)['s']!.attempts[0]!.driven_by).toEqual(PROGRAM);
+  });
+
+  it('no driven_by on the entry ⇒ driver_not_recorded (it predates the field, or no host named itself)', () => {
+    const run = makeRun([{ step_id: 's', status: 'success' }]);
+    expect(composeStepViews(run)['s']!.attempts[0]!.driven_by).toEqual({
+      by: null,
+      absent_cause: 'driver_not_recorded',
+    });
+  });
+
+  it('a stored driven_by that is not a readable name ⇒ name_unreadable — no byte of the value survives', () => {
+    const run = makeRun([
+      { step_id: 's', status: 'success', driven_by: { ...PROGRAM, by: 'x\u001b[2Jy' } },
+    ]);
+    const view = composeStepViews(run)['s']!.attempts[0]!.driven_by;
+    expect(view).toEqual({ by: null, absent_cause: 'name_unreadable' });
+    expect(JSON.stringify(view)).not.toContain('\u001b');
+  });
+});
+
+describe('composeStepViews — issue #625: answers', () => {
+  function answer(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      step_id: 'gate_step',
+      kind: 'gate_response',
+      status: 'success',
+      input_summary: { choice: 'approve' },
+      output_summary: { choice: 'approve' },
+      ...extra,
+    };
+  }
+
+  it('an answer carries the choice, the stated answerer and the recorded verdict', () => {
+    const run = makeRun([
+      { step_id: 'gate_step', kind: 'execution', status: 'success' },
+      answer({ responded_by: 'alice', claim_proof: { proof: 'matched' } }),
+    ]);
+    const view = composeStepViews(run)['gate_step']!;
+    expect(view.attempts).toHaveLength(1);
+    expect(view.answers).toEqual([
+      {
+        choice: 'approve',
+        answered_by: { by: 'alice', by_source: 'stated' },
+        claim_proof: { proof: 'matched' },
+      },
+    ]);
+  });
+
+  it('answers are in entry order — one per gate_response entry', () => {
+    const run = makeRun([
+      answer({ responded_by: 'first', input_summary: { choice: 'a' } }),
+      answer({ responded_by: 'second', input_summary: { choice: 'b' } }),
+    ]);
+    expect(
+      composeStepViews(run)['gate_step']!.answers!.map((a) => [a.choice, a.answered_by]),
+    ).toEqual([
+      ['a', { by: 'first', by_source: 'stated' }],
+      ['b', { by: 'second', by_source: 'stated' }],
+    ]);
+  });
+
+  it('the choice falls back to output_summary, and is absent when neither carries one', () => {
+    const fromOutput = answer({ input_summary: {}, output_summary: { choice: 'x' } });
+    const neither = answer({ input_summary: {}, output_summary: {} });
+    expect(composeStepViews(makeRun([fromOutput]))['gate_step']!.answers![0]!.choice).toBe('x');
+    expect('choice' in composeStepViews(makeRun([neither]))['gate_step']!.answers![0]!).toBe(false);
+  });
+
+  it('no responded_by ⇒ not_stated; an empty or whitespace-only one reads as not_stated too — never a blank name', () => {
+    for (const rb of [undefined, null, '', '   ']) {
+      const run = makeRun([answer(rb === undefined ? {} : { responded_by: rb })]);
+      expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
+        by: null,
+        absent_cause: 'not_stated',
+      });
+    }
+  });
+
+  it('the READ BOUND (mutant p): a responded_by with a control character ⇒ name_unreadable, the string absent', () => {
+    const run = makeRun([answer({ responded_by: 'mallory\u001b[2J' })]);
+    const view = composeStepViews(run)['gate_step']!.answers![0]!;
+    expect(view.answered_by).toEqual({ by: null, absent_cause: 'name_unreadable' });
+    expect(JSON.stringify(view)).not.toContain('mallory');
+  });
+
+  it("F6: a responded_by stored with spaces at either end (an embedding program's own call) reads without them", () => {
+    const run = makeRun([answer({ responded_by: '  bob  ' })]);
+    // (a) red when readAnswerer hands the stored value through untrimmed; (b) prints the view.
+    expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
+      by: 'bob',
+      by_source: 'stated',
+    });
+  });
+
+  it('a non-string responded_by ⇒ name_unreadable', () => {
+    const run = makeRun([answer({ responded_by: 42 })]);
+    expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
+      by: null,
+      absent_cause: 'name_unreadable',
+    });
+  });
+
+  it('an over-long stored name is SHOWN capped with the house marker — not withheld', () => {
+    const run = makeRun([answer({ responded_by: 'n'.repeat(300) })]);
+    expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
+      by: `${'n'.repeat(200)}…[truncated]`,
+      by_source: 'stated',
+    });
+  });
+
+  it('claim_proof_absent — precedence: a readable verdict wins; else unreadable; else expiry; else not recorded', () => {
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [
+        { claim_proof: { proof: 'absent' }, resolution: 'expired_default' },
+        { claim_proof: { proof: 'absent' } },
+      ],
+      [
+        { claim_proof: { proof: 'bogus' }, resolution: 'expired_default' },
+        { claim_proof_absent: 'proof_unreadable' },
+      ],
+      [{ claim_proof: 'nope' }, { claim_proof_absent: 'proof_unreadable' }],
+      [{ resolution: 'expired_default' }, { claim_proof_absent: 'settled_by_expiry' }],
+      [{}, { claim_proof_absent: 'proof_not_recorded' }],
+    ];
+    for (const [entryExtra, expected] of cases) {
+      const view = composeStepViews(makeRun([answer(entryExtra)]))['gate_step']!.answers![0]!;
+      expect({
+        claim_proof: view.claim_proof,
+        claim_proof_absent: view.claim_proof_absent,
+      }).toEqual({
+        claim_proof: undefined,
+        claim_proof_absent: undefined,
+        ...expected,
+      });
+    }
+  });
+
+  it('a step with no answer carries no `answers` key at all', () => {
+    const run = makeRun([{ step_id: 's', status: 'success' }]);
+    expect('answers' in composeStepViews(run)['s']!).toBe(false);
+  });
+
+  it('totality: a gate_response entry with no string step_id mints nothing and never throws', () => {
+    expect(
+      composeStepViews(makeRun([{ kind: 'gate_response' }, { step_id: 5, kind: 'gate_response' }])),
+    ).toEqual({});
+  });
+  // Issue #625, PR-H review correction C2: the settlement writes `responded_by: 'timeout'` on the
+  // entry its expiry makes; no one answered. Keyed on `resolution`, never on the literal.
+  it.each([['expired_default', { choice: 'hold' }, { choice: 'hold' }, 'hold']] as const)(
+    'C2: an entry the gate’s expiry wrote (%s) reads no answerer: settled_by_expiry, whatever responded_by holds',
+    (resolution, input_summary, output_summary, choice) => {
+      const run = makeRun([
+        { step_id: 'gate_step', kind: 'execution', status: 'success' },
+        answer({ responded_by: 'timeout', resolution, input_summary, output_summary }),
+      ]);
+      // (a) red when the expiry's literal is read as a caller-stated name, or the reading keys on
+      //     something other than `resolution`; (b) prints the view.
+      expect(composeStepViews(run)['gate_step']!.answers).toEqual([
+        {
+          ...(choice !== undefined ? { choice } : {}),
+          answered_by: { by: null, absent_cause: 'settled_by_expiry' },
+          claim_proof_absent: 'settled_by_expiry',
+        },
+      ]);
+    },
+  );
+
+  // An `on_expiry: abort` expiry writes a `gate_response` entry (`resolution: 'expired_abort'`, no
+  // choice) but answers nothing and settles nothing — the run ends, the step is skipped. Not an answer.
+  const abortEntry = {
+    responded_by: 'timeout',
+    resolution: 'expired_abort',
+    input_summary: {},
+    output_summary: { gate_expired: true, disposition: 'abort' },
+  };
+  it('an abort expiry’s entry is not an answer: the step keeps its attempts and has no `answers` key', () => {
+    const run = makeRun([
+      { step_id: 'gate_step', kind: 'execution', status: 'success' },
+      answer(abortEntry),
+    ]);
+    const view = composeStepViews(run)['gate_step']!;
+    // (a) red when the abort expiry is composed as an answer (the walk's RED: "settled by the gate's
+    //     expiry" for a gate nothing settled); (b) prints the view.
+    expect(view.attempts).toHaveLength(1);
+    expect('answers' in view).toBe(false);
+  });
+  it('an abort expiry’s entry alone creates no step view', () => {
+    expect(composeStepViews(makeRun([answer(abortEntry)]))).toEqual({});
+  });
+  it('isAnswerEntry, per member', () => {
+    expect(isAnswerEntry({ kind: 'gate_response' })).toBe(true);
+    expect(isAnswerEntry({ kind: 'gate_response', resolution: 'expired_default' })).toBe(true);
+    expect(isAnswerEntry({ kind: 'gate_response', resolution: 'expired_abort' })).toBe(false);
+    expect(isAnswerEntry({ kind: 'execution' })).toBe(false);
+    expect(isAnswerEntry({})).toBe(false);
+    expect(isAnswerEntry(null)).toBe(false);
+    expect(isAnswerEntry('gate_response')).toBe(false);
+  });
+
+  it('C2 (control): a caller who STATES `timeout` as its name (no resolution) is a stated name', () => {
+    const run = makeRun([answer({ responded_by: 'timeout' })]);
+    // (a) red when the reading keys on `responded_by === 'timeout'`; (b) prints the view.
+    expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
+      by: 'timeout',
+      by_source: 'stated',
     });
   });
 });

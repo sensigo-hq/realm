@@ -13,6 +13,7 @@
 // engine-inert for them: no engine or MCP call site constructs one yet (enforced by a source-text
 // guard, deleted when PR-D migrates the five remaining legacy write sites).
 import type { EvidenceSnapshot, PendingGate } from './run-record.js';
+import type { Attributed, GateClaimVerdict } from '../engine/holder.js';
 
 /** The three outcomes a `settle_step` delta's caller can report for the step being settled —
  *  mirrors the THREE seal call sites (:2560 complete, :2220 fail, :1784 handler-abort) this
@@ -120,6 +121,13 @@ export interface SettleGateDelta {
    *  gate_response evidence snapshot the migrated caller (PR-D) builds; no arm in this file ever
    *  reads it. Omit when the caller has no attribution to record. */
   respondedBy?: string;
+  /**
+   * issue #625 (holder slice): the claim token the answer's caller passed back, if any. JUDGED
+   * inside the answer's write (`judgeGateProof`) and reported on the result's `gateClaim` and on the
+   * answer's evidence entry — it NEVER decides whether the answer applies (the answer is decided by
+   * `gateId` alone). Only "not passed" is absent: an empty string is a wrong value, not no value.
+   */
+  claimToken?: string;
   evidence: EvidenceSnapshot[];
 }
 
@@ -315,6 +323,10 @@ export type SettlementResult =
        *  `settleStep`) and at least one guard was eligible after the delta. Absent when none.
        *  `run`, `transitioned` and `pendingFinalizers` describe the record AFTER these guards. */
       guards?: ReadonlyArray<{ step: string; outcome: 'pass' | 'abort' | 'resolution_error' }>;
+      /** issue #625 (holder slice): what the answer's caller showed about the question's claim —
+       *  present only on a `settle_gate` result (and on the `already_settled` result of an
+       *  `expire_gate`/`settle_gate` that found the question settled), never on any other. */
+      gateClaim?: GateClaimVerdict & { claim?: { holder?: Attributed; since?: string } };
     }
   | {
       applied: false;
@@ -335,4 +347,9 @@ export type SettlementResult =
        *  description of the persisted membership that conflicts with the delta's own outcome
        *  (issue #279, increment 2, PR-C; design record §3 `settleGuardArms`). */
       persisted?: string;
+      /** issue #625 (holder slice): the same verdict, on the refusals that carry one (the
+       *  write-free `gate_expired_pending`, and `already_settled` from either gate arm). `claim`
+       *  is present exactly when the gate step had a claim at the read, copying `holder` and
+       *  `since` as stored — NEVER the token. */
+      gateClaim?: GateClaimVerdict & { claim?: { holder?: Attributed; since?: string } };
     };

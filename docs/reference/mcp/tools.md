@@ -27,31 +27,32 @@ To connect an assistant, see [Connect an MCP client](../../guides/connect-an-mcp
 
 `start_run`, `execute_step`, `submit_human_response` and `create_workflow` reply with one JSON object of the same shape. The other tools use that shape when they refuse a call. The examples on this page leave out fields that are empty, and show a long `next_actions` list as `"…"`.
 
-| Field                                                   | Always present                                                                     | Holds                                                                                                                        |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `command`                                               | Yes                                                                                | The tool, or for `execute_step` and `submit_human_response` the step.                                                        |
-| `run_id`                                                | Yes                                                                                | The run. Empty when no run exists.                                                                                           |
-| `run_version`                                           | Yes                                                                                | A number that rises each time the run is changed.                                                                            |
-| `status`                                                | Yes                                                                                | `ok`, `error`, `blocked` or `confirm_required`. See below.                                                                   |
-| `context_hint`                                          | Yes                                                                                | One sentence about what has just happened.                                                                                   |
-| `next_actions`                                          | Yes                                                                                | The calls that can be made next. Empty when the run has ended, is waiting, or cannot go on.                                  |
-| `warnings`, `errors`                                    | Yes                                                                                | Lists of messages.                                                                                                           |
-| `data`, `evidence`                                      | Yes                                                                                | Empty in MCP replies, except that `create_workflow` puts the new `workflow_id` in `data`. Read the run with `get_run_state`. |
-| `run_phase`                                             | With a run                                                                         | The run's phase after the call.                                                                                              |
-| `error_code`                                            | On an error                                                                        | A code such as `VALIDATION_INPUT_SCHEMA`. See [Error codes](../error-codes.md).                                              |
-| `error_details`                                         | On some errors                                                                     | Details that depend on the code, such as the schema rules that were broken.                                                  |
-| `agent_action`                                          | On an error or a block                                                             | What the caller should do. See below.                                                                                        |
-| `retry_after`                                           | With `wait_and_proceed`                                                            | How many seconds to wait.                                                                                                    |
-| `blocked_reason`                                        | With `blocked`                                                                     | `eligible_steps`, the steps that can be called, and a `suggestion`.                                                          |
-| `gate`                                                  | With `confirm_required`                                                            | The open gate: `gate_id`, `step_name`, `preview`, `choices`, and when set `display`, `agent_hint`, `expires_at`.             |
-| `deduped`                                               | From `start_run` and `create_workflow`                                             | `true` if an existing run was returned in place of a new one.                                                                |
-| `chained_auto_steps`                                    | When `auto` or `guard` steps ran in the call                                       | Each such step and the run's phase after it. From `start_run` and `execute_step` only.                                       |
-| `guards`                                                | When the call's write decided guard steps                                          | Each guard and its `outcome`: `pass`, `abort` or `resolution_error`. See [Guards in a reply](#guards-in-a-reply).            |
-| `ended_by`                                              | When one of those guards ended the run                                             | `arm`, the guard's `step`, and a `reason` when there is one.                                                                 |
-| `answer_recorded`                                       | From `submit_human_response`, for an answer that came after the gate's time was up | `false`. It is never `true`: an answer that was recorded leaves the field out.                                               |
-| `adopted_own`, `adopted_anonymous`, `preserved_foreign` | From `execute_step` on an agent step                                               | How many trace entries sent with `append_trace` were attached to the step.                                                   |
-| `settled_by_default`, `defaulted_steps`                 | When a step was given its default output                                           | See [Agent-step controls](../workflow/agent-step-controls.md#validation_exhaustion).                                         |
-| `diagnostics`                                           | From `create_workflow`                                                             | What was ignored in the request, as a list.                                                                                  |
+| Field                                                   | Always present                                                                     | Holds                                                                                                                                                                                                |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command`                                               | Yes                                                                                | The tool, or for `execute_step` and `submit_human_response` the step.                                                                                                                                |
+| `run_id`                                                | Yes                                                                                | The run. Empty when no run exists.                                                                                                                                                                   |
+| `run_version`                                           | Yes                                                                                | A number that rises each time the run is changed.                                                                                                                                                    |
+| `status`                                                | Yes                                                                                | `ok`, `error`, `blocked` or `confirm_required`. See below.                                                                                                                                           |
+| `context_hint`                                          | Yes                                                                                | One sentence about what has just happened.                                                                                                                                                           |
+| `next_actions`                                          | Yes                                                                                | The calls that can be made next. Empty when the run has ended, is waiting, or cannot go on.                                                                                                          |
+| `warnings`, `errors`                                    | Yes                                                                                | Lists of messages.                                                                                                                                                                                   |
+| `data`, `evidence`                                      | Yes                                                                                | Empty in MCP replies, except that `create_workflow` puts the new `workflow_id` in `data`. Read the run with `get_run_state`.                                                                         |
+| `run_phase`                                             | With a run                                                                         | The run's phase after the call.                                                                                                                                                                      |
+| `error_code`                                            | On an error                                                                        | A code such as `VALIDATION_INPUT_SCHEMA`. See [Error codes](../error-codes.md).                                                                                                                      |
+| `error_details`                                         | On some errors                                                                     | Details that depend on the code, such as the schema rules that were broken.                                                                                                                          |
+| `agent_action`                                          | On an error or a block                                                             | What the caller should do. See below.                                                                                                                                                                |
+| `retry_after`                                           | With `wait_and_proceed`                                                            | How many seconds to wait.                                                                                                                                                                            |
+| `blocked_reason`                                        | With `blocked`                                                                     | `eligible_steps`, the steps that can be called, and a `suggestion`.                                                                                                                                  |
+| `gate`                                                  | With `confirm_required`                                                            | The open gate: `gate_id`, `step_name`, `preview`, `choices`, and when set `display`, `agent_hint`, `expires_at`, and `claim_token` when the store gave one. See [The claim token](#the-claim-token). |
+| `deduped`                                               | From `start_run` and `create_workflow`                                             | `true` if an existing run was returned in place of a new one.                                                                                                                                        |
+| `chained_auto_steps`                                    | When `auto` or `guard` steps ran in the call                                       | Each such step and the run's phase after it. From `start_run` and `execute_step` only.                                                                                                               |
+| `guards`                                                | When the call's write decided guard steps                                          | Each guard and its `outcome`: `pass`, `abort` or `resolution_error`. See [Guards in a reply](#guards-in-a-reply).                                                                                    |
+| `ended_by`                                              | When one of those guards ended the run                                             | `arm`, the guard's `step`, and a `reason` when there is one.                                                                                                                                         |
+| `answer_recorded`                                       | From `submit_human_response`, for an answer that came after the gate's time was up | `false`. It is never `true`: an answer that was recorded leaves the field out.                                                                                                                       |
+| `gate_claim`                                            | From `submit_human_response`, on every `ok` reply                                  | Whether the answer came from the conversation that opened the question: `proof`, a `cause` for two of its values, and `opened_by`. See [The claim token](#the-claim-token).                          |
+| `adopted_own`, `adopted_anonymous`, `preserved_foreign` | From `execute_step` on an agent step                                               | How many trace entries sent with `append_trace` were attached to the step.                                                                                                                           |
+| `settled_by_default`, `defaulted_steps`                 | When a step was given its default output                                           | See [Agent-step controls](../workflow/agent-step-controls.md#validation_exhaustion).                                                                                                                 |
+| `diagnostics`                                           | From `create_workflow`                                                             | What was ignored in the request, as a list.                                                                                                                                                          |
 
 ### Guards in a reply
 
@@ -313,12 +314,13 @@ A step with a gate:
 
 ## `submit_human_response`
 
-| Parameter      | Type | Required | Holds                                          |
-| -------------- | ---- | -------- | ---------------------------------------------- |
-| `run_id`       | text | Yes      | The run.                                       |
-| `gate_id`      | text | Yes      | The open gate's ID, from `gate.gate_id`.       |
-| `choice`       | text | Yes      | One of the gate's choices.                     |
-| `responded_by` | text | No       | Who made the choice. Recorded with the answer. |
+| Parameter      | Type | Required | Holds                                                                                                                                |
+| -------------- | ---- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `run_id`       | text | Yes      | The run.                                                                                                                             |
+| `gate_id`      | text | Yes      | The open gate's ID, from `gate.gate_id`.                                                                                             |
+| `choice`       | text | Yes      | One of the gate's choices.                                                                                                           |
+| `responded_by` | text | No       | Who made the choice, as the caller states it. Not verified. At most 200 characters, no control characters. Recorded with the answer. |
+| `claim_token`  | text | No       | The value from `gate.claim_token` on the reply that opened this question. Never required.                                            |
 
 ```json
 {
@@ -332,10 +334,11 @@ A step with a gate:
 }
 ```
 
-| Refusal                          | `error_code`              | Message                                                              |
-| -------------------------------- | ------------------------- | -------------------------------------------------------------------- |
-| The choice is not offered        | `VALIDATION_INPUT_SCHEMA` | `Choice 'maybe' is not valid. Expected one of: send, discard`        |
-| The gate ID is not the open gate | `STATE_BLOCKED`           | `Gate 'x' is not the open gate and matches no committed resolution.` |
+| Refusal                                                                         | `error_code`               | Message                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The choice is not offered                                                       | `VALIDATION_INPUT_SCHEMA`  | `Choice 'maybe' is not valid. Expected one of: send, discard`                                                                                                                                                               |
+| The gate ID is not the open gate                                                | `STATE_BLOCKED`            | `Gate 'x' is not the open gate and matches no committed resolution.`                                                                                                                                                        |
+| `responded_by` is empty, longer than 200 characters, or has a control character | `VALIDATION_ACTOR_INVALID` | `responded_by: empty; nothing was recorded. Give a name of at most 200 characters with no control characters, or leave it out.` The middle word is `empty`, `longer than 200 characters` or `contains a control character`. |
 
 A guard step that the answer makes ready is decided in the same write. The reply names it in `guards`. It has no `chained_auto_steps`. When the guard ended the run, `status` is still `ok`, because the answer was recorded:
 
@@ -411,6 +414,41 @@ Which replies carry `answer_recorded: false`:
 | `on_expiry: abort`          | An earlier call               | No. The reply is the refusal every ended run gives. | None                                  |
 
 A person's own answer sent a second time never carries the field.
+
+The examples above leave out `gate_claim` and the `warnings` that go with it. [The claim token](#the-claim-token) describes both.
+
+An argument that this tool does not take is named in `warnings`, with the nearest argument it has when there is one: `claimToken` and `token` are answered with `did you mean 'claim_token'?`. Up to version 0.45.0 such an argument was dropped without a word, and an answer that sent `claimToken` read as one with no token. The other tools still drop unknown arguments without saying so.
+
+### The claim token
+
+`claim_token`, `gate_claim` and the argument warning were added after version 0.45.0.
+
+The reply that opens a gate carries `gate.claim_token`: the token of the claim that the opening call made on the gate's step. The same value is in both forms of the answer instruction, `instruction.params.claim_token` and `instruction.call_with.claim_token`, and the instruction's `human_readable` text says to pass it back. When the store gave no token, the field and the sentence are left out. That reply is the only one that carries it. `get_run_state`, `realm run inspect` and every refusal leave it out. A bundle made by `realm run export` is a copy of the run's record, and it carries the claim's token.
+
+Pass it back as `claim_token` when you answer. It shows that the answer comes from the conversation that opened the question. It is not a secret: anyone who can read the run store can read it, and Realm cannot tell callers apart. It guards against mistakes and races, not against a caller who means harm. It is never required, and it never decides whether the answer is recorded. The answer is decided by the gate ID alone. An empty `claim_token` is accepted, and counts as a wrong one.
+
+Every `ok` reply to `submit_human_response` has `gate_claim`, including a reply with `answer_recorded: false`. A refused answer has none. `gate_claim` says only what the token showed; whether the answer was recorded is `answer_recorded`.
+
+```json
+"gate_claim": {
+  "proof": "matched",
+  "opened_by": { "by": "ops@server-1", "by_source": "derived", "channel": "mcp-stdio" }
+}
+```
+
+| `proof`        | Means                                                                             | `cause`                                                                                                                                                            |
+| -------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `matched`      | The `claim_token` passed is the one that was handed out when the question opened. |                                                                                                                                                                    |
+| `absent`       | No `claim_token` was passed.                                                      |                                                                                                                                                                    |
+| `mismatch`     | One was passed, and it is not this question's.                                    |                                                                                                                                                                    |
+| `unverifiable` | There was nothing to check it against.                                            | `no_claim` (the gate's step has no claim on the record), `claim_has_no_token` (its claim has no token) or `store_keeps_no_claims` (the run store keeps no claims). |
+| `spent`        | The question had already been settled before this call.                           | `answered` (by an earlier answer) or `expired` (by its time running out).                                                                                          |
+
+The same word is stored on the answer's entry in the run's record as `claim_proof`. The reply and the record carry the same verdict. It is decided once, inside the write that records the answer.
+
+`opened_by` names the program through which the question was opened, not anyone who is working on it now. It holds `by` (the name), `by_source` (how the name is known: `stated`, `ambient` for the `REALM_OPERATOR` variable, or `derived` for the OS user and host name) and `channel` (the door: `mcp-stdio`, `mcp-http`, `agent`, `run`). When there is no name it is `{ "by": null, "absent_cause": … }`, with the word saying why: `holder_not_recorded` (the claim has no name), `pre_lease_claim` (the claim has neither a name nor `since`: it was made before those fields existed), `no_claim`, `store_keeps_no_claims`, `driver_not_recorded` (the step's entry has no name) or `name_unreadable` (a name is stored, and it is not one that can be shown).
+
+Unless the proof is `matched`, or is `spent` with no token passed, the reply also has one sentence in `warnings` about it. For `absent`: `No claim_token was passed; the answer was recorded. Only the conversation that opened the question has one to pass.` On a reply with `answer_recorded: false` the sentence is the token fact alone (for `absent`: `No claim_token was passed.`): the expiry's own sentence and `answer_recorded` already say that the answer was not recorded.
 
 ## `get_run_state`
 

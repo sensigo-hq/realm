@@ -4,10 +4,11 @@ import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Command } from 'commander';
 import { JsonWorkflowStore } from '@sensigo/realm';
-import type { ExtensionRegistry, WorkflowDefinition } from '@sensigo/realm';
+import type { ExtensionRegistry, WorkflowDefinition, Attributed } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
+import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
@@ -38,6 +39,12 @@ export interface StartServerOptions {
    * loader cache — module content changes require a server restart.
    */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+  /**
+   * Issue #625 (holder slice): the program this server runs as (channel `mcp-http`) — made ONCE at
+   * startup and handed to every per-request MCP server. One shared bearer secret authenticates a
+   * session, never a caller: this names the PROGRAM, as stated at startup.
+   */
+  driver?: Attributed;
 }
 
 /**
@@ -54,7 +61,7 @@ export interface StartServerOptions {
  * is discarded, never connected.
  */
 export async function startHttpMcpServer(options: StartServerOptions): Promise<Server> {
-  const { port, host, devMode, token, workflowStore, registryProvider } = options;
+  const { port, host, devMode, token, workflowStore, registryProvider, driver } = options;
 
   // ONE workflow store per process (constructed at startup when none is injected).
   // JsonWorkflowStore.get() is readFileSync-per-call, so reusing the instance across
@@ -64,6 +71,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
   const serverOptions = {
     workflowStore: store,
     ...(registryProvider !== undefined ? { registryProvider } : {}),
+    ...(driver !== undefined ? { driver } : {}),
   };
   // The startup construction: a throw here rejects this async function's promise.
   createRealmMcpServer(serverOptions);
@@ -182,6 +190,9 @@ export const serveCommand = new Command('serve')
     'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory — serve is operator-launched)',
   )
   .action(async (options) => {
+    // issue #625 (holder slice): this program's name, made once outside the per-request handler,
+    // before anything is bound. A name that cannot be used prints one line and exits 1.
+    const driver = resolveProgramIdentity('mcp-http');
     const port = parseInt(options.port, 10);
     const host = options.host as string;
     const devMode = options.dev === true || process.env.REALM_DEV === '1';
@@ -212,7 +223,14 @@ export const serveCommand = new Command('serve')
     // port in use) is not a construction refusal and propagates as before.
     let httpServer: Server;
     try {
-      httpServer = await startHttpMcpServer({ port, host, devMode, token, registryProvider });
+      httpServer = await startHttpMcpServer({
+        port,
+        host,
+        devMode,
+        token,
+        registryProvider,
+        ...(driver !== undefined ? { driver } : {}),
+      });
     } catch (err) {
       if (isListenFailure(err)) throw err;
       console.error(hostRefusalLine('serve', err));

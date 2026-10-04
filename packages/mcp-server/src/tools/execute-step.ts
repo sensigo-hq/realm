@@ -272,6 +272,8 @@ export async function handleExecuteStep(
       ? { traceBufferStore: stores.traceBufferStore }
       : {}),
     ...(args.writer_nonce !== undefined ? { writerNonce: args.writer_nonce } : {}),
+    // issue #625: the program this server runs as — the claim's `holder`, the evidence's `driven_by`.
+    ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
   });
 
   // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the

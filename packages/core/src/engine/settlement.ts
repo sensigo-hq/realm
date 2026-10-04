@@ -52,6 +52,7 @@ import {
 import { deriveDefaultedSteps } from './defaulted-steps.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { omitClaim } from './claim-liveness.js';
+import { judgeGateProof, type GateClaimVerdict } from './holder.js';
 import { DRAIN_LEASE_MAX } from './lifecycle.js';
 import { evaluateGuardConditions } from './precondition.js';
 
@@ -731,13 +732,62 @@ function applyOpenGate(fresh: RunRecord, delta: OpenGateDelta): SettlementResult
 function findSettledGateEntry(
   fresh: RunRecord,
   gateId: string,
-): { step: string; choice: string | undefined } | undefined {
+): { step: string; choice: string | undefined; resolvedBy: 'timeout' | undefined } | undefined {
   for (const [step, entry] of Object.entries(fresh.settled ?? {})) {
     if (entry.outcome !== 'gate' || entry.token !== gateId) continue;
     if (!membershipFor(fresh, entry.outcome).includes(step)) continue; // orphan rule
-    return { step, choice: entry.choice };
+    return { step, choice: entry.choice, resolvedBy: entry.resolved_by };
   }
   return undefined;
+}
+
+/**
+ * issue #625 (the holder slice): the verdict of an answer that finds its question ALREADY settled —
+ * `spent`, cause = how it was settled (`timeout` on the settled entry ⇒ the gate's expiry; any
+ * other ⇒ an answer). The claim is gone by then (the settling write deleted it), so none is copied.
+ */
+function spentGateClaim(hit: { resolvedBy: 'timeout' | undefined }): GateClaimVerdictWithClaim {
+  return judgeGateProof({
+    claim: undefined,
+    presented: undefined,
+    settledBefore: hit.resolvedBy === 'timeout' ? 'expired' : 'answered',
+    storeKeepsClaims: true,
+  });
+}
+
+/** A verdict as a settlement result carries it: the verdict plus, when the gate step had a claim
+ *  at the read, that claim's `holder` and `since` as stored — NEVER its token. */
+export type GateClaimVerdictWithClaim = NonNullable<
+  Extract<SettlementResult, { applied: true }>['gateClaim']
+>;
+
+/** The verdict alone — what the answer's entry records (never the claim's holder or since). */
+export function verdictOnly(g: GateClaimVerdictWithClaim): GateClaimVerdict {
+  const { claim: _claim, ...verdict } = g;
+  return verdict;
+}
+
+export function judgeOpenGateClaim(
+  fresh: RunRecord,
+  stepName: string,
+  presented: string | undefined,
+  storeKeepsClaims: boolean,
+): GateClaimVerdictWithClaim {
+  const claim = fresh.claims?.[stepName];
+  const verdict: GateClaimVerdict = judgeGateProof({
+    claim,
+    presented,
+    settledBefore: undefined,
+    storeKeepsClaims,
+  });
+  if (claim === undefined) return verdict;
+  return {
+    ...verdict,
+    claim: {
+      ...(claim.holder !== undefined ? { holder: claim.holder } : {}),
+      ...(claim.since !== undefined ? { since: claim.since } : {}),
+    },
+  };
 }
 
 function applySettleGate(
@@ -748,6 +798,9 @@ function applySettleGate(
   // every other `now`-consuming arm (`applySettleStep`'s abort branch, `applyExpireGate` below).
   // The ONE authorized addition to this function — every other line is byte-unchanged from PR-C.
   now: Date,
+  // issue #625 (holder slice): whether the store keeping this record keeps claims at all — the
+  // verdict's `store_keeps_no_claims` cause is minted here, once, from this input.
+  storeKeepsClaims: boolean,
 ): SettlementResult {
   const { gateId, choice, evidence } = delta;
 
@@ -757,7 +810,12 @@ function applySettleGate(
   if (hit !== undefined) {
     if (hit.choice === choice) {
       // Double-submit / two-gates delayed retry (TD F1) — same choice, idempotent no-op.
-      return { applied: false, reason: 'already_settled', run: fresh };
+      return {
+        applied: false,
+        reason: 'already_settled',
+        run: fresh,
+        gateClaim: spentGateClaim(hit),
+      };
     }
     return {
       applied: false,
@@ -776,6 +834,15 @@ function applySettleGate(
   }
 
   if (fresh.pending_gate !== undefined && fresh.pending_gate.gate_id === gateId) {
+    // issue #625 (holder slice): the proof is judged ONCE, here, once the open gate's id has
+    // matched and before anything else is decided — it is attached to whichever result follows
+    // and decides NOTHING (the answer is decided by the gate id alone).
+    const gateClaim = judgeOpenGateClaim(
+      fresh,
+      fresh.pending_gate.step_name,
+      delta.claimToken,
+      storeKeepsClaims,
+    );
     // issue #291 ([F3] shape c, the expiry-WINS mechanism): a WRITE-FREE refusal when the live
     // gate has expired unresolved AND has an enactable disposition (`on_expiry` frozen) —
     // checked under the lock, with the injectable `now`, BEFORE choice_not_eligible. The caller
@@ -795,7 +862,7 @@ function applySettleGate(
       fresh.pending_gate.on_expiry !== undefined &&
       now.getTime() >= new Date(fresh.pending_gate.expires_at).getTime()
     ) {
-      return { applied: false, reason: 'gate_expired_pending', run: fresh };
+      return { applied: false, reason: 'gate_expired_pending', run: fresh, gateClaim };
     }
     if (!fresh.pending_gate.choices.includes(choice)) {
       return {
@@ -817,7 +884,14 @@ function applySettleGate(
       in_progress_steps: rest.in_progress_steps.filter((s) => s !== stepName),
       claims: omitClaim(rest.claims, stepName),
       completed_steps: [...rest.completed_steps, stepName],
-      evidence: [...rest.evidence, ...evidence],
+      // issue #625 (holder slice): the verdict is judged inside this write, so it is stamped on the
+      // answer's own entry here (the entry was built before the write, from the pre-read).
+      evidence: [
+        ...rest.evidence,
+        ...evidence.map((e) =>
+          e.kind === 'gate_response' ? { ...e, claim_proof: verdictOnly(gateClaim) } : e,
+        ),
+      ],
       settled: { ...rest.settled, [stepName]: { token: gateId, outcome: 'gate', choice } },
     };
     const propagated = propagateSkips(withMembership, definition);
@@ -850,6 +924,7 @@ function applySettleGate(
       run,
       transitioned,
       pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
+      gateClaim,
     };
   }
 
@@ -876,7 +951,12 @@ function applyExpireGate(
   // Lookup FIRST ([F1] i; D3 §0.2 fail-safer-under-corruption — same order as settleGateArms).
   const hit = findSettledGateEntry(fresh, gateId);
   if (hit !== undefined) {
-    return { applied: false, reason: 'already_settled', run: fresh };
+    return {
+      applied: false,
+      reason: 'already_settled',
+      run: fresh,
+      gateClaim: spentGateClaim(hit),
+    };
   }
 
   // Terminal split ([F1] iv, the replay/crash-recovery arm): a prior expire-abort enactment for
@@ -1456,21 +1536,24 @@ export function applySettlement(
   fresh: RunRecord,
   delta: SettlementDelta,
   definition: WorkflowDefinition,
-  options?: { now?: Date; cascadeGuards?: boolean },
+  options?: { now?: Date; cascadeGuards?: boolean; storeKeepsClaims?: boolean },
 ): SettlementResult {
   const now = options?.now ?? new Date();
+  // issue #625 (holder slice): absent ⇒ false. A store's own `settleStep` passes
+  // `this.persistsClaims === true`; the transform mints `store_keeps_no_claims` itself.
+  const storeKeepsClaims = options?.storeKeepsClaims === true;
   // issue #625: without the option the transform is exactly what it was — one delta, no guard
   // settled, and every throw it had. Only a store's own `settleStep` sets the option on a write
   // (plus the drain dry run, which predicts and never persists).
   if (options?.cascadeGuards !== true || !CASCADING_KINDS.has(delta.kind)) {
-    return applyDelta(fresh, delta, definition, now);
+    return applyDelta(fresh, delta, definition, now, storeKeepsClaims);
   }
   // With the option set, a guard whose `when` cannot be evaluated must not make THIS write
   // unrecordable: the base arm, the loop's eligibility read and `applySettleGuard` all get a copy
   // of the definition in which such a guard has no `when`, so it reads as eligible and the loop
   // settles it as a resolution error.
   const total = totalGuardDefinition(definition, fresh);
-  const base = applyDelta(fresh, delta, total.definition, now);
+  const base = applyDelta(fresh, delta, total.definition, now, storeKeepsClaims);
   // Only an APPLIED delta cascades: a refusal or a no-op stays write-free.
   if (!base.applied) return base;
   return settleEligibleGuards(base, total, now, fresh.version);
@@ -1756,8 +1839,10 @@ function settleEligibleGuards(
     transitioned = transitioned || guardResult.transitioned;
   }
   if (guards.length === 0) return base;
+  // issue #625: spread the base so what the base result carried (the answer's `gateClaim`) is not
+  // dropped by the rebuild — a guard after a gate is exactly this PR's own case.
   return {
-    applied: true,
+    ...base,
     run,
     transitioned,
     pendingFinalizers: pendingFinalizerNames(run.finalizer_ledger),
@@ -1770,6 +1855,7 @@ function applyDelta(
   delta: SettlementDelta,
   definition: WorkflowDefinition,
   now: Date,
+  storeKeepsClaims: boolean,
 ): SettlementResult {
   switch (delta.kind) {
     case 'settle_step':
@@ -1781,7 +1867,7 @@ function applyDelta(
     case 'open_gate':
       return applyOpenGate(fresh, delta);
     case 'settle_gate':
-      return applySettleGate(fresh, delta, definition, now);
+      return applySettleGate(fresh, delta, definition, now, storeKeepsClaims);
     case 'settle_guard':
       return applySettleGuard(fresh, delta, definition);
     case 'release_step':

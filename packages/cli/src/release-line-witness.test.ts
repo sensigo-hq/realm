@@ -5,6 +5,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { REPO_ROOT } from './multi-copy/layout.js';
+import {
+  RUN_STORE_FIDELITY_LAWS,
+  ARTIFACT_STORE_LAWS,
+  FENCED_TRACE_BUFFER_LAWS,
+  SETTLEMENT_LAWS,
+} from '@sensigo/realm-testing';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -52,30 +58,49 @@ describe('release-line witnesses', () => {
       'packages/testing/src/store/cross-copy-note.ts': 1,
     });
   });
-  it('assertReleaseLine: H1 (4), the tool entries (one helper), H2 (10 across five files), H3 (2)', () => {
+  it('assertReleaseLine: H1 (4), the tool entries (one helper), H2 (the admission step: one call for all eight engine entries, framework v1.27 §4), H3 (2), the fence reader (1)', () => {
     expect(callSites('assertReleaseLine')).toEqual({
       'packages/mcp-server/src/server.ts': 4,
       'packages/mcp-server/src/tools/assert-tool-stores.ts': 1,
-      'packages/core/src/engine/execution-loop.ts': 5,
-      'packages/core/src/engine/abandon-run.ts': 1,
-      'packages/core/src/engine/reclaim-step.ts': 1,
-      'packages/core/src/workflow/registrar.ts': 1,
+      'packages/core/src/admission.ts': 1,
       'packages/core/src/store/fence-predicate.ts': 1,
       'packages/core/src/store/trace-buffer-store.ts': 1,
       'packages/mcp-server/src/json-trace-buffer-store.ts': 1,
     });
   });
-  it('every contract runner’s LAWS array runs STORE_RELEASE_LINE_TRUE (a law no runner executes passes vacuously)', () => {
+  it('every contract exports STORE_RELEASE_LINE_TRUE, every runner takes its laws from the export, and no runner keeps a hand-written law list (a law no runner executes passes vacuously)', () => {
+    // (a) the four exported lists carry the law, so a runner that derives from its export runs it.
+    for (const list of [
+      RUN_STORE_FIDELITY_LAWS,
+      ARTIFACT_STORE_LAWS,
+      FENCED_TRACE_BUFFER_LAWS,
+      SETTLEMENT_LAWS,
+    ] as readonly (readonly string[])[]) {
+      expect(list).toContain('STORE_RELEASE_LINE_TRUE');
+    }
+    // (b) every runner derives from an export and does not set the law aside in its NOT_RUN;
+    // (c) no test file keeps its own array of law names — the shape that let
+    //     `in-memory-store.test.ts` (`const laws = [...]`) skip this law on `main` while a check
+    //     keyed on `const LAWS` looked elsewhere.
     const runners: string[] = [];
+    const handLists: string[] = [];
     for (const pkg of ['core', 'cli', 'mcp-server', 'testing']) {
       for (const file of testFiles(join(REPO_ROOT, 'packages', pkg, 'src'))) {
         const text = readFileSync(file, 'utf8');
-        const m = /^const LAWS[^=]*= \[\n([\s\S]*?)\n\]/m.exec(text);
-        if (m === null) continue;
-        runners.push(relative(REPO_ROOT, file));
-        expect(m[1], relative(REPO_ROOT, file)).toContain("'STORE_RELEASE_LINE_TRUE'");
+        const rel = relative(REPO_ROOT, file);
+        if (
+          /\b(?:RUN_STORE_FIDELITY|ARTIFACT_STORE|FENCED_TRACE_BUFFER|SETTLEMENT)_LAWS\.filter\(/.test(
+            text,
+          )
+        ) {
+          runners.push(rel);
+          const notRun = /const NOT_RUN[^=]*= \{([\s\S]*?)\};/.exec(text);
+          expect(notRun?.[1] ?? '', rel).not.toContain('STORE_RELEASE_LINE_TRUE');
+        }
+        if (/const\s+(?:LAWS|laws)\b[^=]*=\s*\[\s*'[A-Z0-9_]+'/.test(text)) handLists.push(rel);
       }
     }
+    expect(handLists).toEqual([]);
     expect(runners.sort()).toEqual([
       'packages/cli/src/store-contracts/failed-attempt-store.contract.test.ts',
       'packages/cli/src/store-contracts/in-memory-trace-buffer-store-fenced.contract.test.ts',
@@ -83,6 +108,7 @@ describe('release-line witnesses', () => {
       'packages/cli/src/store-contracts/json-trace-buffer-store-fenced.contract.test.ts',
       'packages/cli/src/store-contracts/json-trace-buffer-store.contract.test.ts',
       'packages/cli/src/store-contracts/run-store-fidelity.contract.test.ts',
+      'packages/testing/src/store/in-memory-store.test.ts',
       'packages/testing/src/store/settlement-in-memory-store.test.ts',
       'packages/testing/src/store/settlement-json-file-store.test.ts',
     ]);

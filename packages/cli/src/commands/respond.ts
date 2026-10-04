@@ -2,9 +2,11 @@
 import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
-import type { ExtensionRegistry } from '@sensigo/realm';
+import type { ExtensionRegistry, Attributed } from '@sensigo/realm';
 import {
   WorkflowError,
+  boundStatedName,
+  identityRefusalLine,
   submitHumanResponse,
   getWorkflowForRun,
   describeAnswerEnding,
@@ -12,6 +14,7 @@ import {
   lateAnswerOutcome,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import { resolveProgramIdentity } from '../lib/program-identity.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
@@ -48,16 +51,27 @@ export interface RespondOutcome {
  * @param options       `gate` is the gate_id; `choice` is the selected option.
  * @param runStore      Store holding run records.
  * @param workflowStore Registrar for workflow definitions.
+ * @param registry      Project registry (the command passes the one it resolved).
+ * @param driver        The program making this call (issue #625) — named on the cleanup steps the
+ *                      answer drains, never as the answerer.
  * @returns The choice submitted, the new run state after the gate advances, and the lines the
  *          command prints (issue #625). A refused answer THROWS; its message is every line the
  *          command prints on stderr, one per line.
  */
 export async function respondToGate(
   runId: string,
-  options: { gate: string; choice: string; project?: string; extensionsModule?: string },
+  options: {
+    gate: string;
+    choice: string;
+    project?: string;
+    extensionsModule?: string;
+    /** Who made the choice, as the caller states it (issue #625) — recorded as `responded_by`. */
+    by?: string;
+  },
   runStore: RunStore,
   workflowStore: WorkflowRegistrar,
   registry?: ExtensionRegistry,
+  driver?: Attributed,
 ): Promise<RespondOutcome> {
   const run = await runStore.get(runId);
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
@@ -88,6 +102,11 @@ export async function respondToGate(
     gateId: options.gate,
     choice: options.choice,
     registry: effectiveRegistry,
+    // issue #625: a PERSON's name is never derived (an OS account and REALM_OPERATOR name a
+    // PROGRAM): the answer names its answerer only when `--by` is given. No `claimToken` — the
+    // CLI never passes one, by design.
+    ...(options.by !== undefined ? { respondedBy: options.by } : {}),
+    ...(driver !== undefined ? { driver } : {}),
   });
 
   if (result.status !== 'ok') {
@@ -150,11 +169,43 @@ export const respondCommand = new Command('respond')
     '--extensions-module <path>',
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
   )
+  .option(
+    '--by <name>',
+    'Who made the choice, as you state it — recorded with the answer, not verified. At most 200 ' +
+      'characters, no control characters. Optional: the answer names its answerer only when this is given.',
+  )
   .action(
     async (
       runId: string,
-      opts: { gate: string; choice: string; project?: string; extensionsModule?: string },
+      opts: {
+        gate: string;
+        choice: string;
+        project?: string;
+        extensionsModule?: string;
+        by?: string;
+      },
     ) => {
+      // issue #625 (holder slice): both names are checked at the START, before the run is read, and
+      // a name that cannot be used prints ONE line and exits 1 with nothing recorded.
+      // The checked name (spaces at either end removed) is what is passed on and stored.
+      let by: string | undefined;
+      if (opts.by !== undefined) {
+        try {
+          by = boundStatedName(opts.by, '--by');
+        } catch (err) {
+          console.error(identityRefusalLine('--by', err, 'nothing was recorded'));
+          process.exit(1);
+          return;
+        }
+      }
+      // `REALM_OPERATOR` here names the PROGRAM on the cleanup steps this answer drains — never
+      // the person who answered; the answer itself never carries it. It is checked before the run
+      // is read, so it refuses on a workflow with no cleanup steps too — the refusal says both, so
+      // its sentence is true for every workflow.
+      const driver = resolveProgramIdentity(
+        'respond',
+        "it is written as the program's name on any cleanup steps the answer lets run, and respond checks it before reading the run, so nothing was recorded",
+      );
       const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
       const runStore = new JsonFileStore();
       const workflowStore = new JsonWorkflowStore();
@@ -185,7 +236,15 @@ export const respondCommand = new Command('respond')
           process.exit(1);
           return;
         }
-        const outcome = await respondToGate(runId, opts, runStore, workflowStore, registry);
+        const { by: _rawBy, ...rest } = opts;
+        const outcome = await respondToGate(
+          runId,
+          { ...rest, ...(by !== undefined ? { by } : {}) },
+          runStore,
+          workflowStore,
+          registry,
+          driver,
+        );
         // issue #625: what the answer's write settled is said FIRST — the guard that ended the
         // run (with its reason and each finalizer's outcome), or each guard that passed — then
         // the one line that says whether the answer was recorded. Exit 0: the call succeeded.
