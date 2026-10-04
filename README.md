@@ -6,20 +6,20 @@ Website and documentation: [realmengine.dev](https://realmengine.dev)
 
 **The agent calls Realm. Every other tool calls the agent.**
 
-Most AI workflow platforms orchestrate LLMs as services: the platform decides when to call the model, what to send, and what to do with the result. Realm inverts this. The agent calls `execute_step` via MCP. Realm's state machine responds with the current step's task and schema. The agent executes. It cannot skip steps, produce malformed output, or proceed past a human gate — not because of instructions it might ignore, but because the state cannot change until valid output is submitted.
+Most AI workflow platforms orchestrate LLMs as services: the platform decides when to call the model, what to send, and what to do with the result. Realm inverts this. The agent calls `execute_step` via MCP. Realm's state machine responds with the current step's task and schema. The agent executes. It cannot skip steps, hand in an answer that breaks the step's schema, or move past a human gate before the gate is answered — not because of instructions it might ignore, but because the state cannot change until valid output is submitted.
 
 If your skill file has grown a list of "Do NOT" rules, each one is a scar from a failure the agent invented. Realm replaces those rules with structure: wrong behaviour becomes impossible rather than prohibited.
 
-You define workflows in YAML. The engine enforces step order, validates every agent output against a JSON schema, records what each step received and returned (with a SHA-256 hash of each output), and pauses at human gates until a person approves. The result is not just a log of what ran — it is a step-by-step record of what Realm accepted, when, and which choice was made at each gate, that you can inspect, export and compare across runs. For developers building AI workflows for clients, that record is the deliverable. The record is not signed: see [what it proves, and what it does not](docs/concepts/evidence.md#what-the-record-proves-and-what-it-does-not).
+You define workflows in YAML. The engine enforces step order, checks each agent answer against the JSON schema its step declares, records each step's output with a SHA-256 hash, and pauses the run at human gates until they are answered. The result is not just a log of what ran — it is a step-by-step record of what Realm accepted, when, and which choice was made at each gate, that you can inspect, export and compare across runs. For developers building AI workflows for clients, that record is the deliverable. The record is not signed: see [what it proves, and what it does not](docs/concepts/evidence.md#what-the-record-proves-and-what-it-does-not).
 
 ## Packages
 
-| Package                  | npm                                                                                                                 | Description                                                              |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `@sensigo/realm`         | [![npm](https://img.shields.io/npm/v/@sensigo/realm)](https://www.npmjs.com/package/@sensigo/realm)                 | Core engine — state guard, execution loop, evidence capture              |
-| `@sensigo/realm-cli`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-cli)](https://www.npmjs.com/package/@sensigo/realm-cli)         | `realm` CLI — 19 commands for building, operating, and serving workflows |
-| `@sensigo/realm-mcp`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp)         | `realm-mcp` MCP server — 10 tools for AI agent connections               |
-| `@sensigo/realm-testing` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-testing)](https://www.npmjs.com/package/@sensigo/realm-testing) | Testing utilities — fixtures, assertions, in-memory store                |
+| Package                  | npm                                                                                                                 | Description                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `@sensigo/realm`         | [![npm](https://img.shields.io/npm/v/@sensigo/realm)](https://www.npmjs.com/package/@sensigo/realm)                 | Core engine — state guard, execution loop, evidence capture |
+| `@sensigo/realm-cli`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-cli)](https://www.npmjs.com/package/@sensigo/realm-cli)         | `realm` CLI for building, operating, and serving workflows  |
+| `@sensigo/realm-mcp`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp)         | `realm-mcp` MCP server — 10 tools for AI agent connections  |
+| `@sensigo/realm-testing` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-testing)](https://www.npmjs.com/package/@sensigo/realm-testing) | Testing utilities — fixtures, assertions, in-memory store   |
 
 ## Installation
 

@@ -4,7 +4,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "description": "MCP server for Realm: an AI agent runs Realm workflows through it, over stdio or HTTP.",
+  "description": "MCP server for Realm: lets an AI agent run Realm workflows.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

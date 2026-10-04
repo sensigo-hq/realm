@@ -248,15 +248,15 @@ svg.loop-narrow .n-t{font-size:13px}
       </div>
       <div class="cap">
         <svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.4-3.1 8.3-8 9-4.9-.7-8-4.6-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
-        <div><h3>Output is schema-checked</h3><p>Malformed output is rejected at the boundary. It never enters the run.</p></div>
+        <div><h3>Output is schema-checked</h3><p>An answer that breaks its step's schema is rejected at the boundary. It never enters the run.</p></div>
       </div>
       <div class="cap">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>
-        <div><h3>Humans hold the gates</h3><p>Critical steps pause until a person approves. The agent cannot proceed past one.</p></div>
+        <div><h3>Gates stop the run</h3><p>Critical steps pause until the gate is answered, and the answer goes on the record.</p></div>
       </div>
       <div class="cap">
         <svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M9 14l2 2 4-4"/></svg>
-        <div><h3>Evidence, not logs</h3><p>Every step that runs leaves a record of what it received and what it returned. For client work, that record is the deliverable.</p></div>
+        <div><h3>Evidence, not logs</h3><p>Every step that finishes leaves a record of what it returned. For client work, that record is the deliverable.</p></div>
       </div>
     </div>
   </section>
@@ -266,7 +266,7 @@ svg.loop-narrow .n-t{font-size:13px}
       <p class="eyebrow">See it run</p>
       <h2>Step through a real run, decision by decision</h2>
     </div>
-    <p class="spine">Every step records what it was asked, the schema it had to satisfy, what it submitted, and a hash of the result. Not a log that something ran — a record that it ran correctly.</p>
+    <p class="spine">Every step records what it returned, a hash of it, and when. Not a log that something ran: a record of what Realm accepted at each step.</p>
     <Replay />
   </section>
 

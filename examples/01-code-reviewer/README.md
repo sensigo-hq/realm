@@ -50,9 +50,10 @@ rejects the step before anything advances:
 }
 ```
 
-The run stays in `diff_loaded`. Nothing downstream executes. The agent corrects
-and resubmits. The rejected answers are not stored, but the step's evidence entry records
-how many were rejected before one was accepted.
+The step stays open and nothing downstream runs. The agent corrects and resubmits.
+A refused answer is not kept as the step's output. `realm run attempts <run-id>` lists each
+refusal (when it happened and which rule it broke), and the step's evidence entry records how
+many answers were refused before one was accepted.
 
 **Pain points addressed:**
 
@@ -61,7 +62,7 @@ how many were rejected before one was accepted.
 - **Non-determinism + structured output failures (#2)** — invalid enum values and
   short summaries are rejected at the boundary, not discovered downstream.
 - **No audit trail (#3)** — every run produces an evidence chain: what each step
-  received, what fields were returned, and how many answers a step rejected.
+  returned, and how many answers a step refused (`realm run attempts` lists why).
 - **Verification gap / no test gating (#8)** — step output is verified structurally
   before the run advances; a step cannot complete with invalid output.
 
