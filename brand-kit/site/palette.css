@@ -1,0 +1,40 @@
+/* The site's colours. One token set (--c-*), one palette (navy + verdigris), in a dark and a light variant.
+   Dark is the default. Light applies when <html data-theme="light">, which the script in
+   src/lib/theme-init.mjs sets on every page from the visitor's saved choice.
+   Verdigris replaces the old sky accent; the navy surfaces, text and status colours are unchanged.
+   WCAG contrast, text on panel (light / dark): ink 18.8/16.0 · muted 6.4/7.1 · accent 5.3/11.1
+   Button text on accent (light / dark): 5.3/12.2 */
+:root {
+  color-scheme: dark;
+  --c-bg: #07111f;
+  --c-panel: #0e1c30;
+  --c-panel2: #14263e;
+  --c-ink: #f4f8fc;
+  --c-body: #c6d6e6;
+  --c-muted: #93aac2;
+  --c-line: #274565;
+  --c-line-soft: #182f4a;
+  --c-accent: #5ee6c1;
+  --c-on-accent: #04121f;
+  --c-accent-soft: #0c2c32;
+  --c-warn: #f2b155;
+  --c-warn-soft: #2c2414;
+  --c-danger: #f08a7e;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --c-bg: #f6f9fc;
+  --c-panel: #ffffff;
+  --c-panel2: #eef4fa;
+  --c-ink: #07121e;
+  --c-body: #22384e;
+  --c-muted: #45617d;
+  --c-line: #c9d8e6;
+  --c-line-soft: #e0e9f2;
+  --c-accent: #0b7a5f;
+  --c-on-accent: #ffffff;
+  --c-accent-soft: #dff4ec;
+  --c-warn: #8a5a0f;
+  --c-warn-soft: #fbefdc;
+  --c-danger: #b42318;
+}

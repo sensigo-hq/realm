@@ -1,0 +1,461 @@
+{
+  "meta": {
+    "realm_version": "0.45.0",
+    "recorded_at": "2026-10-01T09:49:34.963Z",
+    "workflow_id": "pr-review",
+    "example": "examples/08-pr-review",
+    "register": "Registered: pr-review v1 (5 steps)"
+  },
+  "start": {
+    "call": {
+      "tool": "start_run",
+      "workflow_id": "pr-review",
+      "params": {
+        "repo": "acme/payments-api",
+        "pr_number": 42
+      }
+    },
+    "response": {
+      "status": "ok",
+      "context_hint": "Step 'fetch_pr' completed. 1 step(s) now available.",
+      "run_phase": "running"
+    },
+    "pr": {
+      "diff_text": "--- src/webhooks/retry.ts\n@@ -12,14 +12,22 @@ export async function deliverWebhook(event: ChargeEvent): Promise<void> {\n-  await post(event.endpoint, event.payload);\n+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {\n+    try {\n+      await post(event.endpoint, event.payload);\n+      return;\n+    } catch (err) {\n+      await sleep(1000);\n+    }\n+  }\n }\n\n--- src/webhooks/config.ts\n@@ -3,3 +3,4 @@\n export const WEBHOOK_TIMEOUT_MS = 5000;\n+export const MAX_RETRIES = 5;\n\n--- test/webhooks/retry.test.ts\n@@ -0,0 +1,11 @@\n+import { deliverWebhook } from '../../src/webhooks/retry';\n+\n+it('retries a failed delivery', async () => {\n+  post.mockRejectedValueOnce(new Error('timeout'));\n+  post.mockResolvedValueOnce(undefined);\n+  await deliverWebhook(event);\n+  expect(post).toHaveBeenCalledTimes(2);\n+});",
+      "pr_title": "Retry failed charge webhooks",
+      "base_branch": "main",
+      "head_sha": "9f2c1ab7d4e86c03b5a1f0e2d7c4498a6b3e5d10",
+      "files_changed": [
+        "src/webhooks/retry.ts",
+        "src/webhooks/config.ts",
+        "test/webhooks/retry.test.ts"
+      ],
+      "repo": "acme/payments-api"
+    },
+    "evidence": {
+      "step": "fetch_pr",
+      "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
+      "duration_ms": 36
+    }
+  },
+  "task": {
+    "step": "write_review",
+    "human_readable": "Execute step 'write_review': Review the pull request diff and produce a structured code review with risk assessment, key changes, a recommendation, and a review comment ready to post on the PR.",
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["risk", "key_changes", "recommendation", "review_comment"],
+      "properties": {
+        "risk": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "key_changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Up to 5 key changes, as bullet-point strings"
+        },
+        "recommendation": {
+          "type": "string",
+          "enum": ["approve", "request_changes"]
+        },
+        "review_comment": {
+          "type": "string",
+          "description": "Full review comment text to post on the PR"
+        }
+      }
+    }
+  },
+  "attempts": [
+    {
+      "id": "skip_ahead",
+      "label": "Skip ahead and post",
+      "blurb": "The agent skips the review and calls the step that posts to GitHub.",
+      "call": {
+        "tool": "execute_step",
+        "command": "post_approval",
+        "params": {}
+      },
+      "response": {
+        "status": "blocked",
+        "errors": [],
+        "agent_action": "resolve_precondition",
+        "context_hint": "Step 'post_approval' is not eligible in the current run state.",
+        "run_phase": "running",
+        "blocked_reason": {
+          "eligible_steps": ["write_review"]
+        }
+      }
+    },
+    {
+      "id": "missing_field",
+      "label": "Leave out a field",
+      "blurb": "The agent submits a review with no risk level.",
+      "call": {
+        "tool": "execute_step",
+        "command": "write_review",
+        "params": {
+          "key_changes": [
+            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
+            "New MAX_RETRIES constant (5) in webhooks/config.ts",
+            "One new test: a single failure followed by a success"
+          ],
+          "recommendation": "request_changes",
+          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+        }
+      },
+      "response": {
+        "status": "error",
+        "error_code": "VALIDATION_INPUT_SCHEMA",
+        "errors": ["Invalid input for step 'write_review'"],
+        "agent_action": "provide_input",
+        "context_hint": "Error during 'write_review'. Run phase: 'running'.",
+        "run_phase": "running",
+        "error_details": {
+          "errors": [
+            {
+              "instancePath": "",
+              "keyword": "required",
+              "params": {
+                "missingProperty": "risk"
+              },
+              "message": "must have required property 'risk'"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "bad_enum",
+      "label": "Invent a value",
+      "blurb": "The agent recommends \"merge\", which is not one of the two allowed outcomes.",
+      "call": {
+        "tool": "execute_step",
+        "command": "write_review",
+        "params": {
+          "risk": "high",
+          "key_changes": [
+            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
+            "New MAX_RETRIES constant (5) in webhooks/config.ts",
+            "One new test: a single failure followed by a success"
+          ],
+          "recommendation": "merge",
+          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+        }
+      },
+      "response": {
+        "status": "error",
+        "error_code": "VALIDATION_INPUT_SCHEMA",
+        "errors": ["Invalid input for step 'write_review'"],
+        "agent_action": "provide_input",
+        "context_hint": "Error during 'write_review'. Run phase: 'running'.",
+        "run_phase": "running",
+        "error_details": {
+          "errors": [
+            {
+              "instancePath": "/recommendation",
+              "keyword": "enum",
+              "params": {
+                "allowedValues": ["approve", "request_changes"]
+              },
+              "message": "must be equal to one of the allowed values"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "extra_field",
+      "label": "Add its own field",
+      "blurb": "The agent adds approved_by, a field the step never asked for.",
+      "call": {
+        "tool": "execute_step",
+        "command": "write_review",
+        "params": {
+          "risk": "high",
+          "key_changes": [
+            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
+            "New MAX_RETRIES constant (5) in webhooks/config.ts",
+            "One new test: a single failure followed by a success"
+          ],
+          "recommendation": "request_changes",
+          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed.",
+          "approved_by": "the agent"
+        }
+      },
+      "response": {
+        "status": "error",
+        "error_code": "VALIDATION_INPUT_SCHEMA",
+        "errors": ["Invalid input for step 'write_review'"],
+        "agent_action": "provide_input",
+        "context_hint": "Error during 'write_review'. Run phase: 'running'.",
+        "run_phase": "running",
+        "error_details": {
+          "errors": [
+            {
+              "instancePath": "",
+              "keyword": "additionalProperties",
+              "params": {
+                "additionalProperty": "approved_by"
+              },
+              "message": "must NOT have additional properties"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "valid",
+      "label": "Submit a valid review",
+      "blurb": "All four fields, the right types, nothing extra.",
+      "call": {
+        "tool": "execute_step",
+        "command": "write_review",
+        "params": {
+          "risk": "high",
+          "key_changes": [
+            "deliverWebhook now retries a failed POST in a loop instead of failing on the first error",
+            "New MAX_RETRIES constant (5) in webhooks/config.ts",
+            "One new test: a single failure followed by a success"
+          ],
+          "recommendation": "request_changes",
+          "review_comment": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+        }
+      },
+      "response": {
+        "status": "confirm_required",
+        "context_hint": "Run is paused at gate 'bcccb547-5975-4362-843c-e34742d66c22'. Available choices: approve, request_changes.",
+        "run_phase": "gate_waiting"
+      }
+    }
+  ],
+  "after_refusals": {
+    "run_phase": "running",
+    "completed_steps": ["fetch_pr"],
+    "evidence_count": 1
+  },
+  "gate": {
+    "step": "confirm_review",
+    "display": "PR #42 — acme/payments-api\n\nRisk: HIGH\nAI recommendation: request_changes\n\nKey changes:\n• deliverWebhook now retries a failed POST in a loop instead of failing on the first error\n• New MAX_RETRIES constant (5) in webhooks/config.ts\n• One new test: a single failure followed by a success\n\nReview comment to post:\nChanges requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed.",
+    "choices": ["approve", "request_changes"],
+    "state": {
+      "run_phase": "gate_waiting",
+      "completed_steps": ["fetch_pr", "write_review"]
+    },
+    "agent_attempts": [
+      {
+        "id": "past_gate",
+        "label": "Agent calls post_approval",
+        "blurb": "",
+        "call": {
+          "tool": "execute_step",
+          "command": "post_approval",
+          "params": {}
+        },
+        "response": {
+          "status": "blocked",
+          "errors": [],
+          "agent_action": "resolve_precondition",
+          "context_hint": "Step 'post_approval' is not eligible in the current run state.",
+          "run_phase": "gate_waiting",
+          "blocked_reason": {
+            "eligible_steps": []
+          }
+        }
+      },
+      {
+        "id": "past_gate_other",
+        "label": "Agent calls post_changes_request",
+        "blurb": "",
+        "call": {
+          "tool": "execute_step",
+          "command": "post_changes_request",
+          "params": {}
+        },
+        "response": {
+          "status": "blocked",
+          "errors": [],
+          "agent_action": "resolve_precondition",
+          "context_hint": "Step 'post_changes_request' is not eligible in the current run state.",
+          "run_phase": "gate_waiting",
+          "blocked_reason": {
+            "eligible_steps": []
+          }
+        }
+      }
+    ]
+  },
+  "endings": {
+    "request_changes": {
+      "run_id": "d6f40812-4df9-4053-8adf-064329ae1899",
+      "choice": "request_changes",
+      "respond": {
+        "argv": "realm run respond <run-id> --gate <gate-id> --choice request_changes",
+        "stdout": "Responded: d6f40812-4df9-4053-8adf-064329ae1899 | choice 'request_changes' | new state 'running'"
+      },
+      "other_branch": {
+        "id": "other_branch",
+        "label": "",
+        "blurb": "",
+        "call": {
+          "tool": "execute_step",
+          "command": "post_approval",
+          "params": {}
+        },
+        "response": {
+          "status": "blocked",
+          "errors": [],
+          "agent_action": "resolve_precondition",
+          "context_hint": "Step 'post_approval' is not eligible in the current run state.",
+          "run_phase": "running",
+          "blocked_reason": {
+            "eligible_steps": ["post_changes_request"]
+          }
+        }
+      },
+      "posted": {
+        "step": "post_changes_request",
+        "response": {
+          "status": "ok",
+          "errors": [],
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id 'd6f40812-4df9-4053-8adf-064329ae1899' to retrieve the full evidence record.",
+          "run_phase": "completed"
+        },
+        "body": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+      },
+      "skipped": "post_approval: when_false: confirm_review.choice == 'approve' [lhs → \"request_changes\"]",
+      "completed_steps": ["fetch_pr", "write_review", "confirm_review", "post_changes_request"],
+      "skipped_steps": ["post_approval"],
+      "run_phase": "completed",
+      "sealed_by": {
+        "arm": "complete",
+        "step": "post_changes_request"
+      },
+      "terminal_reason": "Workflow completed.",
+      "evidence": [
+        {
+          "step": "fetch_pr",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 36,
+          "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
+          "choice": null,
+          "rejections": null
+        },
+        {
+          "step": "write_review",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 0,
+          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "choice": null,
+          "rejections": 3
+        },
+        {
+          "step": "confirm_review",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 0,
+          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "choice": null,
+          "rejections": null
+        },
+        {
+          "step": "confirm_review",
+          "kind": "gate_response",
+          "status": "success",
+          "duration_ms": 1103,
+          "hash": "17e0025f9bd2854e37648fe7873bf4f92bf9fd709d1aa1b204417c1358e0be9d",
+          "choice": "request_changes",
+          "rejections": null
+        },
+        {
+          "step": "post_changes_request",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 9,
+          "hash": "a7297b7f232bdf7a9416d2ea4b9c28029d28577b50b0ec7818868f5ed9a72f3f",
+          "choice": null,
+          "rejections": null
+        }
+      ]
+    },
+    "approve": {
+      "run_id": "241149f6-def6-4937-a8fb-1ad59156e40c",
+      "choice": "approve",
+      "respond": {
+        "argv": "realm run respond <run-id> --gate <gate-id> --choice approve",
+        "stdout": "Responded: 241149f6-def6-4937-a8fb-1ad59156e40c | choice 'approve' | new state 'running'"
+      },
+      "other_branch": null,
+      "posted": {
+        "step": "post_approval",
+        "response": {
+          "status": "ok",
+          "errors": [],
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id '241149f6-def6-4937-a8fb-1ad59156e40c' to retrieve the full evidence record.",
+          "run_phase": "completed"
+        },
+        "body": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
+      },
+      "skipped": "post_changes_request: when_false: confirm_review.choice == 'request_changes' [lhs → \"approve\"]",
+      "completed_steps": ["fetch_pr", "write_review", "confirm_review", "post_approval"],
+      "skipped_steps": ["post_changes_request"],
+      "run_phase": "completed",
+      "sealed_by": {
+        "arm": "complete",
+        "step": "post_approval"
+      },
+      "terminal_reason": "Workflow completed.",
+      "evidence": [
+        {
+          "step": "fetch_pr",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 6,
+          "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
+          "choice": null,
+          "rejections": null
+        },
+        {
+          "step": "write_review",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 0,
+          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "choice": null,
+          "rejections": null
+        },
+        {
+          "step": "confirm_review",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 0,
+          "hash": "e6cb3f2bd8a5d1aa6760aca7ff1ab5c8725c37c2d723adf318970c5f1e5207ca",
+          "choice": null,
+          "rejections": null
+        },
+        {
+          "step": "confirm_review",
+          "kind": "gate_response",
+          "status": "success",
+          "duration_ms": 1010,
+          "hash": "12b00114fef2242e92601c768ecb962ba5f2b230c60c5d134bed8966d4bb0c1e",
+          "choice": "approve",
+          "rejections": null
+        },
+        {
+          "step": "post_approval",
+          "kind": "step",
+          "status": "success",
+          "duration_ms": 4,
+          "hash": "a7297b7f232bdf7a9416d2ea4b9c28029d28577b50b0ec7818868f5ed9a72f3f",
+          "choice": null,
+          "rejections": null
+        }
+      ]
+    }
+  }
+}

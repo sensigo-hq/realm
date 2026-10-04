@@ -1,0 +1,254 @@
+---
+import { nav } from '../data/nav.js';
+import '../styles/site.css';
+import ThemeToggle from '../components/ThemeToggle.astro';
+import { THEME_INIT } from '../lib/theme-init.mjs';
+import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
+import Logo from '../components/Logo.astro';
+---
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<script is:inline set:html={THEME_INIT}></script>
+{ICON_LINKS.map((a) => <link {...a} />)}
+<meta name="theme-color" content={THEME_COLOR} />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>How a run moves — Realm</title>
+<meta name="description" content="How a Realm run passes between the engine, an MCP client, realm agent and realm listen — four diagrams." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+<style is:global>
+/* charts + page parts (from the "How a run moves" artifact) */
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;overflow-x:auto}
+.kinds{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.kind{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:grid;gap:4px}
+.kind b{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--accent)}
+.kind span{color:var(--muted);font-size:14px}
+.fig{margin:0;display:grid;gap:12px}
+.fig svg{width:100%;min-width:760px;height:auto;display:block;color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif}
+.fig figcaption{color:var(--muted);font-size:14px;max-width:68ch}
+.box{fill:var(--panel);stroke:var(--muted);stroke-width:1.2}
+.engine{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.8}
+.edge{stroke:currentColor;stroke-width:1.4;fill:none}
+.dash{stroke-dasharray:5 4;stroke:var(--accent)}
+.ahead{fill:currentColor}
+.t{font-size:14px;font-weight:600;text-anchor:middle;fill:var(--ink)}
+.t.big{font-size:20px;fill:var(--accent)}
+.s{font-size:12px;text-anchor:middle;fill:var(--muted)}
+.lbl{font-size:11.5px;text-anchor:middle;fill:var(--muted)}
+.lbl.left{text-anchor:start;fill:var(--accent)}
+.col{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.08em;text-anchor:middle;fill:var(--accent)}
+.fig svg.narrow{display:none;min-width:0}
+.t.sm{font-size:13px}
+.lbl.mute{fill:var(--muted)}
+@media (max-width:720px){
+  .fig svg.wide{display:none}
+  .fig svg.narrow{display:block}
+}
+.seqsvg{width:100%;height:auto;display:block;font-family:"IBM Plex Sans",system-ui,sans-serif}
+.lifeline{stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 4}
+.ret{stroke-dasharray:5 4;stroke:var(--muted)}
+.lbl.m{font-size:12.5px;fill:var(--ink)}
+.band{fill:var(--accent-soft);opacity:.55;stroke:var(--line)}
+.band.alt{fill:var(--warn-soft);opacity:.6}
+.bandlbl{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;fill:var(--accent)}
+.divider{stroke:var(--line);stroke-dasharray:4 4}
+.note{fill:var(--panel);stroke:var(--line)}
+.seqsvg.narrow{display:none}
+.ml{font-size:13.5px;text-anchor:middle;fill:var(--ink);paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+.seqsvg.narrow .ml{font-size:12.5px}
+.edge.sq{stroke-width:1.7}
+.seqfig{padding:14px}
+@media (max-width:720px){
+  .seqsvg.wide{display:none}
+  .seqsvg.narrow{display:block}
+  .seqfig{padding:8px}
+  .fig svg.narrow{min-width:0}
+}
+.lede code{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="site">
+    <a class="brand" href="/" aria-label="Realm"><Logo /></a>
+    <div class="links">{nav.map((l) => <a href={l.href} aria-current={l.href === '/how-it-works' ? 'page' : undefined}>{l.label}</a>)}</div>
+    <ThemeToggle />
+  </nav>
+
+  <header class="hero">
+    <div class="eyebrow">How it works</div>
+    <h1>How a run moves</h1>
+    <p class="lede">The engine owns the graph and the record. An LLM only answers <code>agent</code> steps. The same engine sits behind all three ways of driving a run: MCP, <code>realm agent</code>, and <code>realm listen</code>.</p>
+  </header>
+
+  <section>
+    <div class="eyebrow">Overview</div>
+    <h2>One engine, three front doors</h2>
+    <figure class="diagram fig">
+      <svg class="wide" viewBox="0 0 980 380" role="img" aria-label="Three drivers reach one engine: an MCP client through realm mcp, a webhook through realm listen which spawns realm agent, and realm agent which calls the model provider. The engine reads and writes the run store and hands gates to a human.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker>
+        </defs>
+        <!-- column labels -->
+        <text x="105" y="18" class="col">WHO STARTS IT</text>
+        <text x="355" y="18" class="col">REALM ENTRY POINT</text>
+        <text x="640" y="18" class="col">CORE</text>
+        <text x="895" y="18" class="col">STATE AND PEOPLE</text>
+
+        <!-- row 1: MCP -->
+        <rect x="20" y="30" width="170" height="60" rx="8" class="box"/>
+        <text x="105" y="56" class="t">MCP client</text>
+        <text x="105" y="74" class="s">Claude Code, any agent</text>
+        <rect x="270" y="30" width="170" height="60" rx="8" class="box"/>
+        <text x="355" y="56" class="t">realm mcp / serve</text>
+        <text x="355" y="74" class="s">MCP server, stdio or HTTP</text>
+        <line x1="190" y1="60" x2="268" y2="60" class="edge" marker-end="url(#ah)"/>
+        <text x="229" y="52" class="lbl">tool calls</text>
+        <line x1="440" y1="60" x2="538" y2="60" class="edge" marker-end="url(#ah)"/>
+        <text x="489" y="52" class="lbl">execute_step</text>
+
+        <!-- row 2: webhook -->
+        <rect x="20" y="170" width="170" height="60" rx="8" class="box"/>
+        <text x="105" y="196" class="t">External system</text>
+        <text x="105" y="214" class="s">GitHub, Stripe, cron</text>
+        <rect x="270" y="170" width="170" height="60" rx="8" class="box"/>
+        <text x="355" y="196" class="t">realm listen</text>
+        <text x="355" y="214" class="s">webhook server</text>
+        <line x1="190" y1="200" x2="268" y2="200" class="edge" marker-end="url(#ah)"/>
+        <text x="229" y="192" class="lbl">HTTP POST</text>
+        <line x1="440" y1="200" x2="538" y2="200" class="edge" marker-end="url(#ah)"/>
+        <text x="489" y="192" class="lbl">creates run</text>
+        <line x1="355" y1="230" x2="355" y2="288" class="edge dash" marker-end="url(#ah)"/>
+        <text x="363" y="263" class="lbl left">spawns, --run-id</text>
+
+        <!-- row 3: realm agent -->
+        <rect x="20" y="290" width="170" height="60" rx="8" class="box"/>
+        <text x="105" y="316" class="t">Model provider</text>
+        <text x="105" y="334" class="s">Anthropic or OpenAI</text>
+        <rect x="270" y="290" width="170" height="60" rx="8" class="box"/>
+        <text x="355" y="316" class="t">realm agent</text>
+        <text x="355" y="334" class="s">the driver loop</text>
+        <line x1="192" y1="320" x2="268" y2="320" class="edge" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <text x="229" y="312" class="lbl">prompt / reply</text>
+        <line x1="440" y1="320" x2="538" y2="320" class="edge" marker-end="url(#ah)"/>
+        <text x="489" y="312" class="lbl">execute_step</text>
+
+        <!-- engine -->
+        <rect x="540" y="30" width="200" height="320" rx="10" class="engine"/>
+        <text x="640" y="150" class="t big">Engine</text>
+        <text x="640" y="172" class="s">execution-loop.ts</text>
+        <text x="640" y="206" class="s">picks eligible steps (DAG)</text>
+        <text x="640" y="226" class="s">validates outputs</text>
+        <text x="640" y="246" class="s">runs auto + guard steps</text>
+        <text x="640" y="266" class="s">writes the evidence</text>
+
+        <!-- store -->
+        <path d="M830,48 a65,12 0 0,0 130,0 a65,12 0 0,0 -130,0 v56 a65,12 0 0,0 130,0 v-56" class="box"/>
+        <text x="895" y="86" class="t">Run store</text>
+        <text x="895" y="104" class="s">~/.realm/runs</text>
+        <line x1="742" y1="80" x2="828" y2="80" class="edge" marker-start="url(#ah)" marker-end="url(#ah)"/>
+        <text x="785" y="72" class="lbl">read / write</text>
+
+        <!-- human -->
+        <rect x="830" y="270" width="130" height="80" rx="8" class="box"/>
+        <text x="895" y="302" class="t">Human</text>
+        <text x="895" y="320" class="s">respond, Slack,</text>
+        <text x="895" y="336" class="s">or MCP</text>
+        <line x1="740" y1="290" x2="828" y2="290" class="edge" marker-end="url(#ah)"/>
+        <text x="785" y="282" class="lbl">gate opens</text>
+        <line x1="828" y1="330" x2="742" y2="330" class="edge" marker-end="url(#ah)"/>
+        <text x="785" y="322" class="lbl">answer</text>
+      </svg>
+      <svg class="narrow" viewBox="0 0 380 500" role="img" aria-label="Three lanes, one per driver, all flowing down into one engine, which reads and writes the run store and hands gates to a human.">
+        <defs><marker id="ahm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs>
+        <text x="60" y="16" class="col">MCP</text>
+        <text x="190" y="16" class="col">WEBHOOK</text>
+        <text x="320" y="16" class="col">REALM AGENT</text>
+        <rect x="10" y="26" width="100" height="50" rx="8" class="box"/><text x="60" y="56" class="t sm">MCP client</text>
+        <rect x="140" y="26" width="100" height="50" rx="8" class="box"/><text x="190" y="56" class="t sm">External app</text>
+        <rect x="270" y="26" width="100" height="50" rx="8" class="box"/><text x="320" y="56" class="t sm">Model API</text>
+        <line x1="60" y1="76" x2="60" y2="124" class="edge" marker-end="url(#ahm)"/><text x="66" y="104" class="lbl left mute">tool calls</text>
+        <line x1="190" y1="76" x2="190" y2="124" class="edge" marker-end="url(#ahm)"/><text x="196" y="104" class="lbl left mute">HTTP POST</text>
+        <line x1="320" y1="78" x2="320" y2="124" class="edge" marker-start="url(#ahm)" marker-end="url(#ahm)"/><text x="326" y="98" class="lbl left mute">prompt</text><text x="326" y="112" class="lbl left mute">/ reply</text>
+        <rect x="10" y="126" width="100" height="50" rx="8" class="box"/><text x="60" y="156" class="t sm">realm mcp</text>
+        <rect x="140" y="126" width="100" height="50" rx="8" class="box"/><text x="190" y="156" class="t sm">realm listen</text>
+        <rect x="270" y="126" width="100" height="50" rx="8" class="box"/><text x="320" y="156" class="t sm">realm agent</text>
+        <line x1="240" y1="151" x2="268" y2="151" class="edge dash" marker-end="url(#ahm)"/><text x="255" y="192" class="lbl left" text-anchor="middle" style="text-anchor:middle">spawns</text>
+        <line x1="60" y1="176" x2="60" y2="234" class="edge" marker-end="url(#ahm)"/><text x="66" y="210" class="lbl left mute">execute_step</text>
+        <line x1="190" y1="176" x2="190" y2="234" class="edge" marker-end="url(#ahm)"/><text x="196" y="210" class="lbl left mute">creates run</text>
+        <line x1="320" y1="176" x2="320" y2="234" class="edge" marker-end="url(#ahm)"/><text x="314" y="222" class="lbl mute" style="text-anchor:end">execute_step</text>
+        <rect x="10" y="236" width="360" height="100" rx="10" class="engine"/>
+        <text x="190" y="270" class="t big">Engine</text>
+        <text x="190" y="294" class="s">picks eligible steps, validates outputs,</text>
+        <text x="190" y="312" class="s">runs auto + guard steps, writes evidence</text>
+        <line x1="90" y1="338" x2="90" y2="398" class="edge" marker-start="url(#ahm)" marker-end="url(#ahm)"/><text x="96" y="372" class="lbl left mute">read / write</text>
+        <line x1="260" y1="336" x2="260" y2="398" class="edge" marker-end="url(#ahm)"/><text x="254" y="372" class="lbl mute" style="text-anchor:end">gate opens</text>
+        <line x1="320" y1="398" x2="320" y2="338" class="edge" marker-end="url(#ahm)"/><text x="326" y="372" class="lbl left mute">answer</text>
+        <path d="M10,412 a80,11 0 0,0 160,0 a80,11 0 0,0 -160,0 v56 a80,11 0 0,0 160,0 v-56" class="box"/>
+        <text x="90" y="448" class="t sm">Run store</text><text x="90" y="466" class="s">~/.realm/runs</text>
+        <rect x="200" y="400" width="170" height="78" rx="8" class="box"/>
+        <text x="285" y="432" class="t sm">Human</text><text x="285" y="452" class="s">respond, Slack, MCP</text>
+      </svg>
+      <figcaption>Every path ends at the same engine call. The dashed arrow is the one hand-off between paths: <code>realm listen</code> starts a run, then a separate <code>realm agent</code> process drives it.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="eyebrow">Step kinds</div>
+    <h2>The four step kinds</h2>
+    <div class="kinds">
+      <div class="kind"><b>auto</b><span>The engine runs a handler or service adapter. No LLM.</span></div>
+      <div class="kind"><b>agent</b><span>The driver supplies the output: an LLM, or you over MCP.</span></div>
+      <div class="kind"><b>guard</b><span>The engine checks a condition inline and continues or aborts.</span></div>
+      
+      <div class="kind"><b>finalizer</b><span>Cleanup the engine runs after the run ends.</span></div>
+    </div>
+    <p>A gate is not a fifth kind: a step can carry a gate, and the run then parks until a person answers.</p>
+    <p>After every result, the engine validates and records it, then runs every <code>auto</code> and <code>guard</code> step it can reach. It stops at the next <code>agent</code> step, at a gate, or at the end. Step order comes from the definition (<code>depends_on</code>, <code>when</code>, <code>trigger_rule</code>), never from the LLM.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow">Path 1 · MCP</div>
+    <h2>The external agent drives</h2>
+    <p>Realm makes no model call. The client's own model does the agent steps and follows the instructions the engine returns in each reply.</p>
+    <figure class="diagram fig seqfig"><svg class="seqsvg wide" viewBox="0 0 900 682" role="img" aria-label="An MCP client starts a run, then loops: its own model produces each agent step output, it calls execute_step, and the engine validates, records and replies with the next step."><defs><marker id="am1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs><rect x="8" y="264" width="884" height="272" rx="8" class="band loop"/><rect x="8" y="550" width="884" height="112" rx="8" class="band alt"/><line x1="110.0" y1="76" x2="110.0" y2="676" class="lifeline"/><line x1="336.66666666666663" y1="76" x2="336.66666666666663" y2="676" class="lifeline"/><line x1="563.3333333333333" y1="76" x2="563.3333333333333" y2="676" class="lifeline"/><line x1="790.0" y1="76" x2="790.0" y2="676" class="lifeline"/><rect x="30.0" y="26" width="160" height="50" rx="8" class="box"/><text x="110.0" y="48" class="t">MCP client</text><text x="110.0" y="65" class="s">Claude Code, any agent</text><rect x="256.66666666666663" y="26" width="160" height="50" rx="8" class="box"/><text x="336.66666666666663" y="48" class="t">realm mcp</text><text x="336.66666666666663" y="65" class="s">MCP server</text><rect x="483.33333333333326" y="26" width="160" height="50" rx="8" class="engine"/><text x="563.3333333333333" y="48" class="t">Engine</text><text x="563.3333333333333" y="65" class="s">execution-loop.ts</text><rect x="710.0" y="26" width="160" height="50" rx="8" class="box"/><text x="790.0" y="48" class="t">Run store</text><text x="790.0" y="65" class="s">~/.realm/runs</text><line x1="112.0" y1="122" x2="333.66666666666663" y2="122" class="edge sq" marker-end="url(#am1)"/><text x="223.33333333333331" y="113" class="ml">get_workflow_protocol, then start_run</text><line x1="338.66666666666663" y1="162" x2="560.3333333333333" y2="162" class="edge sq" marker-end="url(#am1)"/><text x="449.99999999999994" y="153" class="ml">create the run</text><line x1="565.3333333333333" y1="202" x2="787.0" y2="202" class="edge sq" marker-end="url(#am1)"/><text x="676.6666666666666" y="193" class="ml">save the run</text><line x1="561.3333333333333" y1="242" x2="113.0" y2="242" class="edge sq ret" marker-end="url(#am1)"/><text x="336.66666666666663" y="233" class="ml">next_actions: the agent step, its prompt and input</text><text x="24" y="281" class="bandlbl">Repeat until the run ends</text><rect x="16" y="296" width="270.24" height="28" rx="6" class="note"/><text x="151.12" y="314" class="ml" style="font-style:italic">the client&#x27;s own model does the work</text><line x1="112.0" y1="356" x2="333.66666666666663" y2="356" class="edge sq" marker-end="url(#am1)"/><text x="223.33333333333331" y="347" class="ml">execute_step(run, step, output)</text><line x1="338.66666666666663" y1="396" x2="560.3333333333333" y2="396" class="edge sq" marker-end="url(#am1)"/><text x="449.99999999999994" y="387" class="ml">validate against the schema</text><line x1="565.3333333333333" y1="436" x2="787.0" y2="436" class="edge sq" marker-end="url(#am1)"/><text x="676.6666666666666" y="427" class="ml">record the evidence</text><path d="M565.3333333333333,462 h26 v16 h-24" class="edge sq" marker-end="url(#am1)"/><text x="601.3333333333333" y="475" class="ml" style="text-anchor:start">run the auto + guard steps that follow</text><line x1="561.3333333333333" y1="516" x2="113.0" y2="516" class="edge sq ret" marker-end="url(#am1)"/><text x="336.66666666666663" y="507" class="ml">next_actions for the next agent step</text><text x="24" y="567" class="bandlbl">When a gate opens</text><line x1="561.3333333333333" y1="602" x2="113.0" y2="602" class="edge sq ret" marker-end="url(#am1)"/><text x="336.66666666666663" y="593" class="ml">waiting on a human: gate id and choices</text><line x1="112.0" y1="642" x2="333.66666666666663" y2="642" class="edge sq" marker-end="url(#am1)"/><text x="223.33333333333331" y="633" class="ml">submit_human_response</text></svg><svg class="seqsvg narrow" viewBox="0 0 380 676" role="img" aria-label="An MCP client starts a run, then loops: its own model produces each agent step output, it calls execute_step, and the engine validates, records and replies with the next step."><defs><marker id="am1n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs><rect x="8" y="252" width="364" height="278" rx="8" class="band loop"/><rect x="8" y="544" width="364" height="112" rx="8" class="band alt"/><line x1="52.0" y1="64" x2="52.0" y2="670" class="lifeline"/><line x1="144.0" y1="64" x2="144.0" y2="670" class="lifeline"/><line x1="236.0" y1="64" x2="236.0" y2="670" class="lifeline"/><line x1="328.0" y1="64" x2="328.0" y2="670" class="lifeline"/><rect x="10.0" y="26" width="84" height="38" rx="8" class="box"/><text x="52.0" y="50" class="t sm">MCP client</text><rect x="102.0" y="26" width="84" height="38" rx="8" class="box"/><text x="144.0" y="50" class="t sm">realm mcp</text><rect x="194.0" y="26" width="84" height="38" rx="8" class="engine"/><text x="236.0" y="50" class="t sm">Engine</text><rect x="286.0" y="26" width="84" height="38" rx="8" class="box"/><text x="328.0" y="50" class="t sm">Run store</text><line x1="54.0" y1="110" x2="141.0" y2="110" class="edge sq" marker-end="url(#am1n)"/><text x="136.1" y="101" class="ml">get_workflow_protocol, then start_run</text><line x1="146.0" y1="150" x2="233.0" y2="150" class="edge sq" marker-end="url(#am1n)"/><text x="190.0" y="141" class="ml">create the run</text><line x1="238.0" y1="190" x2="325.0" y2="190" class="edge sq" marker-end="url(#am1n)"/><text x="282.0" y="181" class="ml">save the run</text><line x1="234.0" y1="230" x2="55.0" y2="230" class="edge sq ret" marker-end="url(#am1n)"/><text x="179.0" y="221" class="ml">next_actions: the agent step, its prompt and input</text><text x="24" y="269" class="bandlbl">Repeat until the run ends</text><rect x="16" y="284" width="249.71999999999997" height="28" rx="6" class="note"/><text x="140.85999999999999" y="302" class="ml" style="font-style:italic">the client&#x27;s own model does the work</text><line x1="54.0" y1="344" x2="141.0" y2="344" class="edge sq" marker-end="url(#am1n)"/><text x="116.3" y="335" class="ml">execute_step(run, step, output)</text><line x1="146.0" y1="384" x2="233.0" y2="384" class="edge sq" marker-end="url(#am1n)"/><text x="190.0" y="375" class="ml">validate against the schema</text><line x1="238.0" y1="424" x2="325.0" y2="424" class="edge sq" marker-end="url(#am1n)"/><text x="282.0" y="415" class="ml">record the evidence</text><text x="236.0" y="455" class="ml">run the auto + guard steps that follow</text><path d="M238.0,462 h22 v14 h-20" class="edge sq" marker-end="url(#am1n)"/><line x1="234.0" y1="510" x2="55.0" y2="510" class="edge sq ret" marker-end="url(#am1n)"/><text x="144.0" y="501" class="ml">next_actions for the next agent step</text><text x="24" y="561" class="bandlbl">When a gate opens</text><line x1="234.0" y1="596" x2="55.0" y2="596" class="edge sq ret" marker-end="url(#am1n)"/><text x="144.0" y="587" class="ml">waiting on a human: gate id and choices</text><line x1="54.0" y1="636" x2="141.0" y2="636" class="edge sq" marker-end="url(#am1n)"/><text x="98.0" y="627" class="ml">submit_human_response</text></svg></figure>
+  </section>
+
+  <section>
+    <div class="eyebrow">Path 2 · realm agent</div>
+    <h2>Realm drives and calls the model API</h2>
+    <p>The loop lives in <code>packages/cli/src/agent/run-agent.ts</code>. It uses the same engine call an MCP client uses.</p>
+    <figure class="diagram fig seqfig"><svg class="seqsvg wide" viewBox="0 0 900 674" role="img" aria-label="realm agent loops: it asks the engine for the next step, calls the model API, hands the output to execute_step, and retries with the errors when the schema rejects it."><defs><marker id="am2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs><rect x="16" y="418" width="868" height="224" rx="8" class="band alt"/><rect x="8" y="144" width="884" height="510" rx="8" class="band loop"/><line x1="110.0" y1="76" x2="110.0" y2="668" class="lifeline"/><line x1="336.66666666666663" y1="76" x2="336.66666666666663" y2="668" class="lifeline"/><line x1="563.3333333333333" y1="76" x2="563.3333333333333" y2="668" class="lifeline"/><line x1="790.0" y1="76" x2="790.0" y2="668" class="lifeline"/><rect x="30.0" y="26" width="160" height="50" rx="8" class="box"/><text x="110.0" y="48" class="t">Model API</text><text x="110.0" y="65" class="s">Anthropic or OpenAI</text><rect x="256.66666666666663" y="26" width="160" height="50" rx="8" class="box"/><text x="336.66666666666663" y="48" class="t">realm agent</text><text x="336.66666666666663" y="65" class="s">the driver loop</text><rect x="483.33333333333326" y="26" width="160" height="50" rx="8" class="engine"/><text x="563.3333333333333" y="48" class="t">Engine</text><text x="563.3333333333333" y="65" class="s">execution-loop.ts</text><rect x="710.0" y="26" width="160" height="50" rx="8" class="box"/><text x="790.0" y="48" class="t">Run store</text><text x="790.0" y="65" class="s">~/.realm/runs</text><line x1="338.66666666666663" y1="122" x2="787.0" y2="122" class="edge sq" marker-end="url(#am2)"/><text x="563.3333333333333" y="113" class="ml">create the run, or attach with --run-id</text><text x="24" y="161" class="bandlbl">Repeat until the run ends or a gate opens</text><line x1="338.66666666666663" y1="196" x2="560.3333333333333" y2="196" class="edge sq" marker-end="url(#am2)"/><text x="449.99999999999994" y="187" class="ml">which steps are eligible?</text><line x1="561.3333333333333" y1="236" x2="339.66666666666663" y2="236" class="edge sq ret" marker-end="url(#am2)"/><text x="449.99999999999994" y="227" class="ml">the first eligible agent step</text><line x1="334.66666666666663" y1="276" x2="113.0" y2="276" class="edge sq" marker-end="url(#am2)"/><text x="223.33333333333331" y="267" class="ml">prompt: profile + step text + inputs</text><line x1="112.0" y1="316" x2="333.66666666666663" y2="316" class="edge sq ret" marker-end="url(#am2)"/><text x="223.33333333333331" y="307" class="ml">model output</text><line x1="338.66666666666663" y1="356" x2="560.3333333333333" y2="356" class="edge sq" marker-end="url(#am2)"/><text x="449.99999999999994" y="347" class="ml">execute_step with the output</text><path d="M565.3333333333333,382 h26 v16 h-24" class="edge sq" marker-end="url(#am2)"/><text x="601.3333333333333" y="395" class="ml" style="text-anchor:start">validate against the schema</text><text x="32" y="435" class="bandlbl">If the output breaks the schema</text><line x1="561.3333333333333" y1="470" x2="339.66666666666663" y2="470" class="edge sq ret" marker-end="url(#am2)"/><text x="449.99999999999994" y="461" class="ml">validation errors</text><line x1="334.66666666666663" y1="510" x2="113.0" y2="510" class="edge sq" marker-end="url(#am2)"/><text x="223.33333333333331" y="501" class="ml">same step, with the errors</text><line x1="32" y1="530" x2="868" y2="530" class="divider"/><text x="40" y="547" class="bandlbl">Otherwise</text><line x1="565.3333333333333" y1="582" x2="787.0" y2="582" class="edge sq" marker-end="url(#am2)"/><text x="676.6666666666666" y="573" class="ml">record the evidence</text><path d="M565.3333333333333,608 h26 v16 h-24" class="edge sq" marker-end="url(#am2)"/><text x="601.3333333333333" y="621" class="ml" style="text-anchor:start">run the auto + guard steps that follow</text></svg><svg class="seqsvg narrow" viewBox="0 0 380 674" role="img" aria-label="realm agent loops: it asks the engine for the next step, calls the model API, hands the output to execute_step, and retries with the errors when the schema rejects it."><defs><marker id="am2n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs><rect x="16" y="412" width="348" height="230" rx="8" class="band alt"/><rect x="8" y="132" width="364" height="522" rx="8" class="band loop"/><line x1="52.0" y1="64" x2="52.0" y2="668" class="lifeline"/><line x1="144.0" y1="64" x2="144.0" y2="668" class="lifeline"/><line x1="236.0" y1="64" x2="236.0" y2="668" class="lifeline"/><line x1="328.0" y1="64" x2="328.0" y2="668" class="lifeline"/><rect x="10.0" y="26" width="84" height="38" rx="8" class="box"/><text x="52.0" y="50" class="t sm">Model API</text><rect x="102.0" y="26" width="84" height="38" rx="8" class="box"/><text x="144.0" y="42" class="t sm">realm</text><text x="144.0" y="57" class="t sm">agent</text><rect x="194.0" y="26" width="84" height="38" rx="8" class="engine"/><text x="236.0" y="50" class="t sm">Engine</text><rect x="286.0" y="26" width="84" height="38" rx="8" class="box"/><text x="328.0" y="50" class="t sm">Run store</text><line x1="146.0" y1="110" x2="325.0" y2="110" class="edge sq" marker-end="url(#am2n)"/><text x="236.0" y="101" class="ml">create the run, or attach with --run-id</text><text x="24" y="149" class="bandlbl">Repeat until the run ends or a gate opens</text><line x1="146.0" y1="184" x2="233.0" y2="184" class="edge sq" marker-end="url(#am2n)"/><text x="190.0" y="175" class="ml">which steps are eligible?</text><line x1="234.0" y1="224" x2="147.0" y2="224" class="edge sq ret" marker-end="url(#am2n)"/><text x="190.0" y="215" class="ml">the first eligible agent step</text><line x1="142.0" y1="264" x2="55.0" y2="264" class="edge sq" marker-end="url(#am2n)"/><text x="132.8" y="255" class="ml">prompt: profile + step text + inputs</text><line x1="54.0" y1="304" x2="141.0" y2="304" class="edge sq ret" marker-end="url(#am2n)"/><text x="98.0" y="295" class="ml">model output</text><line x1="146.0" y1="344" x2="233.0" y2="344" class="edge sq" marker-end="url(#am2n)"/><text x="190.0" y="335" class="ml">execute_step with the output</text><text x="236.0" y="375" class="ml">validate against the schema</text><path d="M238.0,382 h22 v14 h-20" class="edge sq" marker-end="url(#am2n)"/><text x="32" y="429" class="bandlbl">If the output breaks the schema</text><line x1="234.0" y1="464" x2="147.0" y2="464" class="edge sq ret" marker-end="url(#am2n)"/><text x="190.0" y="455" class="ml">validation errors</text><line x1="142.0" y1="504" x2="55.0" y2="504" class="edge sq" marker-end="url(#am2n)"/><text x="99.8" y="495" class="ml">same step, with the errors</text><line x1="32" y1="524" x2="348" y2="524" class="divider"/><text x="40" y="541" class="bandlbl">Otherwise</text><line x1="238.0" y1="576" x2="325.0" y2="576" class="edge sq" marker-end="url(#am2n)"/><text x="282.0" y="567" class="ml">record the evidence</text><text x="236.0" y="607" class="ml">run the auto + guard steps that follow</text><path d="M238.0,614 h22 v14 h-20" class="edge sq" marker-end="url(#am2n)"/></svg></figure>
+    <p class="note">Steps run one at a time today. Parallel branches are recorded correctly, but not called at the same time.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow">Path 3 · realm listen</div>
+    <h2>A webhook front door that starts runs</h2>
+    <p><code>realm listen</code> does not drive anything itself. It accepts a request, creates the run and hands it to <code>realm agent</code>. Expired gates are settled only if it was started with <code>--sweep-expired-gates</code>.</p>
+    <figure class="diagram fig seqfig"><svg class="seqsvg wide" viewBox="0 0 900 620" role="img" aria-label="realm listen verifies a webhook, creates the run, spawns a separate realm agent process to drive it, and answers 202."><defs><marker id="am3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs><rect x="8" y="224" width="884" height="336" rx="8" class="band alt"/><line x1="110.0" y1="76" x2="110.0" y2="614" class="lifeline"/><line x1="336.66666666666663" y1="76" x2="336.66666666666663" y2="614" class="lifeline"/><line x1="563.3333333333333" y1="76" x2="563.3333333333333" y2="614" class="lifeline"/><line x1="790.0" y1="76" x2="790.0" y2="614" class="lifeline"/><rect x="30.0" y="26" width="160" height="50" rx="8" class="box"/><text x="110.0" y="48" class="t">External system</text><text x="110.0" y="65" class="s">GitHub, Stripe, cron</text><rect x="256.66666666666663" y="26" width="160" height="50" rx="8" class="box"/><text x="336.66666666666663" y="48" class="t">realm listen</text><text x="336.66666666666663" y="65" class="s">webhook server</text><rect x="483.33333333333326" y="26" width="160" height="50" rx="8" class="box"/><text x="563.3333333333333" y="48" class="t">realm agent</text><text x="563.3333333333333" y="65" class="s">separate process</text><rect x="710.0" y="26" width="160" height="50" rx="8" class="box"/><text x="790.0" y="48" class="t">Run store</text><text x="790.0" y="65" class="s">~/.realm/runs</text><line x1="112.0" y1="122" x2="333.66666666666663" y2="122" class="edge sq" marker-end="url(#am3)"/><text x="223.33333333333331" y="113" class="ml">POST /path, body + signature</text><path d="M338.66666666666663,148 h26 v16 h-24" class="edge sq" marker-end="url(#am3)"/><text x="374.66666666666663" y="161" class="ml" style="text-anchor:start">match the path, check the busy limit</text><path d="M338.66666666666663,188 h26 v16 h-24" class="edge sq" marker-end="url(#am3)"/><text x="374.66666666666663" y="201" class="ml" style="text-anchor:start">verify the signature, drop duplicates</text><text x="24" y="241" class="bandlbl">If rejected</text><line x1="334.66666666666663" y1="276" x2="113.0" y2="276" class="edge sq ret" marker-end="url(#am3)"/><text x="223.33333333333331" y="267" class="ml">403, 503 or 400 (among others)</text><line x1="24" y1="296" x2="876" y2="296" class="divider"/><text x="32" y="313" class="bandlbl">If a duplicate</text><line x1="334.66666666666663" y1="348" x2="113.0" y2="348" class="edge sq ret" marker-end="url(#am3)"/><text x="223.33333333333331" y="339" class="ml">200 deduplicated</text><line x1="24" y1="368" x2="876" y2="368" class="divider"/><text x="32" y="385" class="bandlbl">If accepted</text><line x1="338.66666666666663" y1="420" x2="787.0" y2="420" class="edge sq" marker-end="url(#am3)"/><text x="563.3333333333333" y="411" class="ml">create the run, params checked</text><line x1="338.66666666666663" y1="460" x2="560.3333333333333" y2="460" class="edge sq dash" marker-end="url(#am3)"/><text x="449.99999999999994" y="451" class="ml">spawn realm agent --run-id</text><line x1="334.66666666666663" y1="500" x2="113.0" y2="500" class="edge sq ret" marker-end="url(#am3)"/><text x="223.33333333333331" y="491" class="ml">202 accepted</text><line x1="565.3333333333333" y1="540" x2="787.0" y2="540" class="edge sq" marker-end="url(#am3)"/><text x="676.6666666666666" y="531" class="ml">drive the run, as in path 2</text><rect x="225.48666666666662" y="572" width="222.36" height="28" rx="6" class="note"/><text x="336.66666666666663" y="590" class="ml" style="font-style:italic">opt-in: --sweep-expired-gates</text></svg><svg class="seqsvg narrow" viewBox="0 0 380 620" role="img" aria-label="realm listen verifies a webhook, creates the run, spawns a separate realm agent process to drive it, and answers 202."><defs><marker id="am3n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs><rect x="8" y="224" width="364" height="336" rx="8" class="band alt"/><line x1="52.0" y1="64" x2="52.0" y2="614" class="lifeline"/><line x1="144.0" y1="64" x2="144.0" y2="614" class="lifeline"/><line x1="236.0" y1="64" x2="236.0" y2="614" class="lifeline"/><line x1="328.0" y1="64" x2="328.0" y2="614" class="lifeline"/><rect x="10.0" y="26" width="84" height="38" rx="8" class="box"/><text x="52.0" y="42" class="t sm">External</text><text x="52.0" y="57" class="t sm">system</text><rect x="102.0" y="26" width="84" height="38" rx="8" class="box"/><text x="144.0" y="42" class="t sm">realm</text><text x="144.0" y="57" class="t sm">listen</text><rect x="194.0" y="26" width="84" height="38" rx="8" class="box"/><text x="236.0" y="42" class="t sm">realm</text><text x="236.0" y="57" class="t sm">agent</text><rect x="286.0" y="26" width="84" height="38" rx="8" class="box"/><text x="328.0" y="50" class="t sm">Run store</text><line x1="54.0" y1="110" x2="141.0" y2="110" class="edge sq" marker-end="url(#am3n)"/><text x="106.39999999999999" y="101" class="ml">POST /path, body + signature</text><text x="144.0" y="141" class="ml">match the path, check the busy limit</text><path d="M146.0,148 h22 v14 h-20" class="edge sq" marker-end="url(#am3n)"/><text x="144.0" y="187" class="ml">verify the signature, drop duplicates</text><path d="M146.0,194 h22 v14 h-20" class="edge sq" marker-end="url(#am3n)"/><text x="24" y="241" class="bandlbl">If rejected</text><line x1="142.0" y1="276" x2="55.0" y2="276" class="edge sq ret" marker-end="url(#am3n)"/><text x="113.0" y="267" class="ml">403, 503 or 400 (among others)</text><line x1="24" y1="296" x2="356" y2="296" class="divider"/><text x="32" y="313" class="bandlbl">If a duplicate</text><line x1="142.0" y1="348" x2="55.0" y2="348" class="edge sq ret" marker-end="url(#am3n)"/><text x="98.0" y="339" class="ml">200 deduplicated</text><line x1="24" y1="368" x2="356" y2="368" class="divider"/><text x="32" y="385" class="bandlbl">If accepted</text><line x1="146.0" y1="420" x2="325.0" y2="420" class="edge sq" marker-end="url(#am3n)"/><text x="236.0" y="411" class="ml">create the run, params checked</text><line x1="146.0" y1="460" x2="233.0" y2="460" class="edge sq dash" marker-end="url(#am3n)"/><text x="190.0" y="451" class="ml">spawn realm agent --run-id</text><line x1="142.0" y1="500" x2="55.0" y2="500" class="edge sq ret" marker-end="url(#am3n)"/><text x="98.0" y="491" class="ml">202 accepted</text><line x1="238.0" y1="540" x2="325.0" y2="540" class="edge sq" marker-end="url(#am3n)"/><text x="276.9" y="531" class="ml">drive the run, as in path 2</text><rect x="41.08500000000001" y="572" width="205.82999999999998" height="28" rx="6" class="note"/><text x="144.0" y="590" class="ml" style="font-style:italic">opt-in: --sweep-expired-gates</text></svg></figure>
+    <p class="note">The busy limit (<code>--max-concurrent</code>, default 20) counts requests being handled, not runs being driven. The spawned drivers are detached, so nothing currently caps how many run at once on a machine.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow">Where to read the code</div>
+    <ul>
+      <li>Engine: <code>packages/core/src/engine/execution-loop.ts</code></li>
+      <li>MCP tools: <code>packages/mcp-server/src/tools/</code></li>
+      <li>Agent driver: <code>packages/cli/src/agent/run-agent.ts</code></li>
+      <li>Webhook server: <code>packages/cli/src/commands/listen.ts</code></li>
+    </ul>
+  </section>
+
+  <footer class="site">
+    <p>Realm is an open-source workflow state machine for AI agents. Apache&#8209;2.0 &middot; <a href="https://github.com/sensigo-hq/realm">github.com/sensigo-hq/realm</a></p>
+  </footer>
+
+</div>
+</body>
+</html>

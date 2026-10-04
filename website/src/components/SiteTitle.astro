@@ -1,0 +1,21 @@
+---
+// The docs' title in the header: the Realm logo in place of the text "Realm".
+// Replaces Starlight's SiteTitle (astro.config.mjs -> components). The link target, and the name
+// the title has for screen readers, still come from Starlight.
+import Logo from './Logo.astro';
+const { siteTitle, siteTitleHref } = Astro.locals.starlightRoute;
+---
+
+<a href={siteTitleHref} class="site-title sl-flex" aria-label={siteTitle}>
+  <Logo height="1.75rem" />
+</a>
+
+<style>
+  @layer starlight.core {
+    .site-title {
+      align-items: center;
+      text-decoration: none;
+      min-width: 0;
+    }
+  }
+</style>
