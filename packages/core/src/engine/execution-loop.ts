@@ -6895,9 +6895,20 @@ export async function advanceRun(
       depth0Warnings,
     },
   );
+  // When nothing ran (no step, no guard), the hint is composed from the record the loop ends on:
+  // a step another process took in the meantime (D3.2) is no longer owed here, and the reply's
+  // `next_actions` already say so — the hint must not still name it.
+  let nothingRanHint: string | undefined;
+  if (chained.length === 0 && advanced.status === 'ok') {
+    const end = await store.get(options.runId).catch(() => stored);
+    nothingRanHint = end.terminal_state
+      ? `Run '${options.runId}' is already terminal (${deriveRunPhase(end)}); nothing ran.`
+      : `Run '${options.runId}': nothing ran.${describeNext(describePending(definition, end, registry))}`;
+  }
   const chainWarnings = [...depth0Warnings, ...chained.flatMap((c) => c.warnings ?? [])];
   const envelope = {
     ...advanced,
+    ...(nothingRanHint !== undefined ? { context_hint: nothingRanHint } : {}),
     command,
     ...(chainWarnings.length > 0
       ? { warnings: [...(advanced.warnings ?? []), ...chainWarnings] }

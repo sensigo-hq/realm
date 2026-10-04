@@ -301,6 +301,57 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect(provider.callStep).not.toHaveBeenCalled();
   });
 
+  it("L7: an engine step that THROWS at the loop top (its snapshot write) is the drive failure's step; no model call follows", async () => {
+    // A store that drops `workflow_context_snapshots` on write, so each step re-takes the snapshot,
+    // and whose snapshot write throws: the one write the engine leaves unguarded, so the throw
+    // leaves `advanceRun` and reaches the driver's last-resort catch (chokepoint 3).
+    const def: WorkflowDefinition = {
+      id: 'loop-snapshot-throw-wf',
+      name: 'loop snapshot throw',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      workflow_context: { doc: { source: { path: '/nonexistent/realm-625-loop-top.md' } } },
+      steps: {
+        x: { description: 'X', execution: 'auto', depends_on: [] },
+        review: { description: 'Review.', execution: 'agent', depends_on: ['x'] },
+      },
+    } as WorkflowDefinition;
+    const inner = new InMemoryStore();
+    const { run } = await inner.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const store = new Proxy(inner, {
+      get(target, prop, receiver) {
+        if (prop === 'update') {
+          return async (record: Parameters<RunStore['update']>[0]) => {
+            if (record.workflow_context_snapshots !== undefined) {
+              throw new Error('snapshot write failed');
+            }
+            return target.update(record);
+          };
+        }
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        return typeof value === 'function'
+          ? (value as (...a: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    }) as unknown as RunStore;
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({});
+    })();
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      runAgent(
+        { store, workflowStore: workflowStore(def), provider, registry: createDefaultRegistry() },
+        { definition: def, existingRunId: run.id, params: {} },
+      ),
+    ).rejects.toThrow('snapshot write failed');
+    const out = logSpy.mock.calls.flat().join('\n');
+    vi.restoreAllMocks();
+    expect(out).toContain('→ [auto] x');
+    expect((await inner.get(run.id)).drive_failures?.entries.at(-1)?.step).toBe('x');
+    expect(provider.callStep).not.toHaveBeenCalled();
+  });
+
   const gated = (guard: boolean): WorkflowDefinition => ({
     id: guard ? 'attended-guard-wf' : 'attended-auto-wf',
     name: 'attended',

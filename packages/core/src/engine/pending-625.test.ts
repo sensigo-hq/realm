@@ -574,6 +574,30 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       expect(after.in_progress_steps).toEqual(['x']);
     });
   });
+
+  it('D3.2: when the only owed step is taken, nothing ran — and the hint says what the record says now', async () => {
+    const d = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const realClaim = store.claimStep.bind(store);
+      let first = true;
+      store.claimStep = async (...args: Parameters<RunStore['claimStep']>) => {
+        if (first) {
+          first = false;
+          await realClaim(args[0], args[1], args[2], {
+            by: 'other@host',
+            by_source: 'derived',
+            channel: 'agent',
+          });
+        }
+        return realClaim(...args);
+      };
+      const reply = await advanceRun(store, d, { runId: run.id });
+      expect(reply.chained_auto_steps).toBeUndefined();
+      expect(reply.next_actions).toEqual([]);
+      expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran. No step is ready.`);
+    });
+  });
 });
 
 describe('#625 PR-2a — decision C3: the output of a bare step the engine runs', () => {

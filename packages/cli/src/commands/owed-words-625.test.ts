@@ -113,6 +113,44 @@ describe('#625 PR-2a — realm run advance: the words', () => {
     expect(stoppedReasons('r', base, none)).toEqual(['nothing is ready to run now']);
   });
 
+  it("advance: a failed engine step is the first Stopped reason, then the view's; exit 1", async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('failed-wf', {
+        x: { description: 'X', execution: 'auto', depends_on: [], handler: 'boom' },
+        y: { description: 'Y', execution: 'agent', depends_on: [] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'boom', {
+        id: 'boom',
+        execute: async () => {
+          throw new Error('handler blew up');
+        },
+      });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        registry,
+      );
+      expect(code).toBe(1);
+      expect(lines.slice(4)).toEqual([
+        '→ x',
+        "Stopped: 'x' failed: Handler 'boom' threw: handler blew up",
+        `Stopped: agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}`,
+        `Run ${run.id}: phase 'running'`,
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('C21: the driver line counts in the plural, and says nothing when no newer entry lacks a driver', async () => {
     const { home, runs, workflows } = stores();
     try {
