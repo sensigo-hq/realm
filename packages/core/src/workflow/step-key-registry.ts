@@ -187,6 +187,9 @@ export function countWitnessMatches(source: string, pattern: string): number {
 // established for a cross-package source-text read: each conformance runner resolves these from
 // its own package location, never from cwd.
 const EL = 'packages/core/src/engine/execution-loop.ts';
+// issue #625 PR-2a: the pre-claim checks (trust, precondition, input schema) are ONE function,
+// `checkPreClaim`, which `executeStep` and the run's view (`describePending`) both call.
+const PEND = 'packages/core/src/engine/pending.ts';
 const ELIG = 'packages/core/src/engine/eligibility.ts';
 const SETTLE = 'packages/core/src/engine/settlement.ts';
 const CL = 'packages/core/src/engine/claim-liveness.ts';
@@ -284,7 +287,7 @@ const W_TRIGGER_RULE: StepKeyWitness = {
 // a second call site and red that unrelated walker (witness-collision class, header above). This
 // read shape is the same consumption evidence without the collision.
 const W_PRECONDITIONS: StepKeyWitness = {
-  file: EL,
+  file: PEND,
   pattern: 'if (stepDef?.preconditions !== undefined && stepDef.preconditions.length > 0) {',
 };
 const W_GATE_MINT_TRUST: StepKeyWitness = {
@@ -298,7 +301,7 @@ const W_GATE_MINT_TRUST: StepKeyWitness = {
 // W_GATE_MINT_TRUST alone left open (an unrecognized value used to fall through the mint
 // untouched and run un-gated; now it never reaches the mint at all).
 const W_TRUST_VALUE_REFUSAL: StepKeyWitness = {
-  file: EL,
+  file: PEND,
   pattern: "classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse'",
 };
 const W_GATE_CHOICES: StepKeyWitness = {
@@ -306,8 +309,8 @@ const W_GATE_CHOICES: StepKeyWitness = {
   pattern: "stepDef!.gate?.choices ?? stepDef!.input_schema?.properties?.['choice']?.enum;",
 };
 const W_INPUT_SCHEMA_2B: StepKeyWitness = {
-  file: EL,
-  pattern: 'validateInputSchema(effectiveInput, stepDef.input_schema, options.command);',
+  file: PEND,
+  pattern: 'validateInputSchema(input, stepDef.input_schema, step);',
 };
 const W_DESCRIPTION_GEN: StepKeyWitness = { file: GEN, pattern: 'description: step.description,' };
 const W_TOOLS_PATH: StepKeyWitness = {
@@ -371,6 +374,9 @@ const W_TIMEOUT_ENFORCE: StepKeyWitness = {
  *  red cell, not a silent fallback). Operator words, never file basenames (D7-5). */
 export const SURFACE_NAME: Record<string, string> = {
   [EL]: "the engine's execution loop",
+  // issue #625 PR-2a: the pre-claim checks the execution loop calls (`checkPreClaim`) — the same
+  // surface to an author, so every minted message citing them reads exactly as before.
+  [PEND]: "the engine's execution loop",
   [ELIG]: 'step eligibility',
   [SETTLE]: 'finalizer selection',
   [CL]: 'claim liveness',
@@ -757,7 +763,12 @@ export const STEP_KEY_REGISTRY = {
     },
     agent: {
       c: 'consumed',
-      where: [{ file: EL, pattern: "definition.steps[name]?.execution === 'agent' ||" }],
+      where: [
+        {
+          file: EL,
+          pattern: "eligible.filter((name) => definition.steps[name]?.execution === 'agent')",
+        },
+      ],
     },
     guard: {
       c: 'consumed',

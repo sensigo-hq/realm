@@ -347,7 +347,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // (a) red when the guard's sentence replaces the answer's own on a run that goes on;
       //     (b) prints the sentence.
       expect(reply.context_hint).toBe(
-        "Gate 'confirm' resolved with choice 'approve'. 1 step(s) now available.",
+        "Gate 'confirm' resolved with choice 'approve'. Ready for the agent: 'finish'.",
       );
       // (a) red when the reply's data is emptied on a run that goes on; (b) prints the choice.
       expect(reply.data['choice']).toBe('approve');
@@ -517,7 +517,7 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       expect(reply.ended_by).toBeUndefined();
       // (a) red when a non-ending guard empties the step's own reply; (b) prints the values.
       expect(reply.data).toEqual({ ok: true });
-      expect(reply.context_hint).toBe("Step 'work' completed. 1 step(s) now available.");
+      expect(reply.context_hint).toBe("Step 'work' completed. Ready for the agent: 'finish'.");
       expect(offeredSteps(reply)).toEqual(['finish']);
       // (a) red when a guard that let the run go on is listed with a phase other than 'running';
       //     (b) prints the list.
@@ -1211,7 +1211,7 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
       // (a) red when a direct call runs or claims the agent step, or invents a list;
       //     (b) prints the values.
       expect(reply.status).toBe('ok');
-      expect(reply.context_hint).toBe(`Run '${run.id}' advanced from its stored record.`);
+      expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran. Ready for the agent: 'work'.`);
       expect(reply.chained_auto_steps).toBeUndefined();
       expect((await store.get(run.id)).version).toBe(run.version);
     });

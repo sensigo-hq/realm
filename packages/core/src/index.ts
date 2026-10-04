@@ -117,7 +117,30 @@ export {
   describeAnswerEnding,
   lateAnswerOutcome,
 } from './engine/execution-loop.js';
-export type { AdvanceRunState, GuardEnding } from './engine/execution-loop.js';
+export type { AdvanceRunOptions, OutputSource, GuardEnding } from './engine/execution-loop.js';
+export { bareStepOutput } from './engine/execution-loop.js';
+// Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
+export {
+  PRE_CLAIM_REFUSALS,
+  checkPreClaim,
+  engineStepInput,
+  describePending,
+  owedNames,
+  owedList,
+  ADVANCE_OWED,
+  composeNextActionsStatusWord,
+  describeNext,
+  PROGRAM_FITS,
+  judgeProgramFit,
+  describeRunDriver,
+} from './engine/pending.js';
+export type {
+  PreClaimRefusal,
+  PreClaimRefused,
+  EngineRunnable,
+  PendingView,
+  ProgramFit,
+} from './engine/pending.js';
 export {
   findEligibleSteps,
   isWorkflowComplete,

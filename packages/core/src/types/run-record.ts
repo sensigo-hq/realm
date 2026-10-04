@@ -454,6 +454,14 @@ export interface EvidenceSnapshot {
    */
   driven_by?: Attributed;
   /**
+   * Issue #625 PR-2a (decision C3): on a BARE `auto` step's entry only — where its output came
+   * from. `driven_step`: what the caller that named the step returned through its dispatcher;
+   * `dependency`: its single `depends_on` step's recorded output (the engine ran it); `run_params`:
+   * the run's params (no `depends_on`); `none`: nothing to copy (`{}`). Absent on older entries and
+   * on every step with a handler or a service.
+   */
+  output_source?: 'driven_step' | 'dependency' | 'run_params' | 'none';
+  /**
    * Holder slice (PR-H): present only on a `gate_response` entry the ANSWER wrote, and only when the
    * answer was recorded (verdict rows 1–5; a settled question has no entry to carry `spent`).
    * Whether the caller passed back the `claim_token` of the reply that opened the question, judged

@@ -27,7 +27,7 @@ import type {
   InputMapNode,
   LiteralNode,
 } from '../types/workflow-definition.js';
-import { classifyStepTrust, isGateTrust, buildTrustRefusal } from '../types/workflow-definition.js';
+import { isGateTrust } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { persistsField } from '../store/store-fidelity.js';
 import type { TraceBufferStore, BufferedEntry } from '../store/trace-buffer-store.js';
@@ -64,11 +64,7 @@ import type {
   ExpireGateDelta,
 } from '../types/settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
-import {
-  validateInputSchema,
-  validateOutputSchema,
-  validateTraceSchema,
-} from '../validation/input-schema.js';
+import { validateOutputSchema, validateTraceSchema } from '../validation/input-schema.js';
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES, DRAIN_CEILING_SECONDS } from './lifecycle.js';
@@ -80,11 +76,7 @@ import {
   sleepWouldExceedCap,
 } from './claim-liveness.js';
 import { computeBackoff } from './backoff.js';
-import {
-  checkPreconditions,
-  evaluateAllPreconditions,
-  evaluateGuardConditions,
-} from './precondition.js';
+import { evaluateAllPreconditions, evaluateGuardConditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { admitEntry } from '../admission.js';
 import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
@@ -104,6 +96,13 @@ import {
   assertSealMarkersAgree,
 } from './eligibility.js';
 import { requirementForStep } from './capability.js';
+import {
+  checkPreClaim,
+  describePending,
+  describeNext,
+  engineStepInput,
+  type PreClaimRefused,
+} from './pending.js';
 import {
   resolvePreExecutionAgentAction,
   resolvePostDispatchAgentAction,
@@ -186,6 +185,13 @@ export interface ExecuteStepOptions {
    * as given; every reader shows `by` without spaces at either end.
    */
   driver?: Attributed;
+  /**
+   * Issue #625 PR-2a (decision C3): how a BARE `auto` step's output was obtained, recorded on its
+   * evidence entry as `output_source`. The engine's own loop sets it for the steps it runs; any
+   * other caller leaves it absent and a bare step it names records `'driven_step'` (its output is
+   * what the caller's dispatcher returned). Ignored for every step that is not a bare `auto` step.
+   */
+  outputSource?: OutputSource;
 }
 
 export interface SubmitGateOptions {
@@ -249,6 +255,8 @@ export interface ExecuteChainOptions {
   writerNonce?: string;
   /** @see ExecuteStepOptions.driver */
   driver?: Attributed;
+  /** @see ExecuteStepOptions.now — threaded to the named step and every step the chain runs. */
+  now?: Date;
 }
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
@@ -765,10 +773,14 @@ function stepToNextAction(
 }
 
 /**
- * Returns NextAction objects for all agent-executable eligible steps.
- * Auto steps are excluded — they are executed internally by executeChain.
+ * The NextActions of every eligible AGENT step, with the step names they stand for (issue #625
+ * PR-2a: an `auto` step is never a next action — the engine runs it, and `advance_run` is the act
+ * that asks it to). The agent×handler arm of `stepToNextAction` is unchanged (#516).
  */
-export function buildNextActions(definition: WorkflowDefinition, run: RunRecord): NextAction[] {
+export function buildAgentActions(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+): { actions: NextAction[]; steps: string[] } {
   const eligible = findEligibleSteps(definition, run);
   const evidenceByStep = buildEvidenceByStep(run);
   const context = {
@@ -785,13 +797,28 @@ export function buildNextActions(definition: WorkflowDefinition, run: RunRecord)
       : {}),
   };
 
-  return eligible
-    .filter(
-      (name) =>
-        definition.steps[name]?.execution === 'agent' ||
-        definition.steps[name]?.handler !== undefined,
-    )
-    .map((name) => stepToNextAction(name, definition.steps[name]!, context));
+  const steps = eligible.filter((name) => definition.steps[name]?.execution === 'agent');
+  return {
+    actions: steps.map((name) => stepToNextAction(name, definition.steps[name]!, context)),
+    steps,
+  };
+}
+
+/**
+ * Returns the run's next actions: every eligible agent step, then — LAST, so `next_actions[0]`
+ * stays the agent step — the `advance_run` act when engine work is owed (issue #625 PR-2a,
+ * `describePending`). A call site that passes no registry gets `'unknown'` for the capability
+ * check, so the act stays offered.
+ */
+export function buildNextActions(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  registry?: ExtensionRegistry,
+): NextAction[] {
+  const pending = describePending(definition, run, registry);
+  return pending.act !== undefined
+    ? [...pending.agent_actions, pending.act]
+    : pending.agent_actions;
 }
 
 /**
@@ -1619,6 +1646,10 @@ export async function executeStep(
   }
 
   const stepDef = definition.steps[options.command];
+  const isBareAutoStep =
+    stepDef?.execution === 'auto' &&
+    stepDef.handler === undefined &&
+    stepDef.uses_service === undefined;
 
   // issue #508 (L2) — fail CLOSED, not merely fail-loud, on a trust value L1 would have refused
   // at load. This is the layer that closes the population L1 cannot reach: a definition already
@@ -1638,71 +1669,13 @@ export async function executeStep(
   // explanation at once. Placed AFTER Step 1.5's `enactExpiredGateIfDue` above, deliberately:
   // enacting a DIFFERENT step's already-expired gate is lawful and must not be blocked by this
   // step's own trust defect.
-  if (classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
-    // issue #508 (final correction): this whole message is now `buildTrustRefusal`
-    // (types/workflow-definition.ts) — the same composer L1 (yaml-loader.ts), the
-    // trust_value_invalid finding (run-health.ts), and the protocol briefing (generator.ts) all
-    // use, so this surface can no longer silently fall back to the generic "not a recognized
-    // value" text while the other three name a service-trust confusion or the human_notified
-    // tombstone by their own arm. `stepDef!` is sound here: `classifyStepTrust` only reaches
-    // 'refuse' when `stepDef?.trust !== undefined`, which is only possible when `stepDef` itself
-    // is defined (optional chaining on an undefined `stepDef` would make `.trust` undefined too,
-    // routing to the FIRST 'lawful_no_gate' arm instead) — and `stepDef.execution` is always
-    // 'auto' or 'agent' here by construction, per this function's own comment above (guard and
-    // finalizer never reach `executeStep` at all).
-    const err = new WorkflowError(
-      buildTrustRefusal({
-        kind: stepDef!.execution,
-        value: stepDef!.trust,
-        step: options.command,
-        surface: 'dispatch',
-      }),
-      {
-        code: 'VALIDATION_TRUST_VALUE',
-        category: 'VALIDATION',
-        agentAction: 'report_to_user',
-        retryable: false,
-        stepId: options.command,
-      },
-    );
-    // Deliberately NOT passing `definition`: `makeErrorEnvelope` appends
-    // `buildNextActions(definition, run)` whenever a definition is supplied and the error's
-    // agentAction isn't 'stop' (:1007-1009) — the refused step is by construction still
-    // eligible, so it would appear in its own refusal's `next_actions`, and an agent following
-    // them would loop forever. Omitting `definition` here is what keeps `next_actions: []`.
-    return makeErrorEnvelope(options, run, err);
-  }
-
-  const evidenceByStep = buildEvidenceByStep(run);
-
-  // Step 2a: Evaluate preconditions.
-  if (stepDef?.preconditions !== undefined && stepDef.preconditions.length > 0) {
-    const failed = checkPreconditions(stepDef.preconditions, evidenceByStep);
-    if (failed !== null) {
-      return {
-        command: options.command,
-        run_id: options.runId,
-        run_version: run.version,
-        status: 'blocked',
-        data: {},
-        evidence: [],
-        warnings: [],
-        errors: [],
-        agent_action: 'stop' as const,
-        context_hint: `Precondition failed for step '${options.command}'.`,
-        run_phase: run.run_phase,
-        next_actions: [],
-        blocked_reason: {
-          eligible_steps: eligible,
-          suggestion: `Precondition failed: '${failed.expression}'. Resolved value: ${String(failed.resolved_value)}.`,
-        },
-      };
-    }
-  }
-
-  const preconditionTrace = evaluateAllPreconditions(stepDef?.preconditions ?? [], evidenceByStep);
-
-  // Extract _debug before validation — it is never validated, never hashed, never in output_summary.
+  // issue #625 PR-2a: the three write-free checks (trust, precondition, input schema) are ONE
+  // function, `checkPreClaim` (pending.ts), which the run's view (`describePending`) calls too — so
+  // the view never offers a step this function refuses. Computed once, here; each refusal is
+  // returned where it was before, in the same order. No registry is passed: the capability check
+  // stays the post-claim dispatch failure that writes `capability_blocks` (decision C4).
+  //
+  // `_debug` is stripped first (pure) because the input-schema member validates the stripped input.
   let debugOutput: unknown;
   let effectiveInput = options.input;
   if (Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
@@ -1710,6 +1683,51 @@ export async function executeStep(
     debugOutput = _debug;
     effectiveInput = rest;
   }
+  const preClaimVerdict = checkPreClaim({
+    definition,
+    run,
+    step: options.command,
+    input: effectiveInput,
+  });
+  const preClaim: PreClaimRefused | undefined =
+    preClaimVerdict !== undefined && 'refused_by' in preClaimVerdict ? preClaimVerdict : undefined;
+
+  if (preClaim?.refused_by === 'trust') {
+    // Deliberately NOT passing `definition`: `makeErrorEnvelope` appends
+    // `buildNextActions(definition, run)` whenever a definition is supplied and the error's
+    // agentAction isn't 'stop' — the refused step is by construction still eligible, so it would
+    // appear in its own refusal's `next_actions`, and an agent following them would loop forever.
+    // Omitting `definition` here is what keeps `next_actions: []`.
+    return makeErrorEnvelope(options, run, preClaim.error!);
+  }
+
+  const evidenceByStep = buildEvidenceByStep(run);
+
+  // Step 2a: Evaluate preconditions (checkPreClaim's precondition member).
+  if (preClaim?.refused_by === 'precondition') {
+    return {
+      command: options.command,
+      run_id: options.runId,
+      run_version: run.version,
+      status: 'blocked',
+      data: {},
+      evidence: [],
+      warnings: [],
+      errors: [],
+      agent_action: 'stop' as const,
+      context_hint: preClaim.hint!,
+      run_phase: run.run_phase,
+      next_actions: [],
+      blocked_reason: {
+        eligible_steps: eligible,
+        suggestion: preClaim.suggestion!,
+      },
+    };
+  }
+
+  const preconditionTrace = evaluateAllPreconditions(stepDef?.preconditions ?? [], evidenceByStep);
+
+  // `_debug` was extracted above (before checkPreClaim) — never validated, hashed, or in output_summary.
 
   // All downstream consumers (handler, adapter, dispatcher, evidence) must see the
   // stripped input. effectiveOptions is identical to options when _debug was absent.
@@ -1835,16 +1853,15 @@ export async function executeStep(
   }
 
   // Step 2b: Validate input schema.
-  if (stepDef?.input_schema !== undefined) {
-    try {
-      validateInputSchema(effectiveInput, stepDef.input_schema, options.command);
-    } catch (err) {
-      await countRejection(err as WorkflowError);
+  if (preClaim?.refused_by === 'input_schema' && preClaim.error !== undefined) {
+    {
+      const err = preClaim.error;
+      await countRejection(err);
       if (exhaustion === null) {
         return makeErrorEnvelope(
           options,
           run,
-          err as WorkflowError,
+          err,
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
         );
@@ -2800,6 +2817,8 @@ export async function executeStep(
       const baseSnap = captureEvidence({
         stepId: options.command,
         ...(options.driver !== undefined ? { drivenBy: options.driver } : {}),
+        // issue #625 PR-2a (decision C3): a bare auto step's entry says where its output came from.
+        ...(isBareAutoStep ? { outputSource: options.outputSource ?? 'driven_step' } : {}),
         startedAt,
         completedAt,
         input: effectiveInput,
@@ -4122,7 +4141,7 @@ export async function executeStep(
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
       : migratedNextActions.length > 0
-        ? `Step '${options.command}' completed. ${migratedNextActions.length} step(s) now available.`
+        ? `Step '${options.command}' completed.${describeNext(describePending(definition, finalRun))}`
         : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
     // issue #625: this step's own write settled every guard it made eligible. When one of them
@@ -4307,7 +4326,7 @@ export async function executeStep(
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
     : nextActions.length > 0
-      ? `Step '${options.command}' completed. ${nextActions.length} step(s) now available.`
+      ? `Step '${options.command}' completed.${describeNext(describePending(definition, savedRun))}`
       : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
   return {
@@ -4828,7 +4847,13 @@ async function composeExpiryReply(
       err.message,
       finalRun.run_phase,
     );
-    return { ...envelope, warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings) };
+    // issue #625 PR-2a (decision C9): another default settled the question and the run moved on —
+    // a refused reply still names what the run owes now (the agent steps, the advance act).
+    return {
+      ...envelope,
+      warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings),
+      next_actions: finalRun.terminal_state ? [] : buildNextActions(definition, finalRun),
+    };
   }
 
   // abort disposition: a skip_details entry kind 'gate_expired' bearing this gateId.
@@ -5114,10 +5139,16 @@ export async function submitHumanResponse(
             err.message,
             result.run.run_phase,
           );
+          // issue #625 PR-2a (decision C9): someone else settled the question and the run moved on —
+          // the refusal names what the run owes now.
+          const conflictWithNext = {
+            ...conflictReply,
+            next_actions: result.run.terminal_state ? [] : buildNextActions(definition, result.run),
+          };
           // issue #625: see `already_settled` above — a gate its expiry settled.
           return gateSettledByTimeout(result.run, stepName)
-            ? { ...conflictReply, answer_recorded: false }
-            : conflictReply;
+            ? { ...conflictWithNext, answer_recorded: false }
+            : conflictWithNext;
         }
         case 'choice_not_eligible': {
           // VALIDATION_INPUT_SCHEMA envelope — parity with the legacy path's own step 4 (below).
@@ -5279,7 +5310,7 @@ export async function submitHumanResponse(
       : buildNextActions(definition, finalRun);
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'. ${migratedNextActions.length} step(s) now available.`;
+      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun))}`;
 
     // issue #625: the answer's own write settled every guard the answer made eligible, so no guard
     // is left "eligible, to be decided by some later call" — the reply lists them in `guards`, and
@@ -5579,7 +5610,7 @@ export async function submitHumanResponse(
   const nextActions = savedRun.terminal_state ? [] : buildNextActions(definition, savedRun);
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-    : `Gate '${gateStepName}' resolved with choice '${options.choice}'. ${nextActions.length} step(s) now available.`;
+    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun))}`;
 
   return withGateClaim(
     {
@@ -5610,8 +5641,6 @@ export async function submitHumanResponse(
     legacyTokenPresented,
   );
 }
-
-const MAX_CHAIN_DEPTH = 50;
 
 /**
  * Evaluates a guard step for `advanceRun`'s guard loop.
@@ -6174,96 +6203,6 @@ export async function drainFinalizers(
   return { run, warnings, leftPending, attempted };
 }
 
-async function executeChainInternal(
-  store: RunStore,
-  definition: WorkflowDefinition,
-  options: ExecuteChainOptions,
-  depth: number,
-  chainedSteps: Array<{
-    step: string;
-    run_phase: string;
-    branched_via?: string;
-    warnings?: string[];
-  }>,
-  /**
-   * issue #197 PR-2 (chain-replacement disposition, accepted): a settled DEPTH-0 step (typically
-   * an agent step — never itself recorded in `chainedSteps`, which is auto-steps-only, feeding
-   * the VISIBLE `chained_auto_steps` list) whose own envelope is about to be discarded in favor
-   * of a deeper auto step's envelope would otherwise silently lose its OWN warnings (seal
-   * outcome / half-minted / missing-carriage-leg advisories) — this separate accumulator exists
-   * ONLY to carry those forward; it never touches `chainedSteps`'/`chained_auto_steps`'s shape.
-   * The three NEW adoption counts on that depth-0 envelope are NOT similarly rescued — they
-   * persist authoritatively in the settled step's own `trace_summary` regardless (see
-   * `ResponseEnvelope.adopted_own`'s own doc) — only the warnings are a load-bearing rescue.
-   */
-  depth0Warnings: string[],
-): Promise<ResponseEnvelope> {
-  if (depth > MAX_CHAIN_DEPTH) {
-    return {
-      command: options.command,
-      run_id: options.runId,
-      run_version: 0,
-      status: 'error',
-      data: {},
-      evidence: [],
-      warnings: [],
-      errors: [
-        'Auto-execution chain exceeded maximum depth (50). Possible cycle in workflow definition.',
-      ],
-      agent_action: 'stop' as const,
-      context_hint: `Auto-step chain exceeded depth limit (50) for run '${options.runId}'.`,
-      next_actions: [],
-    };
-  }
-
-  const result = await executeStep(store, definition, options);
-
-  // Stop chaining on any non-ok result.
-  if (result.status !== 'ok') {
-    return result;
-  }
-
-  // Load the current run to determine what comes next.
-  let run: RunRecord;
-  try {
-    run = await store.get(options.runId);
-  } catch {
-    return result;
-  }
-
-  // issue #625: on a store that declares `settleStep`, the named step's own write settled every
-  // guard it made eligible (`result.guards`). A guard was eligible after the step's own delta, so
-  // the run was 'running' then: that is the phase the step's own entry and every guard that let
-  // the run go on carry. A guard that ended the run carries the phase it sealed. (`run`, read
-  // above, is already the record AFTER those guards.)
-  const cascadedGuards = result.guards ?? [];
-
-  // Record this auto step in the accumulator.
-  if (definition.steps[options.command]?.execution === 'auto') {
-    chainedSteps.push({
-      step: options.command,
-      run_phase: cascadedGuards.length > 0 ? 'running' : run.run_phase,
-      ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
-    });
-  }
-  // The published `chained_auto_steps` keeps listing every step the engine ran on its own.
-  cascadedGuards.forEach((guard, index) => {
-    const endedTheRun = index === cascadedGuards.length - 1 && result.ended_by !== undefined;
-    chainedSteps.push({
-      step: guard.step,
-      run_phase: endedTheRun ? (result.run_phase ?? run.run_phase) : 'running',
-    });
-  });
-
-  return advanceRun(store, definition, options, {
-    run,
-    result,
-    depth,
-    chainedSteps,
-    depth0Warnings,
-  });
-}
-
 /** One entry of the chain's `chained_auto_steps` accumulator. */
 type ChainedStepEntry = {
   step: string;
@@ -6272,172 +6211,441 @@ type ChainedStepEntry = {
   warnings?: string[];
 };
 
+/** How a bare `auto` step got the output it recorded (issue #625 PR-2a, decision C3). */
+export type OutputSource = 'driven_step' | 'dependency' | 'run_params' | 'none';
+
 /**
- * The state `executeChain` already holds when it hands a run to {@link advanceRun}: the record it
- * read after the named step settled, that step's reply, the chain depth, and the two accumulators
- * (see `executeChainInternal`'s own parameters for what each carries).
+ * The output of a bare `auto` step the ENGINE runs (decision C3): its single `depends_on` step's
+ * recorded output (`dependency`); no `depends_on` ⇒ the run's params (`run_params`); else `{}`
+ * (`none`). A single dependency with no successful entry (a trigger rule let the step run after
+ * its dependency failed or was skipped) also records `none` — there is no output to copy.
  */
-export interface AdvanceRunState {
-  run: RunRecord;
-  result: ResponseEnvelope;
-  depth: number;
-  chainedSteps: ChainedStepEntry[];
-  depth0Warnings: string[];
+export function bareStepOutput(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  step: string,
+): { source: Exclude<OutputSource, 'driven_step'>; output: Record<string, unknown> } {
+  const deps = definition.steps[step]?.depends_on ?? [];
+  if (deps.length === 0) return { source: 'run_params', output: { ...run.params } };
+  if (deps.length === 1) {
+    const dep = deps[0]!;
+    for (let i = run.evidence.length - 1; i >= 0; i--) {
+      const entry = run.evidence[i]!;
+      if (entry.step_id === dep && entry.kind !== 'gate_response' && entry.status === 'success') {
+        return { source: 'dependency', output: entry.output_summary };
+      }
+    }
+  }
+  return { source: 'none', output: {} };
 }
 
 /**
- * issue #625 (PR-1): the chain's tail — settle every eligible guard, then run the next eligible
- * `auto` step — MOVED here out of `executeChainInternal` (moved, not copied; it stays in this file
- * because every `store.settleStep` call site lives here). `executeChain` is its only production
- * caller: after its named step settles it passes the state it already holds as `state`.
- *
- * Called WITHOUT `state`, it advances a run from its stored record: it reads the record, starts
- * from a neutral `ok` reply, and wraps `chained_auto_steps` and the chained steps' warnings exactly
- * as `executeChain` does. `options.command` only labels the reply in that case.
- *
- * On a store that declares `settleStep`, a write settles the guards it makes eligible itself, so
- * the guard loop below finds work only on a record that some OTHER kind of write left with an
- * eligible guard (`store.update`, a resume, run creation) — and on every store without
- * `settleStep`, where it is the only thing that settles a guard.
+ * The ONE pick of the next step the engine runs (issue #625 PR-2a, law L8): the first eligible
+ * `auto` step, in definition order, that this call has not attempted and that the pre-claim view
+ * does not refuse for this caller's registry (`describePending`'s own judgement — so the act and
+ * the pick agree by construction, and a refused step is never retried in a loop).
  */
-export async function advanceRun(
+function pickNextEngineStep(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  attempted: ReadonlySet<string>,
+  registry: ExtensionRegistry | undefined,
+): string | undefined {
+  const pending = describePending(definition, run, registry);
+  return pending.engine_runnable.find((e) => e.runnable_here !== false && !attempted.has(e.step))
+    ?.step;
+}
+
+/** What the advance loop is given (issue #625 PR-2a). */
+interface AdvanceLoopContext {
+  runId: string;
+  /** Labels the replies the loop composes itself. */
+  command: string;
+  registry: ExtensionRegistry;
+  traceBufferStore?: TraceBufferStore;
+  driver?: Attributed;
+  now?: Date;
+  onStep?: (step: string) => void;
+  /** The step `executeChain` ran before the loop (its warnings are rescued); absent for advanceRun. */
+  namedStep?: string;
+}
+
+/**
+ * The loop both `advanceRun` and `executeChain` use (issue #625 PR-2a). Iterative: settle every
+ * eligible guard, then run the next eligible `auto` step this call has not attempted — through
+ * `executeStep`, with the engine's own input and the bare-step dispatcher — until a question opens,
+ * only agent steps remain, the run ends, a step's reply is not `ok` (returned as is), or nothing is
+ * left to run. At most one execution per step of the definition per call.
+ */
+async function advanceLoop(
   store: RunStore,
   definition: WorkflowDefinition,
-  options: ExecuteChainOptions,
-  state?: AdvanceRunState,
+  options: AdvanceLoopContext,
+  state: {
+    run: RunRecord;
+    result: ResponseEnvelope;
+    chainedSteps: ChainedStepEntry[];
+    depth0Warnings: string[];
+  },
 ): Promise<ResponseEnvelope> {
-  admitEntry('advanceRun', {
-    store,
-    storeKind: 'run store',
-    registry: options.registry,
-    driver: options.driver,
-  });
-
-  if (state === undefined) {
-    const stored = await store.get(options.runId);
-    const chained: ChainedStepEntry[] = [];
-    const ownDepth0Warnings: string[] = [];
-    const advanced = await advanceRun(
-      store,
-      definition,
-      { ...options, registry: options.registry ?? createDefaultRegistry() },
-      {
-        run: stored,
-        result: {
-          command: options.command,
-          run_id: options.runId,
-          run_version: stored.version,
-          status: 'ok',
-          data: {},
-          evidence: [],
-          warnings: [],
-          errors: [],
-          context_hint: `Run '${options.runId}' advanced from its stored record.`,
-          run_phase: stored.run_phase,
-          next_actions: stored.terminal_state ? [] : buildNextActions(definition, stored),
-        },
-        depth: 0,
-        chainedSteps: chained,
-        depth0Warnings: ownDepth0Warnings,
-      },
-    );
-    const chainWarnings = [...ownDepth0Warnings, ...chained.flatMap((c) => c.warnings ?? [])];
-    const envelope = {
-      ...advanced,
-      ...(chainWarnings.length > 0
-        ? { warnings: [...(advanced.warnings ?? []), ...chainWarnings] }
-        : {}),
-    };
-    return chained.length > 0 ? { ...envelope, chained_auto_steps: chained } : envelope;
-  }
-
-  const { depth, chainedSteps, depth0Warnings } = state;
+  const { chainedSteps, depth0Warnings } = state;
   let { run, result } = state;
+  const attempted = new Set<string>();
+  const budget = Object.keys(definition.steps).length;
+  let executions = 0;
+  let resultIsNamedStep = options.namedStep !== undefined;
 
-  if (run.terminal_state || run.pending_gate !== undefined) {
-    return result;
-  }
+  for (;;) {
+    if (run.terminal_state || run.pending_gate !== undefined) {
+      return result;
+    }
 
-  // Execute any eligible guard steps inline before looking for the next auto step.
-  // Guard steps are synchronous engine decisions — not returned to the agent.
-  // Loop to handle cascading guards (guard A passes → guard B becomes eligible).
-  // issue #279 (increment 2, PR-D, Deliverable 1c): non-abort settled_outcome_divergence warnings
-  // ADVANCE the chain but must still surface somewhere — carried here and merged into whichever
-  // envelope eventually returns (the guardsRan rebuild below, or a migrated terminal return).
-  const guardWarnings: string[] = [];
-  let guardEligible = findEligibleGuardSteps(definition, run);
-  while (guardEligible.length > 0) {
-    const guardName = guardEligible[0]!;
-    const guardStepDef = definition.steps[guardName]!;
+    // Execute any eligible guard steps inline before looking for the next auto step.
+    // Guard steps are synchronous engine decisions — not returned to the agent.
+    // Loop to handle cascading guards (guard A passes → guard B becomes eligible).
+    // issue #279 (increment 2, PR-D, Deliverable 1c): non-abort settled_outcome_divergence warnings
+    // ADVANCE the chain but must still surface somewhere — carried here and merged into whichever
+    // envelope eventually returns (the guardsRan rebuild below, or a migrated terminal return).
+    const guardWarnings: string[] = [];
+    let guardEligible = findEligibleGuardSteps(definition, run);
+    while (guardEligible.length > 0) {
+      const guardName = guardEligible[0]!;
+      const guardStepDef = definition.steps[guardName]!;
 
-    // Execute inline (pure in-memory; returns updated RunRecord). executeGuardStep stays PURE and
-    // UNTOUCHED (design record §1) — both the migrated and legacy paths below call it identically.
-    const guardResult = await executeGuardStep(guardName, guardStepDef, definition, run);
+      // Execute inline (pure in-memory; returns updated RunRecord). executeGuardStep stays PURE and
+      // UNTOUCHED (design record §1) — both the migrated and legacy paths below call it identically.
+      const guardResult = await executeGuardStep(guardName, guardStepDef, definition, run);
 
-    // Capture the guard's OWN evidence (its last entry) BEFORE the finalizer drain appends
-    // finalizer evidence — the terminal return below surfaces only the guard's evidence.
-    const guardOwnEvidence = guardResult.evidence.slice(-1);
+      // Capture the guard's OWN evidence (its last entry) BEFORE the finalizer drain appends
+      // finalizer evidence — the terminal return below surfaces only the guard's evidence.
+      const guardOwnEvidence = guardResult.evidence.slice(-1);
 
-    // issue #279 (increment 2, PR-D, Deliverable 1c): the migrated path — settles this guard's
-    // evaluated outcome atomically against FRESH state via the store's own settleStep. Dormancy:
-    // an undeclaring store falls through to the byte-identical legacy path below (I16/#169
-    // fail-closed dormancy).
-    if (store.settleStep !== undefined) {
-      // Extraction rule (design record §2, normative): reverse-classify guardResult's SEALED
-      // output by MEMBERSHIP — NEVER the terminal_state ternary below (wrong for a non-terminal
-      // pass, which never sets terminal_state at all).
-      const guardSettleOutcome: 'pass' | 'resolution_error' | 'abort' =
-        guardResult.aborted_at !== undefined
-          ? 'abort'
-          : guardResult.failed_steps.includes(guardName)
-            ? 'resolution_error'
-            : 'pass'; // the only remaining membership — completed_steps.includes(guardName)
+      // issue #279 (increment 2, PR-D, Deliverable 1c): the migrated path — settles this guard's
+      // evaluated outcome atomically against FRESH state via the store's own settleStep. Dormancy:
+      // an undeclaring store falls through to the byte-identical legacy path below (I16/#169
+      // fail-closed dormancy).
+      if (store.settleStep !== undefined) {
+        // Extraction rule (design record §2, normative): reverse-classify guardResult's SEALED
+        // output by MEMBERSHIP — NEVER the terminal_state ternary below (wrong for a non-terminal
+        // pass, which never sets terminal_state at all).
+        const guardSettleOutcome: 'pass' | 'resolution_error' | 'abort' =
+          guardResult.aborted_at !== undefined
+            ? 'abort'
+            : guardResult.failed_steps.includes(guardName)
+              ? 'resolution_error'
+              : 'pass'; // the only remaining membership — completed_steps.includes(guardName)
 
-      let resolutionError: { condition: string; unresolvable_path: string } | undefined;
-      if (guardSettleOutcome === 'resolution_error') {
-        // Rails-compliant re-derivation (normative): normalize abort_unless to string[] (the
-        // executeGuardStep :3632-3635 shape) and re-run evaluateGuardConditions against the SAME
-        // pre-seal `run` passed to executeGuardStep — pure + deterministic, so this reproduces the
-        // discarded internal result byte-for-byte.
-        const conditions = Array.isArray(guardStepDef.abort_unless)
-          ? guardStepDef.abort_unless
-          : [guardStepDef.abort_unless!];
-        const reEvaluated = evaluateGuardConditions(conditions, buildEvidenceByStep(run));
-        if (reEvaluated.kind === 'resolution_error') {
-          resolutionError = {
-            condition: reEvaluated.condition,
-            unresolvable_path: reEvaluated.unresolvable_path,
+        let resolutionError: { condition: string; unresolvable_path: string } | undefined;
+        if (guardSettleOutcome === 'resolution_error') {
+          // Rails-compliant re-derivation (normative): normalize abort_unless to string[] (the
+          // executeGuardStep :3632-3635 shape) and re-run evaluateGuardConditions against the SAME
+          // pre-seal `run` passed to executeGuardStep — pure + deterministic, so this reproduces the
+          // discarded internal result byte-for-byte.
+          const conditions = Array.isArray(guardStepDef.abort_unless)
+            ? guardStepDef.abort_unless
+            : [guardStepDef.abort_unless!];
+          const reEvaluated = evaluateGuardConditions(conditions, buildEvidenceByStep(run));
+          if (reEvaluated.kind === 'resolution_error') {
+            resolutionError = {
+              condition: reEvaluated.condition,
+              unresolvable_path: reEvaluated.unresolvable_path,
+            };
+          }
+        }
+
+        const delta: SettleGuardDelta = {
+          kind: 'settle_guard',
+          step: guardName,
+          outcome: guardSettleOutcome,
+          evidence: guardOwnEvidence[0]!,
+          ...(resolutionError !== undefined ? { resolutionError } : {}),
+          ...(guardSettleOutcome === 'abort'
+            ? {
+                abort: {
+                  conditions: guardResult.aborted_at!.conditions ?? [],
+                  ...(guardResult.aborted_at!.abort_message !== undefined
+                    ? { abort_message: guardResult.aborted_at!.abort_message }
+                    : {}),
+                },
+              }
+            : {}),
+          // evaluatedAtVersion (design record §2, lane-B steal 2): the chain's OWN evaluation
+          // snapshot — this iteration's pre-settle `run.version`.
+          evaluatedAtVersion: run.version,
+        };
+
+        let guardSettleResult: SettlementResult;
+        try {
+          guardSettleResult = await store.settleStep(options.runId, delta, definition);
+        } catch (storeErr) {
+          // Thrown infra errors — the same persist-failure envelope shape the legacy path's own
+          // store.update catch (below) has always returned.
+          const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
+          return {
+            command: options.command,
+            run_id: options.runId,
+            run_version: run.version,
+            status: 'error',
+            data: {},
+            evidence: [],
+            warnings: [],
+            errors: [`Failed to persist guard step '${guardName}': ${msg}`],
+            agent_action: 'stop' as const,
+            context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
+            run_phase: run.run_phase,
+            next_actions: [],
           };
         }
+
+        if (!guardSettleResult.applied) {
+          // Chain-consumption table (design record §6, adjudicated):
+          if (
+            guardSettleResult.reason === 'already_settled' ||
+            guardSettleResult.reason === 'gate_open_wait' ||
+            (guardSettleResult.reason === 'settled_outcome_divergence' &&
+              guardSettleOutcome !== 'abort')
+          ) {
+            // already_settled / gate_open_wait ⇒ ADVANCE, threading result.run (findEligibleGuardSteps
+            // self-filters both a now-settled guard and an open gate, so the loop naturally converges).
+            // settled_outcome_divergence on a NON-abort attempt ⇒ ADVANCE + a warning line.
+            if (guardSettleResult.reason === 'settled_outcome_divergence') {
+              guardWarnings.push(
+                `guard '${guardName}' outcome diverged from a concurrent settle` +
+                  (guardSettleResult.persisted !== undefined
+                    ? ` (persisted: '${guardSettleResult.persisted}')`
+                    : '') +
+                  ' — chain advanced on the persisted outcome.',
+              );
+            }
+            if (guardSettleResult.reason !== 'gate_open_wait') {
+              // "quiet" end-of-pass for gate_open_wait only — nothing was decided, so nothing is
+              // recorded; already_settled/divergence DID decide something (elsewhere), so it is.
+              chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
+            }
+            run = guardSettleResult.run;
+            // Drain: on already_settled ∧ pending ledger entries non-empty (design record §6, "same
+            // clause" as the transitioned leg below) — recovers a crashed-drain RESOLVE that a
+            // sibling's own settle committed but never drained.
+            if (guardSettleResult.reason === 'already_settled') {
+              const hasPending = Object.values(run.finalizer_ledger ?? {}).some(
+                (e) => e.status === 'pending',
+              );
+              if (hasPending) {
+                try {
+                  const drainOutcome = await drainFinalizers(
+                    store,
+                    definition,
+                    options.registry,
+                    options.runId,
+                    options.driver,
+                  );
+                  run = drainOutcome.run;
+                  if (drainOutcome.warnings.length > 0)
+                    guardWarnings.push(...drainOutcome.warnings);
+                } catch (err) {
+                  guardWarnings.push(
+                    `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+              }
+            }
+            guardEligible = findEligibleGuardSteps(definition, run);
+            continue;
+          }
+          if (guardSettleResult.reason === 'settled_outcome_divergence') {
+            // ABORT leg only ⇒ report_to_user + chain-RETURN (design record §6/§7) — this attempt's
+            // abort was never recorded.
+            const err = new WorkflowError(
+              `Guard step '${guardName}' was already settled` +
+                (guardSettleResult.persisted !== undefined
+                  ? ` (persisted: '${guardSettleResult.persisted}')`
+                  : '') +
+                ` by a different attempt — your abort was NOT recorded.`,
+              {
+                code: 'STATE_STEP_ALREADY_SETTLED',
+                category: 'STATE',
+                agentAction: 'report_to_user',
+                retryable: false,
+                details: {
+                  runId: options.runId,
+                  step: guardName,
+                  reason: guardSettleResult.reason,
+                  ...(guardSettleResult.persisted !== undefined
+                    ? { persisted: guardSettleResult.persisted }
+                    : {}),
+                },
+              },
+            );
+            return {
+              command: options.command,
+              run_id: options.runId,
+              run_version: guardSettleResult.run.version,
+              status: 'error',
+              data: {},
+              evidence: [],
+              warnings: [],
+              errors: [err.message],
+              error_code: err.code,
+              ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
+              agent_action: 'report_to_user',
+              context_hint: err.message,
+              run_phase: guardSettleResult.run.run_phase,
+              next_actions: [],
+            };
+          }
+          if (guardSettleResult.reason === 'run_terminal') {
+            // Terminal by OTHER (a sibling settle raced this guard's own evaluation) — INLINE
+            // construction, parity with the entry-terminal envelope (executeChain's own early
+            // return).
+            return {
+              command: options.command,
+              run_id: options.runId,
+              run_version: guardSettleResult.run.version,
+              status: 'ok',
+              data: {},
+              evidence: [],
+              warnings: [],
+              errors: [],
+              agent_action: 'stop' as const,
+              context_hint: `Run '${options.runId}' is already terminal (${guardSettleResult.run.run_phase}); guard '${guardName}' was not evaluated.`,
+              run_phase: guardSettleResult.run.run_phase,
+              next_actions: [],
+            };
+          }
+          // gate_mismatch/choice_not_eligible/already_open/already_released and every other kind's
+          // own reason are unreachable here — settle_guard never returns them (design record §7).
+          throw new Error(
+            `advanceLoop: unreachable settle_guard refusal reason '${guardSettleResult.reason}'`,
+          );
+        }
+
+        // applied: true.
+        chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
+
+        if (guardSettleResult.transitioned) {
+          // Drain IMMEDIATELY after a transitioned settle result, BEFORE building the in-loop
+          // terminal envelope (design record §6/R5 — a post-loop drain would be dead code on this
+          // leg: this function RETURNS before ever reaching a post-loop point).
+          let finalGuardRun = guardSettleResult.run;
+          let guardDrainWarnings: string[];
+          try {
+            const drainOutcome = await drainFinalizers(
+              store,
+              definition,
+              options.registry,
+              options.runId,
+              options.driver,
+            );
+            finalGuardRun = drainOutcome.run;
+            guardDrainWarnings = drainOutcome.warnings;
+          } catch (err) {
+            guardDrainWarnings = [
+              `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
+            ];
+          }
+          const migratedContextHint =
+            guardSettleOutcome === 'abort'
+              ? `Guard step '${guardName}' aborted the run.`
+              : guardSettleOutcome === 'resolution_error'
+                ? `Guard step '${guardName}' failed with a resolution error. Run is terminated.`
+                : `Guard step '${guardName}' passed and completed the run.`;
+          return {
+            command: options.command,
+            run_id: options.runId,
+            run_version: finalGuardRun.version,
+            status: 'ok',
+            data: {},
+            evidence: guardOwnEvidence,
+            warnings: mergeWarnings(guardWarnings, ...guardDrainWarnings),
+            errors: [],
+            context_hint: migratedContextHint,
+            run_phase: finalGuardRun.run_phase,
+            next_actions: [],
+            ...(finalGuardRun.defaulted_steps?.length
+              ? { defaulted_steps: finalGuardRun.defaulted_steps }
+              : {}),
+          };
+        }
+
+        // Non-terminal pass — continue the chain.
+        run = guardSettleResult.run;
+        guardEligible = findEligibleGuardSteps(definition, run);
+        continue;
       }
 
-      const delta: SettleGuardDelta = {
-        kind: 'settle_guard',
-        step: guardName,
-        outcome: guardSettleOutcome,
-        evidence: guardOwnEvidence[0]!,
-        ...(resolutionError !== undefined ? { resolutionError } : {}),
-        ...(guardSettleOutcome === 'abort'
-          ? {
-              abort: {
-                conditions: guardResult.aborted_at!.conditions ?? [],
-                ...(guardResult.aborted_at!.abort_message !== undefined
-                  ? { abort_message: guardResult.aborted_at!.abort_message }
-                  : {}),
-              },
-            }
-          : {}),
-        // evaluatedAtVersion (design record §2, lane-B steal 2): the chain's OWN evaluation
-        // snapshot — this iteration's pre-settle `run.version`.
-        evaluatedAtVersion: run.version,
-      };
+      // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
 
-      let guardSettleResult: SettlementResult;
+      // Blocking fix #1: classify the terminal outcome by the SEALED record, not aborted_at
+      // alone. executeGuardStep sets terminal_state in THREE cases — abort (aborted_at set),
+      // resolution-error (failed, no aborted_at), and a PASS that completes the run
+      // (terminal_reason 'Workflow completed.', no aborted_at). `aborted_at ? 'abort' : 'fail'`
+      // would wrongly run the catch finalizers on that success. When terminal, drain the
+      // matching finalizers before the single seal write; non-terminal guard passes persist as-is.
+      const guardProse: 'complete' | 'fail' | 'abort' | undefined = guardResult.terminal_state
+        ? guardResult.aborted_at !== undefined
+          ? 'abort'
+          : guardResult.terminal_reason === 'Workflow completed.'
+            ? 'complete'
+            : 'fail'
+        : undefined;
+      // issue #367: this classifier stays the PRODUCER of guardOutcome (it feeds buildFinalizedSeal,
+      // so a wrong answer here silently drains the wrong finalizers — the executed harm). It now
+      // prefers the RECORDED arm, keeps the prose branch as the fallback for an unstamped record,
+      // and throws if the two disagree: a future writer gap here is loud, never a silent loss.
+      const guardArmOutcome =
+        guardResult.terminal_state && guardResult.sealed_by !== undefined
+          ? armToOutcome(guardResult.sealed_by.arm)
+          : undefined;
+      if (guardArmOutcome === 'abandon') {
+        throw new Error(`guard seal on '${guardName}' produced a non-guard arm`);
+      }
+      if (
+        guardArmOutcome !== undefined &&
+        guardProse !== undefined &&
+        guardArmOutcome !== guardProse
+      ) {
+        throw new Error(
+          `sealed_by.arm (${guardArmOutcome}) disagrees with the prose classifier (${guardProse}) ` +
+            `on guard '${guardName}'`,
+        );
+      }
+      const guardOutcome: 'complete' | 'fail' | 'abort' | undefined = guardArmOutcome ?? guardProse;
+      // issue #220 PR-2 (D6): stamp defaulted_steps ONLY on the 'complete' seal — a guard that FAILS
+      // or ABORTS the run does not get the qualifier (the FM-5 guard: never on a non-complete
+      // terminal, and never on the non-terminal `guardResult` passthrough).
+      const guardSealed =
+        guardOutcome === 'complete'
+          ? stampDefaultedSteps(
+              await buildFinalizedSeal(
+                definition,
+                guardResult,
+                guardOutcome,
+                options.registry,
+                options.driver,
+              ),
+            )
+          : guardOutcome !== undefined
+            ? await buildFinalizedSeal(
+                definition,
+                guardResult,
+                guardOutcome,
+                options.registry,
+                options.driver,
+              )
+            : guardResult;
+      // issue #220 PR-2 (D6 write-site consumer): see the Step-6 twin above.
+      const guardDefaultedStepsDurabilityWarning =
+        guardSealed.defaulted_steps !== undefined &&
+        guardSealed.defaulted_steps.length > 0 &&
+        !persistsField(store, 'defaulted_steps')
+          ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
+          : undefined;
+
+      // Persist the guard step result.
+      let persistedGuardRun: RunRecord;
       try {
-        guardSettleResult = await store.settleStep(options.runId, delta, definition);
+        persistedGuardRun = await store.update(guardSealed);
       } catch (storeErr) {
-        // Thrown infra errors — the same persist-failure envelope shape the legacy path's own
-        // store.update catch (below) has always returned.
         const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
         return {
           command: options.command,
@@ -6455,376 +6663,219 @@ export async function advanceRun(
         };
       }
 
-      if (!guardSettleResult.applied) {
-        // Chain-consumption table (design record §6, adjudicated):
-        if (
-          guardSettleResult.reason === 'already_settled' ||
-          guardSettleResult.reason === 'gate_open_wait' ||
-          (guardSettleResult.reason === 'settled_outcome_divergence' &&
-            guardSettleOutcome !== 'abort')
-        ) {
-          // already_settled / gate_open_wait ⇒ ADVANCE, threading result.run (findEligibleGuardSteps
-          // self-filters both a now-settled guard and an open gate, so the loop naturally converges).
-          // settled_outcome_divergence on a NON-abort attempt ⇒ ADVANCE + a warning line.
-          if (guardSettleResult.reason === 'settled_outcome_divergence') {
-            guardWarnings.push(
-              `guard '${guardName}' outcome diverged from a concurrent settle` +
-                (guardSettleResult.persisted !== undefined
-                  ? ` (persisted: '${guardSettleResult.persisted}')`
-                  : '') +
-                ' — chain advanced on the persisted outcome.',
-            );
-          }
-          if (guardSettleResult.reason !== 'gate_open_wait') {
-            // "quiet" end-of-pass for gate_open_wait only — nothing was decided, so nothing is
-            // recorded; already_settled/divergence DID decide something (elsewhere), so it is.
-            chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
-          }
-          run = guardSettleResult.run;
-          // Drain: on already_settled ∧ pending ledger entries non-empty (design record §6, "same
-          // clause" as the transitioned leg below) — recovers a crashed-drain RESOLVE that a
-          // sibling's own settle committed but never drained.
-          if (guardSettleResult.reason === 'already_settled') {
-            const hasPending = Object.values(run.finalizer_ledger ?? {}).some(
-              (e) => e.status === 'pending',
-            );
-            if (hasPending) {
-              try {
-                const drainOutcome = await drainFinalizers(
-                  store,
-                  definition,
-                  options.registry,
-                  options.runId,
-                  options.driver,
-                );
-                run = drainOutcome.run;
-                if (drainOutcome.warnings.length > 0) guardWarnings.push(...drainOutcome.warnings);
-              } catch (err) {
-                guardWarnings.push(
-                  `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              }
-            }
-          }
-          guardEligible = findEligibleGuardSteps(definition, run);
-          continue;
-        }
-        if (guardSettleResult.reason === 'settled_outcome_divergence') {
-          // ABORT leg only ⇒ report_to_user + chain-RETURN (design record §6/§7) — this attempt's
-          // abort was never recorded.
-          const err = new WorkflowError(
-            `Guard step '${guardName}' was already settled` +
-              (guardSettleResult.persisted !== undefined
-                ? ` (persisted: '${guardSettleResult.persisted}')`
-                : '') +
-              ` by a different attempt — your abort was NOT recorded.`,
-            {
-              code: 'STATE_STEP_ALREADY_SETTLED',
-              category: 'STATE',
-              agentAction: 'report_to_user',
-              retryable: false,
-              details: {
-                runId: options.runId,
-                step: guardName,
-                reason: guardSettleResult.reason,
-                ...(guardSettleResult.persisted !== undefined
-                  ? { persisted: guardSettleResult.persisted }
-                  : {}),
-              },
-            },
-          );
-          return {
-            command: options.command,
-            run_id: options.runId,
-            run_version: guardSettleResult.run.version,
-            status: 'error',
-            data: {},
-            evidence: [],
-            warnings: [],
-            errors: [err.message],
-            error_code: err.code,
-            ...(Object.keys(err.details).length > 0 ? { error_details: err.details } : {}),
-            agent_action: 'report_to_user',
-            context_hint: err.message,
-            run_phase: guardSettleResult.run.run_phase,
-            next_actions: [],
-          };
-        }
-        if (guardSettleResult.reason === 'run_terminal') {
-          // Terminal by OTHER (a sibling settle raced this guard's own evaluation) — INLINE
-          // construction, parity with the entry-terminal envelope (executeChain's own early
-          // return).
-          return {
-            command: options.command,
-            run_id: options.runId,
-            run_version: guardSettleResult.run.version,
-            status: 'ok',
-            data: {},
-            evidence: [],
-            warnings: [],
-            errors: [],
-            agent_action: 'stop' as const,
-            context_hint: `Run '${options.runId}' is already terminal (${guardSettleResult.run.run_phase}); guard '${guardName}' was not evaluated.`,
-            run_phase: guardSettleResult.run.run_phase,
-            next_actions: [],
-          };
-        }
-        // gate_mismatch/choice_not_eligible/already_open/already_released and every other kind's
-        // own reason are unreachable here — settle_guard never returns them (design record §7).
-        throw new Error(
-          `executeChainInternal: unreachable settle_guard refusal reason '${guardSettleResult.reason}'`,
-        );
-      }
+      // Record in chained_auto_steps for visibility.
+      chainedSteps.push({ step: guardName, run_phase: persistedGuardRun.run_phase });
 
-      // applied: true.
-      chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
-
-      if (guardSettleResult.transitioned) {
-        // Drain IMMEDIATELY after a transitioned settle result, BEFORE building the in-loop
-        // terminal envelope (design record §6/R5 — a post-loop drain would be dead code on this
-        // leg: this function RETURNS before ever reaching a post-loop point).
-        let finalGuardRun = guardSettleResult.run;
-        let guardDrainWarnings: string[];
-        try {
-          const drainOutcome = await drainFinalizers(
-            store,
-            definition,
-            options.registry,
-            options.runId,
-            options.driver,
-          );
-          finalGuardRun = drainOutcome.run;
-          guardDrainWarnings = drainOutcome.warnings;
-        } catch (err) {
-          guardDrainWarnings = [
-            `post-commit finalizer drain failed: ${err instanceof Error ? err.message : String(err)}`,
-          ];
-        }
-        const migratedContextHint =
-          guardSettleOutcome === 'abort'
+      if (persistedGuardRun.terminal_state) {
+        // Run is terminal via this guard. Adjacent pre-existing bug fixed: a PASSING guard that
+        // COMPLETES the run was mislabeled "failed with a resolution error" — describe each of
+        // the three terminal outcomes correctly (classified by guardOutcome, not aborted_at alone).
+        const contextHint =
+          guardOutcome === 'abort'
             ? `Guard step '${guardName}' aborted the run.`
-            : guardSettleOutcome === 'resolution_error'
-              ? `Guard step '${guardName}' failed with a resolution error. Run is terminated.`
-              : `Guard step '${guardName}' passed and completed the run.`;
+            : guardOutcome === 'complete'
+              ? `Guard step '${guardName}' passed and completed the run.`
+              : `Guard step '${guardName}' failed with a resolution error. Run is terminated.`;
         return {
           command: options.command,
           run_id: options.runId,
-          run_version: finalGuardRun.version,
+          run_version: persistedGuardRun.version,
           status: 'ok',
           data: {},
+          // The guard's own evidence entry, captured before the finalizer drain appended any.
           evidence: guardOwnEvidence,
-          warnings: mergeWarnings(guardWarnings, ...guardDrainWarnings),
+          // issue #279 (increment 2, PR-D): + the ONE dormancy advisory (I16) — this IS the legacy
+          // path (store.settleStep undeclared).
+          warnings: mergeWarnings([], guardDefaultedStepsDurabilityWarning, DORMANCY_ADVISORY),
           errors: [],
-          context_hint: migratedContextHint,
-          run_phase: finalGuardRun.run_phase,
+          context_hint: contextHint,
+          run_phase: persistedGuardRun.run_phase,
           next_actions: [],
-          ...(finalGuardRun.defaulted_steps?.length
-            ? { defaulted_steps: finalGuardRun.defaulted_steps }
+          // issue #220 PR-2 (D6): read off `guardSealed` — the stamped PRE-PERSIST record — never
+          // the round-tripped `persistedGuardRun`, so a non-persisting store can't silently drop it.
+          ...(guardSealed.defaulted_steps?.length
+            ? { defaulted_steps: guardSealed.defaulted_steps }
             : {}),
         };
       }
 
-      // Non-terminal pass — continue the chain.
-      run = guardSettleResult.run;
+      run = persistedGuardRun;
       guardEligible = findEligibleGuardSteps(definition, run);
-      continue;
     }
 
-    // --- Legacy path (dormancy fallback — byte-identical to pre-#279 behavior) ---
-
-    // Blocking fix #1: classify the terminal outcome by the SEALED record, not aborted_at
-    // alone. executeGuardStep sets terminal_state in THREE cases — abort (aborted_at set),
-    // resolution-error (failed, no aborted_at), and a PASS that completes the run
-    // (terminal_reason 'Workflow completed.', no aborted_at). `aborted_at ? 'abort' : 'fail'`
-    // would wrongly run the catch finalizers on that success. When terminal, drain the
-    // matching finalizers before the single seal write; non-terminal guard passes persist as-is.
-    const guardProse: 'complete' | 'fail' | 'abort' | undefined = guardResult.terminal_state
-      ? guardResult.aborted_at !== undefined
-        ? 'abort'
-        : guardResult.terminal_reason === 'Workflow completed.'
-          ? 'complete'
-          : 'fail'
-      : undefined;
-    // issue #367: this classifier stays the PRODUCER of guardOutcome (it feeds buildFinalizedSeal,
-    // so a wrong answer here silently drains the wrong finalizers — the executed harm). It now
-    // prefers the RECORDED arm, keeps the prose branch as the fallback for an unstamped record,
-    // and throws if the two disagree: a future writer gap here is loud, never a silent loss.
-    const guardArmOutcome =
-      guardResult.terminal_state && guardResult.sealed_by !== undefined
-        ? armToOutcome(guardResult.sealed_by.arm)
-        : undefined;
-    if (guardArmOutcome === 'abandon') {
-      throw new Error(`guard seal on '${guardName}' produced a non-guard arm`);
-    }
-    if (
-      guardArmOutcome !== undefined &&
-      guardProse !== undefined &&
-      guardArmOutcome !== guardProse
-    ) {
-      throw new Error(
-        `sealed_by.arm (${guardArmOutcome}) disagrees with the prose classifier (${guardProse}) ` +
-          `on guard '${guardName}'`,
-      );
-    }
-    const guardOutcome: 'complete' | 'fail' | 'abort' | undefined = guardArmOutcome ?? guardProse;
-    // issue #220 PR-2 (D6): stamp defaulted_steps ONLY on the 'complete' seal — a guard that FAILS
-    // or ABORTS the run does not get the qualifier (the FM-5 guard: never on a non-complete
-    // terminal, and never on the non-terminal `guardResult` passthrough).
-    const guardSealed =
-      guardOutcome === 'complete'
-        ? stampDefaultedSteps(
-            await buildFinalizedSeal(
-              definition,
-              guardResult,
-              guardOutcome,
-              options.registry,
-              options.driver,
-            ),
-          )
-        : guardOutcome !== undefined
-          ? await buildFinalizedSeal(
-              definition,
-              guardResult,
-              guardOutcome,
-              options.registry,
-              options.driver,
-            )
-          : guardResult;
-    // issue #220 PR-2 (D6 write-site consumer): see the Step-6 twin above.
-    const guardDefaultedStepsDurabilityWarning =
-      guardSealed.defaulted_steps !== undefined &&
-      guardSealed.defaulted_steps.length > 0 &&
-      !persistsField(store, 'defaulted_steps')
-        ? 'run-level defaultedness marker (defaulted_steps) not durable on this store'
-        : undefined;
-
-    // Persist the guard step result.
-    let persistedGuardRun: RunRecord;
-    try {
-      persistedGuardRun = await store.update(guardSealed);
-    } catch (storeErr) {
-      const msg = storeErr instanceof Error ? storeErr.message : String(storeErr);
-      return {
-        command: options.command,
-        run_id: options.runId,
+    // If any guards ran and passed, rebuild result with fresh next_actions and run_version.
+    // The original `result` was built before guard execution, so its next_actions and version are stale.
+    const guardsRan = chainedSteps.some((s) => definition.steps[s.step]?.execution === 'guard');
+    if (guardsRan) {
+      const freshNextActions = buildNextActions(definition, run);
+      result = {
+        ...result,
         run_version: run.version,
-        status: 'error',
-        data: {},
-        evidence: [],
-        warnings: [],
-        errors: [`Failed to persist guard step '${guardName}': ${msg}`],
-        agent_action: 'stop' as const,
-        context_hint: `Guard step '${guardName}' could not be persisted. Run state may be inconsistent.`,
-        run_phase: run.run_phase,
-        next_actions: [],
-      };
-    }
-
-    // Record in chained_auto_steps for visibility.
-    chainedSteps.push({ step: guardName, run_phase: persistedGuardRun.run_phase });
-
-    if (persistedGuardRun.terminal_state) {
-      // Run is terminal via this guard. Adjacent pre-existing bug fixed: a PASSING guard that
-      // COMPLETES the run was mislabeled "failed with a resolution error" — describe each of
-      // the three terminal outcomes correctly (classified by guardOutcome, not aborted_at alone).
-      const contextHint =
-        guardOutcome === 'abort'
-          ? `Guard step '${guardName}' aborted the run.`
-          : guardOutcome === 'complete'
-            ? `Guard step '${guardName}' passed and completed the run.`
-            : `Guard step '${guardName}' failed with a resolution error. Run is terminated.`;
-      return {
-        command: options.command,
-        run_id: options.runId,
-        run_version: persistedGuardRun.version,
-        status: 'ok',
-        data: {},
-        // The guard's own evidence entry, captured before the finalizer drain appended any.
-        evidence: guardOwnEvidence,
-        // issue #279 (increment 2, PR-D): + the ONE dormancy advisory (I16) — this IS the legacy
-        // path (store.settleStep undeclared).
-        warnings: mergeWarnings([], guardDefaultedStepsDurabilityWarning, DORMANCY_ADVISORY),
-        errors: [],
-        context_hint: contextHint,
-        run_phase: persistedGuardRun.run_phase,
-        next_actions: [],
-        // issue #220 PR-2 (D6): read off `guardSealed` — the stamped PRE-PERSIST record — never
-        // the round-tripped `persistedGuardRun`, so a non-persisting store can't silently drop it.
-        ...(guardSealed.defaulted_steps?.length
-          ? { defaulted_steps: guardSealed.defaulted_steps }
+        next_actions: freshNextActions,
+        // issue #279 (increment 2, PR-D): non-abort settled_outcome_divergence warnings accumulated
+        // during the guard loop above (the ADVANCE leg) must reach whichever envelope returns —
+        // this rebuild is the first point after the loop `result` is touched again.
+        ...(guardWarnings.length > 0
+          ? { warnings: mergeWarnings(result.warnings, ...guardWarnings) }
           : {}),
       };
     }
 
-    run = persistedGuardRun;
-    guardEligible = findEligibleGuardSteps(definition, run);
-  }
+    if (run.terminal_state || run.pending_gate !== undefined) {
+      return result;
+    }
 
-  // If any guards ran and passed, rebuild result with fresh next_actions and run_version.
-  // The original `result` was built before guard execution, so its next_actions and version are stale.
-  const guardsRan = chainedSteps.some((s) => definition.steps[s.step]?.execution === 'guard');
-  if (guardsRan) {
-    const freshNextActions = buildNextActions(definition, run);
-    result = {
-      ...result,
-      run_version: run.version,
-      next_actions: freshNextActions,
-      // issue #279 (increment 2, PR-D): non-abort settled_outcome_divergence warnings accumulated
-      // during the guard loop above (the ADVANCE leg) must reach whichever envelope returns —
-      // this rebuild is the first point after the loop `result` is touched again.
-      ...(guardWarnings.length > 0
-        ? { warnings: mergeWarnings(result.warnings, ...guardWarnings) }
+    const nextAutoStep = pickNextEngineStep(definition, run, attempted, options.registry);
+    if (nextAutoStep === undefined || executions >= budget) {
+      // Only agent steps, a refused step, or nothing — the reply is composed from this record.
+      return {
+        ...result,
+        run_version: run.version,
+        run_phase: deriveRunPhase(run),
+        next_actions: buildNextActions(definition, run, options.registry),
+      };
+    }
+
+    // issue #197 PR-2 (chain-replacement disposition): the named step's own reply is about to be
+    // replaced by a later step's — rescue its warnings now. An `auto` named step's warnings are
+    // already on `chainedSteps`, so only a non-auto named step's are rescued here.
+    if (
+      resultIsNamedStep &&
+      definition.steps[options.namedStep!]?.execution !== 'auto' &&
+      result.warnings.length > 0
+    ) {
+      depth0Warnings.push(...result.warnings);
+    }
+    resultIsNamedStep = false;
+
+    options.onStep?.(nextAutoStep);
+    attempted.add(nextAutoStep);
+    executions += 1;
+    const stepResult = await executeStep(store, definition, {
+      runId: options.runId,
+      command: nextAutoStep,
+      input: engineStepInput(definition, run, nextAutoStep),
+      // decision C3: a bare step the engine runs records its dependency's output (or the run's
+      // params, or nothing) — never a copy of what some caller's dispatcher returned.
+      dispatcher: async (_step, _input, current) =>
+        bareStepOutput(definition, current, nextAutoStep).output,
+      outputSource: bareStepOutput(definition, run, nextAutoStep).source,
+      registry: options.registry,
+      ...(options.traceBufferStore !== undefined
+        ? { traceBufferStore: options.traceBufferStore }
         : {}),
-    };
+      ...(options.driver !== undefined ? { driver: options.driver } : {}),
+      ...(options.now !== undefined ? { now: options.now } : {}),
+    });
+    if (stepResult.status !== 'ok') {
+      return stepResult;
+    }
+    try {
+      run = await store.get(options.runId);
+    } catch {
+      return stepResult;
+    }
+    // issue #625: the step's own write settled every guard it made eligible (`stepResult.guards`).
+    const cascadedGuards = stepResult.guards ?? [];
+    chainedSteps.push({
+      step: nextAutoStep,
+      run_phase: cascadedGuards.length > 0 ? 'running' : run.run_phase,
+      ...(stepResult.warnings.length > 0 ? { warnings: stepResult.warnings } : {}),
+    });
+    cascadedGuards.forEach((guard, index) => {
+      const endedTheRun = index === cascadedGuards.length - 1 && stepResult.ended_by !== undefined;
+      chainedSteps.push({
+        step: guard.step,
+        run_phase: endedTheRun ? (stepResult.run_phase ?? run.run_phase) : 'running',
+      });
+    });
+    result = stepResult;
   }
+}
 
-  if (run.terminal_state || run.pending_gate !== undefined) {
-    return result;
-  }
+/** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */
+export interface AdvanceRunOptions {
+  runId: string;
+  /** Extension registry for adapters, handlers and cleanup steps; default: the built-in one. */
+  registry?: ExtensionRegistry;
+  traceBufferStore?: TraceBufferStore;
+  /** The host program running the steps (holder slice) — `holder` / `driven_by`. */
+  driver?: Attributed;
+  now?: Date;
+  /** Called with each `auto` step's name just before it runs. */
+  onStep?: (step: string) => void;
+  /** Labels the reply only. Default `'advance_run'`. */
+  command?: string;
+}
 
-  // Find the next eligible auto step and chain into it.
-  const eligible = findEligibleSteps(definition, run);
-  const nextAutoStep = eligible.find((name) => definition.steps[name]?.execution === 'auto');
+/**
+ * issue #625 PR-2a: run what the engine owes on a run — its eligible guards, then its eligible
+ * `auto` steps — from the stored record. The same loop `executeChain` runs after its named step;
+ * `start_run`, the `realm agent` loop, MCP `advance_run` and `realm run advance` call it. A repeat
+ * with nothing owed runs nothing and returns the run's view.
+ */
+export async function advanceRun(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: AdvanceRunOptions,
+): Promise<ResponseEnvelope> {
+  admitEntry('advanceRun', {
+    store,
+    storeKind: 'run store',
+    registry: options.registry,
+    driver: options.driver,
+  });
 
-  if (nextAutoStep === undefined) {
-    // Only agent steps or nothing — stop chain, return with latest next_actions.
-    return result;
-  }
-
-  // issue #197 PR-2 (chain-replacement disposition): THIS step's own result is about to be
-  // discarded in favor of the recursive call's — capture its warnings now, before that happens.
-  // Every step past depth 0 in this recursion is guaranteed 'auto' (nextAutoStep's own filter),
-  // so depth === 0 is the ONLY case where a non-auto (agent) step's warnings would otherwise be
-  // lost here (an 'auto' depth-0 step's warnings are already captured above via `chainedSteps`,
-  // so this would double them — the `depth === 0` guard is exact, not merely conservative:
-  // `chainedSteps` only records 'auto' steps, so a depth-0 'auto' step's warnings are recorded
-  // there, never here, avoiding any double-count).
-  if (
-    depth === 0 &&
-    definition.steps[options.command]?.execution !== 'auto' &&
-    result.warnings.length > 0
-  ) {
-    depth0Warnings.push(...result.warnings);
-  }
-
-  // #600: `stepMeta` describes the calls the DRIVEN step made (its model usage, its tool calls, its
-  // structured-output mode). A chained auto step made none of them, so it must not inherit them: the
-  // three capture sites write `stepMeta` onto whatever step they settle, and carrying it forward
-  // recorded one model call (and its tool calls) on every chained AUTO step too. Guards never read it.
-  // `dispatcher` stays — a chained BARE step recording a copy of the driven step's output is
-  // documented behaviour. Every consumer of `trace` and `writerNonce` sits behind an agent-kind check,
-  // so they need no stripping here. (An auto step declaring `structured_output` — which the loader
-  // refuses, so only a hand-built or pre-prohibition definition — now gets the `external_agent` stamp
-  // instead of the agent step's mode; both were wrong for it, and no admitted definition reaches it.)
-  const { stepMeta: _drivenStepMeta, ...chainOptions } = options;
-  return executeChainInternal(
+  const command = options.command ?? 'advance_run';
+  const stored = await store.get(options.runId);
+  const registry = options.registry ?? createDefaultRegistry();
+  const pending = describePending(definition, stored, registry);
+  const chained: ChainedStepEntry[] = [];
+  const depth0Warnings: string[] = [];
+  const advanced = await advanceLoop(
     store,
     definition,
-    { ...chainOptions, command: nextAutoStep, input: {} },
-    depth + 1,
-    chainedSteps,
-    depth0Warnings,
+    {
+      runId: options.runId,
+      command,
+      registry,
+      ...(options.traceBufferStore !== undefined
+        ? { traceBufferStore: options.traceBufferStore }
+        : {}),
+      ...(options.driver !== undefined ? { driver: options.driver } : {}),
+      ...(options.now !== undefined ? { now: options.now } : {}),
+      ...(options.onStep !== undefined ? { onStep: options.onStep } : {}),
+    },
+    {
+      run: stored,
+      result: {
+        command,
+        run_id: options.runId,
+        run_version: stored.version,
+        status: 'ok',
+        data: {},
+        evidence: [],
+        warnings: [],
+        errors: [],
+        context_hint: stored.terminal_state
+          ? `Run '${options.runId}' is already terminal (${deriveRunPhase(stored)}); nothing ran.`
+          : `Run '${options.runId}': nothing ran.${describeNext(pending)}`,
+        run_phase: deriveRunPhase(stored),
+        next_actions: stored.terminal_state ? [] : buildNextActions(definition, stored, registry),
+      },
+      chainedSteps: chained,
+      depth0Warnings,
+    },
   );
+  const chainWarnings = [...depth0Warnings, ...chained.flatMap((c) => c.warnings ?? [])];
+  const envelope = {
+    ...advanced,
+    command,
+    ...(chainWarnings.length > 0
+      ? { warnings: [...(advanced.warnings ?? []), ...chainWarnings] }
+      : {}),
+  };
+  return chained.length > 0 ? { ...envelope, chained_auto_steps: chained } : envelope;
 }
 
 /**
@@ -6848,7 +6899,7 @@ export async function executeChain(
   // (findEligibleSteps) makes this unreachable in normal operation, but guarding the chain
   // boundary protects every executeChain caller regardless of how it reached here. Placed in the
   // public wrapper so it fires exactly once at entry; recursive depth>0 calls and runs that become
-  // terminal mid-chain are covered by the existing mid-chain check in executeChainInternal.
+  // terminal mid-chain are covered by the loop's own check in advanceLoop.
   let entryRun: RunRecord | undefined;
   try {
     entryRun = await store.get(options.runId);
@@ -6892,23 +6943,61 @@ export async function executeChain(
     ...options,
     registry: options.registry ?? createDefaultRegistry(),
   };
-  const chained: Array<{
-    step: string;
-    run_phase: string;
-    branched_via?: string;
-    warnings?: string[];
-  }> = [];
-  // issue #197 PR-2 (chain-replacement disposition) — see executeChainInternal's own doc on this
-  // parameter for the full contract.
+  const chained: ChainedStepEntry[] = [];
+  // issue #197 PR-2 (chain-replacement disposition): a settled named (depth-0) step — typically an
+  // agent step, never itself recorded in `chained` (auto-steps-only, the VISIBLE
+  // `chained_auto_steps` list) — whose own reply is replaced by a later step's would otherwise
+  // silently lose its OWN warnings; this accumulator carries them forward.
   const depth0Warnings: string[] = [];
-  const result = await executeChainInternal(
-    store,
-    definition,
-    effectiveOptions,
-    0,
-    chained,
-    depth0Warnings,
-  );
+
+  // The named step, through the caller's dispatcher (a bare named step records `driven_step`).
+  const named = await executeStep(store, definition, effectiveOptions);
+  let result: ResponseEnvelope = named;
+  if (named.status === 'ok') {
+    let run: RunRecord | undefined;
+    try {
+      run = await store.get(options.runId);
+    } catch {
+      run = undefined;
+    }
+    if (run !== undefined) {
+      // issue #625: on a store that declares `settleStep`, the named step's own write settled
+      // every guard it made eligible (`named.guards`).
+      const cascadedGuards = named.guards ?? [];
+      if (definition.steps[options.command]?.execution === 'auto') {
+        chained.push({
+          step: options.command,
+          run_phase: cascadedGuards.length > 0 ? 'running' : run.run_phase,
+          ...(named.warnings.length > 0 ? { warnings: named.warnings } : {}),
+        });
+      }
+      cascadedGuards.forEach((guard, index) => {
+        const endedTheRun = index === cascadedGuards.length - 1 && named.ended_by !== undefined;
+        chained.push({
+          step: guard.step,
+          run_phase: endedTheRun ? (named.run_phase ?? run!.run_phase) : 'running',
+        });
+      });
+      // #600: the named step's `stepMeta` (its model usage, tool calls, structured-output mode)
+      // belongs to it alone — the loop never passes it on.
+      result = await advanceLoop(
+        store,
+        definition,
+        {
+          runId: options.runId,
+          command: options.command,
+          registry: effectiveOptions.registry!,
+          ...(options.traceBufferStore !== undefined
+            ? { traceBufferStore: options.traceBufferStore }
+            : {}),
+          ...(options.driver !== undefined ? { driver: options.driver } : {}),
+          ...(options.now !== undefined ? { now: options.now } : {}),
+          namedStep: options.command,
+        },
+        { run, result: named, chainedSteps: chained, depth0Warnings },
+      );
+    }
+  }
   const chainWarnings = [...depth0Warnings, ...chained.flatMap((s) => s.warnings ?? [])];
   const envelope = {
     ...result,

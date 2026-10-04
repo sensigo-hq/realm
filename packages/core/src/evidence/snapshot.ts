@@ -58,6 +58,8 @@ export interface CaptureEvidenceParams {
    * step); never on an entry the engine makes itself. Not hashed.
    */
   drivenBy?: Attributed;
+  /** Issue #625 PR-2a: a bare auto step's output source — written as `output_source`. */
+  outputSource?: 'driven_step' | 'dependency' | 'run_params' | 'none';
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.
@@ -112,6 +114,7 @@ export function captureEvidence(params: CaptureEvidenceParams): EvidenceSnapshot
       : {}),
     ...(params.clippedToMs !== undefined ? { clipped_to_ms: params.clippedToMs } : {}),
     ...(params.drivenBy !== undefined ? { driven_by: params.drivenBy } : {}),
+    ...(params.outputSource !== undefined ? { output_source: params.outputSource } : {}),
     ...traceEntry,
   };
 }
