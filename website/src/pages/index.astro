@@ -1,0 +1,284 @@
+---
+import { nav } from '../data/nav.js';
+import '../styles/site.css';
+import ThemeToggle from '../components/ThemeToggle.astro';
+import { THEME_INIT } from '../lib/theme-init.mjs';
+import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
+import Logo from '../components/Logo.astro';
+import Replay from '../components/Replay.astro';
+---
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<script is:inline set:html={THEME_INIT}></script>
+{ICON_LINKS.map((a) => <link {...a} />)}
+<meta name="theme-color" content={THEME_COLOR} />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Realm — wrong behaviour becomes impossible</title>
+<meta name="description" content="A workflow state machine that agents call. The state cannot change until valid output is submitted." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+<style is:global>
+/* palette + base type come from src/styles/site.css; page-specific parts below */
+:root{--edge:var(--c-line);--edge-soft:var(--c-line-soft);--dim:var(--c-muted);--cy:var(--c-accent);--cy-dim:var(--c-accent);--term:#0b1320}
+/* the terminal is dark in both themes, so its greens are the kit's dark-theme verdigris (#5EE6C1), not the --c-accent token (deep verdigris on a light page) */
+.spine{max-width:66ch}
+section > div:has(> .eyebrow){display:grid;gap:8px}
+section{gap:16px}
+h1 em{color:var(--accent);font-style:normal}
+header.hero h1{font-size:clamp(30px,5.2vw,44px);line-height:1.12;letter-spacing:-.015em}
+.thesis{font-size:17px}
+.thesis{color:var(--muted);font-style:italic}
+.cta{display:flex;flex-wrap:wrap;gap:12px;padding-top:6px}
+.btn{display:inline-block;padding:11px 20px;border-radius:5px;text-decoration:none;
+  font:500 14.5px/1 "IBM Plex Sans",sans-serif}
+.btn-1{background:var(--c-accent);color:var(--c-on-accent)}
+.btn-2{border:1px solid var(--edge);color:var(--ink)}
+
+
+/* diagram */
+.svgbox{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+@media (max-width:720px){.svgbox{padding:8px}}
+.svgbox{container-type:inline-size}
+svg.loop{display:block;width:100%;height:auto}
+svg.loop-narrow{display:none;max-width:460px;margin-inline:auto}
+/* wide text >= 12px needs the box >= 900px wide (12px at scale 1); below that the narrow drawing */
+@container (max-width:899px){svg.loop-wide{display:none}svg.loop-narrow{display:block}}
+/* same text style as the how-it-works charts: sans, sentence case, muted labels */
+svg.loop-wide{max-width:980px;margin-inline:auto}
+svg.loop .n-t{font:600 14px "IBM Plex Sans",sans-serif;fill:var(--ink)}
+svg.loop .n-s{font:400 12px "IBM Plex Sans",sans-serif;letter-spacing:0;fill:var(--muted)}
+svg.loop .w-lab{font:400 11.5px "IBM Plex Sans",sans-serif;fill:var(--muted)}
+svg.loop .w-lab-warn{font:400 11.5px "IBM Plex Sans",sans-serif;fill:var(--warn)}
+svg.loop .step-n{font:500 10.5px "IBM Plex Mono",monospace;letter-spacing:.08em;fill:var(--accent)}
+svg.loop .gate{font:600 13px "IBM Plex Sans",sans-serif;fill:var(--ink)}
+svg.loop .gate-s{font:400 12px "IBM Plex Sans",sans-serif;fill:var(--muted)}
+svg.loop-narrow .n-t{font-size:13px}
+.n-box{fill:var(--panel);stroke:var(--muted);stroke-width:1.2}
+.n-box-hi{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.8}
+.n-t{fill:var(--ink);font:600 15px "IBM Plex Sans",sans-serif}
+.n-s{fill:var(--dim);font:500 10.5px "IBM Plex Mono",monospace;letter-spacing:.08em}
+.wire{stroke:var(--cy-dim);stroke-width:1.6;fill:none}
+.wire-warn{stroke:var(--warn);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.w-lab{fill:var(--cy);font:500 11px "IBM Plex Mono",monospace}
+.w-lab-warn{fill:var(--warn);font:500 11px "IBM Plex Mono",monospace}
+.step-n{fill:var(--cy);font:500 10px "IBM Plex Mono",monospace;letter-spacing:.12em}
+.gate{fill:var(--ink);font:600 13px "IBM Plex Sans",sans-serif}
+.gate-s{fill:var(--body);font:400 11.5px "IBM Plex Sans",sans-serif}
+
+.caps{display:grid;grid-template-columns:repeat(auto-fit,minmax(212px,1fr));gap:26px}
+.cap{display:flex;gap:13px;align-items:flex-start}
+.cap svg{width:25px;height:25px;flex:none;stroke:var(--cy);fill:none;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round;margin-top:2px}
+.cap p{margin-top:4px;font-size:13px;line-height:1.5;color:var(--dim)}
+
+.term{margin:0;background:var(--term);border:1px solid var(--edge-soft);border-radius:8px;padding:22px 24px;overflow-x:auto}
+.term code{display:block;background:none;padding:0;border-radius:0;font:400 14px/1.85 "IBM Plex Mono",monospace;color:#CFE6F5;white-space:pre}
+.termwrap{position:relative}
+.copy{position:absolute;top:10px;right:10px;width:34px;height:34px;display:grid;place-items:center;cursor:pointer;
+  border:1px solid rgba(207,230,245,.28);border-radius:6px;background:rgba(11,19,32,.85);color:#CFE6F5;
+  opacity:0;transition:opacity .15s}
+.termwrap:hover .copy,.copy:focus-visible,.copy.done{opacity:1}
+@media (hover:none){.copy{opacity:1}}
+.copy:hover{border-color:#CFE6F5}
+.copy svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.copy .i-done{display:none}
+.copy.done .i-copy{display:none}
+.copy.done .i-done{display:block;stroke:#5EE6C1}
+.copy-msg{position:absolute;top:17px;right:54px;font:500 12px "IBM Plex Sans",sans-serif;color:#CFE6F5}
+.term .c{color:#8FA3B5}
+.term .f{color:#5EE6C1}
+
+.callout{border-left:2px solid var(--cy);padding:2px 0 2px 20px;display:flex;flex-direction:column;gap:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="site">
+    <a class="brand" href="/" aria-label="Realm"><Logo /></a>
+    <div class="links">{nav.map((l) => <a href={l.href}>{l.label}</a>)}</div>
+    <ThemeToggle />
+  </nav>
+
+  <header class="hero">
+    <p class="eyebrow">Workflow engine for AI agents</p>
+    <h1>Your agent&#8217;s &ldquo;Do NOT&rdquo; list is a list of <em>scars</em>.</h1>
+    <p class="lede spine">Every rule in it exists because the agent invented a failure once. Realm replaces the rules with structure — wrong behaviour becomes <strong>impossible</strong>, not prohibited.</p>
+    <p class="thesis spine">The agent calls Realm. Every other tool calls the agent.</p>
+    <div class="cta">
+      <a class="btn btn-1" href="/docs/start/install-and-first-run/">Get started</a>
+      <a class="btn btn-2" href="https://github.com/sensigo-hq/realm">View on GitHub</a>
+    </div>
+  </header>
+
+  <section>
+    <div>
+      <p class="eyebrow">The inversion</p>
+      <h2>Most platforms call the model. Realm gets called by it.</h2>
+    </div>
+    <div class="svgbox">
+    <svg class="loop loop-wide" viewBox="0 44 900 254" role="img" aria-label="The agent asks Realm for the next step; Realm returns the task and its schema; the agent submits output; the state guard either advances the run and records evidence, or refuses and leaves the state unchanged, and the agent retries.">
+      <defs>
+        <marker id="ah-w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c-accent)"/></marker>
+        <marker id="ahw-w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c-warn)"/></marker>
+      </defs>
+      <rect class="n-box" x="16" y="90" width="190" height="120" rx="9"/>
+      <text class="step-n" x="34" y="118">01</text>
+      <text class="n-t" x="34" y="144">Your agent</text>
+      <text class="n-s" x="34" y="168">Claude · GPT ·</text>
+      <text class="n-s" x="34" y="186">any MCP client</text>
+
+      <rect class="n-box-hi" x="360" y="56" width="230" height="188" rx="9"/>
+      <text class="step-n" x="382" y="86">02</text>
+      <text class="n-t" x="382" y="112">Realm</text>
+      <text class="n-s" x="382" y="134">state machine</text>
+      <line x1="382" y1="152" x2="568" y2="152" style="stroke:var(--c-line)" stroke-width="1"/>
+      <text class="gate" x="382" y="178">State guard</text>
+      <text class="gate-s" x="382" y="200">Validates every submission</text>
+      <text class="gate-s" x="382" y="218">against the step&#8217;s schema</text>
+
+      <path class="wire" d="M206,128 H356" marker-end="url(#ah-w)"/>
+      <text class="w-lab" x="283" y="118" text-anchor="middle">execute_step()</text>
+      <path class="wire" d="M360,176 H210" marker-end="url(#ah-w)"/>
+      <text class="w-lab" x="283" y="196" text-anchor="middle">task + json schema</text>
+
+      <path class="wire" d="M590,110 H676" marker-end="url(#ah-w)"/>
+      <text class="w-lab" x="633" y="100" text-anchor="middle">valid</text>
+      <rect class="n-box" x="680" y="56" width="204" height="104" rx="9"/>
+      <text class="step-n" x="700" y="84">03</text>
+      <text class="n-t" x="700" y="108">State advances</text>
+      <text class="n-s" x="700" y="130">evidence hash</text>
+      <text class="n-s" x="700" y="148">recorded</text>
+
+      <path class="wire-warn" d="M590,222 H676" marker-end="url(#ahw-w)"/>
+      <text class="w-lab-warn" x="633" y="196" text-anchor="middle">invalid ·</text>
+      <text class="w-lab-warn" x="633" y="212" text-anchor="middle">unapproved</text>
+      <rect class="n-box" x="680" y="180" width="204" height="84" rx="9"/>
+      <text class="n-t" x="700" y="212">Refused</text>
+      <text class="n-s" x="700" y="234">state unchanged</text>
+      <text class="n-s" x="700" y="252">&#8212; retry</text>
+      <path class="wire-warn" d="M782,264 V288 H111 V214" marker-end="url(#ahw-w)"/>
+    </svg>
+    <svg class="loop loop-narrow" viewBox="0 0 380 546" role="img" aria-label="The agent asks Realm for the next step; Realm returns the task and its schema; the agent submits output; the state guard either advances the run and records evidence, or refuses and leaves the state unchanged, and the agent retries.">
+      <defs>
+        <marker id="ah-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c-accent)"/></marker>
+        <marker id="ahw-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--c-warn)"/></marker>
+      </defs>
+      <rect class="n-box" x="20" y="10" width="330" height="78" rx="9"/>
+      <text class="step-n" x="36" y="34">01</text>
+      <text class="n-t" x="36" y="56">Your agent</text>
+      <text class="n-s" x="36" y="76">Claude · GPT · any MCP client</text>
+
+      <path class="wire" d="M80,88 V172" marker-end="url(#ah-n)"/>
+      <text class="w-lab" x="90" y="124">execute_step()</text>
+      <path class="wire" d="M300,176 V92" marker-end="url(#ah-n)"/>
+      <text class="w-lab" x="290" y="150" text-anchor="end">task + json schema</text>
+
+      <rect class="n-box-hi" x="20" y="176" width="330" height="150" rx="9"/>
+      <text class="step-n" x="36" y="200">02</text>
+      <text class="n-t" x="36" y="222">Realm</text>
+      <text class="n-s" x="36" y="242">state machine</text>
+      <line x1="36" y1="256" x2="334" y2="256" style="stroke:var(--c-line)" stroke-width="1"/>
+      <text class="gate" x="36" y="280">State guard</text>
+      <text class="gate-s" x="36" y="299">Validates every submission</text>
+      <text class="gate-s" x="36" y="318">against the step&#8217;s schema</text>
+
+      <path class="wire" d="M100,326 V416" marker-end="url(#ah-n)"/>
+      <text class="w-lab" x="110" y="376">valid</text>
+      <path class="wire-warn" d="M270,326 V416" marker-end="url(#ahw-n)"/>
+      <text class="w-lab-warn" x="260" y="364" text-anchor="end">invalid ·</text>
+      <text class="w-lab-warn" x="260" y="382" text-anchor="end">unapproved</text>
+
+      <rect class="n-box" x="20" y="420" width="160" height="116" rx="9"/>
+      <text class="step-n" x="36" y="444">03</text>
+      <text class="n-t" x="36" y="466">State advances</text>
+      <text class="n-s" x="36" y="486">evidence hash</text>
+      <text class="n-s" x="36" y="504">recorded</text>
+
+      <rect class="n-box" x="190" y="420" width="160" height="116" rx="9"/>
+      <text class="n-t" x="206" y="466">Refused</text>
+      <text class="n-s" x="206" y="486">state</text>
+      <text class="n-s" x="206" y="504">unchanged</text>
+      <text class="n-s" x="206" y="522">&#8212; retry</text>
+      <path class="wire-warn" d="M350,478 H368 V49 H354" marker-end="url(#ahw-n)"/>
+    </svg>
+    </div>
+    <div class="callout">
+      <h3>Structure, not instruction</h3>
+      <p style="font-size:15px">A prompt rule is a request. A state machine is a constraint. Only one of them survives contact with a model having a bad day.</p>
+    </div>
+  </section>
+
+  <section>
+    <div><p class="eyebrow">What that buys you</p></div>
+    <div class="caps">
+      <div class="cap">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h13"/><path d="M19 15l2 2-2 2"/></svg>
+        <div><h3>Order is enforced</h3><p>A step cannot run before its dependencies. Not by instruction — by the state machine.</p></div>
+      </div>
+      <div class="cap">
+        <svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.4-3.1 8.3-8 9-4.9-.7-8-4.6-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
+        <div><h3>Output is schema-checked</h3><p>Malformed output is rejected at the boundary. It never enters the run.</p></div>
+      </div>
+      <div class="cap">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>
+        <div><h3>Humans hold the gates</h3><p>Critical steps pause until a person approves. The agent cannot proceed past one.</p></div>
+      </div>
+      <div class="cap">
+        <svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M9 14l2 2 4-4"/></svg>
+        <div><h3>Evidence, not logs</h3><p>Every step leaves a tamper-evident record. For client work, that record is the deliverable.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div>
+      <p class="eyebrow">See it run</p>
+      <h2>Step through a real run, decision by decision</h2>
+    </div>
+    <p class="spine">Every step records what it was asked, the schema it had to satisfy, what it submitted, and a hash of the result. Not a log that something ran — a record that it ran correctly.</p>
+    <Replay />
+  </section>
+
+  <section>
+    <div><p class="eyebrow">Try it</p><h2>Nothing to sign up for</h2></div>
+    <div class="termwrap"><pre class="term"><code><span class="c"># install the CLI</span>
+npm install -g @sensigo/realm-cli
+
+<span class="c"># register a workflow and drive it autonomously</span>
+realm workflow register ./workflow.yaml
+realm agent <span class="f">--workflow</span> my-workflow</code></pre>
+      <button type="button" class="copy" aria-label="Copy commands" title="Copy">
+        <svg class="i-copy" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
+        <svg class="i-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+      </button>
+      <span class="copy-msg" role="status" aria-live="polite"></span>
+    </div>
+    <p class="spine" style="font-size:14.5px;color:var(--dim)">Runs locally. Apache&#8209;2.0, published on npm; evidence is written to your own machine.</p>
+  </section>
+
+  <footer class="site">
+    <p>Realm is an open-source workflow state machine for AI agents. Apache&#8209;2.0 &middot; <a href="https://github.com/sensigo-hq/realm">github.com/sensigo-hq/realm</a></p>
+  </footer>
+
+</div>
+<script is:inline>
+document.querySelectorAll('.termwrap').forEach(function (w) {
+  var btn = w.querySelector('.copy'), msg = w.querySelector('.copy-msg'), t;
+  btn.addEventListener('click', function () {
+    var text = w.querySelector('code').innerText.trim() + '\n';
+    var done = function (ok) {
+      btn.classList.toggle('done', ok); msg.textContent = ok ? 'Copied' : 'Copy failed';
+      clearTimeout(t); t = setTimeout(function () { btn.classList.remove('done'); msg.textContent = ''; }, 1600);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+    else done(false);
+  });
+});
+</script>
+</body>
+</html>

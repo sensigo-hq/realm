@@ -1,0 +1,242 @@
+---
+// Interactive replay of two recorded runs (scripts/replay/record.mjs -> distill.mjs -> replay.json).
+// Every engine response shown is copied from the recording; only labels and blurbs are ours.
+import r from '../data/replay.json';
+const short = (v: unknown): unknown =>
+  typeof v === 'string' ? (v.length > 64 ? v.slice(0, 61) + '…' : v)
+  : Array.isArray(v) ? v.map(short)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, short(x)]))
+  : v;
+const j = (v: unknown) => JSON.stringify(short(v), null, 2);
+const props = Object.entries(r.task.schema.properties as Record<string, any>).map(([name, p]) => ({
+  name,
+  type: p.enum ? p.enum.map((e: string) => `"${e}"`).join(' | ') : p.type === 'array' ? 'string[]' : p.type,
+}));
+const stages = ['Start', 'Agent step', 'Human gate', 'Write', 'Evidence'];
+const endings = Object.values(r.endings);
+const why = (x: any): string => x.error_details?.errors?.[0]?.message ?? x.context_hint;
+const h8 = (h: string) => h.slice(0, 12);
+const date = r.meta.recorded_at.slice(0, 10);
+---
+<div class="rp" data-stage="0" data-ending="">
+  <ol class="rp-rail" role="tablist" aria-label="Run stages">
+    {stages.map((s, i) => (
+      <li><button type="button" role="tab" data-go={i} aria-selected={i === 0 ? 'true' : 'false'}><span>{String(i + 1).padStart(2, '0')}</span>{s}</button></li>
+    ))}
+  </ol>
+
+  <div class="rp-stage" data-s="0">
+    <h3>The agent starts a run. Realm fetches the pull request itself.</h3>
+    <p>The first step is marked <code>auto</code>, so the engine runs it and no model is involved. The agent only learns what comes next.</p>
+    <div class="rp-cols">
+      <div><p class="rp-k">Agent calls</p><pre>{j(r.start.call)}</pre></div>
+      <div><p class="rp-k">Realm answers</p><pre>{j(r.start.response)}</pre></div>
+    </div>
+    <p class="rp-k">What the step fetched — {r.start.pr.pr_title}, {r.start.pr.files_changed.length} files</p>
+    <pre class="rp-diff">{r.start.pr.diff_text.split('\n\n')[0]}</pre>
+    <p class="rp-ev">Evidence recorded for <code>fetch_pr</code> · hash <code title={r.start.evidence.hash}>{h8(r.start.evidence.hash)}…</code></p>
+  </div>
+
+  <div class="rp-stage" data-s="1" hidden>
+    <h3>Realm hands the agent one task and one schema.</h3>
+    <p>{r.task.human_readable.replace(/^Execute step '[^']+': /, '')} Pick what the agent sends back and see what Realm answered.</p>
+    <div class="rp-cols">
+      <div>
+        <p class="rp-k">The schema for <code>{r.task.step}</code> — all required, nothing extra allowed</p>
+        <pre>{props.map((p) => `${p.name}: ${p.type}`).join('\n')}</pre>
+        <div class="rp-picks" role="group" aria-label="What the agent submits">
+          {r.attempts.map((a) => (
+            <button type="button" data-pick={a.id} class={a.id === 'valid' ? 'ok' : ''}>{a.label}</button>
+          ))}
+        </div>
+      </div>
+      <div class="rp-out" aria-live="polite">
+        <p class="rp-hint" data-out="none">Choose a submission on the left.</p>
+        {r.attempts.map((a) => (
+          <div data-out={a.id} hidden>
+            <p>{a.blurb}</p>
+            <p class="rp-k">Agent calls</p><pre>{j(a.call)}</pre>
+            <p class={`rp-k ${a.id === 'valid' ? 'good' : 'bad'}`}>{a.id === 'valid' ? 'Realm accepts it' : 'Realm refuses'}</p>
+            {a.id !== 'valid' && <p class="rp-why">{why(a.response)}</p>}
+            <pre class={a.id === 'valid' ? 'good' : 'bad'}>{j(a.response)}</pre>
+            {a.id === 'valid'
+              ? <p class="rp-ev">The step is complete, and the run stops at the human gate. Go to the next stage.</p>
+              : <p class="rp-ev">After every refusal the run still read <code>completed_steps: {JSON.stringify(r.after_refusals.completed_steps)}</code>, phase <code>{r.after_refusals.run_phase}</code>. Nothing entered the record.</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+
+  <div class="rp-stage" data-s="2" hidden>
+    <h3>The run stops. Only a person can move it.</h3>
+    <p>This is what the reviewer was shown. The run is in phase <code>{r.gate.state.run_phase}</code> and neither posting step is available to the agent.</p>
+    <div class="rp-cols">
+      <div>
+        <p class="rp-k">Gate message</p>
+        <pre class="rp-msg">{r.gate.display}</pre>
+      </div>
+      <div>
+        <p class="rp-k">You are the reviewer</p>
+        <div class="rp-picks">
+          {r.gate.choices.map((c) => <button type="button" class="ok" data-choose={c}>{c === 'approve' ? 'Approve' : 'Request changes'}</button>)}
+        </div>
+        <p class="rp-k">Or let the agent try to get past</p>
+        <div class="rp-picks">
+          {r.gate.agent_attempts.map((a) => <button type="button" data-pick={a.id}>{a.label}</button>)}
+        </div>
+        <div class="rp-out" aria-live="polite">
+          {r.gate.agent_attempts.map((a) => (
+            <div data-out={a.id} hidden>
+              <p class="rp-k">Agent calls</p><pre>{j(a.call)}</pre>
+              <p class="rp-k bad">Realm refuses</p><p class="rp-why">{why(a.response)}</p><pre class="bad">{j(a.response)}</pre>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rp-stage" data-s="3" hidden>
+    <p class="rp-hint rp-need">Answer the gate first. The run cannot reach this stage without a human choice.</p>
+    {endings.map((e) => (
+      <div class="rp-end" data-end={e.choice}>
+        <h3>The reviewer chose <code>{e.choice}</code>. Realm runs that branch and skips the other.</h3>
+        <div class="rp-cols">
+          <div>
+            <p class="rp-k">The reviewer answers</p>
+            <pre>{`$ ${e.respond.argv}\n${e.respond.stdout}`}</pre>
+            {e.other_branch && (
+              <>
+                <p class="rp-k">The agent tries the branch that was not chosen</p>
+                <pre>{j(e.other_branch.call)}</pre>
+                <p class="rp-k bad">Realm refuses</p>
+                <p class="rp-why">{why(e.other_branch.response)}</p>
+                <pre class="bad">{j(e.other_branch.response)}</pre>
+              </>
+            )}
+          </div>
+          <div>
+            <p class="rp-k good">Ran: <code>{e.posted.step}</code></p>
+            <pre class="good">{j(e.posted.response)}</pre>
+            <p class="rp-k">Skipped, with the reason on the record</p>
+            <pre>{e.skipped}</pre>
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <div class="rp-stage" data-s="4" hidden>
+    <p class="rp-hint rp-need">Answer the gate first. There is no finished record until a human has chosen.</p>
+    {endings.map((e) => (
+      <div class="rp-end" data-end={e.choice}>
+        <h3>What is left behind: one record per step, each with a hash.</h3>
+        <p>Phase <code>{e.run_phase}</code> · sealed by <code>{e.sealed_by.arm}</code> at <code>{e.sealed_by.step}</code> · run <code>{e.run_id.slice(0, 8)}</code></p>
+        <div class="rp-table" role="table">
+          {e.evidence.map((x) => (
+            <div role="row">
+              <span role="cell"><code>{x.step}</code></span>
+              <span role="cell">{x.kind === 'gate_response' ? `human chose ${x.choice}` : x.step === r.gate.step ? 'gate opened' : x.rejections ? `accepted after ${x.rejections} refusals` : x.status}</span>
+              <span role="cell"><code title={x.hash}>{h8(x.hash)}…</code></span>
+            </div>
+          ))}
+          <div role="row" class="skip">
+            <span role="cell"><code>{e.skipped_steps[0]}</code></span>
+            <span role="cell">skipped</span>
+            <span role="cell">no evidence</span>
+          </div>
+        </div>
+        <p class="rp-ev">Read it back any time with <code>realm run inspect &lt;run-id&gt;</code>, or take the whole record with <code>realm run export</code>.</p>
+      </div>
+    ))}
+  </div>
+
+  <div class="rp-nav">
+    <button type="button" data-prev disabled>Back</button>
+    <span class="rp-pos" aria-live="polite">1 of {stages.length}</span>
+    <button type="button" data-next class="ok">Next</button>
+  </div>
+  <p class="rp-foot">Recorded on {date} from two real runs of <code>{r.meta.example}</code> on Realm {r.meta.realm_version}, driven over MCP. The two runs differ only in the reviewer's answer; the refusals come from the first. GitHub was a local stand-in server, so nothing was posted. Long text is shortened with “…”.</p>
+</div>
+
+<style is:global>
+.rp{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:14px;min-width:0}
+.rp h3{font-size:17px}
+.rp p{font-size:14.5px;max-width:none}
+.rp-rail{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px;max-width:none}
+.rp-rail button{font:500 13px/1 "IBM Plex Sans",sans-serif;padding:8px 11px;border-radius:5px;border:1px solid var(--line);
+  background:transparent;color:var(--muted);cursor:pointer;display:flex;gap:7px;align-items:baseline}
+.rp-rail button span{font:500 10.5px "IBM Plex Mono",monospace;color:var(--accent)}
+.rp-rail button[aria-selected="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--ink)}
+.rp-stage{display:grid;gap:10px;min-width:0}
+.rp-stage[hidden],.rp [hidden]{display:none}
+.rp-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+.rp-cols > div{display:grid;gap:8px;min-width:0}
+@media (max-width:760px){.rp-cols{grid-template-columns:minmax(0,1fr)}}
+.rp-k{font:500 11.5px/1.4 "IBM Plex Mono",monospace!important;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.rp-k code{text-transform:none;letter-spacing:0}
+.rp-k.bad{color:var(--warn)} .rp-k.good{color:var(--accent)}
+.rp pre{margin:0;background:var(--panel2);border:1px solid var(--line-soft);border-radius:6px;padding:10px 12px;
+  font:400 12.5px/1.55 "IBM Plex Mono",monospace;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+.rp pre.rp-diff,.rp pre.rp-msg{max-height:420px;overflow:auto}
+.rp-why{color:var(--ink);font-weight:600}
+.rp pre.bad{border-color:var(--warn);background:var(--warn-soft)}
+.rp pre.good{border-color:var(--accent);background:var(--accent-soft)}
+.rp pre.rp-msg{font-family:"IBM Plex Sans",sans-serif;font-size:13.5px}
+.rp-picks{display:flex;flex-wrap:wrap;gap:8px}
+.rp-picks button,.rp-nav button{font:500 13.5px/1.2 "IBM Plex Sans",sans-serif;padding:9px 13px;border-radius:5px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--ink)}
+.rp-picks button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.rp button.ok{background:var(--c-accent);color:var(--c-on-accent);border-color:var(--c-accent)}
+.rp-nav button:disabled{opacity:.45;cursor:not-allowed}
+.rp-out{display:grid;gap:8px;min-width:0}
+.rp-out > div{display:grid;gap:8px;min-width:0}
+.rp-hint{color:var(--muted)}
+.rp-ev{color:var(--muted);font-size:13.5px!important}
+.rp-end{display:none;gap:10px;min-width:0}
+.rp[data-ending="approve"] .rp-end[data-end="approve"],.rp[data-ending="request_changes"] .rp-end[data-end="request_changes"]{display:grid}
+.rp:not([data-ending=""]) .rp-need{display:none}
+.rp-table{display:grid;border:1px solid var(--line-soft);border-radius:6px;overflow:hidden;font-size:13.5px}
+.rp-table [role="row"]{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,.9fr);gap:10px;padding:8px 12px;border-top:1px solid var(--line-soft)}
+.rp-table [role="row"]:first-child{border-top:0}
+.rp-table [role="cell"]{overflow-wrap:anywhere}
+.rp-table .skip{color:var(--muted)}
+.rp-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:4px;border-top:1px solid var(--line-soft);padding-top:12px}
+.rp-pos{font:500 12px "IBM Plex Mono",monospace;color:var(--muted)}
+.rp-foot{font-size:12.5px!important;color:var(--muted)}
+</style>
+
+<script is:inline>
+(function () {
+  var root = document.querySelector('.rp'); if (!root) return;
+  var stages = root.querySelectorAll('.rp-stage'), tabs = root.querySelectorAll('[data-go]');
+  var prev = root.querySelector('[data-prev]'), next = root.querySelector('[data-next]'), pos = root.querySelector('.rp-pos');
+  var cur = 0, GATE = 2;
+  function show(n) {
+    cur = Math.max(0, Math.min(stages.length - 1, n));
+    stages.forEach(function (s, i) { s.hidden = i !== cur; });
+    tabs.forEach(function (t, i) { t.setAttribute('aria-selected', i === cur ? 'true' : 'false'); });
+    root.setAttribute('data-stage', cur);
+    prev.disabled = cur === 0;
+    var waiting = cur === GATE && !root.getAttribute('data-ending');
+    next.disabled = cur === stages.length - 1 || waiting;
+    next.textContent = waiting ? 'Waiting for a human' : 'Next';
+    pos.textContent = (cur + 1) + ' of ' + stages.length;
+  }
+  tabs.forEach(function (t) { t.addEventListener('click', function () { show(+t.getAttribute('data-go')); }); });
+  prev.addEventListener('click', function () { show(cur - 1); });
+  next.addEventListener('click', function () { show(cur + 1); });
+  root.querySelectorAll('[data-pick]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var stage = b.closest('.rp-stage');
+      stage.querySelectorAll('[data-out]').forEach(function (o) { o.hidden = o.getAttribute('data-out') !== b.getAttribute('data-pick'); });
+      stage.querySelectorAll('[data-pick]').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); });
+    });
+  });
+  root.querySelectorAll('[data-choose]').forEach(function (b) {
+    b.addEventListener('click', function () { root.setAttribute('data-ending', b.getAttribute('data-choose')); show(GATE + 1); });
+  });
+  show(0);
+})();
+</script>
