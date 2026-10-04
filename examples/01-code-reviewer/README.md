@@ -51,7 +51,8 @@ rejects the step before anything advances:
 ```
 
 The run stays in `diff_loaded`. Nothing downstream executes. The agent corrects
-and resubmits. Every attempt is recorded in the immutable evidence chain.
+and resubmits. The rejected answers are not stored, but the step's evidence entry records
+how many were rejected before one was accepted.
 
 **Pain points addressed:**
 
@@ -59,8 +60,8 @@ and resubmits. Every attempt is recorded in the immutable evidence chain.
   by the `input_schema` declaration. No `IMPORTANT:` annotations accumulate.
 - **Non-determinism + structured output failures (#2)** — invalid enum values and
   short summaries are rejected at the boundary, not discovered downstream.
-- **No audit trail (#3)** — every run produces an immutable evidence chain:
-  who reviewed what, what fields were returned, whether any step was rejected.
+- **No audit trail (#3)** — every run produces an evidence chain: what each step
+  received, what fields were returned, and how many answers a step rejected.
 - **Verification gap / no test gating (#8)** — step output is verified structurally
   before the run advances; a step cannot complete with invalid output.
 

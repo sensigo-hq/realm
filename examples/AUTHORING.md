@@ -23,7 +23,7 @@ These principles apply to every example. Never violate them.
 - Enforce step order via a YAML state machine
 - Validate step input schemas before execution
 - Enforce human gates mechanically — not by agent goodwill
-- Produce an immutable evidence chain for every run
+- Produce an evidence chain for every run
 
 **Realm does NOT do:**
 
@@ -50,7 +50,7 @@ Every example must satisfy all four:
 
 **Never rely on the agent's context window to carry prior step data forward.** Context windows compress, agents lose track of data buried in earlier tool responses, and behaviour varies across LLMs.
 
-Always reference prior step output explicitly via `context.resources.STEP_NAME.FIELD` in `step.prompt`. The engine resolves these references against the immutable evidence chain before delivering the prompt — the agent receives the data at step entry, every time, regardless of what happened earlier in the conversation.
+Always reference prior step output explicitly via `context.resources.STEP_NAME.FIELD` in `step.prompt`. The engine resolves these references against the run's evidence chain before delivering the prompt — the agent receives the data at step entry, every time, regardless of what happened earlier in the conversation.
 
 ---
 
