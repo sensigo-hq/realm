@@ -68,7 +68,7 @@ const PRE_CLAIM: readonly Member[] = ['trust', 'precondition', 'input_schema'];
 
 /** decision C31: the ONE closing line of a drive that stops on a step refused before its claim. */
 const stopLine = (check: PreClaimMember | string, step = 'x'): string =>
-  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'); to end it: realm run abandon <run>.`;
+  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run>; or end it: realm run abandon <run>.`;
 
 /** `d2f0b3cf`'s screen for a capability block on the single-branch fixture (captured). */
 const BASE_CAPABILITY_LINES: Record<'capability_first' | 'capability_later', string[]> = {

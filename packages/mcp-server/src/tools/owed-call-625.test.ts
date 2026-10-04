@@ -141,6 +141,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
         runnable_here: false,
         refused_by: 'capability',
         refusal: "handler 'h' is not registered here",
+        basis: 'registry',
       },
     ]);
     expect(refused.next_actions).toEqual([]);
@@ -179,6 +180,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
         runnable_here: false,
         refused_by: 'capability',
         refusal: "handler 'h' was not registered in the runner that last attempted it",
+        // decision C41: the summary says what the refusal was judged from.
+        basis: 'marker',
       },
     ]);
     expect(noRegistry.next_actions).toEqual([]);
@@ -207,9 +210,86 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       runnable_here: false,
       refused_by: 'capability',
       refusal: "handler 'h' is not registered here",
+      basis: 'registry',
     });
     expect(lacks.next_actions).toEqual([]);
     expect(lacks.next_actions_status).toBe('blocked_on_capability');
+  });
+
+  it('C46: a server that HAS the handler reports no capability_block finding for the step (the marker stays as history); one that lacks it, or passes none, keeps the finding', async () => {
+    const { advanceRun } = await import('@sensigo/realm');
+    const { run } = await runStore.create({
+      workflowId: handlerDef.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await advanceRun(runStore, handlerDef, { runId: run.id, registry: new ExtensionRegistry() });
+    const capable = new ExtensionRegistry();
+    capable.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) } as never);
+    const canRun = await handleGetRunState(
+      { run_id: run.id },
+      { runStore, workflowStore, registry: capable },
+    );
+    expect(canRun.engine_runnable).toEqual([{ step: 'enrich', runnable_here: true }]);
+    expect(canRun.run_health).toBeUndefined();
+    expect((canRun.warnings ?? []).some((w) => w.includes('active run-health finding'))).toBe(
+      false,
+    );
+    expect(canRun.capability_blocks?.map((b) => b.step)).toEqual(['enrich']);
+    for (const registry of [new ExtensionRegistry(), undefined]) {
+      const lacking = await handleGetRunState(
+        { run_id: run.id },
+        { runStore, workflowStore, ...(registry !== undefined ? { registry } : {}) },
+      );
+      expect(lacking.run_health?.map((f) => [f.kind, f.step])).toEqual([
+        ['capability_block', 'enrich'],
+      ]);
+      expect(lacking.warnings ?? []).toContain(
+        "this run has 1 active run-health finding(s) — see 'run_health' for detail.",
+      );
+    }
+  });
+
+  it('C45: a created run on which nothing ran says what comes next in its hint — an engine step that cannot run is named', async () => {
+    const refusedDef: WorkflowDefinition = {
+      id: 'refused-head-wf',
+      name: 'refused head',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        compute: {
+          description: 'Compute.',
+          execution: 'auto',
+          depends_on: [],
+          input_schema: { type: 'object', required: ['n'], properties: { n: { type: 'number' } } },
+        },
+        summarize: { description: 'Summarize.', execution: 'agent', depends_on: [] },
+      },
+    };
+    await workflowStore.register(refusedDef);
+    const r = await handleStartRun(
+      { workflow_id: refusedDef.id, params: { text: 'x' } },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(r.chained_auto_steps).toBeUndefined();
+    expect(r.context_hint).toBe(
+      `Run '${r.run_id}' created for workflow 'refused-head-wf'. Ready for the agent: 'summarize'. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.`,
+    );
+    expect(r.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
+    // A deduped match keeps its own sentence (nothing is created, nothing ran).
+    const again = await handleStartRun(
+      { workflow_id: refusedDef.id, params: { text: 'x' }, idempotency_key: 'c45' },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    const deduped = await handleStartRun(
+      { workflow_id: refusedDef.id, params: { text: 'x' }, idempotency_key: 'c45' },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(again.deduped).toBe(false);
+    expect(deduped.deduped).toBe(true);
+    expect(deduped.context_hint).toBe(
+      `Matched existing run '${again.run_id}' (idempotent) in phase 'running'; no new run created.`,
+    );
   });
 
   it('start_run_batch: each started entry carries next_actions; no step runs', async () => {

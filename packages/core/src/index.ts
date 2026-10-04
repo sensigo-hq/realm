@@ -127,6 +127,7 @@ export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/ex
 // Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
 export {
   PRE_CLAIM_REFUSALS,
+  CAPABILITY_BASES,
   checkPreClaim,
   engineStepInput,
   describePending,
@@ -135,6 +136,7 @@ export {
   owedWords,
   cannotRunWords,
   cannotRunClause,
+  cannotRunWayOut,
   withFullStop,
   ADVANCE_OWED,
   composeNextActionsStatusWord,
@@ -146,6 +148,7 @@ export {
 export type {
   PreClaimRefusal,
   PreClaimRefused,
+  CapabilityBasis,
   EngineRunnable,
   PendingView,
   ProgramFit,

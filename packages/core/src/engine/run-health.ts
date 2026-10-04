@@ -39,7 +39,9 @@
 //      `wedgedNonGatedClaims` (deleted there; see the source-text negative pin in list.test.ts).
 //   3. Capability findings: `findCapabilityBlockedSteps(run)` ⇒ `capability_block`. That function's
 //      own eligibility cross-check already self-suppresses a stale marker whose step has since
-//      settled, so no extra suppression is needed here.
+//      settled. The one other suppression (issue #625 PR-2a, decision C46): a caller that passes
+//      its registry (`opts.registry`) gets no finding for a step whose requirement that registry
+//      has — the marker records another runner's lack, not this one's.
 //   4. `never_claimed_idle` (the #221 class): `deriveRunPhase(run) === 'running'` (never the
 //      persisted `run_phase` field — issue #432: a divergent record, persisted `running` with a
 //      live `pending_gate`, derives `gate_waiting` and must not select as idle at all — an
@@ -112,6 +114,7 @@
 // structurally cannot see (classification here is write-free by construction).
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import type { ExtensionRegistry } from '../extensions/registry.js';
 import { classifyInProgressClaims } from './claim-liveness.js';
 import { findCapabilityBlockedSteps } from './capability.js';
 import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
@@ -405,6 +408,13 @@ export function classifyRunHealth(
      *  workflow copy. Additive to the existing bag; absent ⇒ zero `definition_unresolvable`
      *  findings, never a crash. */
     definitionError?: { code: string; message: string; class?: string };
+    /**
+     * issue #625 PR-2a (decision C46): the CALLER's registry. With one, a step's `capability_block`
+     * finding fires only when that registry lacks the step's requirement — a runner that has the
+     * handler or adapter is not blocked by another runner's old marker. Absent ⇒ the record alone
+     * decides (`inspect`, `--stuck`). The marker itself stays in `capability_blocks`.
+     */
+    registry?: ExtensionRegistry;
   },
 ): RunHealthFinding[] {
   const now = opts?.now ?? new Date();
@@ -536,6 +546,8 @@ export function classifyRunHealth(
   // Branch 3 — capability findings (findCapabilityBlockedSteps already self-suppresses a stale
   // marker whose step has since settled, via its own eligibility cross-check).
   for (const b of findCapabilityBlockedSteps(run)) {
+    // decision C46: a caller whose registry has the requirement is not blocked by the marker.
+    if (opts?.registry?.has(b.requirement.kind, b.requirement.name) === true) continue;
     findings.push({
       kind: 'capability_block',
       step: b.step,

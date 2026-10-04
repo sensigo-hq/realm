@@ -132,7 +132,7 @@ const fixtures: Fixture[] = [
       return { store, d, runId: run.id };
     },
     cannot: [
-      "Cannot run 'x' (capability): handler 'missing_h' was not registered in the runner that last attempted it",
+      "Could not run 'x' (capability): handler 'missing_h' was not registered in the runner that last attempted it",
     ],
     status: 'blocked_on_capability',
   },
@@ -191,7 +191,8 @@ describe('#625 PR-2a — L6 Ownership on inspect and get_run_state', () => {
         expect(owedLines).toEqual([]);
         expect(actOffered).toBe(false);
       }
-      expect(lines.filter((l) => l.startsWith('Cannot run'))).toEqual(f.cannot ?? []);
+      // decision C41: a capability refusal judged from the marker is past tense (`Could not run`).
+      expect(lines.filter((l) => /^(Cannot|Could not) run /.test(l))).toEqual(f.cannot ?? []);
       if (f.status !== undefined) expect(summary.next_actions_status).toBe(f.status);
     });
   }

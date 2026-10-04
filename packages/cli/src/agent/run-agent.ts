@@ -12,7 +12,7 @@ import {
   describePending,
   describeClaimHolder,
   cannotRunClause,
-  deriveRunPhase,
+  cannotRunWayOut,
   buildNextActions,
   findCapabilityBlockedSteps,
   unmetCapabilities,
@@ -686,9 +686,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 );
               }
               currentRun = await deps.store.get(runId);
+              // decision C44: the way out is to correct the workflow and register it again (the run
+              // picks up the corrected definition), then advance — or to end the run.
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
-                  `Run ${runId} stays open (phase '${deriveRunPhase(currentRun)}'); to end it: realm run abandon ${runId}.`,
+                  cannotRunWayOut(currentRun),
               );
               return 'failed';
             }

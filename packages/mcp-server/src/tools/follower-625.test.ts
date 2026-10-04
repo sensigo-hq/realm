@@ -415,6 +415,8 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
           runnable_here: false,
           refused_by: 'capability',
           refusal: "handler 'missing_h' is not registered here",
+          // decision C41: judged from the server's own (empty) registry.
+          basis: 'registry',
         },
       ]);
       expect(state['next_actions']).toEqual([]);

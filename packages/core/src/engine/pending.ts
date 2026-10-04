@@ -12,7 +12,12 @@ import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import { findEligibleSteps, findEligibleGuardSteps, buildEvidenceByStep } from './eligibility.js';
+import {
+  findEligibleSteps,
+  findEligibleGuardSteps,
+  buildEvidenceByStep,
+  deriveRunPhase,
+} from './eligibility.js';
 import { checkPreconditions } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
 import { requirementForStep } from './capability.js';
@@ -23,10 +28,20 @@ import { buildAgentActions } from './execution-loop.js';
 export const PRE_CLAIM_REFUSALS = ['trust', 'precondition', 'input_schema', 'capability'] as const;
 export type PreClaimRefusal = (typeof PRE_CLAIM_REFUSALS)[number];
 
+/**
+ * What a capability refusal was judged from (decision C41): `registry` — the caller's own registry
+ * lacks the handler or adapter; `marker` — the caller passed no registry, so the run's own
+ * `capability_blocks` marker (what the runner that last attempted the step lacked) is the fact.
+ */
+export const CAPABILITY_BASES = ['registry', 'marker'] as const;
+export type CapabilityBasis = (typeof CAPABILITY_BASES)[number];
+
 /** A refusal before the claim. `error` / `hint` + `suggestion` carry what `executeStep` returns. */
 export interface PreClaimRefused {
   refused_by: PreClaimRefusal;
   refusal: string;
+  /** capability only: what the refusal was judged from (decision C41). */
+  basis?: CapabilityBasis;
   /** trust and input_schema: the error `executeStep` returns, unchanged. */
   error?: WorkflowError;
   /** precondition: the reply's hint and suggestion, unchanged. */
@@ -113,12 +128,14 @@ export function checkPreClaim(args: {
           return {
             refused_by: 'capability',
             refusal: `${marker.requirement.kind} '${marker.requirement.name}' was not registered in the runner that last attempted it`,
+            basis: 'marker',
           };
         }
         if (!registry.has(requirement.kind, requirement.name)) {
           return {
             refused_by: 'capability',
             refusal: `${requirement.kind} '${requirement.name}' is not registered here`,
+            basis: 'registry',
           };
         }
       }
@@ -136,8 +153,10 @@ export function checkPreClaim(args: {
 
 /**
  * `Invalid input for step 'x': 'n' must be number` — the engine's message, then the FIRST validation
- * message with the field it names (decision C37). Total: an error with no usable detail keeps the
- * engine's message alone. Never a submitted value — Ajv's `message` names only the rule.
+ * message with the field it names (decision C37). A property the schema does not allow is named
+ * itself, from the validator's own detail: `'<p>' is not allowed` (decision C42). Total: an error
+ * with no usable detail keeps the engine's message alone. Never a submitted value — Ajv's `message`
+ * names only the rule, and an extra property's detail is its NAME.
  */
 function withFirstValidationMessage(err: WorkflowError): string {
   const errors = (err.details as { errors?: unknown } | undefined)?.errors;
@@ -147,7 +166,12 @@ function withFirstValidationMessage(err: WorkflowError): string {
   const message = typeof first?.['message'] === 'string' ? first['message'] : undefined;
   if (message === undefined) return err.message;
   const path = typeof first?.['instancePath'] === 'string' ? first['instancePath'] : '';
-  const field = path === '' ? 'the input' : `'${path.slice(1).split('/').join('.')}'`;
+  const segments = path === '' ? [] : path.slice(1).split('/');
+  const extra = (first?.['params'] as Record<string, unknown> | undefined)?.['additionalProperty'];
+  if (first?.['keyword'] === 'additionalProperties' && typeof extra === 'string') {
+    return `${err.message}: '${[...segments, extra].join('.')}' is not allowed`;
+  }
+  const field = segments.length === 0 ? 'the input' : `'${segments.join('.')}'`;
   return `${err.message}: ${field} ${message}`;
 }
 
@@ -170,6 +194,12 @@ export interface EngineRunnable {
   runnable_here: boolean | 'unknown';
   refused_by?: PreClaimRefusal;
   refusal?: string;
+  /**
+   * Present exactly when `refused_by` is `capability` (decision C41): `registry` — the caller's
+   * own registry lacks the handler or adapter; `marker` — the caller passed none, and the run's
+   * record says the runner that last attempted the step lacked it.
+   */
+  basis?: CapabilityBasis;
 }
 
 export interface PendingView {
@@ -189,19 +219,35 @@ export function withFullStop(text: string): string {
 }
 
 /**
- * The words for an engine step that cannot run (decision C36): `cannot run here (capability)` — a
- * runner with the handler or adapter could run it — and `cannot run (<check>)` for trust,
- * precondition and input schema, which refuse it everywhere. Every surface prints these words.
+ * The words for an engine step that cannot run (decision C36): `cannot run here (capability)` — the
+ * caller's own registry lacks the handler or adapter, and a runner with it could run the step — and
+ * `cannot run (<check>)` for trust, precondition and input schema, which refuse it everywhere. A
+ * capability refusal judged from the run's marker, with no registry consulted, is past tense: `could
+ * not run (capability)` (decision C41). Every surface prints these words.
  */
 export function cannotRunWords(entry: EngineRunnable): string {
-  return entry.refused_by === 'capability'
-    ? 'cannot run here (capability)'
-    : `cannot run (${entry.refused_by ?? 'unknown'})`;
+  if (entry.refused_by === 'capability') {
+    return entry.basis === 'marker' ? 'could not run (capability)' : 'cannot run here (capability)';
+  }
+  return `cannot run (${entry.refused_by ?? 'unknown'})`;
 }
 
 /** `'<s>' cannot run (<check>): <refusal>` — one engine step that cannot run, as every line names it. */
 export function cannotRunClause(entry: EngineRunnable): string {
   return `'${entry.step}' ${cannotRunWords(entry)}: ${entry.refusal ?? ''}`;
+}
+
+/**
+ * The one way out for a run that stops on an engine step refused before its claim — trust,
+ * precondition or input schema (decision C44): the fix (correct the workflow, register it again —
+ * the run picks up the corrected definition — then advance) and the alternative (abandon). The
+ * drive's stop line and `realm run advance` print it.
+ */
+export function cannotRunWayOut(run: RunRecord): string {
+  return (
+    `Run ${run.id} stays open (phase '${deriveRunPhase(run)}'): correct the workflow, register it ` +
+    `again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`
+  );
 }
 
 /** The names the act stands for: guards first, then every `auto` step not refused. */
@@ -262,6 +308,7 @@ export function describePending(
         runnable_here: false,
         refused_by: verdict.refused_by,
         refusal: verdict.refusal,
+        ...(verdict.basis !== undefined ? { basis: verdict.basis } : {}),
       };
     });
   const view: PendingView = { agent_actions, agent_steps, pending_guards, engine_runnable };

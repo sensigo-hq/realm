@@ -20,6 +20,7 @@ import {
   guardPassedLine,
   guardEndingOfRun,
   cannotRunClause,
+  cannotRunWayOut,
   withFullStop,
   type PendingView,
   type ProgramFit,
@@ -63,32 +64,31 @@ function driverWords(
 type RunForReasons = Parameters<typeof deriveRunPhase>[0] &
   Pick<RunRecord, 'in_progress_steps' | 'claims'>;
 
+/** The steps in flight (the open gate's own step holds a claim while it waits and is not in flight). */
+function inFlightSteps(run: RunForReasons): string[] {
+  return run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name);
+}
+
 /**
- * The steps in flight elsewhere (the open gate's own step holds a claim while it waits and is not
- * in flight), each as `'<s>', <taken phrase>[ since <since>]` (decision C37).
+ * The steps in flight elsewhere, each as `'<s>', <taken phrase>[ since <since>]` (decision C37) —
+ * the preview's `In flight:` line, the one place the holder and the time are printed (decision C43).
  */
 export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[] {
-  return run.in_progress_steps
-    .filter((step) => step !== run.pending_gate?.step_name)
-    .map((step) => {
-      const described = describeClaimHolder(run.claims?.[step], keepsClaims);
-      const since = described.since !== undefined ? ` since ${described.since}` : '';
-      return `'${step}' is in flight, ${takenPhrase(described)}${since}`;
-    });
+  return inFlightSteps(run).map((step) => {
+    const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+    const since = described.since !== undefined ? ` since ${described.since}` : '';
+    return `'${step}' is in flight, ${takenPhrase(described)}${since}`;
+  });
 }
 
 /**
  * Every reason that holds for the run to stop where it is, in D4.4's order (a failed step is the
  * caller's to add, first): the run ended · a question is open · each step that cannot run · agent
- * steps ready · each step in flight elsewhere (decision C37) · and, when none of these holds,
- * `nothing is ready to run now`.
+ * steps ready · each step in flight elsewhere, with what to do (decision C43; the holder and the
+ * time are on the preview's `In flight:` line) · and, when none of these holds, `nothing is ready
+ * to run now`.
  */
-export function stoppedReasons(
-  runId: string,
-  run: RunForReasons,
-  pending: PendingView,
-  keepsClaims = false,
-): string[] {
+export function stoppedReasons(runId: string, run: RunForReasons, pending: PendingView): string[] {
   if (run.terminal_state) return [`the run has ended (${deriveRunPhase(run)})`];
   const gate = run.pending_gate;
   if (gate !== undefined) {
@@ -104,8 +104,50 @@ export function stoppedReasons(
       `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them with realm agent --run-id ${runId}`,
     );
   }
-  reasons.push(...inFlightItems(run, keepsClaims));
+  reasons.push(
+    ...inFlightSteps(run).map(
+      (step) =>
+        `'${step}' is in flight in another program — wait for it, or see realm run inspect ${runId}`,
+    ),
+  );
   return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
+}
+
+/**
+ * Whether the run still owes the engine work, though none of it can run now (decision C43): an
+ * `auto` step the view refuses, or an `auto` step or guard in flight in another program. With no
+ * act, every entry in `engine_runnable` is refused.
+ */
+function engineWorkOwed(
+  run: RunForReasons,
+  pending: PendingView,
+  workflow: { steps: Record<string, { execution?: string } | undefined> },
+): boolean {
+  if (run.terminal_state || run.pending_gate !== undefined) return false;
+  return (
+    pending.engine_runnable.length > 0 ||
+    pending.pending_guards.length > 0 ||
+    inFlightSteps(run).some((step) => {
+      const kind = workflow.steps[step]?.execution;
+      return kind === 'auto' || kind === 'guard';
+    })
+  );
+}
+
+/**
+ * Decision C44: nothing else is ready — no act, no agent step, nothing in flight, no question open
+ * — and an engine step is refused before its claim (trust, precondition, input schema). The way out
+ * is then to correct the workflow (or end the run).
+ */
+function wayOutApplies(run: RunForReasons, pending: PendingView): boolean {
+  return (
+    !run.terminal_state &&
+    run.pending_gate === undefined &&
+    pending.act === undefined &&
+    pending.agent_steps.length === 0 &&
+    inFlightSteps(run).length === 0 &&
+    pending.engine_runnable.some((e) => e.runnable_here === false && e.refused_by !== 'capability')
+  );
 }
 
 /** What `advanceRunCommand` returns to the action (and to tests). */
@@ -154,9 +196,13 @@ export async function advanceRunFromShell(
   const inFlight = run.terminal_state ? [] : inFlightItems(run, keepsClaims);
   if (inFlight.length > 0) print(`In flight: ${withFullStop(inFlight.join('; '))}`);
   if (pending.act === undefined) {
-    print(
-      `Nothing is owed to the engine: ${withFullStop(stoppedReasons(runId, run, pending, keepsClaims).join('; '))}`,
-    );
+    // decision C43: "Nothing is owed" only when nothing is; owed work none of which can run now
+    // opens with what the engine can do.
+    const opening = engineWorkOwed(run, pending, workflow)
+      ? 'The engine can run nothing now'
+      : 'Nothing is owed to the engine';
+    print(`${opening}: ${withFullStop(stoppedReasons(runId, run, pending).join('; '))}`);
+    if (wayOutApplies(run, pending)) print(cannotRunWayOut(run));
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
@@ -217,7 +263,7 @@ export async function advanceRunFromShell(
   if (result.status === 'error' && !isCapabilityBlock) {
     reasons.push(`'${lastStep ?? result.command}' failed: ${result.errors.join(', ')}`);
   }
-  reasons.push(...stoppedReasons(runId, after, afterView, keepsClaims));
+  reasons.push(...stoppedReasons(runId, after, afterView));
   if (reasons.length > 1) {
     const none = reasons.indexOf('nothing is ready to run now');
     if (none >= 0) reasons.splice(none, 1);
@@ -226,7 +272,13 @@ export async function advanceRunFromShell(
   // gets no `Stopped:` line (any other reason that holds still does).
   const completedEnding = 'the run has ended (completed)';
   for (const reason of reasons.filter((r) => r !== completedEnding)) print(`Stopped: ${reason}`);
-  print(`Run ${runId}: phase '${deriveRunPhase(after)}'`);
+  // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
+  // last line is the way out (it carries the phase); otherwise the phase line.
+  print(
+    wayOutApplies(after, afterView)
+      ? cannotRunWayOut(after)
+      : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
+  );
   const refused =
     !after.terminal_state && afterView.engine_runnable.some((e) => e.runnable_here === false);
   return (result.status === 'error' && !isCapabilityBlock) || refused ? 1 : 0;

@@ -630,7 +630,10 @@ export async function inspectRun(
     }
     for (const e of pending.engine_runnable) {
       if (e.runnable_here === false) {
-        lines.push(`Cannot run '${e.step}' (${e.refused_by}): ${e.refusal}`);
+        // decision C41: a capability refusal judged from the run's marker (inspect passes no
+        // registry) is past tense — no runner was consulted here.
+        const verb = e.basis === 'marker' ? 'Could not run' : 'Cannot run';
+        lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}`);
       }
     }
   }

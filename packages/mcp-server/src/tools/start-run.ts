@@ -7,6 +7,8 @@ import {
   JsonFileStore,
   advanceRun,
   buildNextActions,
+  describeNext,
+  describePending,
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -208,6 +210,11 @@ export async function handleStartRun(
   }
 
   const nextActions = run.terminal_state ? [] : buildNextActions(definition, run, registry);
+  // issue #625 PR-2a (decision C45): a run this call created on which nothing ran says what comes
+  // next in its own hint — the agent steps ready, the engine's owed work, and each engine step that
+  // cannot run — so a step that cannot run is named on the reply that created the run.
+  const next =
+    !deduped && !run.terminal_state ? describeNext(describePending(definition, run, registry)) : '';
   return {
     command: 'start_run',
     run_id: run.id,
@@ -220,8 +227,8 @@ export async function handleStartRun(
     context_hint: deduped
       ? `Matched existing run '${run.id}' (idempotent) in phase '${derivedPhase}'; no new run created.`
       : run.rerun_of !== undefined
-        ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).`
-        : `Run '${run.id}' created for workflow '${definition.id}'.`,
+        ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
+        : `Run '${run.id}' created for workflow '${definition.id}'.${next}`,
     run_phase: derivedPhase,
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
     deduped,

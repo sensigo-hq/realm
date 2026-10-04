@@ -21,7 +21,9 @@ import {
 } from './execution-loop.js';
 import {
   ADVANCE_OWED,
+  CAPABILITY_BASES,
   PRE_CLAIM_REFUSALS,
+  cannotRunWords,
   checkPreClaim,
   composeNextActionsStatusWord,
   describeNext,
@@ -239,10 +241,11 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       "Gate 'b' resolved with choice 'approve'. 'act' cannot run here (capability): handler 'note' is not registered here.",
     );
     expect(lacking.next_actions).toEqual([]);
-    // A caller with no registry: the run's own marker is the freshest fact.
+    // A caller with no registry: the run's own marker is the freshest fact — past tense, since no
+    // runner was consulted (decision C41).
     const none = await answer(undefined);
     expect(none.context_hint).toBe(
-      "Gate 'b' resolved with choice 'approve'. 'act' cannot run here (capability): handler 'note' was not registered in the runner that last attempted it.",
+      "Gate 'b' resolved with choice 'approve'. 'act' could not run (capability): handler 'note' was not registered in the runner that last attempted it.",
     );
     expect(none.next_actions).toEqual([]);
   });
@@ -470,6 +473,7 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       runnable_here: false,
       refused_by: 'capability',
       refusal: "handler 'h' is not registered here",
+      basis: 'registry',
     });
     const reg = new ExtensionRegistry();
     reg.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
@@ -1119,3 +1123,260 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     expect(el).not.toContain('validateInputSchema(');
   });
 });
+
+describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild (C40), basis (C41), the extra property (C42)', () => {
+  const capDef = def({
+    act: { description: 'Act', execution: 'auto', depends_on: [], handler: 'note' },
+    w: { description: 'W', execution: 'agent', depends_on: [] },
+    b: {
+      description: 'B',
+      execution: 'agent',
+      depends_on: [],
+      trust: 'human_confirmed',
+      gate: { choices: ['approve', 'reject'] },
+    },
+  });
+  const hasNote = (): ExtensionRegistry => {
+    const r = new ExtensionRegistry();
+    r.register('handler', 'note', { id: 'note', execute: async () => ({ data: {} }) } as never);
+    return r;
+  };
+  /** The same store with `settleStep` hidden — the legacy two-write shape. */
+  const withoutSettle = (json: JsonFileStore): RunStore =>
+    new Proxy(json, {
+      get(target, prop, receiver) {
+        if (prop === 'settleStep') return undefined;
+        const v = Reflect.get(target, prop, receiver) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    }) as unknown as RunStore;
+  /** A run whose `act` a runner that lacked `note` attempted: the marker is on the record. */
+  async function markedRun(store: RunStore): Promise<string> {
+    const { run } = await store.create({ workflowId: capDef.id, workflowVersion: 1, params: {} });
+    await advanceRun(store, capDef, { runId: run.id, registry: new ExtensionRegistry() });
+    expect((await store.get(run.id)).capability_blocks?.['act']).toBeDefined();
+    return run.id;
+  }
+  const stepReply = async (store: RunStore) => {
+    const runId = await markedRun(store);
+    return executeStep(store, capDef, {
+      runId,
+      command: 'w',
+      input: {},
+      dispatcher: echo,
+      registry: hasNote(),
+    });
+  };
+  const answerReply = async (store: RunStore) => {
+    const runId = await markedRun(store);
+    await executeStep(store, capDef, {
+      runId,
+      command: 'b',
+      input: {},
+      dispatcher: echo,
+      registry: hasNote(),
+    });
+    const gate = (await store.get(runId)).pending_gate!;
+    return submitHumanResponse(store, capDef, {
+      runId,
+      gateId: gate.gate_id,
+      choice: 'approve',
+      registry: hasNote(),
+    });
+  };
+
+  it("C39 site S1: a step's reply on a store with settleStep judges with the CALL's registry (the old marker loses)", async () => {
+    await withStore(async (store) => {
+      const reply = await stepReply(store);
+      expect(reply.status).toBe('ok');
+      expect(reply.context_hint).toBe(
+        "Step 'w' completed. Ready for the agent: 'b'. Owed to the engine: 'act' — call advance_run.",
+      );
+      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual([
+        'execute_step',
+        'advance_run',
+      ]);
+    });
+  });
+
+  it("C39 site S2: a step's reply on a store without settleStep judges with the CALL's registry", async () => {
+    await withStore(async (json) => {
+      const reply = await stepReply(withoutSettle(json));
+      expect(reply.status).toBe('ok');
+      expect(reply.context_hint).toBe(
+        "Step 'w' completed. Ready for the agent: 'b'. Owed to the engine: 'act' — call advance_run.",
+      );
+      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual([
+        'execute_step',
+        'advance_run',
+      ]);
+    });
+  });
+
+  it("C39 site S4: an answer's reply on a store without settleStep judges with the CALL's registry", async () => {
+    await withStore(async (json) => {
+      const reply = await answerReply(withoutSettle(json));
+      expect(reply.status).toBe('ok');
+      expect(reply.context_hint).toBe(
+        "Gate 'b' resolved with choice 'approve'. Ready for the agent: 'w'. Owed to the engine: 'act' — call advance_run.",
+      );
+      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual([
+        'execute_step',
+        'advance_run',
+      ]);
+    });
+  });
+
+  it("C40: a step that FAILS beside an unmarked step the call's registry cannot run — advanceRun's reply offers no advance_run act", async () => {
+    const d = def({
+      x: { description: 'X', execution: 'auto', depends_on: [], handler: 'boom' },
+      y: { description: 'Y', execution: 'auto', depends_on: [], handler: 'missing_h' },
+    });
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'boom', {
+      id: 'boom',
+      execute: async () => {
+        throw new Error('handler blew up');
+      },
+    } as never);
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const reply = await advanceRun(store, d, { runId: run.id, registry });
+      expect(reply.status).toBe('error');
+      const after = await store.get(run.id);
+      // y is still eligible and unmarked: only the call's registry says it cannot run here.
+      expect(after.terminal_state).toBe(false);
+      expect(after.capability_blocks?.['y']).toBeUndefined();
+      expect(reply.next_actions.some((a) => a.instruction?.tool === 'advance_run')).toBe(false);
+    });
+  });
+
+  it('C41: a capability refusal says what it was judged from — registry (here, present tense) or marker (past tense)', () => {
+    const d = def({ x: { description: 'X', execution: 'auto', depends_on: [], handler: 'h' } });
+    const live = {
+      id: 'r',
+      params: {},
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+      terminal_state: false,
+    } as unknown as RunRecord;
+    const marked = {
+      ...live,
+      capability_blocks: {
+        x: {
+          requirement: { kind: 'handler', name: 'h' },
+          code: 'ENGINE_HANDLER_NOT_REGISTERED',
+          at: '2026-10-05T00:00:00.000Z',
+        },
+      },
+    } as unknown as RunRecord;
+    const byRegistry = describePending(d, live, new ExtensionRegistry()).engine_runnable[0]!;
+    expect(byRegistry).toEqual({
+      step: 'x',
+      runnable_here: false,
+      refused_by: 'capability',
+      refusal: "handler 'h' is not registered here",
+      basis: 'registry',
+    });
+    const byMarker = describePending(d, marked).engine_runnable[0]!;
+    expect(byMarker).toEqual({
+      step: 'x',
+      runnable_here: false,
+      refused_by: 'capability',
+      refusal: "handler 'h' was not registered in the runner that last attempted it",
+      basis: 'marker',
+    });
+    expect(CAPABILITY_BASES).toEqual(['registry', 'marker']);
+    expect(cannotRunWords(byRegistry)).toBe('cannot run here (capability)');
+    expect(cannotRunWords(byMarker)).toBe('could not run (capability)');
+    expect(describeNext(describePending(d, live, new ExtensionRegistry()))).toBe(
+      " 'x' cannot run here (capability): handler 'h' is not registered here.",
+    );
+    expect(describeNext(describePending(d, marked))).toBe(
+      " 'x' could not run (capability): handler 'h' was not registered in the runner that last attempted it.",
+    );
+    // No basis on a refusal that is not capability's, nor on a runnable entry.
+    const trust = def({
+      x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
+    });
+    expect(describePending(trust, live).engine_runnable[0]).not.toHaveProperty('basis');
+    expect(describePending(d, live, hasNote2()).engine_runnable[0]).toEqual({
+      step: 'x',
+      runnable_here: true,
+    });
+  });
+
+  it("C42: a property the schema does not allow is named ('<p>' is not allowed), at the top and on a nested path; executeStep's message is unchanged", async () => {
+    const live = (params: Record<string, unknown>) =>
+      ({
+        id: 'r',
+        params,
+        completed_steps: [],
+        in_progress_steps: [],
+        failed_steps: [],
+        skipped_steps: [],
+        evidence: [],
+        terminal_state: false,
+      }) as unknown as RunRecord;
+    const top = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: {
+          type: 'object',
+          properties: { n: { type: 'number' } },
+          additionalProperties: false,
+        },
+      },
+    });
+    expect(describePending(top, live({ n: 1, extra: true })).engine_runnable[0]?.refusal).toBe(
+      "Invalid input for step 'x': 'extra' is not allowed",
+    );
+    const nested = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: {
+          type: 'object',
+          properties: {
+            n: {
+              type: 'object',
+              properties: { m: { type: 'number' } },
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+    });
+    expect(
+      describePending(nested, live({ n: { m: 1, stray: 2 } })).engine_runnable[0]?.refusal,
+    ).toBe("Invalid input for step 'x': 'n.stray' is not allowed");
+    // executeStep's own reply for the same refusal: the engine's message, byte-identical.
+    await withStore(async (store) => {
+      const { run } = await store.create({
+        workflowId: top.id,
+        workflowVersion: 1,
+        params: { n: 1, extra: true },
+      });
+      const reply = await executeStep(store, top, {
+        runId: run.id,
+        command: 'x',
+        input: { n: 1, extra: true },
+        dispatcher: echo,
+      });
+      expect(reply.error_code).toBe('VALIDATION_INPUT_SCHEMA');
+      expect(reply.errors).toEqual(["Invalid input for step 'x'"]);
+    });
+  });
+});
+
+function hasNote2(): ExtensionRegistry {
+  const r = new ExtensionRegistry();
+  r.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) } as never);
+  return r;
+}

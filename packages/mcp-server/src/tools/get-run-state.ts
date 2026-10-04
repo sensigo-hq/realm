@@ -304,6 +304,8 @@ export interface RunStateSummary {
   /**
    * issue #625 PR-2a: each eligible `auto` step the engine could run, judged for this server's
    * registry — `runnable_here` false names the check that refuses it (`refused_by`, `refusal`);
+   * a capability refusal also says what it was judged from (`basis`: `registry` — this server's
+   * registry lacks it; `marker` — no registry, the run's own record; decision C41);
    * `'unknown'` when the server has no registry to judge the capability check. Absent when none.
    */
   engine_runnable?: EngineRunnable[];
@@ -363,6 +365,8 @@ export async function handleGetRunState(
   // issue #558 PR-T — the failure the definition read produced, when it produced one.
   let definitionError: { code: string; message: string; class?: string } | undefined;
   let pending: ReturnType<typeof describePending> | undefined;
+  // decision C46: the registry the view judged with, passed to the run-health classifier too.
+  let registry: ExtensionRegistry | undefined;
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
   } else if (run.pending_gate !== undefined) {
@@ -391,7 +395,6 @@ export async function handleGetRunState(
       // issue #625 PR-2a (decision C8): the registry the server resolves for every other tool, so
       // the capability check is judged; a failure falls back to none (`'unknown'`), except a
       // release-line refusal, which every registry-resolving tool raises.
-      let registry: ExtensionRegistry | undefined;
       try {
         registry =
           stores?.registryProvider !== undefined
@@ -509,6 +512,9 @@ export async function handleGetRunState(
     : classifyRunHealth(run, {
         ...(definition !== undefined ? { definition } : {}),
         ...(definitionError !== undefined ? { definitionError } : {}),
+        // issue #625 PR-2a (decision C46): a server that can run a step is not told the step is
+        // blocked by another runner's old capability marker.
+        ...(registry !== undefined ? { registry } : {}),
       });
   if (runHealth.length > 0) {
     warnings.push(

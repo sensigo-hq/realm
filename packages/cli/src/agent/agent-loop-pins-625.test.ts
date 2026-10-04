@@ -109,7 +109,7 @@ describe('#625 PR-2a — realm agent loop words', () => {
     expect(result).toBe('failed');
     // decision C31: the stop's own line — the run did not end, so no `Run ended in phase:` line.
     expect(err).toContain(
-      `✗ The drive stops: nothing else can run, and 'x' cannot run (precondition). Run ${runs[0]!.id} stays open (phase 'running'); to end it: realm run abandon ${runs[0]!.id}.`,
+      `✗ The drive stops: nothing else can run, and 'x' cannot run (precondition). Run ${runs[0]!.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${runs[0]!.id}; or end it: realm run abandon ${runs[0]!.id}.`,
     );
     expect(err).not.toContain('Run ended in phase:');
     expect(err).not.toContain("✗ Step 'x'");

@@ -171,11 +171,12 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         (l) => lines.push(l),
         new ExtensionRegistry(),
       );
-      // The view, judged with this shell's registry, refuses `x` before any attempt: nothing is owed,
-      // and the refusal is a reason the run cannot move here — exit 1, as after a call that ran.
+      // The view, judged with this shell's registry, refuses `x` before any attempt: `x` is still owed
+      // but cannot run here (decision C43), and the refusal is a reason the run cannot move here —
+      // exit 1, as after a call that ran.
       expect(code).toBe(1);
       expect(lines.slice(3)).toEqual([
-        `Nothing is owed to the engine: 'x' cannot run here (capability): handler 'missing_h' is not registered here; agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}.`,
+        `The engine can run nothing now: 'x' cannot run here (capability): handler 'missing_h' is not registered here; agent steps are ready: 'y' — drive them with realm agent --run-id ${run.id}.`,
       ]);
       expect(lines.join('\n')).not.toContain('failed');
     } finally {
@@ -256,8 +257,9 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       expect(lines.slice(4)).toEqual([
         '→ x',
         `• Step 'x' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
-        // decision C37: the step the other process holds is the reason — not "nothing is ready".
-        `Stopped: 'x' is in flight, taken by other@host (from the OS user, via agent) since ${since}`,
+        // decision C37: the step the other process holds is the reason — not "nothing is ready"; the
+        // holder and the time are on the taken line above, printed once (decision C43).
+        `Stopped: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}`,
         `Run ${run.id}: phase 'running'`,
       ]);
     } finally {
@@ -543,7 +545,8 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       expect(code).toBe(0);
       expect(lines.slice(3)).toEqual([
         `In flight: 'x' is in flight, taken by other@host (from the OS user, via advance) since ${since}.`,
-        `Nothing is owed to the engine: 'x' is in flight, taken by other@host (from the OS user, via advance) since ${since}.`,
+        // decision C43: `x` is still owed; the holder and the time are on the line above, once.
+        `The engine can run nothing now: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}.`,
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -574,9 +577,10 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
         new ExtensionRegistry(),
       );
       expect(code).toBe(1);
-      expect(lines.at(-1)).toBe(
-        "Nothing is owed to the engine: 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
-      );
+      expect(lines.slice(-2)).toEqual([
+        "The engine can run nothing now: 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
+        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`,
+      ]);
       expect(lines.join('\n')).not.toContain('..');
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -626,6 +630,181 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       } finally {
         rmSync(home, { recursive: true, force: true });
       }
+    }
+  });
+});
+
+describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whether anything is owed; one way out', () => {
+  const advance = async (
+    runs: JsonFileStore,
+    workflows: JsonWorkflowStore,
+    home: string,
+    runId: string,
+  ): Promise<{ code: 0 | 1; lines: string[] }> => {
+    const lines: string[] = [];
+    const code = await advanceRunFromShell(
+      runId,
+      { project: home },
+      runs,
+      workflows,
+      undefined,
+      (l) => lines.push(l),
+      new ExtensionRegistry(),
+    );
+    return { code, lines };
+  };
+
+  it('C43: nothing owed (the run ended) — `Nothing is owed to the engine: …`, exit 0', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('c43-ended', { x: { description: 'X', execution: 'auto', depends_on: [] } });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      expect((await advance(runs, workflows, home, run.id)).code).toBe(0);
+      const again = await advance(runs, workflows, home, run.id);
+      expect(again.code).toBe(0);
+      expect(again.lines.slice(3)).toEqual([
+        'Nothing is owed to the engine: the run has ended (completed).',
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  for (const [check, step, refusal] of [
+    [
+      'trust',
+      { description: 'X', execution: 'auto', depends_on: [], trust: 'not_a_level' as never },
+      "Step 'x': 'trust: \"not_a_level\"' is not a recognized value",
+    ],
+    [
+      'precondition',
+      {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        preconditions: ['nothing.ok == true'],
+      },
+      "Precondition failed for step 'x'.",
+    ],
+    [
+      'input_schema',
+      {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: { type: 'object', required: ['n'] },
+      },
+      "Invalid input for step 'x': the input must have required property 'n'",
+    ],
+  ] as const) {
+    it(`C43, C44 (${check}): owed but cannot run — \`The engine can run nothing now: …\`, then the one way out; exit 1`, async () => {
+      const { home, runs, workflows } = stores();
+      try {
+        const d = wf(`c43-${check}`, {
+          x: step as unknown as WorkflowDefinition['steps'][string],
+        });
+        await workflows.register(d);
+        const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const { code, lines } = await advance(runs, workflows, home, run.id);
+        expect(code).toBe(1);
+        expect(lines).toHaveLength(5);
+        expect(
+          lines[3]!.startsWith(`The engine can run nothing now: 'x' cannot run (${check}): `),
+        ).toBe(true);
+        expect(lines[3]).toContain(refusal);
+        expect(lines[4]).toBe(
+          `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`,
+        );
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('C44 after a call: the run stops on a step refused before its claim with nothing else ready — the way out is the last line, in place of the phase line', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('c44-after', {
+        a: { description: 'A', execution: 'auto', depends_on: [], trust: 'not_a_level' as never },
+        b: { description: 'B', execution: 'auto', depends_on: [] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { code, lines } = await advance(runs, workflows, home, run.id);
+      expect(code).toBe(1);
+      expect(lines.slice(3, 5)).toEqual(["Owed to the engine: 'b'.", '→ b']);
+      expect(lines[5]!.startsWith("Stopped: 'a' cannot run (trust): ")).toBe(true);
+      expect(lines.slice(6)).toEqual([
+        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`,
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('C44: no way out while something else is ready (an agent step) — the phase line stays', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('c44-agent', {
+        a: { description: 'A', execution: 'auto', depends_on: [], trust: 'not_a_level' as never },
+        y: { description: 'Y', execution: 'agent', depends_on: [] },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { lines } = await advance(runs, workflows, home, run.id);
+      expect(lines.join('\n')).not.toContain('correct the workflow');
+      expect(lines[3]!.startsWith("The engine can run nothing now: 'a' cannot run (trust): ")).toBe(
+        true,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("C43: stoppedReasons' in-flight member — no holder or time, what to do", () => {
+    const run = {
+      id: 'r',
+      params: {},
+      completed_steps: [],
+      in_progress_steps: ['z'],
+      failed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+      terminal_state: false,
+    } as unknown as RunRecord;
+    expect(
+      stoppedReasons('r', run, {
+        agent_actions: [],
+        agent_steps: [],
+        pending_guards: [],
+        engine_runnable: [],
+      }),
+    ).toEqual(["'z' is in flight in another program — wait for it, or see realm run inspect r"]);
+  });
+});
+
+describe('#625 PR-2a, C46 — inspect reads the record alone', () => {
+  it('inspect is unchanged: a run another runner marked keeps its capability_block finding and the past-tense line (no registry is consulted)', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = wf('c46-inspect', {
+        x: { description: 'X', execution: 'auto', depends_on: [], handler: 'missing_h' },
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const { advanceRun } = await import('@sensigo/realm');
+      await advanceRun(runs, d, { runId: run.id, registry: new ExtensionRegistry() });
+      // eslint-disable-next-line no-control-regex
+      const screen = (await inspectRun(run.id, runs, workflows)).replace(/\x1b\[[0-9;]*m/g, '');
+      const lines = screen.split('\n');
+      expect(lines).toContain('Run Health (1 finding(s)):');
+      expect(lines).toContain('  capability_block [x]: ENGINE_HANDLER_NOT_REGISTERED');
+      expect(lines).toContain(
+        "Could not run 'x' (capability): handler 'missing_h' was not registered in the runner that last attempted it",
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });
