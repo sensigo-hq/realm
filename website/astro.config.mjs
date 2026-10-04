@@ -4,7 +4,7 @@ import sitemap from '@astrojs/sitemap';
 import sitemapAtRoot from './src/integrations/sitemap-at-root.mjs';
 import { THEME_INIT } from './src/lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from './src/lib/favicon.mjs';
-import { SITE_URL } from './src/lib/site-meta.mjs';
+import { SITEMAP_PATH, SITE_URL } from './src/lib/site-meta.mjs';
 import { DOCS_SIDEBAR } from './src/data/docs-sidebar.mjs';
 
 export default defineConfig({
@@ -31,7 +31,7 @@ export default defineConfig({
         })),
         { tag: 'meta', attrs: { name: 'theme-color', content: THEME_COLOR } },
         // replaces Starlight's own link to /sitemap-index.xml (see sitemapAtRoot below)
-        { tag: 'link', attrs: { rel: 'sitemap', href: '/sitemap.xml' } },
+        { tag: 'link', attrs: { rel: 'sitemap', href: SITEMAP_PATH } },
       ],
       disable404Route: false,
       sidebar: DOCS_SIDEBAR,
