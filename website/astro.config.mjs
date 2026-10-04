@@ -33,6 +33,25 @@ export default defineConfig({
         // replaces Starlight's own link to /sitemap-index.xml (see sitemapAtRoot below)
         { tag: 'link', attrs: { rel: 'sitemap', href: SITEMAP_PATH } },
       ],
+      // Shiki, which colours code examples, stops colouring a line after 500 ms by default and
+      // leaves the rest plain. That made the colours depend on how busy the build machine was,
+      // and Astro keeps a rendered page in its cache, so a slow build's plain words stayed.
+      // 0 removes the limit: the same docs always give the same colours, and a line that
+      // could never finish would stop the build where everyone sees it.
+      // Expressive Code passes no time-limit option to Shiki; a transformer's preprocess step
+      // receives the very options object Shiki then tokenizes with.
+      expressiveCode: {
+        shiki: {
+          transformers: [
+            {
+              name: 'realm-no-tokenize-time-limit',
+              preprocess(code, options) {
+                options.tokenizeTimeLimit = 0;
+              },
+            },
+          ],
+        },
+      },
       disable404Route: false,
       sidebar: DOCS_SIDEBAR,
     }),
