@@ -148,13 +148,15 @@ The record does not yet include what the model's requests cost for a step that u
 
 ## See Realm hold the limits
 
-**When the step has used its tool calls**, the model is not given another. Realm sends it this message, with no tools, and takes its answer:
+**When the step has used its tool calls**, the model is not given another. Realm sends it this message, with none of the step's tools, and takes its answer:
 
 ```text
 You have reached the maximum number of tool calls. Produce your final JSON answer now using only what you have already gathered. No further tool calls will be executed.
 ```
 
 With `max_tool_calls: 1`, the model listed the folder, was sent that message, and answered with what it had. The record shows one tool call. An answer that Realm refuses against the step's schema uses up one of the step's calls as well.
+
+On a Claude model that thinks before it answers, such as Claude Sonnet 5.5, this last request leaves out the model's earlier thinking. Anthropic refuses thinking made under a different list of tools, and this request offers only the answer tool, or none. The model still has its earlier tool calls, their results and what it wrote. This was added after version 0.45.0.
 
 **A tool that the server does not have** stops the step before the model is asked anything:
 
