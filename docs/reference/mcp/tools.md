@@ -180,7 +180,7 @@ An unknown ID is an MCP error with the text `Error: Workflow not found: nope`.
 | `on_live_match`     | text   | No       | What a repeat does while the first run is open: `use_existing` (default) or `fail`.                          |
 | `on_terminal_match` | text   | No       | What a repeat does after the first run has ended: `reuse` (default), `reject`, `rerun_if_failed` or `rerun`. |
 
-It creates the run, then runs every `auto` step that is ready, and replies when the run reaches a step for the assistant, a gate, or its end.
+It creates the run, then runs every `auto` step that is ready, and replies when the run reaches a step for the assistant, a gate, or its end. When no step ran, the reply's `context_hint` says what comes next after `Run '<id>' created for workflow '<workflow>'.`: the steps ready for the assistant, the work owed to the engine, and each `auto` step that cannot run (`'<step>' cannot run (<check>): <why>.`). A repeat matched by `idempotency_key` keeps its own sentence (`Matched existing run …`).
 
 ```json
 {
@@ -192,7 +192,7 @@ It creates the run, then runs every `auto` step that is ready, and replies when 
   "evidence": [],
   "warnings": [],
   "errors": [],
-  "context_hint": "Run '7da561ee-5987-497d-83a5-1eded6dc9b63' created for workflow 'triage'.",
+  "context_hint": "Run '7da561ee-5987-497d-83a5-1eded6dc9b63' created for workflow 'triage'. Ready for the agent: 'classify'.",
   "run_phase": "running",
   "deduped": false,
   "next_actions": ["…"]
@@ -511,7 +511,7 @@ It registers the workflow under an ID it makes up, starts a run, and replies as 
   "run_id": "05ae1756-2fe6-4152-91d1-e1ce1c381083",
   "status": "ok",
   "data": { "workflow_id": "release-notes-88c897726fbda006" },
-  "context_hint": "Run '05ae1756-2fe6-4152-91d1-e1ce1c381083' created for workflow 'release-notes-88c897726fbda006'.",
+  "context_hint": "Run '05ae1756-2fe6-4152-91d1-e1ce1c381083' created for workflow 'release-notes-88c897726fbda006'. Ready for the agent: 'collect'.",
   "run_phase": "running",
   "deduped": false,
   "next_actions": ["…"],
@@ -578,7 +578,7 @@ Runs the guards and `auto` steps a run owes, in the environment of the server th
 | --------- | ------ | -------- | -------- |
 | `run_id`  | string | yes      | The run. |
 
-The reply has the same shape as a step's: `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled, and when a step opens a question the reply is `confirm_required` with the gate. It also carries `continued_by`: the name of the program that ran the steps (`{ by: null, absent_cause: 'driver_not_recorded' }` when the host passed none). A call with nothing owed runs nothing and returns the run's view — never an error. Its `context_hint` says why: `Run '<id>': nothing ran.`, then the agent steps that are ready, the work still owed, and each step that cannot run (`'<step>' cannot run (<check>): <why>.`, or `cannot run here (capability)` for a handler or adapter this server lacks); `No step is ready.` only when none of these holds. A step another process holds when this call tries to claim it is not run here, and the reply's `context_hint` ends with `'<step>' was claimed by another process, so it did not run here.` A step that cannot run (an invalid `trust`, a failed precondition, an input its schema refuses — the refusal names the field and what it must be) or cannot run here (a handler or adapter this server lacks) is not run; `get_run_state`'s `engine_runnable` names it and why, and the act is no longer offered for it. A handler or adapter that is not registered is attempted once, after every other owed step, so the run records which one is missing; that reply is an error, and its `next_actions` no longer offer the act for that step. An unknown argument is named in `warnings` (`advance_run: unknown argument 'x' was ignored.`).
+The reply has the same shape as a step's: `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled, and when a step opens a question the reply is `confirm_required` with the gate. It also carries `continued_by`: the name of the program that ran the steps (`{ by: null, absent_cause: 'driver_not_recorded' }` when the host passed none). A call with nothing owed runs nothing and returns the run's view — never an error. Its `context_hint` says why: `Run '<id>': nothing ran.`, then the agent steps that are ready, the work still owed, and each step that cannot run (`'<step>' cannot run (<check>): <why>.`, or `cannot run here (capability)` for a handler or adapter this server lacks — or `could not run (capability)`, in the past tense, from a caller that passes no extensions, which judges by the run's record); `No step is ready.` only when none of these holds. A step another process holds when this call tries to claim it is not run here, and the reply's `context_hint` ends with `'<step>' was claimed by another process, so it did not run here.` A step that cannot run (an invalid `trust`, a failed precondition, an input its schema refuses — the refusal names the field and what it must be, or the property the schema does not allow: `'<property>' is not allowed`) or cannot run here (a handler or adapter this server lacks) is not run; `get_run_state`'s `engine_runnable` names it and why, and the act is no longer offered for it. A handler or adapter that is not registered is attempted once, after every other owed step, so the run records which one is missing; that reply is an error, and its `next_actions` no longer offer the act for that step. An unknown argument is named in `warnings` (`advance_run: unknown argument 'x' was ignored.`).
 
 The act in `next_actions` reads:
 

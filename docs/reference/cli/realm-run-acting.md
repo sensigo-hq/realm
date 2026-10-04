@@ -45,6 +45,13 @@ Responded: 3ebc1158-1d29-41b5-9ca5-df054a681b58 | choice 'approve' | new state '
 
 `new state` is the run's phase after the answer: `running` if steps remain, `completed` if the gate's step was the last.
 
+When the answer leaves `auto` steps that only the engine can run, one more line names them and the command that runs them (`runs it` for one step, `runs them` for more). Added after version 0.45.0:
+
+```text
+Responded: b178179a-998d-457e-85e6-6d38439d0585 | choice 'approve' | new state 'running'
+Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them from this shell.
+```
+
 `respond` records the answer. Without `--by` the answer names nobody, and `realm run inspect` shows `(not stated)`. A name is never taken from the operating system or from `REALM_OPERATOR`: those name a program, and `respond` uses `REALM_OPERATOR` only for the cleanup steps its answer runs. An empty, long or control-character name is refused before the run is read:
 
 ```text
@@ -117,9 +124,23 @@ The preview's `project code` words compare the code this program loaded with wha
 | `not comparable with the run's last record` | One side records project code and the other does not, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |
 | `neither side records project code`         | Neither the run nor this program loaded project code.                                                                                                                        |
 
-When another program holds an owed step, the preview says so before anything runs: `In flight: '<step>' is in flight, taken by <program> since <time>.`
+When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.`
 
-`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks), agent steps ready (with the `realm agent --run-id` command), each step another program holds (`'<step>' is in flight, taken by <program> since <time>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. A step another process took while this one was about to run it is said as a fact, `• Step '<step>' was taken by <program> at <time>; not run here.`, and the command goes on with what is left. When nothing is owed, the last preview line is `Nothing is owed to the engine: <reasons>.` and nothing runs. Exit code 1 when a step failed or cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
+`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks), agent steps ready (with the `realm agent --run-id` command), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. A step another process took while this one was about to run it is said as a fact, `• Step '<step>' was taken by <program> at <time>; not run here.`, and the command goes on with what is left. When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reasons>.` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reasons>.` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the one way out — correcting the workflow and registering it again is the fix, since the run picks up the corrected definition:
+
+```text
+The engine can run nothing now: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+Run 507090b5-3b5b-4a6c-a814-3faa03404f95 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 507090b5-3b5b-4a6c-a814-3faa03404f95; or end it: realm run abandon 507090b5-3b5b-4a6c-a814-3faa03404f95.
+```
+
+After a call that ran other steps, the same way out takes the place of the `Run <id>: phase '<phase>'` line. A step another program holds:
+
+```text
+In flight: 'process' is in flight, taken by crown (from REALM_OPERATOR, via advance) since 2026-10-04T22:26:13.994Z.
+The engine can run nothing now: 'process' is in flight in another program — wait for it, or see realm run inspect 65d2afc8-2cb3-4401-808c-1d83a40bf989.
+```
+
+Exit code 1 when a step failed or cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
 
 ## `resume`
 
@@ -141,6 +162,14 @@ realm run resume 00b33778-f504-4d65-93ca-6300441f41e7 --from fetch
 ```text
 Resumed run '00b33778-f504-4d65-93ca-6300441f41e7': step 'fetch' re-enabled and run reset to 'running'.
 Drive it with: realm agent --run-id 00b33778-f504-4d65-93ca-6300441f41e7
+```
+
+When the step that is ready again is one only the engine runs, one more line names it (`the step` / `the steps`). Added after version 0.45.0:
+
+```text
+Resumed run '343aa612-ec76-4a27-9524-d3da06141f82': step 'work' re-enabled and run reset to 'running'.
+Drive it with: realm agent --run-id 343aa612-ec76-4a27-9524-d3da06141f82
+To run the step the engine owes ('work') without a model: realm run advance 343aa612-ec76-4a27-9524-d3da06141f82.
 ```
 
 `resume` runs no step. Cleanup steps that had not yet run for the ended run are cancelled, and each is named on a line that starts with `⚠`.
@@ -390,6 +419,14 @@ Guard step 'only_if_shipping' passed.
 Run '230b0939-9c61-40e4-8b6f-910594a81e92' is not terminal (phase: 'running') — nothing further to drain.
 ```
 
+When the enacted gate leaves `auto` steps only the engine runs, one more line names them. Added after version 0.45.0:
+
+```text
+✓ gate enacted (settle_default 'approve').
+Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing further to drain.
+To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd.
+```
+
 With `--all --expired`, the list names what each gate declared, without the choice or the guard. With `--force`, what each guard did is printed under its run:
 
 ```text
@@ -414,6 +451,7 @@ When there is nothing to do, it prints one of:
 ```text
 Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to drain.
 Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f.
+Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd. To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd.
 Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To end the run, answer its gate first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>. The answer can end the run by itself. If the run is still open after it: realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28.
 Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired; add --force to carry it out.
 No runs with an actionable pending finalizer.
