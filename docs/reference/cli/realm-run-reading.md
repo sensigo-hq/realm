@@ -168,7 +168,7 @@ What the engine owes, and steps that cannot run, from three runs. `inspect` load
 ```text
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585
 Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input must have required property 'n'
-Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it — from a program that has it: realm run advance 3d1c7a40-60e4-4a8e-9b1a-1f0a6e2c9d55
+Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it — from a program that has it: realm run advance 31ddb305-989b-42bf-8b63-fcb558ed1c23
 ```
 
 A waiting gate looks like this:
