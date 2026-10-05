@@ -2,13 +2,13 @@
 
 <!-- description: Reference for @sensigo/realm-testing, the package for testing workflows, handlers, adapters and stores: every value and type it exports. -->
 
-`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 25 values and 23 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
+`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 30 values and 23 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
 
 ```bash
 npm install --save-dev @sensigo/realm-testing
 ```
 
-This page describes the package on the `main` branch. Version 0.45.0 exports 23 values: `createFenceRunSource` and `fenceTestRun` were added after it, and the adapter that `fencedTraceBufferContract` takes changed with them (`fenceRuns` and `fenceRunPark` are new, and `fenceForm` has other values).
+This page describes the package on the `main` branch. Version 0.45.0 exports 23 values. Version 0.46.0 added seven: `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, and the four lists of law names `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. The adapter that `fencedTraceBufferContract` takes changed with them (`fenceRuns` and `fenceRunPark` are new, and `fenceForm` has other values).
 
 Nothing in the package depends on a test framework. A function that checks something throws an `Error` when the check fails, which any framework reports as a failed test.
 
@@ -16,15 +16,15 @@ To test a workflow from the command line, with no test file, see [Test a workflo
 
 ## The exports
 
-| Group                               | Values                                                                                                                                                                           |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Fixtures](#fixtures)               | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                         |
-| [Driving a run](#driving-a-run)     | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                           |
-| [Assertions](#assertions)           | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                          |
-| [Unit helpers](#unit-helpers)       | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                |
-| [GitHub stand-in](#github-stand-in) | `startGitHubMockServer`                                                                                                                                                          |
-| [Store contracts](#store-contracts) | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun` |
-| Version                             | `VERSION`, the package's version as a string: `"0.46.0"`.                                                                                                                        |
+| Group                               | Values                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Fixtures](#fixtures)               | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                                                                                                                                                 |
+| [Driving a run](#driving-a-run)     | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                                                                                                                                                   |
+| [Assertions](#assertions)           | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                                                                                                                                                  |
+| [Unit helpers](#unit-helpers)       | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                                                                                                                                        |
+| [GitHub stand-in](#github-stand-in) | `startGitHubMockServer`                                                                                                                                                                                                                                                                                  |
+| [Store contracts](#store-contracts) | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS` |
+| Version                             | `VERSION`, the package's version as a string: `"0.46.0"`.                                                                                                                                                                                                                                                |
 
 The 23 types are named in the group that uses them.
 

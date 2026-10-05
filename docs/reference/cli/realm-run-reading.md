@@ -99,6 +99,8 @@ The outputs in this section are from the `main` branch. Version 0.45.0 prints th
 | `--verbose`     | Under each tool call, also prints the arguments it was given and what it returned.                        |
 | `--check-drift` | Compares the project's code files as they are now with the hashes recorded when the run last loaded them. |
 
+This example comes from a separate run of the `triage` workflow, made with version 0.46.0, so its run ID is not the one in the other examples on this page.
+
 ```bash
 realm run inspect cb0e8545-ce3e-436f-b95c-fbd24f78a59b
 ```
