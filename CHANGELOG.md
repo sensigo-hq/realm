@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.46.0] — 2026-10-05
 
 Nine BREAKING changes; Realm is pre-1.0, so they ship in a minor — read **Upgrading** before you
 take this version. Realm no longer picks a model for you (`realm agent` and `realm listen` need
