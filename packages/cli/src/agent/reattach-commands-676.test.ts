@@ -76,6 +76,13 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
         .split('\n')
         .find((l) => l.startsWith('Drive it with:'));
       expect(line).toBe(`Drive it with: realm agent --run-id ${run.id} ${PLACEHOLDER}`);
+      // The command cannot carry the drive's other flags (a different command took them), so the
+      // next line says to add them and where to find the extension module the run loaded.
+      // (a) red when that line is dropped or reworded; (b) prints the line after "Drive it with:".
+      const lines = printed.join('\n').split('\n');
+      expect(lines[lines.indexOf(line!) + 1]).toBe(
+        `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${run.id} shows the extension module the run loaded).`,
+      );
     } finally {
       if (savedHome === undefined) delete process.env['HOME'];
       else process.env['HOME'] = savedHome;
@@ -104,6 +111,16 @@ describe('the dev-run detach map prints the model flags to fill in (issue #676)'
       .split('\n')
       .find((l) => l.startsWith('  Drive it:'));
     expect(line).toBe(`  Drive it:  realm agent --run-id run_abc ${PLACEHOLDER}`);
+    // The flags the dev run was given that `realm agent` takes too ride on the same line.
+    // (a) red when `driveFlags` is not appended; (b) prints the line.
+    const withFlags = renderDetachMap(record, 'summarise', {
+      driveFlags: buildReattachFlags({ extensionsModule: './ext.mjs', mintWriterNonce: true }),
+    })
+      .split('\n')
+      .find((l) => l.startsWith('  Drive it:'));
+    expect(withFlags).toBe(
+      `  Drive it:  realm agent --run-id run_abc ${PLACEHOLDER} --extensions-module ./ext.mjs --mint-writer-nonce`,
+    );
   });
 });
 
@@ -201,6 +218,54 @@ describe('buildReattachFlags (issue #676)', () => {
 
   it('--provider-module alone when given', () => {
     expect(buildReattachFlags({ providerModule: './p.mjs' })).toBe('--provider-module ./p.mjs');
+  });
+
+  it('each drive flag the operator gave is repeated, each on its own (issue #676 review)', () => {
+    expect(buildReattachFlags({ model: 'm', extensionsModule: './ext.mjs' })).toBe(
+      '--model m --extensions-module ./ext.mjs',
+    );
+    expect(buildReattachFlags({ model: 'm', project: '/srv/app' })).toBe(
+      '--model m --project /srv/app',
+    );
+    expect(buildReattachFlags({ model: 'm', schemaRetries: 0 })).toBe(
+      '--model m --schema-retries 0',
+    );
+    expect(buildReattachFlags({ model: 'm', llmTimeout: 45 })).toBe('--model m --llm-timeout 45');
+    expect(buildReattachFlags({ model: 'm', mintWriterNonce: true })).toBe(
+      '--model m --mint-writer-nonce',
+    );
+  });
+
+  it('--schema-retries at its default (2), and flags left unset, are not repeated', () => {
+    expect(buildReattachFlags({ model: 'm', schemaRetries: 2, mintWriterNonce: false })).toBe(
+      '--model m',
+    );
+  });
+
+  it('--provider-module with the other drive flags, in order', () => {
+    expect(
+      buildReattachFlags({
+        providerModule: './p.mjs',
+        extensionsModule: './ext.mjs',
+        project: '/srv/app',
+        schemaRetries: 4,
+        llmTimeout: 30,
+        mintWriterNonce: true,
+      }),
+    ).toBe(
+      '--provider-module ./p.mjs --extensions-module ./ext.mjs --project /srv/app --schema-retries 4 --llm-timeout 30 --mint-writer-nonce',
+    );
+  });
+
+  it('flags that only apply when a run is created are never repeated', () => {
+    const opts = {
+      model: 'm',
+      workflow: './wf.yaml',
+      params: '{"a":1}',
+      register: true,
+      releaseLineAdvisory: false,
+    } as unknown as Parameters<typeof buildReattachFlags>[0];
+    expect(buildReattachFlags(opts)).toBe('--model m');
   });
 
   it('a value with a space is single-quoted', () => {

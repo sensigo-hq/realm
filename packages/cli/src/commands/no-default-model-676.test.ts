@@ -187,7 +187,7 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
     expect(runFiles()).toEqual([]);
   }, 30_000);
 
-  it('E2 --run-id of an existing run, no --model → "Run <id> was left as it was.", the run file unchanged', async () => {
+  it('E2 --run-id of an existing run, no --model → "If run <id> exists, it was not changed.", the run file unchanged', async () => {
     const store = new JsonFileStore(join(home, '.realm', 'runs'));
     const { run } = await store.create({
       workflowId: 'no-default-model-676',
@@ -201,9 +201,23 @@ describe('realm agent refuses without --model, before any run (issue #676)', () 
       env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: CLOSED_PORT }),
     );
     expect(r.code).toBe(1);
-    expect(r.stderr.trim()).toBe(`Error: ${ONLY_ANTHROPIC} Run ${run.id} was left as it was.`);
+    expect(r.stderr.trim()).toBe(
+      `Error: ${ONLY_ANTHROPIC} If run ${run.id} exists, it was not changed.`,
+    );
     expect(r.stderr).not.toContain('Nothing was started.');
     expect(readFileSync(file).equals(before)).toBe(true);
+  }, 30_000);
+
+  it('E2b --run-id of a run that does not exist, no --model → the same ending, which does not say the run exists; no run file', async () => {
+    const r = await runCli(
+      ['agent', '--run-id', 'no-such-run-676'],
+      env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: CLOSED_PORT }),
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr.trim()).toBe(
+      `Error: ${ONLY_ANTHROPIC} If run no-such-run-676 exists, it was not changed.`,
+    );
+    expect(runFiles()).toEqual([]);
   }, 30_000);
 
   it("E7 --model '' → the same refusal as a missing --model, no run file", async () => {
@@ -379,4 +393,55 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
       await new Promise<void>((r) => stub.server.close(() => r()));
     }
   }, 45_000);
+});
+
+describe('the re-attach command repeats the flags the CLI was given (issue #676 review)', () => {
+  it('a step blocked on a missing handler → the printed command carries every repeated flag, under the names the CLI parsed', async () => {
+    const dir = join(root, 'blocked');
+    mkdirSync(dir);
+    writeFileSync(
+      join(dir, 'workflow.yaml'),
+      [
+        'id: reattach-cli-676',
+        'name: Reattach CLI 676',
+        'version: 1',
+        'steps:',
+        '  publish:',
+        '    description: Publish.',
+        '    execution: auto',
+        '    handler: publish_answer',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(join(dir, 'ext.mjs'), 'export default { handlers: {} };\n', 'utf8');
+    const flags = [
+      '--provider',
+      'anthropic',
+      '--model',
+      'm-676',
+      '--extensions-module',
+      'blocked/ext.mjs',
+      '--project',
+      'blocked',
+      '--schema-retries',
+      '3',
+      '--llm-timeout',
+      '45',
+      '--mint-writer-nonce',
+    ];
+    const r = await runCli(
+      ['agent', '--workflow', join('blocked', 'workflow.yaml'), ...flags],
+      env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: CLOSED_PORT }),
+    );
+    expect(r.code).toBe(1);
+    const files = runFiles();
+    expect(files).toHaveLength(1);
+    const runId = files[0]!.replace(/\.json$/, '');
+    const line = r.stderr.split('\n').find((l) => l.startsWith("⚠ Step 'publish' is blocked:"));
+    expect(line).toBe(
+      "⚠ Step 'publish' is blocked: handler 'publish_answer' is not registered in this runner. " +
+        `The run is NOT failed — add handler 'publish_answer' and re-attach (\`realm agent --run-id ${runId} ${flags.join(' ')}\`).`,
+    );
+  }, 30_000);
 });

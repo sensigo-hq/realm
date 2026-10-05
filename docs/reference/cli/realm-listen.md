@@ -101,7 +101,7 @@ For a request that passes every check, `realm listen` creates the run, starts `r
 
 The new process has the environment of `realm listen`, and it loads the `.env` file in the workflow's folder when it starts. The model provider's key must therefore be set where `realm listen` is started or in that `.env`. `realm agent` needs a key to start at all, even for a workflow in which no step calls a model.
 
-If a run's `realm agent` refuses to start (for example, no key for its provider), the run that `realm listen` created stays open, with nothing on its record. Its refusal appears in the same output as the log, and ends `Run <run-id> was left as it was.`
+If a run's `realm agent` refuses to start (for example, no key for its provider), the run that `realm listen` created stays open, with nothing on its record. Its refusal appears in the same output as the log, and ends `If run <run-id> exists, it was not changed.` To drive the run once the cause is fixed, run `realm agent --run-id <run-id> --provider <provider> --model <model>` in the workflow's folder, with the key set, adding `--llm-timeout` if `realm listen` was given one.
 
 What the new process prints appears in the same output as the log:
 

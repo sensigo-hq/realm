@@ -197,6 +197,14 @@ It needs a terminal. Started without one, it creates no run:
 Error: dev-mode run is interactive — it prompts on stdin for every step and gate, and stdin here is not a terminal. No run was created. Scripted flows: 'realm workflow test' drives fixtures; 'realm listen' / 'realm agent' are the production drives. To run this workflow by hand, use a real terminal.
 ```
 
+A step that does not return `ok` prints a line that starts with `✗`, then the reply's status and the reason. When the step that stopped is one the engine ran after the step you answered, the line names it:
+
+```text
+  ✗ error (step 'file', run by the engine after 'classify' finished): Handler 'file_ticket' threw: the filing system is down
+```
+
+This was added after version 0.45.0, which prints `✗ error: …` without naming the step.
+
 Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:
 
 ```text
@@ -206,7 +214,7 @@ Prompt cancelled — detached from run '00ac2e9c-6728-4fb4-8ba0-234617eff305' at
   Discard:   realm run abandon 00ac2e9c-6728-4fb4-8ba0-234617eff305
 ```
 
-To drive the run, fill in `<provider>` and `<model>`. `<model>` is the model to drive the run with. Give the model flags you drove the run with — `--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url` as you used them. Realm does not record the model or those flags; a drive failure names the provider (`realm run inspect`). A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>`.
+To drive the run with `realm agent`, fill in `<provider>` and `<model>` with the provider and model you want: a run started by `realm workflow run` has not been driven by a model. The `Drive it` line also repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` you gave `realm workflow run` (none in this example), as you typed them: run it from the folder you started that command in. If the workflow file was never registered, register it first (`realm workflow register <file>`). Until then the command stops with `Error: Workflow not found: <id> — most often this run was created from a file without --register. …`, and after it the same command drives the run. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>` and without those flags.
 
 [Install Realm and run a workflow](../../start/install-and-first-run.md) shows a whole session.
 

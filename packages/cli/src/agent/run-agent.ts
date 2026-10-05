@@ -119,12 +119,13 @@ export interface AgentDeps {
    */
   llmTimeoutSeconds?: number;
   /**
-   * Issue #676 — the model flags this drive was started with (`--provider-module <path>`, or
-   * `--provider`, `--model`, `--base-url`, `--strict-base-url` as given), already quoted for a
-   * shell. Realm has no default model, so a re-attach command printed without them would be
-   * refused; the in-drive "re-attach" line repeats them. Set by `realm agent`. Absent (a host
-   * that calls `runAgent` itself) ⇒ the line prints `--provider <provider> --model <model>` for
-   * the operator to fill in.
+   * Issue #676 — the flags this drive was started with (the model flags, `--extensions-module`,
+   * `--project`, a non-default `--schema-retries`, `--llm-timeout`, `--mint-writer-nonce`; see
+   * `buildReattachFlags`), already quoted for a shell. The in-drive "re-attach" line repeats them,
+   * so following it continues the same drive: realm has no default model, and a step blocked on a
+   * missing handler is usually fixed through `--extensions-module`. Set by `realm agent`. Absent (a
+   * host that calls `runAgent` itself) ⇒ the line prints `--provider <provider> --model <model>`
+   * for the operator to fill in.
    */
   reattachFlags?: string;
 }
@@ -1344,11 +1345,26 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
           // issue #217: append the repair count ONLY when at least one repair actually ran — never
           // "after 0 schema-repair attempts".
+          //
+          // issue #676 (review): `stopped_step` names the step whose own reply this is. When it is
+          // not this step, the engine ran it AFTER this one (this step then settled, so its repairs,
+          // if any, succeeded). The lines and the drive-failure entry below name the step that stopped.
+          const laterStep =
+            result.stopped_step !== undefined && result.stopped_step !== stepName
+              ? result.stopped_step
+              : undefined;
+          const stoppedStep = laterStep ?? stepName;
+          const ranAfter =
+            laterStep !== undefined ? ` (run by the engine after '${stepName}' finished)` : '';
           const repairSuffix =
-            repairsUsed > 0 ? ` after ${repairsUsed} schema-repair attempts` : '';
+            repairsUsed > 0 && laterStep === undefined
+              ? ` after ${repairsUsed} schema-repair attempts`
+              : '';
           if (isCapabilityBlock) {
             currentRun = await deps.store.get(runId);
-            const block = findCapabilityBlockedSteps(currentRun).find((b) => b.step === stepName);
+            const block = findCapabilityBlockedSteps(currentRun).find(
+              (b) => b.step === stoppedStep,
+            );
             const need =
               block !== undefined
                 ? `${block.requirement.kind} '${block.requirement.name}'`
@@ -1356,12 +1372,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   ? 'the missing handler'
                   : 'the missing adapter';
             console.error(
-              `\n⚠ Step '${stepName}' is blocked: ${need} is not registered in this runner. ` +
+              `\n⚠ Step '${stoppedStep}'${ranAfter} is blocked: ${need} is not registered in this runner. ` +
                 `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}\`).`,
             );
           } else {
             console.error(
-              `\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}${repairSuffix}`,
+              `\n✗ Step '${stoppedStep}'${ranAfter} failed: ${result.errors.join(', ')}${repairSuffix}`,
             );
             // ═══ issue #401, CHOKEPOINT (4) — the disposition table, KEYED ON ERROR CODE ═══
             //
@@ -1384,7 +1400,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             ) {
               await recordDriveFailure(deps.store, runId, {
                 at: new Date().toISOString(),
-                step: stepName,
+                step: stoppedStep,
                 provider: providerForEvidence ?? 'unknown',
                 error_class: 'validation_rejected',
                 message: sanitizeError(result.errors.join(', ')).slice(0, MESSAGE_CAP),

@@ -265,14 +265,24 @@ const NO_DEFAULT_MODEL = '--model is required: realm has no default model.';
  * because models change frequently." A default written into a release keeps pointing at a model
  * after the provider retires it.
  *
- * Order: no key at all → the provider (named, or chosen from the keys: OpenAI when both are set)
- * → the named provider's own key → `--base-url` with Anthropic → the model.
+ * Order: no key at all (naming the named provider's key when `--provider` was given) → the
+ * provider (named, or chosen from the keys: OpenAI when both are set) → the named provider's own
+ * key → `--base-url` with Anthropic → the model.
  */
 export function checkProviderFlags(flags: ProviderFlags): ProviderFlagsCheck {
   const hasOpenAI = hasText(flags.env.OPENAI_API_KEY);
   const hasAnthropic = hasText(flags.env.ANTHROPIC_API_KEY);
 
   if (!hasOpenAI && !hasAnthropic) {
+    // A named provider needs its own key; telling that operator "OPENAI_API_KEY or
+    // ANTHROPIC_API_KEY" would send half of them to the next refusal.
+    if (flags.provider !== undefined) {
+      const key = flags.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+      return {
+        ok: false,
+        message: `realm agent requires an LLM API key: --provider ${flags.provider} was given, and ${key} is not set or is empty. Set ${key}.`,
+      };
+    }
     return {
       ok: false,
       message: 'realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.',

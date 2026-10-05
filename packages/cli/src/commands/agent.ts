@@ -121,12 +121,20 @@ function shellWord(value: string): string {
   return /^[A-Za-z0-9._/:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/** `--schema-retries`' default; the re-attach command repeats the flag only when it differs. */
+const SCHEMA_RETRIES_DEFAULT = 2;
+
 /**
- * Issue #676 — the model flags a drive was started with, as shell words, for the re-attach
- * command the drive prints when a step is blocked (`AgentDeps.reattachFlags`). Realm has no
- * default model, so that command must repeat them to work: `--provider-module <path>` alone when
- * given; otherwise `--provider`, `--model`, `--base-url` (each when given) and `--strict-base-url`
- * (when set). A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
+ * Issue #676 — the flags a drive was started with, as shell words, for the re-attach command the
+ * drive prints when a step is blocked (`AgentDeps.reattachFlags`). Following that command must
+ * continue the SAME drive: realm has no default model, and a step blocked on a missing handler is
+ * usually fixed through `--extensions-module`, so a command that dropped either would be refused or
+ * blocked again. Repeated, each when given: `--provider-module <path>`, or `--provider`, `--model`,
+ * `--base-url`, `--strict-base-url`; then `--extensions-module`, `--project`, `--schema-retries`
+ * (only when it differs from its default, so the command never shows a value nobody typed),
+ * `--llm-timeout` and `--mint-writer-nonce`. Left out: `--workflow`, `--params` and `--register`
+ * (they apply only when a run is created) and the hidden `--no-release-line-advisory` (listen's
+ * own). A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
  *
  * @internal Exported for testing only.
  */
@@ -136,14 +144,30 @@ export function buildReattachFlags(opts: {
   baseUrl?: string;
   strictBaseUrl?: boolean;
   providerModule?: string;
+  extensionsModule?: string;
+  project?: string;
+  schemaRetries?: number;
+  llmTimeout?: number;
+  mintWriterNonce?: boolean;
 }): string {
-  if (opts.providerModule !== undefined)
-    return `--provider-module ${shellWord(opts.providerModule)}`;
   const words: string[] = [];
-  if (opts.provider !== undefined) words.push('--provider', shellWord(opts.provider));
-  if (opts.model !== undefined) words.push('--model', shellWord(opts.model));
-  if (opts.baseUrl !== undefined) words.push('--base-url', shellWord(opts.baseUrl));
-  if (opts.strictBaseUrl === true) words.push('--strict-base-url');
+  if (opts.providerModule !== undefined) {
+    words.push('--provider-module', shellWord(opts.providerModule));
+  } else {
+    if (opts.provider !== undefined) words.push('--provider', shellWord(opts.provider));
+    if (opts.model !== undefined) words.push('--model', shellWord(opts.model));
+    if (opts.baseUrl !== undefined) words.push('--base-url', shellWord(opts.baseUrl));
+    if (opts.strictBaseUrl === true) words.push('--strict-base-url');
+  }
+  if (opts.extensionsModule !== undefined) {
+    words.push('--extensions-module', shellWord(opts.extensionsModule));
+  }
+  if (opts.project !== undefined) words.push('--project', shellWord(opts.project));
+  if (opts.schemaRetries !== undefined && opts.schemaRetries !== SCHEMA_RETRIES_DEFAULT) {
+    words.push('--schema-retries', String(opts.schemaRetries));
+  }
+  if (opts.llmTimeout !== undefined) words.push('--llm-timeout', String(opts.llmTimeout));
+  if (opts.mintWriterNonce === true) words.push('--mint-writer-nonce');
   return words.join(' ');
 }
 
@@ -201,7 +225,7 @@ export const agentCommand = new Command('agent')
       'output_schema/input_schema validation (issue #217) — the drive re-prompts the same step ' +
       "with the validator's errors appended. 0 disables (today's behavior).",
     parseSchemaRetries,
-    2,
+    SCHEMA_RETRIES_DEFAULT,
   )
   .option(
     '--llm-timeout <seconds>',
@@ -326,7 +350,7 @@ export const agentCommand = new Command('agent')
           if (!flags.ok) {
             const tail =
               opts.runId !== undefined
-                ? `Run ${opts.runId} was left as it was.`
+                ? `If run ${opts.runId} exists, it was not changed.`
                 : 'Nothing was started.';
             console.error(`Error: ${flags.message} ${tail}`);
             process.exit(1);

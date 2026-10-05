@@ -6218,9 +6218,11 @@ async function executeChainInternal(
 
   const result = await executeStep(store, definition, options);
 
-  // Stop chaining on any non-ok result.
+  // Stop chaining on any non-ok result. It is this step's own reply; `executeChain` relabels every
+  // reply with the caller's `command`, and a caller may relabel it again (MCP `start_run`), so
+  // `stopped_step` keeps the name of the step whose reply it is (issue #676 review).
   if (result.status !== 'ok') {
-    return result;
+    return { ...result, stopped_step: options.command };
   }
 
   // Load the current run to determine what comes next.

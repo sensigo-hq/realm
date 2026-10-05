@@ -37,6 +37,10 @@ const MSG = {
     '--provider openai was given, but OPENAI_API_KEY is not set or is empty (only ANTHROPIC_API_KEY is set). ' +
     'Set OPENAI_API_KEY, or use --provider anthropic with an Anthropic model.',
   noKey: 'realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.',
+  noKeyNamedAnthropic:
+    'realm agent requires an LLM API key: --provider anthropic was given, and ANTHROPIC_API_KEY is not set or is empty. Set ANTHROPIC_API_KEY.',
+  noKeyNamedOpenai:
+    'realm agent requires an LLM API key: --provider openai was given, and OPENAI_API_KEY is not set or is empty. Set OPENAI_API_KEY.',
   baseUrlAnthropic:
     '--base-url is only supported with --provider openai (or OpenAI-compatible endpoints). ' +
     'For Anthropic, configure the endpoint via the ANTHROPIC_BASE_URL environment variable.',
@@ -272,6 +276,22 @@ describe('checkProviderFlags — on its own (issue #676)', () => {
     expect(checkProviderFlags(flags({ env: ANTHROPIC, baseUrl: 'https://x', model: 'm' }))).toEqual(
       { ok: false, message: MSG.baseUrlAnthropic },
     );
+  });
+
+  it("no key at all, with a named provider → the no-key message names that provider's key (empty keys count as not set)", () => {
+    for (const env of [
+      { OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined },
+      { OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '   ' },
+    ]) {
+      expect(checkProviderFlags(flags({ env, provider: 'anthropic', model: 'm' }))).toEqual({
+        ok: false,
+        message: MSG.noKeyNamedAnthropic,
+      });
+      expect(checkProviderFlags(flags({ env, provider: 'openai', model: 'm' }))).toEqual({
+        ok: false,
+        message: MSG.noKeyNamedOpenai,
+      });
+    }
   });
 
   it('flags that pass: the chosen provider and the given model', () => {

@@ -87,7 +87,7 @@ A run in `running` moves only when a driver calls it. If the driver has stopped,
 realm agent --run-id <run-id> --model <model>
 ```
 
-`<model>` is the model to drive the run with. Give the model flags you drove the run with — `--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url` as you used them. Realm does not record the model or those flags; a drive failure names the provider (`realm run inspect`). A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 has a default model, so `--model` can be left out there.
+`<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 has a default model, so `--model` can be left out there.
 
 An assistant connected over MCP can pick the run up as well, by asking for its state and following the reply.
 
@@ -104,9 +104,10 @@ It prints:
 ```text
 Resumed run '4a0eafe2-afff-40ca-8b89-ad0e92db1a9c': step 'fetch' re-enabled and run reset to 'running'.
 Drive it with: realm agent --run-id 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c --provider <provider> --model <model>
+Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c shows the extension module the run loaded).
 ```
 
-The run is open again. Steps that had completed stay completed; the named step will run again. Then start a driver on it, as the second line says, with `<provider>` and `<model>` filled in as above. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`.
+The run is open again. Steps that had completed stay completed; the named step will run again. Then start a driver on it, as the second line says, with `<provider>` and `<model>` filled in as above. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
 
 `--from` must name a step the run lists under `Failed`. For any other step, the command refuses:
 

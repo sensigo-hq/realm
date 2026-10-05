@@ -116,9 +116,10 @@ realm run resume 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 --from fetch
 ```text
 Resumed run '8d4053bf-ceb4-4bde-bbde-3595715fd7c5': step 'fetch' re-enabled and run reset to 'running'.
 Drive it with: realm agent --run-id 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 --provider <provider> --model <model>
+Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 shows the extension module the run loaded).
 ```
 
-Fill in `<provider>` and `<model>` before you run the second line. `<model>` is the model to drive the run with. Give the model flags you drove the run with — `--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url` as you used them. Realm does not record the model or those flags; a drive failure names the provider (`realm run inspect`). A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`.
+Fill in `<provider>` and `<model>` before you run the second line. `<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
 
 `resume` runs no step. Cleanup steps that had not yet run for the ended run are cancelled, and each is named on a line that starts with `⚠`.
 

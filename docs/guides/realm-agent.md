@@ -187,8 +187,10 @@ Each model request is given up to 600 seconds. Change that for a whole run with 
 
 ## If you see something else
 
-- **`Error: realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY. Nothing was started.`** No provider key is set in this shell. A key that is empty or holds only spaces counts as not set; version 0.45.0 counted it as set.
-- **`Error: --model is required: realm has no default model. ANTHROPIC_API_KEY is set, so the provider is Anthropic; name one of its models (Anthropic lists them at https://platform.claude.com/docs/en/models/overview). Nothing was started.`** Add `--model` with a model the provider lists. The message names the provider Realm chose and why; it reads differently when another key is set or `--provider` is given. After `--run-id`, it ends `Run <run-id> was left as it was.` instead. Version 0.45.0 does not print it: it has a default model.
+After `--run-id`, each refusal below that ends `Nothing was started.` ends `If run <run-id> exists, it was not changed.` instead.
+
+- **`Error: realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY. Nothing was started.`** No provider key is set in this shell. A key that is empty or holds only spaces counts as not set; version 0.45.0 counted it as set. With `--provider anthropic`, the message names only `ANTHROPIC_API_KEY` (added after version 0.45.0).
+- **`Error: --model is required: realm has no default model. ANTHROPIC_API_KEY is set, so the provider is Anthropic; name one of its models (Anthropic lists them at https://platform.claude.com/docs/en/models/overview). Nothing was started.`** Add `--model` with a model the provider lists. The message names the provider Realm chose and why; it reads differently when another key is set or `--provider` is given. After `--run-id`, it ends `If run <run-id> exists, it was not changed.` instead. Version 0.45.0 does not print it: it has a default model.
 - **`Error: --provider anthropic was given, but ANTHROPIC_API_KEY is not set or is empty (only OPENAI_API_KEY is set). Set ANTHROPIC_API_KEY, or use --provider openai with an OpenAI model. Nothing was started.`** The provider you named has no key in this shell. Set its key, or name the other provider and one of its models. Version 0.45.0 does not print it: it creates the run, and the first model call fails.
 - **`Error: one of --workflow or --run-id is required`** Give one of the two.
 - **`Error: --workflow and --run-id are mutually exclusive`** To continue a run, give `--run-id` alone.

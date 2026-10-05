@@ -332,7 +332,7 @@ Error loading extensions: Extension handler 'order_total' is declared by both '.
 ⚠ Step 'only' is blocked: handler 'missing' is not registered in this runner. The run is NOT failed — add handler 'missing' and re-attach (`realm agent --run-id 019e6924-4d83-4488-aca8-046ae4b8ec8a --provider anthropic --model claude-sonnet-5-5`).
 ```
 
-The re-attach command repeats the model flags the drive was started with. Version 0.45.0 prints `realm agent --run-id <run-id>` alone there.
+The re-attach command repeats the flags the drive was started with: the model flags, `--extensions-module`, `--project`, `--schema-retries` when it is not 2, `--llm-timeout` and `--mint-writer-nonce`; it leaves out `--workflow`, `--params` and `--register`. Version 0.45.0 prints `realm agent --run-id <run-id>` alone there.
 
 The run stays open, and the step can be run later by a process that has the handler.
 

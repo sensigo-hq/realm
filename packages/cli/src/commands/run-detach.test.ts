@@ -239,6 +239,42 @@ steps:
     expect(errSpy.mock.calls).toHaveLength(1);
   }, 20_000);
 
+  it("c FLAGS — the map's Drive it line repeats the --project and --mint-writer-nonce this command was given (issue #676)", async () => {
+    mocks.question.mockImplementation(async () => {
+      throw Object.assign(new Error('Aborted with Ctrl+D'), { code: 'ABORT_ERR' });
+    });
+    await expect(
+      runCommand.parseAsync([join(dir, 'workflow.yaml'), '--project', dir, '--mint-writer-nonce'], {
+        from: 'user',
+      }),
+    ).rejects.toThrow('process.exit');
+    const driveLine = stderr()
+      .split('\n')
+      .find((l) => l.startsWith('  Drive it:'));
+    // (a) red when the cancel path does not pass the command's flags to the map; (b) prints the line.
+    expect(driveLine).toMatch(
+      new RegExp(
+        `^  Drive it:  realm agent --run-id \\S+ --provider <provider> --model <model> --project ${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} --mint-writer-nonce$`,
+      ),
+    );
+  }, 20_000);
+
+  it("c NO FLAGS — given none of those flags, the map's Drive it line ends at the model placeholder (issue #676)", async () => {
+    mocks.question.mockImplementation(async () => {
+      throw Object.assign(new Error('Aborted with Ctrl+D'), { code: 'ABORT_ERR' });
+    });
+    await expect(
+      runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' }),
+    ).rejects.toThrow('process.exit');
+    const driveLine = stderr()
+      .split('\n')
+      .find((l) => l.startsWith('  Drive it:'));
+    // (a) red when an empty set of flags still adds a space after `<model>`; (b) prints the line.
+    expect(driveLine).toMatch(
+      /^ {2}Drive it: {2}realm agent --run-id \S+ --provider <provider> --model <model>$/,
+    );
+  }, 20_000);
+
   it('c NEGATIVE — a non-abort error still rethrows, loudly', async () => {
     // Re-homed by issue #459. A SyntaxError from JSON.parse — the shape this cell used to ride —
     // now RE-PROMPTS (operator input is handled where it is read), so it can no longer stand in
@@ -454,6 +490,35 @@ steps:
       expect(text).toContain('realm run inspect');
       expect(text).toContain("at step '(step unknown)'");
       expect(exitSpy).toHaveBeenCalledWith(1);
+    }, 20_000);
+
+    it('B3b the stall map repeats the --mint-writer-nonce this command was given (issue #676)', async () => {
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  a:
+    description: a
+    execution: agent
+    when:
+      - 'run.params.never_true == true'
+`,
+        'utf8',
+      );
+      await expect(
+        runCommand.parseAsync([join(dir, 'workflow.yaml'), '--mint-writer-nonce'], {
+          from: 'user',
+        }),
+      ).rejects.toThrow('process.exit');
+      const driveLine = stderr()
+        .split('\n')
+        .find((l) => l.startsWith('  Drive it:'));
+      // (a) red when the stall path does not pass the command's flags to the map; (b) prints the line.
+      expect(driveLine).toMatch(
+        /^ {2}Drive it: {2}realm agent --run-id \S+ --provider <provider> --model <model> --mint-writer-nonce$/,
+      );
     }, 20_000);
 
     it("B5 the CHOICE arm's fresh read: a run terminalized externally during a bad choice converges honestly", async () => {
