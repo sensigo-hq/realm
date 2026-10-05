@@ -170,10 +170,12 @@ Run the workflow autonomously from the terminal — no MCP client, no IDE, no co
 ```bash
 realm agent \
   --workflow examples/02-ticket-classifier/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/02-ticket-classifier/tickets/billing-overcharge.txt\"}"
+  --params "{\"path\":\"$(pwd)/examples/02-ticket-classifier/tickets/billing-overcharge.txt\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running. Use `--provider anthropic` to switch providers. The agent drives both steps sequentially, validating each output against its schema before advancing, and prints the `classify_ticket` result when the run completes.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). The agent drives both steps sequentially, validating each output against its schema before advancing, and prints the `classify_ticket` result when the run completes.
 
 Either way, the agent will:
 

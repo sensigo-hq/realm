@@ -1,5 +1,7 @@
 # The four step kinds
 
+<!-- description: The four values of a step's execution field (auto, agent, guard and finalizer): what each kind is for, what it records, and how to choose. -->
+
 Every step has an `execution` field that says who performs it. There are four values: `auto`, `agent`, `guard` and `finalizer`. This page explains what each kind is for, what it leaves in the record, and how to choose between them.
 
 | Kind        | Who performs it        | Use it for                                             |

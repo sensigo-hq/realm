@@ -121,6 +121,10 @@ async function emitFailedAttemptTelemetry(
   let record: ReturnType<typeof buildFailedAttemptRecord>;
   try {
     if (result.status !== 'error') return;
+    // issue #676 (review): a rejection from a step the engine ran AFTER this one is not a failed
+    // attempt of this step — its submission was accepted and it settled (`stopped_step` names
+    // another step).
+    if (result.stopped_step !== undefined && result.stopped_step !== args.command) return;
     const code = result.error_code;
     if (code === undefined || !VALIDATION_TELEMETRY_CODES.has(code)) return;
     // issue #220: VALIDATION_EXHAUSTED carries its ajv errors under `last_ajv_errors` (the last

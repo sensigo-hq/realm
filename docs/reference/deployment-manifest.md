@@ -1,5 +1,7 @@
 # Deployment manifest (`realm.yaml`)
 
+<!-- description: Reference for realm.yaml, a project's settings file: its top-level keys and their rules, where Realm looks for the file, and what a run records about it. -->
+
 `realm.yaml` holds a project's settings: how each adapter, handler and processor is built, where secrets come from, and how gates are posted to Slack. This page lists its 6 top-level keys, the rules for each, where Realm looks for the file, and what a run records about it. Every message shown came from a run of `realm` against a project at `/srv/shop`.
 
 For a walk through a first `realm.yaml`, see [Deploy a project](../guides/deploy.md).

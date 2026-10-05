@@ -89,8 +89,8 @@ Create a `.env` file in this example's directory (next to `realm.yaml`):
 GITHUB_TOKEN=ghp_...             # needs contents:read and pull_requests:write
 
 # AI provider — one of:
-OPENAI_API_KEY=sk-...
-# ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-...
 
 # Slack — required for gate notification and post-approval confirmation
 SLACK_WEBHOOK_URL=https://hooks.slack.com/...  # bound TWICE in realm.yaml: adapters.slack AND notifiers.slack_gate
@@ -183,8 +183,11 @@ In your repository → **Settings → Webhooks → Add webhook**:
 
 ```bash
 GITHUB_WEBHOOK_SECRET=<your-webhook-secret> \
-realm listen examples/09-webhook-pr-review/workflow.yaml --port 4000
+realm listen examples/09-webhook-pr-review/workflow.yaml --port 4000 \
+  --provider anthropic --model claude-sonnet-5-5
 ```
+
+The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)).
 
 The `trigger:` block declares `auth.mode: github` (verifying the HMAC signature against
 `GITHUB_WEBHOOK_SECRET`), filters to `pull_request` opened/synchronize, dedups by delivery id, and

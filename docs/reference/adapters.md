@@ -1,5 +1,7 @@
 # Adapters
 
+<!-- description: The adapters Realm ships, with each one's settings and operations, and for each operation its parameters and the HTTP request it sends. -->
+
 An adapter is the code that talks to one kind of outside service. Realm ships 10. This page lists each one's settings and operations. For every operation it gives the parameters and the HTTP request the adapter sends.
 
 The request shown for each operation is the one the adapter sent when the operation was run against a local stand-in for the service. No call was made to the real services. The parameter lists were read from the adapters' code.

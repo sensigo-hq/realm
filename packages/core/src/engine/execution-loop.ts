@@ -6352,6 +6352,19 @@ function pickNextEngineStep(
     ?.step;
 }
 
+/**
+ * Issue #676 (review; decisions C73/C74 in #625's record): a step's own non-`ok` reply names that
+ * step in `stopped_step`; an `ok` reply never carries the field. Applied exactly where a step's call
+ * returns — the step `executeChain` names, and each step the advance loop runs — so the loop's own
+ * errors (a guard's settlement that could not be written, or was already settled by a different
+ * attempt) carry none. Consumers compare it with `command`; a value that differs means the engine
+ * ran that step after the one the caller named (or, for `advance_run`, whose `command` is no step,
+ * the step it ran).
+ */
+function stampStoppedStep(reply: ResponseEnvelope, step: string): ResponseEnvelope {
+  return reply.status === 'ok' ? reply : { ...reply, stopped_step: step };
+}
+
 /** What the advance loop is given (issue #625 PR-2a). */
 interface AdvanceLoopContext {
   runId: string;
@@ -6851,17 +6864,20 @@ async function advanceLoop(
 
     options.onStep?.(nextAutoStep);
     executions += 1;
-    const stepResult = await executeEngineStep(store, definition, {
-      runId: options.runId,
-      step: nextAutoStep,
-      run,
-      registry: options.registry,
-      ...(options.traceBufferStore !== undefined
-        ? { traceBufferStore: options.traceBufferStore }
-        : {}),
-      ...(options.driver !== undefined ? { driver: options.driver } : {}),
-      ...(options.now !== undefined ? { now: options.now } : {}),
-    });
+    const stepResult = stampStoppedStep(
+      await executeEngineStep(store, definition, {
+        runId: options.runId,
+        step: nextAutoStep,
+        run,
+        registry: options.registry,
+        ...(options.traceBufferStore !== undefined
+          ? { traceBufferStore: options.traceBufferStore }
+          : {}),
+        ...(options.driver !== undefined ? { driver: options.driver } : {}),
+        ...(options.now !== undefined ? { now: options.now } : {}),
+      }),
+      nextAutoStep,
+    );
     if (stepResult.status === 'blocked' && stepResult.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
       // Another process holds the step (decision C14's code): it is not run here and not counted
       // as run (it does count toward the defensive bound — decision C30.14). Re-read the record and
@@ -7155,7 +7171,10 @@ export async function executeChain(
   const takenSteps: string[] = [];
 
   // The named step, through the caller's dispatcher (a bare named step records `driven_step`).
-  const named = await executeStep(store, definition, effectiveOptions);
+  const named = stampStoppedStep(
+    await executeStep(store, definition, effectiveOptions),
+    options.command,
+  );
   let result: ResponseEnvelope = named;
   if (named.status === 'ok') {
     let run: RunRecord | undefined;

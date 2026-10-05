@@ -125,6 +125,19 @@ export abstract class LlmProvider {
   capabilities(): ProviderCapabilities {
     return { jsonMode: false };
   }
+
+  /**
+   * Issue #676 — optional, and public (`LlmProvider` is published as `@sensigo/realm-cli/agent`).
+   * Given an error this provider's own call threw, returns ONE plain sentence explaining it when
+   * the provider recognises it (for example: Anthropic answering that it has no model by the name
+   * given), and `undefined` otherwise. `realm agent` prints the sentence on its own line under the
+   * step's failure line; the error itself, and what the run records about it, stay unchanged.
+   *
+   * Recognise the error from its own fields, never by `instanceof` (an SDK may be loaded more
+   * than once) and never by a pattern over the whole message. It must not throw: realm calls it
+   * through a guard and ignores a throw, a non-string, an empty string or one of only spaces.
+   */
+  explainFailure?(err: unknown): string | undefined;
 }
 
 brandClass(LlmProvider, Symbol.for('@sensigo/realm-cli/LlmProvider'), REALM_CLI_BRAND);
@@ -195,9 +208,195 @@ export function isToolCapable(provider: LlmProvider): provider is ToolCapableLlm
 
 export type ProviderName = 'openai' | 'anthropic';
 
+/** Where Anthropic lists its current models (issue #676; answered 200 on 2026-10-04). */
+export const ANTHROPIC_MODELS_URL = 'https://platform.claude.com/docs/en/models/overview';
+/** Where OpenAI lists its models (issue #676; answered 200 on 2026-10-04). */
+export const OPENAI_MODELS_URL = 'https://developers.openai.com/api/docs/models';
+
+/**
+ * Issue #676: whether a flag or an API key was really given — a value with something other than
+ * whitespace in it. The ONE rule for both keys and `--model`: an empty key used to count as set
+ * (`!== undefined`), so a message saying a key "is set" could be false, and `--model
+ * "$REALM_MODEL"` with the variable unset sent `"model":""` to the provider.
+ */
+export function hasText(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+/** The two API keys realm's built-in providers read, as found in the environment. */
+export interface ProviderKeys {
+  OPENAI_API_KEY: string | undefined;
+  ANTHROPIC_API_KEY: string | undefined;
+}
+
+/**
+ * Issue #676: the one place realm reads the two API keys for choosing a provider. `realm agent`
+ * reads them through this (its command file reads no environment variable), and so does
+ * `resolveProvider`.
+ */
+export function readProviderKeys(): ProviderKeys {
+  return {
+    OPENAI_API_KEY: process.env['OPENAI_API_KEY'],
+    ANTHROPIC_API_KEY: process.env['ANTHROPIC_API_KEY'],
+  };
+}
+
+/** The flags `checkProviderFlags` judges, and the two keys (from `readProviderKeys()`). */
+export interface ProviderFlags {
+  provider: ProviderName | undefined;
+  model: string | undefined;
+  baseUrl: string | undefined;
+  env: ProviderKeys;
+}
+
+/** `checkProviderFlags`' answer: the provider and model to build, or the refusal's message. */
+export type ProviderFlagsCheck =
+  { ok: true; provider: ProviderName; model: string } | { ok: false; message: string };
+
+const NO_DEFAULT_MODEL = '--model is required: realm has no default model.';
+
+/**
+ * Issue #676 — checks the model flags of a built-in provider and chooses the provider, before
+ * anything is created. Pure: it reads only its argument. The ONE place these refusal sentences
+ * are written; `realm agent` adds the closing sentence that says what happened to the run, and
+ * `resolveProvider` throws the bare message.
+ *
+ * Realm has no default model. The owner's reason: "we should not have a default model in realm
+ * because models change frequently." A default written into a release keeps pointing at a model
+ * after the provider retires it.
+ *
+ * Order: no key at all (naming the named provider's key when `--provider` was given) → the
+ * provider (named, or chosen from the keys: OpenAI when both are set) → the named provider's own
+ * key → `--base-url` with Anthropic → the model.
+ */
+export function checkProviderFlags(flags: ProviderFlags): ProviderFlagsCheck {
+  const hasOpenAI = hasText(flags.env.OPENAI_API_KEY);
+  const hasAnthropic = hasText(flags.env.ANTHROPIC_API_KEY);
+
+  if (!hasOpenAI && !hasAnthropic) {
+    // A named provider needs its own key; telling that operator "OPENAI_API_KEY or
+    // ANTHROPIC_API_KEY" would send half of them to the next refusal.
+    if (flags.provider !== undefined) {
+      const key = flags.provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+      return {
+        ok: false,
+        message: `realm agent requires an LLM API key: --provider ${flags.provider} was given, and ${key} is not set or is empty. Set ${key}.`,
+      };
+    }
+    return {
+      ok: false,
+      message: 'realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.',
+    };
+  }
+
+  const provider: ProviderName = flags.provider ?? (hasOpenAI ? 'openai' : 'anthropic');
+
+  // A provider chosen from the keys always has its key; only a named one can lack it. The other
+  // key is set, or the check above would have refused.
+  if (provider === 'anthropic' && !hasAnthropic) {
+    return {
+      ok: false,
+      message:
+        '--provider anthropic was given, but ANTHROPIC_API_KEY is not set or is empty (only OPENAI_API_KEY is set). ' +
+        'Set ANTHROPIC_API_KEY, or use --provider openai with an OpenAI model.',
+    };
+  }
+  if (provider === 'openai' && !hasOpenAI) {
+    return {
+      ok: false,
+      message:
+        '--provider openai was given, but OPENAI_API_KEY is not set or is empty (only ANTHROPIC_API_KEY is set). ' +
+        'Set OPENAI_API_KEY, or use --provider anthropic with an Anthropic model.',
+    };
+  }
+
+  if (flags.baseUrl !== undefined && provider === 'anthropic') {
+    return {
+      ok: false,
+      message:
+        '--base-url is only supported with --provider openai (or OpenAI-compatible endpoints). ' +
+        'For Anthropic, configure the endpoint via the ANTHROPIC_BASE_URL environment variable.',
+    };
+  }
+
+  const model = flags.model;
+  if (!hasText(model)) {
+    return { ok: false, message: missingModelMessage(flags, provider, hasOpenAI, hasAnthropic) };
+  }
+
+  return { ok: true, provider, model };
+}
+
+/** The `--model is required` sentence for the case at hand; see `checkProviderFlags`. */
+function missingModelMessage(
+  flags: ProviderFlags,
+  provider: ProviderName,
+  hasOpenAI: boolean,
+  hasAnthropic: boolean,
+): string {
+  if (flags.baseUrl !== undefined) {
+    return `${NO_DEFAULT_MODEL} Name the model the service at --base-url offers.`;
+  }
+  if (flags.provider === 'anthropic') {
+    return `${NO_DEFAULT_MODEL} Name an Anthropic model; Anthropic lists them at ${ANTHROPIC_MODELS_URL}.`;
+  }
+  if (flags.provider === 'openai') {
+    return `${NO_DEFAULT_MODEL} Name an OpenAI model; OpenAI lists them at ${OPENAI_MODELS_URL}.`;
+  }
+  if (hasOpenAI && hasAnthropic) {
+    return (
+      `${NO_DEFAULT_MODEL} Both OPENAI_API_KEY and ANTHROPIC_API_KEY are set, so the provider is OpenAI; ` +
+      `name one of its models (OpenAI lists them at ${OPENAI_MODELS_URL}), or choose Anthropic with --provider anthropic.`
+    );
+  }
+  if (provider === 'anthropic') {
+    return (
+      `${NO_DEFAULT_MODEL} ANTHROPIC_API_KEY is set, so the provider is Anthropic; ` +
+      `name one of its models (Anthropic lists them at ${ANTHROPIC_MODELS_URL}).`
+    );
+  }
+  return (
+    `${NO_DEFAULT_MODEL} OPENAI_API_KEY is set, so the provider is OpenAI; ` +
+    `name one of its models (OpenAI lists them at ${OPENAI_MODELS_URL}).`
+  );
+}
+
+/**
+ * Issue #676 — the whole line `realm listen` prints, `Error: ` included, when it was started
+ * without `--model`. Listen passes the model to every `realm agent` it starts, and each of those
+ * refuses without one. It checks no API key: each child runs in the workflow's folder and loads
+ * that folder's `.env` itself, so listen cannot see the keys a child will have.
+ */
+export function listenModelRefusal(provider: ProviderName | undefined): string {
+  const lead =
+    '--model is required: realm has no default model, and realm listen starts realm agent';
+  if (provider === 'anthropic') {
+    return (
+      `Error: ${lead} --provider anthropic for every run. ` +
+      `Name an Anthropic model; Anthropic lists them at ${ANTHROPIC_MODELS_URL}. Nothing was started.`
+    );
+  }
+  if (provider === 'openai') {
+    return (
+      `Error: ${lead} --provider openai for every run. ` +
+      `Name an OpenAI model; OpenAI lists them at ${OPENAI_MODELS_URL}. Nothing was started.`
+    );
+  }
+  return (
+    `Error: ${lead} for every run. ` +
+    'Each one picks its provider from the API key it finds (OpenAI when both are set; choose one with --provider). ' +
+    `Anthropic lists its models at ${ANTHROPIC_MODELS_URL}; OpenAI at ${OPENAI_MODELS_URL}. Nothing was started.`
+  );
+}
+
 /**
  * Resolves the correct LLM provider from environment and CLI flags.
- * Throws if no API key is found or the specified package is not installed.
+ *
+ * Throws when no API key is set, when a named provider's own key is not set, when `--base-url` is
+ * given for Anthropic, and when no model is given: realm has no default model (issue #676 — the
+ * owner's reason: "we should not have a default model in realm because models change
+ * frequently"). The checks and their messages are `checkProviderFlags`'; this throws its message.
+ * Also throws when the provider's SDK package is not installed.
  */
 export async function resolveProvider(
   providerFlag: ProviderName | undefined,
@@ -207,23 +406,14 @@ export async function resolveProvider(
    *  strict. Only meaningful together with `--base-url` on the OpenAI provider. */
   strictBaseUrlFlag?: boolean,
 ): Promise<LlmProvider> {
-  const hasOpenAI = process.env['OPENAI_API_KEY'] !== undefined;
-  const hasAnthropic = process.env['ANTHROPIC_API_KEY'] !== undefined;
-
-  if (!hasOpenAI && !hasAnthropic) {
-    throw new Error(
-      'realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.',
-    );
-  }
-
-  const provider = providerFlag ?? (hasOpenAI ? 'openai' : 'anthropic');
-
-  if (baseUrlFlag !== undefined && provider === 'anthropic') {
-    throw new Error(
-      '--base-url is only supported with --provider openai (or OpenAI-compatible endpoints). ' +
-        'For Anthropic, configure the endpoint via the ANTHROPIC_BASE_URL environment variable.',
-    );
-  }
+  const checked = checkProviderFlags({
+    provider: providerFlag,
+    model: modelFlag,
+    baseUrl: baseUrlFlag,
+    env: readProviderKeys(),
+  });
+  if (!checked.ok) throw new Error(checked.message);
+  const { provider, model } = checked;
 
   if (provider === 'openai') {
     // Match o1, o1-mini, o1-preview — the o1 generation requires the special-case
@@ -231,7 +421,7 @@ export async function resolveProvider(
     // o3, o3-mini, and o4-mini support the standard Chat Completions API including
     // function calling, so they route to OpenAIProvider.
     const REASONING_MODELS = /^o1(-|$)/i;
-    if (modelFlag !== undefined && REASONING_MODELS.test(modelFlag)) {
+    if (REASONING_MODELS.test(model)) {
       // issue #313 (dead-config cell 4): this branch has always DROPPED --base-url silently —
       // the o1 provider takes neither it nor the strict attestation. Silently ignoring an
       // explicit flag is exactly the class the #291 F10 precedent says to warn about.
@@ -246,12 +436,12 @@ export async function resolveProvider(
         );
       }
       const { OpenAIReasoningProvider } = await import('./openai-reasoning-provider.js');
-      return new OpenAIReasoningProvider(modelFlag);
+      return new OpenAIReasoningProvider(model);
     }
     const { OpenAIProvider } = await import('./openai-provider.js');
-    return new OpenAIProvider(modelFlag ?? 'gpt-4o', baseUrlFlag, strictBaseUrlFlag === true);
+    return new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true);
   } else {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
-    return new AnthropicProvider(modelFlag ?? 'claude-sonnet-4-5');
+    return new AnthropicProvider(model);
   }
 }

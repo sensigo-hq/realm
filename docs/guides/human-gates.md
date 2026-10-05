@@ -1,5 +1,7 @@
 # Add a human gate
 
+<!-- description: Add a point where a person must decide before anything takes effect: a gate with your own choices and message, a step for one choice, and a time limit. -->
+
 This guide adds a point in a workflow where a person must decide before anything takes effect. At the end you have a gate with your own choices and message, a step that runs only for one of the choices, and a time limit with a safe default.
 
 ## Before you start

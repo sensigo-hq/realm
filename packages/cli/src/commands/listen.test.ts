@@ -598,20 +598,25 @@ describe('defaultDedupBase (issue #332 item 3 — call-time, never module-scope,
 describe('--llm-timeout on listen (issue #409)', () => {
   // issue #620 PR-C: every child also carries the hidden --no-release-line-advisory (listen tells
   // the operator once at startup; a child per webhook must not repeat it).
-  it('buildAgentArgv without the flag: the run id and the advisory silencer only', () => {
-    expect(buildAgentArgv('run-1')).toEqual([
+  // issue #676: every argv now carries --model (realm has no default model).
+  it('buildAgentArgv without the flag: the run id, the model and the advisory silencer only', () => {
+    expect(buildAgentArgv('run-1', { model: 'm-676' })).toEqual([
       'agent',
       '--run-id',
       'run-1',
+      '--model',
+      'm-676',
       '--no-release-line-advisory',
     ]);
   });
 
   it('buildAgentArgv with the flag appends it as a string pair', () => {
-    expect(buildAgentArgv('run-1', 45)).toEqual([
+    expect(buildAgentArgv('run-1', { model: 'm-676', llmTimeoutSeconds: 45 })).toEqual([
       'agent',
       '--run-id',
       'run-1',
+      '--model',
+      'm-676',
       '--llm-timeout',
       '45',
       '--no-release-line-advisory',
@@ -625,7 +630,10 @@ describe('--llm-timeout on listen (issue #409)', () => {
   // args-only assertion would pass against a broken mock.
   it('WIRED — the spawn carries the flag when the operator set one', () => {
     spawnMock.mockClear();
-    const result = defaultSpawnAgent('run-42', '/tmp/cwd', 45);
+    const result = defaultSpawnAgent('run-42', '/tmp/cwd', {
+      model: 'm-676',
+      llmTimeoutSeconds: 45,
+    });
     expect(result).toEqual({ pid: 4242 });
 
     const [cmd, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
@@ -636,6 +644,8 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'agent',
       '--run-id',
       'run-42',
+      '--model',
+      'm-676',
       '--llm-timeout',
       '45',
       '--no-release-line-advisory',
@@ -644,11 +654,18 @@ describe('--llm-timeout on listen (issue #409)', () => {
 
   it('WIRED — the spawn is unchanged when the operator set none', () => {
     spawnMock.mockClear();
-    const result = defaultSpawnAgent('run-43', '/tmp/cwd');
+    const result = defaultSpawnAgent('run-43', '/tmp/cwd', { model: 'm-676' });
     expect(result).toEqual({ pid: 4242 });
 
     const [, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
-    expect(argv.slice(1)).toEqual(['agent', '--run-id', 'run-43', '--no-release-line-advisory']);
+    expect(argv.slice(1)).toEqual([
+      'agent',
+      '--run-id',
+      'run-43',
+      '--model',
+      'm-676',
+      '--no-release-line-advisory',
+    ]);
     expect(argv).not.toContain('--llm-timeout');
   });
 
@@ -686,5 +703,54 @@ describe('--llm-timeout on listen (issue #409)', () => {
       expect(opt().defaultValue).toBeUndefined();
       expect(opt().parseArg).toBeDefined();
     });
+  });
+});
+
+// =================================================================================================
+// issue #676 — realm has no default model: listen passes --model to every drive it starts, and
+// --provider only when the operator gave one. Exact argvs (`toEqual` on the whole argv), never a
+// `not.toContain`: on the base `buildAgentArgv` takes the options object as the timeout and prints
+// `--llm-timeout [object Object]`, so an absence check there would pass for the wrong reason.
+// =================================================================================================
+describe('--provider and --model on listen (issue #676)', () => {
+  it('buildAgentArgv with --provider passes it before --model', () => {
+    expect(buildAgentArgv('run-1', { model: 'm-676', provider: 'anthropic' })).toEqual([
+      'agent',
+      '--run-id',
+      'run-1',
+      '--provider',
+      'anthropic',
+      '--model',
+      'm-676',
+      '--no-release-line-advisory',
+    ]);
+  });
+
+  it('buildAgentArgv without --provider passes none: the child picks from the API keys', () => {
+    expect(buildAgentArgv('run-2', { model: 'gpt-x' })).toEqual([
+      'agent',
+      '--run-id',
+      'run-2',
+      '--model',
+      'gpt-x',
+      '--no-release-line-advisory',
+    ]);
+  });
+
+  it('buildAgentArgv with every option: --provider, --model, --llm-timeout, then the silencer', () => {
+    expect(
+      buildAgentArgv('run-3', { model: 'm-676', provider: 'openai', llmTimeoutSeconds: 30 }),
+    ).toEqual([
+      'agent',
+      '--run-id',
+      'run-3',
+      '--provider',
+      'openai',
+      '--model',
+      'm-676',
+      '--llm-timeout',
+      '30',
+      '--no-release-line-advisory',
+    ]);
   });
 });

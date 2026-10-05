@@ -235,8 +235,16 @@ describe('issue #625 crown — gate → guard over real MCP stdio', () => {
 // ---------------------------------------------------------------------------
 
 describe('issue #625 kill — no surviving record is "gate answered ∧ a guard eligible"', () => {
-  const ROUNDS = 60;
+  /** The law is checked on every round; the search runs at least this many. */
+  const MIN_ROUNDS = 60;
+  /** The search gives up here: the non-vacuity assertion then FAILS, printing every batch. */
+  const MAX_ROUNDS = 240;
   const BATCH = 6;
+  /** No batch starts once the search has run this long (with that batch's longest delay added). */
+  const SEARCH_BUDGET_MS = 150_000;
+  /** A batch's delays run from 0.1× to 1.6× its scale; the scale stays inside these bounds. */
+  const MIN_SCALE_MS = 10;
+  const MAX_SCALE_MS = 20_000;
 
   /** Spawns `realm run respond` for one run. */
   function answerer(home: string, runId: string, gateId: string, choice: string) {
@@ -247,16 +255,15 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
     );
   }
 
-  it(`${ROUNDS} rounds: the built CLI answers and is SIGKILLed at a varying point`, async () => {
+  it(`at least ${MIN_ROUNDS} rounds: the built CLI answers and is SIGKILLed at a varying point`, async () => {
     const home = makeJourneyHome('realm-625-kill-');
     const def = journeyWorkflow('kill-625', { finish: true });
     const { runs, workflows } = storesOf(home);
     await workflows.register(def);
     const client = await mcpClient(home, 'kill-625');
     try {
-      // Calibration: how long an answer takes on THIS box under THIS cell's own concurrency, so
-      // the kill delays straddle the write whatever the machine's load. Its runs are a control:
-      // an answerer nobody kills settles the guard.
+      // Calibration: how long an answer takes on THIS box under THIS cell's own concurrency — the
+      // first batch's scale. Its runs are a control: an answerer nobody kills settles the guard.
       const calibration: Array<{ runId: string; gateId: string }> = [];
       for (let i = 0; i < BATCH; i++) calibration.push(await parkAtGate(client, def.id));
       const startedAt = Date.now();
@@ -276,24 +283,40 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
         expect(run.completed_steps).toEqual(['write', 'confirm', 'check']);
       }
 
-      const parked: Array<{ runId: string; gateId: string; choice: string; delayMs: number }> = [];
-      for (let i = 0; i < ROUNDS; i++) {
-        const { runId, gateId } = await parkAtGate(client, def.id);
-        parked.push({
-          runId,
-          gateId,
-          choice: i % 2 === 0 ? 'approve' : 'reject',
-          // Spread from well before node has booted to well after the write would have landed.
-          delayMs: Math.round(answerMs * (0.1 + (1.5 * i) / (ROUNDS - 1))),
-        });
-      }
-
+      // The search. The machine's load can change between the calibration and any later batch, so
+      // each batch is steered by what the RECORD says the previous batch did (was the answer
+      // written), never by comparing clocks: no kill landed after the write ⇒ the next batch waits
+      // twice as long; every kill did ⇒ half as long. It stops once both kinds are seen and at
+      // least MIN_ROUNDS have run, or at the cap.
+      let scale = Math.min(Math.max(answerMs, MIN_SCALE_MS), MAX_SCALE_MS);
+      let rounds = 0;
       let answered = 0;
       let unanswered = 0;
+      const batches: string[] = [];
       const violations: string[] = [];
-      for (let start = 0; start < ROUNDS; start += BATCH) {
+      const searchStartedAt = Date.now();
+      while (
+        (rounds < MIN_ROUNDS || answered === 0 || unanswered === 0) &&
+        rounds < MAX_ROUNDS &&
+        Date.now() - searchStartedAt + 1.6 * scale < SEARCH_BUDGET_MS
+      ) {
+        const delays = Array.from({ length: BATCH }, (_, i) =>
+          Math.round(scale * (0.1 + (1.5 * i) / (BATCH - 1))),
+        );
+        const parked: Array<{ runId: string; gateId: string; choice: string; delayMs: number }> =
+          [];
+        for (let i = 0; i < BATCH; i++) {
+          const { runId, gateId } = await parkAtGate(client, def.id);
+          parked.push({
+            runId,
+            gateId,
+            choice: (rounds + i) % 2 === 0 ? 'approve' : 'reject',
+            delayMs: delays[i]!,
+          });
+        }
+        let batchAnswered = 0;
         await Promise.all(
-          parked.slice(start, start + BATCH).map(async ({ runId, gateId, choice, delayMs }) => {
+          parked.map(async ({ runId, gateId, choice, delayMs }) => {
             const child = answerer(home, runId, gateId, choice);
             const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
             await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -301,8 +324,12 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
             await exited;
             const run = await runs.get(runId);
             const gateAnswered = run.settled?.['confirm'] !== undefined;
-            if (gateAnswered) answered += 1;
-            else unanswered += 1;
+            if (gateAnswered) {
+              answered += 1;
+              batchAnswered += 1;
+            } else {
+              unanswered += 1;
+            }
             const awaiting = classifyRunHealth(run, {
               now: new Date(),
               definition: def,
@@ -312,27 +339,33 @@ describe('issue #625 kill — no surviving record is "gate answered ∧ a guard 
             }
           }),
         );
+        rounds += BATCH;
+        batches.push(`${delays[0]}–${delays[BATCH - 1]} ms: ${batchAnswered} of ${BATCH} answered`);
+        if (batchAnswered === 0) scale = Math.min(scale * 2, MAX_SCALE_MS);
+        else if (batchAnswered === BATCH) scale = Math.max(scale / 2, MIN_SCALE_MS);
       }
 
-      // The law. (a) red when the answer and the guard's settlement land in two writes — a kill
-      //     between them leaves the gate answered and the guard undecided; (b) prints the
-      //     violating run ids with their choice and kill delay.
+      // The law, over every round. (a) red when the answer and the guard's settlement land in two
+      //     writes — a kill between them leaves the gate answered and the guard undecided;
+      //     (b) prints the violating run ids with their choice and kill delay.
       expect(violations).toEqual([]);
-      // Non-vacuity, both directions. (a) red when every kill landed before the write (the law
-      //     above was never exercised) or none did (nothing was killed mid-flight); (b) prints
-      //     the two counts and the calibrated answer time.
-      expect({
-        someAnswered: answered > 0,
-        someUnanswered: unanswered > 0,
-        answered,
-        unanswered,
-        answerMs,
-      }).toMatchObject({ someAnswered: true, someUnanswered: true });
+      // Non-vacuity, both directions. (a) red when the search reached its cap without seeing both
+      //     a kill before the write and a kill after it (the law above was then not exercised);
+      //     (b) prints the whole search on one line: the counts, the calibrated answer time and
+      //     each batch's delay range with how many of its answers were written.
+      const search = { answered, unanswered, rounds, answerMs, batches };
+      expect(
+        answered > 0 && unanswered > 0,
+        `the search ended without seeing both a kill before the write and one after it: ${JSON.stringify(search)}`,
+      ).toBe(true);
     } finally {
       await client.close();
       rmSync(home, { recursive: true, force: true });
     }
-  }, 240_000);
+    // Worst case: the calibration, SEARCH_BUDGET_MS of batches, and one last batch (its parking
+    // plus at most 1.6 × MAX_SCALE_MS) — this timeout leaves room for all of them, so a search that
+    // fails reports its own message, not vitest's timeout.
+  }, 300_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -421,6 +454,8 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
         'openai',
         '--base-url',
         'http://127.0.0.1:9',
+        '--model',
+        'test-model',
       ],
       {
         env: { ...process.env, HOME: home, OPENAI_API_KEY: 'not-a-key' },

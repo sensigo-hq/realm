@@ -1,5 +1,7 @@
 # Agent-step controls
 
+<!-- description: The settings that limit a model on an agent step: how many wrong answers are allowed, schema enforcement by the provider, request time and tool calls. -->
+
 This page covers the settings that limit and shape what a model does on an `agent` step: how many wrong answers are allowed, whether the model provider is asked to hold answers to the schema, how long a model request may take, and how many tools the model may call. Each setting is shown with a result from a run.
 
 | Setting                                           | Controls                                                      | Applies when                  |
@@ -202,6 +204,8 @@ On a step that has `tools`, the step's own answer is not restricted. Strict mode
 ```text
 ℹ Step 'summarise': structured_output caveat — this step declares tools — strict applies to tool-call arguments here, not to the step output; …
 ```
+
+If Anthropic refuses the tools with strict mode, Realm sends the request again without strict mode and keeps it off for the rest of the step. On a Claude model that thinks before it answers, that request and the later ones leave out the thinking from the turns made while strict mode was on, because removing `strict` changes the list of tools. Leaving out that thinking was added after version 0.45.0.
 
 ## `llm_timeout_seconds`
 

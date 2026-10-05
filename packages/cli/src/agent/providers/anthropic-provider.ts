@@ -9,6 +9,7 @@ import {
 } from '@sensigo/realm';
 import {
   ToolCapableLlmProvider,
+  ANTHROPIC_MODELS_URL,
   type ProviderCapabilities,
   type CallStepWithMetaResult,
 } from './llm-provider.js';
@@ -361,6 +362,39 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     return { jsonMode: false, toolArgsStrict: true, providerId: 'anthropic' };
   }
 
+  /**
+   * Issue #676 — one sentence for the one error this provider explains: Anthropic answering that
+   * it has no model by the name this provider was built with. The body says only `model: <id>`,
+   * captured on 2026-10-04:
+   *   404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-4-5"},…}
+   * Read from the error's own fields (`status`, and `error` = the parsed body) — never
+   * `instanceof` (the SDK may be loaded more than once) and never a pattern over the whole
+   * message. The model is compared for EQUALITY: a prefix test would let a provider for
+   * `claude-sonnet-4-5` claim a message naming `claude-sonnet-4-5-20250929`. Any other error, and
+   * any read that throws, gives `undefined`.
+   */
+  override explainFailure(err: unknown): string | undefined {
+    try {
+      if (err === null || typeof err !== 'object') return undefined;
+      const e = err as { status?: unknown; error?: unknown };
+      if (e.status !== 404) return undefined;
+      const body = e.error;
+      if (body === null || typeof body !== 'object') return undefined;
+      const inner = (body as { error?: unknown }).error as
+        { type?: unknown; message?: unknown } | null | undefined;
+      if (inner === null || typeof inner !== 'object') return undefined;
+      if (inner.type !== 'not_found_error') return undefined;
+      if (inner.message !== 'model: ' + this.model) return undefined;
+      return (
+        `Anthropic offers no model named ${this.model} to this API key. Check the name given to --model; ` +
+        `current models are listed at ${ANTHROPIC_MODELS_URL} and retired ones at ` +
+        'https://platform.claude.com/docs/en/about-claude/model-deprecations.'
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async getClient(clock: LlmClock | undefined, counters: WireCounters): Promise<any> {
     // Dynamically import @anthropic-ai/sdk to keep it an optional peer dependency.
@@ -707,13 +741,95 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const history: any[] = [{ role: 'user', content: prompt }];
 
-    const buildMainCallOpts = (): Record<string, unknown> => {
-      const opts: Record<string, unknown> = {
-        model: this.model,
-        max_tokens: resolveMaxTokens(this.model),
-        system,
-        messages: history,
-      };
+    // -----------------------------------------------------------------------------------------
+    // issue #677 — a thinking block travels only with the list of tools its turn was made under.
+    //
+    // Anthropic binds every `thinking` block to the `tools` of the request that produced it. A
+    // later request that carries the block in its history under a DIFFERENT `tools` list is
+    // refused (the live text, verbatim):
+    //   400 invalid_request_error — messages.1.content.0: Invalid `signature` in `thinking`
+    //   block. The block is bound to a different conversation. Remove the block, or set
+    //   `thinking.block_binding.prefix_mismatch_behavior` to "drop_block". That setting requires
+    //   the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header. The
+    //   `tools` list differs from the one this block was created with.
+    // This path changes the list in two places: the final extraction (only the answer tool, or
+    // none) and every main turn after the #311 drop (the same tools without `strict`). On a model
+    // that thinks by default (Claude Sonnet 5.5; realm sends no `thinking` field) both failed as
+    // soon as an earlier turn thought.
+    //
+    // The rule: every assistant turn is tagged with the KEY of the request that produced it, and
+    // a request leaves out the `thinking` and `redacted_thinking` blocks of every assistant turn
+    // tagged with a different key. The key is the `tools` list ONLY — a changed `tool_choice`
+    // with the same tools keeps the block valid (live check T5) — and the rule is PER TURN: after
+    // a drop, a turn made under the stripped list keeps its thinking (T7). The beta setting the
+    // error offers ("drop_block") is not used: it is a beta, and it needs a `thinking` field realm
+    // sends on no request today, which would change every request.
+    // -----------------------------------------------------------------------------------------
+
+    /** The key of a request: the exact `tools` value placed on it, or `null` when it sends no
+     *  `tools` key. `tool_choice`, the system prompt and `max_tokens` are deliberately not in it. */
+    const requestToolsKey = (requestTools: unknown): string => JSON.stringify(requestTools ?? null);
+
+    /** Each assistant message object → the key of the request that produced it. Keyed by the
+     *  message OBJECT, so the history itself carries no extra field and is never rewritten. */
+    const assistantTurnKeys = new WeakMap<object, string>();
+
+    /** The ONE place an assistant turn enters the history (both the tool-use and the correction
+     *  branch go through it): pushes the turn with the model's own content array and records the
+     *  key of the request that produced it. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pushAssistantTurn = (content: any, key: string): void => {
+      const turn = { role: 'assistant', content };
+      assistantTurnKeys.set(turn, key);
+      history.push(turn);
+    };
+
+    const isThinkingBlock = (block: unknown): boolean => {
+      if (block === null || typeof block !== 'object') return false;
+      const type = (block as { type?: unknown }).type;
+      return type === 'thinking' || type === 'redacted_thinking';
+    };
+
+    /** An assistant turn whose thinking must stay out of a request with this key: it was made
+     *  under a different list (an assistant turn with no recorded key cannot happen — every push
+     *  goes through `pushAssistantTurn` — and would be treated as made under a different list)
+     *  and it actually carries a thinking block. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const thinkingToLeaveOut = (message: any, key: string): boolean =>
+      message !== null &&
+      typeof message === 'object' &&
+      message.role === 'assistant' &&
+      assistantTurnKeys.get(message) !== key &&
+      Array.isArray(message.content) &&
+      message.content.some(isThinkingBlock);
+
+    /**
+     * The `messages` of a request with this key. When no turn needs a block removed — every main
+     * turn of a step with no #311 drop, every step whose model never thought — it is the `history`
+     * array ITSELF, exactly as before this change. Otherwise it is a new array: each affected
+     * assistant turn is a new object `{ ...turn, content: <a filtered copy> }` and every other
+     * element is the same object as in `history`. The history, its messages and their content
+     * arrays are never modified (the #311 rule below: objects already handed to the SDK must not
+     * be rewritten afterwards). A turn left with no blocks is sent as `content: []` — Anthropic
+     * accepts it (T6); the turn is never dropped and no text is invented.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const messagesFor = (key: string): any[] => {
+      if (!history.some((message) => thinkingToLeaveOut(message, key))) return history;
+      return history.map((message) =>
+        thinkingToLeaveOut(message, key)
+          ? {
+              ...message,
+              content: (message.content as unknown[]).filter((block) => !isThinkingBlock(block)),
+            }
+          : message,
+      );
+    };
+
+    /** A main turn's request body and its key. The `tools` value is decided first so the key is
+     *  the exact list this request sends (after a #311 drop, the stripped copies). */
+    const buildMainCallOpts = (): { body: Record<string, unknown>; key: string } => {
+      let requestTools: unknown;
       if (anthropicTools.length > 0) {
         // issue #311: once strict has been dropped, every later turn sends STRIPPED COPIES rather
         // than the mutated originals. Mutating the shared objects in place would retroactively
@@ -721,11 +837,21 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         // hazard, and it makes the wire history unreadable (a request that genuinely carried
         // strict would appear never to have). Pre-drop — which includes every step that never
         // opted in — the original array is passed exactly as before, with no copy.
-        opts['tools'] = toolArgsStrictStripped
+        requestTools = toolArgsStrictStripped
           ? anthropicTools.map(({ strict: _strict, ...rest }) => rest)
           : anthropicTools;
       }
-      return opts;
+      const key = requestToolsKey(requestTools);
+      // The property order is today's (model, max_tokens, system, messages, tools), so a request
+      // that needs nothing removed is byte-for-byte what it was before issue #677.
+      const opts: Record<string, unknown> = {
+        model: this.model,
+        max_tokens: resolveMaxTokens(this.model),
+        system,
+        messages: messagesFor(key),
+      };
+      if (requestTools !== undefined) opts['tools'] = requestTools;
+      return { body: opts, key };
     };
 
     // -----------------------------------------------------------------------------------------
@@ -749,15 +875,18 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       toolArgsStrictStripped = true;
     };
 
+    /** Returns the response together with the key of the request that produced it (issue #677):
+     *  after a #311 drop that is the RETRY's key — the stripped list — not the first attempt's. */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const createMainTurn = async (): Promise<any> => {
+    const createMainTurn = async (): Promise<{ response: any; key: string }> => {
       const carriedStrict = toolArgsStrictActive;
       try {
-        const response = await bounded(buildMainCallOpts());
+        const request = buildMainCallOpts();
+        const response = await bounded(request.body);
         // Only a strict-DECORATED request that came back 200 counts toward the disclosed
         // "turns before drop" — that is exactly what the number claims.
         if (carriedStrict) strictTurnsBeforeDrop += 1;
-        return response;
+        return { response, key: request.key };
       } catch (err) {
         // A turn that carried NO strict is none of this ladder's business: its 400 is a real
         // failure of the request itself and must propagate untouched, never be re-attributed to
@@ -781,8 +910,11 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         };
         dropToolArgsStrict();
         // Retry the SAME turn once, unconstrained. A failure here is a genuine call failure and
-        // propagates — realm does not swallow it behind the ladder.
-        return await bounded(buildMainCallOpts());
+        // propagates — realm does not swallow it behind the ladder. The retry builds its own
+        // `messages` from its own key (issue #677): the stripped list is a different list, so the
+        // thinking of the turns made while strict was on stays out of it.
+        const retry = buildMainCallOpts();
+        return { response: await bounded(retry.body), key: retry.key };
       }
     };
 
@@ -809,14 +941,18 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       // on an opted-in tools step, this call's opts never contain `strict`).
       const finalSubmitTool =
         options.inputSchema !== undefined ? buildSubmitTool(options.inputSchema) : undefined;
+      // issue #677: this request offers only the answer tool, or no tools at all — a different
+      // list from the step's own — so the thinking of the earlier turns stays out of it (see
+      // `messagesFor`). With no tools on either side the key matches and the thinking is kept.
+      const finalTools = finalSubmitTool !== undefined ? [finalSubmitTool] : undefined;
       const finalOpts: Record<string, unknown> = {
         model: this.model,
         max_tokens: resolveMaxTokens(this.model),
         system,
-        messages: history,
+        messages: messagesFor(requestToolsKey(finalTools)),
       };
-      if (finalSubmitTool !== undefined) {
-        finalOpts['tools'] = [finalSubmitTool];
+      if (finalTools !== undefined) {
+        finalOpts['tools'] = finalTools;
         finalOpts['tool_choice'] = { type: 'auto' };
       } else {
         finalOpts['tool_choice'] = { type: 'none' };
@@ -873,13 +1009,14 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     };
 
     while (true) {
-      const response = await createMainTurn();
+      // `turnKey` is the key of the request that produced this response (issue #677).
+      const { response, key: turnKey } = await createMainTurn();
       const toolUseBlocks = (
         response.content as Array<{ type: string; id?: string; name?: string; input?: unknown }>
       ).filter((b) => b.type === 'tool_use');
 
       if (toolUseBlocks.length > 0) {
-        history.push({ role: 'assistant', content: response.content });
+        pushAssistantTurn(response.content, turnKey);
 
         const anthropic_result_blocks: Array<{
           type: 'tool_result';
@@ -1027,7 +1164,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
                 .join('\n')
             : 'no valid JSON object could be extracted from the response';
         console.error(`  ⚠ output rejected (in-conversation); correcting (${correction_count})`);
-        history.push({ role: 'assistant', content: response.content });
+        pushAssistantTurn(response.content, turnKey);
         history.push({
           role: 'user',
           content: `Your response did not match the required JSON schema: ${summary}. Try again.`,

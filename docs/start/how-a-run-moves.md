@@ -1,5 +1,7 @@
 # How a run moves
 
+<!-- description: How a Realm run moves one step at a time: which steps Realm runs itself, which need a model or a person, and the ways a run can be driven. -->
+
 A run moves one step at a time, and every move goes through the same engine. This page explains who does what: which steps Realm runs itself, which ones need a model or a person, and the three ways a run can be driven. For the same story as diagrams, see [How it works](https://realmengine.dev/how-it-works/) on the website.
 
 ## The engine owns the order

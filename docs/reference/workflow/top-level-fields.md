@@ -1,5 +1,7 @@
 # Workflow file: top-level fields
 
+<!-- description: Every field that can appear at the top level of workflow.yaml, with its type, whether it is required, what it does, and an example that was run. -->
+
 This page lists every field that can appear at the top level of `workflow.yaml`. There are 15, taken from the list the loader checks files against. For each one it gives the type, whether it is required, what it does, and an example that was run.
 
 For the fields of a step, see [Step fields](step-fields.md).

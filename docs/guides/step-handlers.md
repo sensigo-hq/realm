@@ -1,5 +1,7 @@
 # Write a step handler
 
+<!-- description: Write a handler, a function from your project that an auto step runs: read its input and settings, then return a result, fail, or stop the run. -->
+
 A handler is a function from your project that an `auto` step runs. Use one when a step needs logic that no built-in adapter covers: a calculation, a check, a call to your own code. At the end of this guide you have a handler that reads its input and its settings, and you know the three ways it can end: return a result, fail, or stop the run.
 
 ## Before you start

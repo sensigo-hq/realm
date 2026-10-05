@@ -1,5 +1,7 @@
 # Run state and health findings
 
+<!-- description: Every field of the get_run_state reply, every value of next_actions_status, and the health findings that realm run inspect and the stuck-run list also report. -->
+
 `get_run_state` returns where a run stands: its phase, its steps, what can be called next, and anything Realm finds wrong with it. This page lists every field of the reply, the 8 values of `next_actions_status`, and the 14 health findings, which `realm run inspect` and `realm run list --stuck` also report. Every reply shown came from a call.
 
 For the tool's parameters, see [MCP tools](tools.md#get_run_state).

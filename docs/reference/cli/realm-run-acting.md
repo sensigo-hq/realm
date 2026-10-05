@@ -1,5 +1,7 @@
 # `realm run`: commands that act
 
+<!-- description: Reference for the realm run subcommands that change a run or the store: their arguments, flags, output and exit codes. -->
+
 `realm run` has sixteen subcommands. This page covers the ten that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
 
 | Subcommand                | What it does                                                  | Acts when                   |
@@ -174,13 +176,16 @@ Takes a failed step off the run's list of failed steps and opens the run again. 
 | `--force`       | No       | Resumes even though another step of the run is marked in progress and Realm cannot tell how long it has been. |
 
 ```bash
-realm run resume 00b33778-f504-4d65-93ca-6300441f41e7 --from fetch
+realm run resume 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 --from fetch
 ```
 
 ```text
-Resumed run '00b33778-f504-4d65-93ca-6300441f41e7': step 'fetch' re-enabled and run reset to 'running'.
-Drive it with: realm agent --run-id 00b33778-f504-4d65-93ca-6300441f41e7
+Resumed run '8d4053bf-ceb4-4bde-bbde-3595715fd7c5': step 'fetch' re-enabled and run reset to 'running'.
+Drive it with: realm agent --run-id 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 --provider <provider> --model <model>
+Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 shows the extension module the run loaded).
 ```
+
+Fill in `<provider>` and `<model>` before you run the second line. `<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
 
 When the step that is ready again is one only the engine runs, one more line names it (`the step` / `the steps`). Added after version 0.45.0:
 

@@ -50,8 +50,10 @@ rejects the step before anything advances:
 }
 ```
 
-The run stays in `diff_loaded`. Nothing downstream executes. The agent corrects
-and resubmits. Every attempt is recorded in the immutable evidence chain.
+The step stays open and nothing downstream runs. The agent corrects and resubmits.
+A refused answer is not kept as the step's output. `realm run attempts <run-id>` lists each
+refusal (when it happened and which rule it broke), and the step's evidence entry records how
+many answers were refused before one was accepted.
 
 **Pain points addressed:**
 
@@ -59,8 +61,8 @@ and resubmits. Every attempt is recorded in the immutable evidence chain.
   by the `input_schema` declaration. No `IMPORTANT:` annotations accumulate.
 - **Non-determinism + structured output failures (#2)** — invalid enum values and
   short summaries are rejected at the boundary, not discovered downstream.
-- **No audit trail (#3)** — every run produces an immutable evidence chain:
-  who reviewed what, what fields were returned, whether any step was rejected.
+- **No audit trail (#3)** — every run produces an evidence chain: what each step
+  returned, and how many answers a step refused (`realm run attempts` lists why).
 - **Verification gap / no test gating (#8)** — step output is verified structurally
   before the run advances; a step cannot complete with invalid output.
 
@@ -142,10 +144,12 @@ Run the workflow autonomously from the terminal — no MCP client, no IDE, no co
 ```bash
 realm agent \
   --workflow examples/01-code-reviewer/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/01-code-reviewer/diffs/add-oauth-provider.diff\"}"
+  --params "{\"path\":\"$(pwd)/examples/01-code-reviewer/diffs/add-oauth-provider.diff\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running. Use `--provider anthropic` to switch providers. The agent drives the full workflow, resubmits automatically if any field fails schema validation, and prints the `review_changes` result when the run completes.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). The agent drives the full workflow, resubmits automatically if any field fails schema validation, and prints the `review_changes` result when the run completes.
 
 Either way, the agent starts the run, loads the diff automatically, then receives a prompt
 asking for the structured review. If any field violates the schema — wrong enum

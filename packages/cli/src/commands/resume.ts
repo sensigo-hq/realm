@@ -219,7 +219,8 @@ export const resumeCommand = new Command('resume')
       });
       console.log(
         `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to 'running'.\n` +
-          `Drive it with: realm agent --run-id ${runId}`,
+          `Drive it with: realm agent --run-id ${runId} --provider <provider> --model <model>\n` +
+          `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${runId} shows the extension module the run loaded).`,
       );
       for (const { disclosure } of voided) {
         console.log(`  ⚠ ${disclosure}`);

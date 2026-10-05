@@ -1,5 +1,7 @@
 # Connect an MCP client
 
+<!-- description: Connect an AI assistant to Realm's MCP server so that it can run your workflows and is held to their rules, and see the calls it makes to drive a run. -->
+
 This guide connects an AI assistant to Realm, so that the assistant can run your workflows and is held to their rules. At the end, the assistant sees Realm's tools, and you know the calls it makes to drive a run.
 
 Realm speaks the Model Context Protocol (MCP). Any assistant that can use MCP servers can connect: Claude Code, Claude Desktop, Cursor, or your own program.

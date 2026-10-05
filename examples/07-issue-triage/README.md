@@ -145,11 +145,12 @@ Replace `your-org/your-repo` and `123` with a real repository and issue number t
 ```bash
 realm agent \
   --workflow examples/07-issue-triage/workflow.yaml \
-  --params "{\"repo\":\"your-org/your-repo\",\"issue_number\":123}"
+  --params "{\"repo\":\"your-org/your-repo\",\"issue_number\":123}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running. Use `--provider anthropic` to
-switch providers.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)).
 
 When the run reaches `triage_issue`, `realm agent` pauses and displays the triage output:
 

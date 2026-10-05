@@ -1,5 +1,7 @@
 # Operate runs
 
+<!-- description: For the person who looks after runs: find the runs that need attention, get each kind moving again or end it, and keep the store tidy. -->
+
 This guide is for the person who looks after runs once workflows are in use. It shows how to find the runs that need attention, how to get each kind moving again or end it, and how to keep the store tidy. Every output shown is from a real run of the command.
 
 ## Find the runs that need attention
@@ -82,8 +84,10 @@ See [Add a human gate](human-gates.md#6-answer-it).
 A run in `running` moves only when a driver calls it. If the driver has stopped, start one on the same run:
 
 ```bash
-realm agent --run-id <run-id>
+realm agent --run-id <run-id> --model <model>
 ```
+
+`<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 has a default model, so `--model` can be left out there.
 
 An assistant connected over MCP can pick the run up as well, by asking for its state and following the reply.
 
@@ -98,11 +102,12 @@ realm run resume <run-id> --from <step>
 It prints:
 
 ```text
-Resumed run '7be2233c-2f2d-4f22-98cd-f561496c129b': step 'fetch' re-enabled and run reset to 'running'.
-Drive it with: realm agent --run-id 7be2233c-2f2d-4f22-98cd-f561496c129b
+Resumed run '4a0eafe2-afff-40ca-8b89-ad0e92db1a9c': step 'fetch' re-enabled and run reset to 'running'.
+Drive it with: realm agent --run-id 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c --provider <provider> --model <model>
+Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c shows the extension module the run loaded).
 ```
 
-The run is open again. Steps that had completed stay completed; the named step will run again. Then start a driver on it, as the second line says.
+The run is open again. Steps that had completed stay completed; the named step will run again. Then start a driver on it, as the second line says, with `<provider>` and `<model>` filled in as above. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
 
 `--from` must name a step the run lists under `Failed`. For any other step, the command refuses:
 

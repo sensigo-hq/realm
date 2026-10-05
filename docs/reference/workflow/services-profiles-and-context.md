@@ -1,5 +1,7 @@
 # Services, tool servers, step templates, profiles and workflow context
 
+<!-- description: Reference for services, mcp_servers, templates, agent profiles, workflow_context, context_wrapper and protocol: their keys, rules and when files are read. -->
+
 This page covers the top-level blocks of `workflow.yaml` that steps draw on: `services`, `mcp_servers`, `templates`, agent profiles (`profiles_dir`), `workflow_context` with `context_wrapper`, and `protocol`. For each it gives the keys, the rules, and when Realm reads the files involved.
 
 ## `services`

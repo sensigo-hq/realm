@@ -4,13 +4,13 @@
   "publishConfig": {
     "access": "public"
   },
-  "description": "MCP server for Realm — exposes 11 tools for AI agent connections over stdio or HTTP.",
+  "description": "MCP server for Realm: lets an AI agent run Realm workflows.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/sensigo-hq/realm.git"
   },
-  "homepage": "https://github.com/sensigo-hq/realm#readme",
+  "homepage": "https://realmengine.dev",
   "keywords": [
     "mcp",
     "model-context-protocol",

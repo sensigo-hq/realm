@@ -1,5 +1,7 @@
 # Write your first workflow
 
+<!-- description: Write a first workflow with a parameter, two agent steps that pass work between them and one automatic step, then run it by hand and read its record. -->
+
 At the end of this page you have a workflow you wrote yourself, with a parameter, two agent steps that pass work from one to the other, and one automatic step. You run it by hand and read its record. On the way, Realm catches a typing mistake in your file.
 
 ## Before you start

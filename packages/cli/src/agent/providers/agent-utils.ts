@@ -680,6 +680,27 @@ export function safeErrorText(err: unknown): string {
 }
 
 /**
+ * Issue #676 — asks the provider for its one-sentence explanation of a failure, TOTALLY.
+ *
+ * `explainFailure` is optional and may come from a third-party `--provider-module`, so it is
+ * called inside a `try`: a method that throws must not replace the operator's error, or the
+ * provider's error in the drive-failure record, with its own. Only a string with something other
+ * than spaces in it is returned; anything else (a throw, a non-string, `''`, `'   '`) gives
+ * `undefined`, and the caller prints nothing.
+ */
+export function safeExplainFailure(
+  provider: { explainFailure?: (err: unknown) => unknown },
+  err: unknown,
+): string | undefined {
+  try {
+    const sentence = provider.explainFailure?.(err);
+    return typeof sentence === 'string' && sentence.trim().length > 0 ? sentence : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Classifies an SDK-raised error by shape, for the payload's `error_class`.
  *
  * BOTH `name` and `constructor.name` are checked, and the second is the one that works. Neither

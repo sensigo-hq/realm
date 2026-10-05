@@ -1,5 +1,7 @@
 # `realm mcp` and `realm serve`
 
+<!-- description: Reference for realm mcp and realm serve, the two ways to start Realm's MCP server: their flags, what each prints, and how each refuses a request. -->
+
 `realm mcp` and `realm serve` start the same MCP server, the one an AI assistant calls to run workflows. They differ in how the assistant reaches it. This page lists the flags of each, what each prints, and how each handles a request it refuses. Every output shown came from a run of the command.
 
 | Command       | The assistant reaches it                           | Started by                               | Who may call it             |

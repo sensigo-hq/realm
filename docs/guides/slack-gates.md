@@ -1,5 +1,7 @@
 # Answer gates from Slack
 
+<!-- description: Make realm agent post each human gate to a Slack channel and take the answer from a reply in the thread, so a person approves or rejects from Slack. -->
+
 This guide makes `realm agent` post each human gate to a Slack channel and take the answer from a reply in the thread. At the end, a person approves or rejects from Slack and the run carries on within a second or two.
 
 ## Before you start
@@ -91,8 +93,10 @@ steps:
 Start it with `realm agent`. Use `--register`, so that the gate can also be answered from the command line:
 
 ```bash
-realm agent --workflow ./ --register
+realm agent --workflow ./ --register --provider anthropic --model claude-sonnet-5-5
 ```
+
+This workflow's steps call no model, but `realm agent` still needs a model provider key and `--model`: it checks them before it reads the workflow. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). Version 0.45.0 has a default model, so `--model` can be left out there.
 
 It prints:
 
@@ -166,7 +170,8 @@ Every Slack gate can also be answered with `realm run respond`. The Slack messag
 
 ## If you see something else
 
-- **`Error: realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY.`** `realm agent` needs a model provider key to start, even for a workflow whose steps need no model. Set one of the two variables.
+- **`Error: realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY. Nothing was started.`** `realm agent` needs a model provider key to start, even for a workflow whose steps need no model. Set one of the two variables.
+- **`Error: --model is required: realm has no default model. ANTHROPIC_API_KEY is set, so the provider is Anthropic; name one of its models (Anthropic lists them at https://platform.claude.com/docs/en/models/overview). Nothing was started.`** `realm agent` needs `--model` to start, even for a workflow whose steps need no model. Add `--model` with a model the provider lists. The message names the provider Realm chose; it reads differently when another key is set or `--provider` is given. Version 0.45.0 does not print it: it has a default model.
 - **`Workflow not found: slack-test — most often this run was created from a file without --register.`** You answered with `realm run respond`, but the workflow was started from a file and never registered. Run `realm workflow register ./`, then answer again.
 - **The gate message appears in Slack, but a reply does nothing.** Check that the reply is in the thread, that it is exactly one of the choices, and that the app's Event Subscriptions include `message.channels`.
 

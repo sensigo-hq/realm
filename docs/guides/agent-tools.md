@@ -1,5 +1,7 @@
 # Give an agent step tools
 
+<!-- description: Give an agent step tools from a tool server, limit how much it may use them, and read what Realm records about each call. -->
+
 An agent step can look things up before it answers: read a file, query an API, search a ticket system. This guide gives a step two tools from a tool server, limits how much it may use them, and shows what Realm records about each call. At the end you have a step that answers a question from a folder of notes.
 
 ## Before you start
@@ -85,8 +87,10 @@ The two limits are optional:
 ## 3. Run it
 
 ```bash
-realm agent --workflow ./ --params '{"question":"How long do customers have to return an item?"}'
+realm agent --workflow ./ --params '{"question":"How long do customers have to return an item?"}' --provider anthropic --model claude-sonnet-5-5
 ```
+
+The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). Version 0.45.0 has a default model, so `--model` can be left out there.
 
 It prints, among the tool server's own start-up lines:
 
@@ -146,13 +150,15 @@ The record does not yet include what the model's requests cost for a step that u
 
 ## See Realm hold the limits
 
-**When the step has used its tool calls**, the model is not given another. Realm sends it this message, with no tools, and takes its answer:
+**When the step has used its tool calls**, the model is not given another. Realm sends it this message, with none of the step's tools, and takes its answer:
 
 ```text
 You have reached the maximum number of tool calls. Produce your final JSON answer now using only what you have already gathered. No further tool calls will be executed.
 ```
 
 With `max_tool_calls: 1`, the model listed the folder, was sent that message, and answered with what it had. The record shows one tool call. An answer that Realm refuses against the step's schema uses up one of the step's calls as well.
+
+On a Claude model that thinks before it answers, such as Claude Sonnet 5.5, this last request leaves out the model's earlier thinking. Anthropic refuses thinking made under a different list of tools, and this request offers only the answer tool, or none. The model still has its earlier tool calls, their results and what it wrote. This was added after version 0.45.0.
 
 **A tool that the server does not have** stops the step before the model is asked anything:
 

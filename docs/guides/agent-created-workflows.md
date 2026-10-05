@@ -1,5 +1,7 @@
 # Let an assistant plan its own workflow
 
+<!-- description: How an assistant connected to Realm writes a workflow for a task that none of yours covers, what Realm checks and refuses, and how it differs from a file. -->
+
 An assistant connected to Realm can write a workflow for a task that none of yours covers. It lists the steps it intends to take, and Realm then holds it to that list: in order, with each answer checked, and with a record at the end. This guide shows what the assistant sends, what Realm does with it, what it refuses, and how such a workflow differs from one you write in a file.
 
 ## Before you start

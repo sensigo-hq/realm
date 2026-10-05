@@ -6,6 +6,28 @@ import { THEME_INIT } from '../lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Logo from '../components/Logo.astro';
 import Replay from '../components/Replay.astro';
+import PageMeta from '../components/PageMeta.astro';
+import { HOME_DESCRIPTION, PUBLISHER, SITE_NAME, absolute } from '../lib/site-meta.mjs';
+
+// Structured data for search engines: the site's name (Google takes it from WebSite on the home page)
+// and who publishes it.
+const organization = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  '@id': absolute('/#publisher'),
+  name: PUBLISHER.name,
+  url: PUBLISHER.url,
+  sameAs: PUBLISHER.sameAs,
+};
+const website = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  '@id': absolute('/#website'),
+  name: SITE_NAME,
+  url: absolute('/'),
+  description: HOME_DESCRIPTION,
+  publisher: { '@id': organization['@id'] },
+};
 ---
 
 <!doctype html>
@@ -16,8 +38,12 @@ import Replay from '../components/Replay.astro';
 {ICON_LINKS.map((a) => <link {...a} />)}
 <meta name="theme-color" content={THEME_COLOR} />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Realm — wrong behaviour becomes impossible</title>
-<meta name="description" content="A workflow state machine that agents call. The state cannot change until valid output is submitted." />
+<PageMeta
+  title="Realm — open-source MCP workflow engine for AI agents"
+  description={HOME_DESCRIPTION}
+  path="/"
+  structuredData={[website, organization]}
+/>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
@@ -222,15 +248,15 @@ svg.loop-narrow .n-t{font-size:13px}
       </div>
       <div class="cap">
         <svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.4-3.1 8.3-8 9-4.9-.7-8-4.6-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
-        <div><h3>Output is schema-checked</h3><p>Malformed output is rejected at the boundary. It never enters the run.</p></div>
+        <div><h3>Output is schema-checked</h3><p>An answer that breaks its step's schema is rejected at the boundary. It never enters the run.</p></div>
       </div>
       <div class="cap">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>
-        <div><h3>Humans hold the gates</h3><p>Critical steps pause until a person approves. The agent cannot proceed past one.</p></div>
+        <div><h3>Gates stop the run</h3><p>Critical steps pause until the gate is answered, and the answer goes on the record.</p></div>
       </div>
       <div class="cap">
         <svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M9 14l2 2 4-4"/></svg>
-        <div><h3>Evidence, not logs</h3><p>Every step leaves a tamper-evident record. For client work, that record is the deliverable.</p></div>
+        <div><h3>Evidence, not logs</h3><p>Every step that finishes leaves a record of what it returned. For client work, that record is the deliverable.</p></div>
       </div>
     </div>
   </section>
@@ -240,18 +266,19 @@ svg.loop-narrow .n-t{font-size:13px}
       <p class="eyebrow">See it run</p>
       <h2>Step through a real run, decision by decision</h2>
     </div>
-    <p class="spine">Every step records what it was asked, the schema it had to satisfy, what it submitted, and a hash of the result. Not a log that something ran — a record that it ran correctly.</p>
+    <p class="spine">Every step records what it returned, a hash of it, and when. Not a log that something ran: a record of what Realm accepted at each step.</p>
     <Replay />
   </section>
 
   <section>
     <div><p class="eyebrow">Try it</p><h2>Nothing to sign up for</h2></div>
-    <div class="termwrap"><pre class="term"><code><span class="c"># install the CLI</span>
-npm install -g @sensigo/realm-cli
+    <div class="termwrap"><pre class="term"><code><span class="c"># install the CLI and the model SDK it calls (Anthropic here)</span>
+npm install -g @sensigo/realm-cli @anthropic-ai/sdk
 
-<span class="c"># register a workflow and drive it autonomously</span>
-realm workflow register ./workflow.yaml
-realm agent <span class="f">--workflow</span> my-workflow</code></pre>
+<span class="c"># create a starter workflow, then let a model drive it</span>
+<span class="c"># (needs ANTHROPIC_API_KEY in your environment)</span>
+realm workflow init my-workflow
+realm agent <span class="f">--workflow</span> ./my-workflow <span class="f">--provider</span> anthropic <span class="f">--model</span> claude-sonnet-5-5</code></pre>
       <button type="button" class="copy" aria-label="Copy commands" title="Copy">
         <svg class="i-copy" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
         <svg class="i-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>

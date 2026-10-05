@@ -193,6 +193,26 @@ export interface ResponseEnvelope {
    */
   ended_by?: { arm: SealArm; step: string; reason?: string };
   /**
+   * Issue #676 (review, decisions C73/C74 in #625's record): the step this call stopped at. Present
+   * on every non-`ok` reply — `error`, `blocked` or `confirm_required` — that a step's own call
+   * produced; the reply's `status`, `errors` and `error_code` are that call's. This includes the
+   * refusals a step's call makes before the step does anything (the run not found, the step not
+   * eligible). It names:
+   * - the step the call named (`command`), when that step stopped the call; or
+   * - a step the engine ran AFTER it: `command`'s own call returned `ok`, so it settled; or,
+   * - after MCP `start_run` (whose `command` is the tool's name), the `auto` step the engine was
+   *   running when the call stopped.
+   *
+   * Absent on every `ok` reply and on an error of the chain itself (the depth limit; a guard's
+   * settlement that could not be written — those errors name their guard in their own text). A
+   * refusal thrown before any step is called (the release-line and driver checks) is not a reply.
+   *
+   * Read it before naming the step a non-`ok` reply belongs to: `command` names what the caller
+   * asked for, not the step that stopped. When it differs from `command`, the engine ran it after
+   * the step that was called.
+   */
+  stopped_step?: string;
+  /**
    * Issue #625. `false` on a reply to an answer the gate's expiry beat: the gate was settled by
    * its timeout (or the run was aborted by it) before this answer could be recorded, so the
    * choice in this call was NOT recorded — including when it matches the choice the expiry

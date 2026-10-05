@@ -154,10 +154,12 @@ Run the workflow autonomously from the terminal — no MCP client, no IDE, no co
 ```bash
 realm agent \
   --workflow examples/04-content-pipeline/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/04-content-pipeline/articles/ml-infrastructure.txt\"}"
+  --params "{\"path\":\"$(pwd)/examples/04-content-pipeline/articles/ml-infrastructure.txt\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running. Use `--provider anthropic` to switch providers. The agent drives all steps sequentially and prints the `tag_content` result when the run completes. If `tag_content` times out mid-run, use `realm run list` to find the run ID and `realm run resume` as described in the timeout section below.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). The agent drives all steps sequentially and prints the `tag_content` result when the run completes. If `tag_content` times out mid-run, use `realm run list` to find the run ID and `realm run resume` as described in the timeout section below.
 
 Either way, the agent will:
 

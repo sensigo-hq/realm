@@ -26,8 +26,9 @@ import type {
   ExtensionRegistry,
   RunRecord,
 } from '@sensigo/realm';
-import type { StepDispatcher } from '@sensigo/realm';
+import type { ResponseEnvelope, StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import { buildReattachFlags } from './agent.js';
 import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 
 /**
@@ -38,6 +39,25 @@ import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 function isWriterNonceRequired(): boolean {
   const v = process.env['REALM_REQUIRE_WRITER_NONCE'];
   return v !== undefined && v !== '' && v !== '0' && v !== 'false';
+}
+
+/**
+ * The line `realm workflow run` prints when a step's call does not return `ok`. It sits under the
+ * prompt for `stepName`, so when the reply is the own reply of another step — one the engine ran
+ * AFTER it (`stopped_step`, issue #676 review) — the line names that step; otherwise it would read
+ * as `stepName`'s own.
+ *
+ * @internal Exported for testing only.
+ */
+export function renderStepFailureLine(
+  result: Pick<ResponseEnvelope, 'status' | 'errors' | 'stopped_step'>,
+  stepName: string,
+): string {
+  const stoppedAfter =
+    result.stopped_step !== undefined && result.stopped_step !== stepName
+      ? ` (step '${result.stopped_step}', run by the engine after '${stepName}' finished)`
+      : '';
+  return `  ✗ ${result.status}${stoppedAfter}: ${result.errors.join(', ')}`;
 }
 
 /**
@@ -74,7 +94,16 @@ function isWriterNonceRequired(): boolean {
 export function renderDetachMap(
   record: RunRecord,
   promptStep: string | undefined,
-  opts?: { headline?: string },
+  opts?: {
+    headline?: string;
+    /**
+     * Issue #676 (review walk): the flags this `realm workflow run` was given that `realm agent`
+     * takes too (`--extensions-module`, `--project`, `--mint-writer-nonce`), built by
+     * `buildReattachFlags`. The `Drive it` line repeats them; the model flags stay placeholders,
+     * because a dev run is never driven by a model.
+     */
+    driveFlags?: string;
+  },
 ): string {
   // DERIVED, never the persisted field: a record can carry a stale `run_phase` that disagrees
   // with what its own seal says (issue #432's class), and a map that names the wrong phase sends
@@ -103,7 +132,11 @@ export function renderDetachMap(
     return lines.join('\n');
   }
 
-  lines.push(`  Drive it:  realm agent --run-id ${record.id}`);
+  const driveFlags =
+    opts?.driveFlags !== undefined && opts.driveFlags !== '' ? ` ${opts.driveFlags}` : '';
+  lines.push(
+    `  Drive it:  realm agent --run-id ${record.id} --provider <provider> --model <model>${driveFlags}`,
+  );
   lines.push(`  Inspect:   realm run inspect ${record.id}`);
   lines.push(`  Discard:   realm run abandon ${record.id}`);
   return lines.join('\n');
@@ -175,6 +208,15 @@ export const runCommand = new Command('run')
       const driver = resolveProgramIdentity('run');
       // issue #197 PR-2 (design §8): the strict-flip force-enables minting even without the flag.
       const mintWriterNonce = options.mintWriterNonce === true || isWriterNonceRequired();
+      // issue #676 (review walk): the detach map's `Drive it` line repeats the flags `realm agent`
+      // shares with this command, as the operator typed them.
+      const driveFlags = buildReattachFlags({
+        ...(options.extensionsModule !== undefined
+          ? { extensionsModule: options.extensionsModule }
+          : {}),
+        ...(options.project !== undefined ? { project: options.project } : {}),
+        mintWriterNonce: options.mintWriterNonce === true,
+      });
       const filePath =
         inputPath.endsWith('.yaml') || inputPath.endsWith('.yml')
           ? inputPath
@@ -431,7 +473,9 @@ export const runCommand = new Command('run')
             // is the doctrine this file already keeps for every detach point (#447) — kept for
             // consistency, not because a staleness gap is constructible in this spot.
             const record = await store.get(runId);
-            console.error(renderDetachMap(record, promptStep, { headline: 'Workflow stalled' }));
+            console.error(
+              renderDetachMap(record, promptStep, { headline: 'Workflow stalled', driveFlags }),
+            );
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
             rl.close();
             process.exit(1);
@@ -502,7 +546,7 @@ export const runCommand = new Command('run')
             const dur = ev !== undefined ? `${ev.duration_ms}ms` : 'n/a';
             console.log(`  ✓ → ${run.run_phase} | hash: ${hash}... | ${dur}\n`);
           } else {
-            console.error(`  ✗ ${result.status}: ${result.errors.join(', ')}\n`);
+            console.error(`${renderStepFailureLine(result, stepName)}\n`);
             // issue #468 — a FRESH read, not a break: below the validation-exhaustion threshold
             // the step is still eligible and this re-prompts it honestly; AT the threshold the
             // run just terminalized in the store, and only a fresh read lets the while condition
@@ -567,7 +611,7 @@ export const runCommand = new Command('run')
             rl.close();
             process.exit(1);
           }
-          console.error(renderDetachMap(record, promptStep));
+          console.error(renderDetachMap(record, promptStep, { driveFlags }));
           // process.exit SKIPS the finally, so close explicitly. (rl.close is idempotent, so
           // the double-close on any path that reaches both is harmless — probed.)
           rl.close();

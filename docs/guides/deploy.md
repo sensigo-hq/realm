@@ -1,5 +1,7 @@
 # Deploy a project
 
+<!-- description: Turn workflows that run on your machine into a project that runs on a server: the settings file, secrets, your own code, and a Realm server kept running. -->
+
 This guide takes workflows that run on your machine and makes them a project that can run on a server: settings in one file, secrets in another, your own code beside them, and a Realm server kept running. At the end you know what each file is for, what Realm reads when, and what to do after a change.
 
 ## Before you start

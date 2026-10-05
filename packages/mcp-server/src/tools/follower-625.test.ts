@@ -455,13 +455,13 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       expect(d['start_run_batch']).toBe(
         "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",
       );
-      // decision C30.15: the package's own description counts the tools the server lists.
+      // decision C30.15, re-pointed at the re-pin: #686 took the tool count out of the package's
+      // description. A count the description states must be the count the server lists.
       const pkg = JSON.parse(
         readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
       ) as { description: string };
-      expect(pkg.description).toBe(
-        `MCP server for Realm — exposes ${tools.length} tools for AI agent connections over stdio or HTTP.`,
-      );
+      const statedCount = /\b(\d+) tools\b/.exec(pkg.description);
+      expect(statedCount === null ? tools.length : Number(statedCount[1])).toBe(tools.length);
     });
   }, 30000);
 });

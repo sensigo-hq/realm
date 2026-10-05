@@ -1,5 +1,7 @@
 # Order and routing
 
+<!-- description: How Realm decides which steps may run after every result, explained through the fields that control it and several runs of one workflow. -->
+
 Realm decides which steps may run, and it decides again after every result. This page explains the five fields that control that decision, using one workflow and three runs of it. Every output shown is from a real run.
 
 ## The example

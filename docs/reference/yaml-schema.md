@@ -1,5 +1,7 @@
 # Workflow file reference
 
+<!-- description: This page was replaced. It links to the pages of the workflow file reference, from the top-level fields to what the loader refuses and warns about. -->
+
 This page has been replaced. Its contents are now on these pages:
 
 - [Workflow file: top-level fields](workflow/top-level-fields.md)

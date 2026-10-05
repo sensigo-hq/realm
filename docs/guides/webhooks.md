@@ -1,5 +1,7 @@
 # Start runs from webhooks
 
+<!-- description: Start a workflow from an HTTP request: accept a webhook, check that it is genuine, turn its contents into run parameters, and ignore repeats. -->
+
 This guide makes a workflow start by itself when another system sends an HTTP request: a new ticket, a pushed commit, a paid invoice. At the end you have a workflow that accepts a webhook, checks that it is genuine, turns its contents into run parameters, and ignores repeats.
 
 ## Before you start
@@ -68,13 +70,15 @@ The secret is not written in the workflow. `secret_from` names an environment va
 
 ## 2. Start the server
 
-Set the secret and a model provider key, then start `realm listen` on the workflow's folder:
+Set the secret and a model provider key, then start `realm listen` on the workflow's folder, with the provider and the model:
 
 ```bash
 export TICKETS_WEBHOOK_TOKEN=choose-a-long-secret
-export OPENAI_API_KEY=your-key
-realm listen ./ --port 3000
+export ANTHROPIC_API_KEY=your-key
+realm listen ./ --port 3000 --provider anthropic --model claude-sonnet-5-5
 ```
+
+The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). Version 0.45.0 has no `--provider` or `--model` on `realm listen`: leave them out there.
 
 It prints:
 
@@ -83,7 +87,7 @@ listen: mounted {"workflow":"tickets","path":"/tickets","mode":"shared_secret"}
 realm listen on 127.0.0.1:3000 — 1 workflow(s) mounted
 ```
 
-The provider key is needed because each run is driven by `realm agent`, which will not start without one.
+The key and the model are needed because each run is driven by `realm agent`, which will not start without them, even though this workflow's only step does not call a model.
 
 You can give `realm listen` several workflow folders. Each must have a `trigger` and its own `path`.
 

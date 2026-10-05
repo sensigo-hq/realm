@@ -1,5 +1,7 @@
 # `realm workflow`
 
+<!-- description: Reference for the realm workflow subcommands, which work on workflow files and registered workflows: their arguments, flags, output and exit codes. -->
+
 `realm workflow` has eight subcommands that work on workflow files and on the workflows registered in `~/.realm/workflows/`. This page gives the arguments, flags, output and exit code of each. Every output shown came from a run of the command.
 
 | Subcommand              | What it does                                                |
@@ -195,14 +197,24 @@ It needs a terminal. Started without one, it creates no run:
 Error: dev-mode run is interactive — it prompts on stdin for every step and gate, and stdin here is not a terminal. No run was created. Scripted flows: 'realm workflow test' drives fixtures; 'realm listen' / 'realm agent' are the production drives. To run this workflow by hand, use a real terminal.
 ```
 
+A step that does not return `ok` prints a line that starts with `✗`, then the reply's status and the reason. When the step that stopped is one the engine ran after the step you answered, the line names it:
+
+```text
+  ✗ error (step 'file', run by the engine after 'classify' finished): Handler 'file_ticket' threw: the filing system is down
+```
+
+This was added after version 0.45.0, which prints `✗ error: …` without naming the step.
+
 Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:
 
 ```text
-Prompt cancelled — detached from run 'b4f04d53-c7d1-4099-96a8-55fd3a54eaa9' at step 'note' (phase: running). The run is saved.
-  Drive it:  realm agent --run-id b4f04d53-c7d1-4099-96a8-55fd3a54eaa9
-  Inspect:   realm run inspect b4f04d53-c7d1-4099-96a8-55fd3a54eaa9
-  Discard:   realm run abandon b4f04d53-c7d1-4099-96a8-55fd3a54eaa9
+Prompt cancelled — detached from run '00ac2e9c-6728-4fb4-8ba0-234617eff305' at step 'note' (phase: running). The run is saved.
+  Drive it:  realm agent --run-id 00ac2e9c-6728-4fb4-8ba0-234617eff305 --provider <provider> --model <model>
+  Inspect:   realm run inspect 00ac2e9c-6728-4fb4-8ba0-234617eff305
+  Discard:   realm run abandon 00ac2e9c-6728-4fb4-8ba0-234617eff305
 ```
+
+To drive the run with `realm agent`, fill in `<provider>` and `<model>` with the provider and model you want: a run started by `realm workflow run` has not been driven by a model. The `Drive it` line also repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` you gave `realm workflow run` (none in this example), as you typed them: run it from the folder you started that command in. If the workflow file was never registered, register it first (`realm workflow register <file>`). Until then the command stops with `Error: Workflow not found: <id> — most often this run was created from a file without --register. …`, and after it the same command drives the run. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>` and without those flags.
 
 An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again. A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks — is not asked for. When nothing else can run, the run stops there, names each such step and gives the way out. Added after version 0.45.0:
 

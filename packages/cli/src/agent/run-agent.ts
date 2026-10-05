@@ -46,6 +46,7 @@ import {
   renderValidationSummaryEntry,
   deriveLlmClock,
   safeErrorText,
+  safeExplainFailure,
   appendRequests,
   type LlmClock,
 } from './providers/agent-utils.js';
@@ -156,6 +157,16 @@ export interface AgentDeps {
    * that the bound is now realm's, is attributed when it fires, and covers retries too.
    */
   llmTimeoutSeconds?: number;
+  /**
+   * Issue #676 — the flags this drive was started with (the model flags, `--extensions-module`,
+   * `--project`, a non-default `--schema-retries`, `--llm-timeout`, `--mint-writer-nonce`; see
+   * `buildReattachFlags`), already quoted for a shell. The in-drive "re-attach" line repeats them,
+   * so following it continues the same drive: realm has no default model, and a step blocked on a
+   * missing handler is usually fixed through `--extensions-module`. Set by `realm agent`. Absent (a
+   * host that calls `runAgent` itself) ⇒ the line prints `--provider <provider> --model <model>`
+   * for the operator to fill in.
+   */
+  reattachFlags?: string;
 }
 
 /**
@@ -480,7 +491,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         throw new Error(
           'This workflow uses MCP tool-enabled steps, but the configured LLM provider does not support tool calling. ' +
             'Reasoning models (o1-series) and custom non-tool providers cannot run tool-enabled steps. ' +
-            'Use --provider openai with a standard chat model (e.g. gpt-4o), or --provider anthropic.',
+            'Use a model that supports tool calling, with --provider openai or --provider anthropic.',
         );
       }
     }
@@ -1238,6 +1249,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 );
               } catch (err) {
                 console.error(`\n✗ Step '${stepName}' (tools) failed: ${safeErrorText(err)}`);
+                // issue #676: the provider's own one-sentence explanation, when it has one.
+                const explainedTools = safeExplainFailure(deps.provider, err);
+                if (explainedTools !== undefined) console.error(`  ${explainedTools}`);
                 // issue #401, CHOKEPOINT (1): recorded AFTER the original line, never instead of
                 // it. Returns rather than throws, which is what makes double-minting structurally
                 // impossible — the last-resort catch below never sees this path.
@@ -1405,6 +1419,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 // per-invocation, and nothing later reads it. The SUCCESS-path arming site
                 // above is the one that serves the #217 repair loop, and it is untouched.
                 console.error(`\n✗ Step '${stepName}' LLM call failed: ${safeErrorText(err)}`);
+                // issue #676: the provider's own one-sentence explanation, when it has one.
+                const explained = safeExplainFailure(deps.provider, err);
+                if (explained !== undefined) console.error(`  ${explained}`);
                 // issue #600: `buildEntry` sees only the THROWING call's own `driveCall.usage`, so
                 // the calls this step's earlier schema-repair passes already billed are put in
                 // front of it (wire order). `err` itself is never mutated.
@@ -1579,11 +1596,26 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // finding already owns this disclosure, and two findings for one fact is noise.
           // issue #217: append the repair count ONLY when at least one repair actually ran — never
           // "after 0 schema-repair attempts".
+          //
+          // issue #676 (review): `stopped_step` names the step whose own reply this is. When it is
+          // not this step, the engine ran it AFTER this one (this step then settled, so its repairs,
+          // if any, succeeded). The lines and the drive-failure entry below name the step that stopped.
+          const laterStep =
+            result.stopped_step !== undefined && result.stopped_step !== stepName
+              ? result.stopped_step
+              : undefined;
+          const stoppedStep = laterStep ?? stepName;
+          const ranAfter =
+            laterStep !== undefined ? ` (run by the engine after '${stepName}' finished)` : '';
           const repairSuffix =
-            repairsUsed > 0 ? ` after ${repairsUsed} schema-repair attempts` : '';
+            repairsUsed > 0 && laterStep === undefined
+              ? ` after ${repairsUsed} schema-repair attempts`
+              : '';
           if (isCapabilityBlock) {
             currentRun = await deps.store.get(runId);
-            const block = findCapabilityBlockedSteps(currentRun).find((b) => b.step === stepName);
+            const block = findCapabilityBlockedSteps(currentRun).find(
+              (b) => b.step === stoppedStep,
+            );
             const need =
               block !== undefined
                 ? `${block.requirement.kind} '${block.requirement.name}'`
@@ -1591,12 +1623,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   ? 'the missing handler'
                   : 'the missing adapter';
             console.error(
-              `\n⚠ Step '${stepName}' is blocked: ${need} is not registered in this runner. ` +
-                `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId}\`).`,
+              `\n⚠ Step '${stoppedStep}'${ranAfter} is blocked: ${need} is not registered in this runner. ` +
+                `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}\`).`,
             );
           } else {
             console.error(
-              `\n✗ Step '${stepName}' failed: ${result.errors.join(', ')}${repairSuffix}`,
+              `\n✗ Step '${stoppedStep}'${ranAfter} failed: ${result.errors.join(', ')}${repairSuffix}`,
             );
             // ═══ issue #401, CHOKEPOINT (4) — the disposition table, KEYED ON ERROR CODE ═══
             //
@@ -1620,7 +1652,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             ) {
               await recordDriveFailure(deps.store, runId, {
                 ...validationWedgeEntry(
-                  stepName,
+                  stoppedStep,
                   providerForEvidence ?? 'unknown',
                   result.errors,
                   attemptStartedAt,
