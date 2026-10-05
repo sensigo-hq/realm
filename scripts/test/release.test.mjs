@@ -867,7 +867,7 @@ const CHOOSE_ANOTHER =
 function originTagText(commitShort, subject) {
   return `Error: Tag v0.46.0 already exists on origin, at ${commitShort} "${subject}", whose packages are not all at 0.46.0: that is not a release commit of v0.46.0, and this script cannot release that version. Choose another version: ${CHOOSE_ANOTHER} v0.46.0 is skipped, and origin keeps its tag.`;
 }
-const ORIGIN_TAG_PUBLISH_TEXT = `Error: Tag v0.46.0 already exists on origin, and a v* tag pushed there starts the Publish workflow: this script cannot release that version. If that tag's Publish run failed (see the Actions page, Part B step 6), re-run it (Part B step 9); otherwise choose another version: ${CHOOSE_ANOTHER}`;
+const ORIGIN_TAG_PUBLISH_TEXT = `Error: Tag v0.46.0 already exists on origin, and a v* tag pushed there starts the Publish workflow: this script cannot release that version. If that tag's Publish run failed (see the Actions page, Part B step 6), re-run it (Part B, "Rollback note"); otherwise choose another version: ${CHOOSE_ANOTHER}`;
 
 test('RL5 — refused: local tag; tag on origin; no origin remote; unreadable origin', () => {
   {
