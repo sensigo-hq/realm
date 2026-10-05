@@ -6,12 +6,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-Nine BREAKING changes; realm is pre-1.0, so they ship in a minor — read **Upgrading** before you
+Nine BREAKING changes; Realm is pre-1.0, so they ship in a minor — read **Upgrading** before you
 take this version. Realm no longer picks a model for you (`realm agent` and `realm listen` need
 `--model`); its packages require each other at exactly one version, recognise objects made by
 another copy of the same version, and refuse a store that does not say which version it belongs to;
 and a guard step behind a human gate is now decided by the answer that makes it eligible. The run
-record also gains what each agent step's model calls reported they cost, and the name of the
+record also gains the token counts each agent step's model calls reported, and the name of the
 program that took each step.
 
 #### Upgrading
@@ -43,8 +43,8 @@ object from another copy of the same version.
 that passes a store of its own to `createRealmMcpServer`, to a published tool handler
 (`@sensigo/realm-mcp/dist/tools/*.js`), to an exported engine function that takes a store
 (`abandonRun`, `reclaimStep`, `executeStep`, `submitHumanResponse`, `drainFinalizers`,
-`advanceRun`, `executeChain`, `getWorkflowForRun`, `readRunForFence` and so
-`checkFenceWithReader`) or to a reader-backed trace-buffer constructor must call
+`advanceRun`, `executeChain`, `getWorkflowForRun`, `readRunForFence` (and through it
+`checkFenceWithReader`)) or to a reader-backed trace-buffer constructor must call
 `declareReleaseLine(MyStore)` once on its store class — or `declareReleaseLine(store)` on a
 plain-object store — from the `@sensigo/realm` it imports its errors from. Until it does, each of
 them refuses the store with `ENGINE_RELEASE_LINE_UNDECLARED` before any work. A store that runs the
@@ -52,10 +52,10 @@ published `@sensigo/realm-testing` contracts gains the `STORE_RELEASE_LINE_TRUE`
 realm-cloud (its four store classes); nobody whose stores are realm's own.
 
 **5. `realm workflow validate --strict` and `register --strict` exit 1 when your project's
-`@sensigo/realm` is another version than the command's (issue #620).** Where realm loads your
+`@sensigo/realm` is a different version from the command's (issue #620).** Where realm loads your
 project's code, both commands now warn with `REALM_RELEASE_LINE_MISMATCH`, and `--strict` turns the
-warning into a failure; on 0.45.0 both exited 0. A CI job that upgrades the `realm` command before
-the project, or the project before the command, now fails. Upgrade the project's realm packages and
+warning into a failure; on 0.45.0 both exited 0. A CI job that runs either command with `--strict` on a workflow that loads project code, and
+upgrades the `realm` command before the project or the project before the command, now fails. Upgrade the project's realm packages and
 the command together, or run the project's own command with `npx realm`.
 
 **6. The fenced trace-buffer methods take a predicate, and two constructors take a run reader
@@ -97,17 +97,20 @@ only spaces, longer than 200 characters, or holds a control character (a newline
 stores the name without spaces at either end. An agent or host that passes such a value shortens or
 cleans it, or leaves `responded_by` out.
 
-Not breaking, but worth knowing: `realm run inspect` prints answers, attempts and drive failures
-differently (an `Answer:` line replaces `Choice:` and the gate entry's `Output:`; a step with more
-than one attempt labels its last attempt `Diagnostics (attempt n/n):`; every drive failure is
-listed), so a script that reads its output may need updating; the exported unions `ErrorCode`
-(three new codes) and `WarningCode` (one) gain members, so an exhaustive `switch` over them gains
-cases; `REALM_OPERATOR`, read for the first time, makes `realm agent`, `realm run respond`,
-`realm run drain`, `realm workflow run`, `realm mcp`, `realm serve` and the `realm-mcp` bin refuse
-with exit code 1 when it is longer than 200 characters or holds a control character,
-and a program whose name cannot be derived from the OS prints one line about it on stderr and runs;
-`atomicWriteFile`'s temp files have a new name; and `LlmProvider.callStepWithMeta` may return
-`usage`.
+Not breaking, but worth knowing:
+
+- `realm run inspect` prints answers, attempts and drive failures differently (an `Answer:` line
+  replaces `Choice:` and the gate entry's `Output:`; a step with more than one attempt labels its
+  last attempt `Diagnostics (attempt n/n):`; every drive failure is listed), so a script that
+  reads its output may need updating.
+- The exported unions `ErrorCode` (three new codes) and `WarningCode` (one) gain members, so an
+  exhaustive `switch` over them needs the new cases.
+- `REALM_OPERATOR` is read for the first time. When it is longer than 200 characters or holds a
+  control character, `realm agent`, `realm run respond`, `realm run drain`, `realm workflow run`,
+  `realm mcp`, `realm serve` and the `realm-mcp` bin refuse with exit code 1. A program whose name
+  cannot be derived from the OS prints one line about it on stderr and runs.
+- `atomicWriteFile`'s temp files have a new name.
+- `LlmProvider.callStepWithMeta` may return `usage`.
 
 ### Added
 
@@ -250,11 +253,11 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
 - **Who took a step, and whether an answer comes from the conversation that opened the question
   (issue #625).** A step's claim now carries `holder` — the PROGRAM that took it:
   its name, how the name is known (`stated`, `ambient` for the `REALM_OPERATOR` variable, or
-  `derived` from the OS user and host name) and the door it came through (`agent`, `run`,
+  `derived` from the OS user and host name) and the channel it came through (`agent`, `run`,
   `mcp-stdio`, `mcp-http`) — and `since`, when the claim was made. The evidence entries written
   where a program's code ran carry `driven_by` the same way, and a cleanup step names the program
   that ran it (`realm run respond` and `realm run drain` write their name on those entries only,
-  with the door `respond` or `drain`, never as the person who answered). The reply that opens a gate
+  with the channel `respond` or `drain`, never as the person who answered). The reply that opens a gate
   hands out the claim's token as `gate.claim_token` (and in both forms of the answer instruction);
   `submit_human_response` takes it back as the optional `claim_token`, and every `ok` reply carries
   `gate_claim`: `proof` (`matched`, `absent`, `mismatch`, `unverifiable` or `spent`, with a `cause`
@@ -353,7 +356,7 @@ given to --model; …`. (Issue #676.)
   `createRealmMcpServer`, every published tool handler (`@sensigo/realm-mcp/dist/tools/*.js`), the
   exported engine functions that take a store (`abandonRun`, `reclaimStep`, `executeStep`,
   `submitHumanResponse`, `drainFinalizers`, `advanceRun`, `executeChain`, `getWorkflowForRun`,
-  `readRunForFence` and so `checkFenceWithReader`) and the two reader-backed trace-buffer
+  `readRunForFence` (and through it `checkFenceWithReader`)) and the two reader-backed trace-buffer
   constructors refuse a store that declares no line (`ENGINE_RELEASE_LINE_UNDECLARED`) or another
   version's (`ENGINE_RELEASE_LINE_MISMATCH`), before any work. A host's own store class calls
   `declareReleaseLine(MyStore)` once, from the `@sensigo/realm` it imports its errors from; a
@@ -363,7 +366,7 @@ given to --model; …`. (Issue #676.)
   its own (realm-cloud's four store classes); nobody whose stores are realm's own. See **Upgrading** 4.
 
 - **BREAKING —** **`realm workflow validate --strict` and `realm workflow register --strict` fail
-  when your project's `@sensigo/realm` is another version than the command's (issue #620).** Where
+  when your project's `@sensigo/realm` is a different version from the command's (issue #620).** Where
   realm loads your project's code, both commands print a `REALM_RELEASE_LINE_MISMATCH` warning
   naming the two versions and folders when the `@sensigo/realm` nearest that code is not the one
   the command runs, and `--strict` turns that warning into a failure: `validate --strict` prints
@@ -674,7 +677,7 @@ test` tries a project handler's retryable `WorkflowError` again instead of faili
   (`isInSubnet()` compares addresses of different families; ≤ 10.7.0). In-range, lockfile-only. The
   one copy comes from `@modelcontextprotocol/sdk` (exactly `1.30.0`, a dependency of
   `@sensigo/realm-cli` and `@sensigo/realm-mcp`) through `express-rate-limit` 8.5.2. Exposure:
-  none, derived fresh. Inside the SDK only its OAuth server handlers
+  none. Inside the SDK only its OAuth server handlers
   (`server/auth/handlers/{authorize,register,revoke,token}.js`) import `express-rate-limit`, and no
   module realm imports from the SDK reaches them: loading every built realm entry point (the core
   library, the realm-mcp server and its tool modules, the CLI's command registry, `serve`, `mcp` and

@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { Command } from 'commander';
 
 /**
- * Scaffolds a new workflow project at targetDir with five template files
+ * Scaffolds a new workflow project at targetDir with six template files
  * (workflow.yaml, schema.json, .env.example, README.md, registry.sample.js, realm.yaml).
  * Throws an error if targetDir already exists.
  * @param name      Workflow project name used in file contents.

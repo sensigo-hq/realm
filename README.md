@@ -46,6 +46,11 @@ workflow-declared project extensions nor the `realm.yaml` deployment manifest.
 npm install @sensigo/realm
 ```
 
+If your project installs `@sensigo/realm` for its own handlers or adapters, install
+`@sensigo/realm-cli` at the same version in the project too and run it as `npx realm`, so the
+command and your code share one copy of realm. A global `realm` of a different version warns
+where it loads your project's code, and its `--strict` checks fail.
+
 **Testing utilities**
 
 ```bash
@@ -157,7 +162,7 @@ Workflows can declare their own custom adapters and step handlers — no wrapper
 extensions: ./registry.js # relative module path(s); the default export declares { adapters, handlers, processors }
 ```
 
-Every command that loads a workflow (`run`, `agent`, `listen`, `serve`, `mcp`, `test`, `validate`) resolves the declaration identically, with fail-fast loading and an enforced trust boundary. See [docs/reference/project-extensions.md](docs/reference/project-extensions.md).
+The `realm` commands that check or run a workflow (`workflow validate`, `register`, `watch`, `test`, `workflow run`, `agent`, `listen`, `mcp`, `serve`, `run respond`, `run drain`) load the declared code the same way, with fail-fast loading and an enforced trust boundary; the commands that only read runs (`run list`, `inspect`, `attempts`, `diff`, `replay`, `export`) never load it. See [when each command loads the code](docs/reference/project-extensions.md#when-each-command-loads-the-code).
 
 ## CLI Reference
 

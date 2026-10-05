@@ -266,8 +266,8 @@ node -e '
   for (const line of body) {
     const fence = /^\s*```/.test(line);
     const prev = joined.length > 0 ? joined[joined.length - 1] : "";
-    const startsBlock = /^\s*([-*+] |\d+\. |#|\||>)/.test(line);
-    const prevJoinable = prev.trim() !== "" && !/^\s*(#|\||```)/.test(prev);
+    const startsBlock = /^\s*([-*+] |\d+\. |#{1,6}(\s|$)|\||>)/.test(line);
+    const prevJoinable = prev.trim() !== "" && !/^\s*(#{1,6}(\s|$)|\||```)/.test(prev);
     if (!inCode && !fence && line.trim() !== "" && !startsBlock && prevJoinable) {
       joined[joined.length - 1] = `${prev} ${line.trim()}`;
     } else {
@@ -284,7 +284,9 @@ node -e '
 gh release create v<version> --repo sensigo-hq/realm --title "v<version>" --notes-file /tmp/realm-v<version>-notes.md --verify-tag
 ```
 
-`--verify-tag` makes `gh` refuse when `v<version>` is not on GitHub. Without it, `gh` would create a new tag `v<version>` from the latest commit of `main`, which is not the release commit. Create no release for a version whose publish did not finish: if the publish needs a new version (step 10), create the release for that version instead.
+Before you run the second, check the file: its first line is the opening paragraph of the release notes, its last line is the last entry of the section (not the next version's heading and not `---`), and each list item is one line.
+
+`--verify-tag` makes `gh` refuse when `v<version>` is not on GitHub: push the tag (step 5) and run it again. Without `--verify-tag`, `gh` would create a new tag `v<version>` from the latest commit of `main`, which is not the release commit, and a pushed `v*` tag starts the Publish workflow. If a release for the tag already exists (a second run), `gh release view v<version>` shows it; to replace its text, run `gh release edit v<version> --notes-file /tmp/realm-v<version>-notes.md`. Create no release for a version whose publish did not finish: if the publish needs a new version (step 10), create the release for the new version instead.
 
 **9. Verify the consumer** _(user-side, Mac-executed)_
 
