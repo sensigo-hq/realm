@@ -7,7 +7,7 @@ export const SITE_NAME = 'Realm';
 
 // The home page's description; llms.txt quotes it as the site's one-line summary.
 export const HOME_DESCRIPTION =
-  'A workflow state machine that agents call. The state cannot change until valid output is submitted.';
+  'The workflow engine your AI agent calls over MCP. Steps run in order; answers that break their schema are refused.';
 
 export const HOW_IT_WORKS_DESCRIPTION =
   'How a Realm run passes between the engine, an MCP client, realm agent and realm listen — four diagrams.';
