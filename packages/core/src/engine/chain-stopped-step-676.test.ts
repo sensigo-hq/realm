@@ -13,10 +13,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
-import { executeChain, executeStep } from './execution-loop.js';
+import { advanceRun, executeChain, executeStep } from './execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
+import type { RunRecord } from '../types/run-record.js';
 
 /** The agent step's submission, accepted as given. */
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
@@ -125,7 +126,12 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
     });
   });
 
-  it('blocked: a chained step whose precondition fails — stopped_step names it', async () => {
+  // #625 PR-2a re-pin (round 9): on #676's base the chain attempted a step after the called one
+  // and returned its precondition refusal. PR-2a's chain never attempts a step it refuses before
+  // its claim (decision C13): the step is named in the reply's hint instead, and the reply is `ok`.
+  // The `blocked` member of the rule is pinned below on the path that still reaches it — a step the
+  // advance loop picked, refused in the window between the pick and its claim.
+  it('precondition: a chained step refused before its claim is not run (#625 PR-2a, C13) — the reply is ok, has no stopped_step, and its hint names the step', async () => {
     const def = draftThenPublish('stopped-blocked', { preconditions: ['draft.ready == true'] });
     const runId = await newRun(def.id);
     const reply = await executeChain(store, def, {
@@ -134,18 +140,94 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
       input: { ready: false },
       dispatcher: echo,
     });
-    // (a) red when the stamp is limited to `error` replies; (b) prints status, command,
-    //     stopped_step and the suggestion naming the failed precondition.
+    // (a) red when the chain attempts the refused step again (the reply then becomes its
+    //     `blocked` refusal) or an ok reply gains the field; (b) prints status, command, presence
+    //     and the hint.
+    expect({
+      status: reply.status,
+      command: reply.command,
+      has_stopped_step: 'stopped_step' in reply,
+      hint: reply.context_hint,
+    }).toEqual({
+      status: 'ok',
+      command: 'draft',
+      has_stopped_step: false,
+      hint: expect.stringContaining("'publish' cannot run (precondition)"),
+    });
+  });
+
+  it('blocked: a step the advance loop picked is refused in the window before its claim (another process opened a gate) — stopped_step names it', async () => {
+    // `a` → `b`, and a sibling gate step `x` another process runs. Between the loop's pick of `b`
+    // and `b`'s own read, that process opens `x`'s gate (a real write, through the same store), so
+    // `b`'s call finds it not eligible — neither in flight nor settled, so not "taken".
+    const def: WorkflowDefinition = {
+      id: 'stopped-race',
+      name: 'stopped-race',
+      version: 1,
+      steps: {
+        a: { description: 'A', execution: 'auto' },
+        b: { description: 'B', execution: 'auto', depends_on: ['a'] },
+        x: {
+          description: 'X',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          gate: { choices: ['go', 'stop'] },
+        } as StepDefinition,
+      },
+    };
+    let armed = false;
+    class OtherProcessOpensAGate extends JsonFileStore {
+      override async get(id: string): Promise<RunRecord> {
+        if (armed) {
+          armed = false;
+          await executeStep(store, def, { runId: id, command: 'x', input: {}, dispatcher: echo });
+        }
+        return super.get(id);
+      }
+    }
+    const racing = new OtherProcessOpensAGate(dir);
+    const runId = await newRun(def.id);
+    const reply = await advanceRun(racing, def, {
+      runId,
+      onStep: (step) => {
+        if (step === 'b') armed = true;
+      },
+    });
+    // (a) red when the loop's stamp skips `blocked` replies, or when the race is reported as
+    //     "taken"; (b) prints status, command and stopped_step, and the gate's step on the record.
+    const record = await store.get(runId);
     expect({
       status: reply.status,
       command: reply.command,
       stopped_step: reply.stopped_step,
-      suggestion: reply.blocked_reason?.suggestion,
+      gate_step: record.pending_gate?.step_name,
+    }).toEqual({ status: 'blocked', command: 'advance_run', stopped_step: 'b', gate_step: 'x' });
+  });
+
+  it('error, advance_run: a step it ran fails — stopped_step names it; command stays advance_run', async () => {
+    const def: WorkflowDefinition = {
+      id: 'stopped-advance',
+      name: 'stopped-advance',
+      version: 1,
+      steps: {
+        a: { description: 'A', execution: 'auto' },
+        b: { description: 'B', execution: 'auto', depends_on: ['a'], handler: 'boom' },
+      },
+    };
+    const runId = await newRun(def.id);
+    const reply = await advanceRun(store, def, { runId, registry: boomRegistry() });
+    // (a) red when the advance loop's stamp is dropped; (b) prints status, command, stopped_step
+    //     and errors.
+    expect({
+      status: reply.status,
+      command: reply.command,
+      stopped_step: reply.stopped_step,
+      errors: reply.errors,
     }).toEqual({
-      status: 'blocked',
-      command: 'draft',
-      stopped_step: 'publish',
-      suggestion: expect.stringContaining('draft.ready == true'),
+      status: 'error',
+      command: 'advance_run',
+      stopped_step: 'b',
+      errors: [expect.stringContaining('the printer is on fire')],
     });
   });
 
@@ -237,22 +319,41 @@ describe('stopped_step: the called step, and where it is absent', () => {
     }).toEqual({ status: 'error', command: 'publish', stopped_step: 'publish' });
   });
 
-  it("CONTROL — an error of the chain itself: the depth limit names no step's own reply", async () => {
-    // 52 bare auto steps in a line: the chain passes its depth limit (50) before the last one runs.
-    const steps: Record<string, StepDefinition> = {};
-    for (let i = 0; i < 52; i++) {
-      steps[`s${i}`] = {
-        description: `Step ${i}`,
-        execution: 'auto',
-        depends_on: i === 0 ? [] : [`s${i - 1}`],
-      } as StepDefinition;
+  // #625 PR-2a re-pin (round 9): the chain has no depth limit any more (PR-2a's loop runs each
+  // step at most once per call), so this control rides the other error of the chain itself the
+  // field's doc names — a guard's settlement that could not be written.
+  it("CONTROL — an error of the chain itself: a guard's settlement that could not be written names no step's own reply", async () => {
+    // A store without `settleStep` (the legacy path settles a guard through `update`) whose write
+    // of the guard's outcome fails.
+    class GuardWriteFails extends JsonFileStore {
+      override async update(record: RunRecord): Promise<RunRecord> {
+        if (record.completed_steps.includes('check') || record.failed_steps.includes('check')) {
+          throw new Error('disk full');
+        }
+        return super.update(record);
+      }
     }
-    const def: WorkflowDefinition = { id: 'stopped-none-depth', name: 'depth', version: 1, steps };
-    const runId = await newRun(def.id);
-    const reply = await executeChain(store, def, {
-      runId,
-      command: 's0',
-      input: {},
+    const legacy = new GuardWriteFails(dir);
+    Object.defineProperty(legacy, 'settleStep', { value: undefined });
+    const def: WorkflowDefinition = {
+      id: 'stopped-none-guard',
+      name: 'stopped-none-guard',
+      version: 1,
+      steps: {
+        draft: { description: 'Write the draft', execution: 'agent' },
+        check: {
+          description: 'Check it',
+          execution: 'guard',
+          depends_on: ['draft'],
+          abort_unless: ['draft.text == "hello"'],
+        } as StepDefinition,
+      },
+    };
+    const { run } = await legacy.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const reply = await executeChain(legacy, def, {
+      runId: run.id,
+      command: 'draft',
+      input: { text: 'hello' },
       dispatcher: echo,
     });
     // (a) red when the chain's own errors gain the field; (b) prints status, errors and presence.
@@ -262,7 +363,7 @@ describe('stopped_step: the called step, and where it is absent', () => {
       has_stopped_step: 'stopped_step' in reply,
     }).toEqual({
       status: 'error',
-      errors: [expect.stringContaining('exceeded maximum depth')],
+      errors: [expect.stringContaining("Failed to persist guard step 'check'")],
       has_stopped_step: false,
     });
   });

@@ -127,10 +127,14 @@ describe("realm agent names the step that stopped the call, when the engine ran 
     const { runId, lines } = await drive(
       draftThenPublish('stopped-cli-block', { handler: 'enricher' }),
     );
-    // (a) red when the line names the drive's step, or the block lookup keys on the drive's step
-    //     (the requirement then degrades to "the missing handler"); (b) prints the line.
+    // #625 PR-2a re-pin (round 9): PR-2a holds a chained capability block (decision C64, keyed on
+    // `stopped_step` by C73): the agent step is said as completed, the blocked step is named once
+    // on its `•` line, and the drive's exit — whose step IS the blocked one — prints the block line
+    // without "(run by the engine after …)". (a) red when the line names the drive's step, or the
+    // block lookup keys on the drive's step (the requirement then degrades to "the missing
+    // handler"); (b) prints the line.
     expect(startsWith(lines, '⚠ Step ')).toBe(
-      "⚠ Step 'publish' (run by the engine after 'draft' finished) is blocked: handler 'enricher' is not registered in this runner. " +
+      "⚠ Step 'publish' is blocked: handler 'enricher' is not registered in this runner. " +
         `The run is NOT failed — add handler 'enricher' and re-attach (\`realm agent --run-id ${runId} --model m\`).`,
     );
   });
@@ -147,10 +151,13 @@ describe("realm agent names the step that stopped the call, when the engine ran 
         },
       }),
     );
-    // (a) red when the line names the drive's step; (b) prints the line.
+    // #625 PR-2a re-pin (round 9): PR-2a's chain never runs a step it refuses before its claim
+    // (decision C13); the drive names it once and, with nothing else to run, stops on it (C31) —
+    // recording the same wedge entry, under the refused step. (a) red when the line names the
+    // drive's step; (b) prints the line.
     expect(
-      startsWith(lines, '✗ Step ').startsWith(
-        "✗ Step 'publish' (run by the engine after 'draft' finished) failed: ",
+      startsWith(lines, '✗ The drive stops').startsWith(
+        "✗ The drive stops: nothing else can run, and 'publish' cannot run (input_schema). ",
       ),
     ).toBe(true);
     const run = await store.get(runId);

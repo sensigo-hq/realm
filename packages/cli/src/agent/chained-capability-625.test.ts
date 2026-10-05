@@ -19,7 +19,7 @@ import { LlmProvider } from './providers/llm-provider.js';
 const BLOCKED_LINE =
   "log: • Step 'compute' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it";
 const EXIT_LINE =
-  "error: \n⚠ Step 'compute' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (`realm agent --run-id <run>`).";
+  "error: \n⚠ Step 'compute' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (`realm agent --run-id <run> --provider <provider> --model <model>`).";
 
 function fixture(secondAgentStep: boolean): WorkflowDefinition {
   return {

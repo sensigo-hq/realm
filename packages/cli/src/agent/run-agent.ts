@@ -1571,20 +1571,22 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
         // decision C64 (the census): the chain after an agent step can reach an engine step that
         // cannot run here (capability). The agent step completed and the reply is the chained step's
-        // block, so the block below would name the agent step. Held instead, as the loop top holds
-        // its own (decision C23): the next pass names the blocked step once, the drive goes on with
-        // any ready agent step, and its exit names the blocked step and what it needs.
-        if (engineReply === undefined && isCapabilityBlock) {
-          const afterChain = await deps.store.get(runId);
-          const chainedBlock = findCapabilityBlockedSteps(afterChain).find(
-            (b) => b.step !== stepName && currentRun?.capability_blocks?.[b.step] === undefined,
-          );
-          if (chainedBlock !== undefined && afterChain.completed_steps.includes(stepName)) {
-            heldCapabilityReplies.set(chainedBlock.step, result);
-            currentRun = afterChain;
-            console.log(`  ✓ → ${currentRun.run_phase}`);
-            continue;
-          }
+        // block. Held instead of sent to the block below, as the loop top holds its own (decision
+        // C23): the next pass names the blocked step once, the drive goes on with any ready agent
+        // step, and its exit names the blocked step and what it needs. Keyed on `stopped_step`
+        // (decision C73): the reply names the step it belongs to, so a value other than this step
+        // means the engine ran that step after this one (and this one settled) — no record is read
+        // to guess it.
+        if (
+          engineReply === undefined &&
+          isCapabilityBlock &&
+          result.stopped_step !== undefined &&
+          result.stopped_step !== stepName
+        ) {
+          heldCapabilityReplies.set(result.stopped_step, result);
+          currentRun = await deps.store.get(runId);
+          console.log(`  ✓ → ${currentRun.run_phase}`);
+          continue;
         }
 
         if (result.status === 'error') {

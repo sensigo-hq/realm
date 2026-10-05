@@ -201,11 +201,16 @@ export interface ResponseEnvelope {
    * - the step the call named (`command`), when that step stopped the call; or
    * - a step the engine ran AFTER it: `command`'s own call returned `ok`, so it settled; or,
    * - after MCP `start_run` (whose `command` is the tool's name), the `auto` step the engine was
-   *   running when the call stopped.
+   *   running when the call stopped;
+   * - after `advanceRun` / MCP `advance_run` (whose `command` is no step), the `auto` step it ran
+   *   that stopped the call (issue #625 PR-2a).
    *
-   * Absent on every `ok` reply and on an error of the chain itself (the depth limit; a guard's
-   * settlement that could not be written — those errors name their guard in their own text). A
-   * refusal thrown before any step is called (the release-line and driver checks) is not a reply.
+   * Absent on every `ok` reply and on an error of the chain itself (a guard's settlement that could
+   * not be written, or that a different attempt had already settled — those errors name their guard
+   * in their own text). A refusal thrown before any step is called (the release-line and driver
+   * checks) is not a reply. An `auto` step the engine refuses before its claim (issue #625 PR-2a,
+   * decision C13) is never run by the chain, so it stops no call: the reply is `ok` and names it in
+   * its `context_hint`.
    *
    * Read it before naming the step a non-`ok` reply belongs to: `command` names what the caller
    * asked for, not the step that stopped. When it differs from `command`, the engine ran it after

@@ -50,7 +50,7 @@ const INPUT_REFUSAL = "Invalid input for step 'x': the input must have required 
 const CAPABILITY_WARN =
   "warn: ⚠ Step 'x' needs handler 'missing_h', which is not registered in this runner. If reached it will block recoverably (not fail) until a runner that provides this handler executes it — load the missing extension or run on a capable runner.";
 const CAPABILITY_EXIT =
-  "error: \n⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (`realm agent --run-id <run>`).";
+  "error: \n⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (`realm agent --run-id <run> --provider <provider> --model <model>`).";
 
 /** The line each member prints, once per drive (decision C36: `here` for capability only). */
 const CANNOT_LINE: Record<Member, string> = {

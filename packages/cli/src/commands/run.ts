@@ -535,11 +535,14 @@ export const runCommand = new Command('run')
           } else if (
             (result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
               result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED') &&
-            (await store.get(runId)).completed_steps.includes(stepName)
+            result.stopped_step !== undefined &&
+            result.stopped_step !== stepName
           ) {
             // decision C64 (the census): this step completed; the chain after it reached a step
             // this runner lacks the code for, and the reply is that step's block. The step is said
             // as completed; the next pass names the blocked step (it is never offered at the prompt).
+            // Keyed on `stopped_step` (decision C73): a value other than this step means the engine
+            // ran that step after this one, so this one settled — no record is read to guess it.
             run = await store.get(runId);
             const ev = [...run.evidence].reverse().find((e) => e.step_id === stepName);
             const hash = ev !== undefined ? ev.evidence_hash.slice(0, 8) : 'n/a';

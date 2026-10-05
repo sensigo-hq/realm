@@ -355,7 +355,7 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect(result).toBe('failed');
     const runId = (await store.list())[0]!.id;
     expect(err).toContain(
-      `⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (\`realm agent --run-id ${runId}\`).`,
+      `⚠ Step 'x' is blocked: handler 'missing_h' is not registered in this runner. The run is NOT failed — add handler 'missing_h' and re-attach (\`realm agent --run-id ${runId} --provider <provider> --model <model>\`).`,
     );
     expect(provider.callStep).not.toHaveBeenCalled();
   });
