@@ -168,7 +168,37 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   `GATE_PROOF_NEVER_GATES_THE_ANSWER`, and the lists `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`,
   `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`.
 
+- **`realm listen --provider` and `--model`.** Each is passed to every `realm agent` it starts;
+  `--model` is required. (Issue #676.)
+
+- **`LlmProvider.explainFailure`, optional, and the model-not-found sentence.** A provider may return
+  one plain sentence for an error it recognises; `realm agent` prints it on its own line under the
+  failure line, and ignores a throw or an empty answer. The Anthropic provider explains a 404 for a
+  model it does not offer: `Anthropic offers no model named <id> to this API key. Check the name
+given to --model; …`. (Issue #676.)
+
 ### Changed
+
+- **BREAKING —** **Realm has no default model (issue #676).** `realm agent` with a built-in
+  provider, and `realm listen`, refuse to start without `--model`; the message names the provider
+  realm picked and why, and where that provider lists its models. A `--model` that is empty or
+  holds only spaces counts as missing. A workflow with no agent step also needs `--model`: both
+  commands check their flags before they read the workflow. `--provider` refuses a word other than
+  `openai` or `anthropic` (it took any other word as Anthropic). `realm agent --provider X` refuses
+  to start when X's API key is not set (it created the run, and the first model call failed). Each
+  refusal of these flags, the no-key and `--base-url` refusals included, ends `Nothing was
+started.` with `--workflow` or `Run <id> was left as it was.` with `--run-id`. An API key that is
+  empty or holds only spaces counts as not set, for choosing the provider as for the messages. The
+  continue command printed for a step blocked by a missing handler or adapter repeats the model
+  flags the drive was started with; `realm run resume` and the dev-run detach map print
+  `--provider <provider> --model <model>` for you to fill in. **Upgrading:** add `--model <name>`
+  to every `realm agent` command (except one with `--provider-module`, which refuses `--model`) and
+  to every `realm listen` command and script; a script that matches the no-key or `--base-url`
+  refusal exactly now sees one more sentence at its end; use only `openai` or `anthropic` after
+  `--provider`; set the key of the provider you name; a key left empty is now treated as not set,
+  so with an empty `OPENAI_API_KEY` beside an Anthropic key realm now picks Anthropic. The old
+  defaults were `gpt-4o` and `claude-sonnet-4-5`; Anthropic retires `claude-sonnet-4-5` on
+  2026-11-30, and a new API key already gets 404 for it.
 
 - **BREAKING —** **Every store realm runs against must carry its release line (issue #620).**
   `createRealmMcpServer`, every published tool handler (`@sensigo/realm-mcp/dist/tools/*.js`), the

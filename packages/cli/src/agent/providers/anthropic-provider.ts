@@ -9,6 +9,7 @@ import {
 } from '@sensigo/realm';
 import {
   ToolCapableLlmProvider,
+  ANTHROPIC_MODELS_URL,
   type ProviderCapabilities,
   type CallStepWithMetaResult,
 } from './llm-provider.js';
@@ -359,6 +360,39 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    */
   capabilities(): ProviderCapabilities {
     return { jsonMode: false, toolArgsStrict: true, providerId: 'anthropic' };
+  }
+
+  /**
+   * Issue #676 — one sentence for the one error this provider explains: Anthropic answering that
+   * it has no model by the name this provider was built with. The body says only `model: <id>`,
+   * captured on 2026-10-04:
+   *   404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-4-5"},…}
+   * Read from the error's own fields (`status`, and `error` = the parsed body) — never
+   * `instanceof` (the SDK may be loaded more than once) and never a pattern over the whole
+   * message. The model is compared for EQUALITY: a prefix test would let a provider for
+   * `claude-sonnet-4-5` claim a message naming `claude-sonnet-4-5-20250929`. Any other error, and
+   * any read that throws, gives `undefined`.
+   */
+  override explainFailure(err: unknown): string | undefined {
+    try {
+      if (err === null || typeof err !== 'object') return undefined;
+      const e = err as { status?: unknown; error?: unknown };
+      if (e.status !== 404) return undefined;
+      const body = e.error;
+      if (body === null || typeof body !== 'object') return undefined;
+      const inner = (body as { error?: unknown }).error as
+        { type?: unknown; message?: unknown } | null | undefined;
+      if (inner === null || typeof inner !== 'object') return undefined;
+      if (inner.type !== 'not_found_error') return undefined;
+      if (inner.message !== 'model: ' + this.model) return undefined;
+      return (
+        `Anthropic offers no model named ${this.model} to this API key. Check the name given to --model; ` +
+        `current models are listed at ${ANTHROPIC_MODELS_URL} and retired ones at ` +
+        'https://platform.claude.com/docs/en/about-claude/model-deprecations.'
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

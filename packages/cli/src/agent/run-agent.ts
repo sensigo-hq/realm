@@ -34,6 +34,7 @@ import {
   renderValidationSummaryEntry,
   deriveLlmClock,
   safeErrorText,
+  safeExplainFailure,
   appendRequests,
   type LlmClock,
 } from './providers/agent-utils.js';
@@ -117,6 +118,15 @@ export interface AgentDeps {
    * that the bound is now realm's, is attributed when it fires, and covers retries too.
    */
   llmTimeoutSeconds?: number;
+  /**
+   * Issue #676 — the model flags this drive was started with (`--provider-module <path>`, or
+   * `--provider`, `--model`, `--base-url`, `--strict-base-url` as given), already quoted for a
+   * shell. Realm has no default model, so a re-attach command printed without them would be
+   * refused; the in-drive "re-attach" line repeats them. Set by `realm agent`. Absent (a host
+   * that calls `runAgent` itself) ⇒ the line prints `--provider <provider> --model <model>` for
+   * the operator to fill in.
+   */
+  reattachFlags?: string;
 }
 
 /**
@@ -433,7 +443,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         throw new Error(
           'This workflow uses MCP tool-enabled steps, but the configured LLM provider does not support tool calling. ' +
             'Reasoning models (o1-series) and custom non-tool providers cannot run tool-enabled steps. ' +
-            'Use --provider openai with a standard chat model (e.g. gpt-4o), or --provider anthropic.',
+            'Use a model that supports tool calling, with --provider openai or --provider anthropic.',
         );
       }
     }
@@ -1004,6 +1014,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 );
               } catch (err) {
                 console.error(`\n✗ Step '${stepName}' (tools) failed: ${safeErrorText(err)}`);
+                // issue #676: the provider's own one-sentence explanation, when it has one.
+                const explainedTools = safeExplainFailure(deps.provider, err);
+                if (explainedTools !== undefined) console.error(`  ${explainedTools}`);
                 // issue #401, CHOKEPOINT (1): recorded AFTER the original line, never instead of
                 // it. Returns rather than throws, which is what makes double-minting structurally
                 // impossible — the last-resort catch below never sees this path.
@@ -1171,6 +1184,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 // per-invocation, and nothing later reads it. The SUCCESS-path arming site
                 // above is the one that serves the #217 repair loop, and it is untouched.
                 console.error(`\n✗ Step '${stepName}' LLM call failed: ${safeErrorText(err)}`);
+                // issue #676: the provider's own one-sentence explanation, when it has one.
+                const explained = safeExplainFailure(deps.provider, err);
+                if (explained !== undefined) console.error(`  ${explained}`);
                 // issue #600: `buildEntry` sees only the THROWING call's own `driveCall.usage`, so
                 // the calls this step's earlier schema-repair passes already billed are put in
                 // front of it (wire order). `err` itself is never mutated.
@@ -1341,7 +1357,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                   : 'the missing adapter';
             console.error(
               `\n⚠ Step '${stepName}' is blocked: ${need} is not registered in this runner. ` +
-                `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId}\`).`,
+                `The run is NOT failed — add ${need} and re-attach (\`realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}\`).`,
             );
           } else {
             console.error(

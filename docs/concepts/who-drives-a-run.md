@@ -46,7 +46,7 @@ It runs one step at a time.
 A run is not tied to the driver that started it. The record is on disk, and any driver can pick it up. Two common cases:
 
 - A gate opened by `realm agent` can be answered from another terminal with `realm run respond`.
-- A run that stopped part-way can be continued with `realm agent --run-id <run-id>`.
+- A run that stopped part-way can be continued with `realm agent --run-id <run-id> --model <model>`. Realm has no default model; give the model, and the provider, you want to drive the run with. Version 0.45.0 has a default model.
 
 ## See also
 

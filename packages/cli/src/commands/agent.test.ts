@@ -297,7 +297,7 @@ describe('resolveProvider', () => {
     delete process.env['ANTHROPIC_API_KEY'];
 
     // The guard must not fire — resolveProvider returns successfully for openai + base-url.
-    const provider = await resolveProvider('openai', undefined, 'https://api.deepseek.com');
+    const provider = await resolveProvider('openai', 'test-model', 'https://api.deepseek.com');
     expect(provider).toBeDefined();
   });
 });
@@ -443,7 +443,9 @@ steps:
       'utf8',
     );
 
-    await agentCommand.parseAsync(['node', 'realm', '--workflow', file]).catch(() => {});
+    await agentCommand
+      .parseAsync(['node', 'realm', '--workflow', file, '--model', 'test-model'])
+      .catch(() => {});
 
     const errored = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls
       .map((c: unknown[]) => String(c[0]))
@@ -460,7 +462,14 @@ steps:
     process.env['OPENAI_API_KEY'] = 'test-key';
     const dir = mkdtempSync(join(tmpdir(), 'realm-agent-voice-missing-'));
     await agentCommand
-      .parseAsync(['node', 'realm', '--workflow', join(dir, 'no-such-file.yaml')])
+      .parseAsync([
+        'node',
+        'realm',
+        '--workflow',
+        join(dir, 'no-such-file.yaml'),
+        '--model',
+        'test-model',
+      ])
       .catch(() => {});
 
     const errored = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls
@@ -481,7 +490,15 @@ steps:
     process.env['OPENAI_API_KEY'] = 'test-key';
     try {
       await agentCommand
-        .parseAsync(['node', 'realm', '--workflow', 'nope/none.yaml', '--strict-base-url'])
+        .parseAsync([
+          'node',
+          'realm',
+          '--workflow',
+          'nope/none.yaml',
+          '--strict-base-url',
+          '--model',
+          'test-model',
+        ])
         .catch(() => {});
       expect(console.error).toHaveBeenCalledWith(
         expect.stringContaining('--strict-base-url has no effect without --base-url'),
@@ -613,9 +630,9 @@ steps:
       'utf8',
     );
 
-    await expect(agentCommand.parseAsync(['node', 'realm', '--workflow', file])).rejects.toThrow(
-      'process.exit',
-    );
+    await expect(
+      agentCommand.parseAsync(['node', 'realm', '--workflow', file, '--model', 'test-model']),
+    ).rejects.toThrow('process.exit');
 
     expect(process.exit).toHaveBeenCalledWith(1);
     const errored = (console.error as unknown as { mock: { calls: unknown[][] } }).mock.calls

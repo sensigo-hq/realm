@@ -144,10 +144,12 @@ Run the workflow autonomously from the terminal — no MCP client, no IDE, no co
 ```bash
 realm agent \
   --workflow examples/01-code-reviewer/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/01-code-reviewer/diffs/add-oauth-provider.diff\"}"
+  --params "{\"path\":\"$(pwd)/examples/01-code-reviewer/diffs/add-oauth-provider.diff\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running. Use `--provider anthropic` to switch providers. The agent drives the full workflow, resubmits automatically if any field fails schema validation, and prints the `review_changes` result when the run completes.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). The agent drives the full workflow, resubmits automatically if any field fails schema validation, and prints the `review_changes` result when the run completes.
 
 Either way, the agent starts the run, loads the diff automatically, then receives a prompt
 asking for the structured review. If any field violates the schema — wrong enum

@@ -17,7 +17,8 @@ import { homedir } from 'node:os';
 import { Command } from 'commander';
 // issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
 // flags cannot drift on what they accept. The listen→agent edge is one-way and cycle-free.
-import { parseLlmTimeout } from './agent.js';
+import { parseLlmTimeout, parseProvider } from './agent.js';
+import { hasText, listenModelRefusal, type ProviderName } from '../agent/providers/llm-provider.js';
 import {
   loadWorkflowFromFile,
   JsonFileStore,
@@ -762,41 +763,49 @@ export function startListen(
   });
 }
 
+/** What listen passes to each `realm agent` it starts (issue #676: an options object, so the
+ *  next flag does not change `buildAgentArgv`'s signature again). */
+export type AgentArgvOptions = {
+  model: string;
+  provider?: ProviderName;
+  llmTimeoutSeconds?: number;
+};
+
 /**
  * The argv a spawned drive is launched with, minus the interpreter and the realm binary.
  *
  * Pure and exported so the passthrough is pinnable without spawning anything: the deps seam that
  * listen's own tests double sits ABOVE this, so nothing else would notice the flag going missing.
  *
+ * MODEL FLAGS (issue #676): realm has no default model, so listen ALWAYS passes `--model`. It
+ * passes the operator's `--provider` only when one was given; without it the child picks the
+ * provider from the API keys it finds, as `realm agent` does.
+ *
  * PROVENANCE: a listen-passed value makes the child derive `perAttemptSource: 'flag'` for its
  * in-memory clock, which is true — the operator did set it. That label is never persisted; what
  * the run record carries is the CONSEQUENCE: `declared_per_attempt_ms` present, and a fired
  * ceiling naming `--llm-timeout` as the lever.
  */
-export function buildAgentArgv(runId: string, llmTimeoutSeconds?: number): string[] {
+export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] {
   const argv = ['agent', '--run-id', runId];
-  if (llmTimeoutSeconds !== undefined) argv.push('--llm-timeout', String(llmTimeoutSeconds));
+  if (opts.provider !== undefined) argv.push('--provider', opts.provider);
+  argv.push('--model', opts.model);
+  if (opts.llmTimeoutSeconds !== undefined) {
+    argv.push('--llm-timeout', String(opts.llmTimeoutSeconds));
+  }
   // issue #620 PR-C: listen tells the operator once at startup; a child per webhook would repeat it.
   argv.push('--no-release-line-advisory');
   return argv;
 }
 
-export function defaultSpawnAgent(
-  runId: string,
-  cwd: string,
-  llmTimeoutSeconds?: number,
-): SpawnResult {
+export function defaultSpawnAgent(runId: string, cwd: string, opts: AgentArgvOptions): SpawnResult {
   try {
     const realmBin = process.argv[1] ?? '';
-    const child = nodeSpawn(
-      process.execPath,
-      [realmBin, ...buildAgentArgv(runId, llmTimeoutSeconds)],
-      {
-        detached: true,
-        stdio: 'inherit',
-        cwd,
-      },
-    );
+    const child = nodeSpawn(process.execPath, [realmBin, ...buildAgentArgv(runId, opts)], {
+      detached: true,
+      stdio: 'inherit',
+      cwd,
+    });
     child.unref();
     return { pid: child.pid ?? -1 };
   } catch (err) {
@@ -828,6 +837,17 @@ export const listenCommand = new Command('listen')
   .option('--max-concurrent <n>', 'Max in-flight requests before 503', '20')
   .option('--dedup-store <kind>', 'Dedup store: file | memory', 'file')
   .option('--log-level <level>', 'Log level: debug | info | warn | error', 'info')
+  // issue #676: no Commander default for either. Realm has no default model; `--provider` absent
+  // means each child picks the provider from the API key it finds.
+  .option(
+    '--provider <provider>',
+    'LLM provider passed to each realm agent it starts: openai or anthropic (default: the agent chooses from the API key that is set; OpenAI when both are)',
+    parseProvider,
+  )
+  .option(
+    '--model <model>',
+    'The model passed to each realm agent it starts, as the provider names it. Required.',
+  )
   // issue #409. NO Commander default, and here that is not style. A defaulted flag would make
   // listen pass `--llm-timeout 600` to every child, and every spawned drive would then persist
   // `declared_per_attempt_ms: 600000` — a declaration nobody made. Absent flag ⇒ no argv
@@ -859,8 +879,20 @@ export const listenCommand = new Command('listen')
         logLevel?: string;
         sweepExpiredGates?: string;
         llmTimeout?: number;
+        provider?: ProviderName;
+        model?: string;
       },
     ) => {
+      // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen
+      // creates is driven by a `realm agent` that refuses without a model. No API key is checked
+      // here: each child loads the workflow folder's `.env` itself, so listen cannot see its keys.
+      const model = opts.model;
+      if (!hasText(model)) {
+        console.error(listenModelRefusal(opts.provider));
+        process.exit(1);
+        return;
+      }
+
       const levels = ['debug', 'info', 'warn', 'error'];
       const threshold = levels.indexOf(opts['logLevel'] ?? 'info');
       const log =
@@ -935,8 +967,13 @@ export const listenCommand = new Command('listen')
         },
         // issue #409: the operator's fallback clock reaches every drive listen spawns. The deps
         // SIGNATURE is unchanged — the value is closed over here rather than threaded through it.
+        // issue #676: and the model (always) and the provider (when given), the same way.
         spawnAgent: (runId: string, cwd: string): SpawnResult =>
-          defaultSpawnAgent(runId, cwd, opts.llmTimeout),
+          defaultSpawnAgent(runId, cwd, {
+            model,
+            ...(opts.provider !== undefined ? { provider: opts.provider } : {}),
+            ...(opts.llmTimeout !== undefined ? { llmTimeoutSeconds: opts.llmTimeout } : {}),
+          }),
         clock: () => Date.now(),
         logger,
       };

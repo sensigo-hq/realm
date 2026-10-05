@@ -87,8 +87,10 @@ The two limits are optional:
 ## 3. Run it
 
 ```bash
-realm agent --workflow ./ --params '{"question":"How long do customers have to return an item?"}'
+realm agent --workflow ./ --params '{"question":"How long do customers have to return an item?"}' --provider anthropic --model claude-sonnet-5-5
 ```
+
+The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)). Version 0.45.0 has a default model, so `--model` can be left out there.
 
 It prints, among the tool server's own start-up lines:
 

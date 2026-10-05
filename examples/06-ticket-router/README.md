@@ -125,17 +125,21 @@ folder. With the default agent, trigger it with:
 ```bash
 realm agent \
   --workflow examples/06-ticket-router/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/06-ticket-router/tickets/billing-overcharge.txt\"}"
+  --params "{\"path\":\"$(pwd)/examples/06-ticket-router/tickets/billing-overcharge.txt\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running. Use `--provider anthropic` to switch providers.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The commands use Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)).
 
 Point `--params path` at any ticket file in `tickets/` to test a different route:
 
 ```bash
 realm agent \
   --workflow examples/06-ticket-router/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/06-ticket-router/tickets/general-question.txt\"}"
+  --params "{\"path\":\"$(pwd)/examples/06-ticket-router/tickets/general-question.txt\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
 ## Inspect the evidence chain

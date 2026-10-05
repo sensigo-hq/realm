@@ -101,7 +101,9 @@ export function renderDetachMap(
     return lines.join('\n');
   }
 
-  lines.push(`  Drive it:  realm agent --run-id ${record.id}`);
+  lines.push(
+    `  Drive it:  realm agent --run-id ${record.id} --provider <provider> --model <model>`,
+  );
   lines.push(`  Inspect:   realm run inspect ${record.id}`);
   lines.push(`  Discard:   realm run abandon ${record.id}`);
   return lines.join('\n');

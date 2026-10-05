@@ -322,15 +322,17 @@ Error loading extensions: Extension handler 'order_total' is declared by both '.
 
 `realm workflow validate` and `realm workflow register` do not check that a step's handler is registered. Both accepted a workflow whose step names a handler that no file provides.
 
-`realm agent` warns when it starts, and stops when it reaches the step:
+`realm agent` warns when it starts, and stops when it reaches the step. Started with `realm agent --workflow ./ --provider anthropic --model claude-sonnet-5-5`, it printed:
 
 ```text
 ⚠ Step 'only' needs handler 'missing', which is not registered in this runner. If reached it will block recoverably (not fail) until a runner that provides this handler executes it — load the missing extension or run on a capable runner.
 ```
 
 ```text
-⚠ Step 'only' is blocked: handler 'missing' is not registered in this runner. The run is NOT failed — add handler 'missing' and re-attach (`realm agent --run-id 69ad1113-4f72-4fdc-a2b4-1abac5135833`).
+⚠ Step 'only' is blocked: handler 'missing' is not registered in this runner. The run is NOT failed — add handler 'missing' and re-attach (`realm agent --run-id 019e6924-4d83-4488-aca8-046ae4b8ec8a --provider anthropic --model claude-sonnet-5-5`).
 ```
+
+The re-attach command repeats the model flags the drive was started with. Version 0.45.0 prints `realm agent --run-id <run-id>` alone there.
 
 The run stays open, and the step can be run later by a process that has the handler.
 

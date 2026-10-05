@@ -200,7 +200,7 @@ describe('HOST ROWS — each program that serves the MCP tools names itself on t
     // No agent step runs before the gate, so no model is called; the key is never used.
     const child = spawn(
       process.execPath,
-      [CLI_ENTRY, 'agent', '--workflow', file, '--provider', 'openai'],
+      [CLI_ENTRY, 'agent', '--workflow', file, '--provider', 'openai', '--model', 'test-model'],
       {
         env: childEnv({ REALM_OPERATOR: 'agent-row', OPENAI_API_KEY: 'not-a-real-key' }),
         stdio: ['ignore', 'pipe', 'pipe'],

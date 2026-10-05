@@ -219,7 +219,7 @@ export const resumeCommand = new Command('resume')
       });
       console.log(
         `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to 'running'.\n` +
-          `Drive it with: realm agent --run-id ${runId}`,
+          `Drive it with: realm agent --run-id ${runId} --provider <provider> --model <model>`,
       );
       for (const { disclosure } of voided) {
         console.log(`  ⚠ ${disclosure}`);

@@ -421,6 +421,8 @@ describe('issue #625 `realm agent --run-id` on a run an external answer moved pa
         'openai',
         '--base-url',
         'http://127.0.0.1:9',
+        '--model',
+        'test-model',
       ],
       {
         env: { ...process.env, HOME: home, OPENAI_API_KEY: 'not-a-key' },

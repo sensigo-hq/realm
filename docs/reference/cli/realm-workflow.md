@@ -200,11 +200,13 @@ Error: dev-mode run is interactive — it prompts on stdin for every step and ga
 Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:
 
 ```text
-Prompt cancelled — detached from run 'b4f04d53-c7d1-4099-96a8-55fd3a54eaa9' at step 'note' (phase: running). The run is saved.
-  Drive it:  realm agent --run-id b4f04d53-c7d1-4099-96a8-55fd3a54eaa9
-  Inspect:   realm run inspect b4f04d53-c7d1-4099-96a8-55fd3a54eaa9
-  Discard:   realm run abandon b4f04d53-c7d1-4099-96a8-55fd3a54eaa9
+Prompt cancelled — detached from run '00ac2e9c-6728-4fb4-8ba0-234617eff305' at step 'note' (phase: running). The run is saved.
+  Drive it:  realm agent --run-id 00ac2e9c-6728-4fb4-8ba0-234617eff305 --provider <provider> --model <model>
+  Inspect:   realm run inspect 00ac2e9c-6728-4fb4-8ba0-234617eff305
+  Discard:   realm run abandon 00ac2e9c-6728-4fb4-8ba0-234617eff305
 ```
+
+To drive the run, fill in `<provider>` and `<model>`. `<model>` is the model to drive the run with. Give the model flags you drove the run with — `--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url` as you used them. Realm does not record the model or those flags; a drive failure names the provider (`realm run inspect`). A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>`.
 
 [Install Realm and run a workflow](../../start/install-and-first-run.md) shows a whole session.
 
