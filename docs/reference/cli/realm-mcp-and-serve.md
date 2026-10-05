@@ -9,7 +9,7 @@
 | `realm mcp`   | Over the standard input and output of the process. | The assistant's client, on your machine. | The client that started it. |
 | `realm serve` | Over HTTP.                                         | You.                                     | Anyone who has the token.   |
 
-Both serve the 11 tools listed in [MCP tools](../mcp/tools.md), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
+Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
 
 ## `realm mcp`
 
@@ -36,7 +36,7 @@ Other commands use the folder they are started in as the project. `realm mcp` do
 
 ### `realm-mcp`
 
-The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server with no flags. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked. `start_run` still creates the run and replies `status: ok`; the block is in its `warnings`:
+The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server with no flags. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked. `start_run` still creates the run and replies `status: ok`; the block is in its `warnings` (added after version 0.46.0, which replies `status: error`):
 
 ```text
 Step 'fetch' is blocked: its handler 'fetch_record' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. …

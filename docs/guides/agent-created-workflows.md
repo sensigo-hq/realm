@@ -87,6 +87,8 @@ Run '6fe03f8d-14bc-4da9-9513-39341907ee0c' created for workflow 'release-notes-8
 next: execute_step collect
 ```
 
+The `Ready for the agent: …` sentence was added after version 0.46.0, which ends the line at `created for workflow '…'.`.
+
 The assistant does not choose the workflow's ID. Realm makes it from the name and a code computed from the plan's content. The same plan sent again gets the same ID and a new run. A plan with no name gets an ID that starts with `dynamic-`.
 
 ## 3. Realm holds the assistant to its plan

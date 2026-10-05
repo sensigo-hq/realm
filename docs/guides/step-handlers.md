@@ -118,6 +118,8 @@ Step 'total' completed. Ready for the agent: 'confirm'.
 The total is 50. Does that look right?
 ```
 
+Version 0.46.0 and earlier say `1 step(s) now available.` instead of naming the step.
+
 The record keeps the handler's input and output:
 
 ```text

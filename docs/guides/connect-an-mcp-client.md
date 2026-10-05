@@ -35,7 +35,7 @@ Restart the assistant, or reload its MCP servers.
 
 ## 2. Check what the assistant sees
 
-The assistant now has eleven tools:
+The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):
 
 | Tool                    | What it does                                                         |
 | ----------------------- | -------------------------------------------------------------------- |

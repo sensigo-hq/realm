@@ -216,7 +216,7 @@ Prompt cancelled — detached from run '00ac2e9c-6728-4fb4-8ba0-234617eff305' at
 
 To drive the run with `realm agent`, fill in `<provider>` and `<model>` with the provider and model you want: a run started by `realm workflow run` has not been driven by a model. The `Drive it` line also repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` you gave `realm workflow run` (none in this example), as you typed them: run it from the folder you started that command in. If the workflow file was never registered, register it first (`realm workflow register <file>`). Until then the command stops with `Error: Workflow not found: <id> — most often this run was created from a file without --register. …`, and after it the same command drives the run. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>` and without those flags.
 
-An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again. A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks — is not asked for. When nothing else can run, the run stops there, names each such step and gives the way out. Added after version 0.45.0:
+An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again. A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks — is not asked for. When nothing else can run, the run stops there, names each such step and gives the way out. Added after version 0.46.0:
 
 ```text
 Workflow stalled: nothing else can run.

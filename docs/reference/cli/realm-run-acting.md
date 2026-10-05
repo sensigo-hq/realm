@@ -47,14 +47,14 @@ Responded: 3ebc1158-1d29-41b5-9ca5-df054a681b58 | choice 'approve' | new state '
 
 `new state` is the run's phase after the answer: `running` if steps remain, `completed` if the gate's step was the last.
 
-When the answer leaves `auto` steps that only the engine can run, one more line names them and the command that runs them (`runs it` for one step, `runs them` for more). Added after version 0.45.0:
+When the answer leaves `auto` steps that only the engine can run, one more line names them and the command that runs them (`runs it` for one step, `runs them` for more). Added after version 0.46.0:
 
 ```text
 Responded: b178179a-998d-457e-85e6-6d38439d0585 | choice 'approve' | new state 'running'
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them from this shell.
 ```
 
-When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.45.0:
+When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0:
 
 ```text
 Responded: 77772f0c-a80d-49d3-b665-4ac186186fd1 | choice 'approve' | new state 'running'
@@ -115,7 +115,7 @@ The refusals:
 
 ## `advance`
 
-Runs the guards and `auto` steps a run owes, from this shell — no model provider, no key. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`), names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
+Added after version 0.46.0. Runs the guards and `auto` steps a run owes, from this shell — no model provider, no key. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`), names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
 
 ```text
 Advancing run <id> (workflow 'cli-owed-wf') from /home/me/project.
@@ -187,21 +187,21 @@ Add the other flags the run was driven with, such as --extensions-module or --pr
 
 Fill in `<provider>` and `<model>` before you run the second line. `<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
 
-When the step that is ready again is one only the engine runs, one more line names it (`the step` / `the steps`). Added after version 0.45.0:
+When the step that is ready again is one only the engine runs, one more line names it (`the step` / `the steps`). Added after version 0.46.0:
 
 ```text
-Resumed run '343aa612-ec76-4a27-9524-d3da06141f82': step 'work' re-enabled and run reset to 'running'.
-Drive it with: realm agent --run-id 343aa612-ec76-4a27-9524-d3da06141f82
-To run the step the engine owes ('work') without a model: realm run advance 343aa612-ec76-4a27-9524-d3da06141f82.
+Resumed run '8bc06d55-77fb-43f4-937f-8d166fad20cf': step 'a' re-enabled and run reset to 'running'.
+Drive it with: realm agent --run-id 8bc06d55-77fb-43f4-937f-8d166fad20cf --provider <provider> --model <model>
+Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 8bc06d55-77fb-43f4-937f-8d166fad20cf shows the extension module the run loaded).
+To run the step the engine owes ('a') without a model: realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf.
 ```
 
-When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, the step and the way out follow instead. Added after version 0.45.0:
+When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, driving the run would only stop on that step: the step and the way out take the place of the `Drive it with:` lines. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
 
 ```text
-Resumed run '1b5bd2f7-a824-4a65-a439-626af3f50b11': step 'a' re-enabled and run reset to 'running'.
-Drive it with: realm agent --run-id 1b5bd2f7-a824-4a65-a439-626af3f50b11
+Resumed run '729eaab3-6203-46cb-9c5c-3714070723a8': step 'a' re-enabled and run reset to 'running'.
 'a' cannot run (input_schema): Invalid input for step 'a': the input must have required property 'n'.
-Run 1b5bd2f7-a824-4a65-a439-626af3f50b11 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 1b5bd2f7-a824-4a65-a439-626af3f50b11; or end it: realm run abandon 1b5bd2f7-a824-4a65-a439-626af3f50b11.
+Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8; or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8.
 ```
 
 `resume` runs no step. Cleanup steps that had not yet run for the ended run are cancelled, and each is named on a line that starts with `⚠`.
@@ -451,7 +451,7 @@ Guard step 'only_if_shipping' passed.
 Run '230b0939-9c61-40e4-8b6f-910594a81e92' is not terminal (phase: 'running') — nothing further to drain.
 ```
 
-When the enacted gate leaves `auto` steps only the engine runs, one more line names them. Added after version 0.45.0:
+When the enacted gate leaves `auto` steps only the engine runs, one more line names them. Added after version 0.46.0:
 
 ```text
 ✓ gate enacted (settle_default 'approve').
@@ -459,7 +459,7 @@ Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') �
 To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd.
 ```
 
-When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.45.0:
+When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.46.0:
 
 ```text
 ✓ gate enacted (settle_default 'approve').
@@ -498,6 +498,8 @@ Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting
 Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired; add --force to carry it out.
 No runs with an actionable pending finalizer.
 ```
+
+The third and fourth lines, and the step and the way out on a run in `running`, were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>.` for every run in `running`.
 
 **Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the four `is not terminal … nothing to drain` lines above, or for one of:
 

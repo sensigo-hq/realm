@@ -69,6 +69,14 @@ All notable changes to this project are documented here.
   - `realm run drain` (on a live run, and after `--expired --force`), `realm run resume` and
     `realm workflow run` print the same lines when the run cannot go on from here; `realm listen`'s
     sweeper logs them as `cannot_go_on`.
+  - `realm run resume` prints those lines in place of its `Drive it with:` lines when the resumed
+    run cannot go on from here (driving it would only stop on that step).
+  - `execute_step` called by name on an `auto` step refused before its claim for a failed
+    precondition or an invalid `trust` ends its `context_hint` with the way out
+    (`Correct the workflow and register it again, then call advance_run; or end the run with
+abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
+  - `advance_run`'s reply names the step that stopped the call in `stopped_step`, as
+    `execute_step` and `start_run` do.
   - When no step is refused before its claim, the last of those lines is
     `To end the run instead: realm run abandon <id>.` (a step this program lacks the handler or
     adapter for names its own way out).

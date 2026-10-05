@@ -144,9 +144,9 @@ Evidence (3 steps):
 | `Defaulted (settled by default)`                | When a step was given its default output                  | The names of those steps.                                                                                                           |
 | `Created`, `Updated`                            | Always                                                    | When the run was started and when it last changed, in UTC.                                                                          |
 | `Gate`, `Choices`                               | When the run is in `gate_waiting`                         | The step, the gate's ID, how long it has been open, and the choices it accepts.                                                     |
-| `Owed to the engine`                            | When guards or `auto` steps are owed                      | The steps, and the `realm run advance` command that runs them. Added after version 0.45.0.                                          |
-| `Cannot run`, `Could not run`                   | When an owed `auto` step cannot run                       | The step, the check that refused it, and why. Added after version 0.45.0.                                                           |
-| `Run <id> stays open`                           | When the run cannot go on until its workflow is corrected | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.45.0. |
+| `Owed to the engine`                            | When guards or `auto` steps are owed                      | The steps, and the `realm run advance` command that runs them. Added after version 0.46.0.                                          |
+| `Cannot run`, `Could not run`                   | When an owed `auto` step cannot run                       | The step, the check that refused it, and why. Added after version 0.46.0.                                                           |
+| `Run <id> stays open`                           | When the run cannot go on until its workflow is corrected | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.46.0. |
 
 Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added after version 0.45.0:
 
@@ -166,7 +166,7 @@ Skipped: total, confirm
   confirm: trigger_rule_unsatisfiable: all_success, dep total skipped
 ```
 
-What the engine owes, and steps that cannot run, from three runs. `inspect` loads no extensions, so a missing handler or adapter is judged by the run's record of the last attempt and said in the past tense (`Could not run`), with the way out — a program that has it runs the step:
+What the engine owes, and steps that cannot run, from three runs (these lines were added after version 0.46.0). `inspect` loads no extensions, so a missing handler or adapter is judged by the run's record of the last attempt and said in the past tense (`Could not run`), with the way out — a program that has it runs the step:
 
 ```text
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585

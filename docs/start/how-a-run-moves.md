@@ -45,7 +45,7 @@ One case needs care. When a gate is answered, the answer is recorded, and a `gua
 submit_human_response  →  Gate 'confirm_review' resolved with choice 'approve'. Owed to the engine: 'post_approval' — call advance_run.
 ```
 
-`next_actions` then holds `advance_run`. `realm agent` makes that call for you; a client that drives the run itself calls `advance_run`; from a shell, `realm run advance <run-id>` runs the owed steps without a model.
+`next_actions` then holds `advance_run`. `realm agent` makes that call for you; a client that drives the run itself calls `advance_run`; from a shell, `realm run advance <run-id>` runs the owed steps without a model. This was added after version 0.46.0: there, the reply says `0 step(s) now available.`, and a client that drives the run itself must call `execute_step` for that step.
 
 ## Three ways to drive a run
 
