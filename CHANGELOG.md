@@ -699,7 +699,9 @@ given to --model; …`. (Issue #676.)
   `realm workflow run` no longer asks for such a step, `realm workflow test` names it instead of running to the iteration cap, and
   `start_run`, `get_run_state` and every reply that says what comes next no longer offer it. A
   `blocked` reply never prints `✓` in `realm agent`: a step another process took between the drive's
-  read and the engine's is said as taken, and any other prints its own hint and stops the drive.
+  read and the engine's is said as taken, and any other prints its own hint and stops the drive. The
+  drive stops on a step that cannot run only when nothing is in flight elsewhere: a step another
+  program is running may give the answer a precondition reads, so the drive waits for it first.
 - **A tool-using step on a Claude model that thinks by default (Claude Sonnet 5.5) no longer fails
   with a 400 about a thinking block's signature** when it runs out of tool calls or corrections, or
   when strict tool arguments are dropped after the provider refuses them. Realm now leaves out of
