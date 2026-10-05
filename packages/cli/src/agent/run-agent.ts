@@ -10,6 +10,7 @@ import {
   executeEngineStep,
   describePending,
   stepsThatCannotRun,
+  cannotGoOnHere,
   describeClaimHolder,
   cannotRunClause,
   cannotRunWayOut,
@@ -647,11 +648,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             ? []
             : describePending(definition, currentRun, deps.registry).agent_steps;
         if (engineReply === undefined && eligible.length === 0) {
-          // decisions C23, C31, C82: no agent step is ready, no engine step can run, and a step
-          // cannot run — the drive stops on the FIRST such step (definition order).
+          // decisions C23, C31, C64, C82: the run cannot go on from here (`cannotGoOnHere`: no agent
+          // step is ready, no engine step can run, nothing is in flight elsewhere — a step another
+          // program holds may still change what can run — and a step cannot run): the drive stops
+          // on the FIRST such step (definition order). With a step in flight it watches below.
           const view = describePending(definition, currentRun, deps.registry);
           const cannotRun = stepsThatCannotRun(view);
-          if (cannotRun.length > 0 && view.act === undefined) {
+          if (cannotGoOnHere(currentRun, view)) {
             const stop = cannotRun[0]!;
             const first = stop.step;
             if (definition.steps[first]?.execution === 'agent') {

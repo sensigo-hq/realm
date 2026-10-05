@@ -163,6 +163,81 @@ describe('#625 PR-2a, C82 — realm agent never picks an agent step refused befo
   });
 });
 
+describe('#625 PR-2a, C82 (4) — the cannot-go-on exit, never while a step is in flight elsewhere', () => {
+  it('a refused agent step whose precondition reads a step another program is running: the drive waits, then runs it', async () => {
+    // `ask` reads `a`'s answer; another program is running `a` when the drive starts. Stopping with
+    // "nothing else can run … correct the workflow" would be false: `a` completes with `ok: true`.
+    const def = wf({ a: agent(), ask: agent({ preconditions: ['a.ok == true'] }) });
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    const other = executeStep(store, def, {
+      runId: run.id,
+      command: 'a',
+      input: {},
+      dispatcher: async () => {
+        await released;
+        return { ok: true };
+      },
+    });
+    while (!(await store.get(run.id)).in_progress_steps.includes('a')) {
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    let calls = 0;
+    const provider = new (class extends LlmProvider {
+      async callStep(): Promise<Record<string, unknown>> {
+        calls += 1;
+        return {};
+      }
+    })();
+    const lines: string[] = [];
+    for (const kind of ['log', 'error', 'warn'] as const) {
+      vi.spyOn(console, kind).mockImplementation((...a: unknown[]) => {
+        lines.push(`${kind}: ${a.join(' ')}`);
+      });
+    }
+    setTimeout(release, 60);
+    let result: string;
+    try {
+      result = await runAgent(
+        {
+          store,
+          workflowStore: {
+            async register() {},
+            async get() {
+              return def;
+            },
+            async list() {
+              return [def];
+            },
+          },
+          provider,
+          registry: createDefaultRegistry(),
+        },
+        {
+          definition: def,
+          params: {},
+          existingRunId: run.id,
+          inFlightPollMs: 5,
+          inFlightWatchMs: 5000,
+        },
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect((await other).status).toBe('ok');
+    // (a) red when the exit fires with a step in flight (the drive stops on 'ask' with the false
+    // "nothing else can run" and never calls the model); (b) prints the result, the calls, the stop.
+    expect({
+      result,
+      calls,
+      stopped: lines.filter((l) => l.includes('The drive stops')),
+      completed: (await store.get(run.id)).completed_steps,
+    }).toEqual({ result: 'completed', calls: 1, stopped: [], completed: ['a', 'ask'] });
+  });
+});
+
 describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', () => {
   it('a precondition that fails on the engine’s own read (after this drive read the record): the reply’s hint, and the drive stops', async () => {
     // The step passes the view when the drive picks it; while the model answers, its precondition
