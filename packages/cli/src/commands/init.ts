@@ -6,7 +6,7 @@ import { Command } from 'commander';
 
 /**
  * Scaffolds a new workflow project at targetDir with five template files
- * (workflow.yaml, schema.json, .env.example, README.md, registry.sample.js).
+ * (workflow.yaml, schema.json, .env.example, README.md, registry.sample.js, realm.yaml).
  * Throws an error if targetDir already exists.
  * @param name      Workflow project name used in file contents.
  * @param targetDir Directory to create (defaults to join(cwd, name) in the command action).

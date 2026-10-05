@@ -6,6 +6,109 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+Nine BREAKING changes; realm is pre-1.0, so they ship in a minor — read **Upgrading** before you
+take this version. Realm no longer picks a model for you (`realm agent` and `realm listen` need
+`--model`); its packages require each other at exactly one version, recognise objects made by
+another copy of the same version, and refuse a store that does not say which version it belongs to;
+and a guard step behind a human gate is now decided by the answer that makes it eligible. The run
+record also gains what each agent step's model calls reported they cost, and the name of the
+program that took each step.
+
+#### Upgrading
+
+**1. Name a model: `realm agent` and `realm listen` have no default model (issue #676).** Add
+`--model <name>` to every `realm agent` command (except one with `--provider-module`, which refuses
+`--model`) and to every `realm listen` command and script — a workflow with no agent step needs it
+too. A script that matches the no-key or `--base-url` refusal exactly now sees one more sentence at
+its end, and with `--provider` given and no key at all the no-key refusal is a different sentence.
+Use only `openai` or `anthropic` after `--provider`, and set the key of the provider you name. A
+key left empty is now treated as not set, so with an empty `OPENAI_API_KEY` beside an Anthropic key
+realm now picks Anthropic.
+
+**2. Install every realm package at one version (issue #620).** `@sensigo/realm-cli`,
+`@sensigo/realm-mcp` and `@sensigo/realm-testing` now require the other realm packages at exactly
+their own version (0.45.0 required `^0.45.0`). Install every realm package your project uses at one
+version, for example
+`npm install @sensigo/realm@0.46.0 @sensigo/realm-cli@0.46.0 --save-exact`. A project whose own
+`@sensigo/realm` is newer than the version a realm package requires now gets a separate copy
+instead of sharing its own.
+
+**3. `instanceof` on a realm class answers true for an object from another copy of the same
+version (issue #620).** With two copies of one version in a project, a handler's retryable
+`WorkflowError` is now tried again, and a provider module that extends the other copy's
+`LlmProvider` is accepted. Act only if your code relied on `instanceof` answering false for an
+object from another copy of the same version.
+
+**4. A store you hand realm must say which realm version it belongs to (issue #620).** A program
+that passes a store of its own to `createRealmMcpServer`, to a published tool handler
+(`@sensigo/realm-mcp/dist/tools/*.js`), to an exported engine function that takes a store
+(`abandonRun`, `reclaimStep`, `executeStep`, `submitHumanResponse`, `drainFinalizers`,
+`advanceRun`, `executeChain`, `getWorkflowForRun`, `readRunForFence` and so
+`checkFenceWithReader`) or to a reader-backed trace-buffer constructor must call
+`declareReleaseLine(MyStore)` once on its store class — or `declareReleaseLine(store)` on a
+plain-object store — from the `@sensigo/realm` it imports its errors from. Until it does, each of
+them refuses the store with `ENGINE_RELEASE_LINE_UNDECLARED` before any work. A store that runs the
+published `@sensigo/realm-testing` contracts gains the `STORE_RELEASE_LINE_TRUE` law. Who must act:
+realm-cloud (its four store classes); nobody whose stores are realm's own.
+
+**5. `realm workflow validate --strict` and `register --strict` exit 1 when your project's
+`@sensigo/realm` is another version than the command's (issue #620).** Where realm loads your
+project's code, both commands now warn with `REALM_RELEASE_LINE_MISMATCH`, and `--strict` turns the
+warning into a failure; on 0.45.0 both exited 0. A CI job that upgrades the `realm` command before
+the project, or the project before the command, now fails. Upgrade the project's realm packages and
+the command together, or run the project's own command with `npx realm`.
+
+**6. The fenced trace-buffer methods take a predicate, and two constructors take a run reader
+(issue #616).** `appendFenced`, `deleteFenced`, `deleteAllForRunFenced` and `sealFenced` take a
+`FencePredicate` where they took a guard callback; `JsonTraceBufferStore` is now
+`(runsDir, runReader, lockProfile?)` and `InMemoryTraceBufferStore` is `(runReader)`, the reader
+being the run store passed beside the trace buffer. An adapter for the published fenced-trace-buffer
+contract supplies `fenceRuns` (and `fenceRunPark` under `fenceForm: 'injected-reader'`), and the
+two `fenceForm` values are renamed. Details under Changed. Who must act: any code outside realm that
+calls a fenced method, constructs either trace buffer, implements the fenced methods, or supplies
+the contract's adapter — none known today.
+
+**7. A guard is settled in the write that makes it eligible (issue #625).** A store with its own
+`settleStep` passes `cascadeGuards: true` to `applySettlement`; the published `settlementContract`
+fails it otherwise. Rename `resolved_gate_with_eligible_guard` to `guard_awaiting_settlement`
+wherever you match run-health kinds, and update anything that matches its old sentence, the removed
+`guard now eligible — converges at the next drive` hint, the last line of `realm run respond` for
+an answer the gate's expiry beat (now `Not recorded: …`), or the gate lines of `realm run drain`.
+An answer can now end the run in the process that answers it, so the run's cleanup steps
+(finalizers) run there, with that process's handlers and credentials (#635 tracks which credentials
+they should run with). A guard whose `when` or `abort_unless` cannot be evaluated now fails the run
+where it used to make the write that made it eligible fail.
+
+**8. A store must name who took each step (issue #625).** `RunStore.claimStep` takes an optional
+fourth argument, `claimant`, which the store writes as the claim's `holder`, and the store stamps
+`since` on every claim. A store that implements `settleStep` passes
+`storeKeepsClaims: store.persistsClaims === true` to `applySettlement` and returns the `gateClaim`
+it computed. The published contracts gain `CLAIM_NAMES_HOLDER`, `EVIDENCE_KEEPS_DRIVER_AND_PROOF`
+and `GATE_PROOF_NEVER_GATES_THE_ANSWER`; a test file that keeps its own list of laws runs none of
+them until it runs the exported lists (`RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`,
+`ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS`) and names, with a reason, each law it leaves out.
+For realm-cloud, the one change this requires is that its conformance wiring run the exported lists;
+declaring `persistsClaims: false` on its production stores states what they do and changes nothing
+at run time.
+
+**9. `submit_human_response` refuses a `responded_by` that 0.45.0 stored (issue #625).** The tool
+now refuses, with `VALIDATION_ACTOR_INVALID` and nothing recorded, a `responded_by` that is empty or
+only spaces, longer than 200 characters, or holds a control character (a newline included), and it
+stores the name without spaces at either end. An agent or host that passes such a value shortens or
+cleans it, or leaves `responded_by` out.
+
+Not breaking, but worth knowing: `realm run inspect` prints answers, attempts and drive failures
+differently (an `Answer:` line replaces `Choice:` and the gate entry's `Output:`; a step with more
+than one attempt labels its last attempt `Diagnostics (attempt n/n):`; every drive failure is
+listed), so a script that reads its output may need updating; the exported unions `ErrorCode`
+(three new codes) and `WarningCode` (one) gain members, so an exhaustive `switch` over them gains
+cases; `REALM_OPERATOR`, read for the first time, makes `realm agent`, `realm run respond`,
+`realm run drain`, `realm workflow run`, `realm mcp`, `realm serve` and the `realm-mcp` bin refuse
+with exit code 1 when it is longer than 200 characters or holds a control character,
+and a program whose name cannot be derived from the OS prints one line about it on stderr and runs;
+`atomicWriteFile`'s temp files have a new name; and `LlmProvider.callStepWithMeta` may return
+`usage`.
+
 ### Added
 
 - **The release mark: `brandClass`, `createRealmBrand`, `RELEASE_LINE_KEY`, `REALM_BRAND` and the
@@ -15,14 +118,15 @@ All notable changes to this project are documented here.
 
 - **Which copy an object came from: `releaseLineOf`, `declareReleaseLine`, `describeUnrecognised`,
   `assertReleaseLine`, `assertRegistryLine`, `releaseLineError`, `describeThrown`,
-  `describeForeignProvider`, the text helpers they compose with, and the types `Unrecognised`,
+  `describeForeignProvider`, the text helpers they compose with (`unbrandedClause`,
+  `describeUnrecognisedForContract`, `releaseLineAdvisoryMessage`), `engineReleaseLine`, and the types `Unrecognised`,
   `RealmClass` and `ReleaseLineFacts`, exported from `@sensigo/realm`**; the error codes
   `ENGINE_RELEASE_LINE_MISMATCH` and `ENGINE_RELEASE_LINE_UNDECLARED`; the warning code
   `REALM_RELEASE_LINE_MISMATCH` and the optional field `LoaderWarning.release_line` (the project's
   and the engine's version and folder, as data); in `@sensigo/realm-testing`, the
   `STORE_RELEASE_LINE_TRUE` law in each store contract and the standalone `storeReleaseLineLaw`.
   `realm agent --no-release-line-advisory` is hidden and not listed: `realm listen` passes it to the
-  children it spawns. (Issue #620.) Added after version 0.45.0.
+  children it spawns. (Issue #620.)
 
 - **`StepDiagnostics.cache`** — what a provider reported about prompt caching for an agent step's
   model calls, one entry per WIRE REQUEST, never per step: `UsageRecord[]` with the measured prompt
@@ -36,8 +140,8 @@ All notable changes to this project are documented here.
   keeps that property per DIRECTION and per REQUEST: an unreported read prints `read not reported`,
   never `read 0`; a counter some requests reported and others did not prints its sum as a floor
   that says so and names what it counted (`read at least 512 (1 of 3 requests reported a read)`);
-  and a step whose provider reported one direction only, with nothing above zero to prove
-  engagement, is `partially_observed`, not `never_engaged` — "nobody wrote to the cache" and "nobody
+  and a step whose provider reported one direction only, and no read above zero, is
+  `partially_observed`, not `never_engaged` — "nobody wrote to the cache" and "nobody
   said whether anything wrote to the cache" are different facts and the screen distinguishes them.
   (A read ABOVE zero is `engaged`
   whatever the write counter withheld: a read proves engagement, so that arm needs no second
@@ -62,7 +166,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   prompt segment, and the cache segment carries the whole fact. The character estimate beside it now
   says what it estimates (`~N tokens (estimate, step input)`): it is
   `JSON.stringify(input).length / 4` of the step's own resolved input, NOT the context window, and
-  in a real run the two differ by ~100x. `never_engaged` prints both reported zeros
+  the two can differ by two orders of magnitude (11 against 1,200 in one measured run).
+  `never_engaged` prints both reported zeros
   (`not engaged — read 0, wrote 0`) rather than one `0` standing for two counters. Wherever a
   counter reaches the line, a `state` or `basis` word this build does not know is named as
   unrecognised rather than printed as an ordinary fact, and a missing, `null` or non-string `basis`
@@ -79,14 +184,16 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   `realm agent` does for every model call it makes through `callStepWithMeta` — with
   `state: 'unobservable'` when the provider reported nothing observable; `usage ?? []` at that call
   site is what keeps a silent third-party provider from looking like a step that recorded nothing.
-  ABSENT when nothing was recorded for the step, which happens three ways: the step made no model
+  ABSENT when nothing was recorded for the step, which happens four ways: the step made no model
   call (a handler step, or one answered at a `realm workflow run` prompt); it called a model on the
-  tool-calling path, which records nothing yet (issue #610); or an external agent drove it over MCP
-  `execute_step`, so its model calls were never realm's to see. Absence alone therefore never proves
+  tool-calling path, which records nothing yet (issue #610); an external agent drove it over MCP
+  `execute_step`, so its model calls were never realm's to see; or the record was written by an
+  earlier realm version, which did not measure usage. Absence alone therefore never proves
   that no model call happened. This measures; it places nothing on the wire and requests nothing new
   from a provider. (Issue #600.)
+
 - **`DriveFailureRecord.usage`** — the same per-request `UsageRecord[]`, on a failed drive: what the
-  provider had already billed before the drive's retries exhausted. On every path that keeps one,
+  provider had already billed before the drive failed. On every path that keeps one,
   the accumulator is owned by the provider's entry point, so it survives any throw below it — the
   wire failure an operator actually meets (a 500 or a timeout after one billed request) carries the
   numbers, not only realm's own typed refusals. The driver also accumulates across a step's
@@ -108,28 +215,32 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   renders on this line too now (issue #611): `cache read R, wrote W`, in the same full/floor/none
   forms as the step line's `read`/`wrote` clauses, plus `(included in the prompt)` under the same
   truth rule; neither side present reads `cache not reported`. Rendered on `realm run inspect`'s
-  "Drive failures:" block — EVERY entry the ring holds, oldest first, each with its own indented
-  `usage:` line (four spaces, so N failures scan as N events) — and passed verbatim through
-  `get_run_state` — an operator (or agent) staring at a failed run can now see that money was spent,
-  not only that the drive failed. (Issue #600.)
+  "Drive failures:" block — EVERY entry the ring holds, oldest first; each entry that carries usage
+  gets its own indented `usage:` line (four spaces, so N failures scan as N events) — and passed
+  verbatim through `get_run_state` — an operator (or agent) staring at a failed run can now see
+  that money was spent, not only that the drive failed. (Issue #600.)
+
 - **`UsageRecord`, `CACHE_STATES`, `CACHE_BASES`, `CacheState`, `CacheBasis`, `StepCacheDetail`,
   `deriveCacheDetail`** — exported from `@sensigo/realm` (the types from
   `packages/core/src/types/run-record.ts`, the function from `engine/execution-loop.ts`, so a
   renderer can pin the sentence it prints against the classifier that produces the state).
   `CACHE_STATES` has five members: `engaged`, `never_engaged`, `write_only`, `partially_observed`
   and `unobservable`. (Issue #600.)
-- **`CostView`/`CostFigure`/`AttemptView`/`StepView`/`CostUnrecordedCause`, and
-  `composeCostView`/`composeStepViews`/`composeDriveFailureCosts`** — exported from `@sensigo/realm`
+
+- **`CostView`/`CostFigure`/`AttemptView`/`StepView`/`DriveFailureCost`/`CostUnrecordedCause`,
+  `COST_UNRECORDED_CAUSES`, and `composeCostView`/`composeStepViews`/`composeDriveFailureCosts`** — exported from `@sensigo/realm`
   (`engine/step-view.ts`). One composed cost view per step, derived ONCE from a run's evidence and
   its failed-drive record, so `realm run inspect` and `get_run_state` render the identical figures
   rather than each re-summing `UsageRecord[]` independently. `CostFigure` sums a counter ONLY over
   the requests that reported it (`value`/`reported`/`of`/`only_request_index?`, the last present iff
   exactly one request reported the figure). An execution entry's cost comes from `diagnostics.cache`
-  alone; an entry with none is classified `tool_calling_step` or `not_measured_by_realm` (never
-  asserting a model call happened), or gets `cost_unreadable: true` when `cache` exists but its
-  `requests` is not a list. (Issue #600 PR 1b.)
-- **`get_run_state` gains `include_steps: boolean`** — opt-in (default `false`; every existing
-  response stays byte-identical), resolved through the same definition the status path already
+  alone; an entry with none is classified `tool_calling_step` (it carries tool calls) or, for an
+  agent step, `not_measured_by_realm` (never asserting a model call happened); a handler step's
+  entry gets neither. An entry whose `cache` exists but whose `requests` is not a list gets
+  `cost_unreadable: true`. (Issue #600 PR 1b.)
+
+- **`get_run_state` gains `include_steps: boolean`** — opt-in (default `false`; a call that does not ask
+  gets nothing from this entry — it may still carry `step_claims`, from the #625 entry below), resolved through the same definition the status path already
   found, or its own `terminalOk` lookup when the status path never needed one — a lookup failure
   here is silent and never leaks into `definitionError`/`run_health`/`next_actions_status`. Asked,
   the response gains `steps: Record<string, StepView>` (absent when there is no execution evidence
@@ -143,30 +254,44 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   `mcp-stdio`, `mcp-http`) — and `since`, when the claim was made. The evidence entries written
   where a program's code ran carry `driven_by` the same way, and a cleanup step names the program
   that ran it (`realm run respond` and `realm run drain` write their name on those entries only,
-  never as the person who answered). The reply that opens a gate hands out the claim's token as
-  `gate.claim_token` (and in both forms of the answer instruction); `submit_human_response` takes it
-  back as the optional `claim_token`, and every `ok` reply carries `gate_claim`: `proof` (`matched`,
-  `absent`, `mismatch`, `unverifiable` or `spent`, with a `cause` for the last two) and `opened_by`.
-  The same verdict is stored on the answer's evidence entry as `claim_proof`. **Nothing here changes
-  what an answer does**: the answer is decided by the gate ID alone, and a missing or wrong token is
-  recorded, never refused. A run still does not carry on after an answer (#625 stays open for that).
-  `get_run_state` gains `step_claims` and, under `include_steps`, `steps[].answers` and `driven_by`
-  on each attempt; `realm run inspect` prints the program on the `In Progress` lines and the attempt
-  lines and one `Answer:` line for each answer; `realm run respond` gains `--by <name>`, the
-  answerer's own stated name; and `VALIDATION_ACTOR_INVALID` refuses a stated name that is empty and
-  any name longer than 200 characters or with a control character, before anything starts or is
-  recorded (no name is shown with spaces at either end, and realm's own commands and tools store it
-  without them; an empty or blank `REALM_OPERATOR` counts as unset). The engine functions that take a
-  `driver` (`executeStep`, `executeChain`, `advanceRun`, `submitHumanResponse` and
+  with the door `respond` or `drain`, never as the person who answered). The reply that opens a gate
+  hands out the claim's token as `gate.claim_token` (and in both forms of the answer instruction);
+  `submit_human_response` takes it back as the optional `claim_token`, and every `ok` reply carries
+  `gate_claim`: `proof` (`matched`, `absent`, `mismatch`, `unverifiable` or `spent`, with a `cause`
+  for the last two) and `opened_by`. The same verdict is stored on the answer's evidence entry as
+  `claim_proof`. **Nothing here changes what an answer does**: the answer is decided by the gate ID
+  alone, and a missing or wrong token is recorded, never refused. Beyond the guard steps the
+  answer's own write now decides (see Fixed), a run still does not carry on after an answer (#625
+  stays open for that). `get_run_state` gains `step_claims` (on any run with a step in progress,
+  asked or not) and, under `include_steps`, `steps[].answers` and `driven_by` on each attempt;
+  `realm run inspect` prints the program on the `In Progress` lines and the attempt lines and one
+  `Answer:` line for each answer; `realm run respond` gains `--by <name>`, the answerer's own stated
+  name; and `VALIDATION_ACTOR_INVALID` refuses a stated name (`--by`, `responded_by`, a host's
+  `driver`) that is empty, and a stated name or a `REALM_OPERATOR` that is longer than 200
+  characters or carries a control character, before anything starts or is recorded (no name is shown
+  with spaces at either end, and realm's own commands and tools store it without them; an empty or
+  blank `REALM_OPERATOR` counts as unset); a name realm derives from the OS user and host that
+  breaks the same rule is not recorded, and the command says so once. The engine functions that take
+  a `driver` (`executeStep`, `executeChain`, `advanceRun`, `submitHumanResponse` and
   `drainFinalizers`) throw that refusal, after the checks of the store and the registry, the same
   way they refuse a store from another realm version. New exports from `@sensigo/realm`: `composeProgramIdentity`, `boundStated`,
   `boundStatedName`, `identityRefusalLine`, `describeClaimHolder`, `judgeGateProof`,
   `composeGateClaimSentence`, the vocabularies `BY_SOURCE_CLASSES`, `ACTOR_ABSENT_CAUSES`,
-  `GATE_PROOFS`, `GATE_PROOF_CAUSES` and `CLAIM_PROOF_ABSENT_CAUSES`, and the types `Attributed`,
-  `ActorAbsent`, `ClaimHolderAbsentCause` and `GateClaimVerdict`. `@sensigo/realm-testing` gains the
+  `GATE_PROOFS`, `GATE_PROOF_CAUSES` and `CLAIM_PROOF_ABSENT_CAUSES`, the name bound
+  `NAME_MAX_LENGTH`, `NAME_CAP_MARKER` and `NAME_REFUSAL_REASONS`, the helpers `validateDriver`,
+  `readStoredName`, `readAttributed`, `readDrivenBy`, `readGateClaimVerdict` and `isAnswerEntry`, and
+  the types `Attributed`, `ActorAbsent`, `ActorAbsentCause`, `BySourceClass`,
+  `ClaimHolderAbsentCause`, `ClaimProofAbsentCause`, `GateProof`, `GateProofCause`,
+  `GateClaimVerdict`, `ProgramIdentityFacts` and `AnswerView`. `@sensigo/realm-testing` gains the
   laws `CLAIM_NAMES_HOLDER`, `EVIDENCE_KEEPS_DRIVER_AND_PROOF` and
   `GATE_PROOF_NEVER_GATES_THE_ANSWER`, and the lists `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`,
   `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`.
+
+- **New exports on the published `@sensigo/realm-mcp/dist/tools/*.js` subpath.**
+  `assert-tool-stores.js`: `assertToolStores` (the release-line check every tool handler runs
+  first on the stores it is handed), `isReleaseLineRefusal`, `markServedByTool`, `registryRole` and
+  the type `ToolStores` (issue #620). `submit-human-response.js`: `submitHumanResponseArgsSchema`
+  and `unknownKeyWarnings` (issue #625).
 
 - **`realm listen --provider` and `--model`.** Each is passed to every `realm agent` it starts;
   `--model` is required. (Issue #676.)
@@ -186,32 +311,43 @@ given to --model; …`. (Issue #676.)
 ### Changed
 
 - **BREAKING —** **Realm has no default model (issue #676).** `realm agent` with a built-in
-  provider, and `realm listen`, refuse to start without `--model`; the message names the provider
-  realm picked and why, and where that provider lists its models. A `--model` that is empty or
-  holds only spaces counts as missing. A workflow with no agent step also needs `--model`: both
-  commands check their flags before they read the workflow. `--provider` refuses a word other than
-  `openai` or `anthropic` (it took any other word as Anthropic). `realm agent --provider X` refuses
-  to start when X's API key is not set (it created the run, and the first model call failed). Each
-  refusal of the API keys, `--base-url` and `--model` ends `Nothing was started.` with `--workflow`
-  or `If run <id> exists, it was not changed.` with `--run-id`. With no API key at all and
-  `--provider` given, the no-key refusal names that provider's key. An API key that is
-  empty or holds only spaces counts as not set, for choosing the provider as for the messages. The
-  continue command printed for a step blocked by a missing handler or adapter repeats the flags
-  the drive was started with (the model flags, `--extensions-module`, `--project`,
-  `--schema-retries` when it is not 2, `--llm-timeout` and `--mint-writer-nonce`);
+  provider, and `realm listen`, refuse to start without `--model`; the message names the provider —
+  for `realm agent` the one realm picked and why, for `realm listen` the one given with
+  `--provider`, or how each run will pick — and where the models are listed. A `--model` that is
+  empty or holds only spaces counts as missing. A workflow with no agent step also needs
+  `--model`: both commands check their flags before they read the workflow. `--provider` refuses a
+  word other than `openai` or `anthropic` (it took any other word as Anthropic).
+  `realm agent --provider X` refuses to start when X's API key is not set (it created the run, and
+  the first model call failed). Each refusal of the API keys, `--base-url` and `--model` ends
+  `Nothing was started.` with `--workflow` or `If run <id> exists, it was not changed.` with
+  `--run-id`. With no API key at all and `--provider` given, the no-key refusal names that
+  provider's key. An API key that is empty or holds only spaces counts as not set, for choosing the
+  provider as for the messages. The continue command printed for a step blocked by a missing handler
+  or adapter repeats the flags the drive was started with (the model flags, `--extensions-module`,
+  `--project`, `--schema-retries` when it is not 2, `--llm-timeout` and `--mint-writer-nonce`);
   `realm run resume` and the dev-run detach map print
   `--provider <provider> --model <model>` for you to fill in; resume adds a line naming the other
   flags to add and where `realm run inspect` shows the extension module the run loaded, and the
   detach map repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` the dev run
-  was given. **Upgrading:** add `--model <name>`
-  to every `realm agent` command (except one with `--provider-module`, which refuses `--model`) and
-  to every `realm listen` command and script; a script that matches the no-key or `--base-url`
-  refusal exactly now sees one more sentence at its end, and with `--provider` given and no key at
-  all the no-key refusal is a different sentence; use only `openai` or `anthropic` after
-  `--provider`; set the key of the provider you name; a key left empty is now treated as not set,
-  so with an empty `OPENAI_API_KEY` beside an Anthropic key realm now picks Anthropic. The old
-  defaults were `gpt-4o` and `claude-sonnet-4-5`; Anthropic retires `claude-sonnet-4-5` on
-  2026-11-30, and a new API key already gets 404 for it.
+  was given. The old defaults were `gpt-4o` and `claude-sonnet-4-5`; Anthropic retires
+  `claude-sonnet-4-5` on 2026-11-30, and a new API key already gets 404 for it. See **Upgrading** 1.
+
+- **BREAKING —** **Realm's packages require each other at exactly the same version.**
+  `@sensigo/realm-cli`, `@sensigo/realm-mcp` and `@sensigo/realm-testing` now depend on the other
+  realm packages at exactly their own version (it was `^` of it), so npm never combines realm
+  packages from different releases. Install every realm package your project uses at one version,
+  for example `npm install @sensigo/realm@<v> @sensigo/realm-cli@<v> --save-exact`. A project whose
+  own `@sensigo/realm` is newer than the version a realm package requires now gets a separate copy
+  instead of sharing its own. See **Upgrading** 2. (Issue #620.)
+
+- **BREAKING —** **`instanceof` on every class a realm package exports also answers true for an
+  object made by another copy of the same realm version** (the same `VERSION` string), user
+  subclasses included. Objects from any other version, even one patch apart, are not recognised.
+  With two copies of one version in a project, a handler's retryable `WorkflowError` is now tried
+  again instead of being replaced by `ENGINE_HANDLER_FAILED`, and a provider module extending the
+  other copy's `LlmProvider` is accepted by `realm agent --provider-module`. Act only if your code
+  relied on `instanceof` answering false for an object from another copy of the same version.
+  See **Upgrading** 3. (Issue #620.)
 
 - **BREAKING —** **Every store realm runs against must carry its release line (issue #620).**
   `createRealmMcpServer`, every published tool handler (`@sensigo/realm-mcp/dist/tools/*.js`), the
@@ -223,37 +359,18 @@ given to --model; …`. (Issue #676.)
   `declareReleaseLine(MyStore)` once, from the `@sensigo/realm` it imports its errors from; a
   plain-object store calls `declareReleaseLine(store)`. `createRealmMcpServer` refuses a
   static registry from another version at construction; the engine and the tool handlers refuse one
-  where they resolve it. `validate --strict` and `register --strict` fail when the
-  project's `@sensigo/realm` is another version. Who must act: a program that hands realm a store of
-  its own (realm-cloud's four store classes); nobody whose stores are realm's own.
+  where they resolve it. Who must act: a program that hands realm a store of
+  its own (realm-cloud's four store classes); nobody whose stores are realm's own. See **Upgrading** 4.
 
-- **Realm objects do not cross versions, and realm now says so.** A `WorkflowError` your handlers or
-  adapters throw is not recognised — its step fails after one attempt, without that error's own code
-  and retry setting: from a copy that carries the release mark as `ENGINE_RELEASE_LINE_MISMATCH`,
-  whose message names both versions and both folders; from an older copy with no mark as
-  `ENGINE_HANDLER_FAILED` or `ENGINE_ADAPTER_FAILED` with a note saying so. The
-  `ENGINE_RELEASE_LINE_MISMATCH` message replaces `ENGINE_HANDLER_FAILED`, `ENGINE_ADAPTER_FAILED`
-  and `ENGINE_INTERNAL` "Dispatcher failed" for an error from a marked copy of another version. A
-  handler, adapter or dispatcher that throws a value that cannot be printed no longer breaks the
-  step's catch. The provider gate's message for a provider from another version names both
-  realm-cli copies. Where project code loads, realm warns (`REALM_RELEASE_LINE_MISMATCH`) when the
-  project's `@sensigo/realm` is not the running one. `realm serve` and `realm mcp` print a
-  construction refusal on one line and exit 1, before `serve` listens; when the refusal is about a
-  store from another realm version, the line says the command's own packages disagree and how to
-  reinstall it. `serve` also logs a request's error to stderr. A registry from another version
-  that a server's registry provider returned is refused in the reply of the tool that resolved it,
-  naming that tool. `realm listen` passes a hidden flag to the children it spawns. (Issue #620.)
-
-- **BREAKING —** **`instanceof` on every class a realm package exports also answers true for an
-  object made by another copy of the same realm version** (the same `VERSION` string), user
-  subclasses included. Objects from any other version, even one patch apart, are not recognised.
-  With two copies of one version in a project, a handler's retryable `WorkflowError` is now tried
-  again instead of being replaced by `ENGINE_HANDLER_FAILED`, and a provider module extending the
-  other copy's `LlmProvider` is accepted by `realm agent --provider-module`. Act only if your code
-  relied on `instanceof` answering false for an object from another copy of the same version.
-  (Issue #620.)
-- **`atomicWriteFile`'s temp file is now `<path>.<pid>.<8 random hex>.tmp`, created exclusively.**
-  Nothing to do unless you match temp files by the old `<pid>.<n>.tmp` form. (Issue #620.)
+- **BREAKING —** **`realm workflow validate --strict` and `realm workflow register --strict` fail
+  when your project's `@sensigo/realm` is another version than the command's (issue #620).** Where
+  realm loads your project's code, both commands print a `REALM_RELEASE_LINE_MISMATCH` warning
+  naming the two versions and folders when the `@sensigo/realm` nearest that code is not the one
+  the command runs, and `--strict` turns that warning into a failure: `validate --strict` prints
+  `Valid: <id> v<n> (<k> steps) — 1 warning; failing due to --strict` and exits 1, and
+  `register --strict` prints
+  `Error: '<id>' v<n> has 1 warning; refusing to register due to --strict` and exits 1. On
+  0.45.0 both exited 0. See **Upgrading** 5.
 
 - **BREAKING —** **Every fenced trace-buffer operation takes its check as DATA, not a callback.**
   `TraceBufferStore.appendFenced` / `deleteFenced` / `deleteAllForRunFenced` / `sealFenced` take a
@@ -288,8 +405,9 @@ given to --model; …`. (Issue #676.)
   `FencedTraceBufferLaw` gains `'FENCE_DATA'`. Behaviour on realm's own stores is UNCHANGED for a
   store built with its run reader, in a process that loads one copy of `@sensigo/realm`: every
   refusal keeps the exact code, message, details, `retryable` and `agentAction` its old guard threw.
-  Two copies of one version classify these refusals correctly; with copies of different versions,
-  gc, purge and reclaim still classify a fence refusal in the wrong copy and fail closed.
+  With copies of different versions, gc, purge and reclaim still classify a fence refusal in the
+  wrong copy and fail closed (for two copies of one version, see the `realm run gc` entry under
+  Fixed).
   New `@sensigo/realm` exports: `FencePredicate`, `FencePredicateKind`, `StepScopedFencePredicate`,
   `RunScopedFencePredicate`, `FenceRunReader`, `StepEligibilityState`, `StepMembershipState`,
   `FENCE_PREDICATE_KINDS`, `FENCE_REQUIRES_RUN`, `FENCE_TARGETS_STEP`, `isStepScopedFence`,
@@ -303,52 +421,14 @@ given to --model; …`. (Issue #676.)
   `TraceBufferStore`, or supplies the published contract's adapter — none known today (neither
   realm-cloud nor bradley-max does any of these). This is #616 PR-0; the SQLite store landing on top
   of it is why the check had to become data — a database transaction cannot wait on an arbitrary
-  callback. (Issue #616.)
-- **`LlmProvider.callStepWithMeta`'s return type widens to `{ output, meta?, usage? }`** — `usage`
-  a sibling of `meta`, never nested inside it. `LlmProvider` is a published type
-  (`agent/index.ts`); a third-party override returning the narrower `{ output, meta? }` still
-  type-checks (additive), but this is a public-surface change. The base default implementation is
-  unchanged: a provider that does not override `callStepWithMeta` keeps inheriting `{ output }`,
-  `usage: undefined`, by construction. `UsageRecord`'s fields carry ENGINE semantics, not either
-  provider's field names: `prompt_tokens` is the WHOLE prompt and `uncached_input_tokens` the part
-  of it not served from cache. The two providers' own "input tokens" mean opposite things — an
-  author of a third-party provider module who maps by field name rather than by meaning will report
-  a wrong number about money, so map onto the documented meaning (`run-record.ts`'s `UsageRecord`
-  doc states it, with the provider citations). (Issue #600.)
-- **A step declaring no `structured_output` now reports what its model calls cost.** Previously such
-  a step's model call went through `callStep` directly, discarding the response; it now goes through
-  `callStepWithMeta` (the same request, byte-for-byte), so `realm agent` records
-  `StepDiagnostics.cache` for every model call it makes that way, not only on steps declaring
-  `structured_output`. A tool-calling step still records none (issue #610). (Issue #600.)
-- **`realm run inspect`'s "Drive failures:" block now renders EVERY entry the ring holds**, oldest
-  first — it rendered only the last one before. The rolled `N total since …` line moves to AFTER
-  every entry and its usage line (it sat between the last entry and its own usage line before).
-  (Issue #600 PR 1b.)
-- **A resumed step now shows every attempt.** Multi-attempt rendering is keyed on the number of
-  EXECUTION evidence entries alone — the `attempt` field is no longer consulted. Before this, a
-  resumed agent step (two execution entries, no `attempt` field at all) fell to the single-entry
-  branch and rendered only its FAILED first entry; the success was invisible. Each earlier attempt's
-  cost (or the reason it has none) now gets its own `attempt i/n: …` line, and the last attempt's
-  cost is LABELLED `Diagnostics (attempt n/n): …` rather than a bare, unlabelled `Diagnostics:` —
-  which a fresh operator walk read as the step's WHOLE cost. There is deliberately no total across a
-  step's attempts (a token sum over a cold write, a warm read and a retry answers no question
-  without a price; that is issue #600 PR 2's job). (Issue #600 PR 1b.)
-- **BREAKING —** **Realm's packages require each other at exactly the same version.**
-  `@sensigo/realm-cli`, `@sensigo/realm-mcp` and `@sensigo/realm-testing` now depend on the other
-  realm packages at exactly their own version (it was `^` of it), so npm never combines realm
-  packages from different releases. Install every realm package your project uses at one version,
-  for example `npm install @sensigo/realm@<v> @sensigo/realm-cli@<v> --save-exact`. A project whose
-  own `@sensigo/realm` is newer than the version a realm package requires now gets a separate copy
-  instead of sharing its own. (Issue #620.)
-- **Between releases, realm's source reports a development version** (the next patch with
-  `-dev.0`). Only published packages carry a release version. A project that runs realm from its
-  source, for example through `file:` dependencies, sees the development version. (Issue #620.)
+  callback. See **Upgrading** 6. (Issue #616.)
 
 - **BREAKING —** **A guard step is settled by the write that makes it eligible (issue #625).** The
   fix below changes nine things a consumer can see:
   - (a) **Store implementers.** A store that declares `settleStep` must settle guards in the same
     write: its `settleStep` passes the new option `cascadeGuards: true` to `applySettlement`
-    (options are now `{ now?, cascadeGuards? }`), which then settles every guard the applied change
+    (options are now `{ now?, cascadeGuards?, storeKeepsClaims? }`; `storeKeepsClaims` is the
+    holder-slice change described below), which then settles every guard the applied change
     makes eligible, and any guard those make eligible, on the record it returns, and lists them in
     the result's new `guards`. `JsonFileStore` and realm-testing's `InMemoryStore` do. The published
     contract (`settlementContract`) gains two laws, `GUARD_CASCADE_ONE_WRITE` and
@@ -373,10 +453,11 @@ given to --model; …`. (Issue #676.)
     answer that arrives after the gate's time is up carries `answer_recorded: false`, and, when
     that answer carried out the expiry, a `context_hint` that is the expiry's sentence, followed by
     the guard's when a guard ended the run. `realm run respond` prints what the guards did before its last line. For an
-    answer the expiry beat, that last line used to be `Responded: …` and is now
-    `Not recorded: <run> | gate settled by timeout with choice '<c>' | state '<phase>'`. Its exit
-    code follows the reply (0 for an applied answer even when the run it ended is aborted, 0 for a
-    late answer whose choice matched the expiry's, 1 for a refused one).
+    answer the expiry beat, the last line is now
+    `Not recorded: <run> | gate settled by timeout with choice '<c>' | state '<phase>'`; it used to
+    be `Responded: …` when the late choice matched the expiry's, and the refusal sentence when it
+    did not. Its exit code follows the reply (0 for an applied answer even when the run it ended
+    is aborted, 0 for a late answer whose choice matched the expiry's, 1 for a refused one).
     `realm run drain <run> --expired`
     names the choice it would enact and predicts what a guard behind the gate would do: where it
     printed `would enact settle_default on --force.` it now prints
@@ -392,8 +473,9 @@ given to --model; …`. (Issue #676.)
     guards, then run the next automatic step — `executeChain` is its only caller in realm),
     `describeAnswerEnding`, `lateAnswerOutcome`, `guardEndingOf`, `describeGuardEndingLines`,
     `describeGuardLines`, `describeEndedBy`, `guardPassedLine`, and the types `AdvanceRunState` and
-    `GuardEnding`. `ResponseEnvelope` gains the three fields in (d); `SettleGuardDelta`'s
-    `resolutionError` gains an optional `cause`.
+    `GuardEnding`. `ResponseEnvelope` gains the three fields in (d); the `settle_guard`
+    member of `SettlementDelta` (`SettleGuardDelta`, not exported by name) gains an optional
+    `cause` on its `resolutionError`.
   - (g) **A failed step's own write settles a guard it leaves eligible.** On earlier versions the
     failing call settled no guard. The failed step's reply keeps its status and errors and adds
     `guards`, and `ended_by` when the guard ended the run.
@@ -414,6 +496,8 @@ given to --model; …`. (Issue #676.)
     `Its gate expired <age> ago. To see what the expiry will do: realm run drain <run> --expired;`
     `add --force to carry it out.` Scripts that match the old line must be updated.
 
+  See **Upgrading** 7.
+
 - **BREAKING —** **Store implementers: the published conformance contracts gained laws, and two
   store methods gained a contract (issue #625).** `RunStore.claimStep` takes an
   optional fourth argument, `claimant`, and a store must write it as the claim's `holder` and stamp
@@ -425,16 +509,83 @@ given to --model; …`. (Issue #676.)
   `GATE_PROOF_NEVER_GATES_THE_ANSWER`. A test file that keeps its own list of laws runs no new law
   until it runs the exported list (`RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`,
   `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS`) and names, with a reason, each law it leaves
-  out. For realm-cloud this is two changes: declare `persistsClaims: false` on its production
-  stores, and have its conformance wiring run the exported lists. Nothing changes for it at run
-  time: every answer there reads `unverifiable` with the cause `store_keeps_no_claims`.
-- **`submit_human_response` names the arguments it does not take, and bounds `responded_by`.** An
+  out. For realm-cloud this release requires one change: have its conformance wiring run the
+  exported lists. Declaring `persistsClaims: false` on its production stores, the documented rule
+  for a store that keeps no claims, is a tidy-up that changes nothing at run time: every answer
+  there reads `unverifiable` with the cause `store_keeps_no_claims` either way. See **Upgrading** 8.
+
+- **BREAKING —** **`submit_human_response` names the arguments it does not take, and bounds
+  `responded_by` (issue #625).** An
   unknown argument used to be dropped without a word, so a misnamed `claimToken` read as an answer
   with no token. It is now named in `warnings`, with the nearest argument it has when there is one.
   `responded_by` is held to the bound `realm run respond --by` has — at most 200 characters, no
   control characters, not empty — and an answer that breaks it is refused with
-  `VALIDATION_ACTOR_INVALID` and not recorded. The other nine tools still drop unknown arguments
-  without saying so (#438).
+  `VALIDATION_ACTOR_INVALID` and not recorded (0.45.0 stored any string; `handleSubmitHumanResponse`
+  throws the refusal). A name that passes is stored without spaces at either end. The other eight
+  tools (every tool but `create_workflow`, which already names them) still drop unknown arguments
+  without saying so (#438). See **Upgrading** 9.
+
+- **Realm objects do not cross versions, and realm now says so.** A `WorkflowError` your handlers or
+  adapters throw is not recognised — its step fails after one attempt, without that error's own code
+  and retry setting: from a copy that carries the release mark as `ENGINE_RELEASE_LINE_MISMATCH`,
+  whose message names both versions and both folders; from an older copy with no mark as
+  `ENGINE_HANDLER_FAILED` or `ENGINE_ADAPTER_FAILED` with a note saying so. The
+  `ENGINE_RELEASE_LINE_MISMATCH` message replaces `ENGINE_HANDLER_FAILED`, `ENGINE_ADAPTER_FAILED`
+  and `ENGINE_INTERNAL` "Dispatcher failed" for an error from a marked copy of another version. A
+  handler, adapter or dispatcher that throws a value that cannot be printed no longer breaks the
+  step's catch. The provider gate's message for a provider from another version names both
+  realm-cli copies. Where project code loads, realm warns (`REALM_RELEASE_LINE_MISMATCH`) when the
+  project's `@sensigo/realm` is not the running one. `realm serve` and `realm mcp` print a
+  construction refusal on one line and exit 1, before `serve` listens; when the refusal is about a
+  store from another realm version, the line says the command's own packages disagree and how to
+  reinstall it. `serve` also logs a request's error to stderr. A registry from another version
+  that a server's registry provider returned is refused in the reply of the tool that resolved it,
+  naming that tool. `realm listen` passes a hidden flag to the children it spawns. (Issue #620.)
+
+- **`atomicWriteFile`'s temp file is now `<path>.<pid>.<8 random hex>.tmp`, created exclusively.**
+  Nothing to do unless you match temp files by the old `<pid>.<n>.tmp` form. (Issue #620.)
+
+- **`LlmProvider.callStepWithMeta`'s return type widens to `{ output, meta?, usage? }`** — `usage`
+  a sibling of `meta`, never nested inside it. `LlmProvider` is a published type
+  (`agent/index.ts`); a third-party override returning the narrower `{ output, meta? }` still
+  type-checks (additive), but this is a public-surface change. The base default implementation is
+  unchanged: a provider that does not override `callStepWithMeta` keeps inheriting `{ output }`,
+  `usage: undefined`, by construction. `UsageRecord`'s fields carry ENGINE semantics, not either
+  provider's field names: `prompt_tokens` is the WHOLE prompt and `uncached_input_tokens` the part
+  of it not served from cache. The two providers' own "input tokens" mean different things
+  (Anthropic's `input_tokens` leaves out the tokens read from or written to the cache; OpenAI's
+  `prompt_tokens` is the whole prompt) — an author of a third-party provider module who maps by
+  field name rather than by meaning will report a wrong number about money, so map onto the
+  documented meaning (`run-record.ts`'s `UsageRecord` doc states it, with the provider citations).
+  (Issue #600.)
+
+- **A step declaring no `structured_output` now reports what its model calls cost.** Previously such
+  a step's model call went through `callStep` directly, discarding the response; it now goes through
+  `callStepWithMeta` (the same request, byte-for-byte), so `realm agent` records
+  `StepDiagnostics.cache` for every model call it makes that way, not only on steps declaring
+  `structured_output`. A tool-calling step still records none (issue #610). (Issue #600.)
+
+- **`realm run inspect`'s "Drive failures:" block now renders EVERY entry the ring holds**, oldest
+  first — it rendered only the last one before. The rolled `N total since …` line now comes after
+  every entry (and the usage line of each entry that has one). (Issue #600 PR 1b.)
+
+- **A resumed step now shows every attempt.** Multi-attempt rendering is keyed on the number of
+  EXECUTION evidence entries alone — the `attempt` field is no longer consulted. Before this, a
+  resumed agent step (two execution entries, no `attempt` field at all) fell to the single-entry
+  branch and rendered only its FAILED first entry; the success was invisible. Each earlier attempt's
+  cost (or the reason it has none) now gets its own `attempt i/n: …` line, and the last attempt's
+  cost is LABELLED `Diagnostics (attempt n/n): …` rather than a bare, unlabelled `Diagnostics:` —
+  which a fresh operator walk read as the step's WHOLE cost. There is deliberately no total across a
+  step's attempts (a token sum over a cold write, a warm read and a retry answers no question
+  without a price; that is issue #600 PR 2's job). (Issue #600 PR 1b.)
+
+- **From this release on, realm's source reports a development version between releases.** The
+  release script moves the source to the next patch with `-dev.0` right after tagging (after
+  0.46.0, `0.46.1-dev.0`), so a build from `main` between releases reports a development version.
+  Only the tagged release commit and the published packages carry a release version. A project that
+  runs realm from its source, for example through `file:` dependencies, sees the development
+  version. (Issue #620.)
+
 - **`realm run inspect` prints every answer of a step.** A step with a gate and one execution entry
   — the common shape — showed no answer at all; the choice was only in the run's record. It now
   prints one `Answer:` line for each answer: the choice, who answered (the name the caller gave,
@@ -445,10 +596,15 @@ given to --model; …`. (Issue #676.)
   quoted string, so a newline or control character in it stays on one line. An
   `on_expiry: abort` expiry's entry prints no lines at all (the run's `Cause:` line and the step's
   `Skipped:` line say what it did).
+
 - **The protocol text tells a model to copy the answer call.** Rule 2 and the per-step gate text of
   `get_workflow_protocol` now say to copy the call in `next_actions[0].instruction.call_with` and
   fill in the choice, instead of naming the tool and its arguments. `call_with` carries the
   `claim_token`.
+
+- **The npm page of every realm package links to https://realmengine.dev**, where it linked to the
+  GitHub README, and `@sensigo/realm-mcp`'s description no longer names a tool count or transports
+  (it said `exposes 7 tools for AI agent connections over stdio or HTTP`).
 
 ### Fixed
 
@@ -457,6 +613,7 @@ given to --model; …`. (Issue #676.)
   when strict tool arguments are dropped after the provider refuses them. Realm now leaves out of
   what it sends the thinking of the earlier turns made under a different list of tools; every other
   request is unchanged. (#677)
+
 - **When a step the engine runs after the one a call named stops the call, it is that step that is
   named.** Before, the line named the step the call started from: a handler that threw in `file`
   after the agent step `classify` printed `✗ Step 'classify' failed: …`, and a later step blocked on
@@ -468,6 +625,7 @@ given to --model; …`. (Issue #676.)
   is no longer added to a later step's line. MCP `execute_step` no longer writes a failed-attempt
   record under the step it was called for when a later step refused its input: that step's
   submission had been accepted. (Issue #676.)
+
 - **With two copies of one realm version in a process, `realm run gc`, `purge` and `reclaim`
   classify the other copy's refusals correctly.** Before: gc reaped no orphaned trace file
   (`Run not found`), purge filed a resumed run under `failed` instead of `blocked`, and reclaim
@@ -477,6 +635,7 @@ test` tries a project handler's retryable `WorkflowError` again instead of faili
   the project's copy of `@sensigo/realm`; and an engine given a store built with another copy tries
   a cleanup step's write again when the store answers that the run is busy, instead of leaving the
   cleanup step pending. (Issue #620.)
+
 - **Two copies of realm writing one file at the same time no longer collide, whatever their
   versions.** The two writers picked one temp file name, so a write was rejected (`ENOENT`) or the
   file was left torn. (Issue #620.)
@@ -496,9 +655,48 @@ test` tries a project handler's retryable `WorkflowError` again instead of faili
   `running`; and `realm workflow run` stalled. The write that records the answer now also settles
   every guard the answer makes eligible, in that one write, so a crash cannot leave a run answered
   with its guard undecided. The same holds for a gate that expires to its default choice and for a
-  step that finishes. Not covered: an automatic (non-guard) step after a gate still waits for a
-  driver's call, and a guard that is already eligible when a run is created or resumed is decided
-  only by the run's next such write (#625 stays open for both).
+  step that finishes. This happens only through a store's own `settleStep`, which realm's own
+  stores have; on a store without one, those writes settle no guard, as before. Not covered: an
+  automatic (non-guard) step after a gate still waits for a driver's call, and a guard that is
+  already eligible when a run is created or resumed is decided only by the run's next such write
+  (#625 stays open for both).
+
+### Security
+
+- **`ip-address` 10.4.0 → 10.7.3** (Dependabot #621) — four MODERATE advisories against the installed
+  10.4.0: [GHSA-2vr4-cq9g-pvrc](https://github.com/advisories/GHSA-2vr4-cq9g-pvrc) / CVE-2026-101910
+  (no classifier recognises the NAT64 local-use range `64:ff9b:1::/48`; ≤ 10.5.0),
+  [GHSA-rpw4-54j3-4h4q](https://github.com/advisories/GHSA-rpw4-54j3-4h4q) / CVE-2026-101913
+  (`Address6.isLinkLocal()` checks `fe80::/64` instead of `fe80::/10`; ≤ 10.5.0),
+  [GHSA-h3mg-xc3c-68pw](https://github.com/advisories/GHSA-h3mg-xc3c-68pw) / CVE-2026-101911 (an
+  `Address6` parse of a long string can stall or crash the process; ≤ 10.7.0) and
+  [GHSA-j6r3-76f7-8jcv](https://github.com/advisories/GHSA-j6r3-76f7-8jcv) / CVE-2026-101912
+  (`isInSubnet()` compares addresses of different families; ≤ 10.7.0). In-range, lockfile-only. The
+  one copy comes from `@modelcontextprotocol/sdk` (exactly `1.30.0`, a dependency of
+  `@sensigo/realm-cli` and `@sensigo/realm-mcp`) through `express-rate-limit` 8.5.2. Exposure:
+  none, derived fresh. Inside the SDK only its OAuth server handlers
+  (`server/auth/handlers/{authorize,register,revoke,token}.js`) import `express-rate-limit`, and no
+  module realm imports from the SDK reaches them: loading every built realm entry point (the core
+  library, the realm-mcp server and its tool modules, the CLI's command registry, `serve`, `mcp` and
+  the agent's MCP client) loaded neither `express-rate-limit` nor `ip-address`, while loading the
+  SDK's token handler alone loaded both. This corrects the v0.34.0 entry, which said realm's `serve`
+  used the rate limiter. A published realm package carries no lockfile, so an existing install
+  gets 10.7.3 when npm next resolves its dependencies (`npm update`, or a fresh install).
+
+- **`fast-uri` 3.1.7 → 3.1.8** (Dependabot #666) — one MODERATE advisory,
+  [GHSA-hrr3-gc8f-f4qj](https://github.com/advisories/GHSA-hrr3-gc8f-f4qj) / CVE-2026-86472 (CVSS
+  4.8): fast-uri lowercased a host before it percent-decoded it, so for a scheme-relative reference
+  `parse("//%41.com").host` was `A.com` and `equal("//%41.com", "//a.com")` was false. In-range,
+  lockfile-only (ajv declares `^3.0.1`); the one copy is used by `@sensigo/realm`'s own ajv and by
+  the SDK's ajv and ajv-formats. Exposure: realm reaches the affected functions — ajv calls
+  fast-uri's `parse`, `serialize` and `resolve` whenever it compiles a schema — but uses the result
+  only as the key under which ajv finds a schema it already holds. Realm gives ajv no `loadSchema`,
+  so no schema is fetched, and nothing in realm or ajv compares a parsed host with an allow- or
+  deny-list. Run through ajv 8.20.0 built as realm builds it, the advisory's case changed only
+  whether a `$ref` resolved: with 3.1.7, `$ref: //%41.com/s` beside a schema whose `$id` is
+  `//a.com/s` was refused (`MissingRefError`); with 3.1.8 it resolves. The defect could refuse a
+  schema; it could not let a value through. As above, an existing install gets 3.1.8 when npm next
+  resolves its dependencies.
 
 ---
 

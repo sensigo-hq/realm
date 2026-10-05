@@ -231,7 +231,62 @@ npm install @sensigo/realm@<version>
 node --input-type=module -e "import { VERSION } from '@sensigo/realm'; console.log(VERSION);"
 ```
 
-**8. Verify the consumer** _(user-side, Mac-executed)_
+**8. Create the GitHub Release**
+
+Once steps 6 and 7 have passed, create the release's page on GitHub by hand. Its title is `v<version>`, and its text is the `## [<version>]` section of `CHANGELOG.md` as the tag `v<version>` holds it, without the heading. Run these one at a time, in the checkout where you ran step 5 (it holds the tag). The first writes the section to a file and says how many lines it holds: read the file before you run the second.
+
+````bash
+node -e '
+  const fs = require("fs");
+  const { execFileSync } = require("child_process");
+  const [version, out] = process.argv.slice(1);
+  let changelog;
+  try {
+    changelog = execFileSync("git", ["show", `v${version}:CHANGELOG.md`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    console.error(`There is no tag v${version} here: run this in the checkout where you ran step 5, or fetch the tag first (git fetch origin tag v${version}).`);
+    process.exit(1);
+  }
+  const lines = changelog.split("\n");
+  const head = `## [${version}]`;
+  const start = lines.findIndex((l) => l === head || l.startsWith(`${head} `));
+  if (start === -1) {
+    console.error(`CHANGELOG.md at v${version} has no ${head} section.`);
+    process.exit(1);
+  }
+  let end = lines.findIndex((l, i) => i > start && l.startsWith("## ["));
+  if (end === -1) end = lines.length;
+  const body = lines.slice(start + 1, end);
+  while (body.length > 0 && ["", "---"].includes(body[0].trim())) body.shift();
+  while (body.length > 0 && ["", "---"].includes(body[body.length - 1].trim())) body.pop();
+  // GitHub shows every line break in the text of a release, and CHANGELOG.md wraps its lines, so
+  // join each wrapped line to the one before it (never inside a code block, never a new item).
+  const joined = [];
+  let inCode = false;
+  for (const line of body) {
+    const fence = /^\s*```/.test(line);
+    const prev = joined.length > 0 ? joined[joined.length - 1] : "";
+    const startsBlock = /^\s*([-*+] |\d+\. |#|\||>)/.test(line);
+    const prevJoinable = prev.trim() !== "" && !/^\s*(#|\||```)/.test(prev);
+    if (!inCode && !fence && line.trim() !== "" && !startsBlock && prevJoinable) {
+      joined[joined.length - 1] = `${prev} ${line.trim()}`;
+    } else {
+      joined.push(line);
+    }
+    if (fence) inCode = !inCode;
+  }
+  fs.writeFileSync(out, joined.join("\n") + "\n");
+  console.log(`Wrote ${joined.length} lines of the v${version} notes to ${out}.`);
+' <version> /tmp/realm-v<version>-notes.md
+````
+
+```bash
+gh release create v<version> --repo sensigo-hq/realm --title "v<version>" --notes-file /tmp/realm-v<version>-notes.md --verify-tag
+```
+
+`--verify-tag` makes `gh` refuse when `v<version>` is not on GitHub. Without it, `gh` would create a new tag `v<version>` from the latest commit of `main`, which is not the release commit. Create no release for a version whose publish did not finish: if the publish needs a new version (step 10), create the release for that version instead.
+
+**9. Verify the consumer** _(user-side, Mac-executed)_
 
 Not runnable from WSL — realm-workspace and its deploy live on the Mac. Every other step in Part B
 is a hard gate; this one is a hard gate **on the Mac**, so a Part B run elsewhere records it as
@@ -247,7 +302,7 @@ npx realm workflow validate workflows/<each>/workflow.yaml
 
 then `npm run deploy`.
 
-**9. Rollback note**
+**10. Rollback note**
 
 If the publish workflow fails after some packages are published: open the failed **Publish** run on the Actions page and re-run all its jobs. Each publish step skips a package already published from the tagged commit and publishes the rest. A package already published from a different commit makes its step fail instead; that needs a new version. A run that failed at "Check versions, and that the tag names the version" fails there again: the tag names a commit whose packages are not at the tag's version. Push the tag the release script created instead, as that check says; when origin already holds that tag's name at another commit, that needs a new version too. Starting the workflow by hand does not help: a manual run is always a dry run. Confirm every package appears on the registry before proceeding.
 
