@@ -8,7 +8,7 @@
 npm install --save-dev @sensigo/realm-testing
 ```
 
-This page describes the package on the `main` branch. Version 0.45.0 exports 23 values. Version 0.46.0 added seven: `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, and the four lists of law names `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. The adapter that `fencedTraceBufferContract` takes changed with them (`fenceRuns` and `fenceRunPark` are new, and `fenceForm` has other values).
+This page describes the package on the `main` branch. Version 0.45.0 exports 23 values. Version 0.46.0 added seven: `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, and the four lists of law names `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. It also added four types, `FenceRunSource`, `FenceRunControl`, `FenceRunPark` and `ParkedRead`: version 0.45.0 has 19 types. The adapter that `fencedTraceBufferContract` takes changed with them (`fenceRuns` and `fenceRunPark` are new, and `fenceForm` has other values).
 
 Nothing in the package depends on a test framework. A function that checks something throws an `Error` when the check fails, which any framework reports as a failed test.
 
@@ -24,7 +24,7 @@ To test a workflow from the command line, with no test file, see [Test a workflo
 | [Unit helpers](#unit-helpers)       | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                                                                                                                                        |
 | [GitHub stand-in](#github-stand-in) | `startGitHubMockServer`                                                                                                                                                                                                                                                                                  |
 | [Store contracts](#store-contracts) | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS` |
-| Version                             | `VERSION`, the package's version as a string: `"0.46.0"`.                                                                                                                                                                                                                                                |
+| Version                             | `VERSION`, the package's version as a string, for example `"0.46.0"`.                                                                                                                                                                                                                                    |
 
 The 23 types are named in the group that uses them.
 
@@ -373,7 +373,7 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | Contract                      | For a store that implements                  | Laws | Cases with Realm's own store        |
 | ----------------------------- | -------------------------------------------- | ---- | ----------------------------------- |
 | `runStoreFidelityContract`    | `RunStore`                                   | 6    | 13, with `InMemoryStore`            |
-| `settlementContract`          | `RunStore` with `settleStep`                 | 56   | 146, with `InMemoryStore`           |
+| `settlementContract`          | `RunStore` with `settleStep`                 | 56   | 146, with `InMemoryStore` (below)   |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 7    | 7, with `FailedAttemptStore`        |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 74, with `InMemoryTraceBufferStore` |
 
@@ -438,7 +438,7 @@ The failing case says what to do:
 [Mine] settlementContract: adapter.store declares settleStep, but adapter.settlementFixture is undefined — this is a WIRING GAP in the calling test file, not a store defect. Pass 'defaultSettlementFixture' from this module …
 ```
 
-The 55 laws:
+The 56 laws:
 
 ```text
 FRESH_APPLICATION, CONDITIONAL_NOOP, CONDITIONAL_NOOP_GRANDFATHERED, OWNERSHIP_REFUSAL,
@@ -458,7 +458,7 @@ EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, GATE_PROOF_NEVE
 ADAPTER_WIRING, STORE_RELEASE_LINE_TRUE
 ```
 
-Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 55 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
+Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, `defaultSettlementFixture` and a `seedLegacyTerminal` that puts the run straight into the store's map of runs, 55 of the laws have cases, 146 in all, and all of them pass. `ADAPTER_WIRING` has one only when the adapter is incomplete. Without `seedLegacyTerminal`, `STAMP_CLASSIFIED_ROUNDTRIP` has no case and a `STAMP_PRESERVES_UPDATED_AT` case fails, saying that the hook is missing: 142 cases.
 
 `GATE_PROOF_NEVER_GATES_THE_ANSWER` was added in 0.46.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
 

@@ -80,7 +80,7 @@ With both copies at a version that carries the release mark, the message names b
 
 With both packages at 0.45.0, the same handler was retried and the run completed.
 
-Two copies of the same version work together: an error or a provider made with one copy is recognised by the other. This was added in 0.46.0. On 0.45.0, your code and the command must share one copy: run the project's own command with `npx realm`. A `realm` command installed for the whole machine is a second copy: even at the same version, a retryable handler fails on its first attempt, as in the first output above.
+Two copies of the same version work together: an error or a provider made with one copy is recognised by the other. This was added in 0.46.0. On 0.45.0, your code and the command must share one copy: run the project's own command with `npx realm`. A `realm` command installed for the whole machine is a second copy: even at the same version, a retryable handler fails on its first attempt, as in the output above that begins `ENGINE_HANDLER_FAILED: Handler 'fetch_record' threw`.
 
 ## 3. Check the workflows you have registered
 

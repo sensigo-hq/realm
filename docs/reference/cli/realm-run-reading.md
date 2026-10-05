@@ -92,14 +92,14 @@ realm run inspect <run-id> [--verbose] [--check-drift]
 
 Prints the run's record: where it stands, then one entry for each step that ran.
 
-The outputs in this section are from the `main` branch. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
+The outputs in this section are from version 0.46.0. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
 
 | Flag            | What it does                                                                                              |
 | --------------- | --------------------------------------------------------------------------------------------------------- |
 | `--verbose`     | Under each tool call, also prints the arguments it was given and what it returned.                        |
 | `--check-drift` | Compares the project's code files as they are now with the hashes recorded when the run last loaded them. |
 
-This example comes from a separate run of the `triage` workflow, made with version 0.46.0, so its run ID is not the one in the other examples on this page.
+This example comes from a separate run of the `triage` workflow, so its run ID is not the one in the other examples on this page.
 
 ```bash
 realm run inspect cb0e8545-ce3e-436f-b95c-fbd24f78a59b
@@ -154,8 +154,8 @@ Under `In Progress`, one line for each step in progress says who took it, how lo
 
 ```text
 In Progress: classify, review
-  classify: taken by ops@server-1 (from the OS user, via agent), 4m ago
-  review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 1h 2m ago
+  classify: taken by ops@server-1 (from the OS user, via agent), 0m ago
+  review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 0m ago
 ```
 
 The name is the program's, not a person's: `from the OS user` is the OS user and host name, `from REALM_OPERATOR` is that variable, `as stated` is a name an embedding program gave. `via` names the door the program came through: `agent`, `run`, `mcp-stdio`, `mcp-http`. A step whose question is open reads `question opened through`, and says nothing about anyone working on it now. When a claim has no name, the line says why instead: `no program name was recorded on this claim`, `claimed before program names were recorded`, `no claim is recorded for this step` or `this run store keeps no claims`. A name that cannot be shown keeps the verb: `taken by a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
@@ -171,7 +171,7 @@ Skipped: total, confirm
 A waiting gate looks like this:
 
 ```text
-Gate: draft (gate 0f2d0b7a-bca4-45d0-9c6b-83559e04a88d, opened 0m ago)
+Gate: draft (gate 580b28a5-abfc-49c1-b8ef-5d3574ce5aea, opened 0m ago)
   Choices: send, discard
 ```
 
@@ -189,7 +189,7 @@ Each block is printed only when the run has something for it.
 
 ```text
 Drive failures:
-  2026-10-01T21:26:32.069Z  classify  openai  validation_rejected after 20ms: Invalid input for step 'classify'
+  2026-10-05T23:01:39.186Z  classify  openai  validation_rejected after 30ms: Invalid input for step 'classify'
     usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache not reported
 ```
 
@@ -212,9 +212,9 @@ With `--check-drift`, after one of the project's files was edited:
 
 ```text
 Drift check (pure recompute of the last entry under its recorded rules):
-  module /srv/shop/handlers.mjs: DIFFERS (recorded a59b22a278c91b616785489dc22fb481c402a5a0f522a818d22f88991120f6bb, current f980fa2b6f70aaff613db47eee7bfafd78dbfe943c0bca97a735d2102f3f9a48)
+  module /srv/shop/handlers.mjs: DIFFERS (recorded 074edb9b29c550845e841aa1cc5a50a3e3db987fcb7d0507578386c94636c5a2, current 47deda97f85b1ad782597ae27a4d52018e681f1d12faed33d081fbe507609fa4)
   manifest /srv/shop/realm.yaml: same
-  tree: DIFFERS (recorded 7f6269ffdae72dc4513e84520e3838970c18716fe9951703606547eb8864ff20, current 4bca32402e93d3ad7e124501c8353dca8941c2383666d7359ade2278eb80cc88)
+  tree: DIFFERS (recorded 651600beac492f14fe9677119e5a98e61490fb3f28dca090d5eae80fbb9e4f0a, current 6dec55f0ef0b606aa70ea9c0414b86d3749fe594b4efd9dfb47acfd3b37d7fa4)
 ```
 
 The check reads the files and computes their hashes. It does not load or run them. For a run that used no project code, it prints `Drift check: no extension identity recorded for this run.`
@@ -241,28 +241,31 @@ A step that `realm agent` drove has measured numbers:
 
 ```text
   1. classify               [profile: support-lead] success   0ms   hash: 93b4b175
+     Taken by: ops@server-1 (from the OS user, via agent)
      Input:  {"category":"bug","urgent":false,"reason":"A valid answer this time."}
      Output: {"category":"bug","urgent":false,"reason":"A valid answer this time."}
-     Diagnostics: ~18 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | no preconditions | cache: not reported by the provider (1 request)
+     Diagnostics: ~18 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, 1 request)
 ```
 
 A step that called a tool, with `--verbose`:
 
 ```text
      Tool calls (1):
-       [notes:list_directory]  8ms
+       [notes:list_directory]  7ms
          args:   {"path":"."}
          result: {"content":[{"type":"text","text":"[FILE] returns.md\n[FILE] shipping.md"}],"structuredContent":{"content":"[FILE] returns.md\n[FILE] shipping.md"}}
 ```
 
-Without `--verbose`, only the `[notes:list_directory]  8ms` line is printed.
+Without `--verbose`, only the `[notes:list_directory]  7ms` line is printed.
 
 A step that ran more than once has one line for each attempt. `Input`, `Output` and `Diagnostics` are those of the last attempt:
 
 ```text
   1. fetch
-     (attempt 1/2)  error   1002ms   hash: 44136fa3
+     (attempt 1/2)  error   1001ms   hash: 44136fa3
+       Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      (attempt 2/2)  success   0ms   hash: e715712f
+       Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"sleep_ms":1500,"sleep_calls":1}
      Output: {"ok":true,"calls":2}
      Diagnostics (attempt 2/2): ~9 tokens (estimate, step input) | no preconditions
