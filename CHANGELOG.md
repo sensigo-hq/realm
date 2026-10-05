@@ -651,15 +651,19 @@ given to --model; …`. (Issue #676.)
     an unknown-age claim.
   - `start_run`'s chained reply now reports the derived phase.
   - When the chain after an agent step reached a step whose handler or adapter is missing, the
-    block was printed against the agent step (`⚠ Step 'ask' is blocked: the missing handler …`).
+    drive stopped there
+    (`⚠ Step 'compute' (run by the engine after 'ask' finished) is blocked: handler 'missing_h' …`),
+    though another agent step could still run.
   - The agent step is now said as completed, the blocked step is named once, the drive goes on with
     any ready agent step, and its stop names the blocked step and what it needs.
   - `realm workflow run` asked again, forever, for an `auto` step no typed answer can unblock (a
-    failed precondition printed `✗ blocked: ` with no reason).
+    failed precondition printed `✗ blocked: ` with no reason; a missing handler,
+    `✗ error: Handler '<h>' is not registered`).
   - It no longer asks for such a step; when nothing else can run it stops, names the step and the
     way out, and exits 1.
-  - It said a completed step failed (`✗ error: Handler '<h>' is not registered`) when the chain
-    after it reached a step this program lacks the handler for; it now says it completed.
+  - When the chain after a step it asked for reached a step this program lacks the handler for, it
+    printed `✗ error (step '<s>', run by the engine after '<asked>' finished): …`; it now says the
+    step it asked for completed, and names the blocked step once.
 
 - **A fixture that reaches a point where nothing else can run now fails naming the step and why
   (issue #625, PR-2a).** `runFixtureTests` and `realm workflow test` failed such a fixture with
