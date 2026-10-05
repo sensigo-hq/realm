@@ -72,13 +72,13 @@ npm install  # from repo root — installs all workspace packages
 Create a `.env` file in the repo root (the CLI loads it automatically):
 
 ```bash
-OPENAI_API_KEY=sk-...       # or ANTHROPIC_API_KEY
+ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
 ```
 
 Alternatively, export it in your shell session:
 
 ```bash
-export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 For the Slack gate notification (optional), add `SLACK_WEBHOOK_URL` to the same `.env` file —
@@ -157,10 +157,12 @@ Run the workflow autonomously from the terminal — no MCP client, no IDE, no co
 ```bash
 realm agent \
   --workflow examples/03-incident-response/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/03-incident-response/alerts/high-latency.json\"}"
+  --params "{\"path\":\"$(pwd)/examples/03-incident-response/alerts/high-latency.json\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` — set it in `.env` or export it in your shell. Use `--provider anthropic` to switch providers.
+Requires `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` — set it in `.env` or export it in your shell. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)).
 
 When the run reaches `confirm_and_send`, `realm agent` pauses and prints the resolved
 `gate.message` — severity, root cause, impacted services, confidence, and the draft headline:

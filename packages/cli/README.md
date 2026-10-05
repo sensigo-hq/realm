@@ -44,15 +44,15 @@ npm install -g @sensigo/realm-cli
 
 ## Using `realm agent`
 
-| Flag                | Description                                                    |
-| ------------------- | -------------------------------------------------------------- |
-| `--workflow <path>` | Path to workflow directory or `workflow.yaml` file             |
-| `--provider <name>` | LLM provider: `openai` or `anthropic` (auto-detected from env) |
-| `--model <name>`    | Model name override (default: `gpt-4o` / `claude-sonnet-4-5`)  |
-| `--base-url <url>`  | Base URL for OpenAI-compatible endpoints                       |
-| `--run-id <id>`     | Attach to an existing run                                      |
-| `--params <json>`   | Initial run parameters as JSON                                 |
-| `--register`        | Persist the workflow definition to `~/.realm/workflows/`       |
+| Flag                | Description                                                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--workflow <path>` | Path to workflow directory or `workflow.yaml` file                                                                                                                        |
+| `--provider <name>` | LLM provider: `openai` or `anthropic` (chosen from the API key that is set; OpenAI when both are). Another word is refused, and so is a provider whose API key is not set |
+| `--model <name>`    | The model, as the provider names it. Required: realm has no default model (not given with `--provider-module`, which picks its own)                                       |
+| `--base-url <url>`  | Base URL for OpenAI-compatible endpoints                                                                                                                                  |
+| `--run-id <id>`     | Attach to an existing run                                                                                                                                                 |
+| `--params <json>`   | Initial run parameters as JSON                                                                                                                                            |
+| `--register`        | Persist the workflow definition to `~/.realm/workflows/`                                                                                                                  |
 
 **DeepSeek / Qwen / other OpenAI-compatible providers:**
 

@@ -19,18 +19,22 @@ function spawnAgentChild(
   home: string,
 ): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [DIST_CLI, 'agent', '--run-id', runId], {
-      cwd: home,
-      env: {
-        ...process.env,
-        HOME: home,
-        // A key must be present so provider resolution succeeds; no LLM call happens —
-        // the extension load fails first.
-        OPENAI_API_KEY: 'test-key-never-used',
-        ANTHROPIC_API_KEY: '',
+    const child = spawn(
+      process.execPath,
+      [DIST_CLI, 'agent', '--run-id', runId, '--model', 'test-model'],
+      {
+        cwd: home,
+        env: {
+          ...process.env,
+          HOME: home,
+          // A key must be present so provider resolution succeeds; no LLM call happens —
+          // the extension load fails first.
+          OPENAI_API_KEY: 'test-key-never-used',
+          ANTHROPIC_API_KEY: '',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    );
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();

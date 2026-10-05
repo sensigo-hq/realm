@@ -120,8 +120,12 @@ Then in Copilot chat (agent mode with Realm tools):
 ```bash
 realm agent \
   --workflow examples/08-pr-review/workflow.yaml \
-  --params '{"repo":"owner/repo","pr_number":42}'
+  --params '{"repo":"owner/repo","pr_number":42}' \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
+
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)).
 
 When the run reaches the gate, the CLI prints the review output and waits:
 

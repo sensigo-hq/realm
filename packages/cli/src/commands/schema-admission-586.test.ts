@@ -246,7 +246,9 @@ describe('#586 schema admission — the CLI surfaces', () => {
     try {
       const file = write(MALFORMED);
       await expect(
-        agentCommand.parseAsync(['--workflow', file, '--params', '{}'], { from: 'user' }),
+        agentCommand.parseAsync(['--workflow', file, '--params', '{}', '--model', 'test-model'], {
+          from: 'user',
+        }),
       ).rejects.toThrow('process.exit');
       const errored = out(errSpy);
       expect(errored).toContain("'params_schema' is not a valid JSON Schema");
@@ -275,9 +277,12 @@ describe('#586 schema admission — the CLI surfaces', () => {
   async function runAgentCell(): Promise<void> {
     const file = write(PARAMS_WF);
     await expect(
-      agentCommand.parseAsync(['--workflow', file, '--params', '{"ticket_id":true}'], {
-        from: 'user',
-      }),
+      agentCommand.parseAsync(
+        ['--workflow', file, '--params', '{"ticket_id":true}', '--model', 'test-model'],
+        {
+          from: 'user',
+        },
+      ),
     ).rejects.toThrow('process.exit');
     const errored = out(errSpy);
     // The #425 family split: not an `Invalid workflow:` message, so it keeps the `Error: ` prefix

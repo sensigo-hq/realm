@@ -180,10 +180,12 @@ folder. With the default agent, trigger it with:
 ```bash
 realm agent \
   --workflow examples/05-parallel-code-review/workflow.yaml \
-  --params "{\"path\":\"$(pwd)/examples/05-parallel-code-review/diffs/add-payment-integration.diff\"}"
+  --params "{\"path\":\"$(pwd)/examples/05-parallel-code-review/diffs/add-payment-integration.diff\"}" \
+  --provider anthropic \
+  --model claude-sonnet-5-5
 ```
 
-Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` before running.
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` before running. The command uses Anthropic and the model `claude-sonnet-5-5`; with an OpenAI key, use `--provider openai --model <a model from OpenAI's list>` ([OpenAI's models](https://developers.openai.com/api/docs/models)).
 
 The agent will:
 

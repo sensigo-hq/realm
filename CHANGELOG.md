@@ -168,7 +168,50 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   `GATE_PROOF_NEVER_GATES_THE_ANSWER`, and the lists `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`,
   `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`.
 
+- **`realm listen --provider` and `--model`.** Each is passed to every `realm agent` it starts;
+  `--model` is required. (Issue #676.)
+
+- **`LlmProvider.explainFailure`, optional, and the model-not-found sentence.** A provider may return
+  one plain sentence for an error it recognises; `realm agent` prints it on its own line under the
+  failure line, and ignores a throw or an empty answer. The Anthropic provider explains a 404 for a
+  model it does not offer: `Anthropic offers no model named <id> to this API key. Check the name
+given to --model; …`. (Issue #676.)
+
+- **`stopped_step` on a reply.** On a non-`ok` reply that a step's own call produced
+  (`executeChain`, and MCP `execute_step` and `start_run`), the step the call stopped at. It differs
+  from `command` when the engine ran that step after the one the call named; after `start_run`,
+  whose `command` is the tool's name, it names the `auto` step that stopped the call. Absent on `ok`
+  replies and on errors of the chain itself. (Issue #676.)
+
 ### Changed
+
+- **BREAKING —** **Realm has no default model (issue #676).** `realm agent` with a built-in
+  provider, and `realm listen`, refuse to start without `--model`; the message names the provider
+  realm picked and why, and where that provider lists its models. A `--model` that is empty or
+  holds only spaces counts as missing. A workflow with no agent step also needs `--model`: both
+  commands check their flags before they read the workflow. `--provider` refuses a word other than
+  `openai` or `anthropic` (it took any other word as Anthropic). `realm agent --provider X` refuses
+  to start when X's API key is not set (it created the run, and the first model call failed). Each
+  refusal of the API keys, `--base-url` and `--model` ends `Nothing was started.` with `--workflow`
+  or `If run <id> exists, it was not changed.` with `--run-id`. With no API key at all and
+  `--provider` given, the no-key refusal names that provider's key. An API key that is
+  empty or holds only spaces counts as not set, for choosing the provider as for the messages. The
+  continue command printed for a step blocked by a missing handler or adapter repeats the flags
+  the drive was started with (the model flags, `--extensions-module`, `--project`,
+  `--schema-retries` when it is not 2, `--llm-timeout` and `--mint-writer-nonce`);
+  `realm run resume` and the dev-run detach map print
+  `--provider <provider> --model <model>` for you to fill in; resume adds a line naming the other
+  flags to add and where `realm run inspect` shows the extension module the run loaded, and the
+  detach map repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` the dev run
+  was given. **Upgrading:** add `--model <name>`
+  to every `realm agent` command (except one with `--provider-module`, which refuses `--model`) and
+  to every `realm listen` command and script; a script that matches the no-key or `--base-url`
+  refusal exactly now sees one more sentence at its end, and with `--provider` given and no key at
+  all the no-key refusal is a different sentence; use only `openai` or `anthropic` after
+  `--provider`; set the key of the provider you name; a key left empty is now treated as not set,
+  so with an empty `OPENAI_API_KEY` beside an Anthropic key realm now picks Anthropic. The old
+  defaults were `gpt-4o` and `claude-sonnet-4-5`; Anthropic retires `claude-sonnet-4-5` on
+  2026-11-30, and a new API key already gets 404 for it.
 
 - **BREAKING —** **Every store realm runs against must carry its release line (issue #620).**
   `createRealmMcpServer`, every published tool handler (`@sensigo/realm-mcp/dist/tools/*.js`), the
@@ -414,6 +457,17 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   when strict tool arguments are dropped after the provider refuses them. Realm now leaves out of
   what it sends the thinking of the earlier turns made under a different list of tools; every other
   request is unchanged. (#677)
+- **When a step the engine runs after the one a call named stops the call, it is that step that is
+  named.** Before, the line named the step the call started from: a handler that threw in `file`
+  after the agent step `classify` printed `✗ Step 'classify' failed: …`, and a later step blocked on
+  a missing handler printed `⚠ Step 'classify' is blocked: the missing handler …`. Now `realm agent`
+  prints `✗ Step 'file' (run by the engine after 'classify' finished) failed: …` and
+  `⚠ Step 'publish' (run by the engine after 'classify' finished) is blocked: handler 'publish_answer' …`,
+  `realm workflow run` prints `✗ error (step 'file', run by the engine after 'classify' finished): …`, the
+  drive-failure record and `drive_failing` name the step that was refused, and a schema-repair count
+  is no longer added to a later step's line. MCP `execute_step` no longer writes a failed-attempt
+  record under the step it was called for when a later step refused its input: that step's
+  submission had been accepted. (Issue #676.)
 - **With two copies of one realm version in a process, `realm run gc`, `purge` and `reclaim`
   classify the other copy's refusals correctly.** Before: gc reaped no orphaned trace file
   (`Run not found`), purge filed a resumed run under `failed` instead of `blocked`, and reclaim

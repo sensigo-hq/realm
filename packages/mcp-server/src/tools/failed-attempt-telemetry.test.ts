@@ -286,3 +286,106 @@ describe('execute_step failed-attempt telemetry — VALIDATION_EXHAUSTED (issue 
     expect(records[0]!.validation_error_summary.length).toBeGreaterThan(0);
   });
 });
+
+// issue #676 (review): a refusal from a step the engine ran AFTER the called one (`stopped_step`)
+// is not a failed attempt of the called step — its submission was accepted and it settled. Before
+// the engine said which step a reply belongs to, this wrote a record under the called step, with
+// the params it had just had ACCEPTED.
+describe('execute_step failed-attempt records: a chained step refused after the called one', () => {
+  // `draft` (agent, its own output_schema) → `publish` (auto; requires `title`, and a chained step
+  // is given `{}`, so it is refused before its claim).
+  const chained: WorkflowDefinition = {
+    id: 'chained-refusal-wf',
+    name: 'Chained refusal',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      draft: {
+        description: 'Write the draft',
+        execution: 'agent',
+        depends_on: [],
+        output_schema: {
+          type: 'object',
+          required: ['text'],
+          properties: { text: { type: 'string' } },
+        },
+      },
+      publish: {
+        description: 'Publish it',
+        execution: 'auto',
+        depends_on: ['draft'],
+        input_schema: {
+          type: 'object',
+          required: ['title'],
+          properties: { title: { type: 'string' } },
+        },
+      },
+    },
+  };
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+  let failedAttemptStore: FailedAttemptStore;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'fat676-run-'));
+    runStore = new JsonFileStore(runsDir);
+    workflowStore = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'fat676-wf-')));
+    failedAttemptStore = new FailedAttemptStore(runsDir);
+    await workflowStore.register(chained);
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errSpy.mockRestore();
+  });
+
+  const failedAttemptLines = (): string[] =>
+    errSpy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((s: string) => s.includes('agent_step_attempt_failed'));
+
+  it("the chained step's refusal writes no record and no line; the reply names the step that was refused", async () => {
+    const { run } = await runStore.create({
+      workflowId: chained.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const result = await handleExecuteStep(
+      { run_id: run.id, command: 'draft', params: { text: 'hello' } },
+      { runStore, workflowStore, failedAttemptStore },
+    );
+    // The setup really is a chained refusal. (a) red when the engine stops stamping it;
+    // (b) prints status, code and stopped_step.
+    expect({
+      status: result.status,
+      error_code: result.error_code,
+      stopped_step: result.stopped_step,
+    }).toEqual({ status: 'error', error_code: 'VALIDATION_INPUT_SCHEMA', stopped_step: 'publish' });
+    // (a) red when the telemetry records a chained refusal under the called step; (b) prints the
+    //     records and the stderr lines.
+    expect({
+      records: (await failedAttemptStore.read(run.id)).records,
+      lines: failedAttemptLines(),
+    }).toEqual({ records: [], lines: [] });
+  });
+
+  it("CONTROL — the called step's own refusal still writes its record", async () => {
+    const { run } = await runStore.create({
+      workflowId: chained.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await handleExecuteStep(
+      { run_id: run.id, command: 'draft', params: { wrong: 1 } },
+      { runStore, workflowStore, failedAttemptStore },
+    );
+    // (a) red when the new early return also swallows the step's own refusal; (b) prints the records.
+    expect(
+      (await failedAttemptStore.read(run.id)).records.map((r) => ({
+        step_id: r.step_id,
+        error_code: r.error_code,
+      })),
+    ).toEqual([{ step_id: 'draft', error_code: 'VALIDATION_OUTPUT_SCHEMA' }]);
+  });
+});

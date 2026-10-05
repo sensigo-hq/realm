@@ -242,12 +242,13 @@ export function registerStartRun(server: McpServer, opts?: HandleRunStores): voi
     async (args) => {
       try {
         const result = await handleStartRun(args, opts);
-        // Override command to 'start_run': MCP callers invoked start_run, not
-        // the first auto step that executeChain may have executed.
         return {
           content: [
             {
               type: 'text' as const,
+              // Override command to 'start_run': MCP callers invoked start_run, not the first auto
+              // step executeChain may have run. The step a non-ok reply belongs to stays named in
+              // `stopped_step` (issue #676 review).
               text: sseJsonStringify({ ...result, command: 'start_run' }),
             },
           ],

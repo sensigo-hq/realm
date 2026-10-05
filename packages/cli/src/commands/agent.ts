@@ -21,7 +21,12 @@ import {
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import type { RunStore, WorkflowDefinition, ExtensionRegistry, Attributed } from '@sensigo/realm';
-import { LlmProvider, resolveProvider } from '../agent/providers/llm-provider.js';
+import {
+  LlmProvider,
+  checkProviderFlags,
+  readProviderKeys,
+  resolveProvider,
+} from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
 import { resolveRunAttach } from '../agent/run-attach.js';
@@ -102,13 +107,86 @@ export function parseLlmTimeout(value: string): number {
   return n;
 }
 
+/**
+ * Commander argParser for `--provider` (issue #676), used by `realm agent` and `realm listen`.
+ * Same idiom as `parseLlmTimeout`. Version 0.45.0 took any other word as Anthropic, silently.
+ */
+export function parseProvider(value: string): ProviderName {
+  if (value === 'openai' || value === 'anthropic') return value;
+  throw new InvalidArgumentError('--provider must be openai or anthropic.');
+}
+
+/** A value as a shell word: kept as is when it holds only safe characters, else single-quoted. */
+function shellWord(value: string): string {
+  return /^[A-Za-z0-9._/:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** `--schema-retries`' default; the re-attach command repeats the flag only when it differs. */
+const SCHEMA_RETRIES_DEFAULT = 2;
+
+/**
+ * Issue #676 — the flags a drive was started with, as shell words, for the re-attach command the
+ * drive prints when a step is blocked (`AgentDeps.reattachFlags`). Following that command must
+ * continue the SAME drive: realm has no default model, and a step blocked on a missing handler is
+ * usually fixed through `--extensions-module`, so a command that dropped either would be refused or
+ * blocked again. Repeated, each when given: `--provider-module <path>`, or `--provider`, `--model`,
+ * `--base-url`, `--strict-base-url`; then `--extensions-module`, `--project`, `--schema-retries`
+ * (only when it differs from its default, so the command never shows a value nobody typed),
+ * `--llm-timeout` and `--mint-writer-nonce`. Left out: `--workflow`, `--params` and `--register`
+ * (they apply only when a run is created) and the hidden `--no-release-line-advisory` (listen's
+ * own). A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
+ *
+ * @internal Exported for testing only.
+ */
+export function buildReattachFlags(opts: {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  strictBaseUrl?: boolean;
+  providerModule?: string;
+  extensionsModule?: string;
+  project?: string;
+  schemaRetries?: number;
+  llmTimeout?: number;
+  mintWriterNonce?: boolean;
+}): string {
+  const words: string[] = [];
+  if (opts.providerModule !== undefined) {
+    words.push('--provider-module', shellWord(opts.providerModule));
+  } else {
+    if (opts.provider !== undefined) words.push('--provider', shellWord(opts.provider));
+    if (opts.model !== undefined) words.push('--model', shellWord(opts.model));
+    if (opts.baseUrl !== undefined) words.push('--base-url', shellWord(opts.baseUrl));
+    if (opts.strictBaseUrl === true) words.push('--strict-base-url');
+  }
+  if (opts.extensionsModule !== undefined) {
+    words.push('--extensions-module', shellWord(opts.extensionsModule));
+  }
+  if (opts.project !== undefined) words.push('--project', shellWord(opts.project));
+  if (opts.schemaRetries !== undefined && opts.schemaRetries !== SCHEMA_RETRIES_DEFAULT) {
+    words.push('--schema-retries', String(opts.schemaRetries));
+  }
+  if (opts.llmTimeout !== undefined) words.push('--llm-timeout', String(opts.llmTimeout));
+  if (opts.mintWriterNonce === true) words.push('--mint-writer-nonce');
+  return words.join(' ');
+}
+
 export const agentCommand = new Command('agent')
   .description('Run a workflow autonomously using an LLM provider')
   .option('--workflow <path>', 'Path to workflow directory or workflow.yaml file')
   .option('--run-id <id>', 'Attach to an existing run instead of creating a new one')
   .option('--params <json>', 'Initial run parameters as JSON string', '{}')
-  .option('--provider <provider>', 'LLM provider: openai or anthropic (auto-detected from env)')
-  .option('--model <model>', 'Model name override (default: gpt-4o / claude-sonnet-4-5)')
+  .option(
+    '--provider <provider>',
+    'LLM provider: openai or anthropic (default: chosen from the API key that is set; OpenAI when both are)',
+    parseProvider,
+  )
+  // issue #676: realm has no default model. Not Commander's `requiredOption`: a
+  // `--provider-module` run must not be given one.
+  .option(
+    '--model <model>',
+    'The model, as the provider names it. Required unless --provider-module is given.',
+  )
   .option(
     '--base-url <url>',
     'Base URL for OpenAI-compatible endpoints (e.g. DeepSeek, Qwen, Groq)',
@@ -147,7 +225,7 @@ export const agentCommand = new Command('agent')
       'output_schema/input_schema validation (issue #217) — the drive re-prompts the same step ' +
       "with the validator's errors appended. 0 disables (today's behavior).",
     parseSchemaRetries,
-    2,
+    SCHEMA_RETRIES_DEFAULT,
   )
   .option(
     '--llm-timeout <seconds>',
@@ -170,7 +248,7 @@ export const agentCommand = new Command('agent')
       workflow?: string;
       runId?: string;
       params: string;
-      provider?: string;
+      provider?: ProviderName;
       model?: string;
       baseUrl?: string;
       strictBaseUrl?: boolean;
@@ -260,6 +338,23 @@ export const agentCommand = new Command('agent')
           provider = mod.default;
           moduleProviderId = `module:${basename(modulePath)}`;
         } else {
+          // issue #676: the model flags are checked before either branch below, so a refusal
+          // happens before any run is created or attached. The message is the check's; the
+          // closing sentence says what happened to the run, which only this command knows.
+          const flags = checkProviderFlags({
+            provider: opts.provider,
+            model: opts.model,
+            baseUrl: opts.baseUrl,
+            env: readProviderKeys(),
+          });
+          if (!flags.ok) {
+            const tail =
+              opts.runId !== undefined
+                ? `If run ${opts.runId} exists, it was not changed.`
+                : 'Nothing was started.';
+            console.error(`Error: ${flags.message} ${tail}`);
+            process.exit(1);
+          }
           // issue #313 (dead-config cell 1): the attestation only means anything for a compat
           // endpoint. Silently accepting it alone would let an author believe they had changed
           // something when nothing changed at all.
@@ -270,7 +365,7 @@ export const agentCommand = new Command('agent')
             );
           }
           provider = await resolveProvider(
-            opts.provider as ProviderName | undefined,
+            opts.provider,
             opts.model,
             opts.baseUrl,
             opts.strictBaseUrl === true,
@@ -322,6 +417,7 @@ export const agentCommand = new Command('agent')
               // always supplies a value (the option's own default), so this is never undefined.
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
+              reattachFlags: buildReattachFlags(opts),
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -392,6 +488,7 @@ export const agentCommand = new Command('agent')
               // always supplies a value (the option's own default), so this is never undefined.
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
+              reattachFlags: buildReattachFlags(opts),
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
