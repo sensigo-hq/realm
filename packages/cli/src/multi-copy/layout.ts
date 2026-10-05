@@ -87,9 +87,12 @@ async function readVersion(versionJs: string): Promise<string> {
   return match[1];
 }
 
-/** `0.45.0` → `0.45.1`: a different release by raw string. Test helper only. */
+/**
+ * Another release by raw string: `0.45.0` → `0.45.1`, and a development version `0.46.1-dev.0` →
+ * `0.46.2` (between releases `main` carries one). Test helper only.
+ */
 function nextPatch(version: string): string {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?$/.exec(version);
   if (match === null) throw new Error(`cannot raise the patch of '${version}'`);
   return `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
 }
