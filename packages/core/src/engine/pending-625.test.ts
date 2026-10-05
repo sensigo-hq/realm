@@ -1514,4 +1514,48 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       "'x' could not run (capability): handler 'h' was not registered in the runner that last attempted it",
     );
   });
+
+  it('the eligibility path of D3.2: a step another process claimed before executeStep read the record is said as taken — never "not eligible"', async () => {
+    const d = def({
+      x: { description: 'X', execution: 'auto', depends_on: [] },
+      y: { description: 'Y', execution: 'auto', depends_on: [] },
+    });
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const realGet = store.get.bind(store);
+      let armed = false;
+      store.get = async (id: string) => {
+        if (armed) {
+          armed = false;
+          await store.claimStep(id, 'x', d, {
+            by: 'other@host',
+            by_source: 'derived',
+            channel: 'agent',
+          });
+        }
+        return realGet(id);
+      };
+      const steps: string[] = [];
+      const taken: string[] = [];
+      const reply = await advanceRun(store, d, {
+        runId: run.id,
+        onStep: (s) => {
+          steps.push(s);
+          if (s === 'x') armed = true;
+        },
+        onTaken: (s) => taken.push(s),
+      });
+      expect(steps).toEqual(['x', 'y']);
+      expect(taken).toEqual(['x']);
+      expect(reply.status).toBe('ok');
+      expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['y']);
+      expect(reply.context_hint).not.toContain('not eligible');
+      expect(
+        reply.context_hint.endsWith(" 'x' was claimed by another process, so it did not run here."),
+      ).toBe(true);
+      const after = await store.get(run.id);
+      expect(after.in_progress_steps).toEqual(['x']);
+      expect(after.completed_steps).toEqual(['y']);
+    });
+  });
 });

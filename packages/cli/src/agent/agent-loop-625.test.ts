@@ -263,6 +263,71 @@ describe('#625 PR-2a — the realm agent loop', () => {
     expect((await store.get(run.id)).completed_steps).toEqual(['review']);
   });
 
+  it('D6.1, the eligibility path: a step another process claimed before executeStep read the record gets the same line, never `✓ → running`', async () => {
+    const def: WorkflowDefinition = {
+      id: 'engine-taken-elig-wf',
+      name: 'engine taken (eligibility)',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        x: { description: 'X', execution: 'auto', depends_on: [] },
+        review: { description: 'Review.', execution: 'agent', depends_on: [] },
+      },
+    };
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    // The other process claims `x` between the loop's pick (`→ [auto] x` is printed) and
+    // executeStep's own read of the record — so executeStep finds `x` not eligible, and never
+    // reaches its claim.
+    const realGet = store.get.bind(store);
+    let armed = false;
+    (store as unknown as RunStore).get = async (id: string) => {
+      if (armed) {
+        armed = false;
+        await store.claimStep(id, 'x', def, {
+          by: 'other@host',
+          by_source: 'derived',
+          channel: 'agent',
+        });
+      }
+      return realGet(id);
+    };
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({});
+    })();
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      const line = a.join(' ');
+      if (line === '→ [auto] x') armed = true;
+      lines.push(line);
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runAgent(
+      { store, workflowStore: workflowStore(def), provider, registry: createDefaultRegistry() },
+      {
+        definition: def,
+        existingRunId: run.id,
+        params: {},
+        inFlightPollMs: 5,
+        inFlightWatchMs: 30,
+      },
+    );
+    vi.restoreAllMocks();
+    const since = (await store.get(run.id)).claims?.['x']?.since;
+    const at = lines.indexOf('→ [auto] x');
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(lines[at + 1]).toBe(
+      `• Step 'x' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
+    );
+    // The step did not run here: its line is the taken line, and the one `✓ → running` printed is
+    // the agent step's, after its own `→ [agent] review`.
+    expect(lines.filter((l) => l === '  ✓ → running')).toHaveLength(1);
+    expect(lines.indexOf('  ✓ → running')).toBeGreaterThan(lines.indexOf('→ [agent] review'));
+    // The loop went on to the ready agent step.
+    expect(provider.callStep).toHaveBeenCalledTimes(1);
+    expect((await store.get(run.id)).completed_steps).toEqual(['review']);
+  });
+
   it('L7: an engine step that is capability-blocked at the loop top is named; no model call follows', async () => {
     const def: WorkflowDefinition = {
       id: 'loop-cap-wf',

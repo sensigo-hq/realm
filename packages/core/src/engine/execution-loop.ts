@@ -6878,6 +6878,29 @@ async function advanceLoop(
       options.onTaken?.(nextAutoStep, run);
       continue;
     }
+    if (stepResult.status === 'blocked' && stepResult.error_code === undefined) {
+      // The other path of the same race: another process claimed (or already ran) the picked step
+      // between this loop's pick and `executeStep`'s own read, so `executeStep` found it not
+      // eligible instead of losing the claim. Said exactly as the claim path says it (D3.2,
+      // decision C25) — never "not eligible in the current run state". A step that is not in
+      // flight, done or failed on the re-read record was not taken: the reply is returned below.
+      let after: RunRecord;
+      try {
+        after = await store.get(options.runId);
+      } catch {
+        return stepResult;
+      }
+      if (
+        after.in_progress_steps.includes(nextAutoStep) ||
+        after.completed_steps.includes(nextAutoStep) ||
+        after.failed_steps.includes(nextAutoStep)
+      ) {
+        run = after;
+        takenSteps.push(nextAutoStep);
+        options.onTaken?.(nextAutoStep, run);
+        continue;
+      }
+    }
     if (stepResult.status === 'confirm_required') {
       // A question opened: the gate reply's own next actions (the answer instruction and its
       // claim token, the holder slice's one door) are returned as they are.
