@@ -4,19 +4,19 @@
 
 Realm's MCP server has 11 tools. An AI assistant calls them to find a workflow, start a run, do its steps and read its state. This page gives each tool's parameters and its reply. The tools and their parameters were read from the server's own `tools/list` reply, and every reply shown came from a call.
 
-| Tool                                              | What it does                                                  |
-| ------------------------------------------------- | ------------------------------------------------------------- |
-| [`list_workflows`](#list_workflows)               | Lists the registered workflows.                               |
-| [`get_workflow_protocol`](#get_workflow_protocol) | Describes one workflow's steps and the rules for running it.  |
-| [`start_run`](#start_run)                         | Starts a run.                                                 |
-| [`start_run_batch`](#start_run_batch)             | Starts several runs of one workflow.                          |
-| [`execute_step`](#execute_step)                   | Does one step, with the assistant's answer.                   |
-| [`submit_human_response`](#submit_human_response) | Passes on a person's choice at a gate.                        |
-| [`advance_run`](#advance_run)                     | Runs the guards and automatic steps a run owes.               |
-| [`get_run_state`](#get_run_state)                 | Returns where a run stands.                                   |
-| [`abandon_run`](#abandon_run)                     | Ends an open run.                                             |
-| [`create_workflow`](#create_workflow)             | Makes a workflow from a list of steps and starts a run of it. |
-| [`append_trace`](#append_trace)                   | Records notes about a step before the step is done.           |
+| Tool                                              | What it does                                                                 |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [`list_workflows`](#list_workflows)               | Lists the registered workflows.                                              |
+| [`get_workflow_protocol`](#get_workflow_protocol) | Describes one workflow's steps and the rules for running it.                 |
+| [`start_run`](#start_run)                         | Starts a run.                                                                |
+| [`start_run_batch`](#start_run_batch)             | Starts several runs of one workflow.                                         |
+| [`execute_step`](#execute_step)                   | Does one step, with the assistant's answer.                                  |
+| [`submit_human_response`](#submit_human_response) | Passes on a person's choice at a gate.                                       |
+| [`advance_run`](#advance_run)                     | Runs the guards and automatic steps a run owes (added after version 0.46.0). |
+| [`get_run_state`](#get_run_state)                 | Returns where a run stands.                                                  |
+| [`abandon_run`](#abandon_run)                     | Ends an open run.                                                            |
+| [`create_workflow`](#create_workflow)             | Makes a workflow from a list of steps and starts a run of it.                |
+| [`append_trace`](#append_trace)                   | Records notes about a step before the step is done.                          |
 
 To connect an assistant, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
 
@@ -531,6 +531,8 @@ It registers the workflow under an ID it makes up, starts a run, and replies as 
   "diagnostics": []
 }
 ```
+
+`Ready for the agent: …` was added after version 0.46.0, whose hint ends at `created for workflow '<workflow>'.`
 
 Fields it does not take are left out, and named in `warnings` and `diagnostics`. See [Workflows an assistant creates](../../guides/agent-created-workflows.md).
 
