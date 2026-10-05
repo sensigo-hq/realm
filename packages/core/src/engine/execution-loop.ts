@@ -777,7 +777,8 @@ function stepToNextAction(
 /**
  * The NextActions of every eligible AGENT step, with the step names they stand for (issue #625
  * PR-2a: an `auto` step is never a next action — the engine runs it, and `advance_run` is the act
- * that asks it to). The agent×handler arm of `stepToNextAction` is unchanged (#516).
+ * that asks it to). The agent×handler arm of `stepToNextAction` is unchanged (#516). Its one caller,
+ * `describePending`, keeps only the steps it does not refuse before their claim (decision C82).
  */
 export function buildAgentActions(
   definition: WorkflowDefinition,
@@ -807,9 +808,10 @@ export function buildAgentActions(
 }
 
 /**
- * Returns the run's next actions: every eligible agent step, then — LAST, so `next_actions[0]`
- * stays the agent step — the `advance_run` act when engine work is owed (issue #625 PR-2a,
- * `describePending`). A call site that passes no registry gets `'unknown'` for the capability
+ * Returns the run's next actions: every agent step the run's view offers — an eligible agent step it
+ * refuses before its claim (a failed precondition, an invalid `trust`) is not offered (decision C82)
+ * — then — LAST, so `next_actions[0]` stays the agent step — the `advance_run` act when engine work
+ * is owed (issue #625 PR-2a, `describePending`). A call site that passes no registry gets `'unknown'` for the capability
  * check, so the act stays offered.
  */
 export function buildNextActions(
@@ -7100,7 +7102,8 @@ export async function advanceRun(
 /**
  * Executes a step and automatically chains into subsequent `execution: auto` steps.
  * Stops at agent steps, gate steps (returning confirm_required), errors, or terminal state.
- * Returns next_actions containing all eligible agent steps when the auto chain exhausts.
+ * Returns next_actions containing the agent steps the run's view offers when the auto chain
+ * exhausts (an agent step refused before its claim is not offered, decision C82).
  */
 export async function executeChain(
   store: RunStore,
