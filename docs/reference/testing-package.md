@@ -379,11 +379,11 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 
 Every case in the last column passed. The store interfaces are in [Core library](core-library.md).
 
-Each contract has the law `STORE_RELEASE_LINE_TRUE`: the release line your store declares must be the line of the errors it throws. The case makes your store refuse something (a run that does not exist, an injected failure, a fence that refuses) and compares the two. `storeReleaseLineLaw(store, provokeRefusal)` runs the same check for any store kind: `provokeRefusal` must make the store throw one of its own errors. A test runner that takes its laws from the exported list (below) runs it with no edit; one that lists its laws by hand must list it, or the case is never run. The law and `storeReleaseLineLaw` were added after version 0.45.0; the counts above include them.
+Each contract has the law `STORE_RELEASE_LINE_TRUE`: the release line your store declares must be the line of the errors it throws. The case makes your store refuse something (a run that does not exist, an injected failure, a fence that refuses) and compares the two. `storeReleaseLineLaw(store, provokeRefusal)` runs the same check for any store kind: `provokeRefusal` must make the store throw one of its own errors. A test runner that takes its laws from the exported list (below) runs it with no edit; one that lists its laws by hand must list it, or the case is never run. The law and `storeReleaseLineLaw` were added in 0.46.0; the counts above include them.
 
 #### Running every law
 
-Each of four contracts exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. They were added after version 0.45.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
+Each of four contracts exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. They were added in 0.46.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
 
 ```js
 import { SETTLEMENT_LAWS } from '@sensigo/realm-testing';
@@ -413,7 +413,7 @@ A law added to the contract then runs in the file with no edit, and a law the fi
 | `EVIDENCE_KEEPS_DRIVER_AND_PROOF` | An evidence entry written with `driven_by`, and a gate answer written with `claim_proof`, come back with both.                                                                                                                                                                                                                                                                                            |
 | `STORE_RELEASE_LINE_TRUE`         | The release line the store declares is the line of the error it throws for a run that does not exist.                                                                                                                                                                                                                                                                                                     |
 
-`claimStep` takes the program's name as an optional fourth argument, `claimant`; a store writes it as the claim's `holder`, and stamps `since` on every claim it makes. The two new laws were added after version 0.45.0. A store that lists no fields gets no `FIDELITY_HONESTY` cases. `CLAIM_SINGLE_OWNER` races 2 calls in one process. It does not show that a store is safe across machines.
+`claimStep` takes the program's name as an optional fourth argument, `claimant`; a store writes it as the claim's `holder`, and stamps `since` on every claim it makes. The two new laws were added in 0.46.0. A store that lists no fields gets no `FIDELITY_HONESTY` cases. `CLAIM_SINGLE_OWNER` races 2 calls in one process. It does not show that a store is safe across machines.
 
 Types: `RunStoreFidelityContractAdapter`, `RunStoreFidelityContractCase`, `RunStoreFidelityLaw`.
 
@@ -460,7 +460,7 @@ ADAPTER_WIRING, STORE_RELEASE_LINE_TRUE
 
 Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 55 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
 
-`GATE_PROOF_NEVER_GATES_THE_ANSWER` was added after version 0.45.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
+`GATE_PROOF_NEVER_GATES_THE_ANSWER` was added in 0.46.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
 
 `defaultSettlementFixture` has 3 functions: `minimalDefinition(stepNames)`, `withFinalizer(definition, name, onOutcome)` and `withGuard(definition, name, abortUnless, options?)`.
 

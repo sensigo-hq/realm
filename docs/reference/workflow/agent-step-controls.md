@@ -205,7 +205,7 @@ On a step that has `tools`, the step's own answer is not restricted. Strict mode
 ℹ Step 'summarise': structured_output caveat — this step declares tools — strict applies to tool-call arguments here, not to the step output; …
 ```
 
-If Anthropic refuses the tools with strict mode, Realm sends the request again without strict mode and keeps it off for the rest of the step. On a Claude model that thinks before it answers, that request and the later ones leave out the thinking from the turns made while strict mode was on, because removing `strict` changes the list of tools. Leaving out that thinking was added after version 0.45.0.
+If Anthropic refuses the tools with strict mode, Realm sends the request again without strict mode and keeps it off for the rest of the step. On a Claude model that thinks before it answers, that request and the later ones leave out the thinking from the turns made while strict mode was on, because removing `strict` changes the list of tools. Leaving out that thinking was added in 0.46.0.
 
 ## `llm_timeout_seconds`
 

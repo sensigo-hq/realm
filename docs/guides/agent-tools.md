@@ -146,7 +146,7 @@ This does not catch everything, so do not rely on it to keep a secret out of a r
 - the rest of a path under your home folder: only the home folder's part is replaced;
 - the model's own answers, and the arguments of its tool calls. Neither is checked.
 
-The record does not yet include what the model's requests cost for a step that uses tools. `realm run inspect` says so on the step's `cost` line. That line was added after version 0.45.0.
+The record does not yet include what the model's requests cost for a step that uses tools. `realm run inspect` says so on the step's `cost` line. That line was added in 0.46.0.
 
 ## See Realm hold the limits
 
@@ -158,7 +158,7 @@ You have reached the maximum number of tool calls. Produce your final JSON answe
 
 With `max_tool_calls: 1`, the model listed the folder, was sent that message, and answered with what it had. The record shows one tool call. An answer that Realm refuses against the step's schema uses up one of the step's calls as well.
 
-On a Claude model that thinks before it answers, such as Claude Sonnet 5.5, this last request leaves out the model's earlier thinking. Anthropic refuses thinking made under a different list of tools, and this request offers only the answer tool, or none. The model still has its earlier tool calls, their results and what it wrote. This was added after version 0.45.0.
+On a Claude model that thinks before it answers, such as Claude Sonnet 5.5, this last request leaves out the model's earlier thinking. Anthropic refuses thinking made under a different list of tools, and this request offers only the answer tool, or none. The model still has its earlier tool calls, their results and what it wrote. This was added in 0.46.0.
 
 **A tool that the server does not have** stops the step before the model is asked anything:
 

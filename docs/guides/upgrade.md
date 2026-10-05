@@ -80,7 +80,7 @@ With both copies at a version that carries the release mark, the message names b
 
 With both packages at 0.45.0, the same handler was retried and the run completed.
 
-Two copies of the same version work together: an error or a provider made with one copy is recognised by the other. This was added after version 0.45.0. On 0.45.0, your code and the command must share one copy: run the project's own command with `npx realm`. A `realm` command installed for the whole machine is a second copy, and fails as above even at the same version.
+Two copies of the same version work together: an error or a provider made with one copy is recognised by the other. This was added in 0.46.0. On 0.45.0, your code and the command must share one copy: run the project's own command with `npx realm`. A `realm` command installed for the whole machine is a second copy, and fails as above even at the same version.
 
 ## 3. Check the workflows you have registered
 

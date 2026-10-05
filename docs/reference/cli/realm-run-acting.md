@@ -19,7 +19,7 @@
 
 A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1.
 
-When the `@sensigo/realm` the workflow's code imports is not the version the command runs, the command prints [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and goes on. This was added after version 0.45.0.
+When the `@sensigo/realm` the workflow's code imports is not the version the command runs, the command prints [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and goes on. This was added in 0.46.0.
 
 ## `respond`
 
@@ -29,13 +29,13 @@ realm run respond <run-id> --gate <gate-id> --choice <choice> [--by <name>] [--p
 
 Answers the gate a run is waiting at. `realm run inspect <run-id>` prints the gate's ID and its choices.
 
-| Flag                         | Required | What it does                                                                                                                                        |
-| ---------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--gate <gate-id>`           | Yes      | The ID of the open gate.                                                                                                                            |
-| `--choice <choice>`          | Yes      | One of the gate's choices.                                                                                                                          |
-| `--by <name>`                | No       | Who made the choice. Recorded with the answer as given, and not checked. At most 200 characters, no control characters. Added after version 0.45.0. |
-| `--project <dir>`            | No       | The project whose `realm.yaml` applies if the workflow has no project of its own. Default: the current folder.                                      |
-| `--extensions-module <path>` | No       | Loads this code file in place of the files named by the workflow's `extensions`.                                                                    |
+| Flag                         | Required | What it does                                                                                                                             |
+| ---------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gate <gate-id>`           | Yes      | The ID of the open gate.                                                                                                                 |
+| `--choice <choice>`          | Yes      | One of the gate's choices.                                                                                                               |
+| `--by <name>`                | No       | Who made the choice. Recorded with the answer as given, and not checked. At most 200 characters, no control characters. Added in 0.46.0. |
+| `--project <dir>`            | No       | The project whose `realm.yaml` applies if the workflow has no project of its own. Default: the current folder.                           |
+| `--extensions-module <path>` | No       | Loads this code file in place of the files named by the workflow's `extensions`.                                                         |
 
 ```bash
 realm run respond 3ebc1158-1d29-41b5-9ca5-df054a681b58 --gate 0d499c26-a6b4-406f-ae29-6d6ef5c75fcb --choice approve

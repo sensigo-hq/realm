@@ -125,7 +125,7 @@ Drive failures:
     usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache read 0, wrote 0 (included in the prompt)
 ```
 
-The `usage` line was added after version 0.45.0. That version prints the line above it and nothing about cost.
+The `usage` line was added in 0.46.0. Version 0.45.0 prints the line above it and nothing about cost.
 
 ## Pick up a run that stopped
 
@@ -157,7 +157,7 @@ The run carries on from where it was. Steps that already completed are not run a
 
 ## What a run costs
 
-The measured figures in this section were added after version 0.45.0. On 0.45.0 the line reads `Diagnostics: ~23 tokens | no preconditions`.
+The measured figures in this section were added in 0.46.0. On 0.45.0 the line reads `Diagnostics: ~23 tokens | no preconditions`.
 
 `realm run inspect` shows, for each step the model answered, how many tokens the provider counted:
 
@@ -189,14 +189,14 @@ Each model request is given up to 600 seconds. Change that for a whole run with 
 
 After `--run-id`, each refusal below that ends `Nothing was started.` ends `If run <run-id> exists, it was not changed.` instead.
 
-- **`Error: realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY. Nothing was started.`** No provider key is set in this shell. A key that is empty or holds only spaces counts as not set; version 0.45.0 counted it as set. With `--provider anthropic`, the message names only `ANTHROPIC_API_KEY` (added after version 0.45.0).
+- **`Error: realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY. Nothing was started.`** No provider key is set in this shell. A key that is empty or holds only spaces counts as not set; version 0.45.0 counted it as set. With `--provider anthropic`, the message names only `ANTHROPIC_API_KEY` (added in 0.46.0).
 - **`Error: --model is required: realm has no default model. ANTHROPIC_API_KEY is set, so the provider is Anthropic; name one of its models (Anthropic lists them at https://platform.claude.com/docs/en/models/overview). Nothing was started.`** Add `--model` with a model the provider lists. The message names the provider Realm chose and why; it reads differently when another key is set or `--provider` is given. After `--run-id`, it ends `If run <run-id> exists, it was not changed.` instead. Version 0.45.0 does not print it: it has a default model.
 - **`Error: --provider anthropic was given, but ANTHROPIC_API_KEY is not set or is empty (only OPENAI_API_KEY is set). Set ANTHROPIC_API_KEY, or use --provider openai with an OpenAI model. Nothing was started.`** The provider you named has no key in this shell. Set its key, or name the other provider and one of its models. Version 0.45.0 does not print it: it creates the run, and the first model call fails.
 - **`Error: one of --workflow or --run-id is required`** Give one of the two.
 - **`Error: --workflow and --run-id are mutually exclusive`** To continue a run, give `--run-id` alone.
 - **`Error: Workflow not found: triage — most often this run was created from a file without --register.`** You tried to continue a run whose workflow was never registered. Run `realm workflow register ./`, then try again.
 - **`✗ Step 'classify' LLM call failed: Connection error.`** The provider could not be reached. The run is not ended; fix the connection and continue it with `--run-id`.
-- **`✗ Step 'classify' LLM call failed: 404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-4-5"}, …`**, followed by the line `Anthropic offers no model named claude-sonnet-4-5 to this API key. …` Anthropic has no model by the name you gave. The run stays open, so continue it with `realm agent --run-id <run-id> --provider anthropic --model <the right name>`; running the `--workflow` command again starts a second run. The second line was added after version 0.45.0.
+- **`✗ Step 'classify' LLM call failed: 404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-sonnet-4-5"}, …`**, followed by the line `Anthropic offers no model named claude-sonnet-4-5 to this API key. …` Anthropic has no model by the name you gave. The run stays open, so continue it with `realm agent --run-id <run-id> --provider anthropic --model <the right name>`; running the `--workflow` command again starts a second run. The second line was added in 0.46.0.
 
 ## See also
 
