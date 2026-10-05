@@ -6,6 +6,10 @@ import {
   createDefaultRegistry,
   executeChain,
   propagateSkips,
+  engineStepInput,
+  describePending,
+  cannotGoOnHere,
+  cannotGoOnLines,
   type WorkflowDefinition,
   type ExtensionManifest,
   type StepHandler,
@@ -250,16 +254,33 @@ async function runSingleFixture(
         continue;
       }
 
+      // issue #625 PR-2a (decision C70): when nothing else can run here — no question open, no
+      // act, no agent step ready, nothing in flight — and an engine step cannot run (a refusal
+      // before its claim, or a handler or adapter this fixture's registry lacks), the fixture fails
+      // naming the step and its check, in core's own lines, instead of running to the iteration cap.
+      const pending = describePending(definition, currentRun, fixtureRegistry);
+      if (cannotGoOnHere(currentRun, pending)) {
+        return {
+          name: fixture.name,
+          passed: false,
+          error: [
+            'Workflow stalled: nothing else can run.',
+            ...cannotGoOnLines(currentRun, pending),
+          ].join('\n'),
+        };
+      }
+
       const nextStep = eligibleSteps[0]!;
       const stepDef = definition.steps[nextStep];
       // Agent steps need the fixture's pre-built response as the input so the
       // engine's input_schema validation passes before the dispatcher runs.
-      // Auto steps take no caller-provided input — the engine resolves it via
-      // input_map or the adapter/handler call.
+      // An auto step gets what the engine gives it in a real run (issue #625 PR-2a, decisions C2,
+      // C70): the run's params for a step with no `depends_on`, otherwise nothing — so a fixture
+      // passes or fails as production does.
       const stepInput =
         stepDef?.execution === 'agent'
           ? ((fixture.agent_responses[nextStep] ?? {}) as Record<string, unknown>)
-          : {};
+          : engineStepInput(definition, currentRun, nextStep);
       const envelope = await executeChain(store, definition, {
         runId,
         command: nextStep,

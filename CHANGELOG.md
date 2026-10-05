@@ -359,6 +359,14 @@ given to --model; …`. (Issue #676.)
   - Pre-claim refusals (trust, precondition, input schema) are one function shared by `executeStep`
     and the view.
 
+- **BREAKING — `@sensigo/realm-testing`'s fixture runner (`runFixtureTests`, `realm workflow test`)
+  gives an `auto` step the input the engine gives it in a real run (issue #625, PR-2a).** An `auto`
+  step with no `depends_on` receives the run's params; it received `{}`, so a fixture whose first
+  `auto` step validates the params failed with `Invalid input for step '<step>'` where the same run
+  completes over MCP. An `auto` step with `depends_on` still receives `{}`. **Upgrading:** a fixture
+  that relied on the empty input (an `input_schema` that refused the params on purpose) now sees the
+  step run.
+
 - **BREAKING —** **Realm has no default model (issue #676).** `realm agent` with a built-in
   provider, and `realm listen`, refuse to start without `--model`; the message names the provider
   realm picked and why, and where that provider lists its models. A `--model` that is empty or
@@ -645,6 +653,12 @@ given to --model; …`. (Issue #676.)
   - It said a completed step failed (`✗ error: Handler '<h>' is not registered`) when the chain
     after it reached a step this program lacks the handler for; it now says it completed.
 
+- **A fixture that reaches a point where nothing else can run now fails naming the step and why
+  (issue #625, PR-2a).** `runFixtureTests` and `realm workflow test` failed such a fixture with
+  `Workflow stalled: exceeded maximum loop iterations` when a step's precondition failed — no step,
+  no check. The fixture now fails with `Workflow stalled: nothing else can run.`, one line per step
+  that cannot run (`'<s>' cannot run (<check>): <why>.`) and the line that ends the run, the lines
+  `realm workflow run` prints in the same state.
 - **A tool-using step on a Claude model that thinks by default (Claude Sonnet 5.5) no longer fails
   with a 400 about a thinking block's signature** when it runs out of tool calls or corrections, or
   when strict tool arguments are dropped after the provider refuses them. Realm now leaves out of

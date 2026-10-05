@@ -10,9 +10,16 @@ import {
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
   getWorkflowForRun,
+  describePending,
+  cannotRunWayOutApplies,
+  cannotRunWayOutTools,
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
+  type ExtensionRegistry,
+  type RunRecord,
+  type RunStore,
+  type WorkflowDefinition,
 } from '@sensigo/realm';
 import type { HandleRunStores, FailedAttemptStoreLike } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
@@ -285,7 +292,37 @@ export async function handleExecuteStep(
   // envelope; awaited but best-effort — it never throws and never alters the response.
   await emitFailedAttemptTelemetry(args, run.workflow_id, result, stores?.failedAttemptStore);
 
-  return result;
+  return withWayOutOnOwnRefusal(result, args, definition, runStore, registry);
+}
+
+/**
+ * issue #625 PR-2a (decision C66): a by-name `execute_step` on an `auto` step the engine refuses
+ * before its claim for a failed precondition or an invalid `trust` returns the step's own refusal.
+ * Its cause is the record or the workflow, which the caller cannot change, so when the run cannot
+ * go on until its workflow is corrected (`cannotRunWayOutApplies`) the reply's `context_hint` ends
+ * with the way out in the tools' words (`cannotRunWayOutTools`, core's one composer). In every
+ * other state — and for an input-schema refusal, which is the caller's own input (decision C3) —
+ * the reply is returned unchanged.
+ */
+async function withWayOutOnOwnRefusal(
+  result: ResponseEnvelope,
+  args: { run_id: string; command: string },
+  definition: WorkflowDefinition,
+  runStore: RunStore,
+  registry: ExtensionRegistry | undefined,
+): Promise<ResponseEnvelope> {
+  if (result.status === 'ok' || result.stopped_step !== args.command) return result;
+  let fresh: RunRecord;
+  try {
+    fresh = await runStore.get(args.run_id);
+  } catch {
+    return result;
+  }
+  const pending = describePending(definition, fresh, registry);
+  const own = pending.engine_runnable.find((e) => e.step === args.command);
+  if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust') return result;
+  if (!cannotRunWayOutApplies(fresh, pending)) return result;
+  return { ...result, context_hint: `${result.context_hint} ${cannotRunWayOutTools()}` };
 }
 
 /**

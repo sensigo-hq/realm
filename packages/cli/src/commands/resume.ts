@@ -217,10 +217,45 @@ export const resumeCommand = new Command('resume')
       const { voided, disclosures } = await resumeRun(runId, opts.from, runStore, workflowStore, {
         ...(opts.force !== undefined ? { force: opts.force } : {}),
       });
+      // issue #625 PR-2a (D7.5): the resumed run's engine work, and the call that runs it without a
+      // model. A JSON read of the registered copy; nothing is added when it cannot be read.
+      let view: { owedLine: string | undefined; stuck: boolean; cannotGoOn: string[] } | undefined;
+      try {
+        const {
+          describePending,
+          owedList,
+          owedWords,
+          getWorkflowForRun,
+          cannotGoOnHere,
+          cannotGoOnLines,
+        } = await import('@sensigo/realm');
+        const resumed = await runStore.get(runId);
+        const wf = await getWorkflowForRun(workflowStore, resumed, {
+          retryVerb: 'resume again',
+          verb: 'resume',
+        });
+        const pending = describePending(wf, resumed);
+        view = {
+          owedLine:
+            pending.act !== undefined
+              ? `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}) without a model: realm run advance ${runId}.`
+              : undefined,
+          stuck: cannotGoOnHere(resumed, pending),
+          // decision C64: the resumed run cannot go on from here — the steps and the way out.
+          cannotGoOn: cannotGoOnLines(resumed, pending),
+        };
+      } catch {
+        // The resume itself succeeded; the owed line is advisory.
+      }
+      // decision C68: when the resumed run cannot go on from here, driving it would only print the
+      // cannot-run exit — the steps and the way out (below) take the drive line's place.
+      const stuck = view !== undefined && view.stuck;
       console.log(
-        `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to 'running'.\n` +
-          `Drive it with: realm agent --run-id ${runId} --provider <provider> --model <model>\n` +
-          `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${runId} shows the extension module the run loaded).`,
+        `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to 'running'.` +
+          (stuck
+            ? ''
+            : `\nDrive it with: realm agent --run-id ${runId} --provider <provider> --model <model>\n` +
+              `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${runId} shows the extension module the run loaded).`),
       );
       for (const { disclosure } of voided) {
         console.log(`  ⚠ ${disclosure}`);
@@ -230,26 +265,9 @@ export const resumeCommand = new Command('resume')
       for (const disclosure of disclosures) {
         console.log(`  ⚠ ${disclosure}`);
       }
-      // issue #625 PR-2a (D7.5): the resumed run's engine work, and the call that runs it without a
-      // model. A JSON read of the registered copy; nothing is added when it cannot be read.
-      try {
-        const { describePending, owedList, owedWords, getWorkflowForRun, cannotGoOnLines } =
-          await import('@sensigo/realm');
-        const resumed = await runStore.get(runId);
-        const wf = await getWorkflowForRun(workflowStore, resumed, {
-          retryVerb: 'resume again',
-          verb: 'resume',
-        });
-        const pending = describePending(wf, resumed);
-        if (pending.act !== undefined) {
-          console.log(
-            `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}) without a model: realm run advance ${runId}.`,
-          );
-        }
-        // decision C64: the resumed run cannot go on from here — the steps and the way out.
-        for (const line of cannotGoOnLines(resumed, pending)) console.log(line);
-      } catch {
-        // The resume itself succeeded; the owed line is advisory.
+      if (view !== undefined) {
+        if (view.owedLine !== undefined) console.log(view.owedLine);
+        for (const line of view.cannotGoOn) console.log(line);
       }
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));

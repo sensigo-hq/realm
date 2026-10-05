@@ -249,8 +249,58 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       );
       const r = realm(home, ['run', 'resume', run.id, '--from', 'a']);
       expect(r.status).toBe(0);
-      expect(r.stdout).toContain(
-        `'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.\n${wayOut(run.id)}\n`,
+      // decision C68: the steps and the way out take the place of #676's `Drive it with:` line
+      // (driving the run would only print the cannot-run exit). (a) red when the drive line is
+      // printed in this state or a line is dropped; (b) prints the whole stdout.
+      expect(r.stdout).toBe(
+        `Resumed run '${run.id}': step 'a' re-enabled and run reset to 'running'.\n` +
+          `'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.\n${wayOut(run.id)}\n`,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 60000);
+
+  it('CONTROL (C68) — resume into a run with an agent step ready: the drive line as #676 prints it, no stuck lines', async () => {
+    const { home, runs, workflows } = await stores();
+    try {
+      const v1 = wf('c68-resume-ready', {
+        a: { description: 'A', execution: 'auto', depends_on: [], handler: 'boom' },
+      });
+      await workflows.register(v1);
+      const { run } = await runs.create({ workflowId: v1.id, workflowVersion: 1, params: {} });
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'boom', {
+        id: 'boom',
+        execute: async () => {
+          throw new Error('boom');
+        },
+      });
+      await executeChain(runs, v1, {
+        runId: run.id,
+        command: 'a',
+        input: {},
+        dispatcher: async () => ({}),
+        registry,
+      });
+      await workflows.register(
+        wf('c68-resume-ready', {
+          a: {
+            description: 'A',
+            execution: 'auto',
+            depends_on: [],
+            preconditions: ['run.params.ok == true'],
+          },
+          ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+        }),
+      );
+      const r = realm(home, ['run', 'resume', run.id, '--from', 'a']);
+      expect(r.status).toBe(0);
+      // (a) red when the drive line is withheld outside the cannot-go-on state; (b) prints stdout.
+      expect(r.stdout).toBe(
+        `Resumed run '${run.id}': step 'a' re-enabled and run reset to 'running'.\n` +
+          `Drive it with: realm agent --run-id ${run.id} --provider <provider> --model <model>\n` +
+          `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${run.id} shows the extension module the run loaded).\n`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

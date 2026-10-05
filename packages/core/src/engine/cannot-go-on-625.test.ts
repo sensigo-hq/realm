@@ -133,4 +133,31 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
       expect(cannotGoOnLines(run, stuck)).toEqual([INPUT, wayOut(run.id)]);
     });
   });
+
+  it('C71 — a live run with no question, no act, no agent step ready, nothing in flight and no engine step that cannot run (#537’s structurally dead run): not this state, no lines', async () => {
+    await withRun(async (run) => {
+      // Hand-built: the view of a run where nothing is eligible and nothing is refused. Every other
+      // conjunct of `cannotGoOnHere` holds here, so only "an engine step cannot run" decides it.
+      const nothing: PendingView = {
+        agent_actions: [],
+        agent_steps: [],
+        pending_guards: [],
+        engine_runnable: [],
+      };
+      // (a) red when `cannotGoOnHere` drops its last conjunct (every surface would then print a
+      //     bare "To end the run instead" with no reason); (b) prints the boolean and the lines.
+      expect({ here: cannotGoOnHere(run, nothing), lines: cannotGoOnLines(run, nothing) }).toEqual({
+        here: false,
+        lines: [],
+      });
+      // Not vacuous: the same run with one step that cannot run IS the state.
+      const oneRefused: PendingView = {
+        ...nothing,
+        engine_runnable: [
+          { step: 'x', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
+        ],
+      };
+      expect(cannotGoOnHere(run, oneRefused)).toBe(true);
+    });
+  });
 });
