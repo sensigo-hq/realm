@@ -249,6 +249,18 @@ Realm Test — ./
 2/2 passed
 ```
 
+When a fixture's error takes several lines, the second and later lines are indented under its `FAIL` line. A fixture whose step's precondition fails, with nothing else left to run ([what each failure prints](../testing-package.md)):
+
+```text
+Realm Test — flow
+  FAIL one: Workflow stalled: nothing else can run.
+    'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+
+0/1 passed
+```
+
+Added after version 0.46.0, which prints the second and later lines at the start of the line, and fails this fixture with `Workflow stalled: exceeded maximum loop iterations`.
+
 See [Test a workflow](../../guides/test-a-workflow.md).
 
 **Exit code:** 0 if every fixture passed; 1 if one failed, or if the folder does not exist: `Error: fixtures directory does not exist: invoice-check/fixtures`.

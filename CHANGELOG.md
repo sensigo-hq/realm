@@ -665,12 +665,17 @@ given to --model; …`. (Issue #676.)
     printed `✗ error (step '<s>', run by the engine after '<asked>' finished): …`; it now says the
     step it asked for completed, and names the blocked step once.
 
-- **A fixture that reaches a point where nothing else can run now fails naming the step and why
+- **A fixture that stops on a step refused before its claim now fails naming the step and why
   (issue #625, PR-2a).** `runFixtureTests` and `realm workflow test` failed such a fixture with
   `Workflow stalled: exceeded maximum loop iterations` when a step's precondition failed — no step,
-  no check. The fixture now fails with `Workflow stalled: nothing else can run.`, one line per step
-  that cannot run (`'<s>' cannot run (<check>): <why>.`) and the line that ends the run, the lines
-  `realm workflow run` prints in the same state.
+  no check. The fixture now fails with `Workflow stalled: nothing else can run.` and one line per
+  step that cannot run, the step lines `realm workflow run` prints in the same state:
+  `'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.`
+  It names no command that ends the run: the run is in the runner's memory, out of reach of every
+  `realm run` command. `realm workflow test` prints each of those lines indented four spaces under
+  the fixture's `FAIL one: Workflow stalled: nothing else can run.` line. A step whose handler or
+  adapter has no stand-in still fails the fixture with the engine's own message
+  (`Adapter 'orders_api' for service 'orders' is not registered. Declare this adapter under 'adapters:' in realm.yaml at your deployment root.`).
 - **A tool-using step on a Claude model that thinks by default (Claude Sonnet 5.5) no longer fails
   with a 400 about a thinking block's signature** when it runs out of tool calls or corrections, or
   when strict tool arguments are dropped after the provider refuses them. Realm now leaves out of
