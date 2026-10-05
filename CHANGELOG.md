@@ -27,6 +27,11 @@ All notable changes to this project are documented here.
   - Core also exports `cannotGoOnHere`, `cannotGoOnLines` and `capabilityMarkerWayOut`: when a run
     cannot go on from here, the lines an operator surface prints — each step that cannot run, then
     the way out.
+  - Core also exports `stepsThatCannotRun`, every step that cannot run, agent and `auto`, in the
+    order of the workflow, and `AGENT_PRE_CLAIM_REFUSALS` with the type `AgentPreClaimRefusal`: the
+    checks an agent step is judged by before its claim (trust, precondition — never its input
+    schema, whose input is the agent's answer). `checkPreClaim` takes `members` to run only some of
+    its checks. The view gains `agent_refused` and `cannot_run`.
   - Core also exports `judgeProgramFit`/`PROGRAM_FITS`, `describeRunDriver` and `bareStepOutput`.
   - Core also exports `executeEngineStep`, the one way the engine runs an `auto` step it owns, with
     its own input.
@@ -40,6 +45,11 @@ All notable changes to this project are documented here.
   - `get_run_state` gains `pending_guards` and `engine_runnable`.
   - `engine_runnable` judges each eligible `auto` step for the server's registry, with `refused_by`
     and `refusal` when it cannot run here.
+  - `get_run_state` also gains `agent_refused`: each agent step that is ready to start but refused
+    before its claim, for a failed precondition or an invalid `trust`, in the order of the workflow,
+    as `step`, `runnable_here: false`, `refused_by` and `refusal`. Such a step is never offered in
+    `next_actions`, and every reply that says what comes next names it with
+    `'<step>' cannot run (<check>): <why>.` instead of `Ready for the agent`.
   - For a missing handler or adapter it also carries `basis`: `registry` when the server's own
     extensions lack it, `marker` when a caller that passes no extensions judged it from the run's
     record.
@@ -71,8 +81,8 @@ All notable changes to this project are documented here.
     sweeper logs them as `cannot_go_on`.
   - `realm run resume` prints those lines in place of its `Drive it with:` lines when the resumed
     run cannot go on from here (driving it would only stop on that step).
-  - `execute_step` called by name on an `auto` step refused before its claim for a failed
-    precondition or an invalid `trust` ends its `context_hint` with the way out
+  - `execute_step` called by name on a step refused before its claim for a failed precondition or
+    an invalid `trust` — an `auto` step or an agent step — ends its `context_hint` with the way out
     (`Correct the workflow and register it again, then call advance_run; or end the run with
 abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - `advance_run`'s reply names the step that stopped the call in `stopped_step`, as
@@ -672,11 +682,24 @@ given to --model; …`. (Issue #676.)
   no check. The fixture now fails with `Workflow stalled: nothing else can run.` and one line per
   step that cannot run, the step lines `realm workflow run` prints in the same state:
   `'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.`
-  It names no command that ends the run: the run is in the runner's memory, out of reach of every
+  A step that can run beside the refused one now runs first: the runner picked the refused step
+  again and again, and the other step never ran. It names no command that ends the run: the run is
+  in the runner's memory, out of reach of every
   `realm run` command. `realm workflow test` prints each of those lines indented four spaces under
   the fixture's `FAIL one: Workflow stalled: nothing else can run.` line. A step whose handler or
   adapter has no stand-in, on its own, still fails the fixture with the engine's own message
   (`Adapter 'orders_api' for service 'orders' is not registered. Declare this adapter under 'adapters:' in realm.yaml at your deployment root.`).
+- **`realm agent` no longer calls the model again and again for an agent step whose precondition
+  fails (issue #625, PR-2a).** The drive offered the step, asked the model to answer it, was refused
+  before the claim, printed `✓ → running`, and went round again, without end — every pass a billed
+  model call. It now never picks the step: it names it once,
+  `• Step 'ask' cannot run (precondition): Precondition failed for step 'ask'. …`, and stops with
+  `✗ The drive stops: nothing else can run, and 'ask' cannot run (precondition). Run <id> stays open …`,
+  exit 1. The same holds for an invalid `trust` in a registered copy the loader never checked.
+  `realm workflow run` no longer asks for such a step, `realm workflow test` names it instead of running to the iteration cap, and
+  `start_run`, `get_run_state` and every reply that says what comes next no longer offer it. A
+  `blocked` reply never prints `✓` in `realm agent`: a step another process took between the drive's
+  read and the engine's is said as taken, and any other prints its own hint and stops the drive.
 - **A tool-using step on a Claude model that thinks by default (Claude Sonnet 5.5) no longer fails
   with a 400 about a thinking block's signature** when it runs out of tool calls or corrections, or
   when strict tool arguments are dropped after the provider refuses them. Realm now leaves out of
