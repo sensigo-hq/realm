@@ -408,3 +408,135 @@ describe("#625 PR-2a, C80 — the runner's pick skips a step refused before its 
     });
   });
 });
+
+describe('#625 PR-2a, C82 — the runner never picks an agent step refused before its claim', () => {
+  const ASK = (deps: string, pre: string): string[] => [
+    '  ask:',
+    '    description: Ask.',
+    '    execution: agent',
+    `    depends_on: [${deps}]`,
+    `    preconditions: ["${pre}"]`,
+  ];
+  const stall = (refusal: string): string[] => [
+    'Workflow stalled: nothing else can run.',
+    `'ask' cannot run (precondition): ${refusal}`,
+  ];
+  const PRE_REFUSAL =
+    "Precondition failed for step 'ask'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.";
+
+  it('head: the stall names the agent step (before C82: the iteration cap)', async () => {
+    const result = await runOne(
+      [
+        'id: c82-head',
+        'name: c82-head',
+        'version: 1',
+        'steps:',
+        ...ASK('', 'run.params.ok == true'),
+      ],
+      [
+        'name: one',
+        'params: {}',
+        'agent_responses:',
+        '  ask: {}',
+        'expected:',
+        '  final_state: completed',
+      ],
+    );
+    // (a) red when the stall or the skip set reads engine steps only (the runner re-picks 'ask' to
+    //     the iteration cap); (b) prints the whole result.
+    expect({ passed: result.passed, lines: (result.error ?? '').split('\n') }).toEqual({
+      passed: false,
+      lines: stall(PRE_REFUSAL),
+    });
+  });
+
+  it("beside a runnable step listed after it: 'file' runs first, then the stall names the agent step", async () => {
+    const ran: string[] = [];
+    const result = await runOne(
+      [
+        'id: c82-beside',
+        'name: c82-beside',
+        'version: 1',
+        'steps:',
+        ...ASK('', 'run.params.ok == true'),
+        '  file:',
+        '    description: File.',
+        '    execution: auto',
+        '    depends_on: []',
+        '    handler: rec_file',
+      ],
+      [
+        'name: one',
+        'params: {}',
+        'agent_responses:',
+        '  ask: {}',
+        'expected:',
+        '  final_state: completed',
+      ],
+      recordingHandlers(ran, ['file']),
+    );
+    // (a) red when the skip set reads engine steps only ('ask' is re-picked and 'file' never runs);
+    //     (b) prints the result and the steps that ran.
+    expect({ lines: (result.error ?? '').split('\n'), ran }).toEqual({
+      lines: stall(PRE_REFUSAL),
+      ran: ['file'],
+    });
+  });
+
+  it('chained: the agent step after another step, its precondition reading that step’s answer', async () => {
+    const result = await runOne(
+      [
+        'id: c82-chained',
+        'name: c82-chained',
+        'version: 1',
+        'steps:',
+        '  first:',
+        '    description: First.',
+        '    execution: agent',
+        '    depends_on: []',
+        ...ASK('first', 'first.ok == true'),
+      ],
+      [
+        'name: one',
+        'params: {}',
+        'agent_responses:',
+        '  first: { ok: false }',
+        '  ask: {}',
+        'expected:',
+        '  final_state: completed',
+      ],
+    );
+    expect({ passed: result.passed, lines: (result.error ?? '').split('\n') }).toEqual({
+      passed: false,
+      lines: stall(
+        "Precondition failed for step 'ask'. Precondition failed: 'first.ok == true'. Resolved value: false.",
+      ),
+    });
+  });
+
+  it('CONTROL — chained, the precondition passes: the fixture passes', async () => {
+    const result = await runOne(
+      [
+        'id: c82-chained-ok',
+        'name: c82-chained-ok',
+        'version: 1',
+        'steps:',
+        '  first:',
+        '    description: First.',
+        '    execution: agent',
+        '    depends_on: []',
+        ...ASK('first', 'first.ok == true'),
+      ],
+      [
+        'name: one',
+        'params: {}',
+        'agent_responses:',
+        '  first: { ok: true }',
+        '  ask: {}',
+        'expected:',
+        '  final_state: completed',
+      ],
+    );
+    expect(result).toEqual({ name: 'one', passed: true });
+  });
+});
