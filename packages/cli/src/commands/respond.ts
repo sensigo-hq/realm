@@ -16,6 +16,7 @@ import {
   describePending,
   owedList,
   owedWords,
+  cannotGoOnLines,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -156,6 +157,9 @@ export async function respondToGate(
   const phase = deriveRunPhase(updatedRun);
   const answeredBy = options.by !== undefined ? ` | answered by ${options.by} (as stated)` : '';
   const pending = describePending(workflow, updatedRun, effectiveRegistry);
+  // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
+  // that cannot run and the way out — core's lines, never a copy.
+  const cannotGoOn = cannotGoOnLines(updatedRun, pending);
   return {
     choice: options.choice,
     newState: phase,
@@ -165,7 +169,8 @@ export async function respondToGate(
       `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'` +
       (pending.act !== undefined
         ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them} from this shell.`
-        : ''),
+        : '') +
+      cannotGoOn.map((line) => `\n${line}`).join(''),
   };
 }
 

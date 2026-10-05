@@ -180,7 +180,7 @@ An unknown ID is an MCP error with the text `Error: Workflow not found: nope`.
 | `on_live_match`     | text   | No       | What a repeat does while the first run is open: `use_existing` (default) or `fail`.                          |
 | `on_terminal_match` | text   | No       | What a repeat does after the first run has ended: `reuse` (default), `reject`, `rerun_if_failed` or `rerun`. |
 
-It creates the run, then runs every `auto` step that is ready, and replies when the run reaches a step for the assistant, a gate, or its end. When no step ran, the reply's `context_hint` says what comes next after `Run '<id>' created for workflow '<workflow>'.`: the steps ready for the assistant, the work owed to the engine, and each `auto` step that cannot run (`'<step>' cannot run (<check>): <why>.`). When the new run cannot go on until its workflow is corrected — its only owed steps are refused before their claim and nothing else is ready — the hint ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` When the step it attempts needs a handler or adapter this server lacks, the reply is still the one that created the run (`status: ok`): its `context_hint` names the step (`'<step>' cannot run here (capability): handler '<name>' is not registered here — load the missing extension, or run the step on a runner that has it.`), and the block's own message (`Step '<step>' is blocked: …`) is in `warnings`, in place of that step's pre-flight warning (`… If reached it will block …`): the step was reached. A pre-flight warning for a step not reached stays. A step that fails is returned as the error it is. A repeat matched by `idempotency_key` keeps its own sentence (`Matched existing run …`).
+It creates the run, then runs every `auto` step that is ready, and replies when the run reaches a step for the assistant, a gate, or its end. When no step ran, the reply's `context_hint` says what comes next after `Run '<id>' created for workflow '<workflow>'.`: the steps ready for the assistant, the work owed to the engine, and each `auto` step that cannot run (`'<step>' cannot run (<check>): <why>.`). When the new run cannot go on until its workflow is corrected — its only owed steps are refused before their claim and nothing else is ready — the hint ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` When the step it attempts needs a handler or adapter this server lacks, the reply is still the one that created the run (`status: ok`): its `context_hint` names the step (`'<step>' cannot run here (capability): handler '<name>' is not registered here — load the missing extension, or run the step on a runner that has it.`), and the block's own message (`Step '<step>' is blocked: …`) is in `warnings`, in place of that step's pre-flight warning (`… If reached it will block …`): the step was reached. A pre-flight warning for a step not reached stays. A step that fails is returned as the error it is. A repeat matched by `idempotency_key` runs nothing: its `context_hint` opens `Matched existing run '<id>' (idempotent) in phase '<phase>'; no new run created.` and then says what comes next for that run in the same words, the way out included.
 
 ```json
 {
@@ -214,25 +214,29 @@ An unknown workflow gets `error_code: "STATE_WORKFLOW_NOT_FOUND"`, with `run_id`
 | `on_live_match`     | text         | No       | As for `start_run`, applied to every item.                                    |
 | `on_terminal_match` | text         | No       | As for `start_run`, applied to every item.                                    |
 
-Every item is checked before any run is created. It creates the runs and runs no step, not even an `auto` step that is ready: each run waits for its first `execute_step` call or for a driver.
+Every item is checked before any run is created. It creates the runs and runs no step, not even an `auto` step that is ready: each run waits for its first `execute_step` call or for a driver. Each entry's `next_actions` names its run's first call, and its `context_hint` is the sentence `start_run`'s reply carries for a run on which nothing ran: `Run '<id>' created for workflow '<workflow>'.` (or `Matched existing run …` for a repeat), then what comes next — the steps ready for the assistant, the work owed to the engine, each `auto` step that cannot run and, when the run cannot go on until its workflow is corrected, the way out (`Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`). Added after version 0.45.0.
 
 ```json
 {
   "started": [
     {
-      "run_id": "591a77a7-4b92-4d88-8c92-bef75745eb38",
+      "run_id": "2f22727f-1709-4a9d-8f04-a325cbee6c59",
       "idempotency_key": "ticket-201",
       "params": { "ticket": 201 },
       "deduped": false,
       "run_phase": "running",
-      "warnings": []
+      "warnings": [],
+      "next_actions": ["…"],
+      "context_hint": "Run '2f22727f-1709-4a9d-8f04-a325cbee6c59' created for workflow 'triage'. Ready for the agent: 'classify'."
     },
     {
-      "run_id": "4cf5addf-c079-4b67-9bce-8d6031205189",
+      "run_id": "98d5e6f1-e0f7-4609-8907-de70a11b3e62",
       "params": { "ticket": 202 },
       "deduped": false,
       "run_phase": "running",
-      "warnings": []
+      "warnings": [],
+      "next_actions": ["…"],
+      "context_hint": "Run '98d5e6f1-e0f7-4609-8907-de70a11b3e62' created for workflow 'triage'. Ready for the agent: 'classify'."
     }
   ],
   "failed": []

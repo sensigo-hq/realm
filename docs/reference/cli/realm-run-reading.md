@@ -132,18 +132,19 @@ Evidence (3 steps):
 
 ### The lines at the top
 
-| Line                                            | Printed                                  | Holds                                                                                                   |
-| ----------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Run`, `Workflow`, `Phase`                      | Always                                   | The run's ID, the workflow's `id` and `version`, and the phase.                                         |
-| `Rerun of`                                      | When the run replaced an earlier one     | The ID of the run it replaced. See [Idempotency and batches](../../guides/idempotency-and-batches.md).  |
-| `Sealed by`                                     | When the run has ended                   | What ended it, such as `complete`, `step_failure` or `handler_abort (total)`.                           |
-| `Cause`                                         | When the run has ended                   | The same, as a sentence.                                                                                |
-| `Completed`, `In Progress`, `Failed`, `Skipped` | Always                                   | The names of the steps in each state. Under `Skipped`, one line for each skipped step gives the reason. |
-| `Defaulted (settled by default)`                | When a step was given its default output | The names of those steps.                                                                               |
-| `Created`, `Updated`                            | Always                                   | When the run was started and when it last changed, in UTC.                                              |
-| `Gate`, `Choices`                               | When the run is in `gate_waiting`        | The step, the gate's ID, how long it has been open, and the choices it accepts.                         |
-| `Owed to the engine`                            | When guards or `auto` steps are owed     | The steps, and the `realm run advance` command that runs them. Added after version 0.45.0.              |
-| `Cannot run`, `Could not run`                   | When an owed `auto` step cannot run      | The step, the check that refused it, and why. Added after version 0.45.0.                               |
+| Line                                            | Printed                                                   | Holds                                                                                                                               |
+| ----------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `Run`, `Workflow`, `Phase`                      | Always                                                    | The run's ID, the workflow's `id` and `version`, and the phase.                                                                     |
+| `Rerun of`                                      | When the run replaced an earlier one                      | The ID of the run it replaced. See [Idempotency and batches](../../guides/idempotency-and-batches.md).                              |
+| `Sealed by`                                     | When the run has ended                                    | What ended it, such as `complete`, `step_failure` or `handler_abort (total)`.                                                       |
+| `Cause`                                         | When the run has ended                                    | The same, as a sentence.                                                                                                            |
+| `Completed`, `In Progress`, `Failed`, `Skipped` | Always                                                    | The names of the steps in each state. Under `Skipped`, one line for each skipped step gives the reason.                             |
+| `Defaulted (settled by default)`                | When a step was given its default output                  | The names of those steps.                                                                                                           |
+| `Created`, `Updated`                            | Always                                                    | When the run was started and when it last changed, in UTC.                                                                          |
+| `Gate`, `Choices`                               | When the run is in `gate_waiting`                         | The step, the gate's ID, how long it has been open, and the choices it accepts.                                                     |
+| `Owed to the engine`                            | When guards or `auto` steps are owed                      | The steps, and the `realm run advance` command that runs them. Added after version 0.45.0.                                          |
+| `Cannot run`, `Could not run`                   | When an owed `auto` step cannot run                       | The step, the check that refused it, and why. Added after version 0.45.0.                                                           |
+| `Run <id> stays open`                           | When the run cannot go on until its workflow is corrected | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.45.0. |
 
 Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added after version 0.45.0:
 
@@ -169,6 +170,13 @@ What the engine owes, and steps that cannot run, from three runs. `inspect` load
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585
 Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input must have required property 'n'
 Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it — from a program that has it: realm run advance 31ddb305-989b-42bf-8b63-fcb558ed1c23
+```
+
+When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the run cannot go on until its workflow is corrected, and the way out follows the `Cannot run` lines:
+
+```text
+Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input must have required property 'n'
+Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): correct the workflow, register it again, then realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e; or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e.
 ```
 
 A waiting gate looks like this:

@@ -20,6 +20,7 @@ import {
   describePending,
   owedList,
   owedWords,
+  cannotGoOnLines,
   type PendingView,
   WorkflowError,
   applySettlement,
@@ -59,6 +60,10 @@ const nothingToDrain = (runId: string): string =>
 const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingView): string => {
   const gate = run.pending_gate;
   if (gate === undefined) {
+    // decision C64: when nothing can run from here, each engine step that cannot run and the way
+    // out — core's lines (`correct the workflow …` for a refusal before the claim).
+    const cannotGoOn = pending === undefined ? [] : cannotGoOnLines(run, pending);
+    if (cannotGoOn.length > 0) return cannotGoOn.join(' ');
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
     return pending?.act !== undefined
@@ -800,6 +805,10 @@ export async function runDrainAction(
         console.log(
           `To run ${owedWords(owed).steps} the engine owes (${owedList(owed)}): realm run advance ${runId}.`,
         );
+      }
+      // decision C64: the expiry left nothing that can run from here — the steps and the way out.
+      for (const line of owed === undefined ? [] : cannotGoOnLines(workingRun, owed)) {
+        console.log(line);
       }
       return;
     }

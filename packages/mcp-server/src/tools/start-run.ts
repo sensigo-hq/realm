@@ -22,10 +22,45 @@ import {
   type FailedAttemptStore,
   ExtensionRegistry,
   type Attributed,
+  type RunRecord,
+  type WorkflowDefinition,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
+
+/**
+ * The hint of a reply that hands back a run on which this call ran nothing (decisions C45, C57, C64,
+ * C65): `Run '<id>' created for workflow '<wf>'.` (with the supersede clause when the run replaced
+ * another), or `Matched existing run '<id>' (idempotent) in phase '<phase>'; no new run created.`
+ * for a run an idempotency key matched — then, on a live run with no question open, what comes next
+ * ({@link describeNext}): the agent steps ready, the engine's owed work, each engine step that cannot
+ * run and, when the run cannot go on until its workflow is corrected, the way out. `start_run`'s reply
+ * and every `started` entry of `start_run_batch` carry it; neither composes its own.
+ *
+ * @param run      The record the store returned: the run created, or the one the key matched.
+ * @param current  The record the reply describes — `run`, or the one a capability block's attempt
+ *                 left (decision C52).
+ */
+export function handBackHint(args: {
+  run: RunRecord;
+  current: RunRecord;
+  definition: WorkflowDefinition;
+  registry?: ExtensionRegistry;
+  deduped: boolean;
+}): string {
+  const { run, current, definition, registry, deduped } = args;
+  const next =
+    !current.terminal_state && current.pending_gate === undefined
+      ? describeNext(describePending(definition, current, registry), current)
+      : '';
+  if (deduped) {
+    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}`;
+  }
+  return run.rerun_of !== undefined
+    ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
+    : `Run '${run.id}' created for workflow '${definition.id}'.${next}`;
+}
 
 /** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
 function logDedup(fields: Record<string, unknown>): void {
@@ -241,14 +276,6 @@ export async function handleStartRun(
   const droppedPreflight = new Set(
     unmet.filter((requirement) => blockedHere.has(requirement.step)).map(capabilityWarning),
   );
-  // issue #625 PR-2a (decision C45): a run this call created on which nothing ran says what comes
-  // next in its own hint — the agent steps ready, the engine's owed work, and each engine step that
-  // cannot run — so a step that cannot run is named on the reply that created the run; and, when
-  // the run cannot go on until its workflow is corrected, the way out (decision C57).
-  const next =
-    !deduped && !createdRun.terminal_state
-      ? describeNext(describePending(definition, createdRun, registry), createdRun)
-      : '';
   return {
     command: 'start_run',
     run_id: run.id,
@@ -264,11 +291,16 @@ export async function handleStartRun(
     ...(capabilityBlock?.chained_auto_steps !== undefined
       ? { chained_auto_steps: capabilityBlock.chained_auto_steps }
       : {}),
-    context_hint: deduped
-      ? `Matched existing run '${run.id}' (idempotent) in phase '${derivedPhase}'; no new run created.`
-      : run.rerun_of !== undefined
-        ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
-        : `Run '${run.id}' created for workflow '${definition.id}'.${next}`,
+    // issue #625 PR-2a (decisions C45, C57, C64): a run this call ran nothing on — created, or
+    // matched by its key — says what comes next in its own hint, so a step that cannot run, and the
+    // way out when the run cannot go on, are named on the reply that hands the run back.
+    context_hint: handBackHint({
+      run,
+      current: createdRun,
+      definition,
+      ...(registry !== undefined ? { registry } : {}),
+      deduped,
+    }),
     run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
     deduped,

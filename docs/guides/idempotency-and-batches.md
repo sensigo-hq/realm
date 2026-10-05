@@ -28,10 +28,10 @@ A second call with the same key, for the same workflow, starts nothing. It retur
 status: ok
 deduped: true
 run_id: 6c48086c-cb0f-47ea-9c33-6279fe42ffdc
-Matched existing run '6c48086c-cb0f-47ea-9c33-6279fe42ffdc' (idempotent) in phase 'running'; no new run created.
+Matched existing run '6c48086c-cb0f-47ea-9c33-6279fe42ffdc' (idempotent) in phase 'running'; no new run created. Ready for the agent: 'fetch'.
 ```
 
-Notice `deduped: true` and the same `run_id`. The caller can carry on with that run as if it had started it.
+Notice `deduped: true` and the same `run_id`. The caller can carry on with that run as if it had started it: the reply also says what comes next for it, as the first one did (here, `sync`'s first step, `fetch`, is ready for the assistant).
 
 A key belongs to one workflow. The same key under another workflow is a different key.
 

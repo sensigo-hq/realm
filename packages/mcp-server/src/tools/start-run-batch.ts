@@ -17,7 +17,7 @@ import {
   type RunPhase,
   type NextAction,
 } from '@sensigo/realm';
-import type { HandleRunStores } from './start-run.js';
+import { handBackHint, type HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
@@ -45,6 +45,12 @@ export interface StartRunBatchResult {
      * engine work is owed (`buildNextActions`). No step runs in this tool; empty for a terminal run.
      */
     next_actions: NextAction[];
+    /**
+     * issue #625 PR-2a (decision C65): the sentence `start_run`'s reply would carry for this run on
+     * which nothing ran — `Run '<id>' created …` or `Matched existing run …`, then what comes next,
+     * the way out included when the run cannot go on (`handBackHint`, one composer).
+     */
+    context_hint: string;
   }>;
   /**
    * Items rejected by the idempotency policy (`on_terminal_match: 'reject'` / `on_live_match: 'fail'`).
@@ -209,6 +215,13 @@ export async function handleStartRunBatch(
       ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
       warnings,
       next_actions: run.terminal_state ? [] : buildNextActions(definition, run, registry),
+      context_hint: handBackHint({
+        run,
+        current: run,
+        definition,
+        ...(registry !== undefined ? { registry } : {}),
+        deduped,
+      }),
     });
   }
   if (dedupHits > 0) {

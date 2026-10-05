@@ -52,6 +52,16 @@ Responded: b178179a-998d-457e-85e6-6d38439d0585 | choice 'approve' | new state '
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them from this shell.
 ```
 
+When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.45.0:
+
+```text
+Responded: 77772f0c-a80d-49d3-b665-4ac186186fd1 | choice 'approve' | new state 'running'
+'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1; or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1.
+```
+
+A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>.`
+
 `respond` records the answer. Without `--by` the answer names nobody, and `realm run inspect` shows `(not stated)`. A name is never taken from the operating system or from `REALM_OPERATOR`: those name a program, and `respond` uses `REALM_OPERATOR` only for the cleanup steps its answer runs. An empty, long or control-character name is refused before the run is read:
 
 ```text
@@ -178,6 +188,15 @@ When the step that is ready again is one only the engine runs, one more line nam
 Resumed run '343aa612-ec76-4a27-9524-d3da06141f82': step 'work' re-enabled and run reset to 'running'.
 Drive it with: realm agent --run-id 343aa612-ec76-4a27-9524-d3da06141f82
 To run the step the engine owes ('work') without a model: realm run advance 343aa612-ec76-4a27-9524-d3da06141f82.
+```
+
+When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, the step and the way out follow instead. Added after version 0.45.0:
+
+```text
+Resumed run '1b5bd2f7-a824-4a65-a439-626af3f50b11': step 'a' re-enabled and run reset to 'running'.
+Drive it with: realm agent --run-id 1b5bd2f7-a824-4a65-a439-626af3f50b11
+'a' cannot run (input_schema): Invalid input for step 'a': the input must have required property 'n'.
+Run 1b5bd2f7-a824-4a65-a439-626af3f50b11 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 1b5bd2f7-a824-4a65-a439-626af3f50b11; or end it: realm run abandon 1b5bd2f7-a824-4a65-a439-626af3f50b11.
 ```
 
 `resume` runs no step. Cleanup steps that had not yet run for the ended run are cancelled, and each is named on a line that starts with `⚠`.
@@ -435,6 +454,15 @@ Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') �
 To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd.
 ```
 
+When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.45.0:
+
+```text
+✓ gate enacted (settle_default 'approve').
+Run '1d703406-777f-4bc6-a6bc-6058b4d8f490' is not terminal (phase: 'running') — nothing further to drain.
+'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490; or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490.
+```
+
 With `--all --expired`, the list names what each gate declared, without the choice or the guard. With `--force`, what each guard did is printed under its run:
 
 ```text
@@ -460,12 +488,13 @@ When there is nothing to do, it prints one of:
 Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to drain.
 Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f.
 Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd. To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd.
+Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): correct the workflow, register it again, then realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e; or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e.
 Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To end the run, answer its gate first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>. The answer can end the run by itself. If the run is still open after it: realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28.
 Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired; add --force to carry it out.
 No runs with an actionable pending finalizer.
 ```
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the three `is not terminal … nothing to drain` lines above, or for one of:
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the four `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.

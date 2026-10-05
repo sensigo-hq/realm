@@ -285,13 +285,61 @@ export function cannotRunWayOutTools(): string {
  */
 export function cannotRunWayOutApplies(run: RunRecord, pending: PendingView): boolean {
   return (
+    cannotGoOnHere(run, pending) &&
+    pending.engine_runnable.some((e) => e.runnable_here === false && e.refused_by !== 'capability')
+  );
+}
+
+/**
+ * When nothing can run from here (decision C64): no question is open, no act, no agent step ready,
+ * nothing in flight — and an engine step cannot run, for any check. A capability refusal counts:
+ * another runner may run that step, but nothing here can. {@link cannotRunWayOutApplies} is this
+ * state with a refusal before the claim among the steps.
+ */
+export function cannotGoOnHere(run: RunRecord, pending: PendingView): boolean {
+  return (
     !run.terminal_state &&
     run.pending_gate === undefined &&
     pending.act === undefined &&
     pending.agent_steps.length === 0 &&
     run.in_progress_steps.length === 0 &&
-    pending.engine_runnable.some((e) => e.runnable_here === false && e.refused_by !== 'capability')
+    pending.engine_runnable.some((e) => e.runnable_here === false)
   );
+}
+
+/**
+ * The way out of a capability refusal judged from the run's record, with no registry consulted
+ * (decision C53): run the step from a program that has the extension. `realm run inspect`'s
+ * past-tense line and every line {@link cannotGoOnLines} composes end with it.
+ */
+export function capabilityMarkerWayOut(runId: string): string {
+  return ` — from a program that has it: realm run advance ${runId}`;
+}
+
+/**
+ * What an operator surface prints when the run cannot go on from here ({@link cannotGoOnHere};
+ * decisions C62, C64): one line per engine step that cannot run — `'<s>' cannot run (<check>):
+ * <refusal>.`, a capability refusal with its own way out — then the way out of the run:
+ * {@link cannotRunWayOut} when a step is refused before its claim (correct the workflow), otherwise
+ * the alternative to running the step elsewhere (abandon). Empty in every other state. `realm run
+ * respond`, `realm run drain`, `realm run resume` and `realm listen`'s sweeper print these lines;
+ * none composes its own.
+ */
+export function cannotGoOnLines(run: RunRecord, pending: PendingView): string[] {
+  if (!cannotGoOnHere(run, pending)) return [];
+  const lines = pending.engine_runnable
+    .filter((e) => e.runnable_here === false)
+    .map((e) =>
+      withFullStop(
+        cannotRunClause(e) + (e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : ''),
+      ),
+    );
+  lines.push(
+    cannotRunWayOutApplies(run, pending)
+      ? cannotRunWayOut(run)
+      : `To end the run instead: realm run abandon ${run.id}.`,
+  );
+  return lines;
 }
 
 /** The names the act stands for: guards first, then every `auto` step not refused. */

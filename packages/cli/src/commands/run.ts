@@ -15,6 +15,8 @@ import {
   capabilityWarning,
   WorkflowError,
   deriveRunPhase,
+  describePending,
+  cannotGoOnLines,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -392,8 +394,35 @@ export const runCommand = new Command('run')
             continue;
           }
 
-          const eligibleSteps = findEligibleSteps(definition, run);
+          // decision C64 (the census): dev mode answers an `auto` step with the typed output, so an
+          // input refusal is the operator's to fix at the prompt. A precondition, trust or capability
+          // refusal is not — no typed output changes it, and prompting would loop forever. Such a
+          // step is not offered; when nothing else is eligible, the run cannot go on from here.
+          const cannotPrompt = new Set(
+            describePending(definition, run, registry)
+              .engine_runnable.filter(
+                (e) => e.runnable_here === false && e.refused_by !== 'input_schema',
+              )
+              .map((e) => e.step),
+          );
+          const eligibleSteps = findEligibleSteps(definition, run).filter(
+            (step) => !cannotPrompt.has(step),
+          );
 
+          if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
+            // The steps that cannot run, and the way out — core's lines (decision C64).
+            const record = await store.get(runId);
+            const cannotGoOn = cannotGoOnLines(
+              record,
+              describePending(definition, record, registry),
+            );
+            if (cannotGoOn.length > 0) {
+              console.error('\nWorkflow stalled: nothing else can run.');
+              for (const line of cannotGoOn) console.error(line);
+              rl.close();
+              process.exit(1);
+            }
+          }
           if (eligibleSteps.length === 0) {
             console.error(`\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`);
             // issue #468 — hands the run back with a truthful map instead of silently exiting 0.
@@ -459,6 +488,19 @@ export const runCommand = new Command('run')
             // Gate opened as part of this step — it will be handled at loop top.
             run = await store.get(runId);
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
+          } else if (
+            (result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+              result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED') &&
+            (await store.get(runId)).completed_steps.includes(stepName)
+          ) {
+            // decision C64 (the census): this step completed; the chain after it reached a step
+            // this runner lacks the code for, and the reply is that step's block. The step is said
+            // as completed; the next pass names the blocked step (it is never offered at the prompt).
+            run = await store.get(runId);
+            const ev = [...run.evidence].reverse().find((e) => e.step_id === stepName);
+            const hash = ev !== undefined ? ev.evidence_hash.slice(0, 8) : 'n/a';
+            const dur = ev !== undefined ? `${ev.duration_ms}ms` : 'n/a';
+            console.log(`  ✓ → ${run.run_phase} | hash: ${hash}... | ${dur}\n`);
           } else {
             console.error(`  ✗ ${result.status}: ${result.errors.join(', ')}\n`);
             // issue #468 — a FRESH read, not a break: below the validation-exhaustion threshold

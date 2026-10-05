@@ -204,9 +204,17 @@ Prompt cancelled — detached from run 'b4f04d53-c7d1-4099-96a8-55fd3a54eaa9' at
   Discard:   realm run abandon b4f04d53-c7d1-4099-96a8-55fd3a54eaa9
 ```
 
+An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again. A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks — is not asked for. When nothing else can run, the run stops there, names each such step and gives the way out. Added after version 0.45.0:
+
+```text
+Workflow stalled: nothing else can run.
+'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+Run 2a319588-0843-41c4-b28b-44f88ecb0752 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 2a319588-0843-41c4-b28b-44f88ecb0752; or end it: realm run abandon 2a319588-0843-41c4-b28b-44f88ecb0752.
+```
+
 [Install Realm and run a workflow](../../start/install-and-first-run.md) shows a whole session.
 
-**Exit code:** 0 if the run completed; 1 if it ended in any other way, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal.
+**Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal.
 
 ## `test`
 

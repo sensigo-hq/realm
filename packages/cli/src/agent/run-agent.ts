@@ -1546,6 +1546,30 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // happened and a throw on the next attempt would lose every billed call.
         stepUsageSaved = true;
 
+        // #134: a NOT-REGISTERED handler or adapter, detected structurally via error_code (never the
+        // message text) — the dispositions below, or the hold just after.
+        const isCapabilityBlock =
+          result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
+          result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
+
+        // decision C64 (the census): the chain after an agent step can reach an engine step that
+        // cannot run here (capability). The agent step completed and the reply is the chained step's
+        // block, so the block below would name the agent step. Held instead, as the loop top holds
+        // its own (decision C23): the next pass names the blocked step once, the drive goes on with
+        // any ready agent step, and its exit names the blocked step and what it needs.
+        if (engineReply === undefined && isCapabilityBlock) {
+          const afterChain = await deps.store.get(runId);
+          const chainedBlock = findCapabilityBlockedSteps(afterChain).find(
+            (b) => b.step !== stepName && currentRun?.capability_blocks?.[b.step] === undefined,
+          );
+          if (chainedBlock !== undefined && afterChain.completed_steps.includes(stepName)) {
+            heldCapabilityReplies.set(chainedBlock.step, result);
+            currentRun = afterChain;
+            console.log(`  ✓ → ${currentRun.run_phase}`);
+            continue;
+          }
+        }
+
         if (result.status === 'error') {
           // #134: a NOT-REGISTERED handler/adapter settles RECOVERABLY — the run is NOT failed, the step
           // is parked awaiting a capable runner. Detect structurally via error_code (not message text) and
@@ -1553,9 +1577,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // (no 'blocked' AgentRunResult variant, by design) — the distinction lives in the message.
           // issue #401: a capability block mints NO drive-failure entry — the `capability_block`
           // finding already owns this disclosure, and two findings for one fact is noise.
-          const isCapabilityBlock =
-            result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
-            result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
           // issue #217: append the repair count ONLY when at least one repair actually ran — never
           // "after 0 schema-repair attempts".
           const repairSuffix =

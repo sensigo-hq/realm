@@ -278,7 +278,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       `Run '${r.run_id}' created for workflow 'refused-head-wf'. Ready for the agent: 'summarize'. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.`,
     );
     expect(r.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
-    // A deduped match keeps its own sentence (nothing is created, nothing ran).
+    // A deduped match keeps its own sentence (nothing is created, nothing ran), then says what comes
+    // next, as every reply that hands a run back does (decision C64: `handBackHint`).
     const again = await handleStartRun(
       { workflow_id: refusedDef.id, params: { text: 'x' }, idempotency_key: 'c45' },
       { runStore, workflowStore, registry: new ExtensionRegistry() },
@@ -290,7 +291,7 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     expect(again.deduped).toBe(false);
     expect(deduped.deduped).toBe(true);
     expect(deduped.context_hint).toBe(
-      `Matched existing run '${again.run_id}' (idempotent) in phase 'running'; no new run created.`,
+      `Matched existing run '${again.run_id}' (idempotent) in phase 'running'; no new run created. Ready for the agent: 'summarize'. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.`,
     );
     // A superseding run (on_terminal_match: rerun) on which nothing ran names what comes next too.
     const { abandonRun } = await import('@sensigo/realm');

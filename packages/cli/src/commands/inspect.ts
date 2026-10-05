@@ -9,6 +9,9 @@ import { Command } from 'commander';
 import {
   describePending,
   owedList,
+  capabilityMarkerWayOut,
+  cannotRunWayOut,
+  cannotRunWayOutApplies,
   CACHE_BASES,
   CACHE_STATES,
   SEAL_ARMS,
@@ -635,11 +638,13 @@ export async function inspectRun(
         const verb = e.basis === 'marker' ? 'Could not run' : 'Cannot run';
         // decision C53: the marker line ends with its way out — a program that has the extension
         // runs the step.
-        const wayOut =
-          e.basis === 'marker' ? ` — from a program that has it: realm run advance ${run.id}` : '';
+        const wayOut = e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '';
         lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}${wayOut}`);
       }
     }
+    // decision C62: when the run cannot go on until its workflow is corrected, the way out follows
+    // the steps that cannot run — the line `realm run advance` and the drive's stop line print.
+    if (cannotRunWayOutApplies(run, pending)) lines.push(cannotRunWayOut(run));
   }
   // issue #401: failed drive attempts. Before this, a run whose drive kept dying showed nothing
   // here at all — the console said so once, at the time, to whoever happened to be watching.

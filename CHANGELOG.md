@@ -24,6 +24,9 @@ All notable changes to this project are documented here.
     `owedList`/`owedNames`/`owedWords`, `cannotRunWords`/`cannotRunClause`,
     `cannotRunWayOut`/`cannotRunWayOutTools`/`cannotRunWayOutApplies`, `withFullStop`,
     `CAPABILITY_BASES` and the type `CapabilityBasis`.
+  - Core also exports `cannotGoOnHere`, `cannotGoOnLines` and `capabilityMarkerWayOut`: when a run
+    cannot go on from here, the lines an operator surface prints — each step that cannot run, then
+    the way out.
   - Core also exports `judgeProgramFit`/`PROGRAM_FITS`, `describeRunDriver` and `bareStepOutput`.
   - Core also exports `executeEngineStep`, the one way the engine runs an `auto` step it owns, with
     its own input.
@@ -56,6 +59,19 @@ All notable changes to this project are documented here.
     `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`
   - Those replies are a step's reply, an answer's reply, `start_run`'s creation reply, and
     `advance_run`'s reply that ran nothing.
+  - Each `started` entry of `start_run_batch` carries `context_hint`: the sentence `start_run`'s
+    reply carries for a run on which nothing ran (one composer), with the way out when the run
+    cannot go on.
+  - `realm run respond`, when its answer leaves nothing that can run from here, names each step
+    that cannot run, then the way out.
+  - `realm run inspect` prints the same way out after its `Cannot run` lines when the run cannot go
+    on until its workflow is corrected.
+  - `realm run drain` (on a live run, and after `--expired --force`), `realm run resume` and
+    `realm workflow run` print the same lines when the run cannot go on from here; `realm listen`'s
+    sweeper logs them as `cannot_go_on`.
+  - When no step is refused before its claim, the last of those lines is
+    `To end the run instead: realm run abandon <id>.` (a step this program lacks the handler or
+    adapter for names its own way out).
   - A step refused for a missing handler or adapter, judged with the caller's own extensions, ends
     with its way out (`— load the missing extension, or run the step on a runner that has it`).
   - `realm run inspect`'s past-tense line ends
@@ -244,6 +260,8 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
     client can call it).
   - A deduped `start_run` (an idempotency-key match) runs nothing; only the creating call runs work.
   - The match's reply names what the run owes.
+  - The match's `context_hint` says what comes next after `Matched existing run …`, in the creation
+    reply's words, the way out included.
   - A bare `auto` step the ENGINE runs records the output of its single `depends_on` step (no
     `depends_on`: the run's params; several: `{}`), instead of a copy of whatever the driven step's
     caller returned.
@@ -573,6 +591,16 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   - It says "its runner likely died" only for a claim past its deadline — never for a live holder or
     an unknown-age claim.
   - `start_run`'s chained reply now reports the derived phase.
+  - When the chain after an agent step reached a step whose handler or adapter is missing, the
+    block was printed against the agent step (`⚠ Step 'ask' is blocked: the missing handler …`).
+  - The agent step is now said as completed, the blocked step is named once, the drive goes on with
+    any ready agent step, and its stop names the blocked step and what it needs.
+  - `realm workflow run` asked again, forever, for an `auto` step no typed answer can unblock (a
+    failed precondition printed `✗ blocked: ` with no reason).
+  - It no longer asks for such a step; when nothing else can run it stops, names the step and the
+    way out, and exits 1.
+  - It said a completed step failed (`✗ error: Handler '<h>' is not registered`) when the chain
+    after it reached a step this program lacks the handler for; it now says it completed.
 
 - **With two copies of one realm version in a process, `realm run gc`, `purge` and `reclaim`
   classify the other copy's refusals correctly.** Before: gc reaped no orphaned trace file
