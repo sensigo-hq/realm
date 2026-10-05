@@ -44,6 +44,13 @@ const PRE_REFUSAL =
 const wayOut = (id: string): string =>
   `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
 
+const ADVANCE_CHAINED = (id: string): string[] => [
+  "Owed to the engine: 'prep'.",
+  '→ prep',
+  "Stopped: 'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'prep.ok == true'. Resolved value: undefined.",
+  wayOut(id),
+];
+
 function stores(): { home: string; runs: JsonFileStore; workflows: JsonWorkflowStore } {
   const home = mkdtempSync(join(tmpdir(), 'realm-c82-cmd-'));
   return {
@@ -124,6 +131,35 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
         // (a) red when advance's reasons or exit code read engine steps only; (b) prints both.
         expect({ code, lines: lines.slice(3) }).toEqual(expected(run.id));
       }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('#625 PR-2a, C82 — realm run advance after a call that ran a step', () => {
+  it('the engine runs the step before, then stops on the refused agent step after it: a Stopped reason, the way out, exit 1', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      // `prep` records the run's params ({}), so `prep.ok == true` fails for `ask`.
+      const d = wf('c82-advance-chained', {
+        prep: { description: 'Prep.', execution: 'auto', depends_on: [] },
+        ask: agent({ preconditions: ['prep.ok == true'] }, ['prep']),
+      });
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        new ExtensionRegistry(),
+      );
+      // (a) red when the exit after a call reads the engine steps only (exit 0); (b) prints both.
+      expect({ code, lines: lines.slice(3) }).toEqual({ code: 1, lines: ADVANCE_CHAINED(run.id) });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

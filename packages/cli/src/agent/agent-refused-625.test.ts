@@ -43,6 +43,8 @@ const PRE_LINE =
   "log: • Step 'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.";
 const TRUST_LINE =
   "log: • Step 'ask' cannot run (trust): 'trust: \"bogus_value\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
+const TAKEN_IN_FLIGHT =
+  "log: • Step 'ask' was taken by a program whose name was not recorded at <since>; not run here.";
 const stopLine = (check: string, step = 'ask'): string =>
   `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run>; or end it: realm run abandon <run>.`;
 
@@ -208,5 +210,57 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
       next: 'log: \n→ [agent] more',
     });
     expect(d.lines.filter((l) => l.startsWith('log:   ✓')).length).toBe(1);
+  });
+
+  it('the member "in flight": another process claimed the step and has not settled it — said as taken, never ✓', async () => {
+    const def = wf({ ask: agent(), more: agent({}, ['ask']) });
+    let once = false;
+    const d = await drive(def, {}, async (store) => {
+      if (once) return;
+      once = true;
+      const runId = (await store.list())[0]!.id;
+      await store.claimStep(runId, 'ask', def);
+    });
+    // (a) red when the in-flight member is dropped (the reply then prints its hint and stops);
+    // (b) prints the line after the attempt and the result.
+    const after = d.lines.slice(d.lines.indexOf('log: \n→ [agent] ask') + 2);
+    expect({
+      result: d.result,
+      calls: d.calls,
+      taken: after[0]?.replace(/ at \S+Z;/, ' at <since>;'),
+    }).toEqual({
+      result: 'failed',
+      calls: 1,
+      taken: TAKEN_IN_FLIGHT,
+    });
+    expect(d.lines.filter((l) => l.includes('✓'))).toEqual([]);
+  });
+
+  it('the member "failed": another process ran the step and it failed — said as taken, never ✓', async () => {
+    // `side` keeps the run live after `ask` fails.
+    const def = wf({ ask: agent(), side: agent() });
+    let once = false;
+    const d = await drive(def, {}, async (store) => {
+      if (once) return;
+      once = true;
+      const runId = (await store.list())[0]!.id;
+      const r = await executeStep(store, def, {
+        runId,
+        command: 'ask',
+        input: {},
+        dispatcher: async () => {
+          throw new Error('the other process failed');
+        },
+      });
+      expect(r.status).toBe('error');
+    });
+    const after = d.lines.slice(d.lines.indexOf('log: \n→ [agent] ask') + 2);
+    expect({ calls: d.calls, taken: after[0], next: after[1] }).toEqual({
+      calls: 2,
+      taken:
+        "log: • Step 'ask' was taken by another process, whose claim is no longer on the record; not run here.",
+      next: 'log: \n→ [agent] side',
+    });
+    expect((await d.store.get(d.runId)).failed_steps).toEqual(['ask']);
   });
 });
