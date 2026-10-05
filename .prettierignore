@@ -1,3 +1,9 @@
 # Brand kit: logo, favicon and badge files plus the kit page are delivered as they are.
 # Formatting them would change files that are meant to match the kit exactly.
 brand-kit/
+
+# The website's build outputs, written by `npm run build` in website/ and ignored by git
+# (website/.gitignore). Prettier does not read that file, so without these lines a check or a
+# commit hook after a local website build would format or report generated files.
+website/.astro/
+website/src/content/
