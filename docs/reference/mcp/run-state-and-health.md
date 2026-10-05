@@ -218,7 +218,7 @@ A finding is one thing Realm has noticed about a run that someone may need to ac
 
 | Surface                  | Shows                                                                                                                                                                                                        |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `get_run_state`          | The findings of a run that is open. For a run that has ended, `run_health` is absent.                                                                                                                        |
+| `get_run_state`          | The findings of a run that is open, judged with this server's extensions: a `capability_block` finding only when this server lacks the code too. For a run that has ended, `run_health` is absent.           |
 | `realm run inspect`      | The findings of any run, open or ended, under `Run Health`.                                                                                                                                                  |
 | `realm run list --stuck` | The runs that have a finding, with a short label at the end of the line. It does not read workflows, so the two findings that need the workflow are never found by it, and two findings do not select a run. |
 
