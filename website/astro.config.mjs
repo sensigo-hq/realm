@@ -4,7 +4,7 @@ import sitemap from '@astrojs/sitemap';
 import sitemapAtRoot from './src/integrations/sitemap-at-root.mjs';
 import { THEME_INIT } from './src/lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from './src/lib/favicon.mjs';
-import { SITEMAP_PATH, SITE_URL } from './src/lib/site-meta.mjs';
+import { HOME_DESCRIPTION, SITEMAP_PATH, SITE_URL } from './src/lib/site-meta.mjs';
 import { DOCS_SIDEBAR } from './src/data/docs-sidebar.mjs';
 
 export default defineConfig({
@@ -12,8 +12,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Realm',
-      description:
-        'A workflow state machine that agents call. Wrong behaviour becomes impossible, not prohibited.',
+      // the description of a page without its own: only the 404 page (every docs page has one)
+      description: HOME_DESCRIPTION,
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/sensigo-hq/realm' }],
       customCss: ['./src/styles/tokens.css'],
       // the Realm logo in place of the title text

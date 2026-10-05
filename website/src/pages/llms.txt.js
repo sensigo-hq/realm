@@ -24,7 +24,7 @@ export async function GET() {
     '',
     `> ${HOME_DESCRIPTION}`,
     '',
-    `Realm is an open-source workflow engine (Apache-2.0) that an AI agent calls. Install the command line with \`npm install -g @sensigo/realm-cli\`.`,
+    `Realm is an open-source workflow engine (Apache-2.0) for AI agents, published by Sensigo Software. An agent calls it through its MCP server, \`@sensigo/realm-mcp\`, or \`realm agent\` drives a model from the command line. Realm decides which steps may run next, refuses an answer that breaks the JSON Schema its step declares, pauses the run at a human gate until someone answers it or its time limit runs out, and records each finished step's output with a SHA-256 hash in a run record you can inspect, export and compare. It is not MongoDB's Realm mobile database or any other product named Realm. Install the command line with \`npm install -g @sensigo/realm-cli\`.`,
     '',
     `Each docs page below links to its Markdown copy. The page itself is at the same address with a closing slash in place of \`.md\`. The docs index is ${absolute(markdownPath(DOCS_INDEX_ID))}.`,
     '',
