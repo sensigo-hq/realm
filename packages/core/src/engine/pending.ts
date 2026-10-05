@@ -114,16 +114,14 @@ export function checkPreClaim(args: {
       };
     }
     stage = 'precondition';
-    if (
-      asked('precondition') &&
-      stepDef?.preconditions !== undefined &&
-      stepDef.preconditions.length > 0
-    ) {
-      const failed = checkPreconditions(stepDef.preconditions, buildEvidenceByStep(run));
-      if (failed !== null) {
-        const hint = `Precondition failed for step '${step}'.`;
-        const suggestion = `Precondition failed: '${failed.expression}'. Resolved value: ${String(failed.resolved_value)}.`;
-        return { refused_by: 'precondition', refusal: `${hint} ${suggestion}`, hint, suggestion };
+    if (asked('precondition')) {
+      if (stepDef?.preconditions !== undefined && stepDef.preconditions.length > 0) {
+        const failed = checkPreconditions(stepDef.preconditions, buildEvidenceByStep(run));
+        if (failed !== null) {
+          const hint = `Precondition failed for step '${step}'.`;
+          const suggestion = `Precondition failed: '${failed.expression}'. Resolved value: ${String(failed.resolved_value)}.`;
+          return { refused_by: 'precondition', refusal: `${hint} ${suggestion}`, hint, suggestion };
+        }
       }
     }
     stage = 'input_schema';

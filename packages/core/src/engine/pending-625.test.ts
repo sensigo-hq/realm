@@ -151,7 +151,14 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
   });
 
   it('describeNext, its four members: agent only, owed only, both, neither', () => {
-    const base = { agent_actions: [], agent_steps: [], pending_guards: [], engine_runnable: [] };
+    const base = {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [],
+      cannot_run: [],
+    };
     const act = { instruction: null, human_readable: '', orientation: '' };
     expect(describeNext({ ...base }, OPEN_RUN)).toBe(' No step is ready.');
     expect(describeNext({ ...base, agent_steps: ['a', 'b'] }, OPEN_RUN)).toBe(
@@ -182,15 +189,22 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
   });
 
   it('C34: describeNext names each engine step that cannot run, one cell per member, after the other clauses', () => {
-    const base = { agent_actions: [], agent_steps: [], pending_guards: [], engine_runnable: [] };
+    const base = {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [],
+      cannot_run: [],
+    };
     const act = { instruction: null, human_readable: '', orientation: '' };
     const refused = (
       check: 'trust' | 'precondition' | 'input_schema' | 'capability',
       refusal: string,
-    ) => ({
-      ...base,
-      engine_runnable: [{ step: 'x', runnable_here: false as const, refused_by: check, refusal }],
-    });
+    ) => {
+      const entry = { step: 'x', runnable_here: false as const, refused_by: check, refusal };
+      return { ...base, engine_runnable: [entry], cannot_run: [entry] };
+    };
     // decision C36: `here` for capability only — a runner with the handler could run it. Another
     // runner can run it, so no way out follows (C57).
     expect(
@@ -218,6 +232,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
             { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad' },
             { step: 'y', runnable_here: true },
           ],
+          cannot_run: [{ step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad' }],
           act,
         },
         OPEN_RUN,
@@ -1116,9 +1131,8 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
       .replace(/\s+/g, ' ');
   it('run-agent.ts names no auto step in its pick', () => {
     const ra = code('cli/src/agent/run-agent.ts');
-    expect(ra).toContain(
-      "findEligibleSteps(definition, currentRun).filter( (name) => definition.steps[name]?.execution === 'agent', )",
-    );
+    // decision C82: the pick is the view's offered agent steps — a refused one is never picked.
+    expect(ra).toContain('describePending(definition, currentRun, deps.registry).agent_steps');
     expect(ra).not.toContain("execution === 'auto'");
     expect(ra).not.toContain('executeStep(');
   });

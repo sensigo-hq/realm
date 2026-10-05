@@ -141,8 +141,10 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
       const nothing: PendingView = {
         agent_actions: [],
         agent_steps: [],
+        agent_refused: [],
         pending_guards: [],
         engine_runnable: [],
+        cannot_run: [],
       };
       // (a) red when `cannotGoOnHere` drops its last conjunct (every surface would then print a
       //     bare "To end the run instead" with no reason); (b) prints the boolean and the lines.
@@ -151,11 +153,16 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
         lines: [],
       });
       // Not vacuous: the same run with one step that cannot run IS the state.
+      const refusedX = {
+        step: 'x',
+        runnable_here: false as const,
+        refused_by: 'precondition' as const,
+        refusal: 'no',
+      };
       const oneRefused: PendingView = {
         ...nothing,
-        engine_runnable: [
-          { step: 'x', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
-        ],
+        engine_runnable: [refusedX],
+        cannot_run: [refusedX],
       };
       expect(cannotGoOnHere(run, oneRefused)).toBe(true);
     });

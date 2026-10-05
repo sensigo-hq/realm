@@ -59,7 +59,14 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    const none = { agent_actions: [], agent_steps: [], pending_guards: [], engine_runnable: [] };
+    const none = {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [],
+      cannot_run: [],
+    };
     expect(
       stoppedReasons(
         'r',
@@ -95,6 +102,10 @@ describe('#625 PR-2a — realm run advance: the words', () => {
           { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
           { step: 'y', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
         ],
+        cannot_run: [
+          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
+          { step: 'y', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
+        ],
       }),
     ).toEqual(["'x' cannot run (trust): bad trust", "'y' cannot run (precondition): no"]);
     expect(stoppedReasons('r', base, { ...none, agent_steps: ['a', 'b'] })).toEqual([
@@ -105,6 +116,9 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         ...none,
         agent_steps: ['a'],
         engine_runnable: [
+          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
+        ],
+        cannot_run: [
           { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
         ],
       }),
@@ -124,7 +138,14 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       skipped_steps: [],
       evidence: [],
     } as unknown as RunRecord;
-    const none = { agent_actions: [], agent_steps: [], pending_guards: [], engine_runnable: [] };
+    const none = {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [],
+      cannot_run: [],
+    };
     expect(stoppedReasons('r', base, { ...none, agent_steps: ['ask'] })).toEqual([
       "an agent step is ready: 'ask' — drive it with realm agent --run-id r",
     ]);
@@ -797,8 +818,10 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
       stoppedReasons('r', run, {
         agent_actions: [],
         agent_steps: [],
+        agent_refused: [],
         pending_guards: [],
         engine_runnable: [],
+        cannot_run: [],
       }),
     ).toEqual(["'z' is in flight in another program — wait for it, or see realm run inspect r"]);
   });
