@@ -8,8 +8,9 @@ import {
   propagateSkips,
   engineStepInput,
   describePending,
-  cannotGoOnHere,
-  cannotGoOnLines,
+  cannotRunWayOutApplies,
+  cannotRunClause,
+  withFullStop,
   type WorkflowDefinition,
   type ExtensionManifest,
   type StepHandler,
@@ -254,18 +255,24 @@ async function runSingleFixture(
         continue;
       }
 
-      // issue #625 PR-2a (decision C70): when nothing else can run here — no question open, no
-      // act, no agent step ready, nothing in flight — and an engine step cannot run (a refusal
-      // before its claim, or a handler or adapter this fixture's registry lacks), the fixture fails
-      // naming the step and its check, in core's own lines, instead of running to the iteration cap.
+      // issue #625 PR-2a (decisions C70, C75): when nothing else can run here — no question open,
+      // no act, no agent step ready, nothing in flight — and an engine step is refused before its
+      // claim (trust, precondition, input schema), the fixture fails naming each step that cannot
+      // run and its check, in core's own clause, instead of running to the iteration cap. Never a
+      // run-level way out (`realm run advance` / `abandon`): this run lives in the runner's memory
+      // and no command reaches it. A step this fixture's registry lacks the handler or adapter for
+      // is not this state: the pick below dispatches it, and the fixture fails with the engine's
+      // own message, as a chained step that needs it does.
       const pending = describePending(definition, currentRun, fixtureRegistry);
-      if (cannotGoOnHere(currentRun, pending)) {
+      if (cannotRunWayOutApplies(currentRun, pending)) {
         return {
           name: fixture.name,
           passed: false,
           error: [
             'Workflow stalled: nothing else can run.',
-            ...cannotGoOnLines(currentRun, pending),
+            ...pending.engine_runnable
+              .filter((e) => e.runnable_here === false)
+              .map((e) => withFullStop(cannotRunClause(e))),
           ].join('\n'),
         };
       }
