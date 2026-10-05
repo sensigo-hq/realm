@@ -63,12 +63,17 @@ describe('formatTestResults', () => {
     ]);
   });
 
-  it('CONTROL — a one-line error prints as one line, as before', () => {
+  it('CONTROL — a one-line error prints as one line, and a failure with no error as its name alone, as before', () => {
     const { lines } = formatTestResults([
       { name: 'one', passed: false, error: "Handler 'my_h' is not registered" },
+      { name: 'two', passed: false },
     ]);
-    // (a) red when a one-line error changes shape; (b) prints the lines.
-    expect(lines).toEqual([`  ${chalk.red('FAIL')} one: Handler 'my_h' is not registered`]);
+    // (a) red when a one-line error changes shape, or a failure with no error gains a colon;
+    //     (b) prints the lines.
+    expect(lines).toEqual([
+      `  ${chalk.red('FAIL')} one: Handler 'my_h' is not registered`,
+      `  ${chalk.red('FAIL')} two`,
+    ]);
   });
 });
 
