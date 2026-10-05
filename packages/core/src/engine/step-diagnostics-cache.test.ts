@@ -267,11 +267,10 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
   describe('D4 — all six symbols exported from the PUBLIC package (@sensigo/realm)', () => {
     it('CACHE_STATES, CACHE_BASES, and the four type-only symbols are importable from the package specifier', async () => {
       // A dynamic import of the package specifier (not a relative path) proves the VALUE exports
-      // land in the built public surface — the type-only ones cannot be asserted at runtime, so
-      // this only proves the two `as const` value exports; the four types are proven by this
-      // file's own `import type { UsageRecord, CacheState } from '../types/run-record.js'` above
-      // compiling — but D4's own acceptance is "exported from core's index", so read index.ts
-      // directly to prove the re-export exists as source text (belt-and-braces).
+      // land in the built public surface. The type-only ones cannot be asserted at runtime, so
+      // this proves only the two `as const` value exports. (realm-cli's `inspect.ts` imports both
+      // from the package too, so its build fails without them — this cell keeps the promise
+      // whatever the CLI happens to import.)
       const pkg = await import('@sensigo/realm');
       expect(pkg.CACHE_STATES).toEqual([
         'engaged',
@@ -281,7 +280,7 @@ describe('issue #600 PR 1a — StepDiagnostics.cache: mint discrimination + abse
         'unobservable',
       ]);
       expect(pkg.CACHE_BASES).toEqual(['provider_reported', 'unobservable']);
-    });
+    }, 30_000); // per-test: a cold import of the whole built package outlasts the 5 s default under load (#371 class)
   });
 
   describe('D5 — deriveCacheDetail: five states, one cell per member', () => {
