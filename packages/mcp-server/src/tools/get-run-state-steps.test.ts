@@ -155,7 +155,9 @@ describe('#600 PR 1b (D7) — get_run_state include_steps', () => {
     // The status path's OWN call already failed and set definitionError — the view must not call
     // the registrar a second time.
     expect(calls()).toBe(1);
-    expect(summary.steps!['agent_step']!.attempts[0]!.cost_unrecorded).toBe('not_driven_by_realm');
+    expect(summary.steps!['agent_step']!.attempts[0]!.cost_unrecorded).toBe(
+      'not_measured_by_realm',
+    );
     // And the status-path failure is untouched by the view's existence.
     expect(summary.next_actions_status).toBe('workflow_unresolved');
   });
@@ -237,7 +239,9 @@ describe('#600 PR 1b (D7) — get_run_state include_steps', () => {
       { run_id: 'r1', include_steps: true },
       { runStore: makeStore(run), workflowStore },
     );
-    expect(summary.steps!['agent_step']!.attempts[0]!.cost_unrecorded).toBe('not_driven_by_realm');
+    expect(summary.steps!['agent_step']!.attempts[0]!.cost_unrecorded).toBe(
+      'not_measured_by_realm',
+    );
     // Without a definition the step is classified via `agent_profile` (absent here) OR, since the
     // definition names it 'agent', via the definition — proving the view's OWN terminalOk call
     // reached the SAME registrar entry the status path (skipped_terminal) never touched.

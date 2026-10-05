@@ -125,7 +125,7 @@ a prompt)`) — showing one request's figure while a larger sibling went unshown
   rather than each re-summing `UsageRecord[]` independently. `CostFigure` sums a counter ONLY over
   the requests that reported it (`value`/`reported`/`of`/`only_request_index?`, the last present iff
   exactly one request reported the figure). An execution entry's cost comes from `diagnostics.cache`
-  alone; an entry with none is classified `tool_calling_step` or `not_driven_by_realm` (never
+  alone; an entry with none is classified `tool_calling_step` or `not_measured_by_realm` (never
   asserting a model call happened), or gets `cost_unreadable: true` when `cache` exists but its
   `requests` is not a list. (Issue #600 PR 1b.)
 - **`get_run_state` gains `include_steps: boolean`** — opt-in (default `false`; every existing

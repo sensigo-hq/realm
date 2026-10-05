@@ -210,15 +210,15 @@ describe('composeStepViews — rule 5: classification only for an entry without 
     expect(view['agent_step']!.attempts[0]!.cost_unrecorded).toBe('tool_calling_step');
   });
 
-  it('an agent step by definition, no cache, no tool_calls: not_driven_by_realm', () => {
+  it('an agent step by definition, no cache, no tool_calls: not_measured_by_realm', () => {
     const run = makeRun([{ step_id: 'agent_step', status: 'success' }]);
     const view = composeStepViews(run, { definition: basicDef });
-    expect(view['agent_step']!.attempts[0]!.cost_unrecorded).toBe('not_driven_by_realm');
+    expect(view['agent_step']!.attempts[0]!.cost_unrecorded).toBe('not_measured_by_realm');
   });
 
   it('the agent_profile fallback fires with NO definition at all', () => {
     const run = makeRun([{ step_id: 's', status: 'success', agent_profile: 'reviewer' }]);
-    expect(composeStepViews(run).s!.attempts[0]!.cost_unrecorded).toBe('not_driven_by_realm');
+    expect(composeStepViews(run).s!.attempts[0]!.cost_unrecorded).toBe('not_measured_by_realm');
   });
 
   it('the agent_profile fallback fires when the definition no longer names the step', () => {
@@ -227,7 +227,7 @@ describe('composeStepViews — rule 5: classification only for an entry without 
     ]);
     expect(
       composeStepViews(run, { definition: basicDef }).removed_step!.attempts[0]!.cost_unrecorded,
-    ).toBe('not_driven_by_realm');
+    ).toBe('not_measured_by_realm');
   });
 
   it('a handler step (no cache, no tool_calls, no agent signal) gets no annotation at all', () => {
