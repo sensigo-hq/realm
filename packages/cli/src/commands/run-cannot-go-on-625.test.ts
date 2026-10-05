@@ -85,10 +85,10 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
   const wayOut = (id: string): string =>
     `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
 
-  async function run(text: string): Promise<number> {
+  async function run(text: string, extra: string[] = []): Promise<number> {
     writeFileSync(join(dir, 'workflow.yaml'), text, 'utf8');
     try {
-      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+      await runCommand.parseAsync([join(dir, 'workflow.yaml'), ...extra], { from: 'user' });
       return 0;
     } catch (err) {
       if (!(err instanceof Error) || err.message !== 'process.exit') throw err;
@@ -120,6 +120,30 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
       '\nWorkflow stalled: nothing else can run.',
       "'compute' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
       `To end the run instead: realm run abandon ${runId()}.`,
+    ]);
+  });
+
+  it('control (C73): a chained step whose handler throws — the ✗ line names it and the engine ran it after the agent step; the agent step is not said as completed', async () => {
+    // (a) red when the ok arm takes every non-ok reply from a later step, not only a capability
+    //     block (round 9's mutant r9k: the failure is then printed as the agent step's ✓);
+    // (b) prints the ✓/✗ lines and the exit code.
+    mocks.question.mockResolvedValue('');
+    const ext = join(dir, 'boom-ext.mjs');
+    writeFileSync(
+      ext,
+      "export default { handlers: { boom: { id: 'boom', async execute() { throw new Error('the printer is on fire'); } } } };\n",
+      'utf8',
+    );
+    const code = await run(yaml('c64-run-fail', ['    handler: boom']), [
+      '--extensions-module',
+      ext,
+    ]);
+    expect(code).toBe(1);
+    expect(asked()).toEqual(['  Agent output JSON (Enter for {}): ']);
+    expect(
+      [...logged(), ...errored()].filter((l) => l.startsWith('  ✓ →') || l.startsWith('  ✗')),
+    ).toEqual([
+      "  ✗ error (step 'compute', run by the engine after 'ask' finished): Handler 'boom' threw: the printer is on fire\n",
     ]);
   });
 
