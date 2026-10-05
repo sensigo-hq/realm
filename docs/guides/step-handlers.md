@@ -100,6 +100,7 @@ It prints:
 ```text
 Valid: price v1 (2 steps)
 Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)
+ℹ 1 step ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
 ```
 
 Notice the `Extensions` line. It confirms that Realm loaded your file and found one handler. Then register:
