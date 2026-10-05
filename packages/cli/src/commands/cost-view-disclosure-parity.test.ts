@@ -392,13 +392,13 @@ const STEP_LINE_UNRECORDED_CAUSE = {
     probe: (out) =>
       expect(out).toContain('cost: not recorded — tool-calling steps do not record usage yet'),
   },
-  not_driven_by_realm: {
+  not_measured_by_realm: {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        'cost: not recorded — realm did not drive this step (an outside agent over MCP, an ' +
-          'answer typed at a realm workflow run prompt, or a record written before usage was ' +
-          'measured)',
+        'cost: not recorded — realm has no usage figures for this attempt (for example: an ' +
+          'outside agent over MCP made it, a person typed its answer at a realm workflow run ' +
+          'prompt, or realm 0.45.0 or earlier recorded it)',
       ),
   },
 } satisfies Record<CostUnrecordedCause, DisclosureRoute>;

@@ -397,10 +397,11 @@ function costAbsenceSentence(
   if (costUnrecorded === 'tool_calling_step') {
     return 'cost: not recorded — tool-calling steps do not record usage yet';
   }
-  if (costUnrecorded === 'not_driven_by_realm') {
+  if (costUnrecorded === 'not_measured_by_realm') {
     return (
-      'cost: not recorded — realm did not drive this step (an outside agent over MCP, an answer ' +
-      'typed at a realm workflow run prompt, or a record written before usage was measured)'
+      'cost: not recorded — realm has no usage figures for this attempt (for example: an outside ' +
+      'agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm ' +
+      '0.45.0 or earlier recorded it)'
     );
   }
   return undefined;

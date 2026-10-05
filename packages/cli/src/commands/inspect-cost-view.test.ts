@@ -444,7 +444,7 @@ describe('#600 PR 1b — the three absence sentences', () => {
     expect(out).toContain('cost: not recorded — tool-calling steps do not record usage yet');
   });
 
-  it('not_driven_by_realm', async () => {
+  it('not_measured_by_realm', async () => {
     const run = makeRun([
       makeSnapshot('step_one', {
         diagnostics: { input_token_estimate: 1, precondition_trace: [] },
@@ -452,8 +452,9 @@ describe('#600 PR 1b — the three absence sentences', () => {
     ]);
     const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
     expect(out).toContain(
-      'cost: not recorded — realm did not drive this step (an outside agent over MCP, an answer ' +
-        'typed at a realm workflow run prompt, or a record written before usage was measured)',
+      'cost: not recorded — realm has no usage figures for this attempt (for example: an outside ' +
+        'agent over MCP made it, a person typed its answer at a realm workflow run prompt, or ' +
+        'realm 0.45.0 or earlier recorded it)',
     );
   });
 

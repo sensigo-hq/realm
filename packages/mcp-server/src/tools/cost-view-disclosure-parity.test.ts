@@ -351,11 +351,11 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
             'tool_calling_step',
           ),
       },
-      not_driven_by_realm: {
+      not_measured_by_realm: {
         surface: 'rendered',
         probe: () =>
           expect(summary.steps!['external_step']!.attempts[0]!.cost_unrecorded).toBe(
-            'not_driven_by_realm',
+            'not_measured_by_realm',
           ),
       },
     } satisfies Record<CostUnrecordedCause, DisclosureRoute>;
