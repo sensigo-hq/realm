@@ -272,12 +272,13 @@ svg.loop-narrow .n-t{font-size:13px}
 
   <section>
     <div><p class="eyebrow">Try it</p><h2>Nothing to sign up for</h2></div>
-    <div class="termwrap"><pre class="term"><code><span class="c"># install the CLI</span>
-npm install -g @sensigo/realm-cli
+    <div class="termwrap"><pre class="term"><code><span class="c"># install the CLI and the model SDK it calls (Anthropic here)</span>
+npm install -g @sensigo/realm-cli @anthropic-ai/sdk
 
-<span class="c"># register a workflow and drive it autonomously</span>
-realm workflow register ./workflow.yaml
-realm agent <span class="f">--workflow</span> my-workflow</code></pre>
+<span class="c"># create a starter workflow, then let a model drive it</span>
+<span class="c"># (needs ANTHROPIC_API_KEY in your environment)</span>
+realm workflow init my-workflow
+realm agent <span class="f">--workflow</span> ./my-workflow <span class="f">--provider</span> anthropic <span class="f">--model</span> claude-sonnet-5-5</code></pre>
       <button type="button" class="copy" aria-label="Copy commands" title="Copy">
         <svg class="i-copy" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
         <svg class="i-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
