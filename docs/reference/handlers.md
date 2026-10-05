@@ -235,11 +235,11 @@ The same handler and workflow, with a retryable error on the first 2 attempts, r
 
 | How Realm was installed                                                                      | Result                                                                                                                                                                                                                                                 |
 | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The project's `@sensigo/realm` at another version than the `realm` command's                 | 1 attempt, then `✗ Step 'only' failed: Handler 'flaky' threw a WorkflowError from realm 0.45.1 (…); this engine runs realm 0.45.0 (…). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. …` |
+| The project's `@sensigo/realm` at another version than the `realm` command's                 | 1 attempt, then `✗ Step 'only' failed: Handler 'flaky' threw a WorkflowError from realm 0.46.1 (…); this engine runs realm 0.46.0 (…). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. …` |
 | The project's `@sensigo/realm` and the `realm` command's own copy, two copies of one version | 3 attempts, then `Run complete`                                                                                                                                                                                                                        |
 | One copy of `@sensigo/realm`, shared by the project and the `realm` command                  | 3 attempts, then `Run complete`                                                                                                                                                                                                                        |
 
-`realm workflow test` on the same project gives the same three results, with no provider module.
+In the first row, the project's copy is 0.46.0 given the version number 0.46.1 for this example. `realm workflow test` on the same project gives the same three results, with no provider module.
 
 ## When the time limit passes
 

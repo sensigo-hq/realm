@@ -27,7 +27,7 @@ realm mcp [--project <dir>] [--extensions-module <path>]
 A client that connects is told the server's name and version:
 
 ```json
-{ "name": "realm", "version": "0.45.0" }
+{ "name": "realm", "version": "0.46.0" }
 ```
 
 ### `--project` has no default
@@ -115,10 +115,10 @@ It does not start in these cases:
 
 ### A store or registry from another realm version
 
-`createRealmMcpServer` refuses a store that declares no realm release line (`ENGINE_RELEASE_LINE_UNDECLARED`) or belongs to another realm version (`ENGINE_RELEASE_LINE_MISMATCH`). `realm serve` builds one server before it listens: when that is refused it prints one line to stderr and exits with code 1, and nothing listens; with `--dev`, its dev-mode warning prints first. `realm mcp` prints one line to stderr and exits with code 1, with nothing on stdout. These two commands hand the server only the workflow store they build themselves, so a release-line refusal there means the command's own packages are at different versions, and the line says so (here, a global install whose realm-mcp carries its own `@sensigo/realm` 0.45.9):
+`createRealmMcpServer` refuses a store that declares no realm release line (`ENGINE_RELEASE_LINE_UNDECLARED`) or belongs to another realm version (`ENGINE_RELEASE_LINE_MISMATCH`). `realm serve` builds one server before it listens: when that is refused it prints one line to stderr and exits with code 1, and nothing listens; with `--dev`, its dev-mode warning prints first. `realm mcp` prints one line to stderr and exits with code 1, with nothing on stdout. These two commands hand the server only the workflow store they build themselves, so a release-line refusal there means the command's own packages are at different versions, and the line says so (here, a global install of 0.46.0 whose realm-mcp carries its own `@sensigo/realm`, a copy of 0.46.0 given the version number 0.46.1 for this example):
 
 ```text
-realm serve: this realm command's own packages disagree: its realm-mcp runs @sensigo/realm 0.45.9 (/usr/lib/node_modules/@sensigo/realm-cli/node_modules/@sensigo/realm-mcp/node_modules/@sensigo/realm) and was handed a workflow store from @sensigo/realm 0.45.0 (/usr/lib/node_modules/@sensigo/realm-cli/node_modules/@sensigo/realm). Reinstall @sensigo/realm-cli so every @sensigo package it installs is one version (npm ls -g @sensigo/realm lists the copies of a global install; npm ls @sensigo/realm in a project).
+realm serve: this realm command's own packages disagree: its realm-mcp runs @sensigo/realm 0.46.1 (/usr/lib/node_modules/@sensigo/realm-cli/node_modules/@sensigo/realm-mcp/node_modules/@sensigo/realm) and was handed a workflow store from @sensigo/realm 0.46.0 (/usr/lib/node_modules/@sensigo/realm-cli/node_modules/@sensigo/realm). Reinstall @sensigo/realm-cli so every @sensigo package it installs is one version (npm ls -g @sensigo/realm lists the copies of a global install; npm ls @sensigo/realm in a project).
 ```
 
 `realm mcp` prints the same line beginning `realm mcp:`. Any other error that stops the server from being built is printed as `realm serve: <message>` or `realm mcp: <message>`. A registry is also checked when a tool resolves it for a call: a registry from another realm version that the server's registry provider returned is refused in that tool's reply, with `error_code` `ENGINE_RELEASE_LINE_MISMATCH` and a message that begins `The registry the server's registry provider returned for start_run` (or `start_run_batch`, `execute_step`, `submit_human_response`). Any other error while a request is handled is logged as `realm serve: <message>` and the request is answered with `500`; the server keeps running. A program that builds the server itself must catch the refusal: an `http` request handler that throws ends the process. When the `@sensigo/realm` the workflow's code imports is not the version the command runs, both commands print [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and go on. This was added in 0.46.0.
@@ -134,7 +134,7 @@ realm serve: this realm command's own packages disagree: its realm-mcp runs @sen
 realm [--version] [--help] <command>
 ```
 
-`realm --version` prints the installed version, such as `0.45.0`. `realm --help`, and `--help` after any command, print that command's flags. `realm` has six commands: `workflow`, `run`, `agent`, `listen`, `mcp` and `serve`. A seventh name, `webhook`, is kept only to say that it was removed:
+`realm --version` prints the installed version, such as `0.46.0`. `realm --help`, and `--help` after any command, print that command's flags. `realm` has six commands: `workflow`, `run`, `agent`, `listen`, `mcp` and `serve`. A seventh name, `webhook`, is kept only to say that it was removed:
 
 ```text
 `realm webhook` has been removed. Use `realm listen` with a `trigger:` block (auth.mode: github + a params_map for the PR fields) in your workflow instead. See `realm listen --help`.

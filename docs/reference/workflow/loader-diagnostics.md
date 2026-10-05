@@ -123,7 +123,7 @@ With `--json`, `validate` prints one JSON object and nothing else on standard ou
   "mode": "file",
   "path": "./",
   "workflow_id": "w",
-  "loader_version": "0.45.0",
+  "loader_version": "0.46.0",
   "schema_version": null,
   "error_count": 1,
   "warning_count": 1,

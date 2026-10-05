@@ -301,7 +301,7 @@ Each operation returns Notion's reply, unchanged.
 
 | The entry has                       | Message                                                                                                                                                                          |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A `use:` that is not in the list    | `adapters.gh — unknown catalog adapter 'gitlab'. Valid catalog names (realm v0.45.0): github, slack, http, airtable, gorgias, shopify, notion, parcelpanel, filesystem, mock. …` |
+| A `use:` that is not in the list    | `adapters.gh — unknown catalog adapter 'gitlab'. Valid catalog names (realm v0.46.0): github, slack, http, airtable, gorgias, shopify, notion, parcelpanel, filesystem, mock. …` |
 | `config:` on `filesystem` or `mock` | `adapters.gh — catalog adapter 'filesystem' takes no config; remove the 'config:' block.`                                                                                        |
 | No `use:`                           | `adapters.gh needs 'use:' — a catalog name (adapters) or a module reference './path.js#Export'.`                                                                                 |
 

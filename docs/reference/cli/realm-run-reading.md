@@ -100,11 +100,11 @@ The outputs in this section are from the `main` branch. Version 0.45.0 prints th
 | `--check-drift` | Compares the project's code files as they are now with the hashes recorded when the run last loaded them. |
 
 ```bash
-realm run inspect 419c3c51-c4e7-4066-970f-8f877844709a
+realm run inspect cb0e8545-ce3e-436f-b95c-fbd24f78a59b
 ```
 
 ```text
-Run: 419c3c51-c4e7-4066-970f-8f877844709a
+Run: cb0e8545-ce3e-436f-b95c-fbd24f78a59b
 Workflow: triage v1
 Phase: completed  ✓
 Sealed by: complete
@@ -113,22 +113,25 @@ Completed: classify, draft, send
 In Progress: (none)
 Failed: (none)
 Skipped: (none)
-Created: 2026-10-01T22:52:32.587Z
-Updated: 2026-10-01T22:52:32.807Z
+Created: 2026-10-05T22:31:22.823Z
+Updated: 2026-10-05T22:31:22.963Z
 
 Evidence (3 steps):
 
   1. classify               success   0ms   hash: 09a1b61c
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"category":"billing","confidence":0.9}
      Output: {"category":"billing","confidence":0.9}
      Diagnostics: ~10 tokens (estimate, step input) | no preconditions
      cost: not recorded — realm has no usage figures for this attempt (for example: an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
 
   2. draft                  success   0ms   hash: 626ebbef
+     Question opened through: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"reply":"We have refunded the charge."}
      Output: {"reply":"We have refunded the charge."}
      Diagnostics: ~10 tokens (estimate, step input) | preconditions: classify.confidence >= 0.7 → true (0.9)
      cost: not recorded — realm has no usage figures for this attempt (for example: an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
+     Answer: send · answered by (not stated) · proof: matched the claim_token of the reply that opened this question
   …
 ```
 

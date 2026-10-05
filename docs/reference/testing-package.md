@@ -24,7 +24,7 @@ To test a workflow from the command line, with no test file, see [Test a workflo
 | [Unit helpers](#unit-helpers)       | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                |
 | [GitHub stand-in](#github-stand-in) | `startGitHubMockServer`                                                                                                                                                          |
 | [Store contracts](#store-contracts) | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun` |
-| Version                             | `VERSION`, the package's version as a string: `"0.45.0"`.                                                                                                                        |
+| Version                             | `VERSION`, the package's version as a string: `"0.46.0"`.                                                                                                                        |
 
 The 23 types are named in the group that uses them.
 
