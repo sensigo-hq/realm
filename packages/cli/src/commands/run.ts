@@ -16,6 +16,7 @@ import {
   WorkflowError,
   deriveRunPhase,
   describePending,
+  stepsThatCannotRun,
   cannotGoOnLines,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
@@ -439,12 +440,11 @@ export const runCommand = new Command('run')
           // decision C64 (the census): dev mode answers an `auto` step with the typed output, so an
           // input refusal is the operator's to fix at the prompt. A precondition, trust or capability
           // refusal is not — no typed output changes it, and prompting would loop forever. Such a
-          // step is not offered; when nothing else is eligible, the run cannot go on from here.
+          // step is not offered — an agent step refused for trust or precondition included
+          // (decision C82); when nothing else is eligible, the run cannot go on from here.
           const cannotPrompt = new Set(
-            describePending(definition, run, registry)
-              .engine_runnable.filter(
-                (e) => e.runnable_here === false && e.refused_by !== 'input_schema',
-              )
+            stepsThatCannotRun(describePending(definition, run, registry))
+              .filter((e) => e.refused_by !== 'input_schema')
               .map((e) => e.step),
           );
           const eligibleSteps = findEligibleSteps(definition, run).filter(

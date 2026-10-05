@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import {
   describePending,
+  stepsThatCannotRun,
   owedList,
   capabilityMarkerWayOut,
   cannotRunWayOut,
@@ -623,24 +624,22 @@ export async function inspectRun(
     lines.push(`Cause: ${run.terminal_reason}`);
   }
   // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
-  // engine step this record shows cannot run. No registry here: a capability need is judged by the
-  // run's own marker (what the runner that last attempted the step lacked), else is unknown
-  // (decision C33).
+  // step this record shows cannot run — an engine step, or an agent step refused before its claim
+  // (decision C82). No registry here: a capability need is judged by the run's own marker (what the
+  // runner that last attempted the step lacked), else is unknown (decision C33).
   if (definition !== undefined && !run.terminal_state && run.pending_gate === undefined) {
     const pending = describePending(definition, run);
     if (pending.act !== undefined) {
       lines.push(`Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}`);
     }
-    for (const e of pending.engine_runnable) {
-      if (e.runnable_here === false) {
-        // decision C41: a capability refusal judged from the run's marker (inspect passes no
-        // registry) is past tense — no runner was consulted here.
-        const verb = e.basis === 'marker' ? 'Could not run' : 'Cannot run';
-        // decision C53: the marker line ends with its way out — a program that has the extension
-        // runs the step.
-        const wayOut = e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '';
-        lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}${wayOut}`);
-      }
+    for (const e of stepsThatCannotRun(pending)) {
+      // decision C41: a capability refusal judged from the run's marker (inspect passes no
+      // registry) is past tense — no runner was consulted here.
+      const verb = e.basis === 'marker' ? 'Could not run' : 'Cannot run';
+      // decision C53: the marker line ends with its way out — a program that has the extension
+      // runs the step.
+      const wayOut = e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '';
+      lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}${wayOut}`);
     }
     // decision C62: when the run cannot go on until its workflow is corrected, the way out follows
     // the steps that cannot run — the line `realm run advance` and the drive's stop line print.

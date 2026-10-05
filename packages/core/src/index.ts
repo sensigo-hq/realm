@@ -127,10 +127,12 @@ export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/ex
 // Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
 export {
   PRE_CLAIM_REFUSALS,
+  AGENT_PRE_CLAIM_REFUSALS,
   CAPABILITY_BASES,
   checkPreClaim,
   engineStepInput,
   describePending,
+  stepsThatCannotRun,
   owedNames,
   owedList,
   owedWords,
@@ -152,6 +154,7 @@ export {
 } from './engine/pending.js';
 export type {
   PreClaimRefusal,
+  AgentPreClaimRefusal,
   PreClaimRefused,
   CapabilityBasis,
   EngineRunnable,

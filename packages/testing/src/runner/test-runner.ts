@@ -8,6 +8,7 @@ import {
   propagateSkips,
   engineStepInput,
   describePending,
+  stepsThatCannotRun,
   cannotRunWayOutApplies,
   cannotRunClause,
   withFullStop,
@@ -256,8 +257,9 @@ async function runSingleFixture(
       }
 
       // issue #625 PR-2a (decisions C70, C75): when nothing else can run here — no question open,
-      // no act, no agent step ready, nothing in flight — and an engine step is refused before its
-      // claim (trust, precondition, input schema), the fixture fails naming each step that cannot
+      // no act, no agent step ready, nothing in flight — and a step is refused before its claim (an
+      // engine step for trust, precondition or input schema; an agent step for trust or precondition,
+      // decision C82), the fixture fails naming each step that cannot
       // run and its check, in core's own clause, instead of running to the iteration cap. Never a
       // run-level way out (`realm run advance` / `abandon`): this run lives in the runner's memory
       // and no command reaches it. A step whose handler or adapter this fixture's registry lacks
@@ -271,22 +273,20 @@ async function runSingleFixture(
           passed: false,
           error: [
             'Workflow stalled: nothing else can run.',
-            ...pending.engine_runnable
-              .filter((e) => e.runnable_here === false)
-              .map((e) => withFullStop(cannotRunClause(e))),
+            ...stepsThatCannotRun(pending).map((e) => withFullStop(cannotRunClause(e))),
           ].join('\n'),
         };
       }
 
-      // issue #625 PR-2a (decisions C80, C13): the pick skips a step the view above refuses before
-      // its claim (trust, precondition, input schema), as production's pick never runs one — so a
+      // issue #625 PR-2a (decisions C80, C13, C82): the pick skips a step the view above refuses
+      // before its claim — an engine step or an agent step — as production's pick never runs one — so a
       // runnable sibling runs, and when nothing else can run the stall above names the refused
       // step, never the iteration cap. A step refused only for capability stays pickable: it fails
       // with the engine's own message (C75). Among the steps it may pick, the runner's order is
       // unchanged (the first eligible one).
       const refusedBeforeClaim = new Set(
-        pending.engine_runnable
-          .filter((e) => e.runnable_here === false && e.refused_by !== 'capability')
+        stepsThatCannotRun(pending)
+          .filter((e) => e.refused_by !== 'capability')
           .map((e) => e.step),
       );
       const nextStep = eligibleSteps.find((s) => !refusedBeforeClaim.has(s)) ?? eligibleSteps[0]!;

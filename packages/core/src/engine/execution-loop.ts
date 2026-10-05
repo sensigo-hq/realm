@@ -101,6 +101,8 @@ import {
   describePending,
   describeNext,
   engineStepInput,
+  stepsThatCannotRun,
+  type PendingView,
   type PreClaimRefused,
 } from './pending.js';
 import {
@@ -6974,11 +6976,9 @@ function withTakenClauses(hint: string, takenSteps: readonly string[]): string {
   );
 }
 
-/** Whether the view names an engine step that cannot run (decision C34). */
-function hasCannotRun(pending: {
-  engine_runnable: Array<{ runnable_here: boolean | 'unknown' }>;
-}): boolean {
-  return pending.engine_runnable.some((e) => e.runnable_here === false);
+/** Whether the view names a step that cannot run, agent or engine (decisions C34, C82). */
+function hasCannotRun(pending: PendingView): boolean {
+  return stepsThatCannotRun(pending).length > 0;
 }
 
 /** The reply text of an `advanceRun` call that ran nothing, from the record it ends on (M10). */

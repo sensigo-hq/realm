@@ -4,12 +4,12 @@
 import { join } from 'node:path';
 import {
   loadWorkflowFromFile,
-  findEligibleSteps,
   classifyInProgressClaims,
   executeChain,
   advanceRun,
   executeEngineStep,
   describePending,
+  stepsThatCannotRun,
   describeClaimHolder,
   cannotRunClause,
   cannotRunWayOut,
@@ -625,12 +625,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           }
           if (currentRun.terminal_state) break;
           if (currentRun.pending_gate !== undefined) continue;
-          // decisions C17, C23: an engine step that cannot run (refused before its claim) or cannot
-          // run here (capability-blocked) — nothing changed and the act is withdrawn — is named once
-          // per drive, and the loop goes on with the ready agent steps. The words are core's
+          // decisions C17, C23, C82: a step that cannot run — an engine step refused before its claim
+          // or capability-blocked, or an agent step refused before its claim — is named once per
+          // drive, and the loop goes on with the ready agent steps. The words are core's
           // (decision C36).
-          for (const e of describePending(definition, currentRun, deps.registry).engine_runnable) {
-            if (e.runnable_here === false && !reportedRefusals.has(e.step)) {
+          for (const e of stepsThatCannotRun(
+            describePending(definition, currentRun, deps.registry),
+          )) {
+            if (!reportedRefusals.has(e.step)) {
               reportedRefusals.add(e.step);
               console.log(`• Step ${cannotRunClause(e)}`);
             }
@@ -638,20 +640,31 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         }
 
         // --- Step execution: agent steps only ---
+        // decision C82: the agent steps the run's view offers — an agent step it refuses before its
+        // claim (trust, precondition) is never picked, so no model is asked to answer it.
         const eligible =
           engineReply !== undefined
             ? []
-            : findEligibleSteps(definition, currentRun).filter(
-                (name) => definition.steps[name]?.execution === 'agent',
-              );
+            : describePending(definition, currentRun, deps.registry).agent_steps;
         if (engineReply === undefined && eligible.length === 0) {
-          // decisions C23, C31: no agent step is ready, no engine step can run, and an owed engine
-          // step cannot run — the drive stops on the FIRST such step (definition order).
+          // decisions C23, C31, C82: no agent step is ready, no engine step can run, and a step
+          // cannot run — the drive stops on the FIRST such step (definition order).
           const view = describePending(definition, currentRun, deps.registry);
-          const cannotRun = view.engine_runnable.filter((e) => e.runnable_here === false);
+          const cannotRun = stepsThatCannotRun(view);
           if (cannotRun.length > 0 && view.act === undefined) {
             const stop = cannotRun[0]!;
             const first = stop.step;
+            if (definition.steps[first]?.execution === 'agent') {
+              // decision C82: an agent step refused before its claim (trust, precondition) — the
+              // view's verdict on this record, and nothing is called: the step's input would be a
+              // model's answer, the call its refusal rules out. Nothing is recorded, as for an engine
+              // step refused for trust or precondition.
+              console.error(
+                `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
+                  cannotRunWayOut(currentRun),
+              );
+              return 'failed';
+            }
             const preClaim = stop.refused_by !== 'capability';
             // capability (decision C23): the block's own exit — the capability block this drive
             // holds for the step, otherwise one attempt after the claim (`→ [auto]`, then the block's
@@ -1681,13 +1694,34 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         }
 
         currentRun = await deps.store.get(runId);
-        if (result.status === 'blocked' && result.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
-          // issue #625 PR-2a (D6.1): another process took the step — say who and when, as past-tense
-          // facts read off its claim, never `✓ → running`; then re-read and continue.
-          console.log(
-            takenLine(stepName, describeClaimHolder(currentRun.claims?.[stepName], keepsClaims)),
-          );
-          continue;
+        if (result.status === 'blocked') {
+          // A `blocked` reply is never `✓` (decision C82 (5)). Which step it belongs to is the reply's
+          // own `stopped_step` (decision C74): this step's, or a step the engine ran after it.
+          const blockedStep = result.stopped_step ?? stepName;
+          if (
+            result.error_code === 'STATE_STEP_ALREADY_CLAIMED' ||
+            (result.error_code === undefined &&
+              (currentRun.in_progress_steps.includes(blockedStep) ||
+                currentRun.completed_steps.includes(blockedStep) ||
+                currentRun.failed_steps.includes(blockedStep)))
+          ) {
+            // issue #625 PR-2a (D6.1, D3.2): another process took the step — on the claim, or between
+            // this drive's read and the engine's (the step is then "not eligible", but in flight,
+            // done or failed on the record) — say who and when, as past-tense facts read off its
+            // claim, never `✓ → running`; then re-read and continue.
+            console.log(
+              takenLine(
+                blockedStep,
+                describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
+              ),
+            );
+            continue;
+          }
+          // decision C82 (5): any other `blocked` reply — the step's precondition failed on the
+          // engine's own read, or the step stopped being eligible for another reason, after this drive
+          // read the record — prints the reply's own hint, and the drive stops.
+          console.error(`\n✗ ${result.context_hint}`);
+          return 'failed';
         }
         console.log(`  ✓ → ${currentRun.run_phase}`);
       }

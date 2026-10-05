@@ -87,8 +87,8 @@ export interface HandleRunStateStores {
 /**
  * Diagnostic classification of `next_actions`:
  * - `ok` — next_actions reflects what to do next (agent steps, then the `advance_run` act when
- *   engine work is also owed); empty when nothing can run here (`engine_runnable` names each
- *   refused step and why).
+ *   engine work is also owed); empty when nothing can run here (`engine_runnable` and
+ *   `agent_refused` name each refused step and why).
  * - `advance_owed` — the only next work is the engine's: a guard is pending or an `auto` step can
  *   run, and no agent step is ready. `next_actions` holds the one act, `advance_run` — call it.
  *   (issue #625 PR-2a; replaces `auto_pending`, which told the caller the opposite.)
@@ -309,6 +309,13 @@ export interface RunStateSummary {
    * `'unknown'` when the server has no registry to judge the capability check. Absent when none.
    */
   engine_runnable?: EngineRunnable[];
+  /**
+   * issue #625 PR-2a (decision C82): each eligible agent step the run refuses before its claim — a
+   * failed precondition, or a `trust` value it refuses — in definition order, shaped as
+   * `engine_runnable`'s refused entries (`step`, `runnable_here: false`, `refused_by`, `refusal`).
+   * Such a step is never in `next_actions`. Absent when none.
+   */
+  agent_refused?: EngineRunnable[];
 }
 
 /**
@@ -622,6 +629,9 @@ export async function handleGetRunState(
       : {}),
     ...(pending !== undefined && pending.engine_runnable.length > 0
       ? { engine_runnable: pending.engine_runnable }
+      : {}),
+    ...(pending !== undefined && pending.agent_refused.length > 0
+      ? { agent_refused: pending.agent_refused }
       : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };

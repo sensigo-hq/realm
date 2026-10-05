@@ -11,6 +11,7 @@ import {
   serializeFailedAttemptLine,
   getWorkflowForRun,
   describePending,
+  stepsThatCannotRun,
   cannotRunWayOutApplies,
   cannotRunWayOutTools,
   type StepDispatcher,
@@ -296,8 +297,9 @@ export async function handleExecuteStep(
 }
 
 /**
- * issue #625 PR-2a (decision C66): a by-name `execute_step` on an `auto` step the engine refuses
- * before its claim for a failed precondition or an invalid `trust` returns the step's own refusal.
+ * issue #625 PR-2a (decisions C66, C82): a by-name `execute_step` on a step the engine refuses
+ * before its claim for a failed precondition or an invalid `trust` — an `auto` step or an agent
+ * step — returns the step's own refusal.
  * Its cause is the record or the workflow, which the caller cannot change, so when the run cannot
  * go on until its workflow is corrected (`cannotRunWayOutApplies`) the reply's `context_hint` ends
  * with the way out in the tools' words (`cannotRunWayOutTools`, core's one composer). In every
@@ -319,7 +321,7 @@ async function withWayOutOnOwnRefusal(
     return result;
   }
   const pending = describePending(definition, fresh, registry);
-  const own = pending.engine_runnable.find((e) => e.step === args.command);
+  const own = stepsThatCannotRun(pending).find((e) => e.step === args.command);
   if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust') return result;
   if (!cannotRunWayOutApplies(fresh, pending)) return result;
   return { ...result, context_hint: `${result.context_hint} ${cannotRunWayOutTools()}` };

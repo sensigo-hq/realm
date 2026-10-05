@@ -29,6 +29,15 @@ export const PRE_CLAIM_REFUSALS = ['trust', 'precondition', 'input_schema', 'cap
 export type PreClaimRefusal = (typeof PRE_CLAIM_REFUSALS)[number];
 
 /**
+ * The checks of {@link checkPreClaim} that read no input (decision C82): an agent step's input is the
+ * agent's own answer, which does not exist until the agent answers, so the run's view judges an
+ * eligible AGENT step by these members alone — never by its input schema. (A capability requirement
+ * belongs to `auto` steps only.)
+ */
+export const AGENT_PRE_CLAIM_REFUSALS = ['trust', 'precondition'] as const;
+export type AgentPreClaimRefusal = (typeof AGENT_PRE_CLAIM_REFUSALS)[number];
+
+/**
  * What a capability refusal was judged from (decision C41): `registry` — the caller's own registry
  * lacks the handler or adapter; `marker` — the caller passed no registry, so the run's own
  * `capability_blocks` marker (what the runner that last attempted the step lacked) is the fact.
@@ -58,6 +67,9 @@ function stepOrder(definition: WorkflowDefinition): Map<string, number> {
  * schema — plus the capability check the dispatch makes (`requirementForStep` + `registry.has`,
  * the same pure functions `capability.ts` keeps for the pre-flight). Pure; never throws.
  * With no registry, a step that needs a handler or adapter is `{ unknown: 'capability' }`.
+ * `members` (default: every check, in this order) runs only the checks it names — the run's view
+ * passes {@link AGENT_PRE_CLAIM_REFUSALS} for an agent step (decision C82), whose `input` it never
+ * reads.
  */
 export function checkPreClaim(args: {
   definition: WorkflowDefinition;
@@ -65,12 +77,15 @@ export function checkPreClaim(args: {
   step: string;
   input: Record<string, unknown>;
   registry?: ExtensionRegistry;
+  members?: readonly PreClaimRefusal[];
 }): PreClaimRefused | { unknown: 'capability' } | undefined {
-  const { definition, run, step, input, registry } = args;
+  const { definition, run, step, input, registry, members } = args;
+  const asked = (member: PreClaimRefusal): boolean =>
+    members === undefined || members.includes(member);
   const stepDef: StepDefinition | undefined = definition.steps[step];
   let stage: PreClaimRefusal = 'trust';
   try {
-    if (classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
+    if (asked('trust') && classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse') {
       // decision C49: the view's `refusal` is #508's read-time voice (`finding`) — a step not yet
       // dispatched, shown beside other steps that run — while the `error` `executeStep` returns
       // stays the dispatch voice, so its reply is byte-identical.
@@ -99,7 +114,11 @@ export function checkPreClaim(args: {
       };
     }
     stage = 'precondition';
-    if (stepDef?.preconditions !== undefined && stepDef.preconditions.length > 0) {
+    if (
+      asked('precondition') &&
+      stepDef?.preconditions !== undefined &&
+      stepDef.preconditions.length > 0
+    ) {
       const failed = checkPreconditions(stepDef.preconditions, buildEvidenceByStep(run));
       if (failed !== null) {
         const hint = `Precondition failed for step '${step}'.`;
@@ -108,7 +127,7 @@ export function checkPreClaim(args: {
       }
     }
     stage = 'input_schema';
-    if (stepDef?.input_schema !== undefined) {
+    if (asked('input_schema') && stepDef?.input_schema !== undefined) {
       try {
         validateInputSchema(input, stepDef.input_schema, step);
       } catch (err) {
@@ -125,7 +144,7 @@ export function checkPreClaim(args: {
       }
     }
     stage = 'capability';
-    if (stepDef !== undefined) {
+    if (asked('capability') && stepDef !== undefined) {
       const requirement = requirementForStep(step, stepDef, definition);
       if (requirement !== undefined) {
         // decision C33: the freshest fact the caller has — its registry when it passes one; else
@@ -197,7 +216,11 @@ export function engineStepInput(
   return deps.length === 0 ? { ...run.params } : {};
 }
 
-/** One `auto` step the engine could run, judged for the caller's registry. */
+/**
+ * One `auto` step the engine could run, judged for the caller's registry. The same shape names an
+ * eligible agent step the run refuses before its claim (`PendingView.agent_refused`, decision C82):
+ * `runnable_here: false`, `refused_by` (`trust` or `precondition`), `refusal`.
+ */
 export interface EngineRunnable {
   step: string;
   runnable_here: boolean | 'unknown';
@@ -215,9 +238,31 @@ export interface PendingView {
   agent_actions: NextAction[];
   /** The agent steps `agent_actions` stands for, in the same order. */
   agent_steps: string[];
+  /**
+   * The eligible agent steps the run refuses before their claim — a failed precondition, or a
+   * `trust` value it refuses (decision C82) — in definition order. Never in `agent_steps` or
+   * `agent_actions`: no surface offers them and no driver picks them.
+   */
+  agent_refused: EngineRunnable[];
   pending_guards: string[];
   engine_runnable: EngineRunnable[];
+  /**
+   * Every step that cannot run — the `agent_refused` entries and the refused `engine_runnable`
+   * entries — in definition order, as `describePending` composes it. Read it through
+   * {@link stepsThatCannotRun}.
+   */
+  cannot_run: EngineRunnable[];
   act?: NextAction;
+}
+
+/**
+ * Every step that cannot run, agent and engine, in definition order (decision C82): the one list
+ * every consumer reads — the cannot-go-on predicates and lines, the next sentence, `realm run
+ * inspect`'s `Cannot run` lines, the drivers' picks and stop lines, the fixture runner's stall and
+ * skip set, and the by-name way out. An entry's `refused_by` says which check refuses it.
+ */
+export function stepsThatCannotRun(pending: PendingView): EngineRunnable[] {
+  return pending.cannot_run;
 }
 
 const quoteList = (names: readonly string[]): string => names.map((n) => `'${n}'`).join(', ');
@@ -278,23 +323,24 @@ export function cannotRunWayOutTools(): string {
 }
 
 /**
- * When the run cannot go on until its workflow is corrected (decisions C44, C51): nothing else is
- * ready — no act, no agent step, nothing in flight, no question open — and an engine step is
- * refused before its claim (trust, precondition, input schema). A capability refusal is not one:
- * another runner can run that step.
+ * When the run cannot go on until its workflow is corrected (decisions C44, C51, C82): nothing else
+ * is ready — no act, no agent step, nothing in flight, no question open — and a step is refused
+ * before its claim: an engine step for trust, precondition or input schema, or an agent step for
+ * trust or precondition. A capability refusal is not one: another runner can run that step.
  */
 export function cannotRunWayOutApplies(run: RunRecord, pending: PendingView): boolean {
   return (
     cannotGoOnHere(run, pending) &&
-    pending.engine_runnable.some((e) => e.runnable_here === false && e.refused_by !== 'capability')
+    stepsThatCannotRun(pending).some((e) => e.refused_by !== 'capability')
   );
 }
 
 /**
- * When nothing can run from here (decision C64): no question is open, no act, no agent step ready,
- * nothing in flight — and an engine step cannot run, for any check. A capability refusal counts:
- * another runner may run that step, but nothing here can. {@link cannotRunWayOutApplies} is this
- * state with a refusal before the claim among the steps.
+ * When nothing can run from here (decisions C64, C82): no question is open, no act, no agent step
+ * ready, nothing in flight — and a step cannot run ({@link stepsThatCannotRun}: an engine step for
+ * any check, an agent step refused before its claim). A capability refusal counts: another runner
+ * may run that step, but nothing here can. {@link cannotRunWayOutApplies} is this state with a
+ * refusal before the claim among the steps.
  */
 export function cannotGoOnHere(run: RunRecord, pending: PendingView): boolean {
   return (
@@ -303,7 +349,7 @@ export function cannotGoOnHere(run: RunRecord, pending: PendingView): boolean {
     pending.act === undefined &&
     pending.agent_steps.length === 0 &&
     run.in_progress_steps.length === 0 &&
-    pending.engine_runnable.some((e) => e.runnable_here === false)
+    stepsThatCannotRun(pending).length > 0
   );
 }
 
@@ -318,8 +364,9 @@ export function capabilityMarkerWayOut(runId: string): string {
 
 /**
  * What an operator surface prints when the run cannot go on from here ({@link cannotGoOnHere};
- * decisions C62, C64): one line per engine step that cannot run — `'<s>' cannot run (<check>):
- * <refusal>.`, a capability refusal with its own way out — then the way out of the run:
+ * decisions C62, C64, C82): one line per step that cannot run ({@link stepsThatCannotRun}, an agent
+ * step refused before its claim included) — `'<s>' cannot run (<check>): <refusal>.`, a capability
+ * refusal with its own way out — then the way out of the run:
  * {@link cannotRunWayOut} when a step is refused before its claim (correct the workflow), otherwise
  * the alternative to running the step elsewhere (abandon). Empty in every other state. `realm run
  * respond`, `realm run drain`, `realm run resume` and `realm listen`'s sweeper print these lines;
@@ -327,13 +374,9 @@ export function capabilityMarkerWayOut(runId: string): string {
  */
 export function cannotGoOnLines(run: RunRecord, pending: PendingView): string[] {
   if (!cannotGoOnHere(run, pending)) return [];
-  const lines = pending.engine_runnable
-    .filter((e) => e.runnable_here === false)
-    .map((e) =>
-      withFullStop(
-        cannotRunClause(e) + (e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : ''),
-      ),
-    );
+  const lines = stepsThatCannotRun(pending).map((e) =>
+    withFullStop(cannotRunClause(e) + (e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '')),
+  );
   lines.push(
     cannotRunWayOutApplies(run, pending)
       ? cannotRunWayOut(run)
@@ -367,7 +410,9 @@ export function owedWords(pending: PendingView): { steps: string; them: string }
 
 /**
  * What the run owes, from the record, the definition and (when present) the registry. Pure.
- * A terminal run, or a run with an open gate, owes nothing.
+ * A terminal run, or a run with an open gate, owes nothing. An eligible agent step is judged by the
+ * checks that read no input ({@link AGENT_PRE_CLAIM_REFUSALS}, decision C82): one the run refuses is
+ * listed in `agent_refused`, never in `agent_steps` or `agent_actions`.
  */
 export function describePending(
   definition: WorkflowDefinition,
@@ -375,13 +420,44 @@ export function describePending(
   registry?: ExtensionRegistry,
 ): PendingView {
   if (run.terminal_state || run.pending_gate !== undefined) {
-    return { agent_actions: [], agent_steps: [], pending_guards: [], engine_runnable: [] };
+    return {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [],
+      cannot_run: [],
+    };
   }
   const order = stepOrder(definition);
   const eligible = [...findEligibleSteps(definition, run)].sort(
     (a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0),
   );
-  const { actions: agent_actions, steps: agent_steps } = buildAgentActions(definition, run);
+  const offered = buildAgentActions(definition, run);
+  const agent_actions: NextAction[] = [];
+  const agent_steps: string[] = [];
+  const agent_refused: EngineRunnable[] = [];
+  offered.steps.forEach((step, index) => {
+    const verdict = checkPreClaim({
+      definition,
+      run,
+      step,
+      // read by none of the members asked for: an agent step's input is the agent's answer
+      input: {},
+      members: AGENT_PRE_CLAIM_REFUSALS,
+    });
+    if (verdict !== undefined && 'refused_by' in verdict) {
+      agent_refused.push({
+        step,
+        runnable_here: false,
+        refused_by: verdict.refused_by,
+        refusal: verdict.refusal,
+      });
+      return;
+    }
+    agent_actions.push(offered.actions[index]!);
+    agent_steps.push(step);
+  });
   const pending_guards = findEligibleGuardSteps(definition, run);
   const engine_runnable: EngineRunnable[] = eligible
     .filter((name) => definition.steps[name]?.execution === 'auto')
@@ -403,7 +479,18 @@ export function describePending(
         ...(verdict.basis !== undefined ? { basis: verdict.basis } : {}),
       };
     });
-  const view: PendingView = { agent_actions, agent_steps, pending_guards, engine_runnable };
+  const cannot_run = [
+    ...agent_refused,
+    ...engine_runnable.filter((e) => e.runnable_here === false),
+  ].sort((a, b) => (order.get(a.step) ?? 0) - (order.get(b.step) ?? 0));
+  const view: PendingView = {
+    agent_actions,
+    agent_steps,
+    agent_refused,
+    pending_guards,
+    engine_runnable,
+    cannot_run,
+  };
   const names = owedNames(view);
   if (names.length > 0) {
     const list = quoteList(names);
@@ -427,7 +514,7 @@ export const ADVANCE_OWED = 'advance_owed' as const;
 /**
  * `advance_owed` exactly when the act is present and no agent step is ready. When every owed engine
  * step is refused and no agent step is ready there is no act: the status is `ok`, and
- * `engine_runnable` says why.
+ * `engine_runnable` and `agent_refused` say why.
  */
 export function composeNextActionsStatusWord(
   pending: PendingView,
@@ -438,7 +525,8 @@ export function composeNextActionsStatusWord(
 /**
  * The one sentence after `Step 'X' completed.` / `Gate 'G' resolved with choice 'c'.`, after
  * `start_run`'s `Run '<id>' created …`, and after the nothing-ran reply's `nothing ran.`: the agent
- * steps ready, the engine's owed work, then each engine step that cannot run (decision C34);
+ * steps ready, the engine's owed work, then each step that cannot run (decisions C34, C82 — an agent
+ * step refused before its claim is named here, never as ready);
  * ` No step is ready.` only when nothing else is said. When the run cannot go on until its workflow
  * is corrected ({@link cannotRunWayOutApplies}), it ends with the way out in the tools' words
  * (decision C57): every reply that says what comes next says it, from one place.
@@ -451,8 +539,8 @@ export function describeNext(pending: PendingView, run: RunRecord): string {
   if (pending.act !== undefined) {
     sentence += ` Owed to the engine: ${owedList(pending)} — call advance_run.`;
   }
-  for (const entry of pending.engine_runnable) {
-    if (entry.runnable_here === false) sentence += ` ${withFullStop(cannotRunClause(entry))}`;
+  for (const entry of stepsThatCannotRun(pending)) {
+    sentence += ` ${withFullStop(cannotRunClause(entry))}`;
   }
   if (cannotRunWayOutApplies(run, pending)) sentence += ` ${cannotRunWayOutTools()}`;
   return sentence.length > 0 ? sentence : ' No step is ready.';

@@ -10,6 +10,7 @@ import type {
 import {
   advanceRun,
   describePending,
+  stepsThatCannotRun,
   describeRunDriver,
   judgeProgramFit,
   owedList,
@@ -109,9 +110,7 @@ export function stoppedReasons(runId: string, run: RunForReasons, pending: Pendi
       `a question is open — realm run respond ${runId} --gate ${gate.gate_id} --choice <one of: ${gate.choices.join(', ')}>`,
     ];
   }
-  const reasons = pending.engine_runnable
-    .filter((e) => e.runnable_here === false)
-    .map((e) => cannotRunClause(e));
+  const reasons = stepsThatCannotRun(pending).map((e) => cannotRunClause(e));
   if (pending.agent_steps.length > 0) {
     // decisions C55, C59: the subject and the count word agree with how many agent steps are ready.
     const ready =
@@ -206,9 +205,7 @@ export async function advanceRunFromShell(
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
-    return !run.terminal_state && pending.engine_runnable.some((e) => e.runnable_here === false)
-      ? 1
-      : 0;
+    return !run.terminal_state && stepsThatCannotRun(pending).length > 0 ? 1 : 0;
   }
   print(`Owed to the engine: ${owedList(pending)}.`);
 
@@ -279,8 +276,7 @@ export async function advanceRunFromShell(
       ? cannotRunWayOut(after)
       : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
   );
-  const refused =
-    !after.terminal_state && afterView.engine_runnable.some((e) => e.runnable_here === false);
+  const refused = !after.terminal_state && stepsThatCannotRun(afterView).length > 0;
   return (result.status === 'error' && !isCapabilityBlock) || refused ? 1 : 0;
 }
 
