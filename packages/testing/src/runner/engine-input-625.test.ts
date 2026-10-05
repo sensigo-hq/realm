@@ -11,6 +11,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createDefaultRegistry, type StepHandler } from '@sensigo/realm';
 import { runFixtureTests } from './test-runner.js';
 
 const dirs: string[] = [];
@@ -18,16 +19,34 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** Writes `workflow.yaml` and `fixtures/one.yaml` into a fresh folder and runs the fixture. */
-async function runOne(workflow: string[], fixture: string[]) {
+/**
+ * Writes `workflow.yaml` and `fixtures/one.yaml` into a fresh folder and runs the fixture. When
+ * `handlers` is given, each is loaded as a project extension (it runs REAL in the fixture).
+ */
+async function runOne(
+  workflow: string[],
+  fixture: string[],
+  handlers?: Record<string, StepHandler>,
+) {
   const dir = mkdtempSync(join(tmpdir(), 'realm-c70-'));
   dirs.push(dir);
   mkdirSync(join(dir, 'fixtures'));
   writeFileSync(join(dir, 'workflow.yaml'), workflow.join('\n') + '\n');
   writeFileSync(join(dir, 'fixtures', 'one.yaml'), fixture.join('\n') + '\n');
+  let extensions: Parameters<typeof runFixtureTests>[0]['extensions'];
+  if (handlers !== undefined) {
+    const registry = createDefaultRegistry();
+    for (const [name, handler] of Object.entries(handlers))
+      registry.register('handler', name, handler);
+    extensions = {
+      registry,
+      manifest: { modules: [], adapters: [], handlers: Object.keys(handlers), processors: [] },
+    };
+  }
   const [result] = await runFixtureTests({
     workflowPath: join(dir, 'workflow.yaml'),
     fixturesPath: join(dir, 'fixtures'),
+    ...(extensions !== undefined ? { extensions } : {}),
   });
   return result!;
 }
@@ -264,6 +283,128 @@ describe("#625 PR-2a, C75 — a missing stand-in fails with the engine's own mes
         "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
         "'fetch' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
       ],
+    });
+  });
+});
+
+// issue #625 PR-2a, decision C80: the runner's pick skips a step the view refuses before its claim
+// (trust, precondition, input schema), as production's pick does (C13): a runnable sibling runs, and
+// the fixture then ends in C75's stall — never by re-picking the refused step to the iteration cap.
+// A step refused only for capability stays pickable, and among the steps it may pick the runner's
+// order is unchanged. Each step below runs through a recording handler, so the cells see which
+// steps ran and in what order.
+function recordingHandlers(ran: string[], names: string[]): Record<string, StepHandler> {
+  return Object.fromEntries(
+    names.map((name) => [
+      `rec_${name}`,
+      { id: `rec_${name}`, execute: async () => (ran.push(name), { data: { ran: name } }) },
+    ]),
+  );
+}
+
+describe("#625 PR-2a, C80 — the runner's pick skips a step refused before its claim", () => {
+  it("[pick] a refused HEAD step listed first beside a runnable one: 'file' runs and completes, then the stall names 'compute'", async () => {
+    const ran: string[] = [];
+    const result = await runOne(
+      [
+        'id: c80-pick',
+        'name: c80-pick',
+        'version: 1',
+        'steps:',
+        '  compute:',
+        '    description: Compute.',
+        '    execution: auto',
+        '    depends_on: []',
+        '    preconditions: ["run.params.ok == true"]',
+        '    handler: rec_compute',
+        '  file:',
+        '    description: File.',
+        '    execution: auto',
+        '    depends_on: []',
+        '    handler: rec_file',
+      ],
+      ['name: one', 'params: {}', 'agent_responses: {}', 'expected:', '  final_state: completed'],
+      recordingHandlers(ran, ['compute', 'file']),
+    );
+    // (a) red when the pick is back on the first eligible step (it re-picks 'compute', which the
+    //     engine refuses as `blocked`, until "Workflow stalled: exceeded maximum loop iterations",
+    //     and 'file' never runs); (b) prints the whole result.
+    expect({
+      name: result.name,
+      passed: result.passed,
+      lines: (result.error ?? '').split('\n'),
+    }).toEqual({
+      name: 'one',
+      passed: false,
+      lines: [
+        'Workflow stalled: nothing else can run.',
+        "'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
+      ],
+    });
+    // (a) red when 'file' does not run, runs twice, or the refused 'compute' runs its handler; the
+    //     stall above can fire only once 'file' is no longer owed, so this run is 'file' completed;
+    //     (b) prints the steps that ran.
+    expect(ran).toEqual(['file']);
+  });
+
+  it('CONTROL — nothing is refused: the two HEAD steps run in their old pick order and the fixture passes', async () => {
+    const ran: string[] = [];
+    const result = await runOne(
+      [
+        'id: c80-order',
+        'name: c80-order',
+        'version: 1',
+        'steps:',
+        '  compute:',
+        '    description: Compute.',
+        '    execution: auto',
+        '    depends_on: []',
+        '    handler: rec_compute',
+        '  file:',
+        '    description: File.',
+        '    execution: auto',
+        '    depends_on: []',
+        '    handler: rec_file',
+      ],
+      ['name: one', 'params: {}', 'agent_responses: {}', 'expected:', '  final_state: completed'],
+      recordingHandlers(ran, ['compute', 'file']),
+    );
+    // (a) red when the pick changes the order among steps it may pick; (b) prints the result and
+    //     the order.
+    expect({ result, ran }).toEqual({
+      result: { name: 'one', passed: true },
+      ran: ['compute', 'file'],
+    });
+  });
+
+  it("CONTROL — a step refused only for capability, listed first, stays pickable: the engine's own message, and the step after it never runs", async () => {
+    const ran: string[] = [];
+    const result = await runOne(
+      [
+        'id: c80-capability',
+        'name: c80-capability',
+        'version: 1',
+        'steps:',
+        '  fetch:',
+        '    description: Fetch.',
+        '    execution: auto',
+        '    depends_on: []',
+        '    handler: missing_h',
+        '  file:',
+        '    description: File.',
+        '    execution: auto',
+        '    depends_on: []',
+        '    handler: rec_file',
+      ],
+      ['name: one', 'params: {}', 'agent_responses: {}', 'expected:', '  final_state: completed'],
+      recordingHandlers(ran, ['file']),
+    );
+    // (a) red when the pick also skips a step refused for capability (decision C75 keeps it
+    //     pickable, and the runner's order among pickable steps unchanged): 'file' then runs before
+    //     the engine's message; (b) prints the result and the steps that ran.
+    expect({ result, ran }).toEqual({
+      result: { name: 'one', passed: false, error: "Handler 'missing_h' is not registered" },
+      ran: [],
     });
   });
 });

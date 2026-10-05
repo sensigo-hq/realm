@@ -278,7 +278,18 @@ async function runSingleFixture(
         };
       }
 
-      const nextStep = eligibleSteps[0]!;
+      // issue #625 PR-2a (decisions C80, C13): the pick skips a step the view above refuses before
+      // its claim (trust, precondition, input schema), as production's pick never runs one — so a
+      // runnable sibling runs, and when nothing else can run the stall above names the refused
+      // step, never the iteration cap. A step refused only for capability stays pickable: it fails
+      // with the engine's own message (C75). Among the steps it may pick, the runner's order is
+      // unchanged (the first eligible one).
+      const refusedBeforeClaim = new Set(
+        pending.engine_runnable
+          .filter((e) => e.runnable_here === false && e.refused_by !== 'capability')
+          .map((e) => e.step),
+      );
+      const nextStep = eligibleSteps.find((s) => !refusedBeforeClaim.has(s)) ?? eligibleSteps[0]!;
       const stepDef = definition.steps[nextStep];
       // Agent steps need the fixture's pre-built response as the input so the
       // engine's input_schema validation passes before the dispatcher runs.
