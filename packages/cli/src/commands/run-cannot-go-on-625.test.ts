@@ -113,9 +113,13 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
     const code = await run(yaml('c64-run-cap', ['    handler: missing_h']));
     expect(code).toBe(1);
     expect(asked()).toEqual(['  Agent output JSON (Enter for {}): ']);
-    expect(logged().filter((l) => l.startsWith('  ✓ →') || l.startsWith('  ✗'))).toEqual([
-      '  ✓ → running | hash: 44136fa3... | 0ms\n',
-    ]);
+    // The step's duration is the machine's (round 12 saw `1ms` under load): the line's text is
+    // compared with the number replaced.
+    expect(
+      logged()
+        .filter((l) => l.startsWith('  ✓ →') || l.startsWith('  ✗'))
+        .map((l) => l.replace(/\| \d+ms\n$/, '| <n>ms\n')),
+    ).toEqual(['  ✓ → running | hash: 44136fa3... | <n>ms\n']);
     expect(errored()).toEqual([
       '\nWorkflow stalled: nothing else can run.',
       "'compute' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
