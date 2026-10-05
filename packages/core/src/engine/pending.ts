@@ -267,9 +267,11 @@ export function cannotRunWayOut(run: RunRecord): string {
 }
 
 /**
- * The same way out for a caller that speaks the tools (decision C51): `advance_run`'s nothing-ran
- * reply ends with it under {@link cannotRunWayOutApplies}, as `realm run advance` prints
- * {@link cannotRunWayOut} under the same condition.
+ * The same way out for a caller that speaks the tools (decisions C51, C57): every reply whose next
+ * sentence {@link describeNext} composes — a step's reply, an answer's reply, `start_run`'s
+ * creation reply and `advance_run`'s nothing-ran reply — ends with it under
+ * {@link cannotRunWayOutApplies}, as `realm run advance` prints {@link cannotRunWayOut} under the
+ * same condition.
  */
 export function cannotRunWayOutTools(): string {
   return 'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
@@ -386,11 +388,14 @@ export function composeNextActionsStatusWord(
 }
 
 /**
- * The one sentence after `Step 'X' completed.` / `Gate 'G' resolved with choice 'c'.`, and the
- * nothing-ran reply: the agent steps ready, the engine's owed work, then each engine step that
- * cannot run (decision C34); ` No step is ready.` only when nothing else is said.
+ * The one sentence after `Step 'X' completed.` / `Gate 'G' resolved with choice 'c'.`, after
+ * `start_run`'s `Run '<id>' created …`, and after the nothing-ran reply's `nothing ran.`: the agent
+ * steps ready, the engine's owed work, then each engine step that cannot run (decision C34);
+ * ` No step is ready.` only when nothing else is said. When the run cannot go on until its workflow
+ * is corrected ({@link cannotRunWayOutApplies}), it ends with the way out in the tools' words
+ * (decision C57): every reply that says what comes next says it, from one place.
  */
-export function describeNext(pending: PendingView): string {
+export function describeNext(pending: PendingView, run: RunRecord): string {
   let sentence = '';
   if (pending.agent_steps.length > 0) {
     sentence += ` Ready for the agent: ${quoteList(pending.agent_steps)}.`;
@@ -401,6 +406,7 @@ export function describeNext(pending: PendingView): string {
   for (const entry of pending.engine_runnable) {
     if (entry.runnable_here === false) sentence += ` ${withFullStop(cannotRunClause(entry))}`;
   }
+  if (cannotRunWayOutApplies(run, pending)) sentence += ` ${cannotRunWayOutTools()}`;
   return sentence.length > 0 ? sentence : ' No step is ready.';
 }
 

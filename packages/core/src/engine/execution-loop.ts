@@ -101,8 +101,6 @@ import {
   describePending,
   describeNext,
   engineStepInput,
-  cannotRunWayOutApplies,
-  cannotRunWayOutTools,
   type PreClaimRefused,
 } from './pending.js';
 import {
@@ -4150,7 +4148,7 @@ export async function executeStep(
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
       : migratedNextActions.length > 0 || hasCannotRun(migratedPending)
-        ? `Step '${options.command}' completed.${describeNext(migratedPending)}`
+        ? `Step '${options.command}' completed.${describeNext(migratedPending, finalRun)}`
         : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
     // issue #625: this step's own write settled every guard it made eligible. When one of them
@@ -4340,7 +4338,7 @@ export async function executeStep(
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
     : nextActions.length > 0 || hasCannotRun(stepPending)
-      ? `Step '${options.command}' completed.${describeNext(stepPending)}`
+      ? `Step '${options.command}' completed.${describeNext(stepPending, savedRun)}`
       : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
   return {
@@ -5355,7 +5353,7 @@ export async function submitHumanResponse(
       : buildNextActions(definition, finalRun, options.registry);
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun, options.registry))}`;
+      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun, options.registry), finalRun)}`;
 
     // issue #625: the answer's own write settled every guard the answer made eligible, so no guard
     // is left "eligible, to be decided by some later call" — the reply lists them in `guards`, and
@@ -5657,7 +5655,7 @@ export async function submitHumanResponse(
     : buildNextActions(definition, savedRun, options.registry);
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun, options.registry))}`;
+    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun, options.registry), savedRun)}`;
 
   return withGateClaim(
     {
@@ -6976,11 +6974,10 @@ function nothingRanHint(
   if (run.terminal_state) {
     return `Run '${run.id}' is already terminal (${deriveRunPhase(run)}); nothing ran.`;
   }
-  const pending = describePending(definition, run, registry);
-  // decision C51: when the run cannot go on until its workflow is corrected, the reply ends with the
-  // way out in the tools' words — the same condition `realm run advance` prints its own form under.
-  const wayOut = cannotRunWayOutApplies(run, pending) ? ` ${cannotRunWayOutTools()}` : '';
-  return `Run '${run.id}': nothing ran.${describeNext(pending)}${wayOut}`;
+  // decisions C51, C57: when the run cannot go on until its workflow is corrected, describeNext
+  // ends with the way out in the tools' words — the same condition `realm run advance` prints its
+  // own form under, and the same sentence every other reply that says what comes next ends with.
+  return `Run '${run.id}': nothing ran.${describeNext(describePending(definition, run, registry), run)}`;
 }
 
 /** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */

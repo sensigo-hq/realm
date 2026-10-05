@@ -113,10 +113,12 @@ export function stoppedReasons(runId: string, run: RunForReasons, pending: Pendi
     .filter((e) => e.runnable_here === false)
     .map((e) => cannotRunClause(e));
   if (pending.agent_steps.length > 0) {
-    reasons.push(
-      // decision C55: the count words agree with how many agent steps are ready.
-      `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive ${pending.agent_steps.length === 1 ? 'it' : 'them'} with realm agent --run-id ${runId}`,
-    );
+    // decisions C55, C59: the subject and the count word agree with how many agent steps are ready.
+    const ready =
+      pending.agent_steps.length === 1
+        ? `an agent step is ready: '${pending.agent_steps[0]}' — drive it`
+        : `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them`;
+    reasons.push(`${ready} with realm agent --run-id ${runId}`);
   }
   reasons.push(
     ...inFlightSteps(run).map(

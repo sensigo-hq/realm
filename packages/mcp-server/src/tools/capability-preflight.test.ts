@@ -75,7 +75,10 @@ describe('#134 pre-flight capability warning', () => {
     const warned = result.warnings.join('\n');
     expect(warned).toContain("Step 'validate'");
     expect(warned).toContain("handler 'custom_handler'");
-    expect(warned).toContain('block recoverably');
+    // issue #625 PR-2a (decision C58): start_run reaches this head step and it blocks, so the
+    // pre-flight "If reached it will block recoverably" is replaced by the block's own message,
+    // which says the same recoverable fact in the past tense.
+    expect(warned).toContain('The run is NOT terminated — the step remains eligible');
     // WARN, never REFUSE — the run is created (and persisted) regardless. start_run auto-drives the
     // first auto step, which recoverably blocks (error_code set, NOT a hard refusal); the run persists.
     expect(result.run_id).toBeDefined();

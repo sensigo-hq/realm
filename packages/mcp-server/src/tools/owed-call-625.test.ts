@@ -18,6 +18,7 @@ import { handleStartRunBatch } from './start-run-batch.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
+import { handleExecuteStep } from './execute-step.js';
 
 const owedDef: WorkflowDefinition = {
   id: 'owed-wf',
@@ -384,10 +385,10 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     expect(r.context_hint).toBe(
       `Run '${r.run_id}' created for workflow 'cap-head-wf'. Ready for the agent: 'ask'. 'enrich' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.`,
     );
-    expect(r.warnings).toEqual([
-      "Step 'enrich' needs handler 'h', which is not registered in this runner. If reached it will block recoverably (not fail) until a runner that provides this handler executes it — load the missing extension or run on a capable runner.",
-      BLOCK,
-    ]);
+    // decision C58: the step was reached and blocked, so its pre-flight warning ("If reached it will
+    // block") is dropped beside the block that happened — exactly one warning about 'enrich'.
+    expect(r.warnings).toEqual([BLOCK]);
+    expect(r.warnings.filter((w) => w.includes("'enrich'"))).toHaveLength(1);
     expect(r.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
     // The attempt was made and recorded: the marker is on the record, and the reply's version is
     // the record's.
@@ -507,5 +508,105 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       `Run '${r.run_id}' created for workflow 'trust-head-wf'. Ready for the agent: 'ask'. 'compute' cannot run (trust): 'trust: "human_confimred"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed; did you mean 'human_confirmed'? — correct the value and 'realm workflow register <path>'.`,
     );
     expect(r.context_hint).not.toContain('parked');
+  });
+  // decision C57: every reply that says what comes next ends with the tools' way out when the run
+  // cannot go on until its workflow is corrected — not only advance_run's nothing-ran reply.
+  const TOOLS_WAY_OUT =
+    'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
+  const needsN = { type: 'object', required: ['n'], properties: { n: { type: 'number' } } };
+  const C57_REFUSAL =
+    "'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.";
+
+  it("C57: start_run's creation hint ends with the way out when the new run's only engine step is refused before its claim", async () => {
+    const onlyDef: WorkflowDefinition = {
+      id: 'c57-only-wf',
+      name: 'c57 only',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        compute: { description: 'C.', execution: 'auto', depends_on: [], input_schema: needsN },
+      },
+    };
+    await workflowStore.register(onlyDef);
+    const r = await handleStartRun(
+      { workflow_id: onlyDef.id, params: {} },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(r.status).toBe('ok');
+    expect(r.next_actions).toEqual([]);
+    expect(r.context_hint).toBe(
+      `Run '${r.run_id}' created for workflow 'c57-only-wf'. ${C57_REFUSAL} ${TOOLS_WAY_OUT}`,
+    );
+  });
+
+  it("C57: execute_step's reply after the last agent step ends with the way out; with another agent step ready it does not", async () => {
+    const lastDef: WorkflowDefinition = {
+      id: 'c57-last-wf',
+      name: 'c57 last',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+        compute: {
+          description: 'C.',
+          execution: 'auto',
+          depends_on: ['ask'],
+          input_schema: needsN,
+        },
+      },
+    };
+    const notLastDef: WorkflowDefinition = {
+      id: 'c57-not-last-wf',
+      name: 'c57 not last',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+        ask2: { description: 'Ask 2.', execution: 'agent', depends_on: ['ask'] },
+        compute: {
+          description: 'C.',
+          execution: 'auto',
+          depends_on: ['ask'],
+          input_schema: needsN,
+        },
+      },
+    };
+    await workflowStore.register(lastDef);
+    await workflowStore.register(notLastDef);
+    const stores = { runStore, workflowStore, registry: new ExtensionRegistry() };
+    const a = await handleStartRun({ workflow_id: lastDef.id, params: {} }, stores);
+    const e = await handleExecuteStep({ run_id: a.run_id, command: 'ask', params: {} }, stores);
+    expect(e.status).toBe('ok');
+    expect(e.next_actions).toEqual([]);
+    expect(e.context_hint).toBe(`Step 'ask' completed. ${C57_REFUSAL} ${TOOLS_WAY_OUT}`);
+    const b = await handleStartRun({ workflow_id: notLastDef.id, params: {} }, stores);
+    const f = await handleExecuteStep({ run_id: b.run_id, command: 'ask', params: {} }, stores);
+    expect(f.context_hint).toBe(
+      `Step 'ask' completed. Ready for the agent: 'ask2'. ${C57_REFUSAL}`,
+    );
+  });
+
+  it("C58: a pre-flight warning for a step that was NOT reached stays; only the blocked step's is dropped", async () => {
+    const twoDef: WorkflowDefinition = {
+      id: 'c58-two-wf',
+      name: 'c58 two',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        enrich: { description: 'Enrich.', execution: 'auto', depends_on: [], handler: 'h' },
+        ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+        later: { description: 'Later.', execution: 'auto', depends_on: ['ask'], handler: 'h2' },
+      },
+    };
+    await workflowStore.register(twoDef);
+    const r = await handleStartRun(
+      { workflow_id: twoDef.id, params: {} },
+      { runStore, workflowStore, registry: new ExtensionRegistry() },
+    );
+    expect(r.status).toBe('ok');
+    expect(r.warnings).toEqual([
+      "Step 'later' needs handler 'h2', which is not registered in this runner. If reached it will block recoverably (not fail) until a runner that provides this handler executes it — load the missing extension or run on a capable runner.",
+      "Step 'enrich' is blocked: its handler 'h' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. Provision this runner (or re-run on a capable one), then follow next_actions.",
+    ]);
   });
 });

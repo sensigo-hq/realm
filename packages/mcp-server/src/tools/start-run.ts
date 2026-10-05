@@ -131,9 +131,8 @@ export async function handleStartRun(
   // auto-step handlers/adapters, warn so the operator can provision before a step blocks recoverably.
   // The `?? createDefaultRegistry()` fallback is a HARD invariant — it mirrors the dispatch sites, so a
   // filesystem-only workflow with no supplied registry does not false-warn.
-  const warnings: string[] = unmetCapabilities(definition, registry ?? createDefaultRegistry()).map(
-    capabilityWarning,
-  );
+  const unmet = unmetCapabilities(definition, registry ?? createDefaultRegistry());
+  const warnings: string[] = unmet.map(capabilityWarning);
   if (deduped) {
     // Observational only — a legitimate same-caller retry also hits an active run. Keyed on
     // terminal_state, never the persisted run_phase.
@@ -190,8 +189,8 @@ export async function handleStartRun(
     // decision C52: a capability block is not this call's failure — the run was created and is
     // healthy; a runner with the extension runs the step. The reply is the creation reply (status
     // ok), its hint names the step through describeNext, and the block's message (its own
-    // `context_hint`: "Step '<s>' is blocked: …") rides in `warnings`. A failed step is returned
-    // as is.
+    // `context_hint`: "Step '<s>' is blocked: …") rides in `warnings`, in place of that step's
+    // pre-flight warning (decision C58). A failed step is returned as is.
     if (
       result.status === 'error' &&
       (result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
@@ -228,12 +227,27 @@ export async function handleStartRun(
   const nextActions = createdRun.terminal_state
     ? []
     : buildNextActions(definition, createdRun, registry);
+  // decision C58: the block happened, so the pre-flight warning for the same step ("If reached it
+  // will block") is dropped beside it. The blocked steps are the ones whose `capability_blocks`
+  // marker this call's attempt wrote — a created run carries none before it.
+  const blockedHere =
+    capabilityBlock === undefined
+      ? new Set<string>()
+      : new Set(
+          Object.keys(createdRun.capability_blocks ?? {}).filter(
+            (step) => run.capability_blocks?.[step] === undefined,
+          ),
+        );
+  const droppedPreflight = new Set(
+    unmet.filter((requirement) => blockedHere.has(requirement.step)).map(capabilityWarning),
+  );
   // issue #625 PR-2a (decision C45): a run this call created on which nothing ran says what comes
   // next in its own hint — the agent steps ready, the engine's owed work, and each engine step that
-  // cannot run — so a step that cannot run is named on the reply that created the run.
+  // cannot run — so a step that cannot run is named on the reply that created the run; and, when
+  // the run cannot go on until its workflow is corrected, the way out (decision C57).
   const next =
     !deduped && !createdRun.terminal_state
-      ? describeNext(describePending(definition, createdRun, registry))
+      ? describeNext(describePending(definition, createdRun, registry), createdRun)
       : '';
   return {
     command: 'start_run',
@@ -243,7 +257,9 @@ export async function handleStartRun(
     data: {},
     evidence: [],
     warnings:
-      capabilityBlock !== undefined ? [...warnings, capabilityBlock.context_hint] : warnings,
+      capabilityBlock !== undefined
+        ? [...warnings.filter((w) => !droppedPreflight.has(w)), capabilityBlock.context_hint]
+        : warnings,
     errors: [],
     ...(capabilityBlock?.chained_auto_steps !== undefined
       ? { chained_auto_steps: capabilityBlock.chained_auto_steps }

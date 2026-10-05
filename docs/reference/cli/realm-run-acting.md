@@ -111,7 +111,7 @@ This program: tester (from REALM_OPERATOR) · project code: neither side records
 Last recorded driver: none recorded.
 Owed to the engine: 'after'.
 → after
-Stopped: agent steps are ready: 'finish' — drive it with realm agent --run-id <id>
+Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id <id>
 Run <id>: phase 'running'
 ```
 
@@ -127,7 +127,7 @@ The preview's `project code` words compare the code this program loaded with wha
 
 When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.`
 
-`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), agent steps ready (with the `realm agent --run-id` command), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. A step another process took while this one was about to run it is said as a fact, and the command goes on with what is left. The command prints `→ <step>` as it starts a step, before it claims it, so the losing program prints both lines, in this order — the second says another program took the step first, so it did not run here:
+`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. A step another process took while this one was about to run it is said as a fact, and the command goes on with what is left. The command prints `→ <step>` as it starts a step, before it claims it, so the losing program prints both lines, in this order — the second says another program took the step first, so it did not run here:
 
 ```text
 → process
