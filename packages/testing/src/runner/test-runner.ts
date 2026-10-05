@@ -260,9 +260,10 @@ async function runSingleFixture(
       // claim (trust, precondition, input schema), the fixture fails naming each step that cannot
       // run and its check, in core's own clause, instead of running to the iteration cap. Never a
       // run-level way out (`realm run advance` / `abandon`): this run lives in the runner's memory
-      // and no command reaches it. A step this fixture's registry lacks the handler or adapter for
-      // is not this state: the pick below dispatches it, and the fixture fails with the engine's
-      // own message, as a chained step that needs it does.
+      // and no command reaches it. A step whose handler or adapter this fixture's registry lacks
+      // does not stop the fixture here on its own: the pick below dispatches it, and the fixture
+      // fails with the engine's own message, as a chained step that needs it does. Beside a step
+      // refused before its claim, it is named here too, with the other steps that cannot run.
       const pending = describePending(definition, currentRun, fixtureRegistry);
       if (cannotRunWayOutApplies(currentRun, pending)) {
         return {

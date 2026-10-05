@@ -3,7 +3,8 @@
 // run, and a fixture that stops because a step is refused before its claim fails naming each step
 // that cannot run and its check — never by running to the iteration cap, and never with a way out
 // that names a command (the run lives in the runner's memory). A step whose handler or adapter has
-// no stand-in fails with the engine's own message, at the head of the run as after a step.
+// no stand-in fails on its own with the engine's own message, at the head of the run as after a
+// step; beside a step refused before its claim, the stall names it too.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, afterEach } from 'vitest';
