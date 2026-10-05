@@ -107,7 +107,7 @@ It prints:
 
 ```text
 Realm — my-first v1
-Run ID: 731242a8-3350-46a5-b723-a5b7ad1680f2
+Run ID: 69ae7fc8-b08e-4885-a280-464d7cd0bbd2
 
 → [agent] step_one: First step — replace with your own
   Agent output JSON (Enter for {}): {"result": 42}
@@ -142,13 +142,13 @@ Notice that you answered once and the run finished. Realm accepted `step_one`, t
 Print the record of the run. Use the run ID from step 4; yours is different.
 
 ```bash
-realm run inspect 731242a8-3350-46a5-b723-a5b7ad1680f2
+realm run inspect 69ae7fc8-b08e-4885-a280-464d7cd0bbd2
 ```
 
 It prints the following. Some lines are left out here and marked `…`.
 
 ```text
-Run: 731242a8-3350-46a5-b723-a5b7ad1680f2
+Run: 69ae7fc8-b08e-4885-a280-464d7cd0bbd2
 Workflow: my-first v1
 Phase: completed  ✓
 …
@@ -156,12 +156,14 @@ Completed: step_one, step_two
 …
 Evidence (2 steps):
 
-  1. step_one               success   0ms   hash: 735e6dd8
+  1. step_one               success   1ms   hash: 735e6dd8
+     Taken by: ops@server-1 (from the OS user, via run)
      Input:  {"result":"hello from my first run"}
      Output: {"result":"hello from my first run"}
      …
 
   2. step_two               success   0ms   hash: 735e6dd8
+     Taken by: ops@server-1 (from the OS user, via run)
      Input:  {}
      Output: {"result":"hello from my first run"}
      …

@@ -121,7 +121,8 @@ The total is 50. Does that look right?
 The record keeps the handler's input and output:
 
 ```text
-  1. total                  success   1ms   hash: b2da9bae
+  1. total                  success   1ms   hash: 4e944dad
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"quantity":4}
      Resolved: {"quantity":4}
      Output: {"total":50}

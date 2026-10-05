@@ -81,6 +81,7 @@ The record shows what was sent and what was recorded, and names the step as defa
 Defaulted (settled by default): classify
 …
   1. classify               success   0ms   hash: aefc126d
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"category":"refunds"}
      Output: {"category":"other"}
 ```
