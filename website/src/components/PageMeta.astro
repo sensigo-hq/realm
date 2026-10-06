@@ -1,6 +1,7 @@
 ---
 // The description, canonical link and link-preview tags of a page that is not a docs page
-// (Starlight writes these for the docs pages). The home page also passes its structured data.
+// (Starlight writes these for the docs pages). The home page also passes its structured data; a page
+// with a Markdown copy names it, as each docs page does.
 import { HOME_DESCRIPTION, jsonLdText, previewTags } from '../lib/site-meta.mjs';
 
 interface Props {
@@ -10,21 +11,27 @@ interface Props {
   path: string;
   /** schema.org objects, written as one <script type="application/ld+json"> each. */
   structuredData?: object[];
+  /** The page's own preview image, /og/<key>.png, and what it shows. Default: the site's image. */
+  image?: { key: string; alt: string };
+  /** The address of the page's Markdown copy, e.g. '/compare.md'. */
+  markdownPath?: string;
 }
-const { title, description, path, structuredData = [] } = Astro.props;
-const tags = previewTags({
+const {
   title,
   description,
   path,
-  imageKey: 'site',
+  structuredData = [],
   // the image of /og/site.png, drawn from the home page's description (src/pages/og/)
-  imageAlt: `The Realm logo and the words: ${HOME_DESCRIPTION}`,
-});
+  image = { key: 'site', alt: `The Realm logo and the words: ${HOME_DESCRIPTION}` },
+  markdownPath,
+} = Astro.props;
+const tags = previewTags({ title, description, path, imageKey: image.key, imageAlt: image.alt });
 ---
 
 <title>{title}</title>
 <meta name="description" content={description} />
 {tags.map(({ tag: Tag, attrs }) => <Tag {...attrs} />)}
+{markdownPath && <link rel="alternate" type="text/markdown" href={markdownPath} />}
 {
   structuredData.map((data) => (
     <script is:inline type="application/ld+json" set:html={jsonLdText(data)} />
