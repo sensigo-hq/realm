@@ -142,9 +142,11 @@ function check(d) {
     perTool(`fact ${f.id}`, f.cells);
     for (const k of keys) text(`fact ${f.id} ${k}`, f.cells[k]);
   }
+  // Star counts are kept in the document (the private view reads them) and not shown on the page.
   const stars = d.facts.find((f) => f.id === 'stars');
-  if (!stars) fail('facts', 'has no "stars" fact; the page states adoption from it');
-  for (const k of keys) {
+  if (stars?.public)
+    fail('fact stars', 'must stay public: false; the page does not show popularity');
+  for (const k of stars ? keys : []) {
     if (!STARS.test(stars.cells[k]))
       fail(
         `fact stars ${k}`,
@@ -178,6 +180,3 @@ export const rows = doc.rows;
 export const publicFacts = doc.facts.filter((f) => f.public);
 export const strengths = doc.strengths;
 export const rowsByVerdict = (kind) => doc.rows.filter((r) => r.verdict.kind === kind);
-/** A tool's GitHub star count as a number (the format is checked above). */
-export const starsOf = (key) =>
-  Number(doc.facts.find((f) => f.id === 'stars').cells[key].replaceAll(',', ''));

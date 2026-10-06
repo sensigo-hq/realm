@@ -875,7 +875,7 @@
     {
       "id": "stars",
       "title": "GitHub stars",
-      "public": true,
+      "public": false,
       "cells": {
         "realm": "2",
         "langgraph": "42,772",
@@ -893,7 +893,7 @@
   "strengths": {
     "realm": {
       "stronger": "Drives an outside agent step by step and refuses out-of-order steps and wrong-shape answers; works with any MCP client and no model key; records why each step was skipped and why the run ended, which program took each step, and each gate answer; refuses a misspelt trust level or an invalid schema when the workflow is loaded.",
-      "weaker": "One maintainer and 2 stars; no UI; JSON files on one machine; no automatic recovery after a crash; gate answers not checked (an agent can approve its own gate); the record can be edited unnoticed; after a gate is answered the next automatic step waits for a call; MCP tools for steps are stdio only; frequent breaking changes before 1.0 (9 in 0.46.0)."
+      "weaker": "No UI: no visual editor or dashboard; runs are stored as JSON files on one machine; nothing resumes a run after a crash; a gate records the name the answerer gives and checks nothing; after a gate is answered, the next automatic step waits for a call; agent steps can use tools only from local (stdio) MCP servers, and only under realm agent."
     },
     "langgraph": {
       "stronger": "Time travel and forking from any checkpoint; per-node retries, timeouts and caching; Postgres and MongoDB with encryption; Studio debugger; LangSmith tracing; Python and JS.",
@@ -924,7 +924,7 @@
       "weaker": "Model output is not checked; approvals carry only what the event says; traces last 24 hours to 14 days below Enterprise."
     },
     "n8n": {
-      "stronger": "1,500+ integrations by its README (the repository description says 400+) and 9,000+ templates; human review of AI tool calls on 9 channels; visual editor; MCP server that can build workflows; queue mode; about 207k stars.",
+      "stronger": "1,500+ integrations by its README (the repository description says 400+) and 9,000+ templates; human review of AI tool calls on 9 channels; visual editor; MCP server that can build workflows; queue mode.",
       "weaker": "Inside the agent node the model decides; link approvals record no one; records pruned after 14 days by default; not OSI open source."
     },
     "dify": {

@@ -12,7 +12,7 @@ import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Logo from '../components/Logo.astro';
 import PageMeta from '../components/PageMeta.astro';
 import { COMPARE_DESCRIPTION, SOURCE_URL } from '../lib/site-meta.mjs';
-import { tools, rows, publicFacts, strengths, rowsByVerdict, starsOf } from '../lib/comparison.mjs';
+import { tools, rows, publicFacts, strengths, rowsByVerdict } from '../lib/comparison.mjs';
 
 const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
 const VERDICT = {
@@ -32,12 +32,6 @@ for (const t of tools) {
   if (groups.length && groups.at(-1).name === t.group) groups.at(-1).span += 1;
   else groups.push({ name: t.group, span: 1 });
 }
-
-// The adoption line: Realm's stars against the range of the others (the loader checks the format).
-const fmt = (x) => x.toLocaleString('en-US');
-const otherStars = tools.filter((t) => t.key !== 'realm').map((t) => starsOf(t.key));
-const realmStars = starsOf('realm');
-const adoption = `Adoption: ${fmt(realmStars)} GitHub star${realmStars === 1 ? '' : 's'}, against ${fmt(Math.min(...otherStars))} to ${fmt(Math.max(...otherStars))} for the others`;
 
 // Issue numbers in the text (#625) become links to the issue.
 const linkParts = (text) => text.split(/(#\d+)/).map((part) => (/^#\d+$/.test(part) ? { issue: part.slice(1) } : { text: part }));
@@ -159,7 +153,6 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
         <h3><span class={`dot ${kind}`}></span>{label}</h3>
         <ul>
           {list.map((r) => <li><a href={`#${r.id}`}>{r.title}</a></li>)}
-          {kind === 'behind' && adoption && <li>{adoption}</li>}
         </ul>
       </div>
     ))}
@@ -253,7 +246,7 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
       <li>Each answer was read in the tool's own source code, docs or release notes. A column names the main release that was read; where an answer comes from a companion package, such as a tool's SDK, CLI or MCP server, its source names the file. Blog posts, comparison articles and AI summaries were not used.</li>
       <li>Realm's own column was checked by a separate pass told to find its weaknesses, and its key answers were run on the published release.</li>
       <li>"Only Realm", "Level with the field", "Realm is behind" and "Nobody has it" are our reading of each row. The answers and their sources are the evidence.</li>
-      <li>Claims a tool makes only in its docs are labelled DOCS and were not checked in its code. GitHub stars change daily; they were read on the date in each column. Prices change often and are not listed here.</li>
+      <li>Claims a tool makes only in its docs are labelled DOCS and were not checked in its code. Prices change often and are not listed here.</li>
       <li>The newest column was checked on {lastChecked}. The data behind this page is one file, <a href={dataUrl}>comparison.json</a>.</li>
       <li>Something wrong or out of date? <a href={issueUrl}>Open an issue</a> with a link to the tool's own code or docs, and we will check it and correct the page.</li>
     </ul>
