@@ -376,13 +376,24 @@ loaded from there.`
 
 ### Security
 
+- **`@modelcontextprotocol/sdk` 1.30.0 → 1.31.0** — one HIGH advisory,
+  [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h) / CVE-2026-104850: the
+  SDK's OAuth client could send the credentials it held (stored from an earlier sign-in, or
+  configured on one of its bundled providers) to an authorization server that the MCP server chose. Realm pins the SDK exactly, so `@sensigo/realm-cli` and `@sensigo/realm-mcp`
+  now depend on exactly `1.31.0`. Exposure: none. Realm uses the SDK's client side only to run the
+  MCP servers an agent step declares, through `Client` and `StdioClientTransport`; the OAuth client
+  (`client/auth.js`, and the providers in `client/auth-extensions.js`) is loaded only by the SDK's
+  HTTP client transports and their middleware, and none of the SDK modules realm imports reaches it. 1.31.0 also carries 1.30.1's server changes, and
+  one of them is visible in realm: `realm serve` now answers a JSON-RPC batch of more than 100
+  messages with HTTP 400. The SDK's new 4 MiB request-body limit does not apply there, because
+  `realm serve` reads the body itself under its own 1 MiB limit. Nothing changes over stdio.
 - **`proxy-addr` 2.0.7 → 2.0.8** — one CRITICAL advisory,
   [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h) / CVE-2026-90711 (CVSS
   9.1): a trusted-proxy subnet written as an IPv4-mapped IPv6 address with a short prefix (such as
   `::ffff:10.0.0.0/8`), or any IPv6 subnet with zero leading bits, matched every IPv4 address, so an
   Express app using it believed any client's `X-Forwarded-For`. In-range, lockfile-only (`express`
-  5.2.1 declares `^2.0.7`). The one copy comes from `@modelcontextprotocol/sdk` (exactly `1.30.0`, a
-  dependency of `@sensigo/realm-cli` and `@sensigo/realm-mcp`) through `express` 5.2.1. Exposure:
+  5.2.1 declares `^2.0.7`). The one copy comes from `@modelcontextprotocol/sdk` (a dependency of
+  `@sensigo/realm-cli` and `@sensigo/realm-mcp`) through `express` 5.2.1. Exposure:
   none. Inside the SDK only its Express server (`server/express.js`), its OAuth server files
   (`server/auth/`) and its examples import `express`, and no module realm imports from the SDK
   reaches them; realm's HTTP transport is the SDK's Hono-based `StreamableHTTPServerTransport`.

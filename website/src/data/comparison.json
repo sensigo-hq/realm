@@ -1,0 +1,841 @@
+{
+  "schema": 1,
+  "about": "The main comparison document. The public page /compare/ (website/src/pages/compare.astro) is built from this file, so every fact is edited here and nowhere else. Each tool's 'checked' is the date its column was last read at the version named.",
+  "checked_on": "2026-10-06",
+  "order": {
+    "by": "GitHub stars",
+    "on": "2026-10-06"
+  },
+  "tools": [
+    {
+      "key": "realm",
+      "name": "Realm",
+      "group": "This project",
+      "version": "0.46.0 (npm)",
+      "checked": "2026-10-06"
+    },
+    {
+      "key": "n8n",
+      "name": "n8n",
+      "group": "Visual platforms",
+      "version": "2.42.3",
+      "checked": "2026-10-06"
+    },
+    {
+      "key": "dify",
+      "name": "Dify",
+      "group": "Visual platforms",
+      "version": "1.17.1",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "crewai",
+      "name": "CrewAI",
+      "group": "Agent frameworks",
+      "version": "1.15.23",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "langgraph",
+      "name": "LangGraph",
+      "group": "Agent frameworks",
+      "version": "1.2.13",
+      "checked": "2026-10-06"
+    },
+    {
+      "key": "mastra",
+      "name": "Mastra",
+      "group": "Agent frameworks",
+      "version": "core 1.74.0",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "temporal",
+      "name": "Temporal",
+      "group": "Durable execution",
+      "version": "server 1.32.0",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "maf",
+      "name": "Microsoft Agent Framework",
+      "group": "Agent frameworks",
+      "version": "python 1.20.0",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "inngest",
+      "name": "Inngest",
+      "group": "Durable execution",
+      "version": "server 1.45.1",
+      "checked": "2026-10-05"
+    }
+  ],
+  "rows": [
+    {
+      "id": "drive",
+      "title": "An outside AI agent can be driven through it one step at a time",
+      "ask": "Can an assistant such as Claude or Cursor work through a workflow step by step, and be refused when it skips ahead or answers in the wrong shape?",
+      "verdict": {
+        "kind": "lead",
+        "text": "Only Realm does this built in. The others give an outside agent, at most, tools that run a whole workflow."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "An MCP client calls execute_step for one step at a time. A step that is not eligible yet is refused, and when a step declares a schema, an answer that breaks it is refused.",
+          "source": "execution-loop.ts:1591-1605; probe on 0.46.0 over MCP",
+          "label": "CODE + EXECUTED"
+        },
+        "langgraph": {
+          "value": "No",
+          "note": "Agent Server exposes each graph as one MCP tool; one call runs the whole graph, with no sessions.",
+          "source": "docs.langchain.com/langsmith/server-mcp",
+          "label": "DOCS"
+        },
+        "crewai": {
+          "value": "No",
+          "note": "No MCP server in the open-source code; outside callers start a crew through A2A or the paid platform's API.",
+          "source": "grep lib/ @1.15.23; processes.mdx",
+          "label": "CODE + DOCS"
+        },
+        "mastra": {
+          "value": "No",
+          "note": "MCPServer exposes a workflow as one tool, run_<key>, which runs the whole workflow.",
+          "source": "packages/mcp/src/server/server.ts:280-310",
+          "label": "CODE"
+        },
+        "maf": {
+          "value": "No",
+          "note": "WorkflowMCPTool (alpha) runs a whole workflow, and refuses one that needs human input.",
+          "source": "hosting-mcp/_workflow_tool.py:99-105",
+          "label": "CODE"
+        },
+        "temporal": {
+          "value": "No",
+          "note": "Not built in. Temporal's own MCP server searches its docs; you can write a server whose tools start workflows.",
+          "source": "docs.temporal.io/with-ai; cli commands.yaml (no mcp)",
+          "label": "DOCS + CODE"
+        },
+        "inngest": {
+          "value": "No",
+          "note": "Its MCP server sends events, runs functions and reads traces. A client does not hand in step results through it.",
+          "source": "inngest.com/docs ai-dev-tools/mcp; pkg/devserver/mcp.go, pkg/api/v2/apiv2mcp/tools.go @v1.45.1",
+          "label": "DOCS + CODE"
+        },
+        "n8n": {
+          "value": "No",
+          "note": "MCP execute_workflow runs a whole workflow, and does not support workflows with human-in-the-loop steps.",
+          "source": "docs.n8n.io MCP server tools reference",
+          "label": "DOCS"
+        },
+        "dify": {
+          "value": "No",
+          "note": "An app published as an MCP server is exactly one tool.",
+          "source": "api/core/mcp/server/streamable_http.py:181-203",
+          "label": "CODE"
+        }
+      }
+    },
+    {
+      "id": "order",
+      "title": "Decides which step runs next",
+      "ask": "Does the tool, not the model, decide the step order?",
+      "verdict": {
+        "kind": "level",
+        "text": "Level with the tools whose workflows are ordered by code, and the only one that holds an outside agent to that order. One gap: after a gate is answered, the next automatic step waits for an explicit call (#625)."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "The engine works out the eligible steps after every result and refuses the others. Among several eligible steps, the caller picks. A guard step behind a gate is decided when the answer is written; an automatic step after a gate still waits for a call (#625, open).",
+          "source": "execution-loop.ts:1591-1605; CHANGELOG 0.46.0; probe on 0.46.0",
+          "label": "CODE + DOCS + EXECUTED"
+        },
+        "langgraph": {
+          "value": "Yes",
+          "note": "The graph's edges decide; routing can use the model's output, but only to nodes the code wires in. Inside a prebuilt agent loop the model picks tools.",
+          "source": "graph-api.md#conditional-edges",
+          "label": "DOCS"
+        },
+        "crewai": {
+          "value": "Yes",
+          "note": "Sequential crews and Flows follow code; in hierarchical crews a manager LLM assigns the tasks.",
+          "source": "processes.mdx:17-19, 53-60",
+          "label": "DOCS"
+        },
+        "mastra": {
+          "value": "Yes",
+          "note": "Workflows run a graph fixed in code; in agent networks a routing LLM picks the next agent.",
+          "source": "workflows/overview.mdx:19-29",
+          "label": "DOCS"
+        },
+        "maf": {
+          "value": "Yes",
+          "note": "Graph workflows run typed executors along edges; in group-chat, handoff and Magentic orchestrations an LLM picks who acts.",
+          "source": "learn: concepts/workflows; _magentic.py:474-519",
+          "label": "DOCS + CODE"
+        },
+        "temporal": {
+          "value": "Yes",
+          "note": "Your workflow code decides; when that code is an agent loop, the model picks the tools.",
+          "source": "docs: openai-agents integration",
+          "label": "DOCS"
+        },
+        "inngest": {
+          "value": "Yes",
+          "note": "Your code decides; in an agent loop \"the model's response decides the next step\".",
+          "source": "docs: durable-agents",
+          "label": "DOCS"
+        },
+        "n8n": {
+          "value": "Yes",
+          "note": "The graph sets node order; inside the AI Agent node the model picks tools, up to 10 iterations by default.",
+          "source": "ToolsAgent/options.ts:22-25",
+          "label": "CODE + DOCS"
+        },
+        "dify": {
+          "value": "Yes",
+          "note": "Workflow apps follow the graph; Agent nodes give the model control over tools.",
+          "source": "docs: nodes/agent",
+          "label": "DOCS"
+        }
+      }
+    },
+    {
+      "id": "schema",
+      "title": "Checks the model's output against a schema",
+      "ask": "Is a step's output checked against a declared schema before the run moves on?",
+      "verdict": {
+        "kind": "level",
+        "text": "Level. Realm refuses a wrong-shape answer and lets the caller try again; n8n, CrewAI and LangChain's agent also send the error back to the model. In Realm the schema is optional per step."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "When a step declares a schema, a wrong-shape answer is refused before it is recorded; after 6 refusals the step fails, or uses a declared default. realm agent sends the error back to the model. Schemas are optional per step.",
+          "source": "execution-loop.ts:1836-1880; json-schema-blocks.md",
+          "label": "CODE + DOCS + EXECUTED"
+        },
+        "langgraph": {
+          "value": "Partial",
+          "note": "The graph does not check a node's output. LangChain's create_agent checks response_format and sends errors back to the model.",
+          "source": "use-graph-api.md; langchain/structured-output.md",
+          "label": "DOCS"
+        },
+        "crewai": {
+          "value": "Partial",
+          "note": "output_pydantic and guardrails check output and retry with the error up to 3 times; on the output_json path a failed conversion can let the run continue on raw text.",
+          "source": "task.py:1382-1390; converter.py:150-174",
+          "label": "CODE + DOCS"
+        },
+        "mastra": {
+          "value": "Partial",
+          "note": "An agent step's structured output is validated and fails the step by default; a plain step's output is not checked against its own schema.",
+          "source": "output-format-handlers.ts:741-749; handlers/step.ts:112",
+          "label": "CODE"
+        },
+        "maf": {
+          "value": "Partial",
+          "note": "A Pydantic result is validated only when read; a dict schema is only parsed as JSON. No retry with errors found.",
+          "source": "_types.py:2470-2490, 3043-3065",
+          "label": "CODE"
+        },
+        "temporal": {
+          "value": "Partial",
+          "note": "Not checked by Temporal; your activity code validates, and failures become activity retries without the errors going back to the model.",
+          "source": "docs: structured-output recipe; contrib/pydantic.py",
+          "label": "CODE + DOCS"
+        },
+        "inngest": {
+          "value": "No",
+          "note": "Model output and tool arguments are not checked; event data can be.",
+          "source": "agent-kit agent.ts:667; triggers.ts:184",
+          "label": "CODE"
+        },
+        "n8n": {
+          "value": "Yes",
+          "note": "The Structured Output Parser checks the reply against a schema; Auto-Fix makes one more model call with the error, then fails.",
+          "source": "N8nStructuredOutputParser.ts:67-68; N8nOutputFixingParser.ts",
+          "label": "CODE"
+        },
+        "dify": {
+          "value": "Partial",
+          "note": "Only checks that the reply parses as JSON (repairing broken JSON); not checked against the schema.",
+          "source": "structured_output.py:121-160",
+          "label": "CODE"
+        }
+      }
+    },
+    {
+      "id": "gate",
+      "title": "Pauses for a person's decision, with a time limit",
+      "ask": "Is there a built-in step that waits for a person, and can it time out?",
+      "verdict": {
+        "kind": "level",
+        "text": "Level with n8n, Dify, Temporal and Inngest. Ahead of the frameworks that have no time limit. Realm's time limit is opt-in; by default a gate waits forever."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "A gate puts the run in gate_waiting and refuses later steps. A time limit is opt-in (abort or a default answer on expiry); by default it waits forever.",
+          "source": "gates-and-trust.md:63-114; probe on 0.46.0",
+          "label": "DOCS + EXECUTED"
+        },
+        "langgraph": {
+          "value": "Partial",
+          "note": "interrupt() pauses inside a node and resume continues it. No time limit on the wait.",
+          "source": "types.py:461-490, 833-858; interrupts.md",
+          "label": "CODE + DOCS"
+        },
+        "crewai": {
+          "value": "Partial",
+          "note": "Open source: console input or Flow feedback, no time limit. The paid platform adds email review with a timeout.",
+          "source": "human_input.py:364; flow-hitl-management.md",
+          "label": "CODE + DOCS"
+        },
+        "mastra": {
+          "value": "Partial",
+          "note": "A step can suspend and be resumed with data. No time limit found.",
+          "source": "workflows/human-in-the-loop.mdx",
+          "label": "DOCS"
+        },
+        "maf": {
+          "value": "Partial",
+          "note": "request_info() pauses and routes the answer back by id. No time limit in core.",
+          "source": "_workflow_context.py:404-434",
+          "label": "CODE"
+        },
+        "temporal": {
+          "value": "Yes",
+          "note": "Wait for a Signal with a timeout.",
+          "source": "docs: design-patterns/approval",
+          "label": "DOCS"
+        },
+        "inngest": {
+          "value": "Yes",
+          "note": "step.waitForEvent with a timeout, which returns null on expiry.",
+          "source": "docs: human-in-the-loop",
+          "label": "DOCS"
+        },
+        "n8n": {
+          "value": "Yes",
+          "note": "Send and Wait (approval, text or form), with an optional wait limit.",
+          "source": "sendAndWait/utils.ts; docs",
+          "label": "CODE + DOCS"
+        },
+        "dify": {
+          "value": "Yes",
+          "note": "A Human Input node with a form, action buttons and a timeout branch (3 days by default in the editor).",
+          "source": "human_input/entities.py:249-290",
+          "label": "CODE + DOCS"
+        }
+      }
+    },
+    {
+      "id": "who",
+      "title": "Records who made the decision, and checks it",
+      "ask": "Is the person who answered recorded, and is their identity checked?",
+      "verdict": {
+        "kind": "behind",
+        "text": "Behind Dify, which records the account that answered and gives each recipient its own token, and CrewAI's paid platform, which checks the reviewer's email (per its docs). Realm records a name the caller states and checks nothing; in a test the agent approved its own gate, and the proof token, which shows only the conversation, recorded it as matched."
+      },
+      "cells": {
+        "realm": {
+          "value": "Partial",
+          "note": "Records a name the caller states and checks nothing. Each answer also records whether it passed back the token from the reply that opened the gate, which proves the conversation, not the person: in a test the MCP agent approved its own gate, passed its token, and was recorded as matched. Slack records no name (#603).",
+          "source": "gates-and-trust.md:72; mcp/tools.md:431-433; slack-gate-notifier.ts; probe on 0.46.0",
+          "label": "DOCS + CODE + EXECUTED"
+        },
+        "langgraph": {
+          "value": "No",
+          "note": "resume carries no field for who answered. Agent Server's auth can check the caller if you write that code.",
+          "source": "types.py:833-858; langsmith/auth.md",
+          "label": "CODE + DOCS"
+        },
+        "crewai": {
+          "value": "Partial",
+          "note": "Open source: no answerer recorded. Paid platform: the reviewer's identity is recorded and checked against a signed token (docs only).",
+          "source": "flow/human_feedback.py:180-185; flow-hitl-management.md",
+          "label": "CODE + DOCS"
+        },
+        "mastra": {
+          "value": "No",
+          "note": "The step result has no field for who resumed it; a permission check needs the enterprise edition.",
+          "source": "workflows/types.ts:74-86; workflow.ts:4701-4726",
+          "label": "CODE"
+        },
+        "maf": {
+          "value": "No",
+          "note": "No responder field; authentication is left to your code.",
+          "source": "hosting-mcp/README.md:18-20",
+          "label": "DOCS"
+        },
+        "temporal": {
+          "value": "Partial",
+          "note": "The approver is a field you put in the signal; the event also stores an identity string the sender sets. Not checked per approval.",
+          "source": "api history/v1/message.proto:618-635",
+          "label": "CODE + DOCS"
+        },
+        "inngest": {
+          "value": "No",
+          "note": "Only what your code puts in the event; anyone with the environment's event key can send one.",
+          "source": "docs: human-in-the-loop; event keys",
+          "label": "DOCS"
+        },
+        "n8n": {
+          "value": "No",
+          "note": "A link approval resumes with {approved, respondedAt} only. The link is signed, but anyone holding it can answer.",
+          "source": "sendAndWait/utils.ts:488-493",
+          "label": "CODE"
+        },
+        "dify": {
+          "value": "Partial",
+          "note": "Records the submitting user and recipient; each recipient gets a token. Email links: anyone with the link can answer.",
+          "source": "models/human_input.py:72-78; human_input_service.py",
+          "label": "CODE + DOCS"
+        }
+      }
+    },
+    {
+      "id": "record",
+      "title": "Records each step's input and output",
+      "ask": "Is each step's input and output kept, and for how long?",
+      "verdict": {
+        "kind": "level",
+        "text": "Level. Realm keeps records until you delete them, as do the tools that store their own (LangGraph, Mastra, Microsoft Agent Framework, Dify). n8n prunes after 14 days by default, Inngest Cloud keeps traces 24 hours to 14 days below Enterprise, and Temporal Cloud keeps history 1 to 90 days."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "Each step's input, output and timing; the program that took it (stated or from the OS user, not verified); every gate answer with its stated answerer; why a step was skipped and why the run ended. Under realm agent, the token counts the provider reported. Kept until purged; one-file export.",
+          "source": "run-record-and-export.md:154-163; evidence.md; probe on 0.46.0",
+          "label": "DOCS + EXECUTED"
+        },
+        "langgraph": {
+          "value": "Yes",
+          "note": "A state snapshot at every step plus each node's writes, with a persistent checkpointer. No export file.",
+          "source": "checkpointers.md",
+          "label": "DOCS"
+        },
+        "crewai": {
+          "value": "Partial",
+          "note": "Task inputs and outputs of the latest run only; full checkpoints are opt-in.",
+          "source": "kickoff_task_outputs_storage.py:49-58",
+          "label": "CODE"
+        },
+        "mastra": {
+          "value": "Yes",
+          "note": "Each step's input, output and timestamps in the run snapshot, with persistent storage.",
+          "source": "workflows/types.ts:74-86",
+          "label": "CODE"
+        },
+        "maf": {
+          "value": "Yes",
+          "note": "A chain of checkpoints with messages and state.",
+          "source": "_checkpoint.py:35-87",
+          "label": "CODE"
+        },
+        "temporal": {
+          "value": "Yes",
+          "note": "The event history keeps inputs and results; Temporal Cloud keeps it 1 to 90 days, then you export.",
+          "source": "cloud/namespaces.md:207; cloud/export.md",
+          "label": "DOCS"
+        },
+        "inngest": {
+          "value": "Partial",
+          "note": "Step results and a trace per run. Inngest Cloud keeps trace history 24 hours (Free), 7 days (Pro), 14 days (Business) or up to 365 days (Enterprise); self-hosted Inngest does not remove them.",
+          "source": "docs: limits; docs: self-host Inngest",
+          "label": "DOCS"
+        },
+        "n8n": {
+          "value": "Yes",
+          "note": "Each node's input and output with the execution; pruned after 14 days or 10,000 executions by default.",
+          "source": "executions.config.ts:106-118",
+          "label": "CODE + DOCS"
+        },
+        "dify": {
+          "value": "Yes",
+          "note": "Every node execution's inputs and outputs; kept indefinitely on self-host by default.",
+          "source": "configs/feature/__init__.py:1621-1624",
+          "label": "CODE"
+        }
+      }
+    },
+    {
+      "id": "tamper",
+      "title": "Shows if a record was changed afterwards",
+      "ask": "Is the record hashed, chained or signed so an edit can be detected?",
+      "verdict": {
+        "kind": "open",
+        "text": "None of the tools here does this. LangGraph's optional encryption comes closest: an edited value fails to decrypt."
+      },
+      "cells": {
+        "realm": {
+          "value": "No",
+          "note": "A SHA-256 hash of each output, never re-checked. In a test, hand edits to an agent's output, a person's choice and the answerer's name all showed as real, with no warning; nothing is signed and there is no verify command.",
+          "source": "snapshot.ts:65-70; evidence.md:90-92; probe on 0.46.0",
+          "label": "CODE + DOCS + EXECUTED"
+        },
+        "langgraph": {
+          "value": "Partial",
+          "note": "Optional encryption makes an edited value fail to decrypt; a deleted or reordered checkpoint goes unnoticed.",
+          "source": "serde/encrypted.py:63-78",
+          "label": "CODE"
+        },
+        "crewai": {
+          "value": "No",
+          "note": "No hashing or signing in the open-source code. The paid platform claims immutable audit logs for reviews (not checked).",
+          "source": "grep state/, flow/persistence/",
+          "label": "CODE"
+        },
+        "mastra": {
+          "value": "No",
+          "note": "No hash or signature on step records.",
+          "source": "grep workflows/, storage/",
+          "label": "CODE"
+        },
+        "maf": {
+          "value": "No",
+          "note": "The only hash fingerprints the graph's shape; the docs call checkpoint storage a trust boundary.",
+          "source": "_checkpoint.py; learn: workflows/checkpoints",
+          "label": "CODE + DOCS"
+        },
+        "temporal": {
+          "value": "No",
+          "note": "No hashing or signing described; histories can be deleted.",
+          "source": "llms-full.txt grep; cli commands.yaml:4767",
+          "label": "DOCS + CODE"
+        },
+        "inngest": {
+          "value": "No",
+          "note": "No hashing or signing described.",
+          "source": "llms-full.txt grep",
+          "label": "DOCS"
+        },
+        "n8n": {
+          "value": "No",
+          "note": "No hashing or signing of execution data.",
+          "source": "grep packages/cli/src/executions",
+          "label": "CODE"
+        },
+        "dify": {
+          "value": "No",
+          "note": "Archive bundles carry MD5 checksums against corruption only.",
+          "source": "archive_download_preparation.py:324-326",
+          "label": "CODE"
+        }
+      }
+    },
+    {
+      "id": "crash",
+      "title": "Carries on after a crash, by itself",
+      "ask": "If the process dies mid-run, does the run resume without a person or your code stepping in?",
+      "verdict": {
+        "kind": "behind",
+        "text": "Behind Temporal, Inngest and Mastra, which resume a run on their own. LangGraph, CrewAI and Microsoft Agent Framework resume when your code calls them. A Realm run survives on disk, but a person or a driver restarts it, and a crash during an agent step needs a manual reclaim that may repeat the step's work."
+      },
+      "cells": {
+        "realm": {
+          "value": "Partial",
+          "note": "State is saved after every step, but nothing resumes it: someone starts a driver again. Claims now name a holder and a time, but nothing checks that the holder is alive. A crash mid agent step needs realm run reclaim --force, which may repeat the work. No fsync.",
+          "source": "claim-liveness.ts:116-157; atomic-write.ts:29-32; operate-runs.md",
+          "label": "CODE + DOCS"
+        },
+        "langgraph": {
+          "value": "Partial",
+          "note": "With a persistent checkpointer, a run resumes from the last checkpoint when your code calls it again with the same thread_id; finished nodes are not re-run.",
+          "source": "checkpointers.md",
+          "label": "DOCS"
+        },
+        "crewai": {
+          "value": "Partial",
+          "note": "Opt-in checkpoints; a run resumes when your code restores it (completed tasks are skipped). Writes are best-effort.",
+          "source": "checkpointing.mdx:31-47",
+          "label": "DOCS"
+        },
+        "mastra": {
+          "value": "Yes",
+          "note": "With persistent storage, active runs restart from the last active step.",
+          "source": "workflows/overview.mdx:497-520",
+          "label": "DOCS"
+        },
+        "maf": {
+          "value": "Partial",
+          "note": "Restarts from a checkpoint your code chooses; resuming is not automatic in core. The durable extension makes it automatic.",
+          "source": "learn: workflows/checkpoints",
+          "label": "DOCS"
+        },
+        "temporal": {
+          "value": "Yes",
+          "note": "Replays the event history and resumes from the point of failure.",
+          "source": "encyclopedia/event-history",
+          "label": "DOCS"
+        },
+        "inngest": {
+          "value": "Yes",
+          "note": "Saves each step's result and retries from the step that failed.",
+          "source": "docs: platform overview",
+          "label": "DOCS"
+        },
+        "n8n": {
+          "value": "Partial",
+          "note": "Waits survive a restart; an execution running at the crash is marked crashed, not resumed.",
+          "source": "execution-recovery.service.ts:215,228",
+          "label": "CODE"
+        },
+        "dify": {
+          "value": "Partial",
+          "note": "Paused runs resume; no resume of a run that crashed mid-node was found.",
+          "source": "workflow_execute_task.py:484-596 (inferred)",
+          "label": "CODE + INFERRED"
+        }
+      }
+    },
+    {
+      "id": "mcpserver",
+      "title": "Can be used as an MCP server",
+      "ask": "Can an MCP client (Claude, Cursor, …) connect to it?",
+      "verdict": {
+        "kind": "level",
+        "text": "Level: n8n, Dify, Mastra and Inngest have one too, and LangGraph and Microsoft's in part. What only Realm does is the first row: its tools work one step at a time, where the others run whole workflows. CrewAI has no MCP server; Temporal's own MCP server searches its docs and runs no workflows."
+      },
+      "cells": {
+        "realm": {
+          "value": "Yes",
+          "note": "10 tools over stdio (realm mcp) or HTTP (realm serve), at step level. realm serve checks one shared token.",
+          "source": "packages/mcp-server/src/tools; realm-mcp-and-serve.md",
+          "label": "CODE + EXECUTED"
+        },
+        "langgraph": {
+          "value": "Partial",
+          "note": "Only in Agent Server (Elastic-2.0, needs Postgres and Redis); one tool per graph.",
+          "source": "langsmith/server-mcp.md",
+          "label": "DOCS"
+        },
+        "crewai": {
+          "value": "No",
+          "note": "No MCP server in the open-source code.",
+          "source": "grep lib/",
+          "label": "CODE"
+        },
+        "mastra": {
+          "value": "Yes",
+          "note": "Agents, tools and workflows over stdio and HTTP; a workflow is one whole-run tool.",
+          "source": "connections/mcp.mdx; packages/mcp/src/server/server.ts:280-310 (@mastra/mcp 2.1.2)",
+          "label": "DOCS + CODE"
+        },
+        "maf": {
+          "value": "Partial",
+          "note": "An agent or a workflow as one tool; the workflow tool is alpha.",
+          "source": "_agents.py:1815; _workflow_tool.py",
+          "label": "CODE"
+        },
+        "temporal": {
+          "value": "No",
+          "note": "Its MCP server searches the docs; nothing built in for running workflows.",
+          "source": "docs.temporal.io/with-ai",
+          "label": "DOCS"
+        },
+        "inngest": {
+          "value": "Yes",
+          "note": "Cloud and local servers for operations: send events, run functions, read traces.",
+          "source": "docs: ai-dev-tools/mcp; pkg/devserver/mcp.go, pkg/api/v2/apiv2mcp/tools.go @v1.45.1",
+          "label": "DOCS + CODE"
+        },
+        "n8n": {
+          "value": "Yes",
+          "note": "Per-workflow tools and an instance server that can also build workflows; not stdio.",
+          "source": "docs: mcptrigger; connect-to-n8n-mcp-server",
+          "label": "DOCS"
+        },
+        "dify": {
+          "value": "Yes",
+          "note": "An app as one tool, off by default; credentials in the URL.",
+          "source": "docs: publish-mcp",
+          "label": "DOCS"
+        }
+      }
+    },
+    {
+      "id": "mcpclient",
+      "title": "Steps can call other MCP servers as tools",
+      "ask": "Can a step use tools from other MCP servers?",
+      "verdict": {
+        "kind": "behind",
+        "text": "Behind. Realm supports stdio servers only, and only when realm agent drives the step."
+      },
+      "cells": {
+        "realm": {
+          "value": "Partial",
+          "note": "stdio servers only, and only when realm agent drives the step.",
+          "source": "agent-tools.md:15, 33-36",
+          "label": "DOCS"
+        },
+        "langgraph": {
+          "value": "Yes",
+          "note": "Through LangChain's MCP adapter (beta).",
+          "source": "langchain/mcp.md",
+          "label": "DOCS"
+        },
+        "crewai": {
+          "value": "Yes",
+          "note": "stdio, SSE or Streamable HTTP.",
+          "source": "mcp/overview.mdx",
+          "label": "DOCS"
+        },
+        "mastra": {
+          "value": "Yes",
+          "note": "MCPClient over stdio and Streamable HTTP.",
+          "source": "connections/mcp.mdx",
+          "label": "DOCS"
+        },
+        "maf": {
+          "value": "Yes",
+          "note": "stdio, Streamable HTTP and WebSocket.",
+          "source": "_mcp.py",
+          "label": "CODE"
+        },
+        "temporal": {
+          "value": "Yes",
+          "note": "Through agent-framework integrations; each MCP call runs as an activity.",
+          "source": "openai-agents.md:309-395",
+          "label": "DOCS"
+        },
+        "inngest": {
+          "value": "Yes",
+          "note": "AgentKit agents take MCP servers over HTTP, SSE or WS.",
+          "source": "agentkit docs: MCP as tools",
+          "label": "DOCS"
+        },
+        "n8n": {
+          "value": "Yes",
+          "note": "The MCP Client Tool node.",
+          "source": "docs: toolmcp",
+          "label": "DOCS"
+        },
+        "dify": {
+          "value": "Yes",
+          "note": "MCP servers as tool providers, HTTP only.",
+          "source": "docs: workspace/tools",
+          "label": "DOCS"
+        }
+      }
+    }
+  ],
+  "facts": [
+    {
+      "id": "defined-in",
+      "title": "Defined in",
+      "cells": {
+        "realm": "YAML + JSON Schema; JavaScript extensions",
+        "langgraph": "Python or JS/TS code",
+        "crewai": "Python + JSONC/YAML; visual editor on the paid platform",
+        "mastra": "TypeScript code; JSON (beta)",
+        "maf": "Python, C#, Go code; YAML",
+        "temporal": "Code, 8 SDKs",
+        "inngest": "Code: TS, Python, Go, Kotlin/Java",
+        "n8n": "Visual editor (JSON); code nodes; TS SDK",
+        "dify": "Visual editor; YAML export"
+      }
+    },
+    {
+      "id": "run-through",
+      "title": "Run through",
+      "cells": {
+        "realm": "CLI, MCP, library, webhooks. No UI",
+        "langgraph": "Library, CLI, API, Studio, cloud",
+        "crewai": "CLI, SDK, platform UI and API",
+        "mastra": "CLI, SDK, API, Studio UI, cloud",
+        "maf": "SDK; DevUI sample; Azure Foundry",
+        "temporal": "CLI, SDKs, Web UI, Cloud",
+        "inngest": "CLI, SDKs, dashboard, API, Cloud",
+        "n8n": "UI, API, CLI, MCP, Cloud",
+        "dify": "UI, API, CLI, MCP, Cloud"
+      }
+    },
+    {
+      "id": "hosting",
+      "title": "Hosting and storage",
+      "cells": {
+        "realm": "Self-hosted; JSON files on one machine",
+        "langgraph": "Both; SQLite, Postgres, MongoDB (server: Postgres + Redis)",
+        "crewai": "Both; SQLite, LanceDB",
+        "mastra": "Both; about 20 storage adapters",
+        "maf": "Both; file, Cosmos DB, Foundry",
+        "temporal": "Both; Cassandra, Postgres, MySQL",
+        "inngest": "Both; SQLite, or Redis + Postgres",
+        "n8n": "Both; SQLite or Postgres (+ Redis)",
+        "dify": "Both; Postgres, Redis, a vector store"
+      }
+    },
+    {
+      "id": "license",
+      "title": "License",
+      "cells": {
+        "realm": "Apache-2.0",
+        "langgraph": "MIT (Agent Server: Elastic-2.0)",
+        "crewai": "MIT",
+        "mastra": "Apache-2.0 + source-available ee/",
+        "maf": "MIT",
+        "temporal": "MIT",
+        "inngest": "SSPL server; Apache-2.0 SDKs",
+        "n8n": "Sustainable Use License (source-available)",
+        "dify": "Apache-2.0 with added conditions"
+      }
+    },
+    {
+      "id": "first-release",
+      "title": "First release",
+      "cells": {
+        "realm": "2026-06",
+        "langgraph": "2024-01",
+        "crewai": "2023-11",
+        "mastra": "2024-10",
+        "maf": "2025-10",
+        "temporal": "2020-09 (1.0)",
+        "inngest": "2021-07",
+        "n8n": "2019-06",
+        "dify": "2023-05"
+      }
+    }
+  ],
+  "strengths": {
+    "realm": {
+      "stronger": "Drives an outside agent step by step and refuses out-of-order steps and wrong-shape answers; works with any MCP client and no model key; records why each step was skipped and why the run ended, which program took each step, and each gate answer; refuses a misspelt trust level or an invalid schema when the workflow is loaded.",
+      "weaker": "No UI: no visual editor or dashboard; no loops: a workflow cannot go back to an earlier step, repeat a step until a condition holds, or run a step once per item of a list (only a retry of the same step, or a separate run per item); runs are stored as JSON files on one machine; nothing resumes a run after a crash; a gate records the name the answerer gives and checks nothing; after a gate is answered, the next automatic step waits for a call; agent steps can use tools only from local (stdio) MCP servers, and only under realm agent."
+    },
+    "langgraph": {
+      "stronger": "Time travel and forking from any checkpoint; per-node retries, timeouts and caching; Postgres and MongoDB with encryption; Studio debugger; LangSmith tracing; Python and JS.",
+      "weaker": "The graph does not check a node's output; interrupts have no time limit and no answerer; the MCP server needs the licensed Agent Server and runs whole graphs."
+    },
+    "crewai": {
+      "stronger": "Role-based multi-agent crews; memory and knowledge; A2A; a large tool catalogue; on the paid platform, email review with the reviewer checked.",
+      "weaker": "A manager LLM can decide the order; output_json can continue unvalidated; open-source reviews record no one and have no time limit; no MCP server."
+    },
+    "mastra": {
+      "stronger": "One TypeScript stack for agents, memory, RAG and evals; about 20 storage backends; Studio with time travel; scheduled workflows; MCP on the latest spec.",
+      "weaker": "An outside agent can only start a whole workflow; no answerer on human steps and no time limit; a plain step's output is not checked."
+    },
+    "maf": {
+      "stronger": "Python, C# and Go; ready-made multi-agent patterns; workflow types checked when built; durable execution through Azure; A2A hosting.",
+      "weaker": "A dict schema is never checked; human steps record no responder and have no time limit; the MCP workflow tool is alpha."
+    },
+    "temporal": {
+      "stronger": "Production record since 2020; crash recovery by design; 8 SDKs; Signals, Updates and Schedules; Cloud with high-availability tiers; integrations with 10+ agent frameworks.",
+      "weaker": "Your code is the agent loop and the checks; approver identity is up to you; Cloud keeps history at most 90 days unless exported."
+    },
+    "inngest": {
+      "stronger": "Event-driven runs; concurrency, throttling and debounce; hosted model calls; realtime streaming; evals; serverless-friendly.",
+      "weaker": "Model output is not checked; approvals carry only what the event says; traces last 24 hours to 14 days below Enterprise."
+    },
+    "n8n": {
+      "stronger": "1,500+ integrations by its README (the repository description says 400+) and 9,000+ templates; human review of AI tool calls on 9 channels; visual editor; MCP server that can build workflows; queue mode.",
+      "weaker": "Inside the agent node the model decides; link approvals record no one; records pruned after 14 days by default; not OSI open source."
+    },
+    "dify": {
+      "stronger": "A rich human-input node that records the answerer and has a timeout branch; RAG pipelines; hundreds of model providers; logs kept by default.",
+      "weaker": "Structured output is only parsed, not checked; an MCP client runs a whole app; email approval links work for anyone holding them."
+    }
+  }
+}

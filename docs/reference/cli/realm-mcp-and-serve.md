@@ -87,13 +87,14 @@ A caller sends MCP messages as HTTP `POST` requests with the header `Authorizati
 
 `realm serve` serves plain HTTP. To reach it from another machine, put it behind a web server that provides HTTPS.
 
-| Request                        | Reply                                                                                                                        |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| No token, or a wrong one       | `401` `{"error":"Unauthorized"}`, with the header `WWW-Authenticate: Bearer`                                                 |
-| A body that is not JSON        | `400` `{"error":"Invalid JSON in request body"}`                                                                             |
-| A body larger than 1 MiB       | `413` `{"error":"Request body too large"}`                                                                                   |
-| No `Accept: text/event-stream` | `406` `{"jsonrpc":"2.0","error":{"code":-32000,"message":"Not Acceptable: Client must accept text/event-stream"},"id":null}` |
-| An MCP message                 | `200`, with the MCP reply                                                                                                    |
+| Request                                                                               | Reply                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No token, or a wrong one                                                              | `401` `{"error":"Unauthorized"}`, with the header `WWW-Authenticate: Bearer`                                                                                               |
+| A body that is not JSON                                                               | `400` `{"error":"Invalid JSON in request body"}`                                                                                                                           |
+| A body larger than 1 MiB                                                              | `413` `{"error":"Request body too large"}`                                                                                                                                 |
+| An `Accept` header that does not list both `application/json` and `text/event-stream` | `406` `{"jsonrpc":"2.0","error":{"code":-32000,"message":"Not Acceptable: Client must accept both application/json and text/event-stream"},"id":null}`                     |
+| A batch of more than 100 MCP messages                                                 | `400` `{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: Batch must not exceed 100 messages"},"id":null}` (added after version 0.46.0, which answers it) |
+| An MCP message                                                                        | `200`, with the MCP reply                                                                                                                                                  |
 
 The token is checked before anything else, so a caller without it learns nothing about the request.
 
