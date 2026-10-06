@@ -5,6 +5,7 @@ import { getCollection } from 'astro:content';
 import {
   HOME_DESCRIPTION,
   HOW_IT_WORKS_DESCRIPTION,
+  COMPARE_DESCRIPTION,
   SITE_NAME,
   SOURCE_URL,
   absolute,
@@ -32,6 +33,7 @@ export async function GET() {
     '## Optional',
     '',
     `- [How it works](${absolute('/how-it-works/')}): ${HOW_IT_WORKS_DESCRIPTION}`,
+    `- [How Realm compares](${absolute('/compare/')}): ${COMPARE_DESCRIPTION}`,
     `- [Source code](${SOURCE_URL}): The Realm repository on GitHub, with the changelog and the docs as written.`,
     '',
   ].join('\n');

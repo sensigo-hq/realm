@@ -1,0 +1,348 @@
+---
+// The public comparison page. Everything on it is derived from the main comparison document,
+// src/data/comparison.json, through src/lib/comparison.mjs, which stops the build if the document
+// is incomplete. Edit the facts there, never here. The document holds only what this page shows.
+import { nav } from '../data/nav.js';
+import '../styles/site.css';
+import ThemeToggle from '../components/ThemeToggle.astro';
+import { THEME_INIT } from '../lib/theme-init.mjs';
+import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
+import Logo from '../components/Logo.astro';
+import PageMeta from '../components/PageMeta.astro';
+import { COMPARE_DESCRIPTION, SOURCE_URL } from '../lib/site-meta.mjs';
+import { tools, rows, facts, strengths, rowsByVerdict, order } from '../lib/comparison.mjs';
+
+const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
+const VERDICT = {
+  lead: ['v-lead', 'Only Realm'],
+  level: ['v-level', 'Level with the field'],
+  behind: ['v-behind', 'Realm is behind'],
+  open: ['v-open', 'Nobody has it'],
+};
+const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const others = tools.length - 1;
+const othersWord = WORDS[others] ?? String(others);
+const totalWord = WORDS[tools.length] ?? String(tools.length);
+
+
+// Issue numbers in the text (#625) become links to the issue.
+const linkParts = (text) => text.split(/(#\d+)/).map((part) => (/^#\d+$/.test(part) ? { issue: part.slice(1) } : { text: part }));
+
+// Every product named in the page title must be a column of the table.
+const TITLE_NAMES = ['LangGraph', 'CrewAI', 'Temporal', 'n8n'];
+for (const name of TITLE_NAMES) {
+  if (!tools.some((t) => t.name === name)) throw new Error(`compare.astro: the page title names ${name}, which is not a tool in src/data/comparison.json`);
+}
+// The introduction says what only Realm does; that is the claim of the row "drive". If that row stops
+// being "Only Realm", the sentence would be false, so the build stops instead.
+const driveRow = rows.find((r) => r.id === 'drive');
+if (!driveRow || driveRow.verdict.kind !== 'lead') {
+  throw new Error('compare.astro: the introduction says only Realm can be walked step by step from outside, but the row "drive" in src/data/comparison.json is missing or not "lead"');
+}
+const pageTitle = `How Realm compares with ${TITLE_NAMES.slice(0, -1).join(', ')}, ${TITLE_NAMES.at(-1)} and others`;
+
+const checkedDates = [...new Set(tools.map((t) => t.checked))].sort();
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const parts = (iso) => { const [y, m, d] = iso.split('-').map(Number); return { y, m: MONTHS[m - 1], d }; };
+const first = parts(checkedDates[0]);
+const last = parts(checkedDates.at(-1));
+const longDate = (iso) => { const p = parts(iso); return `${p.d} ${p.m} ${p.y}`; };
+const orderLine = `After Realm, the tools are ordered by ${order.by} on ${longDate(order.on)}, most first. The order says how popular each one is, not how good.`;
+const checkedRange =
+  checkedDates.length === 1 ? `${last.d} ${last.m} ${last.y}`
+  : first.y !== last.y ? `${first.d} ${first.m} ${first.y} – ${last.d} ${last.m} ${last.y}`
+  : first.m !== last.m ? `${first.d} ${first.m} – ${last.d} ${last.m} ${last.y}`
+  : `${first.d}–${last.d} ${last.m} ${last.y}`;
+const issueUrl = `${SOURCE_URL}/issues/new?title=${encodeURIComponent('Comparison: ')}&body=${encodeURIComponent(
+  'Which tool and which question:\n\nWhat the page says:\n\nWhat is true (with a link to the tool\'s own code or docs, and its version):\n',
+)}`;
+const dataUrl = `${SOURCE_URL}/blob/main/website/src/data/comparison.json`;
+const groupsOf = [
+  ['lead', 'Only Realm', rowsByVerdict('lead')],
+  ['level', 'Level with the field', rowsByVerdict('level')],
+  ['behind', 'Realm is behind', rowsByVerdict('behind')],
+  ['open', 'Nobody has it', rowsByVerdict('open')],
+].filter(([, , list]) => list.length > 0);
+---
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<script is:inline set:html={THEME_INIT}></script>
+{ICON_LINKS.map((a) => <link {...a} />)}
+<meta name="theme-color" content={THEME_COLOR} />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<PageMeta title={pageTitle} description={COMPARE_DESCRIPTION} path="/compare/" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+<style is:global>
+/* The comparison: a summary in four groups, one wide table that scrolls inside its own box,
+   then every tool's answer to each question in one table per question, a table of what each
+   tool does better and worse, and how it was checked. */
+:root { --danger: var(--c-danger); --danger-soft: color-mix(in srgb, var(--c-danger) 14%, var(--c-panel)); }
+.hero .diff { color: var(--ink); font-size: 17px; line-height: 1.55; max-width: 68ch; }
+.hero .checked { font: 500 13px/1.4 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); margin-top: 8px; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px; }
+.sbox { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px; }
+.sbox h3 { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.sbox ul { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 15px; }
+.sbox p { margin: 8px 0 0; font-size: 14px; color: var(--muted); }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.lead { background: var(--accent); } .dot.level { background: var(--muted); }
+.dot.behind { background: var(--warn); } .dot.open { background: var(--danger); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; font-size: 14px; color: var(--muted); align-items: center; }
+.scroll { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel); margin-top: 14px; }
+table.matrix { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: 13px; }
+.matrix th, .matrix td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); text-align: center; vertical-align: middle; }
+.matrix thead th { background: var(--panel2); color: var(--ink); font-weight: 600; }
+.tname { display: block; font-size: 13px; }
+.tkind { display: block; font-size: 11.5px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+.tver { display: block; font: 400 11px/1.35 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); margin-top: 2px; }
+.rowhead { position: sticky; left: 0; z-index: 1; text-align: left !important; background: var(--panel); min-width: 220px; max-width: 250px; font-weight: 500; }
+thead .rowhead { background: var(--panel2); z-index: 2; }
+.rowhead a { color: var(--ink); text-decoration: none; display: block; }
+.rowhead a:hover { text-decoration: underline; }
+.rowhead .vchip { margin-top: 6px; }
+/* Realm stands out the same way everywhere: a slightly lighter, neutral background on its column
+   and its rows. Never the accent green, which is the colour of a "Yes" answer. */
+:root { --realm-tint: color-mix(in srgb, var(--c-ink) 7%, var(--c-panel)); }
+:root[data-theme='light'] { --realm-tint: color-mix(in srgb, var(--c-ink) 5%, var(--c-panel)); }
+.matrix .realm { background: var(--realm-tint); }
+.matrix a.cellink { display: inline-block; border-radius: 999px; text-decoration: none; }
+.matrix a.cellink:hover .pill { text-decoration: underline; }
+.matrix tr.sep th, .matrix tr.sep td { background: var(--panel2); font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-block: 6px; }
+.matrix tr.fact td { font-size: 12.5px; color: var(--body); max-width: 170px; min-width: 120px; text-align: left; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; font: 500 12px/1 'IBM Plex Sans', system-ui, sans-serif; padding: 5px 9px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+.pill.yes { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.pill.part { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.pill.no { background: var(--danger-soft); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.pill.na { background: var(--panel2); color: var(--muted); }
+.vchip { display: inline-block; font: 500 11px/1.2 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .04em; padding: 3px 7px; border-radius: 4px; }
+.v-lead { background: var(--accent-soft); color: var(--accent); }
+.v-level { background: var(--panel2); color: var(--muted); }
+.v-behind { background: var(--warn-soft); color: var(--warn); }
+.v-open { background: var(--danger-soft); color: var(--danger); }
+.qrows { display: grid; gap: 28px; margin-top: 8px; }
+section.q { border-top: 1px solid var(--line); padding-top: 22px; scroll-margin-top: 16px; }
+.qtop { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.qtop h3 { font-size: 19px; font-weight: 600; }
+.ask { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
+.verdict { margin: 10px 0 0; max-width: 78ch; color: var(--ink); }
+/* One table per question, and one for the tools: one row per tool, in the main table's column order. */
+.box { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel); overflow: hidden; margin-top: 14px; }
+table.rowsof { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+.rowsof th, .rowsof td { padding: 11px 16px; border-top: 1px solid var(--line-soft); vertical-align: top; text-align: left; }
+.rowsof tbody tr:first-child > * { border-top: 0; }
+.rowsof thead th { background: var(--panel2); font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-top: 0; }
+.rowsof tbody th { color: var(--ink); font-weight: 600; width: 190px; }
+.rowsof tr.realm { background: var(--realm-tint); }
+.rowsof td.ans { width: 96px; }
+.rowsof p { margin: 0; max-width: 76ch; line-height: 1.5; }
+.rowsof p.src { margin-top: 4px; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); overflow-wrap: anywhere; }
+.rowsof .tmeta { display: block; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); font-weight: 400; margin-top: 2px; white-space: nowrap; }
+.rowsof tr:target { outline: 2px solid var(--muted); outline-offset: -2px; }
+.rowsof tr { scroll-margin-top: 16px; }
+details.box > summary { cursor: pointer; padding: 11px 16px; color: var(--ink); font-weight: 600; font-size: 14.5px; list-style-position: inside; }
+details.box > summary:hover { background: var(--panel2); }
+details.box[open] > summary { border-bottom: 1px solid var(--line-soft); }
+details.box > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tally { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; max-width: none; font-size: 14.5px; }
+.tally .tg { display: inline-flex; align-items: baseline; gap: 7px; }
+.qtools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+button.openall { font: 500 14px/1 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+button.openall:hover { border-color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.lab { color: var(--ink); background: var(--panel2); border-radius: 3px; padding: 1px 4px; margin-right: 4px; white-space: nowrap; }
+/* On a phone each row stacks: the tool and its answer on one line, the note under them. */
+@media (max-width: 640px) {
+  .rowsof thead { display: none; }
+  .rowsof tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 14px; border-top: 1px solid var(--line-soft); }
+  .rowsof tbody tr:first-child { border-top: 0; }
+  .rowsof th, .rowsof td { display: block; padding: 0; border: 0; width: auto; }
+  .rowsof td.wide { grid-column: 1 / -1; }
+  .rowsof td[data-label]::before { content: attr(data-label); display: block; font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+}
+@media (max-width: 520px) { .rowhead { min-width: 160px; max-width: 180px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="site">
+    <a class="brand" href="/" aria-label="Realm"><Logo /></a>
+    <div class="links">{nav.map((l) => <a href={l.href} aria-current={l.href === '/compare' ? 'page' : undefined}>{l.label}</a>)}</div>
+    <ThemeToggle />
+  </nav>
+
+  <header class="hero">
+    <div class="eyebrow">Comparison</div>
+    <h1>How Realm compares</h1>
+    <p class="checked">Checked {checkedRange}</p>
+    <p class="lede">Realm against {othersWord} tools people consider for the same job: getting an AI agent to do multi-step work reliably. Every answer below cites the tool's own code or docs, and each column names the release that was checked and when. Where Realm is behind, the page says so.</p>
+    <p class="diff">The difference that matters most: the other {othersWord} run the work themselves and call the model when they need it. Realm can do that too, but an outside assistant, such as Claude or Cursor, can also work through a Realm workflow one step at a time. Realm refuses a step taken out of order, and an answer that breaks the schema the step declares.</p>
+  </header>
+
+  <div class="summary">
+    {groupsOf.map(([kind, label, list]) => (
+      <div class="sbox">
+        <h3><span class={`dot ${kind}`}></span>{label}</h3>
+        <ul>
+          {list.map((r) => <li><a href={`#${r.id}`}>{r.title}</a></li>)}
+        </ul>
+      </div>
+    ))}
+  </div>
+
+  <section aria-labelledby="table">
+    <div class="eyebrow">The table</div>
+    <h2 id="table">{totalWord.charAt(0).toUpperCase() + totalWord.slice(1)} tools, {rows.length} questions</h2>
+    <p>Each row is a question. Its name links to every tool's answer to it; each answer links to its own explanation and source. The shaded column is Realm. {orderLine}</p>
+    <div class="legend"><span class="pill yes">Yes</span><span class="pill part">Partial</span><span class="pill no">No</span><span>Partial always means something is missing; the answers below say what.</span></div>
+    <div class="scroll" role="region" aria-label="Comparison table" tabindex="0">
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th class="rowhead" scope="col">Question</th>
+            {tools.map((t) => (
+              <th scope="col" class={t.key === 'realm' ? 'realm' : undefined}>
+                <span class="tname">{t.name}</span><span class="tkind">{t.group}</span><span class="tver">{t.version}</span><span class="tver">checked {t.checked}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr>
+              <th scope="row" class="rowhead"><a href={`#${r.id}`}>{r.title}</a><span class={`vchip ${VERDICT[r.verdict.kind][0]}`}>{VERDICT[r.verdict.kind][1]}</span></th>
+              {tools.map((t) => (
+                <td class={t.key === 'realm' ? 'realm' : undefined}><a class="cellink" href={`#${r.id}-${t.key}`} title={`${t.name}: ${r.cells[t.key].note}`} aria-label={`${t.name}, ${r.title}: ${r.cells[t.key].value}. Read the answer and its source.`}><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></a></td>
+              ))}
+            </tr>
+          ))}
+          <tr class="sep"><th scope="row" class="rowhead">Facts</th>{tools.map((t) => <td class={t.key === 'realm' ? 'realm' : undefined}></td>)}</tr>
+          {facts.map((f) => (
+            <tr class="fact">
+              <th scope="row" class="rowhead">{f.title}</th>
+              {tools.map((t) => <td class={t.key === 'realm' ? 'realm' : undefined}>{f.cells[t.key]}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="answers">
+    <div class="eyebrow">Question by question</div>
+    <h2 id="answers">Every answer, with its source</h2>
+    <p>Each question shows the verdict and which tools gave which answer. Open it for every tool's explanation and its source. Each source says how it was checked: <span class="lab">CODE</span> read in the tool's source, <span class="lab">DOCS</span> stated in its own docs, <span class="lab">EXECUTED</span> run, <span class="lab">INFERRED</span> reasoned from what was read.</p>
+    <div class="qtools"><button type="button" class="openall" id="openall" hidden>Open all answers</button></div>
+    <div class="qrows">
+      {rows.map((r) => (
+        <section class="q" id={r.id}>
+          <div class="qtop"><h3>{r.title}</h3><span class={`vchip ${VERDICT[r.verdict.kind][0]}`}>{VERDICT[r.verdict.kind][1]}</span></div>
+          <p class="ask">{r.ask}</p>
+          <p class="verdict">{linkParts(r.verdict.text).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
+          <p class="tally">
+            {['Yes', 'Partial', 'No', 'N/A'].map((v) => {
+              const names = tools.filter((t) => r.cells[t.key].value === v).map((t) => t.name);
+              return names.length > 0 ? <span class="tg"><span class={`pill ${PILL[v]}`}>{v}</span><span>{names.join(', ')}</span></span> : null;
+            })}
+          </p>
+          <details class="box">
+            <summary>Every tool's answer, with its explanation and source</summary>
+            <table class="rowsof">
+              <caption class="sr">Every tool's answer: {r.title}</caption>
+              <tbody>
+                {tools.map((t) => (
+                  <tr class={t.key === 'realm' ? 'realm' : undefined} id={`${r.id}-${t.key}`}>
+                    <th scope="row">{t.name}</th>
+                    <td class="ans"><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></td>
+                    <td class="wide">
+                      <p>{linkParts(r.cells[t.key].note).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
+                      <p class="src"><span class="lab">{r.cells[t.key].label}</span> {r.cells[t.key].source}</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        </section>
+      ))}
+    </div>
+  </section>
+
+  <section aria-labelledby="tools">
+    <div class="eyebrow">Tool by tool</div>
+    <h2 id="tools">What each one does better, and where it falls short</h2>
+    <p>Where each tool is stronger than Realm, and where it falls short for making an agent follow steps and show what it did.</p>
+    <div class="box">
+      <table class="rowsof">
+        <thead><tr><th scope="col">Tool</th><th scope="col">Stronger at</th><th scope="col">Weaker at</th></tr></thead>
+        <tbody>
+          {tools.map((t) => (
+            <tr class={t.key === 'realm' ? 'realm' : undefined}>
+              <th scope="row">{t.name}<span class="tmeta">{t.group}</span><span class="tmeta">{t.version}</span><span class="tmeta">checked {t.checked}</span></th>
+              <td class="wide" data-label="Stronger at"><p>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p></td>
+              <td class="wide" data-label="Weaker at"><p>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="how">
+    <div class="eyebrow">How this was checked</div>
+    <h2 id="how">Sources, dates and corrections</h2>
+    <ul>
+      <li>Each answer was read in the tool's own source code, docs or release notes. A column names the main release that was read; where an answer comes from a companion package, such as a tool's SDK, CLI or MCP server, its source names the file. Blog posts, comparison articles and AI summaries were not used.</li>
+      <li>Realm's own column was checked by a separate pass told to find its weaknesses, and its key answers were run on the published release.</li>
+      <li>"Only Realm", "Level with the field", "Realm is behind" and "Nobody has it" are our reading of each row. The answers and their sources are the evidence.</li>
+      <li>Claims a tool makes only in its docs are labelled DOCS and were not checked in its code. Prices change often and are not listed here.</li>
+      <li>Every answer and its source is also in one data file, <a href={dataUrl}>comparison.json</a>.</li>
+      <li>Something wrong or out of date? <a href={issueUrl}>Open an issue</a> with a link to the tool's own code or docs, and we will check it and correct the page.</li>
+    </ul>
+  </section>
+
+  <script is:inline>
+    (function () {
+      function openFor(hash) {
+        if (!hash || hash.length < 2) return;
+        var el = document.getElementById(decodeURIComponent(hash.slice(1)));
+        var fold = el && el.closest('details');
+        if (fold && !fold.open) fold.open = true;
+      }
+      document.addEventListener('click', function (e) {
+        var a = e.target.closest && e.target.closest('a[href^="#"]');
+        if (a) openFor(a.getAttribute('href'));
+      });
+      window.addEventListener('hashchange', function () { openFor(location.hash); });
+      openFor(location.hash);
+      if (location.hash) { var t = document.getElementById(decodeURIComponent(location.hash.slice(1))); if (t) t.scrollIntoView(); }
+      var btn = document.getElementById('openall');
+      var folds = document.querySelectorAll('section.q details');
+      function label() {
+        var allOpen = Array.prototype.every.call(folds, function (d) { return d.open; });
+        btn.textContent = allOpen ? 'Close all answers' : 'Open all answers';
+      }
+      if (btn && folds.length) {
+        btn.hidden = false;
+        btn.addEventListener('click', function () {
+          var open = !Array.prototype.every.call(folds, function (d) { return d.open; });
+          folds.forEach(function (d) { d.open = open; });
+          label();
+        });
+        folds.forEach(function (d) { d.addEventListener('toggle', label); });
+      }
+    })();
+  </script>
+
+  <footer class="site">
+    <p>Realm is an open-source workflow state machine for AI agents. Apache&#8209;2.0 &middot; <a href="https://github.com/sensigo-hq/realm">github.com/sensigo-hq/realm</a></p>
+  </footer>
+
+</div>
+</body>
+</html>
