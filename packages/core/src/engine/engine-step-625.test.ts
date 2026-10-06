@@ -225,3 +225,63 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
     });
   });
 });
+
+describe('#625 PR-2a, C84 — a bare dependent of a step settled by its declared default records the default', () => {
+  const echo: StepDispatcher = async (_name, input) => ({ ...input });
+  const d = def({
+    classify: {
+      description: 'Classify the ticket.',
+      execution: 'agent',
+      depends_on: [],
+      output_schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['category'],
+        properties: { category: { type: 'string', enum: ['billing', 'technical', 'other'] } },
+      },
+      validation_exhaustion: {
+        threshold: 2,
+        mode: 'default',
+        default_output: { category: 'other' },
+      },
+    } as StepDefinition,
+    route: {
+      description: 'Route the ticket.',
+      execution: 'auto',
+      depends_on: ['classify'],
+    } as StepDefinition,
+  });
+
+  it('two refused answers through executeChain, then the bare dependent: the default, from the dependency', async () => {
+    await withStore(async (store) => {
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const refused = { category: 'refunds' };
+      const first = await executeChain(store, d, {
+        runId: run.id,
+        command: 'classify',
+        input: refused,
+        dispatcher: echo,
+      });
+      // (a) the threshold or the schema changed → the first answer settles. (b) prints the reply.
+      expect(first.status).toBe('error');
+      expect(first.error_code).toBe('VALIDATION_OUTPUT_SCHEMA');
+      const second = await executeChain(store, d, {
+        runId: run.id,
+        command: 'classify',
+        input: refused,
+        dispatcher: echo,
+      });
+      expect(second.status).toBe('ok');
+      const after = await store.get(run.id);
+      expect(after.completed_steps).toEqual(['classify', 'route']);
+      expect(after.defaulted_steps).toEqual(['classify']);
+      const route = after.evidence.find((e) => e.step_id === 'route');
+      // (a) the bare step's output read from the dependency's INPUT (the refused answer), or from the
+      // caller's input → `{"category":"refunds"}`. (b) prints the recorded output.
+      expect(route?.output_summary).toEqual({ category: 'other' });
+      expect(route?.output_source).toBe('dependency');
+      // the refused answer appears nowhere in the dependent's entry (0.46.0 recorded it there)
+      expect(JSON.stringify(route)).not.toContain('refunds');
+    });
+  });
+});

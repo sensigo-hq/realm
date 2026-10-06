@@ -275,6 +275,13 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   drive stops on a step that cannot run only when nothing is in flight elsewhere: a step another
   program is running may give the answer a precondition reads, so the drive waits for it first.
 
+- **A step that depends on an agent step settled by its declared default records the default
+  (issue #625, PR-2a).** On 0.46.0, when answers an agent step's `output_schema` refused reached its
+  `validation_exhaustion` threshold with `mode: default`, the step settled with its `default_output`
+  — and a bare `auto` step after it (no `handler`, no `uses_service`) recorded, as its own output,
+  the answer the schema had just refused: the chain handed it the caller's input. It now records
+  its one dependency's recorded output (the default), with `output_source: 'dependency'`.
+
 ---
 
 ## [0.46.0] — 2026-10-05
