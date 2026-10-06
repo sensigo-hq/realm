@@ -111,7 +111,8 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(advanced.status).toBe(0);
       const lines = advanced.stdout.trim().split('\n');
       expect(lines[0]).toBe(
-        `Advancing run ${run.id} (workflow 'cli-owed-wf') with the project code under ${home}, in this shell's environment.`,
+        // decision C107: this folder holds no project code (no realm.yaml, no module) — said so.
+        `Advancing run ${run.id} (workflow 'cli-owed-wf') with no project code (nothing to load under ${home}), in this shell's environment.`,
       );
       expect(lines[1]).toBe(
         'This program: tester (from REALM_OPERATOR) · project code: neither side records project code.',

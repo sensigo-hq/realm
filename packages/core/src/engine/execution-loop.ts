@@ -1636,19 +1636,6 @@ export async function executeStep(
   definition: WorkflowDefinition,
   options: ExecuteStepOptions,
 ): Promise<ResponseEnvelope> {
-  // decisions C109, C110: the line Step 1.5's expiry enactment writes rides EVERY reply this call
-  // returns, once — core prints nothing, so a reply that dropped it would hide the enactment.
-  const expiry: { line?: string } = {};
-  const reply = await executeStepBody(store, definition, options, expiry);
-  return withExpiryLineOnce(reply, expiry.line);
-}
-
-async function executeStepBody(
-  store: RunStore,
-  definition: WorkflowDefinition,
-  options: ExecuteStepOptions,
-  expiry: { line?: string },
-): Promise<ResponseEnvelope> {
   // The admission step (framework v1.27 §4): what the host handed in, checked before the first
   // read — a defect throws here instead of becoming the ENGINE_STORE_FAILED envelope below.
   admitEntry('executeStep', {
@@ -1657,7 +1644,20 @@ async function executeStepBody(
     registry: options.registry,
     driver: options.driver,
   });
+  // decisions C109, C110: the line Step 1.5's expiry enactment writes rides EVERY reply this call
+  // returns, once — core prints nothing, so a reply that dropped it would hide the enactment.
+  const expiry: { line?: string } = {};
+  const reply = await executeStepBody(store, definition, options, expiry);
+  return withExpiryLineOnce(reply, expiry.line);
+}
 
+/** {@link executeStep}'s body, after the admission step; `expiry.line` receives Step 1.5's line. */
+async function executeStepBody(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteStepOptions,
+  expiry: { line?: string },
+): Promise<ResponseEnvelope> {
   // Step 1: Load run.
   let run: RunRecord;
   try {

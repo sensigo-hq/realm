@@ -94,7 +94,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     });
     // (a) red when the disclosure is dropped or names the wrong call; (b) prints the warnings.
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired — enacted declared settle_default before this advance_run call (enacted_via: advance_run).`,
+      `gate '${gateId}' on 'confirm' had expired — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
     );
     // (a) red when the owed step the expiry made is not run in the same call; (b) prints the steps.
     expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['after']);
@@ -120,7 +120,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       `Run '${runId}': its expired question was carried out as declared (see warnings); no step ran. The run ended (aborted).`,
     );
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired — enacted declared abort before this advance_run call (enacted_via: advance_run).`,
+      `gate '${gateId}' on 'confirm' had expired — this advance_run call first carried out its declared abort: the run ended (enacted_via: advance_run).`,
     );
   });
 
@@ -137,7 +137,8 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     }).toEqual({
       gate: gateId,
       warnings: [],
-      hint: `Run '${runId}': nothing ran. No step is ready.`,
+      // decision C103: the open question is named, with its choices and the act.
+      hint: `Run '${runId}': nothing ran. Waiting on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.`,
     });
   });
 

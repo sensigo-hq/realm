@@ -116,7 +116,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
       expect(envelope.status).toBe('blocked');
       expect(
         envelope.warnings?.some(
-          (w) => w.includes('enacted (abort)') || w.includes('enacted declared abort'),
+          (w) => w.includes('enacted (abort)') || w.includes('carried out its declared abort'),
         ),
       ).toBe(true);
 

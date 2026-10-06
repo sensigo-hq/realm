@@ -146,7 +146,9 @@ describe('executeStep', () => {
     });
 
     expect(envelope.status).toBe('blocked');
-    expect(envelope.agent_action).toBe('resolve_precondition');
+    // issue #625 PR-2a (decision C104, C94's rule): nothing can be called, so report_to_user —
+    // never resolve_precondition, which points at next_actions.
+    expect(envelope.agent_action).toBe('report_to_user');
     expect(envelope.next_actions).toHaveLength(0);
     expect(envelope.blocked_reason?.suggestion).toBeDefined();
   });

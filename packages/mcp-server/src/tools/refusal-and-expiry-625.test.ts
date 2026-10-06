@@ -6,7 +6,11 @@
 // - decision C95 (the walk's J3-a): an open question whose time is up and that declares `on_expiry`
 //   is owed engine work — `get_run_state` says `advance_owed` and offers `advance_run`, which carries
 //   it out (`settle_default`: the run goes on and completes; `abort`: it ends). A question not yet
-//   expired, or with no `on_expiry`, stays `awaiting_human`.
+//   expired, or with no `on_expiry`, stays `awaiting_human` — and names the question by its answer act
+//   (decision C103), with no claim token.
+// - decisions C103, C104 (the scoped walk's W2-R1, W1-R1): `advance_run` at an open question names it
+//   and offers `submit_human_response`; `execute_step` on a step that is not eligible says why, offers
+//   the answer behind a question, and with nothing to call replies `report_to_user` and the way out.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -18,6 +22,7 @@ import {
   JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   executeStep,
+  answerAction,
   type WorkflowDefinition,
   type ResponseEnvelope,
 } from '@sensigo/realm';
@@ -186,7 +191,11 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       });
       // (a) red when the disclosure leaves the reply; (b) prints the warnings.
       expect(reply.warnings).toContain(
-        `gate '${gateId}' on 'confirm' had expired — enacted declared ${onExpiry} before this advance_run call (enacted_via: advance_run).`,
+        `gate '${gateId}' on 'confirm' had expired — this advance_run call first carried out its declared ${
+          onExpiry === 'settle_default'
+            ? "settle_default: the default choice 'approve' was recorded"
+            : 'abort: the run ended'
+        } (enacted_via: advance_run).`,
       );
     });
   }
@@ -195,18 +204,97 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
     ['not yet expired', 'settle_default', false],
     ['a finding only (no on_expiry), expired', undefined, true],
   ] as const) {
-    it(`C95 CONTROL — ${label}: awaiting_human, nothing to call; advance_run touches nothing`, async () => {
+    it(`C95 CONTROL — ${label}: awaiting_human, only the answer offered (C103, no token); advance_run touches nothing`, async () => {
       const d = gated(`rae-ctl-${expired ? 'f' : 'n'}`, onExpiry);
       const { runId, gateId } = await expiredGate(d, expired);
       const state = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
-      // (a) red when the view offers an act here; (b) prints status and act.
+      // (a) red when the view offers `advance_run` here, or get_run_state names no answer (C103), or
+      // the answer carries a claim token; (b) prints status and act.
       expect({ status: state.next_actions_status, next: state.next_actions }).toEqual({
         status: 'awaiting_human',
-        next: [],
+        next: [
+          answerAction(runId, {
+            step: 'confirm',
+            gate_id: gateId,
+            choices: ['approve', 'reject'],
+          }),
+        ],
       });
+      expect(JSON.stringify(state.next_actions)).not.toContain('claim_token');
       await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
       // (a) red when advance_run settles or aborts this question; (b) prints the gate.
       expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
     });
   }
+
+  it('C103, W2-R1: advance_run at an open question names it and offers submit_human_response (no token, no agent_action)', async () => {
+    const d = gated('rae-oq', undefined);
+    const { runId, gateId } = await expiredGate(d, false);
+    const reply = await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
+    // (a) red when the reply offers nothing at a question, sets an agent_action, or says "No step is
+    // ready."; (b) prints the reply.
+    expect({
+      status: reply.status,
+      agent_action: reply.agent_action,
+      hint: reply.context_hint,
+      next: reply.next_actions,
+    }).toEqual({
+      status: 'ok',
+      agent_action: undefined,
+      hint: `Run '${runId}': nothing ran. Waiting on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.`,
+      next: [
+        answerAction(runId, { step: 'confirm', gate_id: gateId, choices: ['approve', 'reject'] }),
+      ],
+    });
+  });
+
+  it('C104, W1-R1: execute_step on a step behind an open question names it and offers the answer; behind a stranded step, report_to_user and the way out', async () => {
+    const d = gated('rae-ne', undefined);
+    const { runId } = await expiredGate(d, false);
+    const behind = await handleExecuteStep(
+      { run_id: runId, command: 'after', params: {} },
+      { runStore, workflowStore },
+    );
+    // (a) red when the question is not named, its answer not offered, or the routing is not
+    // resolve_precondition; (b) prints the reply.
+    expect({ ...routing(behind), hint: behind.context_hint }).toEqual({
+      status: 'blocked',
+      agent_action: 'resolve_precondition',
+      next: ['submit_human_response:'],
+      eligible_steps: [],
+      hint: "Step 'after' cannot be called now: it waits on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.",
+    });
+    const strand: WorkflowDefinition = {
+      id: 'rae-strand',
+      name: 'strand',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        a: J9R1.steps['a']!,
+        c: { description: 'After a.', execution: 'auto', depends_on: ['a'] },
+      },
+    };
+    await workflowStore.register(strand);
+    const { run } = await runStore.create({
+      workflowId: strand.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const stuck = await handleExecuteStep(
+      { run_id: run.id, command: 'c', params: {} },
+      { runStore, workflowStore },
+    );
+    // (a) red when resolve_precondition comes back with nothing to call, or the way out is dropped;
+    // (b) prints the reply.
+    expect(routing(stuck)).toEqual({
+      status: 'blocked',
+      agent_action: 'report_to_user',
+      next: [],
+      eligible_steps: [],
+    });
+    expect(stuck.context_hint).toBe(
+      "Step 'c' cannot be called now: a step it depends on cannot run ('a'). 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'b.output.go == true'. Resolved value: undefined. " +
+        WAY_OUT,
+    );
+  });
 });

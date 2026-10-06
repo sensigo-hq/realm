@@ -16,6 +16,7 @@ import {
   type RunRecord,
   type WorkflowDefinition,
   type ExtensionIdentityEntry,
+  answerAction,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, stoppedReasons, advanceRunFromShell } from './run-advance.js';
 import { inspectRun } from './inspect.js';
@@ -79,22 +80,27 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         none,
       ),
     ).toEqual(['the run has ended (completed)']);
+    // decision C103: the open question's line is rendered from the reply's answer act — never from
+    // this command's own read of the record (the record here says g1; the reply says g2 and wins).
+    const atQuestion = {
+      ...base,
+      pending_gate: {
+        gate_id: 'g1',
+        step_name: 's',
+        choices: ['a', 'b'],
+        opened_at: '',
+        preview: {},
+      },
+    } as RunRecord;
     expect(
-      stoppedReasons(
-        'r',
-        {
-          ...base,
-          pending_gate: {
-            gate_id: 'g1',
-            step_name: 's',
-            choices: ['a', 'b'],
-            opened_at: '',
-            preview: {},
-          },
-        } as RunRecord,
-        none,
-      ),
-    ).toEqual(['a question is open — realm run respond r --gate g1 --choice <one of: a, b>']);
+      stoppedReasons('r', atQuestion, none, [
+        answerAction('r', { step: 's', gate_id: 'g2', choices: ['x', 'y'] }),
+      ]),
+    ).toEqual(['a question is open — realm run respond r --gate g2 --choice <one of: x, y>']);
+    // (a) red when a reply with no answer act still prints a respond command; (b) prints the reason.
+    expect(stoppedReasons('r', atQuestion, none)).toEqual([
+      'a question is open — see realm run inspect r',
+    ]);
     expect(
       stoppedReasons('r', base, {
         ...none,
@@ -361,6 +367,9 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       expect(ending.slice(1, 2)).toEqual(['Reason: Not approved by the reviewer.']);
       expect(ending[0]).toContain("'check'");
       expect(ending.slice(2)).toEqual([
+        // decision C109: the command renders its reply's warnings — this fixture's store is a
+        // legacy one (no settleStep), whose advisory the reply carries.
+        '⚠ settled via the legacy compatibility path — this store does not declare atomic settlement (RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)',
         'Stopped: the run has ended (aborted)',
         `Run ${run.id}: phase 'aborted'`,
       ]);

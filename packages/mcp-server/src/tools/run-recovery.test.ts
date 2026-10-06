@@ -252,7 +252,9 @@ describe('get_run_state — next_actions_status', () => {
     await runStore.update({ ...run, pending_gate: gate });
     const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
     expect(state.next_actions_status).toBe('awaiting_human');
-    expect(state.next_actions).toEqual([]);
+    // issue #625 PR-2a (decision C103): the open question is named by its answer act — no token.
+    expect(state.next_actions.map((a) => a.instruction?.tool)).toEqual(['submit_human_response']);
+    expect(state.next_actions[0]?.instruction?.params).toEqual({ run_id: run.id, gate_id: 'g1' });
   });
 
   it('skipped_terminal: terminal run', async () => {
