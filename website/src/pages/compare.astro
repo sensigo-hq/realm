@@ -1,9 +1,7 @@
 ---
 // The public comparison page. Everything on it is derived from the main comparison document,
 // src/data/comparison.json, through src/lib/comparison.mjs, which stops the build if the document
-// is incomplete. Edit the facts there, never here. The main document also holds what this page
-// leaves out on purpose: the prices (fact `paid-offer`, public: false) and the platform rows
-// used for an internal score.
+// is incomplete. Edit the facts there, never here. The document holds only what this page shows.
 import { nav } from '../data/nav.js';
 import '../styles/site.css';
 import ThemeToggle from '../components/ThemeToggle.astro';
@@ -12,7 +10,7 @@ import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Logo from '../components/Logo.astro';
 import PageMeta from '../components/PageMeta.astro';
 import { COMPARE_DESCRIPTION, SOURCE_URL } from '../lib/site-meta.mjs';
-import { tools, rows, publicFacts, strengths, rowsByVerdict } from '../lib/comparison.mjs';
+import { tools, rows, facts, strengths, rowsByVerdict } from '../lib/comparison.mjs';
 
 const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
 const VERDICT = {
@@ -44,7 +42,15 @@ for (const name of TITLE_NAMES) {
 const pageTitle = `How Realm compares with ${TITLE_NAMES.slice(0, -1).join(', ')}, ${TITLE_NAMES.at(-1)} and others`;
 
 const checkedDates = [...new Set(tools.map((t) => t.checked))].sort();
-const lastChecked = checkedDates.at(-1);
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const parts = (iso) => { const [y, m, d] = iso.split('-').map(Number); return { y, m: MONTHS[m - 1], d }; };
+const first = parts(checkedDates[0]);
+const last = parts(checkedDates.at(-1));
+const checkedRange =
+  checkedDates.length === 1 ? `${last.d} ${last.m} ${last.y}`
+  : first.y !== last.y ? `${first.d} ${first.m} ${first.y} – ${last.d} ${last.m} ${last.y}`
+  : first.m !== last.m ? `${first.d} ${first.m} – ${last.d} ${last.m} ${last.y}`
+  : `${first.d}–${last.d} ${last.m} ${last.y}`;
 const issueUrl = `${SOURCE_URL}/issues/new?title=${encodeURIComponent('Comparison: ')}&body=${encodeURIComponent(
   'Which tool and which question:\n\nWhat the page says:\n\nWhat is true (with a link to the tool\'s own code or docs, and its version):\n',
 )}`;
@@ -74,6 +80,7 @@ const groupsOf = [
    then every tool's answer to each question in one table per question, a table of what each
    tool does better and worse, and how it was checked. */
 :root { --danger: var(--c-danger); --danger-soft: color-mix(in srgb, var(--c-danger) 14%, var(--c-panel)); }
+.hero .checked { font: 500 13px/1.4 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); margin-top: 8px; }
 .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px; }
 .sbox { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px; }
 .sbox h3 { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
@@ -169,6 +176,7 @@ button.openall:hover { border-color: var(--muted); }
   <header class="hero">
     <div class="eyebrow">Comparison</div>
     <h1>How Realm compares</h1>
+    <p class="checked">Checked {checkedRange}</p>
     <p class="lede">Realm against {othersWord} tools people consider for the same job: getting an AI agent to do multi-step work reliably. Every answer below cites the tool's own code or docs, and each column names the release that was checked and when. Where Realm is behind, the page says so.</p>
   </header>
 
@@ -213,7 +221,7 @@ button.openall:hover { border-color: var(--muted); }
             </tr>
           ))}
           <tr class="sep"><th scope="row" class="rowhead">Facts</th>{tools.map((t) => <td class={t.key === 'realm' ? 'realm' : undefined}></td>)}</tr>
-          {publicFacts.map((f) => (
+          {facts.map((f) => (
             <tr class="fact">
               <th scope="row" class="rowhead">{f.title}</th>
               {tools.map((t) => <td class={t.key === 'realm' ? 'realm' : undefined}>{f.cells[t.key]}</td>)}
@@ -292,7 +300,7 @@ button.openall:hover { border-color: var(--muted); }
       <li>Realm's own column was checked by a separate pass told to find its weaknesses, and its key answers were run on the published release.</li>
       <li>"Only Realm", "Level with the field", "Realm is behind" and "Nobody has it" are our reading of each row. The answers and their sources are the evidence.</li>
       <li>Claims a tool makes only in its docs are labelled DOCS and were not checked in its code. Prices change often and are not listed here.</li>
-      <li>The newest column was checked on {lastChecked}. The data behind this page is one file, <a href={dataUrl}>comparison.json</a>.</li>
+      <li>Every answer and its source is also in one data file, <a href={dataUrl}>comparison.json</a>.</li>
       <li>Something wrong or out of date? <a href={issueUrl}>Open an issue</a> with a link to the tool's own code or docs, and we will check it and correct the page.</li>
     </ul>
   </section>

@@ -12,7 +12,6 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ID = /^[a-z][a-z0-9-]*$/;
 // Section ids the page itself uses; a row id equal to one would make two elements share it.
 const PAGE_IDS = ['table', 'answers', 'tools', 'how'];
-const STARS = /^\d{1,3}(,\d{3})*$/;
 // A column older than this is still published, but the build says it needs re-checking.
 const STALE_DAYS = 120;
 const DAY = 86_400_000;
@@ -138,22 +137,16 @@ function check(d) {
     if (factIds.includes(f.id)) fail(`fact ${f.id}`, 'id is used twice');
     factIds.push(f.id);
     text(`fact ${f.id} title`, f.title);
-    if (typeof f.public !== 'boolean') fail(`fact ${f.id}`, 'public must be true or false');
+    // The page shows every fact in this file, and the file is published. A fact the page should
+    // not show does not belong here at all.
+    if ('public' in f)
+      fail(
+        `fact ${f.id}`,
+        'has a "public" field; every fact in this file is shown on the page, so a fact that should not be shown does not belong in it',
+      );
     perTool(`fact ${f.id}`, f.cells);
     for (const k of keys) text(`fact ${f.id} ${k}`, f.cells[k]);
   }
-  // Star counts are kept in the document (the private view reads them) and not shown on the page.
-  const stars = d.facts.find((f) => f.id === 'stars');
-  if (stars?.public)
-    fail('fact stars', 'must stay public: false; the page does not show popularity');
-  for (const k of stars ? keys : []) {
-    if (!STARS.test(stars.cells[k]))
-      fail(
-        `fact stars ${k}`,
-        `${JSON.stringify(stars.cells[k])} is not a whole number written like 1,234`,
-      );
-  }
-
   perTool('strengths', d.strengths);
   for (const k of keys) {
     object(`strengths ${k}`, d.strengths[k]);
@@ -176,7 +169,7 @@ for (const t of doc.tools) {
 export const comparison = doc;
 export const tools = doc.tools;
 export const rows = doc.rows;
-/** The facts rows the public page shows (a fact marked public: false stays in the main document only). */
-export const publicFacts = doc.facts.filter((f) => f.public);
+/** The facts rows; the page shows every one of them. */
+export const facts = doc.facts;
 export const strengths = doc.strengths;
 export const rowsByVerdict = (kind) => doc.rows.filter((r) => r.verdict.kind === kind);

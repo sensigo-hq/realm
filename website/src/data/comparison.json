@@ -790,7 +790,6 @@
     {
       "id": "defined-in",
       "title": "Defined in",
-      "public": true,
       "cells": {
         "realm": "YAML + JSON Schema; JavaScript extensions",
         "langgraph": "Python or JS/TS code",
@@ -807,7 +806,6 @@
     {
       "id": "run-through",
       "title": "Run through",
-      "public": true,
       "cells": {
         "realm": "CLI, MCP, library, webhooks. No UI",
         "langgraph": "Library, CLI, API, Studio, cloud",
@@ -824,7 +822,6 @@
     {
       "id": "hosting",
       "title": "Hosting and storage",
-      "public": true,
       "cells": {
         "realm": "Self-hosted; JSON files on one machine",
         "langgraph": "Both; SQLite, Postgres, MongoDB (server: Postgres + Redis)",
@@ -841,7 +838,6 @@
     {
       "id": "license",
       "title": "License",
-      "public": true,
       "cells": {
         "realm": "Apache-2.0",
         "langgraph": "MIT (Agent Server: Elastic-2.0)",
@@ -858,7 +854,6 @@
     {
       "id": "first-release",
       "title": "First release",
-      "public": true,
       "cells": {
         "realm": "2026-06",
         "langgraph": "2024-01",
@@ -870,23 +865,6 @@
         "inngest": "2021-07",
         "n8n": "2019-06",
         "dify": "2023-05"
-      }
-    },
-    {
-      "id": "stars",
-      "title": "GitHub stars",
-      "public": false,
-      "cells": {
-        "realm": "2",
-        "langgraph": "42,772",
-        "crewai": "59,354",
-        "openai": "29,839",
-        "mastra": "28,560",
-        "maf": "13,946",
-        "temporal": "23,469",
-        "inngest": "5,908",
-        "n8n": "206,752",
-        "dify": "157,868"
       }
     }
   ],
