@@ -1,5 +1,5 @@
 // The words of the comparison, in one place: the page (src/pages/compare.astro) and its Markdown copy
-// (src/pages/compare.md.js) both read them, so the two cannot say different things. The facts come from
+// (src/pages/compare.md.js) both read these sentences and headings, so they cannot drift apart. The facts come from
 // the main comparison document through src/lib/comparison.mjs; this module only phrases them.
 import { tools, rows, rowsByVerdict, order } from './comparison.mjs';
 import { SOURCE_URL } from './site-meta.mjs';
@@ -102,6 +102,12 @@ export const lede = `Realm against ${othersWord} tools people consider for the s
 export const difference = `The difference that matters most: the other ${othersWord} run the work themselves and call the model when they need it. Realm can do that too, but an outside assistant, such as Claude or Cursor, can also work through a Realm workflow one step at a time. Realm refuses a step taken out of order, and an answer that breaks the schema the step declares.`;
 export const orderLine = `After Realm, the tools are ordered by ${order.by} on ${longDate(order.on)}, most first. The order says how popular each one is, not how good.`;
 export const tableHeading = `${totalWord.charAt(0).toUpperCase() + totalWord.slice(1)} tools, ${rows.length} questions`;
+/** The section headings both the page and its Markdown copy use. */
+export const HEADINGS = {
+  answers: 'Every answer, with its source',
+  tools: 'What each one does better, and where it falls short',
+  how: 'Sources, dates and corrections',
+};
 export const partialNote = 'Partial always means something is missing; the answers below say what.';
 export const toolsIntro =
   'Where each tool is stronger than Realm, and where it falls short for making an agent follow steps and show what it did.';

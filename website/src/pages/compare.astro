@@ -26,6 +26,7 @@ import {
   howChecked,
   linkParts,
   issueLink,
+  HEADINGS,
 } from '../lib/compare-text.mjs';
 
 const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
@@ -202,7 +203,7 @@ button.openall:hover { border-color: var(--muted); }
 
   <section aria-labelledby="answers">
     <div class="eyebrow">Question by question</div>
-    <h2 id="answers">Every answer, with its source</h2>
+    <h2 id="answers">{HEADINGS.answers}</h2>
     <p>Each question shows the verdict and which tools gave which answer. Open it for every tool's explanation and its source. Each source says how it was checked: {LABEL_MEANINGS.map(([lab, meaning], i) => <>{i > 0 ? ', ' : ''}<span class="lab">{lab}</span> {meaning}</>)}.</p>
     <div class="qtools"><button type="button" class="openall" id="openall" hidden>Open all answers</button></div>
     <div class="qrows">
@@ -242,7 +243,7 @@ button.openall:hover { border-color: var(--muted); }
 
   <section aria-labelledby="tools">
     <div class="eyebrow">Tool by tool</div>
-    <h2 id="tools">What each one does better, and where it falls short</h2>
+    <h2 id="tools">{HEADINGS.tools}</h2>
     <p>{toolsIntro}</p>
     <div class="box">
       <table class="rowsof">
@@ -262,7 +263,7 @@ button.openall:hover { border-color: var(--muted); }
 
   <section aria-labelledby="how">
     <div class="eyebrow">How this was checked</div>
-    <h2 id="how">Sources, dates and corrections</h2>
+    <h2 id="how">{HEADINGS.how}</h2>
     <ul>
       {howChecked.map((item) => <li>{item.map((part) => (typeof part === 'string' ? part : <a href={part.href}>{part.text}</a>))}</li>)}
     </ul>
