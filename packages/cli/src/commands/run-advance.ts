@@ -307,7 +307,6 @@ export async function advanceRunFromShell(
             ...(driver !== undefined ? { driver } : {}),
           })
         : undefined;
-    for (const warning of reply?.warnings ?? []) print(`⚠ ${warning}`);
     print(
       `${opening}: ${withFullStop(stoppedReasons(runId, run, pending, reply?.next_actions).join('; '))}`,
     );
