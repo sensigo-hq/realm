@@ -12,6 +12,9 @@ export const HOME_DESCRIPTION =
 export const HOW_IT_WORKS_DESCRIPTION =
   'How a Realm run passes between the engine, an MCP client, realm agent and realm listen — four diagrams.';
 
+export const COMPARE_DESCRIPTION =
+  "Realm against nine tools for multi-step AI agent work, question by question. Every answer cites the tool's own code or docs.";
+
 export const SOURCE_URL = 'https://github.com/sensigo-hq/realm';
 
 // The sitemap's one address. Written there by src/integrations/sitemap-at-root.mjs, named by
