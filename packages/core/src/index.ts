@@ -152,6 +152,9 @@ export {
   PROGRAM_FITS,
   judgeProgramFit,
   describeRunDriver,
+  dueExpiry,
+  dueExpiryWords,
+  callableSteps,
 } from './engine/pending.js';
 export type {
   PreClaimRefusal,
@@ -161,6 +164,7 @@ export type {
   EngineRunnable,
   PendingView,
   ProgramFit,
+  DueExpiry,
 } from './engine/pending.js';
 export {
   findEligibleSteps,

@@ -6,7 +6,7 @@
 // this, so a run whose next step belongs to the engine is never left without a named call.
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
-import type { RunRecord } from '../types/run-record.js';
+import type { RunRecord, PendingGate } from '../types/run-record.js';
 import type { NextAction } from '../types/response-envelope.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { ExtensionIdentityEntry } from '../types/extension-identity.js';
@@ -250,7 +250,53 @@ export interface PendingView {
    * {@link stepsThatCannotRun}.
    */
   cannot_run: EngineRunnable[];
+  /**
+   * Present only when `describePending` was given `now` (decision C95): the run's open question has
+   * expired and declares `on_expiry`, so carrying out that declared default or abort is owed engine
+   * work — the act is `advance_run`, whose first move carries it out. Absent for a question with no
+   * `on_expiry` (a finding only, never touched), one not yet expired, and every call with no `now`.
+   */
+  expiry_due?: DueExpiry;
   act?: NextAction;
+}
+
+/** An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95). */
+export interface DueExpiry {
+  gate_id: string;
+  step: string;
+  on_expiry: 'settle_default' | 'abort';
+}
+
+/**
+ * Whether `gate` has expired at `now` with an `on_expiry` the engine can carry out (decision C95) —
+ * the ONE predicate `enactExpiredGateIfDue` and the run's view read, in the same form as the
+ * settlement's own `not_expired` refusal (`!(now < expires_at)`), so the view never offers an
+ * expiry the enactment would refuse as premature. Pure.
+ */
+export function dueExpiry(gate: PendingGate | undefined, now: Date): DueExpiry | undefined {
+  if (gate === undefined || gate.expires_at === undefined || gate.on_expiry === undefined) {
+    return undefined;
+  }
+  if (now.getTime() < new Date(gate.expires_at).getTime()) return undefined;
+  return { gate_id: gate.gate_id, step: gate.step_name, on_expiry: gate.on_expiry };
+}
+
+/** `the expired question on '<step>' (its declared <on_expiry>)` — the owed expiry, as every line names it. */
+export function dueExpiryWords(expiry: DueExpiry): string {
+  return `the expired question on '${expiry.step}' (its declared ${expiry.on_expiry})`;
+}
+
+/**
+ * The steps a caller can call now (decision C94): the agent steps the view offers and the `auto`
+ * steps it does not refuse, in definition order — never a step refused before its claim (C13, C82),
+ * never a guard. A refusal's `blocked_reason.eligible_steps`.
+ */
+export function callableSteps(definition: WorkflowDefinition, pending: PendingView): string[] {
+  const order = stepOrder(definition);
+  return [
+    ...pending.agent_steps,
+    ...pending.engine_runnable.filter((e) => e.runnable_here !== false).map((e) => e.step),
+  ].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
 }
 
 /**
@@ -391,9 +437,17 @@ export function owedNames(pending: PendingView): string[] {
   ];
 }
 
-/** `'a', 'b'` — the owed names as every surface prints them. */
+/** The owed work as every surface names it: a due expiry first (decision C95), then each step quoted. */
+function owedItems(pending: PendingView): string[] {
+  return [
+    ...(pending.expiry_due !== undefined ? [dueExpiryWords(pending.expiry_due)] : []),
+    ...owedNames(pending).map((n) => `'${n}'`),
+  ];
+}
+
+/** `'a', 'b'` — the owed work as every surface prints it (a due expiry by its words, decision C95). */
 export function owedList(pending: PendingView): string {
-  return quoteList(owedNames(pending));
+  return owedItems(pending).join(', ');
 }
 
 /**
@@ -401,30 +455,51 @@ export function owedList(pending: PendingView): string {
  * `it` / `them` — so no surface says "runs them" of one step.
  */
 export function owedWords(pending: PendingView): { steps: string; them: string } {
-  return owedNames(pending).length === 1
+  return owedItems(pending).length === 1
     ? { steps: 'the step', them: 'it' }
     : { steps: 'the steps', them: 'them' };
 }
 
 /**
  * What the run owes, from the record, the definition and (when present) the registry. Pure.
- * A terminal run, or a run with an open gate, owes nothing. An eligible agent step is judged by the
- * checks that read no input ({@link AGENT_PRE_CLAIM_REFUSALS}, decision C82): one the run refuses is
- * listed in `agent_refused`, never in `agent_steps` or `agent_actions`.
+ * A terminal run owes nothing; so does a run with an open gate — except, when the caller passes
+ * `now` (decision C95), a question whose time is up and that declares `on_expiry`: carrying it out
+ * is owed engine work (`expiry_due`, the `advance_run` act). With no `now` nothing reads a clock.
+ * An eligible agent step is judged by the checks that read no input
+ * ({@link AGENT_PRE_CLAIM_REFUSALS}, decision C82): one the run refuses is listed in
+ * `agent_refused`, never in `agent_steps` or `agent_actions`.
  */
 export function describePending(
   definition: WorkflowDefinition,
   run: RunRecord,
   registry?: ExtensionRegistry,
+  now?: Date,
 ): PendingView {
   if (run.terminal_state || run.pending_gate !== undefined) {
-    return {
+    const empty: PendingView = {
       agent_actions: [],
       agent_steps: [],
       agent_refused: [],
       pending_guards: [],
       engine_runnable: [],
       cannot_run: [],
+    };
+    const expiry =
+      run.terminal_state || now === undefined ? undefined : dueExpiry(run.pending_gate, now);
+    if (expiry === undefined) return empty;
+    const words = dueExpiryWords(expiry);
+    return {
+      ...empty,
+      expiry_due: expiry,
+      act: {
+        instruction: {
+          tool: 'advance_run',
+          params: { run_id: run.id },
+          call_with: { run_id: run.id },
+        },
+        human_readable: `Call advance_run to carry out ${words}, then run what it leaves owed. It runs with this server's extensions and environment.`,
+        orientation: `Run is active. Engine work is owed: ${words}.`,
+      },
     };
   }
   const order = stepOrder(definition);

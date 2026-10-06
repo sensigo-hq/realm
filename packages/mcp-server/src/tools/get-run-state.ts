@@ -21,6 +21,7 @@ import {
   composeDriveFailureCosts,
   describePending,
   composeNextActionsStatusWord,
+  dueExpiry,
   assertRegistryLine,
   ExtensionRegistry,
   type ADVANCE_OWED,
@@ -90,9 +91,11 @@ export interface HandleRunStateStores {
  *   engine work is also owed); empty when nothing can run here (`engine_runnable` and
  *   `agent_refused` name each refused step and why).
  * - `advance_owed` — the only next work is the engine's: a guard is pending or an `auto` step can
- *   run, and no agent step is ready. `next_actions` holds the one act, `advance_run` — call it.
- *   (issue #625 PR-2a; replaces `auto_pending`, which told the caller the opposite.)
- * - `awaiting_human` — a human gate is open.
+ *   run, and no agent step is ready — or the open question's time is up and it declares
+ *   `on_expiry`, which `advance_run` carries out first (decision C95). `next_actions` holds the one
+ *   act, `advance_run` — call it. (issue #625 PR-2a; replaces `auto_pending`, which told the caller
+ *   the opposite.)
+ * - `awaiting_human` — a human gate is open, and has not expired with a declared `on_expiry`.
  * - `workflow_unresolved` — no workflow store provided, or the workflow is not registered.
  * - `skipped_terminal` — the run is terminal; nothing to do.
  * - `claim_stale` — a non-terminal run has an in-progress claim past its deadline (a likely-dead
@@ -362,8 +365,11 @@ export async function handleGetRunState(
   }
 
   // Compute next_actions + diagnostic status (read-only). Precedence:
-  // terminal → skipped_terminal; gate open → awaiting_human; no/unresolved workflow →
-  // workflow_unresolved; else describePending → ok | advance_owed (issue #625 PR-2a).
+  // terminal → skipped_terminal; gate open → awaiting_human — unless its time is up and it declares
+  // `on_expiry` (decision C95: carrying that out is owed engine work, read through the view below);
+  // no/unresolved workflow → workflow_unresolved; else describePending → ok | advance_owed (issue
+  // #625 PR-2a).
+  const now = new Date();
   // `definition` is hoisted (issue #221) so classifyRunHealth below can reuse it when resolved —
   // scoping/resolution logic here is otherwise UNCHANGED.
   let nextActions: NextAction[] = [];
@@ -376,7 +382,7 @@ export async function handleGetRunState(
   let registry: ExtensionRegistry | undefined;
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
-  } else if (run.pending_gate !== undefined) {
+  } else if (run.pending_gate !== undefined && dueExpiry(run.pending_gate, now) === undefined) {
     nextActionsStatus = 'awaiting_human';
   } else {
     definition =
@@ -416,8 +422,8 @@ export async function handleGetRunState(
         if (isReleaseLineRefusal(err)) throw err;
         registry = undefined;
       }
-      pending = describePending(definition, run, registry);
-      nextActions = buildNextActions(definition, run, registry);
+      pending = describePending(definition, run, registry, now);
+      nextActions = buildNextActions(definition, run, registry, now);
       nextActionsStatus = composeNextActionsStatusWord(pending) ?? 'ok';
     }
 
@@ -428,7 +434,12 @@ export async function handleGetRunState(
     //  - when only unknown-age claims remain and there is nothing else to do, surface
     //    `claim_unknown_age` (detect-only). A `healthy` in-flight claim (a live runner) stays 'ok'.
     if (run.in_progress_steps.length > 0) {
-      const claimStates = classifyInProgressClaims(run).map((c) => c.state);
+      // The open question's own step holds a claim while it waits (decision C95 reaches this block
+      // with a question open, when its time is up): it is not work in flight, as `stuck_claims`
+      // below says too.
+      const claimStates = classifyInProgressClaims(run)
+        .filter((c) => c.step !== run.pending_gate?.step_name)
+        .map((c) => c.state);
       if (claimStates.includes('claim_stale')) {
         nextActionsStatus = 'claim_stale';
       } else if (nextActions.length === 0 && !claimStates.includes('healthy')) {

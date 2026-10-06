@@ -10,6 +10,7 @@ import {
   describePending,
   stepsThatCannotRun,
   owedList,
+  dueExpiry,
   capabilityMarkerWayOut,
   cannotRunWayOut,
   cannotRunWayOutApplies,
@@ -628,8 +629,15 @@ export async function inspectRun(
   // step this record shows cannot run — an engine step, or an agent step refused before its claim
   // (decision C82). No registry here: a capability need is judged by the run's own marker (what the
   // runner that last attempted the step lacked), else is unknown (decision C33).
-  if (definition !== undefined && !run.terminal_state && run.pending_gate === undefined) {
-    const pending = describePending(definition, run);
+  // decision C95: an open question whose time is up and that declares `on_expiry` is owed engine
+  // work too — named here with the command that carries it out.
+  const inspectNow = new Date();
+  if (
+    definition !== undefined &&
+    !run.terminal_state &&
+    (run.pending_gate === undefined || dueExpiry(run.pending_gate, inspectNow) !== undefined)
+  ) {
+    const pending = describePending(definition, run, undefined, inspectNow);
     if (pending.act !== undefined) {
       lines.push(`Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}`);
     }

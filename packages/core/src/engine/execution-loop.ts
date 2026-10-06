@@ -102,6 +102,8 @@ import {
   describeNext,
   engineStepInput,
   stepsThatCannotRun,
+  callableSteps,
+  dueExpiry,
   type PendingView,
   type PreClaimRefused,
 } from './pending.js';
@@ -812,14 +814,21 @@ export function buildAgentActions(
  * refuses before its claim (a failed precondition, an invalid `trust`) is not offered (decision C82)
  * — then — LAST, so `next_actions[0]` stays the agent step — the `advance_run` act when engine work
  * is owed (issue #625 PR-2a, `describePending`). A call site that passes no registry gets `'unknown'` for the capability
- * check, so the act stays offered.
+ * check, so the act stays offered. A call site that passes `now` gets the act for an open question
+ * whose time is up and that declares `on_expiry` (decision C95); with no `now`, an open question
+ * leaves nothing to call.
  */
 export function buildNextActions(
   definition: WorkflowDefinition,
   run: RunRecord,
   registry?: ExtensionRegistry,
+  now?: Date,
 ): NextAction[] {
-  const pending = describePending(definition, run, registry);
+  return nextActionsOf(describePending(definition, run, registry, now));
+}
+
+/** A view's `next_actions`: its agent actions, then — last — the act (the one composition). */
+function nextActionsOf(pending: PendingView): NextAction[] {
   return pending.act !== undefined
     ? [...pending.agent_actions, pending.act]
     : pending.agent_actions;
@@ -1338,14 +1347,14 @@ async function enactExpiredGateIfDue(
   // issue #625 (holder slice): the program whose call enacts the expiry — named on the cleanup
   // steps its drain runs.
   driver: Attributed | undefined,
+  // issue #625 PR-2a (decision C95): the call that carries the expiry out, named on the disclosure
+  // line — `execute_step` (Step 1.5) or the advance call's own name (`advance_run`, `advance`, …).
+  via = 'execute_step',
 ): Promise<{ run: RunRecord; disclosure?: string }> {
   const gate = run.pending_gate;
-  if (
-    gate === undefined ||
-    gate.expires_at === undefined ||
-    gate.on_expiry === undefined ||
-    now.getTime() < new Date(gate.expires_at).getTime()
-  ) {
+  // decision C95: the one predicate the run's view reads too (`dueExpiry`), so the view never
+  // offers an expiry this function would not carry out.
+  if (gate === undefined || dueExpiry(gate, now) === undefined) {
     return { run };
   }
 
@@ -1378,7 +1387,7 @@ async function enactExpiredGateIfDue(
   const disposition =
     finalRun.settled?.[gate.step_name]?.resolved_by === 'timeout' ? 'settle_default' : 'abort';
   disclosureParts.push(
-    `gate '${gate.gate_id}' on '${gate.step_name}' had expired — enacted declared ${disposition} before this execute_step call (enacted_via: execute_step).`,
+    `gate '${gate.gate_id}' on '${gate.step_name}' had expired — enacted declared ${disposition} before this ${via} call (enacted_via: ${via}).`,
   );
   // issue #625: the expiry's own write settled the guards its default made eligible. This leg
   // builds no reply of its own (the reply is the commanded step's), so each guard is named here,
@@ -1623,6 +1632,9 @@ export async function executeStep(
   const eligible = findEligibleSteps(definition, run);
   if (!eligible.includes(options.command)) {
     const nextActions = buildNextActions(definition, run);
+    // decision C94: `blocked_reason.eligible_steps` names the steps that can be called — the view's,
+    // as `next_actions` is (never a step the run refuses before its claim).
+    const callable = callableSteps(definition, describePending(definition, run));
     return {
       command: options.command,
       run_id: options.runId,
@@ -1639,11 +1651,11 @@ export async function executeStep(
       blocked_reason:
         nextActions.length > 0
           ? {
-              eligible_steps: eligible,
+              eligible_steps: callable,
               suggestion: `Call one of the steps indicated in next_actions instead.`,
             }
           : {
-              eligible_steps: eligible,
+              eligible_steps: callable,
               suggestion: `No eligible steps available. Check run_phase and completed_steps.`,
             },
     };
@@ -1696,19 +1708,49 @@ export async function executeStep(
   const preClaim: PreClaimRefused | undefined =
     preClaimVerdict !== undefined && 'refused_by' in preClaimVerdict ? preClaimVerdict : undefined;
 
+  // issue #625 PR-2a (decision C94): a step refused before its claim — an invalid `trust` or a failed
+  // precondition — tells its caller what it can do instead, from the run's view: `next_actions` are
+  // the view's (agent steps, then the `advance_run` act), and the view never offers a step refused
+  // before its claim (decisions C13, C82), so the refused step is never in its own refusal's
+  // `next_actions` and a caller that follows them cannot loop on it. Judged with the caller's
+  // registry and clock, as `get_run_state` judges. `agent_action` is `resolve_precondition` when
+  // there is something to call, `report_to_user` when there is not (a person must correct the
+  // workflow; the MCP reply then ends with the way out, decision C66).
+  const refusalRouting = (): {
+    next_actions: NextAction[];
+    eligible_steps: string[];
+    agent_action: 'resolve_precondition' | 'report_to_user';
+  } => {
+    const view = describePending(definition, run, options.registry, gateExpiryCheckNow);
+    const next_actions = nextActionsOf(view);
+    return {
+      next_actions,
+      eligible_steps: callableSteps(definition, view),
+      agent_action: next_actions.length > 0 ? 'resolve_precondition' : 'report_to_user',
+    };
+  };
+
   if (preClaim?.refused_by === 'trust') {
-    // Deliberately NOT passing `definition`: `makeErrorEnvelope` appends
-    // `buildNextActions(definition, run)` whenever a definition is supplied and the error's
-    // agentAction isn't 'stop' — the refused step is by construction still eligible, so it would
-    // appear in its own refusal's `next_actions`, and an agent following them would loop forever.
-    // Omitting `definition` here is what keeps `next_actions: []`.
-    return makeErrorEnvelope(options, run, preClaim.error!);
+    const routing = refusalRouting();
+    return {
+      ...makeErrorEnvelope(options, run, preClaim.error!),
+      agent_action: routing.agent_action,
+      next_actions: routing.next_actions,
+      blocked_reason: {
+        eligible_steps: routing.eligible_steps,
+        suggestion:
+          routing.next_actions.length > 0
+            ? `Call one of the steps indicated in next_actions instead.`
+            : `No other step can be called now.`,
+      },
+    };
   }
 
   const evidenceByStep = buildEvidenceByStep(run);
 
   // Step 2a: Evaluate preconditions (checkPreClaim's precondition member).
   if (preClaim?.refused_by === 'precondition') {
+    const routing = refusalRouting();
     return {
       command: options.command,
       run_id: options.runId,
@@ -1718,12 +1760,12 @@ export async function executeStep(
       evidence: [],
       warnings: [],
       errors: [],
-      agent_action: 'stop' as const,
+      agent_action: routing.agent_action,
       context_hint: preClaim.hint!,
       run_phase: run.run_phase,
-      next_actions: [],
+      next_actions: routing.next_actions,
       blocked_reason: {
-        eligible_steps: eligible,
+        eligible_steps: routing.eligible_steps,
         suggestion: preClaim.suggestion!,
       },
     };
@@ -2089,7 +2131,8 @@ export async function executeStep(
           run_phase: freshRun.run_phase,
           next_actions: buildNextActions(definition, freshRun),
           blocked_reason: {
-            eligible_steps: findEligibleSteps(definition, freshRun),
+            // decision C94: the steps that can be called, as `next_actions` names them.
+            eligible_steps: callableSteps(definition, describePending(definition, freshRun)),
             suggestion: `Step is already in progress. Wait for it to complete.`,
           },
         };
@@ -7008,19 +7051,31 @@ function hasCannotRun(pending: PendingView): boolean {
   return stepsThatCannotRun(pending).length > 0;
 }
 
-/** The reply text of an `advanceRun` call that ran nothing, from the record it ends on (M10). */
+/**
+ * The reply text of an `advanceRun` call that ran no step, from the record it ends on (M10). When
+ * the call carried out an expired question's declared `on_expiry` (decision C95), it says so — the
+ * run did not end, or stop, by itself — and the disclosure line in `warnings` gives the details.
+ */
 function nothingRanHint(
   definition: WorkflowDefinition,
   run: RunRecord,
   registry: ExtensionRegistry,
+  now: Date,
+  expiryCarriedOut: boolean,
 ): string {
+  if (expiryCarriedOut) {
+    const outcome = run.terminal_state
+      ? ` The run ended (${deriveRunPhase(run)}).`
+      : describeNext(describePending(definition, run, registry, now), run);
+    return `Run '${run.id}': its expired question was carried out as declared (see warnings); no step ran.${outcome}`;
+  }
   if (run.terminal_state) {
     return `Run '${run.id}' is already terminal (${deriveRunPhase(run)}); nothing ran.`;
   }
   // decisions C51, C57: when the run cannot go on until its workflow is corrected, describeNext
   // ends with the way out in the tools' words — the same condition `realm run advance` prints its
   // own form under, and the same sentence every other reply that says what comes next ends with.
-  return `Run '${run.id}': nothing ran.${describeNext(describePending(definition, run, registry), run)}`;
+  return `Run '${run.id}': nothing ran.${describeNext(describePending(definition, run, registry, now), run)}`;
 }
 
 /** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */
@@ -7064,8 +7119,27 @@ export async function advanceRun(
   });
 
   const command = options.command ?? 'advance_run';
-  const stored = await store.get(options.runId);
   const registry = options.registry ?? createDefaultRegistry();
+  const now = options.now ?? new Date();
+  let stored = await store.get(options.runId);
+  // decision C95: an open question whose time is up and that declares `on_expiry` is carried out
+  // first — the same function `executeStep`'s Step 1.5 calls, with its race behaviour (a refusal is
+  // absorbed; the fresh record is what the loop then reads) — and then what it made owed runs.
+  // A question with no `on_expiry`, or not yet expired, is never touched.
+  let expiryDisclosure: string | undefined;
+  if (stored.pending_gate !== undefined) {
+    const enacted = await enactExpiredGateIfDue(
+      store,
+      definition,
+      stored,
+      registry,
+      now,
+      options.driver,
+      command,
+    );
+    stored = enacted.run;
+    expiryDisclosure = enacted.disclosure;
+  }
   const chained: ChainedStepEntry[] = [];
   const depth0Warnings: string[] = [];
   const takenSteps: string[] = [];
@@ -7095,9 +7169,17 @@ export async function advanceRun(
         evidence: [],
         warnings: [],
         errors: [],
-        context_hint: nothingRanHint(definition, stored, registry),
+        context_hint: nothingRanHint(
+          definition,
+          stored,
+          registry,
+          now,
+          expiryDisclosure !== undefined,
+        ),
         run_phase: deriveRunPhase(stored),
-        next_actions: stored.terminal_state ? [] : buildNextActions(definition, stored, registry),
+        next_actions: stored.terminal_state
+          ? []
+          : buildNextActions(definition, stored, registry, now),
       },
       chainedSteps: chained,
       depth0Warnings,
@@ -7110,9 +7192,13 @@ export async function advanceRun(
   let endHint: string | undefined;
   if (chained.length === 0 && advanced.status === 'ok') {
     const end = await store.get(options.runId).catch(() => stored);
-    endHint = nothingRanHint(definition, end, registry);
+    endHint = nothingRanHint(definition, end, registry, now, expiryDisclosure !== undefined);
   }
-  const chainWarnings = [...depth0Warnings, ...chained.flatMap((c) => c.warnings ?? [])];
+  const chainWarnings = [
+    ...(expiryDisclosure !== undefined ? [expiryDisclosure] : []),
+    ...depth0Warnings,
+    ...chained.flatMap((c) => c.warnings ?? []),
+  ];
   const envelope = {
     ...advanced,
     context_hint: withTakenClauses(endHint ?? advanced.context_hint, takenSteps),

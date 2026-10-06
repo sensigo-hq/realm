@@ -1,4 +1,5 @@
-// run advance command — runs the guards and automatic steps a run owes, from this shell (issue #625 PR-2a).
+// run advance command — runs what a run owes the engine, from this shell (issue #625 PR-2a).
+import { resolve } from 'node:path';
 import { Command } from 'commander';
 import type {
   RunStore,
@@ -26,6 +27,7 @@ import {
   withFullStop,
   type PendingView,
   type ProgramFit,
+  type WorkflowDefinition,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -111,19 +113,8 @@ export function stoppedReasons(runId: string, run: RunForReasons, pending: Pendi
     ];
   }
   const reasons = stepsThatCannotRun(pending).map((e) => cannotRunClause(e));
-  if (pending.agent_steps.length > 0) {
-    // decisions C55, C59: the subject and the count word agree with how many agent steps are ready.
-    const ready =
-      pending.agent_steps.length === 1
-        ? `an agent step is ready: '${pending.agent_steps[0]}' — drive it`
-        : `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them`;
-    // decision C89: the drive command a person can run as printed — since #676 `realm agent` refuses
-    // to start without a model, so the line carries the placeholders the other printers use
-    // (run-agent.ts's re-attach line, resume.ts, run.ts's detach map).
-    reasons.push(
-      `${ready} with realm agent --run-id ${runId} --provider <provider> --model <model>`,
-    );
-  }
+  const ready = agentReadyReason(runId, pending.agent_steps);
+  if (ready !== undefined) reasons.push(ready);
   reasons.push(
     ...inFlightSteps(run).map(
       (step) =>
@@ -131,6 +122,55 @@ export function stoppedReasons(runId: string, run: RunForReasons, pending: Pendi
     ),
   );
   return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
+}
+
+/**
+ * The one ready line for agent steps (decisions C55, C59, C89, C96): `an agent step is ready: '<s>' —
+ * drive it with realm agent --run-id <id> --provider <provider> --model <model>`, plural for two or
+ * more; `undefined` when none is ready. `realm run advance` prints it as a `Stopped:` reason and
+ * `realm run respond` as its own line — the same words from here.
+ */
+export function agentReadyReason(runId: string, agentSteps: readonly string[]): string | undefined {
+  if (agentSteps.length === 0) return undefined;
+  // decisions C55, C59: the subject and the count word agree with how many agent steps are ready.
+  const ready =
+    agentSteps.length === 1
+      ? `an agent step is ready: '${agentSteps[0]}' — drive it`
+      : `agent steps are ready: ${agentSteps.map((s) => `'${s}'`).join(', ')} — drive them`;
+  // decision C89: the drive command a person can run as printed — since #676 `realm agent` refuses
+  // to start without a model, so the line carries the placeholders the other printers use
+  // (run-agent.ts's re-attach line, resume.ts, run.ts's detach map).
+  return `${ready} with realm agent --run-id ${runId} --provider <provider> --model <model>`;
+}
+
+/**
+ * Where the project code of a run's steps is loaded from (decision C98) — the folder
+ * `loadProjectExtensions` anchors on: the workflow's own `trust_root` (its declared modules are
+ * resolved under it, and its realm.yaml is read there) whatever folder the shell is in; for a
+ * definition with none (made by an agent or from a string), the folder given with `--project`, else
+ * the shell's own. With `--extensions-module`, that module replaces the declared ones.
+ */
+export function projectCodeWhere(
+  workflow: Pick<WorkflowDefinition, 'trust_root'>,
+  opts: { project?: string; extensionsModule?: string },
+  cwd: string,
+): string {
+  const root =
+    workflow.trust_root ?? (opts.project !== undefined ? resolve(cwd, opts.project) : cwd);
+  return opts.extensionsModule !== undefined
+    ? `the module ${resolve(cwd, opts.extensionsModule)} (--extensions-module) and the realm.yaml of ${root}`
+    : `the project code under ${root}`;
+}
+
+/**
+ * Where a later `realm run advance` loads the run's project code from (decision C98), said before it
+ * runs: under the workflow's own `trust_root` — whatever folder that shell is in — or, for a
+ * definition with none, under the folder it runs in (or its `--project`).
+ */
+export function laterAdvanceCodeWhere(workflow: Pick<WorkflowDefinition, 'trust_root'>): string {
+  return workflow.trust_root !== undefined
+    ? `the project code under ${workflow.trust_root}`
+    : 'the project code under the folder it runs in (or its --project)';
 }
 
 /**
@@ -179,6 +219,9 @@ export async function advanceRunFromShell(
     verb: 'advance',
   });
   const projectDir = opts.project ?? process.cwd();
+  // decision C95: the clock the view reads, so an open question whose time is up and that declares
+  // `on_expiry` is named as owed — and `advanceRun` carries it out first.
+  const now = new Date();
   const registry =
     registryOverride ??
     (
@@ -188,9 +231,13 @@ export async function advanceRunFromShell(
       })
     ).registry;
 
-  const pending = describePending(workflow, run, registry);
+  const pending = describePending(workflow, run, registry, now);
   const keepsClaims = runStore.persistsClaims === true;
-  print(`Advancing run ${runId} (workflow '${workflow.id}') from ${projectDir}.`);
+  // decision C98: what comes from where — the folder the step's project code is loaded from (not
+  // the shell's, unless it is), and the environment, which is the shell's.
+  print(
+    `Advancing run ${runId} (workflow '${workflow.id}') with ${projectCodeWhere(workflow, opts, process.cwd())}, in this shell's environment.`,
+  );
   print(
     `This program: ${identityWords(driver)} · project code: ${fitWords(judgeProgramFit(run, registry.identity), run)}.`,
   );
@@ -219,6 +266,7 @@ export async function advanceRunFromShell(
     runId,
     command: 'advance',
     registry,
+    now,
     ...(driver !== undefined ? { driver } : {}),
     onStep: (step) => {
       lastStep = step;
@@ -255,7 +303,7 @@ export async function advanceRunFromShell(
     });
   }
 
-  const afterView = describePending(workflow, after, registry);
+  const afterView = describePending(workflow, after, registry, new Date());
   const isCapabilityBlock =
     result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
     result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
@@ -287,7 +335,7 @@ export async function advanceRunFromShell(
 
 export const runAdvanceCommand = new Command('advance')
   .description(
-    'Run the guards and automatic steps a run owes, from this shell — no model provider, no key',
+    "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — from this shell, with no model provider and no key",
   )
   .argument('<run-id>', 'ID of the run to advance')
   .option(

@@ -9,6 +9,7 @@ import {
   buildNextActions,
   describeNext,
   describePending,
+  dueExpiry,
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -48,12 +49,17 @@ export function handBackHint(args: {
   definition: WorkflowDefinition;
   registry?: ExtensionRegistry;
   deduped: boolean;
+  /** decision C95: with a clock, a matched run whose open question is due names its expiry as owed. */
+  now?: Date;
 }): string {
-  const { run, current, definition, registry, deduped } = args;
-  const next =
-    !current.terminal_state && current.pending_gate === undefined
-      ? describeNext(describePending(definition, current, registry), current)
-      : '';
+  const { run, current, definition, registry, deduped, now } = args;
+  const describes =
+    !current.terminal_state &&
+    (current.pending_gate === undefined ||
+      (now !== undefined && dueExpiry(current.pending_gate, now) !== undefined));
+  const next = describes
+    ? describeNext(describePending(definition, current, registry, now), current)
+    : '';
   if (deduped) {
     return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}`;
   }
@@ -259,9 +265,12 @@ export async function handleStartRun(
     }
   }
 
+  // decision C95: with the clock, a run the key matched whose open question is due (its time is up,
+  // `on_expiry` declared) is handed back with the `advance_run` act that carries it out.
+  const now = new Date();
   const nextActions = createdRun.terminal_state
     ? []
-    : buildNextActions(definition, createdRun, registry);
+    : buildNextActions(definition, createdRun, registry, now);
   // decision C58: the block happened, so the pre-flight warning for the same step ("If reached it
   // will block") is dropped beside it. The blocked steps are the ones whose `capability_blocks`
   // marker this call's attempt wrote — a created run carries none before it.
@@ -300,6 +309,7 @@ export async function handleStartRun(
       definition,
       ...(registry !== undefined ? { registry } : {}),
       deduped,
+      now,
     }),
     run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),

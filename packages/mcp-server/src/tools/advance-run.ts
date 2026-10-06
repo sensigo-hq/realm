@@ -84,7 +84,7 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
     'advance_run',
     {
       description:
-        "Run the guards and automatic steps a run owes, in this server's environment. Call it when next_actions names it.",
+        "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — in this server's environment. Call it when next_actions names it.",
       inputSchema: advanceRunArgsSchema,
     },
     async (rawArgs) => {

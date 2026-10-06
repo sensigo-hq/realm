@@ -20,6 +20,7 @@ import {
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
+import { agentReadyReason, laterAdvanceCodeWhere } from './run-advance.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
@@ -153,13 +154,16 @@ export async function respondToGate(
     };
   }
   // issue #625 PR-2a (decision C11): the recorded answerer when `--by` was given, the DERIVED
-  // phase, and — when the answer left engine work owed — the one command that runs it from here.
+  // phase, and — when the answer left engine work owed — the one command that runs it, with where
+  // its project code comes from and that its environment is its shell's (decision C98); when it
+  // left an agent step ready, the same ready line `realm run advance` prints (decision C96).
   const phase = deriveRunPhase(updatedRun);
   const answeredBy = options.by !== undefined ? ` | answered by ${options.by} (as stated)` : '';
   const pending = describePending(workflow, updatedRun, effectiveRegistry);
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
   // that cannot run and the way out — core's lines, never a copy.
   const cannotGoOn = cannotGoOnLines(updatedRun, pending);
+  const ready = agentReadyReason(runId, pending.agent_steps);
   return {
     choice: options.choice,
     newState: phase,
@@ -168,8 +172,9 @@ export async function respondToGate(
     lastLine:
       `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'` +
       (pending.act !== undefined
-        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them} from this shell.`
+        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them}, with ${laterAdvanceCodeWhere(workflow)}, in the environment of the shell it runs in.`
         : '') +
+      (ready !== undefined ? `\n${ready.charAt(0).toUpperCase()}${ready.slice(1)}.` : '') +
       cannotGoOn.map((line) => `\n${line}`).join(''),
   };
 }
