@@ -47,11 +47,18 @@ Responded: 3ebc1158-1d29-41b5-9ca5-df054a681b58 | choice 'approve' | new state '
 
 `new state` is the run's phase after the answer: `running` if steps remain, `completed` if the gate's step was the last.
 
-When the answer leaves `auto` steps that only the engine can run, one more line names them and the command that runs them (`runs it` for one step, `runs them` for more). Added after version 0.46.0:
+When the answer leaves `auto` steps that only the engine can run, one more line names them and the command that runs them (`runs it` for one step, `runs them` for more), where that command loads the steps' project code from (the workflow's own project folder, whatever folder the shell is in; for a workflow made without one, the folder it runs in or its `--project`), and that the environment is that shell's. Added after version 0.46.0:
 
 ```text
 Responded: b178179a-998d-457e-85e6-6d38439d0585 | choice 'approve' | new state 'running'
-Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them from this shell.
+Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them, with the project code under /home/me/project, in the environment of the shell it runs in.
+```
+
+When the answer leaves an agent step ready, the line says so in the words `realm run advance` uses, with the command that drives it. Added after version 0.46.0:
+
+```text
+Responded: 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 | choice 'approve' | new state 'running'
+An agent step is ready: 'finish' — drive it with realm agent --run-id 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 --provider <provider> --model <model>.
 ```
 
 When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0:
@@ -115,10 +122,10 @@ The refusals:
 
 ## `advance`
 
-Added after version 0.46.0. Runs the guards and `auto` steps a run owes, from this shell — no model provider, no key. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`), names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
+Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (stderr then shows `⚠ gate '<gate>' on '<step>' had expired — enacted declared <on_expiry> before this advance call (enacted_via: advance).`, and the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`); then the guards and `auto` steps that are ready. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
 
 ```text
-Advancing run <id> (workflow 'cli-owed-wf') from /home/me/project.
+Advancing run <id> (workflow 'cli-owed-wf') with the project code under /home/me/project, in this shell's environment.
 This program: tester (from REALM_OPERATOR) · project code: neither side records project code.
 Last recorded driver: none recorded.
 Owed to the engine: 'after'.

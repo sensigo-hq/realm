@@ -17,8 +17,20 @@ All notable changes to this project are documented here.
     carries `continued_by`, the program that ran the steps.
   - A new CLI command **`realm run advance <run-id>`** runs it from a shell with no model provider
     and no key.
-  - Before it runs, it prints what it will run, from which project folder, how this program's
-    project code compares with the run's last record, and the run's last recorded driver.
+  - Before it runs, it prints what it will run, the folder the steps' project code is loaded from —
+    the workflow's own project, whatever folder the shell is in (for a workflow made without one,
+    `--project` or the shell's folder) — and that the environment is the shell's; how this program's
+    project code compares with the run's last record; and the run's last recorded driver.
+    `realm run respond`'s line for owed work says the same of the `realm run advance` it names.
+  - When an open question's time is up and it declares `on_expiry`, carrying out that default or
+    abort is owed engine work too: `advance_run`, `realm run advance` and `advanceRun` carry it out
+    first, with the disclosure line in the reply's `warnings`, then run what it made owed.
+    `get_run_state` says `advance_owed` and offers `advance_run` for it. `describePending` and
+    `buildNextActions` take an optional `now` for it (the view's `expiry_due`); core exports
+    `dueExpiry`, `dueExpiryWords` and the type `DueExpiry`. A question not yet expired, or with no
+    `on_expiry`, is never touched.
+  - `realm run respond` prints, when its answer leaves an agent step ready, the line `realm run
+advance` prints for it, with the command that drives it.
   - Core exports the view: `describePending`, `checkPreClaim`, `engineStepInput`,
     `PRE_CLAIM_REFUSALS`, `ADVANCE_OWED`, `composeNextActionsStatusWord`, `describeNext`,
     `owedList`/`owedNames`/`owedWords`, `cannotRunWords`/`cannotRunClause`,
@@ -222,6 +234,17 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
     `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them), and
     `command` only labels the reply.
+- **A refusal before the claim says what can be called instead (issue #625, PR-2a).** A step
+  `executeStep` refuses before its claim — a failed precondition (`blocked`) or an invalid `trust`
+  (`error`, `VALIDATION_TRUST_VALUE`), an agent step or an `auto` step — now carries the run view's
+  `next_actions`, and `blocked_reason.eligible_steps` names the steps that can be called now, never
+  the refused one. Its `agent_action` is `resolve_precondition` when there is something to call,
+  `report_to_user` when there is not.
+  - On 0.46.0 a failed precondition replied `agent_action: "stop"` ("make no further calls for this
+    run") with `next_actions: []` and the refused step among `eligible_steps`, and a `trust` refusal
+    gave no `next_actions` — even when another step was ready.
+  - Every other `blocked` reply's `eligible_steps` also names only the steps that can be called.
+  - Core exports `callableSteps`, the steps a caller can call now.
 
 ### Fixed
 
