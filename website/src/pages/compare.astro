@@ -12,7 +12,7 @@ import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Logo from '../components/Logo.astro';
 import PageMeta from '../components/PageMeta.astro';
 import { COMPARE_DESCRIPTION, SOURCE_URL } from '../lib/site-meta.mjs';
-import { tools, rows, publicFacts, strengths, rowsByVerdict } from '../lib/comparison.mjs';
+import { tools, rows, publicFacts, strengths, rowsByVerdict, starsOf } from '../lib/comparison.mjs';
 
 const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
 const VERDICT = {
@@ -33,14 +33,21 @@ for (const t of tools) {
   else groups.push({ name: t.group, span: 1 });
 }
 
-// The adoption line: Realm's stars against the range of the others, from the stars fact.
-const stars = publicFacts.find((f) => f.id === 'stars');
-const n = (s) => Number(String(s).replace(/[^0-9]/g, ''));
-const otherStars = stars ? tools.filter((t) => t.key !== 'realm').map((t) => n(stars.cells[t.key])) : [];
+// The adoption line: Realm's stars against the range of the others (the loader checks the format).
 const fmt = (x) => x.toLocaleString('en-US');
-const adoption = stars
-  ? `Adoption: ${stars.cells.realm} GitHub star${n(stars.cells.realm) === 1 ? '' : 's'}, against ${fmt(Math.min(...otherStars))} to ${fmt(Math.max(...otherStars))} for the others`
-  : null;
+const otherStars = tools.filter((t) => t.key !== 'realm').map((t) => starsOf(t.key));
+const realmStars = starsOf('realm');
+const adoption = `Adoption: ${fmt(realmStars)} GitHub star${realmStars === 1 ? '' : 's'}, against ${fmt(Math.min(...otherStars))} to ${fmt(Math.max(...otherStars))} for the others`;
+
+// Issue numbers in the text (#625) become links to the issue.
+const linkParts = (text) => text.split(/(#\d+)/).map((part) => (/^#\d+$/.test(part) ? { issue: part.slice(1) } : { text: part }));
+
+// Every product named in the page title must be a column of the table.
+const TITLE_NAMES = ['LangGraph', 'CrewAI', 'Temporal', 'n8n'];
+for (const name of TITLE_NAMES) {
+  if (!tools.some((t) => t.name === name)) throw new Error(`compare.astro: the page title names ${name}, which is not a tool in src/data/comparison.json`);
+}
+const pageTitle = `How Realm compares with ${TITLE_NAMES.slice(0, -1).join(', ')}, ${TITLE_NAMES.at(-1)} and others`;
 
 const checkedDates = [...new Set(tools.map((t) => t.checked))].sort();
 const lastChecked = checkedDates.at(-1);
@@ -64,7 +71,7 @@ const groupsOf = [
 {ICON_LINKS.map((a) => <link {...a} />)}
 <meta name="theme-color" content={THEME_COLOR} />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<PageMeta title="How Realm compares with LangGraph, CrewAI, Temporal, n8n and others" description={COMPARE_DESCRIPTION} path="/compare/" />
+<PageMeta title={pageTitle} description={COMPARE_DESCRIPTION} path="/compare/" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
@@ -208,12 +215,12 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
         <section class="q" id={r.id}>
           <div class="qtop"><h3>{r.title}</h3><span class={`vchip ${VERDICT[r.verdict.kind][0]}`}>{VERDICT[r.verdict.kind][1]}</span></div>
           <p class="ask">{r.ask}</p>
-          <p class="verdict">{r.verdict.text}</p>
+          <p class="verdict">{linkParts(r.verdict.text).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
           <ul class="cells">
             {tools.map((t) => (
               <li class={t.key === 'realm' ? 'cell realm' : 'cell'}>
                 <div class="chead"><span class="cname">{t.name}</span><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></div>
-                <p>{r.cells[t.key].note}</p>
+                <p>{linkParts(r.cells[t.key].note).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
                 <p class="src"><span class="lab">{r.cells[t.key].label}</span> {r.cells[t.key].source}</p>
               </li>
             ))}
@@ -232,8 +239,8 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
         <article class={t.key === 'realm' ? 'card realm' : 'card'}>
           <h3>{t.name}</h3>
           <p class="cgroup">{t.group} · {t.version} · checked {t.checked}</p>
-          <h4>Stronger at</h4><p>{strengths[t.key].stronger}</p>
-          <h4>Weaker at</h4><p>{strengths[t.key].weaker}</p>
+          <h4>Stronger at</h4><p>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
+          <h4>Weaker at</h4><p>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
         </article>
       ))}
     </div>
@@ -243,7 +250,7 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
     <div class="eyebrow">How this was checked</div>
     <h2 id="how">Sources, dates and corrections</h2>
     <ul>
-      <li>Each tool was read at the release named in its column: its own source code, docs and release notes. Blog posts, comparison articles and AI summaries were not used.</li>
+      <li>Each answer was read in the tool's own source code, docs or release notes. A column names the main release that was read; where an answer comes from a companion package, such as a tool's SDK, CLI or MCP server, its source names the file. Blog posts, comparison articles and AI summaries were not used.</li>
       <li>Realm's own column was checked by a separate pass told to find its weaknesses, and its key answers were run on the published release.</li>
       <li>"Only Realm", "Level with the field", "Realm is behind" and "Nobody has it" are our reading of each row. The answers and their sources are the evidence.</li>
       <li>Claims a tool makes only in its docs are labelled DOCS and were not checked in its code. GitHub stars change daily; they were read on the date in each column. Prices change often and are not listed here.</li>

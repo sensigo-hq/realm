@@ -81,12 +81,12 @@
       "ask": "Can an assistant such as Claude or Cursor work through a workflow step by step, and be refused when it skips ahead or answers in the wrong shape?",
       "verdict": {
         "kind": "lead",
-        "text": "Realm is the only one of the ten that does this built in. The others give an outside agent, at most, one tool that runs a whole workflow."
+        "text": "Realm is the only one of the ten that does this built in. The others give an outside agent, at most, tools that run a whole workflow."
       },
       "cells": {
         "realm": {
           "value": "Yes",
-          "note": "An MCP client calls execute_step for one step at a time. A step that is not eligible yet is refused, and an answer that breaks the step's schema is refused.",
+          "note": "An MCP client calls execute_step for one step at a time. A step that is not eligible yet is refused, and when a step declares a schema, an answer that breaks it is refused.",
           "source": "execution-loop.ts:1591-1605; probe on 0.46.0 over MCP",
           "label": "CODE + EXECUTED"
         },
@@ -129,7 +129,7 @@
         "inngest": {
           "value": "No",
           "note": "Its MCP server sends events, runs functions and reads traces. A client does not hand in step results through it.",
-          "source": "inngest.com/docs ai-dev-tools/mcp",
+          "source": "inngest.com/docs ai-dev-tools/mcp; pkg/devserver/mcp.go, pkg/api/v2/apiv2mcp/tools.go @v1.45.1",
           "label": "DOCS + CODE"
         },
         "n8n": {
@@ -152,7 +152,7 @@
       "ask": "Does the tool, not the model, decide the step order?",
       "verdict": {
         "kind": "level",
-        "text": "Level with the code-first tools, and the only one that holds an outside agent to it. One gap: after a gate is answered over MCP, the next automatic step waits for an explicit call (#625)."
+        "text": "Level with the tools whose workflows are ordered by code, and the only one that holds an outside agent to that order. One gap: after a gate is answered, the next automatic step waits for an explicit call (#625)."
       },
       "cells": {
         "realm": {
@@ -168,7 +168,7 @@
           "label": "DOCS"
         },
         "crewai": {
-          "value": "Partial",
+          "value": "Yes",
           "note": "Sequential crews and Flows follow code; in hierarchical crews a manager LLM assigns the tasks.",
           "source": "processes.mdx:17-19, 53-60",
           "label": "DOCS"
@@ -204,13 +204,13 @@
           "label": "DOCS"
         },
         "n8n": {
-          "value": "Partial",
+          "value": "Yes",
           "note": "The graph sets node order; inside the AI Agent node the model picks tools, up to 10 iterations by default.",
           "source": "ToolsAgent/options.ts:22-25",
           "label": "CODE + DOCS"
         },
         "dify": {
-          "value": "Partial",
+          "value": "Yes",
           "note": "Workflow apps follow the graph; Agent nodes give the model control over tools.",
           "source": "docs: nodes/agent",
           "label": "DOCS"
@@ -347,7 +347,7 @@
         },
         "n8n": {
           "value": "Yes",
-          "note": "Send and Wait (approval, text, form) on 9 channels, with an optional wait limit.",
+          "note": "Send and Wait (approval, text or form), with an optional wait limit.",
           "source": "sendAndWait/utils.ts; docs",
           "label": "CODE + DOCS"
         },
@@ -365,7 +365,7 @@
       "ask": "Is the person who answered recorded, and is their identity checked?",
       "verdict": {
         "kind": "behind",
-        "text": "Behind Dify, which records the account that answered and gives each recipient its own token, and CrewAI's paid platform, which checks the reviewer's email. Realm records a name the caller states and checks nothing; in a test the agent approved its own gate, and the proof token, which shows only the conversation, recorded it as matched."
+        "text": "Behind Dify, which records the account that answered and gives each recipient its own token, and CrewAI's paid platform, which checks the reviewer's email (per its docs). Realm records a name the caller states and checks nothing; in a test the agent approved its own gate, and the proof token, which shows only the conversation, recorded it as matched."
       },
       "cells": {
         "realm": {
@@ -436,7 +436,7 @@
       "ask": "Is each step's input and output kept, and for how long?",
       "verdict": {
         "kind": "level",
-        "text": "Level, with two strengths: Realm keeps records until you delete them (n8n prunes after 14 days by default, Inngest keeps traces 24 hours to 14 days, Temporal Cloud up to 90), and its record says why each step was skipped and why the run ended."
+        "text": "Level. Realm keeps records until you delete them, as do the tools that store their own (LangGraph, Mastra, Microsoft Agent Framework, Dify). n8n prunes after 14 days by default, Inngest Cloud keeps traces 24 hours to 14 days below Enterprise, and Temporal Cloud keeps history 1 to 90 days."
       },
       "cells": {
         "realm": {
@@ -483,8 +483,8 @@
         },
         "inngest": {
           "value": "Partial",
-          "note": "Step results and a trace per run; trace history is 24 hours (Free) to 14 days (Business).",
-          "source": "docs: limits",
+          "note": "Step results and a trace per run. Inngest Cloud keeps trace history 24 hours (Free), 7 days (Pro), 14 days (Business) or up to 365 days (Enterprise); self-hosted Inngest does not remove them.",
+          "source": "docs: limits; docs: self-host Inngest",
           "label": "DOCS"
         },
         "n8n": {
@@ -507,7 +507,7 @@
       "ask": "Is the record hashed, chained or signed so an edit can be detected?",
       "verdict": {
         "kind": "open",
-        "text": "Nobody among the ten does this. LangGraph's optional encryption comes closest. It is open ground for Realm, where the record is the product."
+        "text": "Nobody among the ten does this. LangGraph's optional encryption comes closest: an edited value fails to decrypt."
       },
       "cells": {
         "realm": {
@@ -554,9 +554,9 @@
         },
         "inngest": {
           "value": "No",
-          "note": "No hashing or signing described; model-call input is editable in the UI.",
-          "source": "llms-full.txt grep; InngestStepTools.ts:766",
-          "label": "DOCS + CODE"
+          "note": "No hashing or signing described.",
+          "source": "llms-full.txt grep",
+          "label": "DOCS"
         },
         "n8n": {
           "value": "No",
@@ -575,10 +575,10 @@
     {
       "id": "crash",
       "title": "Carries on after a crash, by itself",
-      "ask": "If the process dies mid-run, does the run resume without a person stepping in?",
+      "ask": "If the process dies mid-run, does the run resume without a person or your code stepping in?",
       "verdict": {
         "kind": "behind",
-        "text": "Behind Temporal, Inngest, LangGraph, Mastra and CrewAI. A Realm run survives on disk, but a person restarts it, and a crash during an agent step needs a manual reclaim that may repeat the step's work."
+        "text": "Behind Temporal, Inngest and Mastra, which resume a run on their own. LangGraph, CrewAI and Microsoft Agent Framework resume when your code calls them. A Realm run survives on disk, but a person or a driver restarts it, and a crash during an agent step needs a manual reclaim that may repeat the step's work."
       },
       "cells": {
         "realm": {
@@ -588,14 +588,14 @@
           "label": "CODE + DOCS"
         },
         "langgraph": {
-          "value": "Yes",
-          "note": "Resumes from the last checkpoint with a persistent checkpointer; finished nodes are not re-run.",
+          "value": "Partial",
+          "note": "With a persistent checkpointer, a run resumes from the last checkpoint when your code calls it again with the same thread_id; finished nodes are not re-run.",
           "source": "checkpointers.md",
           "label": "DOCS"
         },
         "crewai": {
-          "value": "Yes",
-          "note": "Opt-in checkpoints; completed tasks are skipped on restore. Writes are best-effort.",
+          "value": "Partial",
+          "note": "Opt-in checkpoints; a run resumes when your code restores it (completed tasks are skipped). Writes are best-effort.",
           "source": "checkpointing.mdx:31-47",
           "label": "DOCS"
         },
@@ -612,8 +612,8 @@
           "label": "DOCS"
         },
         "maf": {
-          "value": "Yes",
-          "note": "Restarts from a checkpoint your code chooses; the durable extension makes it automatic.",
+          "value": "Partial",
+          "note": "Restarts from a checkpoint your code chooses; resuming is not automatic in core. The durable extension makes it automatic.",
           "source": "learn: workflows/checkpoints",
           "label": "DOCS"
         },
@@ -649,7 +649,7 @@
       "ask": "Can an MCP client (Claude, Cursor, …) connect to it?",
       "verdict": {
         "kind": "level",
-        "text": "Level: n8n, Dify, Mastra and Inngest have one too, and LangGraph and Microsoft's in part. What only Realm does is the first row: its tools work one step at a time, where the others run whole workflows. CrewAI, the OpenAI SDK and Temporal have no server of their own."
+        "text": "Level: n8n, Dify, Mastra and Inngest have one too, and LangGraph and Microsoft's in part. What only Realm does is the first row: its tools work one step at a time, where the others run whole workflows. CrewAI and the OpenAI SDK have no MCP server; Temporal's own MCP server searches its docs and runs no workflows."
       },
       "cells": {
         "realm": {
@@ -679,7 +679,7 @@
         "mastra": {
           "value": "Yes",
           "note": "Agents, tools and workflows over stdio and HTTP; a workflow is one whole-run tool.",
-          "source": "connections/mcp.mdx",
+          "source": "connections/mcp.mdx; packages/mcp/src/server/server.ts:280-310 (@mastra/mcp 2.1.2)",
           "label": "DOCS + CODE"
         },
         "maf": {
@@ -697,7 +697,7 @@
         "inngest": {
           "value": "Yes",
           "note": "Cloud and local servers for operations: send events, run functions, read traces.",
-          "source": "docs: ai-dev-tools/mcp",
+          "source": "docs: ai-dev-tools/mcp; pkg/devserver/mcp.go, pkg/api/v2/apiv2mcp/tools.go @v1.45.1",
           "label": "DOCS + CODE"
         },
         "n8n": {
@@ -763,7 +763,7 @@
           "value": "Yes",
           "note": "Through agent-framework integrations; each MCP call runs as an activity.",
           "source": "openai-agents.md:309-395",
-          "label": "DOCS + CODE"
+          "label": "DOCS"
         },
         "inngest": {
           "value": "Yes",
@@ -856,23 +856,6 @@
       }
     },
     {
-      "id": "paid-offer",
-      "title": "Paid offer",
-      "public": false,
-      "cells": {
-        "realm": "None",
-        "langgraph": "LangSmith: $0 or $39 per seat/month, + usage",
-        "crewai": "Platform: free (50 runs/month), Enterprise",
-        "openai": "None (model usage only)",
-        "mastra": "Platform: $0, $250/month, Enterprise",
-        "maf": "None (Azure hosting billed)",
-        "temporal": "Cloud: usage + 10%, or from $500/month",
-        "inngest": "Cloud: free, $99, $499/month, Enterprise",
-        "n8n": "Cloud: from €20/month",
-        "dify": "Cloud: $590/year and up"
-      }
-    },
-    {
       "id": "first-release",
       "title": "First release",
       "public": true,
@@ -941,249 +924,12 @@
       "weaker": "Model output is not checked; approvals carry only what the event says; traces last 24 hours to 14 days below Enterprise."
     },
     "n8n": {
-      "stronger": "1,500+ integrations and 9,000+ templates; approvals on 9 channels; visual editor; MCP server that can build workflows; queue mode; about 207k stars.",
+      "stronger": "1,500+ integrations by its README (the repository description says 400+) and 9,000+ templates; human review of AI tool calls on 9 channels; visual editor; MCP server that can build workflows; queue mode; about 207k stars.",
       "weaker": "Inside the agent node the model decides; link approvals record no one; records pruned after 14 days by default; not OSI open source."
     },
     "dify": {
       "stronger": "A rich human-input node that records the answerer and has a timeout branch; RAG pipelines; hundreds of model providers; logs kept by default.",
       "weaker": "Structured output is only parsed, not checked; an MCP client runs a whole app; email approval links work for anyone holding them."
     }
-  },
-  "platform": [
-    {
-      "id": "p-ui",
-      "title": "Has a UI or dashboard",
-      "rule": "Yes: ships one. Partial: a sample, or on the paid platform only.",
-      "cells": {
-        "realm": {
-          "value": "No",
-          "note": "No UI: CLI, MCP, library, webhooks"
-        },
-        "langgraph": {
-          "value": "Yes",
-          "note": "Studio"
-        },
-        "crewai": {
-          "value": "Partial",
-          "note": "UI on the paid platform only"
-        },
-        "openai": {
-          "value": "No",
-          "note": "SDK only"
-        },
-        "mastra": {
-          "value": "Yes",
-          "note": "Studio UI"
-        },
-        "maf": {
-          "value": "Partial",
-          "note": "DevUI sample"
-        },
-        "temporal": {
-          "value": "Yes",
-          "note": "Web UI"
-        },
-        "inngest": {
-          "value": "Yes",
-          "note": "Dashboard"
-        },
-        "n8n": {
-          "value": "Yes",
-          "note": "Visual editor"
-        },
-        "dify": {
-          "value": "Yes",
-          "note": "Visual editor"
-        }
-      }
-    },
-    {
-      "id": "p-store",
-      "title": "Ships database storage",
-      "rule": "Yes: a database store is included. Partial: optional session stores only.",
-      "cells": {
-        "realm": {
-          "value": "No",
-          "note": "JSON files on one machine"
-        },
-        "langgraph": {
-          "value": "Yes",
-          "note": "SQLite, Postgres, MongoDB"
-        },
-        "crewai": {
-          "value": "Yes",
-          "note": "SQLite, LanceDB"
-        },
-        "openai": {
-          "value": "Partial",
-          "note": "Optional session stores"
-        },
-        "mastra": {
-          "value": "Yes",
-          "note": "About 20 storage adapters"
-        },
-        "maf": {
-          "value": "Yes",
-          "note": "File, Cosmos DB, Foundry"
-        },
-        "temporal": {
-          "value": "Yes",
-          "note": "Cassandra, Postgres, MySQL"
-        },
-        "inngest": {
-          "value": "Yes",
-          "note": "SQLite, or Redis + Postgres"
-        },
-        "n8n": {
-          "value": "Yes",
-          "note": "SQLite or Postgres"
-        },
-        "dify": {
-          "value": "Yes",
-          "note": "Postgres, Redis"
-        }
-      }
-    },
-    {
-      "id": "p-hosted",
-      "title": "Offers a hosted service",
-      "rule": "Yes: the vendor runs it for you.",
-      "cells": {
-        "realm": {
-          "value": "No",
-          "note": "Self-hosted only"
-        },
-        "langgraph": {
-          "value": "Yes",
-          "note": "LangSmith cloud"
-        },
-        "crewai": {
-          "value": "Yes",
-          "note": "Paid platform"
-        },
-        "openai": {
-          "value": "No",
-          "note": "Runs in your own process"
-        },
-        "mastra": {
-          "value": "Yes",
-          "note": "Mastra platform"
-        },
-        "maf": {
-          "value": "Yes",
-          "note": "Azure Foundry"
-        },
-        "temporal": {
-          "value": "Yes",
-          "note": "Temporal Cloud"
-        },
-        "inngest": {
-          "value": "Yes",
-          "note": "Inngest Cloud"
-        },
-        "n8n": {
-          "value": "Yes",
-          "note": "n8n Cloud"
-        },
-        "dify": {
-          "value": "Yes",
-          "note": "Dify Cloud"
-        }
-      }
-    },
-    {
-      "id": "p-mature",
-      "title": "Mature",
-      "rule": "Yes: first release over a year ago and over 1,000 GitHub stars. Partial: one of the two.",
-      "cells": {
-        "realm": {
-          "value": "No",
-          "note": "First release 2026-06; 2 stars"
-        },
-        "langgraph": {
-          "value": "Yes",
-          "note": "2024-01; 42,730 stars"
-        },
-        "crewai": {
-          "value": "Yes",
-          "note": "2023-11; 59,354 stars"
-        },
-        "openai": {
-          "value": "Yes",
-          "note": "2025-03; 29,839 stars"
-        },
-        "mastra": {
-          "value": "Yes",
-          "note": "2024-10; 28,560 stars"
-        },
-        "maf": {
-          "value": "Partial",
-          "note": "2025-10 (under a year); 13,946 stars"
-        },
-        "temporal": {
-          "value": "Yes",
-          "note": "2020-09; 23,469 stars"
-        },
-        "inngest": {
-          "value": "Yes",
-          "note": "2021-07; 5,908 stars"
-        },
-        "n8n": {
-          "value": "Yes",
-          "note": "2019-06; 206,695 stars"
-        },
-        "dify": {
-          "value": "Yes",
-          "note": "2023-05; 157,868 stars"
-        }
-      }
-    },
-    {
-      "id": "p-licence",
-      "title": "Open-source licence",
-      "rule": "Yes: an open-source licence. Partial: part source-available, or added conditions. No: source-available.",
-      "cells": {
-        "realm": {
-          "value": "Yes",
-          "note": "Apache-2.0"
-        },
-        "langgraph": {
-          "value": "Partial",
-          "note": "MIT; Agent Server is Elastic-2.0"
-        },
-        "crewai": {
-          "value": "Yes",
-          "note": "MIT"
-        },
-        "openai": {
-          "value": "Yes",
-          "note": "MIT"
-        },
-        "mastra": {
-          "value": "Partial",
-          "note": "Apache-2.0 + source-available ee/"
-        },
-        "maf": {
-          "value": "Yes",
-          "note": "MIT"
-        },
-        "temporal": {
-          "value": "Yes",
-          "note": "MIT"
-        },
-        "inngest": {
-          "value": "Partial",
-          "note": "SSPL server; Apache-2.0 SDKs"
-        },
-        "n8n": {
-          "value": "No",
-          "note": "Sustainable Use License (source-available)"
-        },
-        "dify": {
-          "value": "Partial",
-          "note": "Apache-2.0 with added conditions"
-        }
-      }
-    }
-  ]
+  }
 }
