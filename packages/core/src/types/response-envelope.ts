@@ -27,7 +27,10 @@ export interface NextAction {
 export type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
 
 export interface BlockedReason {
-  /** Step names currently eligible for execution. */
+  /**
+   * The steps that can be called now: the agent steps the run's view offers and the `auto` steps
+   * it does not refuse — never a step refused before its claim (issue #625 PR-2a, decision C94).
+   */
   eligible_steps: string[];
   suggestion?: string;
 }
@@ -121,7 +124,10 @@ export interface ResponseEnvelope {
    * could be loaded (`buildPreExecutionErrorEnvelope` / `errorEnvelope`).
    */
   run_phase?: RunPhase;
-  /** Steps available for execution. Empty array means terminal or blocked — check status and run_phase. */
+  /**
+   * What to call next. Empty means nothing can be called now: the run has ended, waits on a person
+   * or another process, or cannot go on — check status, agent_action and run_phase.
+   */
   next_actions: NextAction[];
   blocked_reason?: BlockedReason;
   gate?: GateInfo;
