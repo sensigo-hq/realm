@@ -82,8 +82,8 @@ Realm registers the workflow, starts a run of it, and returns the first step to 
 ```text
 status: ok
 workflow_id: release-notes-86de43b5661ea6e9
-run_id: a6f70959-6ffb-470b-87fc-f95cfa193ac1
-Run 'a6f70959-6ffb-470b-87fc-f95cfa193ac1' created for workflow 'release-notes-86de43b5661ea6e9'. Ready for the agent: 'collect'.
+run_id: 4fe4f2e3-14b4-4f9c-9e8c-b96052cb8ed9
+Run '4fe4f2e3-14b4-4f9c-9e8c-b96052cb8ed9' created for workflow 'release-notes-86de43b5661ea6e9'. Ready for the agent: 'collect'.
 next: execute_step collect
 ```
 

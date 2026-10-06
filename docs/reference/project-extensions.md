@@ -183,17 +183,17 @@ A step may have a `config` block only if its adapter has a `config_schema`, a JS
 
 ## When each command loads the code
 
-| Command                                                             | Loads the code                                    | If loading fails         |
-| ------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
-| `realm workflow validate`, `register`, `watch`                      | Before it accepts the workflow.                   | The workflow is refused. |
-| `realm workflow test`                                               | Before the fixtures run.                          | The command fails.       |
-| `realm agent --workflow`, `realm workflow run`                      | Before the run is created.                        | No run is created.       |
-| `realm agent --run-id`                                              | Before it continues the run.                      | See below.               |
-| `realm listen`                                                      | When it starts, for every workflow it mounts.     | It does not start.       |
-| `realm mcp`, `realm serve`                                          | The first time a tool call needs the workflow.    | The tool call fails.     |
-| `realm run respond`, `realm run drain`                              | When it runs.                                     | The command fails.       |
-| `realm-mcp`, from the package `@sensigo/realm-mcp`                  | Never. A step that needs project code is blocked. |                          |
-| `realm run list`, `inspect`, `attempts`, `diff`, `replay`, `export` | Never.                                            |                          |
+| Command                                                                                  | Loads the code                                    | If loading fails         |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| `realm workflow validate`, `register`, `watch`                                           | Before it accepts the workflow.                   | The workflow is refused. |
+| `realm workflow test`                                                                    | Before the fixtures run.                          | The command fails.       |
+| `realm agent --workflow`, `realm workflow run`                                           | Before the run is created.                        | No run is created.       |
+| `realm agent --run-id`                                                                   | Before it continues the run.                      | See below.               |
+| `realm listen`                                                                           | When it starts, for every workflow it mounts.     | It does not start.       |
+| `realm mcp`, `realm serve`                                                               | The first time a tool call needs the workflow.    | The tool call fails.     |
+| `realm run respond`, `realm run drain`, `realm run advance` (added after version 0.46.0) | When it runs.                                     | The command fails.       |
+| `realm-mcp`, from the package `@sensigo/realm-mcp`                                       | Never. A step that needs project code is blocked. |                          |
+| `realm run list`, `inspect`, `attempts`, `diff`, `replay`, `export`                      | Never.                                            |                          |
 
 With a code file that throws when loaded, `realm run inspect`, `list`, `replay` and `diff` gave their usual output.
 
@@ -220,7 +220,7 @@ After the file was fixed, the same `realm agent --run-id` command opened the run
 
 ### `--extensions-module <path>`
 
-`realm agent`, `realm workflow run`, `realm workflow validate`, `realm workflow test`, `realm mcp`, `realm serve`, `realm run respond` and `realm run drain` take `--extensions-module <path>`. The file is loaded in place of every file the workflow names. It does not have to be inside the project.
+`realm agent`, `realm workflow run`, `realm workflow validate`, `realm workflow test`, `realm mcp`, `realm serve`, `realm run respond`, `realm run drain` and `realm run advance` (added after version 0.46.0) take `--extensions-module <path>`. The file is loaded in place of every file the workflow names. It does not have to be inside the project.
 
 ```text
 [realm] --extensions-module override active: loading '/srv/repair.mjs' (resolved: /srv/repair.mjs). Declared workflow extensions are IGNORED.

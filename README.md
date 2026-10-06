@@ -162,7 +162,7 @@ Workflows can declare their own custom adapters and step handlers — no wrapper
 extensions: ./registry.js # relative module path(s); the default export declares { adapters, handlers, processors }
 ```
 
-The `realm` commands that check or run a workflow (`workflow validate`, `register`, `watch`, `test`, `workflow run`, `agent`, `listen`, `mcp`, `serve`, `run respond`, `run drain`) load the declared code the same way, with fail-fast loading and an enforced trust boundary; the commands that only read runs (`run list`, `inspect`, `attempts`, `diff`, `replay`, `export`) never load it. See [when each command loads the code](docs/reference/project-extensions.md#when-each-command-loads-the-code).
+The `realm` commands that check or run a workflow (`workflow validate`, `register`, `watch`, `test`, `workflow run`, `agent`, `listen`, `mcp`, `serve`, `run respond`, `run drain`, `run advance`) load the declared code the same way, with fail-fast loading and an enforced trust boundary; the commands that only read runs (`run list`, `inspect`, `attempts`, `diff`, `replay`, `export`) never load it (`run advance` was added after version 0.46.0). See [when each command loads the code](docs/reference/project-extensions.md#when-each-command-loads-the-code).
 
 ## CLI Reference
 
