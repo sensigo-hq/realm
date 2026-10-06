@@ -69,7 +69,7 @@ function stranded(withB: boolean): WorkflowDefinition {
 }
 
 const NOT_A_GATE_REPLY_TEXT =
-  "Human review required for step 'q'. Ask the user to choose one of: approve, reject, then call submit_human_response with their choice.";
+  "Human review required for step 'q'. Ask the user to choose one of: approve, reject, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message.";
 
 describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named everywhere', () => {
   let store: JsonFileStore;
@@ -402,7 +402,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     // (a) red when the line says "before this call", drops the default choice, or is missing; (b)
     // prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
+      `gate '${gateId}' on 'q' had expired — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
     ]);
   });
 
@@ -415,7 +415,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const reply = await advanceRun(store, d, { runId, now: past });
     // (a) red when the abort's line does not say the run ended; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired — this advance_run call first carried out its declared abort: the run ended (enacted_via: advance_run).`,
+      `gate '${gateId}' on 'q' had expired — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
     ]);
   });
 
@@ -437,7 +437,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     expect(warn.mock.calls).toEqual([]);
     // (a) red when the could-not case returns no line; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired, but this advance_run call could not carry out its declared abort (store says no); it went on with the run as it was.`,
+      `gate '${gateId}' on 'q' had expired, but this advanceRun call could not carry out its declared abort (store says no); it went on with the run as it was.`,
     ]);
     // (a) red when the hint says the expiry was carried out; (b) prints the hint.
     expect(reply.context_hint).not.toContain('was carried out as declared');

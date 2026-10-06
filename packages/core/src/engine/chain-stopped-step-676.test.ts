@@ -189,6 +189,7 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
     const runId = await newRun(def.id);
     const reply = await advanceRun(racing, def, {
       runId,
+      caller: 'advance_run',
       onStep: (step) => {
         if (step === 'b') armed = true;
       },
@@ -215,7 +216,11 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
       },
     };
     const runId = await newRun(def.id);
-    const reply = await advanceRun(store, def, { runId, registry: boomRegistry() });
+    const reply = await advanceRun(store, def, {
+      runId,
+      caller: 'advance_run',
+      registry: boomRegistry(),
+    });
     // (a) red when the advance loop's stamp is dropped; (b) prints status, command, stopped_step
     //     and errors.
     expect({

@@ -27,8 +27,11 @@ import {
   projectCodeWhere,
   laterAdvanceCodeWhere,
   projectNotUsedLine,
+  projectWords,
   runAdvanceCommand,
+  PROJECT_OPTION_HELP,
 } from './run-advance.js';
+import { respondCommand } from './respond.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -160,17 +163,17 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     const advanced = realm(proj, ['run', 'advance', runId]);
     expect(advanced.status).toBe(0);
     const lines = advanced.stdout.trim().split('\n');
+    // decision C123: the expiry line is printed when the call carries the expiry out — before the
+    // step it led to — and once.
     // (a) red when the view does not name the due expiry as owed (advance would print "Nothing is
-    // owed" and stop); (b) prints the lines.
-    expect(lines.slice(3, 5)).toEqual([
+    // owed" and stop), when the line comes after the step, says "before this call" or drops the
+    // default choice; (b) prints the lines.
+    expect(lines.slice(3, 6)).toEqual([
       "Owed to the engine: the expired question on 'confirm' (its declared settle_default).",
+      `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
       '→ after',
     ]);
-    // (a) red when the command does not render the reply's line, or the line says "before this call"
-    // or drops the default choice; (b) prints the lines.
-    expect(lines).toContain(
-      `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
-    );
+    expect(lines.filter((l) => l.includes('had expired'))).toHaveLength(1);
     // (a) red when core prints the line itself (C109); (b) prints stderr.
     expect(advanced.stderr).not.toContain('had expired');
     const after = await runs.get(runId);
@@ -317,6 +320,111 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     // (a) red when the description drops the expiry; (b) prints it.
     expect(runAdvanceCommand.description()).toBe(
       "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — from this shell, with no model provider and no key",
+    );
+  });
+  it('C121: one composer for the project words — every member; the not-used line says (no project code there) when the project holds none', () => {
+    // (a) red when a member's two halves disagree about code, or a clause is dropped; (b) prints it.
+    expect(
+      projectWords({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, '/sh', true),
+    ).toEqual({
+      where: 'the project code under /p/proj',
+      notUsed:
+        "--project other was not used: workflow 'w' has its own project, /p/proj, and its code is loaded from there.",
+    });
+    expect(
+      projectWords({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, '/sh', false),
+    ).toEqual({
+      where: 'no project code (nothing to load under /p/proj)',
+      notUsed:
+        "--project other was not used: workflow 'w' has its own project, /p/proj (no project code there).",
+    });
+    expect(projectWords({ id: 'w', trust_root: '/p/proj' }, {}, '/sh', false)).toEqual({
+      where: 'no project code (nothing to load under /p/proj)',
+    });
+    expect(projectWords({ id: 'w' }, { project: 'deploy' }, '/sh', false)).toEqual({
+      where: 'no project code (nothing to load under /sh/deploy)',
+    });
+    // (a) red when the two exported readers do not read the one composer; (b) prints them.
+    expect(
+      projectNotUsedLine({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, false),
+    ).toBe(
+      "--project other was not used: workflow 'w' has its own project, /p/proj (no project code there).",
+    );
+    expect(projectCodeWhere({ trust_root: '/p/proj' }, {}, '/sh', false)).toBe(
+      'no project code (nothing to load under /p/proj)',
+    );
+  });
+
+  it('C121, W4-R1: --project on a workflow whose own project holds no code — respond and advance say (no project code there), never that its code is loaded', async () => {
+    const bare = realpathSync(mkdtempSync(join(tmpdir(), 'realm-pcw-bare-')));
+    try {
+      mkdirSync(join(bare, 'wf'), { recursive: true });
+      writeFileSync(
+        join(bare, 'wf', 'workflow.yaml'),
+        YAML('none')
+          .replace('id: pcw-none', 'id: pcw-bare2')
+          .replace('extensions:\n  - ../../dist/registry.js\n', '')
+          .replace('    handler: mark\n', ''),
+        'utf8',
+      );
+      expect(realm(bare, ['workflow', 'register', 'wf/workflow.yaml']).status).toBe(0);
+      const definition = await new JsonWorkflowStore(join(home, '.realm', 'workflows')).get(
+        'pcw-bare2',
+      );
+      const root = definition.trust_root!;
+      const runs = new JsonFileStore(join(home, '.realm', 'runs'));
+      const { run } = await runs.create({
+        workflowId: 'pcw-bare2',
+        workflowVersion: 1,
+        params: {},
+      });
+      await executeStep(runs, definition, {
+        runId: run.id,
+        command: 'confirm',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+      const gateId = (await runs.get(run.id)).pending_gate!.gate_id;
+      const line = `--project ${elsewhere} was not used: workflow 'pcw-bare2' has its own project, ${root} (no project code there).`;
+      const advanced = realm(elsewhere, ['run', 'advance', run.id, '--project', elsewhere]);
+      // (a) red when the not-used line says "its code is loaded from there" beside "no project
+      // code"; (b) prints stdout.
+      expect(advanced.stdout.split('\n').slice(0, 2)).toEqual([
+        `Advancing run ${run.id} (workflow 'pcw-bare2') with no project code (nothing to load under ${root}), in this shell's environment.`,
+        line,
+      ]);
+      const responded = realm(elsewhere, [
+        'run',
+        'respond',
+        run.id,
+        '--gate',
+        gateId,
+        '--choice',
+        'approve',
+        '--project',
+        elsewhere,
+      ]);
+      expect(responded.status).toBe(0);
+      // (a) red when respond's line disagrees with its own later-advance words; (b) prints stdout.
+      expect(responded.stdout.split('\n')[0]).toBe(line);
+      expect(responded.stdout).not.toContain('its code is loaded from there');
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("C121, W4-Y1: respond's and advance's --project help says when it is used and that a workflow registered from a folder loads from there", () => {
+    for (const command of [runAdvanceCommand, respondCommand]) {
+      const help = command.options.find((o) => o.long === '--project')?.description;
+      // (a) red when the help speaks of a config anchor and trust_root again, or the commands
+      // disagree; (b) prints it.
+      expect({ command: command.name(), help }).toEqual({
+        command: command.name(),
+        help: PROJECT_OPTION_HELP,
+      });
+    }
+    expect(PROJECT_OPTION_HELP).toBe(
+      'Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose realm.yaml and code it loads (default: current directory). A workflow registered from a folder loads its code from there, and --project is not used.',
     );
   });
 });

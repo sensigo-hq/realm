@@ -14,7 +14,8 @@ All notable changes to this project are documented here.
   - `next_actions` ends with the act `advance_run {run_id}`, always last, so `next_actions[0]` stays
     the agent step.
   - A new MCP tool **`advance_run`** runs it in the receiving server's environment; its reply
-    carries `continued_by`, the program that ran the steps.
+    carries `continued_by`, the program that ran the steps, and empty `data` and `evidence`, as
+    every MCP reply does.
   - A new CLI command **`realm run advance <run-id>`** runs it from a shell with no model provider
     and no key.
   - Before it runs, it prints what it will run, the folder the steps' project code is loaded from —
@@ -26,7 +27,8 @@ All notable changes to this project are documented here.
     abort is owed engine work too: `advance_run`, `realm run advance` and `advanceRun` carry it out
     first, with the disclosure line in the reply's `warnings`, then run what it made owed.
     `get_run_state` says `advance_owed` and offers `advance_run` for it. `describePending` and
-    `buildNextActions` take an optional `now` for it (the view's `expiry_due`); core exports
+    `buildNextActions` take the clock `now` for it, as a required argument (the view's
+    `expiry_due`; see the BREAKING entry under Changed); core exports
     `dueExpiry`, `dueExpiryWords` and the type `DueExpiry`. A question not yet expired, or with no
     `on_expiry`, is never touched.
   - `realm run respond` prints, when its answer leaves an agent step ready, the line `realm run
@@ -225,15 +227,20 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
 - **BREAKING — `advanceRun` takes the owed call's options (issue #625, PR-2a).** Version 0.46.0
   exported `advanceRun(store, definition, options: ExecuteChainOptions, state?: AdvanceRunState)`
   and the type `AdvanceRunState` (issue #625 PR-1; see 0.46.0's notes). It is now
-  `advanceRun(store, definition, { runId, registry?, traceBufferStore?, driver?, now?, onStep?, onTaken?, command? })`
+  `advanceRun(store, definition, { runId, registry?, traceBufferStore?, driver?, now?, onStep?, onTaken?, onExpiry?, caller?, command? })`
   (type `AdvanceRunOptions`): it runs what the engine owes on a run — its eligible guards, then its
   eligible `auto` steps — from the stored record. The `state` argument and `AdvanceRunState` are
   removed.
   - `onTaken` is told each step another process held when the call tried to claim it; the call
-    re-reads the record and goes on.
+    re-reads the record and goes on. `onExpiry` is told the line that says the call carried out an
+    expired question, before any step runs.
+  - `caller` names the caller — `advanceRun` (the default: a program's own call), `advance_run`
+    (the MCP tool) or `advance` (`realm run advance`) — on the reply's `command` and on that line's
+    `enacted_via`. Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via`
+    vocabulary, which gains `advanceRun`) and `expiryCarriedOutLine`, the line's one composer.
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
-    `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them), and
-    `command` only labels the reply.
+    `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them);
+    `caller` names the call, and `command` only labels the reply (default: the caller).
 - **BREAKING — a refusal before the claim says what can be called instead (issue #625, PR-2a).** A step
   `executeStep` refuses before its claim — a failed precondition (`blocked`) or an invalid `trust`
   (`error`, `VALIDATION_TRUST_VALUE`), an agent step or an `auto` step — now carries the run view's
@@ -271,9 +278,12 @@ as next_actions says.`).
   one), and its hint says `Waiting on the question on step '<q>' (choices: <a>, <b>) — answer it with
 submit_human_response.` where 0.46.0 said `No step is ready.` and offered nothing.
   - `get_run_state` at `awaiting_human`: `next_actions` holds that entry (0.46.0: empty).
+  - The entry's text says where the question's text is: `The question's text, when its gate declares
+a message, is get_run_state's pending_gate.resolved_message.` The reply that opens a question,
+    which carries the `gate` object, is unchanged.
   - `start_run` matched by its idempotency key at an open question: the entry, and the hint names
     the question. `submit_human_response` with a gate id that is not the open one: the refusal holds
-    the open question's entry (0.46.0: nothing to call).
+    the open question's entry (0.46.0: nothing to call) — see the next entry.
   - `advance_run` and `advanceRun` at an open question run nothing and reply with that entry and
     hint, with no `agent_action`; `realm run advance` prints its `a question is open — realm run
 respond …` line from that reply.
@@ -283,18 +293,44 @@ respond …` line from that reply.
     `answerableQuestion`, `openQuestionWords`, `notCallableReason` and the type `OpenQuestion`.
   - **Upgrading:** a client that read an empty `next_actions` at a question as "nothing to do" now
     gets the answer: show the question to the person and send their choice, or keep waiting.
+- **BREAKING — an answer with the wrong gate id routes by what can be called, and names the open
+  question (issue #625, PR-2a).** `submit_human_response` (and `submitHumanResponse`) with a gate id
+  that is not the open one now replies `agent_action: "resolve_precondition"` when `next_actions`
+  holds something to call, `report_to_user` only when it is empty (0.46.0: always
+  `report_to_user`). Its `context_hint` follows the message with the open question's step and gate
+  id — `The open question is on step '<s>' (gate '<g>') — answer it as next_actions says.` — or,
+  when that question's time is up and it declares `on_expiry`,
+  `The question on step '<s>' (gate '<g>') can no longer be answered: its time is up — call
+advance_run to carry out its declared <on_expiry>.`, with `advance_run` in `next_actions` in place
+  of an answer that could not be recorded; or `No question is open on this run.`
+  - The other refusals of an answer keep `report_to_user`: a different choice already recorded, a
+    late answer the expiry beat, a choice the question does not offer, a run that has ended.
+  - **Upgrading:** a client that stopped on this refusal's `report_to_user` follows `next_actions`.
+- **BREAKING — the run's view needs the clock (issue #625, PR-2a).** `buildNextActions(definition,
+run, registry, now)` and `describePending(definition, run, registry, now)` take `now` as a required
+  argument (`registry` may be `undefined`); 0.46.0's `buildNextActions(definition, run)` took
+  neither. A view built without a clock assumed no question had expired, so a reply could offer an
+  answer that could no longer be recorded; every reply now passes its call's clock.
+  - **Upgrading:** pass `registry` (or `undefined`) and `new Date()`.
 - **BREAKING — the expiry line says what this call did, and core prints nothing (issue #625,
   PR-2a).** The line a call adds to its `warnings` when it carries out an expired question's
   `on_expiry` now reads `gate '<g>' on '<s>' had expired — this <call> call first carried out its
-declared settle_default: the default choice '<c>' was recorded (enacted_via: <call>).`, or `…
+declared settle_default: the default choice '<c>' was recorded (enacted_via: <via>).`, or `…
 its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_expiry> before this
-<call> call (enacted_via: <call>).`).
+<call> call (enacted_via: <call>).`). `<call>` names the call: `execute_step`, `advance_run`,
+  `advance` (`realm run advance`), `advanceRun` (a program's own call) or `submit_human_response`
+  (a late answer, `enacted_via: submit`).
+  - A late answer's line is this one too (0.46.0: `gate '<g>' expired <n>m ago and was enacted
+(settle_default: '<c>') before this response arrived — enacted_via: submit.`). When another call
+    had already carried the expiry out, it says so: `… had expired — another call had already
+carried out its declared …`.
   - The engine no longer writes that line, or the could-not line, to stderr. A store that cannot
     carry the expiry out now gives a line in `warnings` too: `gate '<g>' on '<s>' had expired, but
 this <call> call could not carry out its declared <on_expiry> (<error>); it went on with the run
 as it was.`
-  - `realm run advance` prints every line of its reply's `warnings` as `⚠ <line>` after the steps it
-    ran (0.46.0 printed only the expiry line, on stderr, from the engine).
+  - `realm run advance` prints the expiry line when it carries the expiry out, before the steps it
+    led to, and every other line of its reply's `warnings` as `⚠ <line>` after the steps it ran
+    (0.46.0 printed only the expiry line, on stderr, from the engine, after the steps).
   - **Upgrading:** a program that matched the old text, or read the line from stderr, reads the
     reply's `warnings`.
 - **`realm run list --stuck` names the command for an expired question the engine carries out
@@ -305,7 +341,8 @@ as it was.`
   `realm.yaml` and no extension module, they say `with no project code (nothing to load under
 <folder>)`. A `--project` given for a workflow with its own project folder is named in one line:
   `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is
-loaded from there.`
+loaded from there.`, or `… <folder> (no project code there).` when that folder holds none. Their
+  `--project` help says it is used only for a workflow registered without a project folder.
 
 ### Fixed
 

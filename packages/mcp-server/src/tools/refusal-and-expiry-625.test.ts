@@ -11,6 +11,10 @@
 // - decisions C103, C104 (the scoped walk's W2-R1, W1-R1): `advance_run` at an open question names it
 //   and offers `submit_human_response`; `execute_step` on a step that is not eligible says why, offers
 //   the answer behind a question, and with nothing to call replies `report_to_user` and the way out.
+// - decisions C117-C120 (the walk on the merged head, W3-R1, W1-Y2, W1-R1, W5-R1): a wrong gate id on
+//   an expired question offers `advance_run` and says its time is up (on an open one, the answer);
+//   `advance_run`'s reply carries empty `data` and `evidence`; `execute_step` whose own expiry ended
+//   the run replies `blocked` and `stop`.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -26,8 +30,12 @@ import {
   type WorkflowDefinition,
   type ResponseEnvelope,
 } from '@sensigo/realm';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { handleExecuteStep } from './execute-step.js';
-import { handleAdvanceRun } from './advance-run.js';
+import { handleAdvanceRun, registerAdvanceRun } from './advance-run.js';
+import { handleSubmitHumanResponse } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
 
@@ -325,5 +333,113 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       "Step 'c' cannot be called now: a step it depends on cannot run ('a'). 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'b.output.go == true'. Resolved value: undefined. " +
         WAY_OUT,
     );
+  });
+  it('C117, C118, W3-R1: a wrong gate id on an EXPIRED question offers advance_run and says its time is up — get_run_state agrees', async () => {
+    const d = gated('rae-w3r1', 'settle_default');
+    const { runId, gateId } = await expiredGate(d, true);
+    const reply = await handleSubmitHumanResponse(
+      { run_id: runId, gate_id: 'not-the-gate', choice: 'reject' },
+      { runStore, workflowStore },
+    );
+    const state = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
+    // (a) red when the refusal offers the answer (no clock: "ask the user again"), routes to
+    // report_to_user with something to call, or the hint does not say the time is up; (b) prints them.
+    expect({
+      status: reply.status,
+      agent_action: reply.agent_action,
+      next: reply.next_actions.map((a) => a.instruction?.tool),
+      hint: reply.context_hint,
+      state: state.next_actions_status,
+      stateNext: state.next_actions.map((a) => a.instruction?.tool),
+    }).toEqual({
+      status: 'error',
+      agent_action: 'resolve_precondition',
+      next: ['advance_run'],
+      hint: `Gate 'not-the-gate' is not the open gate and matches no committed resolution. The question on step 'confirm' (gate '${gateId}') can no longer be answered: its time is up — call advance_run to carry out its declared settle_default.`,
+      state: 'advance_owed',
+      stateNext: ['advance_run'],
+    });
+    // (a) red when the refusal's act is not the view's (the one composition); (b) prints both.
+    expect(reply.next_actions).toEqual(state.next_actions);
+    // (a) red when the refusal carried the expiry out (it refuses; advance_run does that); (b) prints it.
+    expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
+  });
+
+  it('C117 CONTROL: the same wrong gate id on an open question whose time is not up offers the answer — resolve_precondition, the question named', async () => {
+    const d = gated('rae-w3r1-ctl', 'settle_default');
+    const { runId, gateId } = await expiredGate(d, false);
+    const reply = await handleSubmitHumanResponse(
+      { run_id: runId, gate_id: 'not-the-gate', choice: 'reject' },
+      { runStore, workflowStore },
+    );
+    // (a) red when an unexpired question offers advance_run, or the answer is not offered; (b) prints it.
+    expect({
+      agent_action: reply.agent_action,
+      next: reply.next_actions,
+      hint: reply.context_hint,
+    }).toEqual({
+      agent_action: 'resolve_precondition',
+      next: [
+        answerAction(runId, { step: 'confirm', gate_id: gateId, choices: ['approve', 'reject'] }),
+      ],
+      hint: `Gate 'not-the-gate' is not the open gate and matches no committed resolution. The open question is on step 'confirm' (gate '${gateId}') — answer it as next_actions says.`,
+    });
+  });
+
+  it("C119, W1-R1: advance_run's MCP reply carries empty data and evidence, as execute_step's", async () => {
+    const d = gated('rae-w1r1', 'settle_default');
+    const { runId } = await expiredGate(d, true);
+    const server = new McpServer({ name: 'test', version: '0' });
+    registerAdvanceRun(server, { runStore, workflowStore });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0' });
+    await client.connect(clientTransport);
+    try {
+      const result = await client.callTool({ name: 'advance_run', arguments: { run_id: runId } });
+      const reply = JSON.parse(
+        (result.content as Array<{ type: string; text: string }>)[0]!.text,
+      ) as ResponseEnvelope;
+      // (a) red when the tool passes the core reply's evidence (the step it ran) through; (b) prints
+      // the fields — and that a step did run, so the evidence would not have been empty.
+      expect({
+        data: reply.data,
+        evidence: reply.evidence,
+        ran: reply.chained_auto_steps?.map((c) => c.step),
+        phase: reply.run_phase,
+      }).toEqual({ data: {}, evidence: [], ran: ['after'], phase: 'completed' });
+      // (a) red when the run's own evidence is lost (the reply empties; the record keeps); (b) prints it.
+      expect((await runStore.get(runId)).evidence.map((e) => e.step_id)).toContain('after');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('C120, W5-R1: execute_step on the step after an expired abort question — blocked and stop: this call ended the run', async () => {
+    const d = gated('rae-w5r1', 'abort');
+    const { runId, gateId } = await expiredGate(d, true);
+    const reply = await handleExecuteStep(
+      { run_id: runId, command: 'after', params: {} },
+      { runStore, workflowStore },
+    );
+    // (a) red when the reply is not blocked/stop, offers something, or drops the line that says this
+    // call ended the run; (b) prints the reply.
+    expect({
+      status: reply.status,
+      agent_action: reply.agent_action,
+      next: reply.next_actions,
+      hint: reply.context_hint,
+      phase: reply.run_phase,
+      line: reply.warnings.filter((w) => w.includes('had expired')),
+    }).toEqual({
+      status: 'blocked',
+      agent_action: 'stop',
+      next: [],
+      hint: "Step 'after' cannot be called now: the run has ended (aborted).",
+      phase: 'aborted',
+      line: [
+        `gate '${gateId}' on 'confirm' had expired — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
+      ],
+    });
   });
 });

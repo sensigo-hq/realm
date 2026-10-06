@@ -652,7 +652,8 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       const reply = await advanceRun(store, gateThenAuto, { runId, onStep: (s) => steps.push(s) });
       expect(steps).toEqual(['after']);
       expect(reply.status).toBe('ok');
-      expect(reply.command).toBe('advance_run');
+      // decision C124: a program's own call names itself.
+      expect(reply.command).toBe('advanceRun');
       expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['after']);
       expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
       // A repeat with nothing owed runs nothing and returns the view, never an error.
@@ -1165,7 +1166,9 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
   it('run-agent.ts names no auto step in its pick', () => {
     const ra = code('cli/src/agent/run-agent.ts');
     // decision C82: the pick is the view's offered agent steps — a refused one is never picked.
-    expect(ra).toContain('describePending(definition, currentRun, deps.registry).agent_steps');
+    expect(ra).toContain(
+      'describePending(definition, currentRun, deps.registry, new Date()).agent_steps',
+    );
     expect(ra).not.toContain("execution === 'auto'");
     expect(ra).not.toContain('executeStep(');
   });
