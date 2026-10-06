@@ -1720,9 +1720,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             );
             continue;
           }
+          // decision C85: the step stopped being eligible because, in the same moment, another
+          // process opened a gate or ended the run. The loop top handles both — it waits at the gate,
+          // or prints the run-ended line — as it did before C82 (5).
+          if (currentRun.terminal_state === true || currentRun.pending_gate !== undefined) {
+            continue;
+          }
           // decision C82 (5): any other `blocked` reply — the step's precondition failed on the
           // engine's own read, or the step stopped being eligible for another reason, after this drive
-          // read the record — prints the reply's own hint, and the drive stops.
+          // read the record — prints the reply's own hint, and the drive stops. Kept a stop on
+          // purpose (C85): going back to the loop top on a reply the run's view does not explain
+          // could bring back the unbounded, billed loop C82 removed.
           console.error(`\n✗ ${result.context_hint}`);
           return 'failed';
         }

@@ -271,7 +271,9 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   `realm workflow run` no longer asks for such a step, `realm workflow test` names it instead of running to the iteration cap, and
   `start_run`, `get_run_state` and every reply that says what comes next no longer offer it. A
   `blocked` reply never prints `✓` in `realm agent`: a step another process took between the drive's
-  read and the engine's is said as taken, and any other prints its own hint and stops the drive. The
+  read and the engine's is said as taken; when another process opened a gate or ended the run in
+  that moment, the drive goes on as it does at any gate or end (it waits at the gate, or prints
+  `Run ended in phase: <phase>`); any other prints its own hint and stops the drive. The
   drive stops on a step that cannot run only when nothing is in flight elsewhere: a step another
   program is running may give the answer a precondition reads, so the drive waits for it first.
 
