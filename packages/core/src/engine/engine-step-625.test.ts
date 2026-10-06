@@ -215,6 +215,7 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
         runId: run.id,
         command: 'nope',
         input: {},
+        dispatcher: async () => ({}),
       });
       const r = viaEngine.reply as { status: string; error_code?: string; context_hint: string };
       expect({ status: r.status, error_code: r.error_code, context_hint: r.context_hint }).toEqual({
