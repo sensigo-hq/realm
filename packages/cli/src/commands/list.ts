@@ -92,11 +92,16 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
       const raw = f.evidence?.['disposition'];
       const disposition = typeof raw === 'string' ? raw : 'unknown';
       // The pointer is keyed on the LITERAL `finding_only`, never on "not abort/settle_default".
-      // The other two dispositions enact themselves at the next enactment point (and `realm run
-      // drain --expired` can force them), so a verb there would send an operator to do work the
-      // engine is already going to do. `unknown` is the armor branch above — an out-of-contract
-      // record — and prescribing `respond` against one is a claim the engine cannot back.
-      const pointer = disposition === 'finding_only' ? ' (realm run respond)' : '';
+      // `unknown` is the armor branch above — an out-of-contract record — and prescribing a verb
+      // against one is a claim the engine cannot back. issue #625 PR-2a (decision C106): the two
+      // dispositions the engine carries out name the command that carries them out now —
+      // `realm run advance` (C95) — never `respond`, whose answer the expiry would beat.
+      const pointer =
+        disposition === 'finding_only'
+          ? ' (realm run respond)'
+          : disposition === 'settle_default' || disposition === 'abort'
+            ? ' (realm run advance)'
+            : '';
       return `${f.step}=gate_expired(${disposition})${pointer}`;
     }
     // issue #406: a settled gate entry coexisting with a live pending_gate of the same id. This

@@ -104,6 +104,9 @@ import {
   stepsThatCannotRun,
   callableSteps,
   dueExpiry,
+  answerAction,
+  answerableQuestion,
+  notCallableReason,
   type PendingView,
   type PreClaimRefused,
 } from './pending.js';
@@ -824,14 +827,60 @@ export function buildNextActions(
   registry?: ExtensionRegistry,
   now?: Date,
 ): NextAction[] {
-  return nextActionsOf(describePending(definition, run, registry, now));
+  return nextActionsOf(describePending(definition, run, registry, now), run.id);
 }
 
-/** A view's `next_actions`: its agent actions, then — last — the act (the one composition). */
-function nextActionsOf(pending: PendingView): NextAction[] {
-  return pending.act !== undefined
-    ? [...pending.agent_actions, pending.act]
-    : pending.agent_actions;
+/**
+ * A view's `next_actions` (the one composition): its agent actions, then the answer to the open
+ * question when a caller can answer it (decision C103 — {@link answerAction}, never with a claim
+ * token: only the reply that opens a question carries one), then — last — the act.
+ */
+function nextActionsOf(pending: PendingView, runId: string): NextAction[] {
+  const question = answerableQuestion(pending);
+  return [
+    ...pending.agent_actions,
+    ...(question !== undefined ? [answerAction(runId, question)] : []),
+    ...(pending.act !== undefined ? [pending.act] : []),
+  ];
+}
+
+/**
+ * `blocked_reason.suggestion` of a reply that refuses the step it was asked for (decisions C94,
+ * C104), from its own `next_actions`.
+ */
+function refusalSuggestion(nextActions: readonly NextAction[]): string {
+  if (nextActions.length === 0) return 'No other step can be called now.';
+  if (nextActions.every((a) => a.instruction?.tool === 'submit_human_response')) {
+    return 'Answer the open question first, as next_actions says.';
+  }
+  return 'Call one of the steps indicated in next_actions instead.';
+}
+
+/**
+ * A reply's `warnings` with the expiry line once (decision C110): the line the call's own expiry
+ * enactment wrote, put first when the reply does not already carry it.
+ */
+function withExpiryLineOnce(reply: ResponseEnvelope, line: string | undefined): ResponseEnvelope {
+  if (line === undefined || reply.warnings.includes(line)) return reply;
+  return { ...reply, warnings: [line, ...reply.warnings] };
+}
+
+/**
+ * The warnings a chained reply ends with (decision C110): the final reply's own, then the warnings
+ * carried forward — the named step's, each chained step's — except an entry the final reply already
+ * carries (it IS that step's reply, or was rebuilt from it), so no line is listed twice.
+ */
+function foldChainWarnings(
+  finalWarnings: readonly string[],
+  carried: readonly string[],
+  chained: readonly ChainedStepEntry[],
+): string[] {
+  const own = (entry: readonly string[]): boolean =>
+    entry.length > 0 && entry.every((w, i) => finalWarnings[i] === w);
+  return [
+    ...carried,
+    ...chained.flatMap((c) => (c.warnings !== undefined && !own(c.warnings) ? c.warnings : [])),
+  ];
 }
 
 /**
@@ -1350,12 +1399,12 @@ async function enactExpiredGateIfDue(
   // issue #625 PR-2a (decision C95): the call that carries the expiry out, named on the disclosure
   // line — `execute_step` (Step 1.5) or the advance call's own name (`advance_run`, `advance`, …).
   via = 'execute_step',
-): Promise<{ run: RunRecord; disclosure?: string }> {
+): Promise<{ run: RunRecord; disclosure?: string; enacted: boolean }> {
   const gate = run.pending_gate;
   // decision C95: the one predicate the run's view reads too (`dueExpiry`), so the view never
   // offers an expiry this function would not carry out.
   if (gate === undefined || dueExpiry(gate, now) === undefined) {
-    return { run };
+    return { run, enacted: false };
   }
 
   const delta = { kind: 'expire_gate' as const, gateId: gate.gate_id };
@@ -1366,28 +1415,35 @@ async function enactExpiredGateIfDue(
     } else {
       const pure = applySettlement(run, delta, definition, { now });
       if (!pure.applied) {
-        return { run: pure.run };
+        return { run: pure.run, enacted: false };
       }
       const persisted = await store.update(pure.run);
       expireOutcome = { ...pure, run: persisted };
     }
   } catch (err) {
-    console.warn(
-      `⚠ realm: could not enact run '${run.id}''s expired gate '${gate.gate_id}' (${err instanceof Error ? err.message : String(err)}) — proceeding with the pre-enactment state.`,
-    );
-    return { run };
+    // decision C109: core prints nothing — the caller puts this line in its reply's `warnings`.
+    return {
+      run,
+      enacted: false,
+      disclosure: `gate '${gate.gate_id}' on '${gate.step_name}' had expired, but this ${via} call could not carry out its declared ${gate.on_expiry} (${err instanceof Error ? err.message : String(err)}); it went on with the run as it was.`,
+    };
   }
 
   if (!expireOutcome.applied) {
-    return { run: expireOutcome.run };
+    return { run: expireOutcome.run, enacted: false };
   }
 
   let finalRun = expireOutcome.run;
   const disclosureParts: string[] = [];
-  const disposition =
-    finalRun.settled?.[gate.step_name]?.resolved_by === 'timeout' ? 'settle_default' : 'abort';
+  // decision C105: this call carried it out, as its first act — and what it did: the default choice
+  // it recorded, or that the run ended.
+  const settledEntry = finalRun.settled?.[gate.step_name];
+  const did =
+    settledEntry?.resolved_by === 'timeout'
+      ? `settle_default: the default choice '${settledEntry.choice ?? gate.default_choice ?? ''}' was recorded`
+      : 'abort: the run ended';
   disclosureParts.push(
-    `gate '${gate.gate_id}' on '${gate.step_name}' had expired — enacted declared ${disposition} before this ${via} call (enacted_via: ${via}).`,
+    `gate '${gate.gate_id}' on '${gate.step_name}' had expired — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`,
   );
   // issue #625: the expiry's own write settled the guards its default made eligible. This leg
   // builds no reply of its own (the reply is the commanded step's), so each guard is named here,
@@ -1413,12 +1469,10 @@ async function enactExpiredGateIfDue(
     }
   }
 
-  const disclosure = disclosureParts.join(' ');
-  // Printed unconditionally (never silently dropped, regardless of which downstream envelope
-  // path the caller's own request takes) — the caller ALSO threads this into whichever
-  // response-envelope warnings array is in scope at its own return point.
-  console.warn(`⚠ ${disclosure}`);
-  return { run: finalRun, disclosure };
+  // decision C109: core prints nothing (it is I/O-free) — every caller puts this line in its
+  // reply's `warnings` (`executeStep` on every reply it returns, `advanceRun` on its own), and a
+  // host that shows a person the outcome renders the reply's warnings.
+  return { run: finalRun, disclosure: disclosureParts.join(' '), enacted: true };
 }
 
 /**
@@ -1582,6 +1636,19 @@ export async function executeStep(
   definition: WorkflowDefinition,
   options: ExecuteStepOptions,
 ): Promise<ResponseEnvelope> {
+  // decisions C109, C110: the line Step 1.5's expiry enactment writes rides EVERY reply this call
+  // returns, once — core prints nothing, so a reply that dropped it would hide the enactment.
+  const expiry: { line?: string } = {};
+  const reply = await executeStepBody(store, definition, options, expiry);
+  return withExpiryLineOnce(reply, expiry.line);
+}
+
+async function executeStepBody(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteStepOptions,
+  expiry: { line?: string },
+): Promise<ResponseEnvelope> {
   // The admission step (framework v1.27 §4): what the host handed in, checked before the first
   // read — a defect throws here instead of becoming the ENGINE_STORE_FAILED envelope below.
   admitEntry('executeStep', {
@@ -1626,15 +1693,23 @@ export async function executeStep(
     );
     run = enacted.run;
     gateExpiryDisclosure = enacted.disclosure;
+    if (enacted.disclosure !== undefined) expiry.line = enacted.disclosure;
   }
 
   // Step 2: Check eligibility.
   const eligible = findEligibleSteps(definition, run);
   if (!eligible.includes(options.command)) {
-    const nextActions = buildNextActions(definition, run);
-    // decision C94: `blocked_reason.eligible_steps` names the steps that can be called — the view's,
-    // as `next_actions` is (never a step the run refuses before its claim).
-    const callable = callableSteps(definition, describePending(definition, run));
+    // decision C104 (C94's rule): what can be called instead is the run's view, read with the
+    // caller's registry and clock — its steps, the answer to an open question (C103), the act — and
+    // `context_hint` says why this step cannot be called. `resolve_precondition` when there is
+    // something to call; `report_to_user` when there is not (with the way out when the run cannot go
+    // on until its workflow is corrected — `describeNext` ends with it); `stop` on a run that has
+    // ended, whose reply `executeChain` gives first with the same word.
+    const view = describePending(definition, run, options.registry, gateExpiryCheckNow);
+    const nextActions = run.terminal_state ? [] : nextActionsOf(view, run.id);
+    const why = notCallableReason(definition, run, options.command, view);
+    const tail =
+      run.terminal_state || view.open_question !== undefined ? '' : describeNext(view, run);
     return {
       command: options.command,
       run_id: options.runId,
@@ -1644,20 +1719,18 @@ export async function executeStep(
       evidence: [],
       warnings: gateExpiryDisclosure !== undefined ? [gateExpiryDisclosure] : [],
       errors: [],
-      agent_action: 'resolve_precondition' as const,
-      context_hint: `Step '${options.command}' is not eligible in the current run state.`,
+      agent_action: run.terminal_state
+        ? ('stop' as const)
+        : nextActions.length > 0
+          ? ('resolve_precondition' as const)
+          : ('report_to_user' as const),
+      context_hint: `Step '${options.command}' cannot be called now: ${why}.${tail === ' No step is ready.' ? '' : tail}`,
       run_phase: run.run_phase,
       next_actions: nextActions,
-      blocked_reason:
-        nextActions.length > 0
-          ? {
-              eligible_steps: callable,
-              suggestion: `Call one of the steps indicated in next_actions instead.`,
-            }
-          : {
-              eligible_steps: callable,
-              suggestion: `No eligible steps available. Check run_phase and completed_steps.`,
-            },
+      blocked_reason: {
+        eligible_steps: run.terminal_state ? [] : callableSteps(definition, view),
+        suggestion: refusalSuggestion(nextActions),
+      },
     };
   }
 
@@ -1722,7 +1795,7 @@ export async function executeStep(
     agent_action: 'resolve_precondition' | 'report_to_user';
   } => {
     const view = describePending(definition, run, options.registry, gateExpiryCheckNow);
-    const next_actions = nextActionsOf(view);
+    const next_actions = nextActionsOf(view, run.id);
     return {
       next_actions,
       eligible_steps: callableSteps(definition, view),
@@ -1738,10 +1811,7 @@ export async function executeStep(
       next_actions: routing.next_actions,
       blocked_reason: {
         eligible_steps: routing.eligible_steps,
-        suggestion:
-          routing.next_actions.length > 0
-            ? `Call one of the steps indicated in next_actions instead.`
-            : `No other step can be called now.`,
+        suggestion: refusalSuggestion(routing.next_actions),
       },
     };
   }
@@ -3817,34 +3887,20 @@ export async function executeStep(
     // question; it never decides whether an answer is recorded. Absent when the store minted none.
     const gateClaimToken = pendingRun.claims?.[options.command]?.token;
 
+    // decision C103: the answer instruction is core's ONE composer's (`answerAction`); a gate reply
+    // carries the `gate` object its text points at, and the token only where this call opened it.
     function buildGateNextAction(
       id: string,
       gateChoices: string[],
       forStep: string,
       claimToken?: string,
     ): NextAction {
-      return {
-        instruction: {
-          tool: 'submit_human_response',
-          params: {
-            run_id: options.runId,
-            gate_id: id,
-            ...(claimToken !== undefined ? { claim_token: claimToken } : {}),
-          },
-          call_with: {
-            run_id: options.runId,
-            gate_id: id,
-            choice: `<${gateChoices.join('|')}>`,
-            ...(claimToken !== undefined ? { claim_token: claimToken } : {}),
-          },
-        },
-        human_readable: `Human review required for step '${forStep}'. Present gate.display to the user, wait for their choice from gate.response_spec.choices, then call submit_human_response${
-          claimToken !== undefined
-            ? ' with call_with, passing claim_token back unchanged — it shows that this answer comes from the conversation that opened the question.'
-            : '.'
-        }`,
-        orientation: `Run is paused at gate '${id}'. Available choices: ${gateChoices.join(', ')}.`,
-      };
+      return answerAction(
+        options.runId,
+        { step: forStep, gate_id: id, choices: gateChoices },
+        claimToken,
+        'gate_reply',
+      );
     }
 
     // issue #279 (increment 2, PR-D, Deliverable 1a): the migrated path — opens this gate
@@ -7127,6 +7183,7 @@ export async function advanceRun(
   // absorbed; the fresh record is what the loop then reads) — and then what it made owed runs.
   // A question with no `on_expiry`, or not yet expired, is never touched.
   let expiryDisclosure: string | undefined;
+  let expiryCarriedOut = false;
   if (stored.pending_gate !== undefined) {
     const enacted = await enactExpiredGateIfDue(
       store,
@@ -7139,6 +7196,9 @@ export async function advanceRun(
     );
     stored = enacted.run;
     expiryDisclosure = enacted.disclosure;
+    // decision C109: a line can say the expiry could NOT be carried out — the hint then never says
+    // it was.
+    expiryCarriedOut = enacted.enacted;
   }
   const chained: ChainedStepEntry[] = [];
   const depth0Warnings: string[] = [];
@@ -7169,13 +7229,7 @@ export async function advanceRun(
         evidence: [],
         warnings: [],
         errors: [],
-        context_hint: nothingRanHint(
-          definition,
-          stored,
-          registry,
-          now,
-          expiryDisclosure !== undefined,
-        ),
+        context_hint: nothingRanHint(definition, stored, registry, now, expiryCarriedOut),
         run_phase: deriveRunPhase(stored),
         next_actions: stored.terminal_state
           ? []
@@ -7192,13 +7246,15 @@ export async function advanceRun(
   let endHint: string | undefined;
   if (chained.length === 0 && advanced.status === 'ok') {
     const end = await store.get(options.runId).catch(() => stored);
-    endHint = nothingRanHint(definition, end, registry, now, expiryDisclosure !== undefined);
+    endHint = nothingRanHint(definition, end, registry, now, expiryCarriedOut);
   }
-  const chainWarnings = [
-    ...(expiryDisclosure !== undefined ? [expiryDisclosure] : []),
-    ...depth0Warnings,
-    ...chained.flatMap((c) => c.warnings ?? []),
-  ];
+  // decision C110: each line once — a chained step's warnings are not listed again when the final
+  // reply is that step's own.
+  const chainWarnings = foldChainWarnings(
+    advanced.warnings ?? [],
+    [...(expiryDisclosure !== undefined ? [expiryDisclosure] : []), ...depth0Warnings],
+    chained,
+  );
   const envelope = {
     ...advanced,
     context_hint: withTakenClauses(endHint ?? advanced.context_hint, takenSteps),
@@ -7335,7 +7391,9 @@ export async function executeChain(
       );
     }
   }
-  const chainWarnings = [...depth0Warnings, ...chained.flatMap((s) => s.warnings ?? [])];
+  // decision C110: each line once — the named step's warnings (and a chained step's) are not listed
+  // again when the final reply is that step's own.
+  const chainWarnings = foldChainWarnings(result.warnings ?? [], depth0Warnings, chained);
   const envelope = {
     ...result,
     context_hint: withTakenClauses(result.context_hint, takenSteps),

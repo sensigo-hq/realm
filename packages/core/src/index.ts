@@ -155,6 +155,14 @@ export {
   dueExpiry,
   dueExpiryWords,
   callableSteps,
+  // decisions C103, C104: the open question, its one answer composer and its reader; why a step
+  // cannot be called.
+  openQuestionOf,
+  answerableQuestion,
+  openQuestionWords,
+  answerAction,
+  answerOf,
+  notCallableReason,
 } from './engine/pending.js';
 export type {
   PreClaimRefusal,
@@ -165,6 +173,7 @@ export type {
   PendingView,
   ProgramFit,
   DueExpiry,
+  OpenQuestion,
 } from './engine/pending.js';
 export {
   findEligibleSteps,

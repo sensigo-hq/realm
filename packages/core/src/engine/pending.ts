@@ -258,6 +258,97 @@ export interface PendingView {
    */
   expiry_due?: DueExpiry;
   act?: NextAction;
+  /**
+   * The question the run waits on (decision C103): present whenever the run is open and its record
+   * holds an open question (`pending_gate`), with or without `now`. Its answer is the act
+   * {@link answerAction} composes; a reply offers it while the question can be answered
+   * ({@link answerableQuestion}).
+   */
+  open_question?: OpenQuestion;
+}
+
+/** An open question (decision C103): the step that asks it, its gate, and the choices it takes. */
+export interface OpenQuestion {
+  step: string;
+  gate_id: string;
+  choices: string[];
+}
+
+/** The open question of an open run, read from its record (decision C103); none on a sealed run. */
+export function openQuestionOf(
+  run: Pick<RunRecord, 'terminal_state' | 'pending_gate'>,
+): OpenQuestion | undefined {
+  const gate = run.pending_gate;
+  if (run.terminal_state || gate === undefined) return undefined;
+  return { step: gate.step_name, gate_id: gate.gate_id, choices: [...gate.choices] };
+}
+
+/**
+ * The question a caller can answer now (decision C103): the view's open question, unless its time is
+ * up and it declares `on_expiry` (`expiry_due`) — then carrying that out is owed instead, and an
+ * answer would not be recorded.
+ */
+export function answerableQuestion(pending: PendingView): OpenQuestion | undefined {
+  return pending.expiry_due === undefined ? pending.open_question : undefined;
+}
+
+/** `the question on step '<s>' (choices: a, b)` — an open question, as every line names it. */
+export function openQuestionWords(question: OpenQuestion): string {
+  return `the question on step '${question.step}' (choices: ${question.choices.join(', ')})`;
+}
+
+/**
+ * The ONE composer of the instruction that answers an open question (decision C103): the
+ * `submit_human_response` act. The reply that OPENS the question passes its claim token, and only it
+ * (the holder slice's one door): the token rides `params` and `call_with`, and the text says to pass
+ * it back. `form: 'gate_reply'` is for a reply that carries the `gate` object (the opening reply and
+ * the already-open reply) — its text points at `gate.display` and `gate.response_spec.choices`;
+ * every other reply names the choices itself.
+ */
+export function answerAction(
+  runId: string,
+  question: OpenQuestion,
+  claimToken?: string,
+  form: 'gate_reply' | 'elsewhere' = 'elsewhere',
+): NextAction {
+  const token = claimToken !== undefined ? { claim_token: claimToken } : {};
+  return {
+    instruction: {
+      tool: 'submit_human_response',
+      params: { run_id: runId, gate_id: question.gate_id, ...token },
+      call_with: {
+        run_id: runId,
+        gate_id: question.gate_id,
+        choice: `<${question.choices.join('|')}>`,
+        ...token,
+      },
+    },
+    human_readable:
+      form === 'gate_reply'
+        ? `Human review required for step '${question.step}'. Present gate.display to the user, wait for their choice from gate.response_spec.choices, then call submit_human_response${
+            claimToken !== undefined
+              ? ' with call_with, passing claim_token back unchanged — it shows that this answer comes from the conversation that opened the question.'
+              : '.'
+          }`
+        : `Human review required for step '${question.step}'. Ask the user to choose one of: ${question.choices.join(', ')}, then call submit_human_response with their choice.`,
+    orientation: `Run is paused at gate '${question.gate_id}'. Available choices: ${question.choices.join(', ')}.`,
+  };
+}
+
+/**
+ * The open question an answer act names (decision C103): its gate and choices, read back from the
+ * act {@link answerAction} composed — so a surface that prints the answer command renders it from a
+ * reply, never from its own read of the record. `undefined` for any other act.
+ */
+export function answerOf(
+  action: NextAction | undefined,
+): { gate_id: string; choices: string[] } | undefined {
+  if (action?.instruction?.tool !== 'submit_human_response') return undefined;
+  const gateId = action.instruction.params['gate_id'];
+  const choice = action.instruction.call_with['choice'];
+  if (typeof gateId !== 'string' || typeof choice !== 'string') return undefined;
+  if (!choice.startsWith('<') || !choice.endsWith('>')) return undefined;
+  return { gate_id: gateId, choices: choice.slice(1, -1).split('|') };
 }
 
 /** An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95). */
@@ -476,6 +567,7 @@ export function describePending(
   now?: Date,
 ): PendingView {
   if (run.terminal_state || run.pending_gate !== undefined) {
+    const question = openQuestionOf(run);
     const empty: PendingView = {
       agent_actions: [],
       agent_steps: [],
@@ -483,6 +575,7 @@ export function describePending(
       pending_guards: [],
       engine_runnable: [],
       cannot_run: [],
+      ...(question !== undefined ? { open_question: question } : {}),
     };
     const expiry =
       run.terminal_state || now === undefined ? undefined : dueExpiry(run.pending_gate, now);
@@ -599,13 +692,19 @@ export function composeNextActionsStatusWord(
  * The one sentence after `Step 'X' completed.` / `Gate 'G' resolved with choice 'c'.`, after
  * `start_run`'s `Run '<id>' created …`, and after the nothing-ran reply's `nothing ran.`: the agent
  * steps ready, the engine's owed work, then each step that cannot run (decisions C34, C82 — an agent
- * step refused before its claim is named here, never as ready);
+ * step refused before its claim is named here, never as ready) — first, when the run waits on a
+ * question a caller can answer, that question, its choices and the act (decision C103);
  * ` No step is ready.` only when nothing else is said. When the run cannot go on until its workflow
  * is corrected ({@link cannotRunWayOutApplies}), it ends with the way out in the tools' words
  * (decision C57): every reply that says what comes next says it, from one place.
  */
 export function describeNext(pending: PendingView, run: RunRecord): string {
   let sentence = '';
+  // decision C103: a reply that meets an open question names it, its choices and the act.
+  const question = answerableQuestion(pending);
+  if (question !== undefined) {
+    sentence += ` Waiting on ${openQuestionWords(question)} — answer it with submit_human_response.`;
+  }
   if (pending.agent_steps.length > 0) {
     sentence += ` Ready for the agent: ${quoteList(pending.agent_steps)}.`;
   }
@@ -617,6 +716,58 @@ export function describeNext(pending: PendingView, run: RunRecord): string {
   }
   if (cannotRunWayOutApplies(run, pending)) sentence += ` ${cannotRunWayOutTools()}`;
   return sentence.length > 0 ? sentence : ' No step is ready.';
+}
+
+/**
+ * Why a step named by a caller cannot be called now (decision C104), from the record and the view —
+ * the clause after `Step '<s>' cannot be called now: `. In this order: the step is not in the
+ * workflow · the run has ended · the step has already settled · the run waits on a question (named,
+ * with its choices and the act — or, when its time is up and it declares `on_expiry`, that carrying
+ * it out is owed) · the step is in flight · a step it depends on (directly or further up) cannot run
+ * (named) · its dependencies are not settled (named) · otherwise, that it is not eligible now.
+ */
+export function notCallableReason(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  step: string,
+  pending: PendingView,
+): string {
+  if (definition.steps[step] === undefined) {
+    return `it is not a step of workflow '${definition.id}'`;
+  }
+  if (run.terminal_state) return `the run has ended (${deriveRunPhase(run)})`;
+  if (run.completed_steps.includes(step)) return 'it has already completed';
+  if (run.failed_steps.includes(step)) return 'it has already failed';
+  if (run.skipped_steps.includes(step)) return 'it was skipped';
+  if (pending.expiry_due !== undefined) {
+    return `it waits on ${dueExpiryWords(pending.expiry_due)} — call advance_run to carry it out`;
+  }
+  const question = pending.open_question;
+  if (question !== undefined) {
+    return question.step === step
+      ? `its question is open (choices: ${question.choices.join(', ')}) — answer it with submit_human_response`
+      : `it waits on ${openQuestionWords(question)} — answer it with submit_human_response`;
+  }
+  if (run.in_progress_steps.includes(step)) return 'it is in flight (claimed by another call)';
+  const settled = new Set([...run.completed_steps, ...run.failed_steps, ...run.skipped_steps]);
+  const unsettled = (name: string): string[] =>
+    (definition.steps[name]?.depends_on ?? []).filter((d) => !settled.has(d));
+  // Every unsettled step above this one, nearest first.
+  const above: string[] = [];
+  const queue = unsettled(step);
+  while (queue.length > 0) {
+    const next = queue.shift()!;
+    if (above.includes(next)) continue;
+    above.push(next);
+    queue.push(...unsettled(next));
+  }
+  const cannot = stepsThatCannotRun(pending)
+    .map((e) => e.step)
+    .filter((s) => above.includes(s));
+  if (cannot.length > 0) return `a step it depends on cannot run (${quoteList(cannot)})`;
+  const direct = unsettled(step);
+  if (direct.length > 0) return `its dependencies are not settled (${quoteList(direct)})`;
+  return 'it is not eligible in the current run state';
 }
 
 /** How this program's project code compares with what the run last recorded (holder D-8). */

@@ -25,6 +25,8 @@ import {
   cannotRunWayOut,
   cannotRunWayOutApplies,
   withFullStop,
+  answerOf,
+  type NextAction,
   type PendingView,
   type ProgramFit,
   type WorkflowDefinition,
@@ -102,14 +104,22 @@ export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[
  * caller's to add, first): the run ended · a question is open · each step that cannot run · agent
  * steps ready · each step in flight elsewhere, with what to do (decision C43; the holder and the
  * time are on the preview's `In flight:` line) · and, when none of these holds, `nothing is ready
- * to run now`.
+ * to run now`. The open question's line is rendered from the reply's answer act (decision C103 —
+ * `nextActions`, core's one composer), never from this command's own read of the record.
  */
-export function stoppedReasons(runId: string, run: RunForReasons, pending: PendingView): string[] {
+export function stoppedReasons(
+  runId: string,
+  run: RunForReasons,
+  pending: PendingView,
+  nextActions: readonly NextAction[] = [],
+): string[] {
   if (run.terminal_state) return [`the run has ended (${deriveRunPhase(run)})`];
-  const gate = run.pending_gate;
-  if (gate !== undefined) {
+  if (run.pending_gate !== undefined) {
+    const answer = nextActions.map((a) => answerOf(a)).find((a) => a !== undefined);
     return [
-      `a question is open — realm run respond ${runId} --gate ${gate.gate_id} --choice <one of: ${gate.choices.join(', ')}>`,
+      answer !== undefined
+        ? `a question is open — realm run respond ${runId} --gate ${answer.gate_id} --choice <one of: ${answer.choices.join(', ')}>`
+        : `a question is open — see realm run inspect ${runId}`,
     ];
   }
   const reasons = stepsThatCannotRun(pending).map((e) => cannotRunClause(e));
@@ -154,12 +164,33 @@ export function projectCodeWhere(
   workflow: Pick<WorkflowDefinition, 'trust_root'>,
   opts: { project?: string; extensionsModule?: string },
   cwd: string,
+  // decision C107: whether any project code was found there (a realm.yaml or a declared module).
+  hasCode = true,
 ): string {
   const root =
     workflow.trust_root ?? (opts.project !== undefined ? resolve(cwd, opts.project) : cwd);
-  return opts.extensionsModule !== undefined
-    ? `the module ${resolve(cwd, opts.extensionsModule)} (--extensions-module) and the realm.yaml of ${root}`
-    : `the project code under ${root}`;
+  if (opts.extensionsModule !== undefined) {
+    return `the module ${resolve(cwd, opts.extensionsModule)} (--extensions-module) and the realm.yaml of ${root}`;
+  }
+  return hasCode ? `the project code under ${root}` : noProjectCode(root);
+}
+
+/** `no project code (nothing to load under <folder>)` — a workflow with none (decision C107). */
+function noProjectCode(root: string): string {
+  return `no project code (nothing to load under ${root})`;
+}
+
+/**
+ * The line for a `--project` the command did not use (decision C108): the workflow has its own
+ * project (its `trust_root`), and its code and realm.yaml are loaded from there. `undefined` when
+ * `--project` was not given or was used.
+ */
+export function projectNotUsedLine(
+  workflow: Pick<WorkflowDefinition, 'id' | 'trust_root'>,
+  opts: { project?: string },
+): string | undefined {
+  if (opts.project === undefined || workflow.trust_root === undefined) return undefined;
+  return `--project ${opts.project} was not used: workflow '${workflow.id}' has its own project, ${workflow.trust_root}, and its code is loaded from there.`;
 }
 
 /**
@@ -167,10 +198,17 @@ export function projectCodeWhere(
  * runs: under the workflow's own `trust_root` — whatever folder that shell is in — or, for a
  * definition with none, under the folder it runs in (or its `--project`).
  */
-export function laterAdvanceCodeWhere(workflow: Pick<WorkflowDefinition, 'trust_root'>): string {
-  return workflow.trust_root !== undefined
+export function laterAdvanceCodeWhere(
+  workflow: Pick<WorkflowDefinition, 'trust_root'>,
+  // decision C107: whether any project code was found under the workflow's own project.
+  hasCode = true,
+): string {
+  if (workflow.trust_root === undefined) {
+    return 'the project code under the folder it runs in (or its --project)';
+  }
+  return hasCode
     ? `the project code under ${workflow.trust_root}`
-    : 'the project code under the folder it runs in (or its --project)';
+    : noProjectCode(workflow.trust_root);
 }
 
 /**
@@ -234,10 +272,15 @@ export async function advanceRunFromShell(
   const pending = describePending(workflow, run, registry, now);
   const keepsClaims = runStore.persistsClaims === true;
   // decision C98: what comes from where — the folder the step's project code is loaded from (not
-  // the shell's, unless it is), and the environment, which is the shell's.
+  // the shell's, unless it is), and the environment, which is the shell's. Decision C107: a
+  // workflow with no project code is said to have none (the registry loaded no realm.yaml and no
+  // module, so it carries no code identity); decision C108: a `--project` not used is said.
+  const hasCode = registryOverride !== undefined || registry.identity !== undefined;
   print(
-    `Advancing run ${runId} (workflow '${workflow.id}') with ${projectCodeWhere(workflow, opts, process.cwd())}, in this shell's environment.`,
+    `Advancing run ${runId} (workflow '${workflow.id}') with ${projectCodeWhere(workflow, opts, process.cwd(), hasCode)}, in this shell's environment.`,
   );
+  const notUsed = projectNotUsedLine(workflow, opts);
+  if (notUsed !== undefined) print(notUsed);
   print(
     `This program: ${identityWords(driver)} · project code: ${fitWords(judgeProgramFit(run, registry.identity), run)}.`,
   );
@@ -252,7 +295,22 @@ export async function advanceRunFromShell(
     const opening = engineWorkOwed(run, pending, workflow)
       ? 'The engine can run nothing now'
       : 'Nothing is owed to the engine';
-    print(`${opening}: ${withFullStop(stoppedReasons(runId, run, pending).join('; '))}`);
+    // decision C103: at an open question the line is the reply's — `advanceRun` runs nothing there
+    // and answers with the question's act (core's one composer), which the line renders.
+    const reply =
+      !run.terminal_state && run.pending_gate !== undefined
+        ? await advanceRun(runStore, workflow, {
+            runId,
+            command: 'advance',
+            registry,
+            now,
+            ...(driver !== undefined ? { driver } : {}),
+          })
+        : undefined;
+    for (const warning of reply?.warnings ?? []) print(`⚠ ${warning}`);
+    print(
+      `${opening}: ${withFullStop(stoppedReasons(runId, run, pending, reply?.next_actions).join('; '))}`,
+    );
     if (cannotRunWayOutApplies(run, pending)) print(cannotRunWayOut(run));
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
@@ -303,6 +361,10 @@ export async function advanceRunFromShell(
     });
   }
 
+  // decision C109: the reply's warnings — the expiry line among them (core prints nothing) — are
+  // this command's to show.
+  for (const warning of result.warnings) print(`⚠ ${warning}`);
+
   const afterView = describePending(workflow, after, registry, new Date());
   const isCapabilityBlock =
     result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
@@ -313,7 +375,7 @@ export async function advanceRunFromShell(
   if (result.status === 'error' && !isCapabilityBlock) {
     reasons.push(`'${lastStep ?? result.command}' failed: ${result.errors.join(', ')}`);
   }
-  reasons.push(...stoppedReasons(runId, after, afterView));
+  reasons.push(...stoppedReasons(runId, after, afterView, result.next_actions));
   if (reasons.length > 1) {
     const none = reasons.indexOf('nothing is ready to run now');
     if (none >= 0) reasons.splice(none, 1);

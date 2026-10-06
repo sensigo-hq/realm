@@ -20,7 +20,7 @@ import {
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
-import { agentReadyReason, laterAdvanceCodeWhere } from './run-advance.js';
+import { agentReadyReason, laterAdvanceCodeWhere, projectNotUsedLine } from './run-advance.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
@@ -164,6 +164,10 @@ export async function respondToGate(
   // that cannot run and the way out — core's lines, never a copy.
   const cannotGoOn = cannotGoOnLines(updatedRun, pending);
   const ready = agentReadyReason(runId, pending.agent_steps);
+  // decision C107: whether the project the later advance loads holds any code — the registry this
+  // answer loaded from it carries a code identity only when a realm.yaml or a module was found.
+  const hasCode =
+    options.extensionsModule !== undefined || effectiveRegistry.identity !== undefined;
   return {
     choice: options.choice,
     newState: phase,
@@ -172,7 +176,7 @@ export async function respondToGate(
     lastLine:
       `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'` +
       (pending.act !== undefined
-        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them}, with ${laterAdvanceCodeWhere(workflow)}, in the environment of the shell it runs in.`
+        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`
         : '') +
       (ready !== undefined ? `\n${ready.charAt(0).toUpperCase()}${ready.slice(1)}.` : '') +
       cannotGoOn.map((line) => `\n${line}`).join(''),
@@ -244,6 +248,9 @@ export const respondCommand = new Command('respond')
           retryVerb: 'respond again',
           verb: 'respond',
         });
+        // decision C108: a `--project` the workflow's own project overrides is said, first.
+        const notUsed = projectNotUsedLine(workflow, opts);
+        if (notUsed !== undefined) console.log(notUsed);
         let registry: ExtensionRegistry;
         try {
           ({ registry } = await loadProjectExtensions(workflow, {

@@ -22,6 +22,8 @@ import {
   describePending,
   composeNextActionsStatusWord,
   dueExpiry,
+  answerAction,
+  openQuestionOf,
   assertRegistryLine,
   ExtensionRegistry,
   type ADVANCE_OWED,
@@ -384,6 +386,11 @@ export async function handleGetRunState(
     nextActionsStatus = 'skipped_terminal';
   } else if (run.pending_gate !== undefined && dueExpiry(run.pending_gate, now) === undefined) {
     nextActionsStatus = 'awaiting_human';
+    // decision C103: the question is named by its answer — core's one composer, never with the claim
+    // token (only the reply that opened the question carries it). Read from the record alone: no
+    // definition is needed to answer a question.
+    const question = openQuestionOf(run);
+    if (question !== undefined) nextActions = [answerAction(run.id, question)];
   } else {
     definition =
       stores?.workflowStore !== undefined
