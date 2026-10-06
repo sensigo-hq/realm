@@ -92,19 +92,21 @@ realm run inspect <run-id> [--verbose] [--check-drift]
 
 Prints the run's record: where it stands, then one entry for each step that ran.
 
-The outputs in this section are from the `main` branch. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
+The outputs in this section are from version 0.46.0. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
 
 | Flag            | What it does                                                                                              |
 | --------------- | --------------------------------------------------------------------------------------------------------- |
 | `--verbose`     | Under each tool call, also prints the arguments it was given and what it returned.                        |
 | `--check-drift` | Compares the project's code files as they are now with the hashes recorded when the run last loaded them. |
 
+This example comes from a separate run of the `triage` workflow, so its run ID is not the one in the other examples on this page.
+
 ```bash
-realm run inspect 419c3c51-c4e7-4066-970f-8f877844709a
+realm run inspect cb0e8545-ce3e-436f-b95c-fbd24f78a59b
 ```
 
 ```text
-Run: 419c3c51-c4e7-4066-970f-8f877844709a
+Run: cb0e8545-ce3e-436f-b95c-fbd24f78a59b
 Workflow: triage v1
 Phase: completed  ✓
 Sealed by: complete
@@ -113,22 +115,25 @@ Completed: classify, draft, send
 In Progress: (none)
 Failed: (none)
 Skipped: (none)
-Created: 2026-10-01T22:52:32.587Z
-Updated: 2026-10-01T22:52:32.807Z
+Created: 2026-10-05T22:31:22.823Z
+Updated: 2026-10-05T22:31:22.963Z
 
 Evidence (3 steps):
 
   1. classify               success   0ms   hash: 09a1b61c
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"category":"billing","confidence":0.9}
      Output: {"category":"billing","confidence":0.9}
      Diagnostics: ~10 tokens (estimate, step input) | no preconditions
      cost: not recorded — realm has no usage figures for this attempt (for example: an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
 
   2. draft                  success   0ms   hash: 626ebbef
+     Question opened through: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"reply":"We have refunded the charge."}
      Output: {"reply":"We have refunded the charge."}
      Diagnostics: ~10 tokens (estimate, step input) | preconditions: classify.confidence >= 0.7 → true (0.9)
      cost: not recorded — realm has no usage figures for this attempt (for example: an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
+     Answer: send · answered by (not stated) · proof: matched the claim_token of the reply that opened this question
   …
 ```
 
@@ -145,12 +150,12 @@ Evidence (3 steps):
 | `Created`, `Updated`                            | Always                                   | When the run was started and when it last changed, in UTC.                                              |
 | `Gate`, `Choices`                               | When the run is in `gate_waiting`        | The step, the gate's ID, how long it has been open, and the choices it accepts.                         |
 
-Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added after version 0.45.0:
+Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added in 0.46.0:
 
 ```text
 In Progress: classify, review
-  classify: taken by ops@server-1 (from the OS user, via agent), 4m ago
-  review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 1h 2m ago
+  classify: taken by ops@server-1 (from the OS user, via agent), 0m ago
+  review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 0m ago
 ```
 
 The name is the program's, not a person's: `from the OS user` is the OS user and host name, `from REALM_OPERATOR` is that variable, `as stated` is a name an embedding program gave. `via` names the door the program came through: `agent`, `run`, `mcp-stdio`, `mcp-http`. A step whose question is open reads `question opened through`, and says nothing about anyone working on it now. When a claim has no name, the line says why instead: `no program name was recorded on this claim`, `claimed before program names were recorded`, `no claim is recorded for this step` or `this run store keeps no claims`. A name that cannot be shown keeps the verb: `taken by a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
@@ -166,7 +171,7 @@ Skipped: total, confirm
 A waiting gate looks like this:
 
 ```text
-Gate: draft (gate 0f2d0b7a-bca4-45d0-9c6b-83559e04a88d, opened 0m ago)
+Gate: draft (gate 580b28a5-abfc-49c1-b8ef-5d3574ce5aea, opened 0m ago)
   Choices: send, discard
 ```
 
@@ -184,7 +189,7 @@ Each block is printed only when the run has something for it.
 
 ```text
 Drive failures:
-  2026-10-01T21:26:32.069Z  classify  openai  validation_rejected after 20ms: Invalid input for step 'classify'
+  2026-10-05T23:01:39.186Z  classify  openai  validation_rejected after 30ms: Invalid input for step 'classify'
     usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache not reported
 ```
 
@@ -207,9 +212,9 @@ With `--check-drift`, after one of the project's files was edited:
 
 ```text
 Drift check (pure recompute of the last entry under its recorded rules):
-  module /srv/shop/handlers.mjs: DIFFERS (recorded a59b22a278c91b616785489dc22fb481c402a5a0f522a818d22f88991120f6bb, current f980fa2b6f70aaff613db47eee7bfafd78dbfe943c0bca97a735d2102f3f9a48)
+  module /srv/shop/handlers.mjs: DIFFERS (recorded 074edb9b29c550845e841aa1cc5a50a3e3db987fcb7d0507578386c94636c5a2, current 47deda97f85b1ad782597ae27a4d52018e681f1d12faed33d081fbe507609fa4)
   manifest /srv/shop/realm.yaml: same
-  tree: DIFFERS (recorded 7f6269ffdae72dc4513e84520e3838970c18716fe9951703606547eb8864ff20, current 4bca32402e93d3ad7e124501c8353dca8941c2383666d7359ade2278eb80cc88)
+  tree: DIFFERS (recorded 651600beac492f14fe9677119e5a98e61490fb3f28dca090d5eae80fbb9e4f0a, current 6dec55f0ef0b606aa70ea9c0414b86d3749fe594b4efd9dfb47acfd3b37d7fa4)
 ```
 
 The check reads the files and computes their hashes. It does not load or run them. For a run that used no project code, it prints `Drift check: no extension identity recorded for this run.`
@@ -218,46 +223,49 @@ The check reads the files and computes their hashes. It does not load or run the
 
 `Evidence` has one entry for each step that ran, in the order they first ran.
 
-| Line                                  | Printed when                                                                          | Holds                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| First line                            | Always                                                                                | The step's name, `[profile: <name>]` if it has an agent profile, `success` or `error`, how long it took, and the first 8 characters of its hash.                                                                                                                                                                                                 |
-| `Input`                               | Always                                                                                | What the step was given. Text longer than 120 characters is cut, and ends in `…`.                                                                                                                                                                                                                                                                |
-| `Resolved`                            | The step called a service                                                             | The parameters after `input_map` was applied.                                                                                                                                                                                                                                                                                                    |
-| `Output`                              | Always                                                                                | What the step produced, cut in the same way.                                                                                                                                                                                                                                                                                                     |
-| `Taken by`, `Question opened through` | The attempt's entry names the program whose code ran it                               | The program, how its name is known, and the door, as in `In Progress`. On a step whose gate is open, has been answered or has expired, the line under its last attempt reads `Question opened through:` — the program through which the question was opened, not who answered it; earlier attempts read `Taken by:`. Added after version 0.45.0. |
-| `Trace`                               | The step recorded trace entries                                                       | How many.                                                                                                                                                                                                                                                                                                                                        |
-| `Message`                             | The answered gate had a message                                                       | The question as the person read it, in quotes, printed before its answer.                                                                                                                                                                                                                                                                        |
-| `Answer`                              | The step's gate was answered                                                          | One line for each answer: the choice, who answered, and the proof of the `claim_token`. See below. Added after version 0.45.0.                                                                                                                                                                                                                   |
-| `Tool calls`                          | An agent step called tools                                                            | One line for each call: the server, the tool and the time taken. `Tools declared, none called` if it had tools and used none.                                                                                                                                                                                                                    |
-| `Diagnostics`                         | The step is an agent or an auto step                                                  | An estimate of the input's size, the measured prompt and output tokens if `realm agent` drove the step, each precondition with its result, and what the provider reported about its cache.                                                                                                                                                       |
-| `cost`                                | An agent step's attempt recorded no usage, or recorded it in a form realm cannot read | Why: `not recorded — realm has no usage figures for this attempt (…)`, or `unreadable — the recorded usage is not a list`. A step that runs code prints no `cost` line.                                                                                                                                                                          |
+| Line                                  | Printed when                                                                          | Holds                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First line                            | Always                                                                                | The step's name, `[profile: <name>]` if it has an agent profile, `success` or `error`, how long it took, and the first 8 characters of its hash.                                                                                                                                                                                      |
+| `Input`                               | Always                                                                                | What the step was given. Text longer than 120 characters is cut, and ends in `…`.                                                                                                                                                                                                                                                     |
+| `Resolved`                            | The step called a service                                                             | The parameters after `input_map` was applied.                                                                                                                                                                                                                                                                                         |
+| `Output`                              | Always                                                                                | What the step produced, cut in the same way.                                                                                                                                                                                                                                                                                          |
+| `Taken by`, `Question opened through` | The attempt's entry names the program whose code ran it                               | The program, how its name is known, and the door, as in `In Progress`. On a step whose gate is open, has been answered or has expired, the line under its last attempt reads `Question opened through:` — the program through which the question was opened, not who answered it; earlier attempts read `Taken by:`. Added in 0.46.0. |
+| `Trace`                               | The step recorded trace entries                                                       | How many.                                                                                                                                                                                                                                                                                                                             |
+| `Message`                             | The answered gate had a message                                                       | The question as the person read it, in quotes, printed before its answer.                                                                                                                                                                                                                                                             |
+| `Answer`                              | The step's gate was answered                                                          | One line for each answer: the choice, who answered, and the proof of the `claim_token`. See below. Added in 0.46.0.                                                                                                                                                                                                                   |
+| `Tool calls`                          | An agent step called tools                                                            | One line for each call: the server, the tool and the time taken. `Tools declared, none called` if it had tools and used none.                                                                                                                                                                                                         |
+| `Diagnostics`                         | The step is an agent or an auto step                                                  | An estimate of the input's size, the measured prompt and output tokens if `realm agent` drove the step, each precondition with its result, and what the provider reported about its cache.                                                                                                                                            |
+| `cost`                                | An agent step's attempt recorded no usage, or recorded it in a form realm cannot read | Why: `not recorded — realm has no usage figures for this attempt (…)`, or `unreadable — the recorded usage is not a list`. A step that runs code prints no `cost` line.                                                                                                                                                               |
 
 A step that `realm agent` drove has measured numbers:
 
 ```text
   1. classify               [profile: support-lead] success   0ms   hash: 93b4b175
+     Taken by: ops@server-1 (from the OS user, via agent)
      Input:  {"category":"bug","urgent":false,"reason":"A valid answer this time."}
      Output: {"category":"bug","urgent":false,"reason":"A valid answer this time."}
-     Diagnostics: ~18 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | no preconditions | cache: not reported by the provider (1 request)
+     Diagnostics: ~18 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, 1 request)
 ```
 
 A step that called a tool, with `--verbose`:
 
 ```text
      Tool calls (1):
-       [notes:list_directory]  8ms
+       [notes:list_directory]  7ms
          args:   {"path":"."}
          result: {"content":[{"type":"text","text":"[FILE] returns.md\n[FILE] shipping.md"}],"structuredContent":{"content":"[FILE] returns.md\n[FILE] shipping.md"}}
 ```
 
-Without `--verbose`, only the `[notes:list_directory]  8ms` line is printed.
+Without `--verbose`, only the `[notes:list_directory]  7ms` line is printed.
 
 A step that ran more than once has one line for each attempt. `Input`, `Output` and `Diagnostics` are those of the last attempt:
 
 ```text
   1. fetch
-     (attempt 1/2)  error   1002ms   hash: 44136fa3
+     (attempt 1/2)  error   1001ms   hash: 44136fa3
+       Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      (attempt 2/2)  success   0ms   hash: e715712f
+       Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"sleep_ms":1500,"sleep_calls":1}
      Output: {"ok":true,"calls":2}
      Diagnostics (attempt 2/2): ~9 tokens (estimate, step input) | no preconditions

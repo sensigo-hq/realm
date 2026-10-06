@@ -106,8 +106,11 @@ With that change, a fetch that failed twice and then worked was retried, and the
 ```text
   1. fetch
      (attempt 1/3)  error   1ms   hash: 44136fa3
+       Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      (attempt 2/3)  error   0ms   hash: 44136fa3
+       Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      (attempt 3/3)  success   0ms   hash: d038311e
+       Taken by: ops@server-1 (from the OS user, via mcp-stdio)
 ```
 
 When every attempt fails, the step fails with its own code, and the run ends:

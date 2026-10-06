@@ -2,13 +2,13 @@
 
 <!-- description: Reference for @sensigo/realm-testing, the package for testing workflows, handlers, adapters and stores: every value and type it exports. -->
 
-`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 25 values and 23 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
+`@sensigo/realm-testing` is the package for testing workflows, handlers, adapters and stores from your own test files. It exports 30 values and 23 types. This page lists every one, with its signature and what it returns. The lists come from the package's built `index.js` and `index.d.ts`, and every output shown came from a call to the built package.
 
 ```bash
 npm install --save-dev @sensigo/realm-testing
 ```
 
-This page describes the package on the `main` branch. Version 0.45.0 exports 23 values: `createFenceRunSource` and `fenceTestRun` were added after it, and the adapter that `fencedTraceBufferContract` takes changed with them (`fenceRuns` and `fenceRunPark` are new, and `fenceForm` has other values).
+This page describes the package on the `main` branch. Version 0.45.0 exports 23 values. Version 0.46.0 added seven: `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, and the four lists of law names `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. It also added four types, `FenceRunSource`, `FenceRunControl`, `FenceRunPark` and `ParkedRead`: version 0.45.0 has 19 types. The adapter that `fencedTraceBufferContract` takes changed with them (`fenceRuns` and `fenceRunPark` are new, and `fenceForm` has other values).
 
 Nothing in the package depends on a test framework. A function that checks something throws an `Error` when the check fails, which any framework reports as a failed test.
 
@@ -16,15 +16,15 @@ To test a workflow from the command line, with no test file, see [Test a workflo
 
 ## The exports
 
-| Group                               | Values                                                                                                                                                                           |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Fixtures](#fixtures)               | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                         |
-| [Driving a run](#driving-a-run)     | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                           |
-| [Assertions](#assertions)           | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                          |
-| [Unit helpers](#unit-helpers)       | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                |
-| [GitHub stand-in](#github-stand-in) | `startGitHubMockServer`                                                                                                                                                          |
-| [Store contracts](#store-contracts) | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun` |
-| Version                             | `VERSION`, the package's version as a string: `"0.45.0"`.                                                                                                                        |
+| Group                               | Values                                                                                                                                                                                                                                                                                                   |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Fixtures](#fixtures)               | `loadFixtureFromFile`, `loadFixtureFromString`, `loadFixturesFromDir`, `runFixtureTests`                                                                                                                                                                                                                 |
+| [Driving a run](#driving-a-run)     | `InMemoryStore`, `MockServiceRecorder`, `createAgentDispatcher`, `createGateResponder`                                                                                                                                                                                                                   |
+| [Assertions](#assertions)           | `assertFinalState`, `assertStepSucceeded`, `assertStepFailed`, `assertStepOutput`, `assertEvidenceHash`                                                                                                                                                                                                  |
+| [Unit helpers](#unit-helpers)       | `testStepHandler`, `testAdapter`, `testProcessor`                                                                                                                                                                                                                                                        |
+| [GitHub stand-in](#github-stand-in) | `startGitHubMockServer`                                                                                                                                                                                                                                                                                  |
+| [Store contracts](#store-contracts) | `runStoreFidelityContract`, `settlementContract`, `defaultSettlementFixture`, `perRunArtifactStoreContract`, `fencedTraceBufferContract`, `createFenceRunSource`, `fenceTestRun`, `storeReleaseLineLaw`, `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS`, `FENCED_TRACE_BUFFER_LAWS` |
+| Version                             | `VERSION`, the package's version as a string, for example `"0.46.0"`.                                                                                                                                                                                                                                    |
 
 The 23 types are named in the group that uses them.
 
@@ -373,17 +373,17 @@ Build a new adapter and store for each case, as above. Several cases delete or d
 | Contract                      | For a store that implements                  | Laws | Cases with Realm's own store        |
 | ----------------------------- | -------------------------------------------- | ---- | ----------------------------------- |
 | `runStoreFidelityContract`    | `RunStore`                                   | 6    | 13, with `InMemoryStore`            |
-| `settlementContract`          | `RunStore` with `settleStep`                 | 56   | 146, with `InMemoryStore`           |
+| `settlementContract`          | `RunStore` with `settleStep`                 | 56   | 146, with `InMemoryStore` (below)   |
 | `perRunArtifactStoreContract` | `PerRunArtifactStore`                        | 7    | 7, with `FailedAttemptStore`        |
 | `fencedTraceBufferContract`   | `TraceBufferStore` with the fenced functions | 12   | 74, with `InMemoryTraceBufferStore` |
 
 Every case in the last column passed. The store interfaces are in [Core library](core-library.md).
 
-Each contract has the law `STORE_RELEASE_LINE_TRUE`: the release line your store declares must be the line of the errors it throws. The case makes your store refuse something (a run that does not exist, an injected failure, a fence that refuses) and compares the two. `storeReleaseLineLaw(store, provokeRefusal)` runs the same check for any store kind: `provokeRefusal` must make the store throw one of its own errors. A test runner that takes its laws from the exported list (below) runs it with no edit; one that lists its laws by hand must list it, or the case is never run. The law and `storeReleaseLineLaw` were added after version 0.45.0; the counts above include them.
+Each contract has the law `STORE_RELEASE_LINE_TRUE`: the release line your store declares must be the line of the errors it throws. The case makes your store refuse something (a run that does not exist, an injected failure, a fence that refuses) and compares the two. `storeReleaseLineLaw(store, provokeRefusal)` runs the same check for any store kind: `provokeRefusal` must make the store throw one of its own errors. A test runner that takes its laws from the exported list (below) runs it with no edit; one that lists its laws by hand must list it, or the case is never run. The law and `storeReleaseLineLaw` were added in 0.46.0; the counts above include them.
 
 #### Running every law
 
-Each of four contracts exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. They were added after version 0.45.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
+Each of four contracts exports the names of its laws as a list, so that a test file does not keep its own copy of them: `RUN_STORE_FIDELITY_LAWS`, `SETTLEMENT_LAWS`, `ARTIFACT_STORE_LAWS` and `FENCED_TRACE_BUFFER_LAWS`. They were added in 0.46.0. Run the list, minus the laws that the file names in a `NOT_RUN` object with a reason for each:
 
 ```js
 import { SETTLEMENT_LAWS } from '@sensigo/realm-testing';
@@ -413,7 +413,7 @@ A law added to the contract then runs in the file with no edit, and a law the fi
 | `EVIDENCE_KEEPS_DRIVER_AND_PROOF` | An evidence entry written with `driven_by`, and a gate answer written with `claim_proof`, come back with both.                                                                                                                                                                                                                                                                                            |
 | `STORE_RELEASE_LINE_TRUE`         | The release line the store declares is the line of the error it throws for a run that does not exist.                                                                                                                                                                                                                                                                                                     |
 
-`claimStep` takes the program's name as an optional fourth argument, `claimant`; a store writes it as the claim's `holder`, and stamps `since` on every claim it makes. The two new laws were added after version 0.45.0. A store that lists no fields gets no `FIDELITY_HONESTY` cases. `CLAIM_SINGLE_OWNER` races 2 calls in one process. It does not show that a store is safe across machines.
+`claimStep` takes the program's name as an optional fourth argument, `claimant`; a store writes it as the claim's `holder`, and stamps `since` on every claim it makes. The two new laws were added in 0.46.0. A store that lists no fields gets no `FIDELITY_HONESTY` cases. `CLAIM_SINGLE_OWNER` races 2 calls in one process. It does not show that a store is safe across machines.
 
 Types: `RunStoreFidelityContractAdapter`, `RunStoreFidelityContractCase`, `RunStoreFidelityLaw`.
 
@@ -438,7 +438,7 @@ The failing case says what to do:
 [Mine] settlementContract: adapter.store declares settleStep, but adapter.settlementFixture is undefined — this is a WIRING GAP in the calling test file, not a store defect. Pass 'defaultSettlementFixture' from this module …
 ```
 
-The 55 laws:
+The 56 laws:
 
 ```text
 FRESH_APPLICATION, CONDITIONAL_NOOP, CONDITIONAL_NOOP_GRANDFATHERED, OWNERSHIP_REFUSAL,
@@ -458,9 +458,9 @@ EXPIRE_ARM_MATRIX, EXPIRE_ABORT_CASCADE, EXPIRE_DEFAULT_RESOLVE, GATE_PROOF_NEVE
 ADAPTER_WIRING, STORE_RELEASE_LINE_TRUE
 ```
 
-Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, 55 of the laws have cases. `ADAPTER_WIRING` has one only when the adapter is incomplete.
+Each case's `name` says in a sentence what the law requires. With `InMemoryStore`, `defaultSettlementFixture` and a `seedLegacyTerminal` that puts the run straight into the store's map of runs, 55 of the laws have cases, 146 in all, and all of them pass. `ADAPTER_WIRING` has one only when the adapter is incomplete. Without `seedLegacyTerminal`, `STAMP_CLASSIFIED_ROUNDTRIP` has no case and a `STAMP_PRESERVES_UPDATED_AT` case fails, saying that the hook is missing: 142 cases.
 
-`GATE_PROOF_NEVER_GATES_THE_ANSWER` was added after version 0.45.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
+`GATE_PROOF_NEVER_GATES_THE_ANSWER` was added in 0.46.0. It answers one question: does a token passed with a gate answer change anything but the `claim_proof` on the answer's entry? For each way a token can relate to the claim (`matched`, `absent`, `mismatch`, and each cause of `unverifiable` and `spent`), the record after the answer must equal the record after the same answer with no token, except for that field. It also checks that the verdict survives a guard settled in the same write, that `gateClaim.claim` carries `holder` and `since` and never the token, and that a store declaring `persistsClaims: false` gets `store_keeps_no_claims`. A store's `settleStep` must return the `gateClaim` that `applySettlement` computed, and must pass `storeKeepsClaims: store.persistsClaims === true` to it.
 
 `defaultSettlementFixture` has 3 functions: `minimalDefinition(stepNames)`, `withFinalizer(definition, name, onOutcome)` and `withGuard(definition, name, abortUnless, options?)`.
 

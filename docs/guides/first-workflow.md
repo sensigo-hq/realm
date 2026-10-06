@@ -158,7 +158,7 @@ It prints:
 
 ```text
 Realm — Write a short article v1
-Run ID: 6824dacc-5f25-4a6e-a152-3dee7c88ea97
+Run ID: faf114dc-0c5f-4d95-b310-d5d36b101b6d
 
 → [agent] outline: List the points the article will make.
   Agent output JSON (Enter for {}): {"points":["Gates stop a run","Evidence is recorded"]}
@@ -186,7 +186,7 @@ Type the article:
 It prints:
 
 ```text
-  ✓ → completed | hash: 77d5900d... | 1ms
+  ✓ → completed | hash: 77d5900d... | 0ms
 
 Run complete. Phase: completed
 ```
@@ -198,7 +198,7 @@ Notice that `publish` did not ask you anything. It is an `auto` step, so Realm r
 Print the record, using the run ID from step 5:
 
 ```bash
-realm run inspect 6824dacc-5f25-4a6e-a152-3dee7c88ea97
+realm run inspect faf114dc-0c5f-4d95-b310-d5d36b101b6d
 ```
 
 It prints the following. Some lines are left out here and marked `…`.
@@ -212,13 +212,16 @@ Completed: outline, write, publish
 Evidence (3 steps):
 
   1. outline                success   0ms   hash: 043e7f4b
+     Taken by: ops@server-1 (from the OS user, via run)
      Input:  {"points":["Gates stop a run","Evidence is recorded"]}
      Output: {"points":["Gates stop a run","Evidence is recorded"]}
      …
   2. write                  success   0ms   hash: 77d5900d
+     Taken by: ops@server-1 (from the OS user, via run)
      Input:  {"text":"Realm stops a run at a gate until someone answers, and records every step."}
      …
-  3. publish                success   1ms   hash: 77d5900d
+  3. publish                success   0ms   hash: 77d5900d
+     Taken by: ops@server-1 (from the OS user, via run)
      …
 ```
 

@@ -100,6 +100,7 @@ It prints:
 ```text
 Valid: price v1 (2 steps)
 Extensions: ./registry.mjs (adapters: 0, handlers: 1, processors: 0)
+ℹ 1 step ready for structured_output: strict — run 'realm workflow validate --explain' for detail (REALM_NO_NUDGE=1 to silence).
 ```
 
 Notice the `Extensions` line. It confirms that Realm loaded your file and found one handler. Then register:
@@ -121,7 +122,8 @@ The total is 50. Does that look right?
 The record keeps the handler's input and output:
 
 ```text
-  1. total                  success   1ms   hash: b2da9bae
+  1. total                  success   1ms   hash: 4e944dad
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"quantity":4}
      Resolved: {"quantity":4}
      Output: {"total":50}
