@@ -116,7 +116,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(lines[3]).toBe("Owed to the engine: 'after'.");
       expect(lines[4]).toBe('→ after');
       expect(lines[5]).toBe(
-        `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id}`,
+        `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
       );
       expect(lines[6]).toBe(`Run ${run.id}: phase 'running'`);
 
@@ -127,7 +127,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         "Last recorded driver: tester (from REALM_OPERATOR, via advance) at step 'after', " +
           (again.stdout.match(/at step 'after', (\S+)\./)?.[1] ?? '') +
           '.',
-        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id}.`,
+        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.`,
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });

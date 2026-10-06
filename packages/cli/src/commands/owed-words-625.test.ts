@@ -109,7 +109,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       }),
     ).toEqual(["'x' cannot run (trust): bad trust", "'y' cannot run (precondition): no"]);
     expect(stoppedReasons('r', base, { ...none, agent_steps: ['a', 'b'] })).toEqual([
-      "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r",
+      "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r --provider <provider> --model <model>",
     ]);
     expect(
       stoppedReasons('r', base, {
@@ -124,7 +124,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       }),
     ).toEqual([
       "'x' cannot run (trust): bad trust",
-      "an agent step is ready: 'a' — drive it with realm agent --run-id r",
+      "an agent step is ready: 'a' — drive it with realm agent --run-id r --provider <provider> --model <model>",
     ]);
     expect(stoppedReasons('r', base, none)).toEqual(['nothing is ready to run now']);
   });
@@ -147,10 +147,10 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       cannot_run: [],
     };
     expect(stoppedReasons('r', base, { ...none, agent_steps: ['ask'] })).toEqual([
-      "an agent step is ready: 'ask' — drive it with realm agent --run-id r",
+      "an agent step is ready: 'ask' — drive it with realm agent --run-id r --provider <provider> --model <model>",
     ]);
     expect(stoppedReasons('r', base, { ...none, agent_steps: ['a', 'b'] })).toEqual([
-      "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r",
+      "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r --provider <provider> --model <model>",
     ]);
   });
 
@@ -184,7 +184,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       expect(lines.slice(4)).toEqual([
         '→ x',
         "Stopped: 'x' failed: Handler 'boom' threw: handler blew up",
-        `Stopped: an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id}`,
+        `Stopped: an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
         `Run ${run.id}: phase 'running'`,
       ]);
     } finally {
@@ -216,7 +216,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       // exit 1, as after a call that ran.
       expect(code).toBe(1);
       expect(lines.slice(3)).toEqual([
-        `The engine can run nothing now: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it; an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id}.`,
+        `The engine can run nothing now: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it; an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.`,
       ]);
       expect(lines.join('\n')).not.toContain('failed');
     } finally {
@@ -251,7 +251,7 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         '→ b',
         '→ x',
         "Stopped: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it",
-        `Stopped: an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id}`,
+        `Stopped: an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
         `Run ${run.id}: phase 'running'`,
       ]);
       expect(lines.join('\n')).not.toContain('failed');
@@ -932,10 +932,10 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
       const r1 = (await runs.create({ workflowId: one.id, workflowVersion: 1, params: {} })).run;
       const r2 = (await runs.create({ workflowId: two.id, workflowVersion: 1, params: {} })).run;
       expect((await preview(runs, workflows, home, r1.id, new ExtensionRegistry())).at(-1)).toBe(
-        `Nothing is owed to the engine: an agent step is ready: 'a' — drive it with realm agent --run-id ${r1.id}.`,
+        `Nothing is owed to the engine: an agent step is ready: 'a' — drive it with realm agent --run-id ${r1.id} --provider <provider> --model <model>.`,
       );
       expect((await preview(runs, workflows, home, r2.id, new ExtensionRegistry())).at(-1)).toBe(
-        `Nothing is owed to the engine: agent steps are ready: 'a', 'b' — drive them with realm agent --run-id ${r2.id}.`,
+        `Nothing is owed to the engine: agent steps are ready: 'a', 'b' — drive them with realm agent --run-id ${r2.id} --provider <provider> --model <model>.`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

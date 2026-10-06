@@ -190,7 +190,9 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - A step that fails still gives the error reply, and `advance_run` still replies with the block's
     error.
   - `realm run advance` says `an agent step is ready: '<s>' — drive it` for one ready agent step and
-    `agent steps are ready: … — drive them` for several.
+    `agent steps are ready: … — drive them` for several, followed by the drive command with the
+    model flags to fill in: `with realm agent --run-id <id> --provider <provider> --model <model>`
+    (since #676, `realm agent --run-id <id>` alone is refused for having no model).
   - Its preview says `not comparable — the run has recorded no project code yet` when the run has
     recorded no project code (`not comparable with the run's last record` otherwise).
   - A reply from `advance_run` or `execute_step` ends with

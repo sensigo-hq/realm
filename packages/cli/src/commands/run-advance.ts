@@ -117,7 +117,12 @@ export function stoppedReasons(runId: string, run: RunForReasons, pending: Pendi
       pending.agent_steps.length === 1
         ? `an agent step is ready: '${pending.agent_steps[0]}' — drive it`
         : `agent steps are ready: ${pending.agent_steps.map((s) => `'${s}'`).join(', ')} — drive them`;
-    reasons.push(`${ready} with realm agent --run-id ${runId}`);
+    // decision C89: the drive command a person can run as printed — since #676 `realm agent` refuses
+    // to start without a model, so the line carries the placeholders the other printers use
+    // (run-agent.ts's re-attach line, resume.ts, run.ts's detach map).
+    reasons.push(
+      `${ready} with realm agent --run-id ${runId} --provider <provider> --model <model>`,
+    );
   }
   reasons.push(
     ...inFlightSteps(run).map(
