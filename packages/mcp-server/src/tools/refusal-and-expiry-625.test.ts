@@ -81,7 +81,7 @@ function routing(reply: ResponseEnvelope) {
     status: reply.status,
     agent_action: reply.agent_action,
     next: reply.next_actions.map(
-      (a) => `${a.instruction.tool}:${a.instruction.params['command'] ?? ''}`,
+      (a) => `${a.instruction?.tool}:${a.instruction?.params['command'] ?? ''}`,
     ),
     eligible_steps: reply.blocked_reason?.eligible_steps,
   };
@@ -175,7 +175,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       // (a) red when a due expiry reads `awaiting_human` with nothing to call; (b) prints status and act.
       expect({
         status: state.next_actions_status,
-        next: state.next_actions.map((a) => a.instruction.tool),
+        next: state.next_actions.map((a) => a.instruction?.tool),
       }).toEqual({ status: 'advance_owed', next: ['advance_run'] });
       const reply = await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
       const after = await runStore.get(runId);

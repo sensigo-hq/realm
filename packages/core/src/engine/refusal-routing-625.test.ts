@@ -50,7 +50,7 @@ function routing(reply: ResponseEnvelope) {
     status: reply.status,
     agent_action: reply.agent_action,
     next: reply.next_actions.map(
-      (a) => `${a.instruction.tool}:${a.instruction.params['command'] ?? ''}`,
+      (a) => `${a.instruction?.tool}:${a.instruction?.params['command'] ?? ''}`,
     ),
     eligible_steps: reply.blocked_reason?.eligible_steps,
   };
