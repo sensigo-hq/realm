@@ -9,60 +9,27 @@ import { THEME_INIT } from '../lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
 import Logo from '../components/Logo.astro';
 import PageMeta from '../components/PageMeta.astro';
-import { COMPARE_DESCRIPTION, SOURCE_URL } from '../lib/site-meta.mjs';
-import { tools, rows, facts, strengths, rowsByVerdict, order } from '../lib/comparison.mjs';
+import { COMPARE_DESCRIPTION } from '../lib/site-meta.mjs';
+import { tools, rows, facts, strengths } from '../lib/comparison.mjs';
+import {
+  VERDICT_LABEL,
+  verdictGroups,
+  LABEL_MEANINGS,
+  pageTitle,
+  checkedRange,
+  lede,
+  difference,
+  orderLine,
+  tableHeading,
+  partialNote,
+  toolsIntro,
+  howChecked,
+  linkParts,
+  issueLink,
+} from '../lib/compare-text.mjs';
 
 const PILL = { Yes: 'yes', Partial: 'part', No: 'no', 'N/A': 'na' };
-const VERDICT = {
-  lead: ['v-lead', 'Only Realm'],
-  level: ['v-level', 'Level with the field'],
-  behind: ['v-behind', 'Realm is behind'],
-  open: ['v-open', 'Nobody has it'],
-};
-const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-const others = tools.length - 1;
-const othersWord = WORDS[others] ?? String(others);
-const totalWord = WORDS[tools.length] ?? String(tools.length);
-
-
-// Issue numbers in the text (#625) become links to the issue.
-const linkParts = (text) => text.split(/(#\d+)/).map((part) => (/^#\d+$/.test(part) ? { issue: part.slice(1) } : { text: part }));
-
-// Every product named in the page title must be a column of the table.
-const TITLE_NAMES = ['LangGraph', 'CrewAI', 'Temporal', 'n8n'];
-for (const name of TITLE_NAMES) {
-  if (!tools.some((t) => t.name === name)) throw new Error(`compare.astro: the page title names ${name}, which is not a tool in src/data/comparison.json`);
-}
-// The introduction says what only Realm does; that is the claim of the row "drive". If that row stops
-// being "Only Realm", the sentence would be false, so the build stops instead.
-const driveRow = rows.find((r) => r.id === 'drive');
-if (!driveRow || driveRow.verdict.kind !== 'lead') {
-  throw new Error('compare.astro: the introduction says only Realm can be walked step by step from outside, but the row "drive" in src/data/comparison.json is missing or not "lead"');
-}
-const pageTitle = `How Realm compares with ${TITLE_NAMES.slice(0, -1).join(', ')}, ${TITLE_NAMES.at(-1)} and others`;
-
-const checkedDates = [...new Set(tools.map((t) => t.checked))].sort();
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const parts = (iso) => { const [y, m, d] = iso.split('-').map(Number); return { y, m: MONTHS[m - 1], d }; };
-const first = parts(checkedDates[0]);
-const last = parts(checkedDates.at(-1));
-const longDate = (iso) => { const p = parts(iso); return `${p.d} ${p.m} ${p.y}`; };
-const orderLine = `After Realm, the tools are ordered by ${order.by} on ${longDate(order.on)}, most first. The order says how popular each one is, not how good.`;
-const checkedRange =
-  checkedDates.length === 1 ? `${last.d} ${last.m} ${last.y}`
-  : first.y !== last.y ? `${first.d} ${first.m} ${first.y} – ${last.d} ${last.m} ${last.y}`
-  : first.m !== last.m ? `${first.d} ${first.m} – ${last.d} ${last.m} ${last.y}`
-  : `${first.d}–${last.d} ${last.m} ${last.y}`;
-const issueUrl = `${SOURCE_URL}/issues/new?title=${encodeURIComponent('Comparison: ')}&body=${encodeURIComponent(
-  'Which tool and which question:\n\nWhat the page says:\n\nWhat is true (with a link to the tool\'s own code or docs, and its version):\n',
-)}`;
-const dataUrl = `${SOURCE_URL}/blob/main/website/src/data/comparison.json`;
-const groupsOf = [
-  ['lead', 'Only Realm', rowsByVerdict('lead')],
-  ['level', 'Level with the field', rowsByVerdict('level')],
-  ['behind', 'Realm is behind', rowsByVerdict('behind')],
-  ['open', 'Nobody has it', rowsByVerdict('open')],
-].filter(([, , list]) => list.length > 0);
+const VERDICT_CLASS = { lead: 'v-lead', level: 'v-level', behind: 'v-behind', open: 'v-open' };
 ---
 
 <!doctype html>
@@ -73,7 +40,7 @@ const groupsOf = [
 {ICON_LINKS.map((a) => <link {...a} />)}
 <meta name="theme-color" content={THEME_COLOR} />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<PageMeta title={pageTitle} description={COMPARE_DESCRIPTION} path="/compare/" />
+<PageMeta title={pageTitle} description={COMPARE_DESCRIPTION} path="/compare/" image={{ key: 'compare', alt: `Realm comparison: ${pageTitle}` }} markdownPath="/compare.md" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
@@ -180,12 +147,12 @@ button.openall:hover { border-color: var(--muted); }
     <div class="eyebrow">Comparison</div>
     <h1>How Realm compares</h1>
     <p class="checked">Checked {checkedRange}</p>
-    <p class="lede">Realm against {othersWord} tools people consider for the same job: getting an AI agent to do multi-step work reliably. Every answer below cites the tool's own code or docs, and each column names the release that was checked and when. Where Realm is behind, the page says so.</p>
-    <p class="diff">The difference that matters most: the other {othersWord} run the work themselves and call the model when they need it. Realm can do that too, but an outside assistant, such as Claude or Cursor, can also work through a Realm workflow one step at a time. Realm refuses a step taken out of order, and an answer that breaks the schema the step declares.</p>
+    <p class="lede">{lede}</p>
+    <p class="diff">{difference}</p>
   </header>
 
   <div class="summary">
-    {groupsOf.map(([kind, label, list]) => (
+    {verdictGroups.map(({ kind, label, rows: list }) => (
       <div class="sbox">
         <h3><span class={`dot ${kind}`}></span>{label}</h3>
         <ul>
@@ -197,9 +164,9 @@ button.openall:hover { border-color: var(--muted); }
 
   <section aria-labelledby="table">
     <div class="eyebrow">The table</div>
-    <h2 id="table">{totalWord.charAt(0).toUpperCase() + totalWord.slice(1)} tools, {rows.length} questions</h2>
+    <h2 id="table">{tableHeading}</h2>
     <p>Each row is a question. Its name links to every tool's answer to it; each answer links to its own explanation and source. The shaded column is Realm. {orderLine}</p>
-    <div class="legend"><span class="pill yes">Yes</span><span class="pill part">Partial</span><span class="pill no">No</span><span>Partial always means something is missing; the answers below say what.</span></div>
+    <div class="legend"><span class="pill yes">Yes</span><span class="pill part">Partial</span><span class="pill no">No</span><span>{partialNote}</span></div>
     <div class="scroll" role="region" aria-label="Comparison table" tabindex="0">
       <table class="matrix">
         <thead>
@@ -215,7 +182,7 @@ button.openall:hover { border-color: var(--muted); }
         <tbody>
           {rows.map((r) => (
             <tr>
-              <th scope="row" class="rowhead"><a href={`#${r.id}`}>{r.title}</a><span class={`vchip ${VERDICT[r.verdict.kind][0]}`}>{VERDICT[r.verdict.kind][1]}</span></th>
+              <th scope="row" class="rowhead"><a href={`#${r.id}`}>{r.title}</a><span class={`vchip ${VERDICT_CLASS[r.verdict.kind]}`}>{VERDICT_LABEL[r.verdict.kind]}</span></th>
               {tools.map((t) => (
                 <td class={t.key === 'realm' ? 'realm' : undefined}><a class="cellink" href={`#${r.id}-${t.key}`} title={`${t.name}: ${r.cells[t.key].note}`} aria-label={`${t.name}, ${r.title}: ${r.cells[t.key].value}. Read the answer and its source.`}><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></a></td>
               ))}
@@ -236,14 +203,14 @@ button.openall:hover { border-color: var(--muted); }
   <section aria-labelledby="answers">
     <div class="eyebrow">Question by question</div>
     <h2 id="answers">Every answer, with its source</h2>
-    <p>Each question shows the verdict and which tools gave which answer. Open it for every tool's explanation and its source. Each source says how it was checked: <span class="lab">CODE</span> read in the tool's source, <span class="lab">DOCS</span> stated in its own docs, <span class="lab">EXECUTED</span> run, <span class="lab">INFERRED</span> reasoned from what was read.</p>
+    <p>Each question shows the verdict and which tools gave which answer. Open it for every tool's explanation and its source. Each source says how it was checked: {LABEL_MEANINGS.map(([lab, meaning], i) => <>{i > 0 ? ', ' : ''}<span class="lab">{lab}</span> {meaning}</>)}.</p>
     <div class="qtools"><button type="button" class="openall" id="openall" hidden>Open all answers</button></div>
     <div class="qrows">
       {rows.map((r) => (
         <section class="q" id={r.id}>
-          <div class="qtop"><h3>{r.title}</h3><span class={`vchip ${VERDICT[r.verdict.kind][0]}`}>{VERDICT[r.verdict.kind][1]}</span></div>
+          <div class="qtop"><h3>{r.title}</h3><span class={`vchip ${VERDICT_CLASS[r.verdict.kind]}`}>{VERDICT_LABEL[r.verdict.kind]}</span></div>
           <p class="ask">{r.ask}</p>
-          <p class="verdict">{linkParts(r.verdict.text).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
+          <p class="verdict">{linkParts(r.verdict.text).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p>
           <p class="tally">
             {['Yes', 'Partial', 'No', 'N/A'].map((v) => {
               const names = tools.filter((t) => r.cells[t.key].value === v).map((t) => t.name);
@@ -260,7 +227,7 @@ button.openall:hover { border-color: var(--muted); }
                     <th scope="row">{t.name}</th>
                     <td class="ans"><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></td>
                     <td class="wide">
-                      <p>{linkParts(r.cells[t.key].note).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
+                      <p>{linkParts(r.cells[t.key].note).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p>
                       <p class="src"><span class="lab">{r.cells[t.key].label}</span> {r.cells[t.key].source}</p>
                     </td>
                   </tr>
@@ -276,7 +243,7 @@ button.openall:hover { border-color: var(--muted); }
   <section aria-labelledby="tools">
     <div class="eyebrow">Tool by tool</div>
     <h2 id="tools">What each one does better, and where it falls short</h2>
-    <p>Where each tool is stronger than Realm, and where it falls short for making an agent follow steps and show what it did.</p>
+    <p>{toolsIntro}</p>
     <div class="box">
       <table class="rowsof">
         <thead><tr><th scope="col">Tool</th><th scope="col">Stronger at</th><th scope="col">Weaker at</th></tr></thead>
@@ -284,8 +251,8 @@ button.openall:hover { border-color: var(--muted); }
           {tools.map((t) => (
             <tr class={t.key === 'realm' ? 'realm' : undefined}>
               <th scope="row">{t.name}<span class="tmeta">{t.group}</span><span class="tmeta">{t.version}</span><span class="tmeta">checked {t.checked}</span></th>
-              <td class="wide" data-label="Stronger at"><p>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p></td>
-              <td class="wide" data-label="Weaker at"><p>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p></td>
+              <td class="wide" data-label="Stronger at"><p>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p></td>
+              <td class="wide" data-label="Weaker at"><p>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={issueLink(p.issue)}>#{p.issue}</a> : p.text))}</p></td>
             </tr>
           ))}
         </tbody>
@@ -297,12 +264,7 @@ button.openall:hover { border-color: var(--muted); }
     <div class="eyebrow">How this was checked</div>
     <h2 id="how">Sources, dates and corrections</h2>
     <ul>
-      <li>Each answer was read in the tool's own source code, docs or release notes. A column names the main release that was read; where an answer comes from a companion package, such as a tool's SDK, CLI or MCP server, its source names the file. Blog posts, comparison articles and AI summaries were not used.</li>
-      <li>Realm's own column was checked by a separate pass told to find its weaknesses, and its key answers were run on the published release.</li>
-      <li>"Only Realm", "Level with the field", "Realm is behind" and "Nobody has it" are our reading of each row. The answers and their sources are the evidence.</li>
-      <li>Claims a tool makes only in its docs are labelled DOCS and were not checked in its code. Prices change often and are not listed here.</li>
-      <li>Every answer and its source is also in one data file, <a href={dataUrl}>comparison.json</a>.</li>
-      <li>Something wrong or out of date? <a href={issueUrl}>Open an issue</a> with a link to the tool's own code or docs, and we will check it and correct the page.</li>
+      {howChecked.map((item) => <li>{item.map((part) => (typeof part === 'string' ? part : <a href={part.href}>{part.text}</a>))}</li>)}
     </ul>
   </section>
 

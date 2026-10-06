@@ -33,7 +33,7 @@ export async function GET() {
     '## Optional',
     '',
     `- [How it works](${absolute('/how-it-works/')}): ${HOW_IT_WORKS_DESCRIPTION}`,
-    `- [How Realm compares](${absolute('/compare/')}): ${COMPARE_DESCRIPTION}`,
+    `- [How Realm compares](${absolute('/compare.md')}): ${COMPARE_DESCRIPTION} The page itself is ${absolute('/compare/')}.`,
     `- [Source code](${SOURCE_URL}): The Realm repository on GitHub, with the changelog and the docs as written.`,
     '',
   ].join('\n');
