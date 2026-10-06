@@ -234,7 +234,7 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
     `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them), and
     `command` only labels the reply.
-- **A refusal before the claim says what can be called instead (issue #625, PR-2a).** A step
+- **BREAKING — a refusal before the claim says what can be called instead (issue #625, PR-2a).** A step
   `executeStep` refuses before its claim — a failed precondition (`blocked`) or an invalid `trust`
   (`error`, `VALIDATION_TRUST_VALUE`), an agent step or an `auto` step — now carries the run view's
   `next_actions`, and `blocked_reason.eligible_steps` names the steps that can be called now, never
@@ -244,6 +244,9 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
     run") with `next_actions: []` and the refused step among `eligible_steps`, and a `trust` refusal
     gave no `next_actions` — even when another step was ready.
   - Every other `blocked` reply's `eligible_steps` also names only the steps that can be called.
+  - **Upgrading:** a client that stopped on this reply's `stop` now gets `resolve_precondition` and
+    `next_actions` when another step can run: follow `next_actions`. With nothing to call, the reply
+    says `report_to_user`.
   - Core exports `callableSteps`, the steps a caller can call now.
 
 ### Fixed
