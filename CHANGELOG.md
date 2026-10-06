@@ -235,8 +235,11 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
     re-reads the record and goes on. `onExpiry` is told the line that says the call carried out an
     expired question, before any step runs.
   - `caller` names the caller — `advanceRun` (the default: a program's own call), `advance_run`
-    (the MCP tool) or `advance` (`realm run advance`) — on the reply's `command` and on that line's
-    `enacted_via`. Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via`
+    (the MCP tool), `advance` (`realm run advance`), `start_run` or `agent` — on the reply's
+    `command` and on that line's `enacted_via`. Any other value throws a `WorkflowError`
+    (`ENGINE_INTERNAL`) before anything is read or written, naming the value and the five words: a
+    program in plain JavaScript gets no type error, and the word would otherwise reach the reply
+    and the line (`this undefined call …`). Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via`
     vocabulary, which gains `advanceRun`) and `expiryCarriedOutLine`, the line's one composer.
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
     `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them);
@@ -267,8 +270,9 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - On 0.46.0 every such reply said `resolve_precondition` and
     `Step '<s>' is not eligible in the current run state.`, even with nothing to call, and its
     `blocked_reason.suggestion` read `No eligible steps available. Check run_phase and
-completed_steps.` (now `No other step can be called now.`, or `Answer the open question first,
-as next_actions says.`).
+completed_steps.` (now `No other step can be called now.`, `Answer the open question first,
+as next_actions says.`, or, when `next_actions` holds only `advance_run`, `Call advance_run, as
+next_actions says.`).
   - **Upgrading:** a client that matched the old hint, or followed `resolve_precondition` into an
     empty `next_actions`, follows `next_actions`; with `report_to_user`, it shows `context_hint` to
     the person.
@@ -279,8 +283,9 @@ as next_actions says.`).
 submit_human_response.` where 0.46.0 said `No step is ready.` and offered nothing.
   - `get_run_state` at `awaiting_human`: `next_actions` holds that entry (0.46.0: empty).
   - The entry's text says where the question's text is: `The question's text, when its gate declares
-a message, is get_run_state's pending_gate.resolved_message.` The reply that opens a question,
-    which carries the `gate` object, is unchanged.
+a message, is get_run_state's pending_gate.resolved_message.`, and who passes a token back: `The
+conversation that opened the question passes back the claim_token it was given then, when it was
+given one.` The reply that opens a question, which carries the `gate` object, is unchanged.
   - `start_run` matched by its idempotency key at an open question: the entry, and the hint names
     the question. `submit_human_response` with a gate id that is not the open one: the refusal holds
     the open question's entry (0.46.0: nothing to call) — see the next entry.
@@ -305,6 +310,13 @@ advance_run to carry out its declared <on_expiry>.`, with `advance_run` in `next
   of an answer that could not be recorded; or `No question is open on this run.`
   - The other refusals of an answer keep `report_to_user`: a different choice already recorded, a
     late answer the expiry beat, a choice the question does not offer, a run that has ended.
+  - The two whose choice was not recorded — a different choice already recorded, a late answer the
+    expiry beat — end their `context_hint`, when the run goes on, with what the run owes, in the
+    words a recorded answer uses (`… your choice '<c>' was not recorded. Owed to the engine: '<s>' —
+call advance_run.`); `next_actions` holds it, as before. `realm run respond`'s late answer
+    prints, after `Not recorded:`, the lines an answer in time prints after `Responded:` (the
+    `Owed to the engine: … — realm run advance <id> …` line, a ready agent step, the steps that
+    cannot run).
   - **Upgrading:** a client that stopped on this refusal's `report_to_user` follows `next_actions`.
 - **BREAKING — the run's view needs the clock (issue #625, PR-2a).** `buildNextActions(definition,
 run, registry, now)` and `describePending(definition, run, registry, now)` take `now` as a required

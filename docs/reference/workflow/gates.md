@@ -236,7 +236,7 @@ See [`drain`](../cli/realm-run-acting.md#drain) for the other forms.
 
 **An answer that arrives after the time is up is not recorded.** The expiry is carried out first. What the person is told depends on what the gate declared.
 
-**`on_expiry: settle_default`.** The gate was settled with its default choice. For such an answer `realm run respond` does not print `Responded:`. Its last line is `Not recorded:`, with the choice the gate was settled with and the run's phase.
+**`on_expiry: settle_default`.** The gate was settled with its default choice. For such an answer `realm run respond` does not print `Responded:`. It prints `Not recorded:`, with the choice the gate was settled with and the run's phase, and after it the lines an answer in time prints after `Responded:`: what the run owes (`Owed to the engine: … — realm run advance <id> …`, an agent step that is ready, or the steps that cannot run). Those lines were added after version 0.46.0.
 
 If the answer is the choice the gate was settled with, the command exits 0:
 
@@ -255,7 +255,7 @@ Reason: The order was held.
 Not recorded: 71f47780-06a7-421c-87d0-c74d2c8998de | gate settled by timeout with choice 'hold' | state 'aborted'
 ```
 
-The lines about the guard are printed only when this answer is the call that carried out the expiry. If `realm run drain --expired`, the process waiting at the gate, or `realm listen` carried it out first, that call reported the guard. The late answer then prints its first line and `Not recorded:`, and a different choice is told `was already resolved with choice 'ship'` in place of `was settled by timeout`:
+The lines about the guard are printed only when this answer is the call that carried out the expiry. If `realm run drain --expired`, the process waiting at the gate, or `realm listen` carried it out first, that call reported the guard. The late answer then prints its first line, `Not recorded:` and what the run owes, and a different choice is told `was already resolved with choice 'ship'` in place of `was settled by timeout`:
 
 ```text
 the outcome matches your choice, but it was settled by timeout; your response was not recorded.
