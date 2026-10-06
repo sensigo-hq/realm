@@ -286,6 +286,25 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   the answer the schema had just refused: the chain handed it the caller's input. It now records
   its one dependency's recorded output (the default), with `output_source: 'dependency'`.
 
+### Security
+
+- **`proxy-addr` 2.0.7 → 2.0.8** — one CRITICAL advisory,
+  [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h) / CVE-2026-90711 (CVSS
+  9.1): a trusted-proxy subnet written as an IPv4-mapped IPv6 address with a short prefix (such as
+  `::ffff:10.0.0.0/8`), or any IPv6 subnet with zero leading bits, matched every IPv4 address, so an
+  Express app using it believed any client's `X-Forwarded-For`. In-range, lockfile-only (`express`
+  5.2.1 declares `^2.0.7`). The one copy comes from `@modelcontextprotocol/sdk` (exactly `1.30.0`, a
+  dependency of `@sensigo/realm-cli` and `@sensigo/realm-mcp`) through `express` 5.2.1. Exposure:
+  none. Inside the SDK only its Express server (`server/express.js`), its OAuth server files
+  (`server/auth/`) and its examples import `express`, and no module realm imports from the SDK
+  reaches them; realm's HTTP transport is the SDK's Hono-based `StreamableHTTPServerTransport`.
+  Under a module-load tracer, realm's `serve` (answering `initialize` and `tools/list`), `mcp`,
+  `agent` (driven to the model call) and `listen` with the `realm agent` it spawned for a webhook
+  loaded neither `express` nor `proxy-addr`, while loading the SDK's Express server alone loaded
+  both. The defect also needs an application that configures a trusted-proxy subnet, and realm
+  configures none. A published realm package carries no lockfile, so an existing install gets 2.0.8
+  when npm next resolves its dependencies (`npm update`, or a fresh install).
+
 ---
 
 ## [0.46.0] — 2026-10-05
