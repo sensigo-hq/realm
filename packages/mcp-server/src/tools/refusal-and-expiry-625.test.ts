@@ -29,6 +29,7 @@ import {
 import { handleExecuteStep } from './execute-step.js';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleGetRunState } from './get-run-state.js';
+import { handleStartRun } from './start-run.js';
 
 const WAY_OUT =
   'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
@@ -244,6 +245,34 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       hint: `Run '${runId}': nothing ran. Waiting on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.`,
       next: [
         answerAction(runId, { step: 'confirm', gate_id: gateId, choices: ['approve', 'reject'] }),
+      ],
+    });
+  });
+
+  it('C103: start_run matched by its key at an open question names it — the answer offered (no token), the hint says the question', async () => {
+    const d = gated('rae-start', undefined);
+    await workflowStore.register(d);
+    const first = await handleStartRun(
+      { workflow_id: d.id, params: {}, idempotency_key: 'k1' },
+      { runStore, workflowStore },
+    );
+    expect(first.status).toBe('confirm_required');
+    const gateId = (await runStore.get(first.run_id)).pending_gate!.gate_id;
+    const again = await handleStartRun(
+      { workflow_id: d.id, params: {}, idempotency_key: 'k1' },
+      { runStore, workflowStore },
+    );
+    // (a) red when the matched run's reply offers nothing at its question, carries the opener's
+    // token, or its hint does not name the question; (b) prints the reply.
+    expect({ deduped: again.deduped, hint: again.context_hint, next: again.next_actions }).toEqual({
+      deduped: true,
+      hint: `Matched existing run '${first.run_id}' (idempotent) in phase 'gate_waiting'; no new run created. Waiting on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.`,
+      next: [
+        answerAction(first.run_id, {
+          step: 'confirm',
+          gate_id: gateId,
+          choices: ['approve', 'reject'],
+        }),
       ],
     });
   });

@@ -246,11 +246,70 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - Every other `blocked` reply's `eligible_steps` also names only the steps that can be called.
   - **Upgrading:** a client that stopped on this reply's `stop` now gets `resolve_precondition` and
     `next_actions` when another step can run: follow `next_actions`. With nothing to call, the reply
-    says `report_to_user`.
+    says `report_to_user`. A step that is not ready follows the same rule (the next entry).
   - Core exports `callableSteps`, the steps a caller can call now.
+- **BREAKING — a step that is not ready says why, and what can be done instead (issue #625,
+  PR-2a).** `executeStep` (and `execute_step`) on a step that is not eligible now replies with the
+  run view's `next_actions` — the steps that can be called, or, behind an open question, that
+  question's answer (`submit_human_response`, without a `claim_token`). Its `agent_action` is
+  `resolve_precondition` when there is something to do, `report_to_user` when there is not, and
+  `stop` on a run that has ended. Its `context_hint` says why:
+  `Step '<s>' cannot be called now: <why>.` — it waits on the question on step '<q>' (its choices),
+  a step it depends on cannot run (named; then the way out when the run cannot go on), its
+  dependencies are not settled (named), or it has already completed, failed or been skipped.
+  - On 0.46.0 every such reply said `resolve_precondition` and
+    `Step '<s>' is not eligible in the current run state.`, even with nothing to call, and its
+    `blocked_reason.suggestion` read `No eligible steps available. Check run_phase and
+completed_steps.` (now `No other step can be called now.`, or `Answer the open question first,
+as next_actions says.`).
+  - **Upgrading:** a client that matched the old hint, or followed `resolve_precondition` into an
+    empty `next_actions`, follows `next_actions`; with `report_to_user`, it shows `context_hint` to
+    the person.
+- **BREAKING — every reply that meets an open question names it (issue #625, PR-2a).** A reply
+  whose `next_actions` the engine composes from the run's view now holds the question's answer,
+  `submit_human_response` (without a `claim_token`: only the reply that opens a question carries
+  one), and its hint says `Waiting on the question on step '<q>' (choices: <a>, <b>) — answer it with
+submit_human_response.` where 0.46.0 said `No step is ready.` and offered nothing.
+  - `get_run_state` at `awaiting_human`: `next_actions` holds that entry (0.46.0: empty).
+  - `advance_run` and `advanceRun` at an open question run nothing and reply with that entry and
+    hint, with no `agent_action`; `realm run advance` prints its `a question is open — realm run
+respond …` line from that reply.
+  - `describePending` gains `open_question` (`step`, `gate_id`, `choices`), whenever the run waits
+    on a question. Core exports `answerAction` (the one composer of the answer instruction; the
+    reply that opens a question calls it with its token, unchanged), `answerOf`, `openQuestionOf`,
+    `answerableQuestion`, `openQuestionWords`, `notCallableReason` and the type `OpenQuestion`.
+  - **Upgrading:** a client that read an empty `next_actions` at a question as "nothing to do" now
+    gets the answer: show the question to the person and send their choice, or keep waiting.
+- **BREAKING — the expiry line says what this call did, and core prints nothing (issue #625,
+  PR-2a).** The line a call adds to its `warnings` when it carries out an expired question's
+  `on_expiry` now reads `gate '<g>' on '<s>' had expired — this <call> call first carried out its
+declared settle_default: the default choice '<c>' was recorded (enacted_via: <call>).`, or `…
+its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_expiry> before this
+<call> call (enacted_via: <call>).`).
+  - The engine no longer writes that line, or the could-not line, to stderr. A store that cannot
+    carry the expiry out now gives a line in `warnings` too: `gate '<g>' on '<s>' had expired, but
+this <call> call could not carry out its declared <on_expiry> (<error>); it went on with the run
+as it was.`
+  - `realm run advance` prints every line of its reply's `warnings` as `⚠ <line>` after the steps it
+    ran (0.46.0 printed only the expiry line, on stderr, from the engine).
+  - **Upgrading:** a program that matched the old text, or read the line from stderr, reads the
+    reply's `warnings`.
+- **`realm run list --stuck` names the command for an expired question the engine carries out
+  (issue #625, PR-2a).** `gate_expired(settle_default)` and `gate_expired(abort)` now end with
+  `(realm run advance)`; the finding-only label keeps `(realm run respond)`.
+- **`realm run respond` and `realm run advance` say when there is no project code, and when
+  `--project` was not used (issue #625, PR-2a).** For a workflow whose own project folder holds no
+  `realm.yaml` and no extension module, they say `with no project code (nothing to load under
+<folder>)`. A `--project` given for a workflow with its own project folder is named in one line:
+  `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is
+loaded from there.`
 
 ### Fixed
 
+- **A reply lists each warning once (issue #625, PR-2a).** When the last step a call ran gave the
+  call's reply, that step's `warnings` were listed twice (`execute_step`, `advance_run`) — on 0.46.0,
+  `execute_step` on the step after an expired `settle_default` question listed the expiry line
+  twice. The step's entry in `chained_auto_steps` still carries them.
 - **`realm agent` no longer misreads another process's work (issue #625, PR-2a).** A step another
   process took between the loop's pick and its claim printed `✓ → running`.
   - It now prints `• Step '<s>' was taken by <holder> at <since>; not run here.` and continues.

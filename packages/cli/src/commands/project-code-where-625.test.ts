@@ -228,6 +228,16 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     expect(projectNotUsedLine({ id: 'w', trust_root: '/p/proj' }, {})).toBe(undefined);
   });
 
+  it("C103: realm run advance at an open question prints the reply's line — the question's respond command", async () => {
+    const { runId, gateId } = await atGate('none', false);
+    const advanced = realm(elsewhere, ['run', 'advance', runId]);
+    expect(advanced.status).toBe(0);
+    // (a) red when the line is not printed, or names another gate or choices; (b) prints stdout.
+    expect(advanced.stdout.trim().split('\n').at(-1)).toBe(
+      `Nothing is owed to the engine: a question is open — realm run respond ${runId} --gate ${gateId} --choice <one of: approve, reject>.`,
+    );
+  }, 60_000);
+
   it('C107: a workflow with no project code, from an unrelated folder — respond and advance say it has none', async () => {
     const bare = realpathSync(mkdtempSync(join(tmpdir(), 'realm-pcw-bare-')));
     try {

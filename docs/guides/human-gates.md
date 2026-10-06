@@ -101,8 +101,10 @@ An agent that tries to run `send` at this point is refused:
 
 ```text
 status: blocked
-Step 'send' is not eligible in the current run state.
+Step 'send' cannot be called now: it waits on the question on step 'review' (choices: send, discard) — answer it with submit_human_response.
 ```
+
+Its `next_actions` holds that answer, `submit_human_response`. Added after version 0.46.0, which says `Step 'send' is not eligible in the current run state.` and offers nothing to call.
 
 Find runs that are waiting, from any terminal:
 

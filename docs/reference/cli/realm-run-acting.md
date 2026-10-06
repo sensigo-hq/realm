@@ -54,6 +54,8 @@ Responded: b178179a-998d-457e-85e6-6d38439d0585 | choice 'approve' | new state '
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them, with the project code under /home/me/project, in the environment of the shell it runs in.
 ```
 
+When the workflow's own project folder holds no project code (no `realm.yaml`, no extension module), the line says `with no project code (nothing to load under <folder>)` instead. When `--project` is given for a workflow that has its own project folder, the first line says it was not used: `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is loaded from there.` Both added after version 0.46.0.
+
 When the answer leaves an agent step ready, the line says so in the words `realm run advance` uses, with the command that drives it. Added after version 0.46.0:
 
 ```text
@@ -122,10 +124,10 @@ The refusals:
 
 ## `advance`
 
-Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (stderr then shows `⚠ gate '<gate>' on '<step>' had expired — enacted declared <on_expiry> before this advance call (enacted_via: advance).`, and the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`); then the guards and `auto` steps that are ready. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
+Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and after the steps the command prints the line from its reply: `⚠ gate '<gate>' on '<step>' had expired — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`); then the guards and `auto` steps that are ready. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
 
 ```text
-Advancing run <id> (workflow 'cli-owed-wf') with the project code under /home/me/project, in this shell's environment.
+Advancing run <id> (workflow 'cli-owed-wf') with no project code (nothing to load under /home/me/project), in this shell's environment.
 This program: tester (from REALM_OPERATOR) · project code: neither side records project code.
 Last recorded driver: none recorded.
 Owed to the engine: 'after'.
@@ -133,6 +135,8 @@ Owed to the engine: 'after'.
 Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id <id> --provider <provider> --model <model>
 Run <id>: phase 'running'
 ```
+
+The first line names the folder the project code is loaded from, or says `with no project code (nothing to load under <folder>)` when that folder holds none (no `realm.yaml`, no extension module); a `--project` the workflow's own project folder overrides is said on the next line, `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is loaded from there.` (both added after version 0.46.0). Every line in the reply's `warnings` is printed as `⚠ <line>` after the steps that ran, such as the expiry line above (added after version 0.46.0, which printed only the expiry line, on stderr). At an open question the command runs nothing, and its `Nothing is owed to the engine: a question is open — realm run respond …` line is rendered from the reply's answer.
 
 The preview's `project code` words compare the code this program loaded with what the run last recorded:
 

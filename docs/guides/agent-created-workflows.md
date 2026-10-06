@@ -97,9 +97,11 @@ From here the run behaves like any other. The assistant tried `group` before `co
 
 ```text
 status: blocked
-Step 'group' is not eligible in the current run state.
+Step 'group' cannot be called now: its dependencies are not settled ('collect'). Ready for the agent: 'collect'.
 eligible_steps: collect
 ```
+
+The reason after `cannot be called now:` was added after version 0.46.0, which says `Step 'group' is not eligible in the current run state.`
 
 It then answered `collect` with an empty list, which its own schema does not allow:
 

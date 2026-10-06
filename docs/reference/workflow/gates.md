@@ -185,10 +185,12 @@ Realm has no background process. A gate whose time is up stays open until a call
 and `realm run list --stuck` says what would be done:
 
 ```text
-3fdf338c-…  ex-default v1  gate_waiting  …  approve=gate_expired(settle_default)
-34cba823-…  ex-abort v1    gate_waiting  …  approve=gate_expired(abort)
+3fdf338c-…  ex-default v1  gate_waiting  …  approve=gate_expired(settle_default) (realm run advance)
+34cba823-…  ex-abort v1    gate_waiting  …  approve=gate_expired(abort) (realm run advance)
 774285e8-…  ex-finding v1  gate_waiting  …  approve=gate_expired(finding_only) (realm run respond)
 ```
+
+The two dispositions the engine carries out name `realm run advance`, which carries them out now; the finding-only one names `realm run respond`. The `(realm run advance)` pointer was added after version 0.46.0.
 
 `realm run drain --expired --all` reports the same, and with `--force` carries it out:
 

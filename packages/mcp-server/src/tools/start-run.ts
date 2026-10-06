@@ -9,7 +9,6 @@ import {
   buildNextActions,
   describeNext,
   describePending,
-  dueExpiry,
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -34,9 +33,10 @@ import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from 
  * The hint of a reply that hands back a run on which this call ran nothing (decisions C45, C57, C64,
  * C65): `Run '<id>' created for workflow '<wf>'.` (with the supersede clause when the run replaced
  * another), or `Matched existing run '<id>' (idempotent) in phase '<phase>'; no new run created.`
- * for a run an idempotency key matched — then, on a live run with no question open, what comes next
- * ({@link describeNext}): the agent steps ready, the engine's owed work, each engine step that cannot
- * run and, when the run cannot go on until its workflow is corrected, the way out. `start_run`'s reply
+ * for a run an idempotency key matched — then, on a live run, what comes next ({@link describeNext}):
+ * the open question it waits on (decision C103), the agent steps ready, the engine's owed work, each
+ * engine step that cannot run and, when the run cannot go on until its workflow is corrected, the way
+ * out. `start_run`'s reply
  * and every `started` entry of `start_run_batch` carry it; neither composes its own.
  *
  * @param run      The record the store returned: the run created, or the one the key matched.
@@ -53,10 +53,9 @@ export function handBackHint(args: {
   now?: Date;
 }): string {
   const { run, current, definition, registry, deduped, now } = args;
-  const describes =
-    !current.terminal_state &&
-    (current.pending_gate === undefined ||
-      (now !== undefined && dueExpiry(current.pending_gate, now) !== undefined));
+  // decision C103: a run waiting on a question is described too — `describeNext` names the
+  // question, its choices and the act, as `next_actions` holds its answer.
+  const describes = !current.terminal_state;
   const next = describes
     ? describeNext(describePending(definition, current, registry, now), current)
     : '';
