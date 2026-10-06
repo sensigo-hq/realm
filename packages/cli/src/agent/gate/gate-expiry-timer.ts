@@ -8,6 +8,7 @@
 // run.ts's interactive prompt.
 import { applySettlement, describeGuardLines, drainFinalizers } from '@sensigo/realm';
 import type {
+  EnactedVia,
   RunStore,
   WorkflowDefinition,
   PendingGate,
@@ -15,6 +16,9 @@ import type {
   SettlementResult,
   Attributed,
 } from '@sensigo/realm';
+
+/** The `enacted_via` word of this timer's line — a member of core's vocabulary (decision C124). */
+const TIMER_VIA: EnactedVia = 'timer';
 
 /** Node's `setTimeout` delay is a 32-bit signed int; a delay exceeding 2^31-1 ms (~24.8 days)
  *  overflows and fires IMMEDIATELY instead of throwing or clamping (lane-1 F-7) — self-reschedule
@@ -83,7 +87,7 @@ export function scheduleGateExpiryTimer(
         // it reports none.)
         const guardLines = describeGuardLines(outcome);
         console.log(
-          `⏰ gate '${gate.gate_id}' on run '${runId}' expired — enacted via the attending-process timer (enacted_via: timer).` +
+          `⏰ gate '${gate.gate_id}' on run '${runId}' expired — enacted via the attending-process timer (enacted_via: ${TIMER_VIA}).` +
             (guardLines.length > 0 ? ` ${guardLines.join(' ')}` : ''),
         );
         if (outcome.transitioned) {

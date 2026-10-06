@@ -154,20 +154,24 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     expect(reply.status).toBe('ok');
   });
 
-  it("C103: describePending's open_question — with and without a clock; none on a run with no question", async () => {
+  it("C103, C117: describePending's open_question — before and after its time is up; none on a run with no question", async () => {
     const d = gated('settle_default');
     const { runId, gateId } = await atQuestion(d);
     const run = await store.get(runId);
     const question = { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] };
     // (a) red when the view does not name the open question; (b) prints the view.
-    expect(describePending(d, run).open_question).toEqual(question);
     expect(describePending(d, run, undefined, new Date()).open_question).toEqual(question);
     // (a) red when a due question loses the field (it is still the open question); (b) prints it.
     const past = new Date(new Date(run.pending_gate!.expires_at!).getTime() + 5_000);
     expect(describePending(d, run, undefined, past).open_question).toEqual(question);
     // (a) red when a run with no question gets one; (b) prints it.
     expect(
-      describePending(d, { ...run, pending_gate: undefined } as unknown as RunRecord).open_question,
+      describePending(
+        d,
+        { ...run, pending_gate: undefined } as unknown as RunRecord,
+        undefined,
+        new Date(),
+      ).open_question,
     ).toBe(undefined);
     expect(openQuestionOf({ ...run, terminal_state: true } as RunRecord)).toBe(undefined);
     // (a) red when the act's reader does not give back the gate and choices; (b) prints it.

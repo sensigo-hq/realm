@@ -530,7 +530,7 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
       );
       const line = logged.find(([m]) => m === 'listen: sweeper enacted an expired gate');
       expect((line?.[1] as Record<string, unknown>)['owed']).toEqual(['after']);
-      expect(describePending(d, await runs.get(run.id)).act).toBeDefined();
+      expect(describePending(d, await runs.get(run.id), undefined, new Date()).act).toBeDefined();
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

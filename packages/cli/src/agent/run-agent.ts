@@ -570,7 +570,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         let startedNotDone: string | undefined;
         const advanced = await advanceRun(deps.store, definition, {
           runId,
-          command: 'agent',
+          caller: 'agent',
           registry: deps.registry,
           ...(deps.traceBufferStore !== undefined
             ? { traceBufferStore: deps.traceBufferStore }
@@ -631,7 +631,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // drive, and the loop goes on with the ready agent steps. The words are core's
           // (decision C36).
           for (const e of stepsThatCannotRun(
-            describePending(definition, currentRun, deps.registry),
+            describePending(definition, currentRun, deps.registry, new Date()),
           )) {
             if (!reportedRefusals.has(e.step)) {
               reportedRefusals.add(e.step);
@@ -646,13 +646,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const eligible =
           engineReply !== undefined
             ? []
-            : describePending(definition, currentRun, deps.registry).agent_steps;
+            : describePending(definition, currentRun, deps.registry, new Date()).agent_steps;
         if (engineReply === undefined && eligible.length === 0) {
           // decisions C23, C31, C64, C82: the run cannot go on from here (`cannotGoOnHere`: no agent
           // step is ready, no engine step can run, nothing is in flight elsewhere — a step another
           // program holds may still change what can run — and a step cannot run): the drive stops
           // on the FIRST such step (definition order). With a step in flight it watches below.
-          const view = describePending(definition, currentRun, deps.registry);
+          const view = describePending(definition, currentRun, deps.registry, new Date());
           const cannotRun = stepsThatCannotRun(view);
           if (cannotGoOnHere(currentRun, view)) {
             const stop = cannotRun[0]!;
@@ -862,7 +862,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // are still safe to recompute per iteration here regardless, since neither is read from
             // again until the NEXT step (this step's own next_actions/prompt derivation never
             // consults `validation_rejections`).
-            const nextActions = buildNextActions(definition, currentRun);
+            const nextActions = buildNextActions(definition, currentRun, undefined, new Date());
             const nextAction =
               nextActions.find(
                 (a) =>

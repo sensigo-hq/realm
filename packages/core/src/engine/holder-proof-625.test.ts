@@ -337,7 +337,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
     const def = gateWorkflow();
     const opened = await open(store, def);
     const run = await store.get(opened.runId);
-    expect(occurrences(buildNextActions(def, run), opened.token)).toBe(0);
+    expect(occurrences(buildNextActions(def, run, undefined, new Date()), opened.token)).toBe(0);
     expect(occurrences(classifyRunHealth(run), opened.token)).toBe(0);
     // The settlement result of the answer itself: its `gateClaim` copies holder and since — never
     // the token (the transform's own output, observed through the store).

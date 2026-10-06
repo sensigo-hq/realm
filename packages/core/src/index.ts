@@ -117,9 +117,12 @@ export {
   guardPassedLine,
   describeAnswerEnding,
   lateAnswerOutcome,
+  expiryCarriedOutLine,
 } from './engine/execution-loop.js';
 export type {
   AdvanceRunOptions,
+  AdvanceCaller,
+  EnactedVia,
   ExecuteEngineStepOptions,
   OutputSource,
   GuardEnding,

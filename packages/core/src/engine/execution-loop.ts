@@ -107,6 +107,7 @@ import {
   answerAction,
   answerableQuestion,
   notCallableReason,
+  refusedAnswerTail,
   type PendingView,
   type PreClaimRefused,
 } from './pending.js';
@@ -817,15 +818,15 @@ export function buildAgentActions(
  * refuses before its claim (a failed precondition, an invalid `trust`) is not offered (decision C82)
  * — then — LAST, so `next_actions[0]` stays the agent step — the `advance_run` act when engine work
  * is owed (issue #625 PR-2a, `describePending`). A call site that passes no registry gets `'unknown'` for the capability
- * check, so the act stays offered. A call site that passes `now` gets the act for an open question
- * whose time is up and that declares `on_expiry` (decision C95); with no `now`, an open question
- * leaves nothing to call.
+ * check, so the act stays offered. The clock is required (decision C117): at an open question whose
+ * time is up at `now` and that declares `on_expiry` the act is offered (decision C95) and the
+ * answer is not; at any other open question, its answer.
  */
 export function buildNextActions(
   definition: WorkflowDefinition,
   run: RunRecord,
-  registry?: ExtensionRegistry,
-  now?: Date,
+  registry: ExtensionRegistry | undefined,
+  now: Date,
 ): NextAction[] {
   return nextActionsOf(describePending(definition, run, registry, now), run.id);
 }
@@ -842,6 +843,17 @@ function nextActionsOf(pending: PendingView, runId: string): NextAction[] {
     ...(question !== undefined ? [answerAction(runId, question)] : []),
     ...(pending.act !== undefined ? [pending.act] : []),
   ];
+}
+
+/**
+ * The `agent_action` of an answer refused for its gate id (decision C118), by C94's rule:
+ * `resolve_precondition` when `next_actions` holds something to call — the open question's answer,
+ * or `advance_run` when its time is up — `report_to_user` when it is empty.
+ */
+function refusedAnswerAction(
+  nextActions: readonly NextAction[],
+): 'resolve_precondition' | 'report_to_user' {
+  return nextActions.length > 0 ? 'resolve_precondition' : 'report_to_user';
 }
 
 /**
@@ -1159,7 +1171,10 @@ function makeErrorEnvelope(
       ? { ...translatedBase, warnings: extraWarnings }
       : translatedBase;
   if (run !== null && definition !== undefined && err.agentAction !== 'stop') {
-    return { ...baseWithWarnings, next_actions: buildNextActions(definition, run) };
+    return {
+      ...baseWithWarnings,
+      next_actions: buildNextActions(definition, run, options.registry, options.now ?? new Date()),
+    };
   }
   return baseWithWarnings;
 }
@@ -1346,7 +1361,9 @@ async function buildAlreadySettledEnvelope(
       ];
     }
   }
-  const nextActions = run.terminal_state ? [] : buildNextActions(definition, run);
+  const nextActions = run.terminal_state
+    ? []
+    : buildNextActions(definition, run, options.registry, options.now ?? new Date());
   return {
     command: options.command,
     run_id: options.runId,
@@ -1373,6 +1390,57 @@ const DORMANCY_ADVISORY =
   '(RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)';
 
 /**
+ * The callers of {@link advanceRun} (decision C124): each names itself — on the reply's `command`
+ * and, when the call carries out an expired question, on that line's `enacted_via`. `advanceRun`
+ * is a program's own call (the library default); `advance_run` the MCP tool; `advance`
+ * `realm run advance`; `start_run` and `agent` the other hosts that call it.
+ */
+export type AdvanceCaller = 'advanceRun' | 'advance_run' | 'advance' | 'start_run' | 'agent';
+
+/**
+ * The vocabulary of `enacted_via` (decisions C95, C105, C122, C124): the call that carried out an
+ * expired question's declared `on_expiry`, the word its line ends with. A caller of `advanceRun`
+ * ({@link AdvanceCaller}); `execute_step`, a call to another step of the run (its Step 1.5);
+ * `submit`, a late answer (`submit_human_response`); `timer`, the process waiting at the question.
+ */
+export type EnactedVia = AdvanceCaller | 'execute_step' | 'submit' | 'timer';
+
+/** The call each `enacted_via` word names on the line — `this <call> call`. */
+const ENACTED_VIA_CALL: Readonly<Record<EnactedVia, string>> = {
+  advanceRun: 'advanceRun',
+  advance_run: 'advance_run',
+  advance: 'advance',
+  start_run: 'start_run',
+  agent: 'agent',
+  execute_step: 'execute_step',
+  submit: 'submit_human_response',
+  timer: 'timer',
+};
+
+/**
+ * The ONE line that says an expired question's declared `on_expiry` was carried out (decisions
+ * C105, C122): by this call — `this <call> call first carried out its declared settle_default: the
+ * default choice '<c>' was recorded (enacted_via: <via>).` or `… abort: the run ended …` — or, when
+ * another call had already done it (`byThisCall: false`, a late answer that lost the race), that
+ * another call had. Every caller that carries an expiry out says it through this function.
+ */
+export function expiryCarriedOutLine(
+  gateId: string,
+  step: string,
+  outcome: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
+  via: EnactedVia,
+  byThisCall = true,
+): string {
+  const did =
+    outcome.on_expiry === 'settle_default'
+      ? `settle_default: the default choice '${outcome.choice}' was recorded`
+      : 'abort: the run ended';
+  return byThisCall
+    ? `gate '${gateId}' on '${step}' had expired — this ${ENACTED_VIA_CALL[via]} call first carried out its declared ${did} (enacted_via: ${via}).`
+    : `gate '${gateId}' on '${step}' had expired — another call had already carried out its declared ${did}.`;
+}
+
+/**
  * issue #291 (D1 "execute_step pre-refusal" enactment point — enact-then-proceed): if `run`
  * carries an expired, enactable gate (`expires_at` past, `on_expiry` frozen), enacts it via the
  * SAME dormancy-discriminated pattern `submitHumanResponse` uses (settleStep when declared, else
@@ -1396,9 +1464,10 @@ async function enactExpiredGateIfDue(
   // issue #625 (holder slice): the program whose call enacts the expiry — named on the cleanup
   // steps its drain runs.
   driver: Attributed | undefined,
-  // issue #625 PR-2a (decision C95): the call that carries the expiry out, named on the disclosure
-  // line — `execute_step` (Step 1.5) or the advance call's own name (`advance_run`, `advance`, …).
-  via = 'execute_step',
+  // issue #625 PR-2a (decisions C95, C124): the call that carries the expiry out, named on the
+  // disclosure line — `execute_step` (Step 1.5) or the advance call's caller (`advanceRun`,
+  // `advance_run`, `advance`, …).
+  via: EnactedVia = 'execute_step',
 ): Promise<{ run: RunRecord; disclosure?: string; enacted: boolean }> {
   const gate = run.pending_gate;
   // decision C95: the one predicate the run's view reads too (`dueExpiry`), so the view never
@@ -1425,7 +1494,7 @@ async function enactExpiredGateIfDue(
     return {
       run,
       enacted: false,
-      disclosure: `gate '${gate.gate_id}' on '${gate.step_name}' had expired, but this ${via} call could not carry out its declared ${gate.on_expiry} (${err instanceof Error ? err.message : String(err)}); it went on with the run as it was.`,
+      disclosure: `gate '${gate.gate_id}' on '${gate.step_name}' had expired, but this ${ENACTED_VIA_CALL[via]} call could not carry out its declared ${gate.on_expiry} (${err instanceof Error ? err.message : String(err)}); it went on with the run as it was.`,
     };
   }
 
@@ -1438,12 +1507,18 @@ async function enactExpiredGateIfDue(
   // decision C105: this call carried it out, as its first act — and what it did: the default choice
   // it recorded, or that the run ended.
   const settledEntry = finalRun.settled?.[gate.step_name];
-  const did =
-    settledEntry?.resolved_by === 'timeout'
-      ? `settle_default: the default choice '${settledEntry.choice ?? gate.default_choice ?? ''}' was recorded`
-      : 'abort: the run ended';
   disclosureParts.push(
-    `gate '${gate.gate_id}' on '${gate.step_name}' had expired — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`,
+    expiryCarriedOutLine(
+      gate.gate_id,
+      gate.step_name,
+      settledEntry?.resolved_by === 'timeout'
+        ? {
+            on_expiry: 'settle_default',
+            choice: settledEntry.choice ?? gate.default_choice ?? '',
+          }
+        : { on_expiry: 'abort' },
+      via,
+    ),
   );
   // issue #625: the expiry's own write settled the guards its default made eligible. This leg
   // builds no reply of its own (the reply is the commanded step's), so each guard is named here,
@@ -2199,10 +2274,18 @@ async function executeStepBody(
           agent_action: 'resolve_precondition' as const,
           context_hint: `Step '${options.command}' was already claimed by another process.`,
           run_phase: freshRun.run_phase,
-          next_actions: buildNextActions(definition, freshRun),
+          next_actions: buildNextActions(
+            definition,
+            freshRun,
+            options.registry,
+            gateExpiryCheckNow,
+          ),
           blocked_reason: {
             // decision C94: the steps that can be called, as `next_actions` names them.
-            eligible_steps: callableSteps(definition, describePending(definition, freshRun)),
+            eligible_steps: callableSteps(
+              definition,
+              describePending(definition, freshRun, options.registry, gateExpiryCheckNow),
+            ),
             suggestion: `Step is already in progress. Wait for it to complete.`,
           },
         };
@@ -3331,7 +3414,12 @@ async function executeStepBody(
       let blockedNextActions: NextAction[] = [];
       if (blockedAction !== 'stop' && blockStoreWarning === undefined) {
         try {
-          blockedNextActions = buildNextActions(definition, persistedBlockedRun ?? blockedRun);
+          blockedNextActions = buildNextActions(
+            definition,
+            persistedBlockedRun ?? blockedRun,
+            options.registry,
+            gateExpiryCheckNow,
+          );
         } catch {
           // buildNextActions can throw for unresolvable template references; fall back to [].
         }
@@ -3494,7 +3582,12 @@ async function executeStepBody(
       let migratedNextActions: NextAction[] = [];
       if (migratedEffectiveAction !== 'stop') {
         try {
-          migratedNextActions = buildNextActions(definition, finalRun);
+          migratedNextActions = buildNextActions(
+            definition,
+            finalRun,
+            options.registry,
+            gateExpiryCheckNow,
+          );
         } catch {
           // buildNextActions can throw for unresolvable template references; fall back to [].
         }
@@ -3690,7 +3783,12 @@ async function executeStepBody(
     let nextActions: NextAction[] = [];
     if (effectiveAction !== 'stop' && storeCleanupWarning === undefined) {
       try {
-        nextActions = buildNextActions(definition, persistedRun ?? failedRun);
+        nextActions = buildNextActions(
+          definition,
+          persistedRun ?? failedRun,
+          options.registry,
+          gateExpiryCheckNow,
+        );
       } catch {
         // buildNextActions can throw for unresolvable template references; fall back to [].
       }
@@ -3952,7 +4050,7 @@ async function executeStepBody(
           const noopRun = result.run;
           const noopNextActions = noopRun.terminal_state
             ? []
-            : buildNextActions(definition, noopRun);
+            : buildNextActions(definition, noopRun, options.registry, gateExpiryCheckNow);
           return {
             command: options.command,
             run_id: options.runId,
@@ -4246,8 +4344,13 @@ async function executeStepBody(
     // passed over as "waiting for other steps".
     const migratedNextActions = finalRun.terminal_state
       ? []
-      : buildNextActions(definition, finalRun, options.registry);
-    const migratedPending = describePending(definition, finalRun, options.registry);
+      : buildNextActions(definition, finalRun, options.registry, gateExpiryCheckNow);
+    const migratedPending = describePending(
+      definition,
+      finalRun,
+      options.registry,
+      gateExpiryCheckNow,
+    );
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
       : migratedNextActions.length > 0 || hasCannotRun(migratedPending)
@@ -4436,8 +4539,8 @@ async function executeStepBody(
   // named, never passed over as "waiting for other steps".
   const nextActions = savedRun.terminal_state
     ? []
-    : buildNextActions(definition, savedRun, options.registry);
-  const stepPending = describePending(definition, savedRun, options.registry);
+    : buildNextActions(definition, savedRun, options.registry, gateExpiryCheckNow);
+  const stepPending = describePending(definition, savedRun, options.registry, gateExpiryCheckNow);
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
     : nextActions.length > 0 || hasCannotRun(stepPending)
@@ -4839,19 +4942,6 @@ function buildGateResponseSnapshot(
   };
 }
 
-/** Renders a millisecond duration as a compact human-readable string ("3m", "2h 15m", "1d 4h") —
- *  issue #291 [F8] overdue-delta disclosure. Local to this file (core has no CLI dependency);
- *  mirrors the CLI's own `formatGateAge` shape but is independently maintained — no cross-package
- *  import for a two-branch formatter. */
-function formatOverdueDuration(ms: number): string {
-  const totalMinutes = Math.floor(ms / 60_000);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalDays = Math.floor(totalHours / 24);
-  if (totalMinutes < 60) return `${totalMinutes}m`;
-  if (totalHours < 24) return `${totalHours}h ${totalMinutes % 60}m`;
-  return `${totalDays}d ${totalHours % 24}h`;
-}
-
 /**
  * issue #291 ([F3] shape c / [F8] / [F12]): composes the honest envelope for a late gate response
  * that lost the race to the enforce clock — called AFTER an `expire_gate` settleStep attempt,
@@ -4870,7 +4960,8 @@ async function composeExpiredGateEnvelope(
   driver: Attributed | undefined,
   originalGateId: string,
   originalChoice: string,
-  overdueMs: number,
+  // decision C117: the call's own clock, for the reply's next_actions.
+  now: Date,
   expireResult: SettlementResult,
   // issue #625: the verdict the late answer already earned (judged when its gate id matched,
   // before the expiry was found) and the engine inputs the reply's sentence needs.
@@ -4883,7 +4974,7 @@ async function composeExpiredGateEnvelope(
     driver,
     originalGateId,
     originalChoice,
-    overdueMs,
+    now,
     expireResult,
   );
   // issue #625 — two facts, both kept, on every form of this reply:
@@ -4929,7 +5020,7 @@ async function composeExpiryReply(
   driver: Attributed | undefined,
   originalGateId: string,
   originalChoice: string,
-  overdueMs: number,
+  now: Date,
   expireResult: SettlementResult,
 ): Promise<ResponseEnvelope> {
   let finalRun = expireResult.run;
@@ -4945,7 +5036,9 @@ async function composeExpiryReply(
       ];
     }
   }
-  const overdueLabel = formatOverdueDuration(Math.max(0, overdueMs));
+  // decision C122: the line is C105's — this submit_human_response call carried the expiry out
+  // (`enacted_via: submit`), or, when a racing call had already settled it, that call did.
+  const byThisCall = expireResult.applied;
 
   // settle_default disposition: a 'gate' settled entry bearing this gateId, resolved_by:'timeout'.
   const settledEntry = Object.entries(finalRun.settled ?? {}).find(
@@ -4953,7 +5046,13 @@ async function composeExpiryReply(
   );
   if (settledEntry !== undefined) {
     const [stepName, entry] = settledEntry;
-    const enactedDisclosure = `gate '${originalGateId}' expired ${overdueLabel} ago and was enacted (settle_default: '${entry.choice}') before this response arrived — enacted_via: submit.`;
+    const enactedDisclosure = expiryCarriedOutLine(
+      originalGateId,
+      stepName,
+      { on_expiry: 'settle_default', choice: entry.choice ?? '' },
+      'submit',
+      byThisCall,
+    );
     if (entry.choice === originalChoice) {
       // [F12]'s own pinned string — same choice, still honestly not "your" recorded response.
       return {
@@ -4967,7 +5066,9 @@ async function composeExpiryReply(
         errors: [],
         context_hint: LATE_SAME_CHOICE_SENTENCE,
         run_phase: finalRun.run_phase,
-        next_actions: finalRun.terminal_state ? [] : buildNextActions(definition, finalRun),
+        next_actions: finalRun.terminal_state
+          ? []
+          : buildNextActions(definition, finalRun, registry, now),
       };
     }
     const err = new WorkflowError(
@@ -4998,7 +5099,9 @@ async function composeExpiryReply(
     return {
       ...envelope,
       warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings),
-      next_actions: finalRun.terminal_state ? [] : buildNextActions(definition, finalRun),
+      next_actions: finalRun.terminal_state
+        ? []
+        : buildNextActions(definition, finalRun, registry, now),
     };
   }
 
@@ -5008,7 +5111,13 @@ async function composeExpiryReply(
   );
   if (abortEntry !== undefined) {
     const [stepName] = abortEntry;
-    const enactedDisclosure = `gate '${originalGateId}' expired ${overdueLabel} ago and was enacted (abort) before this response arrived — enacted_via: submit.`;
+    const enactedDisclosure = expiryCarriedOutLine(
+      originalGateId,
+      stepName,
+      { on_expiry: 'abort' },
+      'submit',
+      byThisCall,
+    );
     const err = new WorkflowError(
       `Gate '${originalGateId}' on '${stepName}' expired and the run aborted per the ` +
         `workflow's declared on_expiry — your choice was NOT recorded.`,
@@ -5161,10 +5270,6 @@ export async function submitHumanResponse(
           // caller-composed expire_gate settleStep ([F1]'s arms make this idempotent even under a
           // race with another enactment point) and compose the honest late-response envelope from
           // whatever the enactment result actually committed.
-          const overdueMs =
-            run.pending_gate?.expires_at !== undefined
-              ? now.getTime() - new Date(run.pending_gate.expires_at).getTime()
-              : 0;
           const expireDelta: ExpireGateDelta = { kind: 'expire_gate', gateId: options.gateId };
           let expireResult: SettlementResult;
           try {
@@ -5197,7 +5302,7 @@ export async function submitHumanResponse(
             options.driver,
             options.gateId,
             options.choice,
-            overdueMs,
+            now,
             expireResult,
             { verdict: result.gateClaim, tokenPresented: options.claimToken !== undefined },
           );
@@ -5251,7 +5356,9 @@ export async function submitHumanResponse(
                 : {}),
               context_hint: `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
               run_phase: noopRun.run_phase,
-              next_actions: noopRun.terminal_state ? [] : buildNextActions(definition, noopRun),
+              next_actions: noopRun.terminal_state
+                ? []
+                : buildNextActions(definition, noopRun, options.registry, now),
             },
             result.gateClaim,
             noopRun,
@@ -5289,7 +5396,9 @@ export async function submitHumanResponse(
           // the refusal names what the run owes now.
           const conflictWithNext = {
             ...conflictReply,
-            next_actions: result.run.terminal_state ? [] : buildNextActions(definition, result.run),
+            next_actions: result.run.terminal_state
+              ? []
+              : buildNextActions(definition, result.run, options.registry, now),
           };
           // issue #625: see `already_settled` above — a gate its expiry settled.
           return gateSettledByTimeout(result.run, stepName)
@@ -5320,27 +5429,34 @@ export async function submitHumanResponse(
           );
         }
         case 'gate_mismatch': {
+          // issue #625 PR-2a (decisions C103, C117, C118): the question that IS open is named — by
+          // its answer in `next_actions` and in the hint — read at this call's clock, so a question
+          // whose time is up offers `advance_run`, never an answer that could not be recorded; the
+          // routing is C94's rule.
+          const view = result.run.terminal_state
+            ? undefined
+            : describePending(definition, result.run, options.registry, now);
+          const nextActions = view === undefined ? [] : nextActionsOf(view, result.run.id);
           const err = new WorkflowError(
             `Gate '${options.gateId}' is not the open gate and matches no committed resolution.`,
             {
               code: 'STATE_BLOCKED',
               category: 'STATE',
-              agentAction: 'report_to_user',
+              agentAction: refusedAnswerAction(nextActions),
               retryable: false,
               details: { runId: options.runId, gateId: options.gateId },
             },
           );
-          // issue #625 PR-2a (decision C103): the question that IS open is named by its answer.
           return {
             ...errorEnvelope(
               'submit_gate',
               options.runId,
               result.run.version,
               err,
-              err.message,
+              `${err.message}${refusedAnswerTail(view)}`,
               result.run.run_phase,
             ),
-            next_actions: result.run.terminal_state ? [] : buildNextActions(definition, result.run),
+            next_actions: nextActions,
           };
         }
         case 'run_terminal': {
@@ -5457,10 +5573,10 @@ export async function submitHumanResponse(
 
     const migratedNextActions = finalRun.terminal_state
       ? []
-      : buildNextActions(definition, finalRun, options.registry);
+      : buildNextActions(definition, finalRun, options.registry, now);
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun, options.registry), finalRun)}`;
+      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun, options.registry, now), finalRun)}`;
 
     // issue #625: the answer's own write settled every guard the answer made eligible, so no guard
     // is left "eligible, to be decided by some later call" — the reply lists them in `guards`, and
@@ -5533,6 +5649,9 @@ export async function submitHumanResponse(
 
   // 3. Verify gate_id.
   if (run.pending_gate.gate_id !== options.gateId) {
+    // issue #625 PR-2a (decisions C103, C117, C118): as the settleStep path's `gate_mismatch`.
+    const view = describePending(definition, run, options.registry, now);
+    const nextActions = nextActionsOf(view, run.id);
     const mismatch = errorEnvelope(
       'submit_gate',
       options.runId,
@@ -5540,13 +5659,12 @@ export async function submitHumanResponse(
       new WorkflowError('Gate ID mismatch.', {
         code: 'STATE_BLOCKED',
         category: 'STATE',
-        agentAction: 'report_to_user',
+        agentAction: refusedAnswerAction(nextActions),
         retryable: false,
       }),
-      `Gate ID mismatch on run '${options.runId}'.`,
+      `Gate ID mismatch on run '${options.runId}'.${refusedAnswerTail(view)}`,
     );
-    // issue #625 PR-2a (decision C103): the question that IS open is named by its answer.
-    return { ...mismatch, next_actions: buildNextActions(definition, run) };
+    return { ...mismatch, next_actions: nextActions };
   }
 
   // issue #625 (holder slice): this store has no `settleStep`, so the answer never reaches the
@@ -5576,7 +5694,6 @@ export async function submitHumanResponse(
     run.pending_gate.on_expiry !== undefined &&
     now.getTime() >= new Date(run.pending_gate.expires_at).getTime()
   ) {
-    const overdueMs = now.getTime() - new Date(run.pending_gate.expires_at).getTime();
     const expireOutcome = applySettlement(
       run,
       { kind: 'expire_gate', gateId: options.gateId },
@@ -5595,7 +5712,7 @@ export async function submitHumanResponse(
         options.driver,
         options.gateId,
         options.choice,
-        overdueMs,
+        now,
         expireOutcome,
         { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
       );
@@ -5629,7 +5746,7 @@ export async function submitHumanResponse(
       options.driver,
       options.gateId,
       options.choice,
-      overdueMs,
+      now,
       { ...expireOutcome, run: persistedExpiry },
       { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
     );
@@ -5761,10 +5878,10 @@ export async function submitHumanResponse(
   const data = { ...run.pending_gate.preview, choice: options.choice };
   const nextActions = savedRun.terminal_state
     ? []
-    : buildNextActions(definition, savedRun, options.registry);
+    : buildNextActions(definition, savedRun, options.registry, now);
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun, options.registry), savedRun)}`;
+    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun, options.registry, now), savedRun)}`;
 
   return withGateClaim(
     {
@@ -6474,8 +6591,9 @@ function pickNextEngineStep(
   definition: WorkflowDefinition,
   run: RunRecord,
   registry: ExtensionRegistry | undefined,
+  now: Date,
 ): string | undefined {
-  const pending = describePending(definition, run, registry);
+  const pending = describePending(definition, run, registry, now);
   // Every step the view lets run comes first, so a call that names the owed steps runs all of them
   // before it makes the one capability attempt that stops it (decision C23: a capability block is a
   // step that cannot run here, like a refusal — it must not leave the act's own steps unrun).
@@ -6955,7 +7073,12 @@ async function advanceLoop(
     // The original `result` was built before guard execution, so its next_actions and version are stale.
     const guardsRan = chainedSteps.some((s) => definition.steps[s.step]?.execution === 'guard');
     if (guardsRan) {
-      const freshNextActions = buildNextActions(definition, run);
+      const freshNextActions = buildNextActions(
+        definition,
+        run,
+        options.registry,
+        options.now ?? new Date(),
+      );
       result = {
         ...result,
         run_version: run.version,
@@ -6973,14 +7096,24 @@ async function advanceLoop(
       return result;
     }
 
-    const nextAutoStep = pickNextEngineStep(definition, run, options.registry);
+    const nextAutoStep = pickNextEngineStep(
+      definition,
+      run,
+      options.registry,
+      options.now ?? new Date(),
+    );
     if (nextAutoStep === undefined || executions >= budget) {
       // Only agent steps, a refused step, or nothing — the reply is composed from this record.
       return {
         ...result,
         run_version: run.version,
         run_phase: deriveRunPhase(run),
-        next_actions: buildNextActions(definition, run, options.registry),
+        next_actions: buildNextActions(
+          definition,
+          run,
+          options.registry,
+          options.now ?? new Date(),
+        ),
       };
     }
 
@@ -7068,7 +7201,7 @@ async function advanceLoop(
         ...stepResult,
         next_actions: after.terminal_state
           ? []
-          : buildNextActions(definition, after, options.registry),
+          : buildNextActions(definition, after, options.registry, options.now ?? new Date()),
       };
     }
     try {
@@ -7158,8 +7291,21 @@ export interface AdvanceRunOptions {
    * from the re-read record's claim.
    */
   onTaken?: (step: string, run: RunRecord) => void;
-  /** Labels the reply only. Default `'advance_run'`. */
+  /**
+   * The caller, naming itself (decision C124): the `enacted_via` of the line that says this call
+   * carried out an expired question (`this <caller> call …`), and the reply's `command` unless
+   * `command` is given. Default `'advanceRun'` (a program's own call); the MCP tool passes
+   * `'advance_run'`, `realm run advance` `'advance'`.
+   */
+  caller?: AdvanceCaller;
+  /** Labels the reply only. Default: the caller. */
   command?: string;
+  /**
+   * Called once, before any step runs, with the line that says this call carried out an expired
+   * question's declared `on_expiry` (or could not) — so a host that prints as the steps run prints
+   * it first (decision C123). The line is in the reply's `warnings` too.
+   */
+  onExpiry?: (line: string) => void;
 }
 
 /**
@@ -7180,7 +7326,8 @@ export async function advanceRun(
     driver: options.driver,
   });
 
-  const command = options.command ?? 'advance_run';
+  const caller: AdvanceCaller = options.caller ?? 'advanceRun';
+  const command = options.command ?? caller;
   const registry = options.registry ?? createDefaultRegistry();
   const now = options.now ?? new Date();
   let stored = await store.get(options.runId);
@@ -7198,10 +7345,11 @@ export async function advanceRun(
       registry,
       now,
       options.driver,
-      command,
+      caller,
     );
     stored = enacted.run;
     expiryDisclosure = enacted.disclosure;
+    if (expiryDisclosure !== undefined) options.onExpiry?.(expiryDisclosure);
     // decision C109: a line can say the expiry could NOT be carried out — the hint then never says
     // it was.
     expiryCarriedOut = enacted.enacted;

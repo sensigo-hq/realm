@@ -49,8 +49,11 @@ export function handBackHint(args: {
   definition: WorkflowDefinition;
   registry?: ExtensionRegistry;
   deduped: boolean;
-  /** decision C95: with a clock, a matched run whose open question is due names its expiry as owed. */
-  now?: Date;
+  /**
+   * decisions C95, C117: the call's clock — a matched run whose open question is due names its
+   * expiry as owed, never its answer. Required: a hint built without one assumed nothing had expired.
+   */
+  now: Date;
 }): string {
   const { run, current, definition, registry, deduped, now } = args;
   // decision C103: a run waiting on a question is described too — `describeNext` names the
@@ -215,7 +218,7 @@ export async function handleStartRun(
   if (!deduped) {
     const result = await advanceRun(runStore, definition, {
       runId: run.id,
-      command: 'start_run',
+      caller: 'start_run',
       ...(registry !== undefined ? { registry } : {}),
       ...(stores?.traceBufferStore !== undefined
         ? { traceBufferStore: stores.traceBufferStore }

@@ -320,7 +320,7 @@ async function withWayOutOnOwnRefusal(
   } catch {
     return result;
   }
-  const pending = describePending(definition, fresh, registry);
+  const pending = describePending(definition, fresh, registry, new Date());
   const own = stepsThatCannotRun(pending).find((e) => e.step === args.command);
   if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust') return result;
   if (!cannotRunWayOutApplies(fresh, pending)) return result;

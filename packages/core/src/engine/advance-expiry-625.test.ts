@@ -192,8 +192,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     expect(buildNextActions(d, run, undefined, past).map((a) => a.instruction?.tool)).toEqual([
       'advance_run',
     ]);
-    // (a) red when a view with no clock (or before the expiry) reads one; (b) prints the acts.
-    expect(describePending(d, run).act).toBeUndefined();
+    // (a) red when a view before the expiry reads one; (b) prints the acts.
     expect(describePending(d, run, undefined, before).act).toBeUndefined();
     expect(dueExpiry(run.pending_gate, before)).toBeUndefined();
   });

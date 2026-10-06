@@ -206,6 +206,8 @@ export async function handleStartRunBatch(
       }
     }
 
+    // decision C117: one clock for the entry's next_actions and its hint.
+    const now = new Date();
     started.push({
       run_id: run.id,
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
@@ -214,13 +216,14 @@ export async function handleStartRunBatch(
       run_phase: derivedPhase,
       ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
       warnings,
-      next_actions: run.terminal_state ? [] : buildNextActions(definition, run, registry),
+      next_actions: run.terminal_state ? [] : buildNextActions(definition, run, registry, now),
       context_hint: handBackHint({
         run,
         current: run,
         definition,
         ...(registry !== undefined ? { registry } : {}),
         deduped,
+        now,
       }),
     });
   }

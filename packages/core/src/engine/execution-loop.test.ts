@@ -1535,7 +1535,7 @@ describe('executeStep', () => {
         workflowVersion: 1,
         params: {},
       });
-      const action = buildNextActions(def, run)[0]!;
+      const action = buildNextActions(def, run, undefined, new Date())[0]!;
       expect(action.instruction!.tool).toBe('execute_step');
       expect(Object.keys(action)).not.toContain('expected_timeout');
       expect(JSON.stringify(action)).not.toContain('60s');
@@ -1566,7 +1566,7 @@ describe('executeStep', () => {
       });
       // issue #625 PR-2a (decision C5): an auto step is never its own next action — its handler is
       // no tool a client can call; the one act is `advance_run`.
-      const action = buildNextActions(def, run)[0]!;
+      const action = buildNextActions(def, run, undefined, new Date())[0]!;
       expect(action.instruction!.tool).toBe('advance_run');
       expect(Object.keys(action)).not.toContain('expected_timeout');
       expect(JSON.stringify(action)).not.toContain('60s');
@@ -1593,7 +1593,7 @@ describe('executeStep', () => {
         params: {},
       });
 
-      const actions = buildNextActions(agentStepDef, run);
+      const actions = buildNextActions(agentStepDef, run, undefined, new Date());
       expect(actions).toHaveLength(1);
       const action = actions[0]!;
       expect(action.instruction).not.toBeNull();
@@ -1638,7 +1638,7 @@ describe('executeStep', () => {
       });
 
       // issue #625 PR-2a: an auto step is never its own next action — the one act runs it
-      const actions = buildNextActions(autoStepDef, run);
+      const actions = buildNextActions(autoStepDef, run, undefined, new Date());
       expect(actions).toHaveLength(1);
       expect(actions[0]!.instruction!.tool).toBe('advance_run');
       expect(actions[0]!.human_readable).toBe(

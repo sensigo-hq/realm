@@ -669,7 +669,7 @@ export async function sweepExpiredGates(
         // it — nothing else is attending a run the sweeper just moved on.
         const owedView = outcome.run.terminal_state
           ? undefined
-          : describePending(definition, outcome.run);
+          : describePending(definition, outcome.run, undefined, now);
         // decision C64: an expiry that leaves nothing able to run from here names the steps and the
         // way out — core's lines.
         const cannotGoOn = owedView === undefined ? [] : cannotGoOnLines(outcome.run, owedView);

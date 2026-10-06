@@ -167,30 +167,67 @@ export function projectCodeWhere(
   // decision C107: whether any project code was found there (a realm.yaml or a declared module).
   hasCode = true,
 ): string {
-  const root =
-    workflow.trust_root ?? (opts.project !== undefined ? resolve(cwd, opts.project) : cwd);
-  if (opts.extensionsModule !== undefined) {
-    return `the module ${resolve(cwd, opts.extensionsModule)} (--extensions-module) and the realm.yaml of ${root}`;
-  }
-  return hasCode ? `the project code under ${root}` : noProjectCode(root);
-}
-
-/** `no project code (nothing to load under <folder>)` — a workflow with none (decision C107). */
-function noProjectCode(root: string): string {
-  return `no project code (nothing to load under ${root})`;
+  return projectWords({ id: '', ...workflow }, opts, cwd, hasCode).where;
 }
 
 /**
  * The line for a `--project` the command did not use (decision C108): the workflow has its own
- * project (its `trust_root`), and its code and realm.yaml are loaded from there. `undefined` when
- * `--project` was not given or was used.
+ * project (its `trust_root`), and its code and realm.yaml are loaded from there — or, when that
+ * project holds no code, `(no project code there)` (decision C121). `undefined` when `--project`
+ * was not given or was used.
  */
 export function projectNotUsedLine(
   workflow: Pick<WorkflowDefinition, 'id' | 'trust_root'>,
   opts: { project?: string },
+  // decision C121: whether the workflow's own project holds any code — the same fact the header says.
+  hasCode = true,
 ): string | undefined {
-  if (opts.project === undefined || workflow.trust_root === undefined) return undefined;
-  return `--project ${opts.project} was not used: workflow '${workflow.id}' has its own project, ${workflow.trust_root}, and its code is loaded from there.`;
+  return projectWords(workflow, opts, process.cwd(), hasCode).notUsed;
+}
+
+/**
+ * The project words, from ONE composer (decisions C98, C107, C108, C121): where a run's project code
+ * is loaded from — `the project code under <folder>`, `no project code (nothing to load under
+ * <folder>)`, or the `--extensions-module` module — and, for a `--project` the workflow's own
+ * project overrides, the line that says it was not used, with the same fact about its code. The
+ * folder is the workflow's own `trust_root` whatever folder the shell is in; for a definition with
+ * none, the folder given with `--project`, else the shell's.
+ */
+export function projectWords(
+  workflow: Pick<WorkflowDefinition, 'id' | 'trust_root'>,
+  opts: { project?: string; extensionsModule?: string },
+  cwd: string,
+  hasCode: boolean,
+): { where: string; notUsed?: string } {
+  const root =
+    workflow.trust_root ?? (opts.project !== undefined ? resolve(cwd, opts.project) : cwd);
+  const where =
+    opts.extensionsModule !== undefined
+      ? `the module ${resolve(cwd, opts.extensionsModule)} (--extensions-module) and the realm.yaml of ${root}`
+      : hasCode
+        ? `the project code under ${root}`
+        : noProjectCode(root);
+  if (opts.project === undefined || workflow.trust_root === undefined) return { where };
+  const code = hasCode
+    ? `${workflow.trust_root}, and its code is loaded from there`
+    : `${workflow.trust_root} (no project code there)`;
+  return {
+    where,
+    notUsed: `--project ${opts.project} was not used: workflow '${workflow.id}' has its own project, ${code}.`,
+  };
+}
+
+/**
+ * The `--project` help of `realm run advance` and `realm run respond` (decision C121): when it is
+ * used — a workflow registered without a project folder — and that a workflow registered from a
+ * folder loads its code from there.
+ */
+export const PROJECT_OPTION_HELP =
+  'Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose realm.yaml and code it loads (default: current directory). A workflow registered from a folder loads its code from there, and --project is not used.';
+
+/** `no project code (nothing to load under <folder>)` — a workflow with none (decision C107). */
+function noProjectCode(root: string): string {
+  return `no project code (nothing to load under ${root})`;
 }
 
 /**
@@ -276,11 +313,11 @@ export async function advanceRunFromShell(
   // workflow with no project code is said to have none (the registry loaded no realm.yaml and no
   // module, so it carries no code identity); decision C108: a `--project` not used is said.
   const hasCode = registryOverride !== undefined || registry.identity !== undefined;
+  const words = projectWords(workflow, opts, process.cwd(), hasCode);
   print(
-    `Advancing run ${runId} (workflow '${workflow.id}') with ${projectCodeWhere(workflow, opts, process.cwd(), hasCode)}, in this shell's environment.`,
+    `Advancing run ${runId} (workflow '${workflow.id}') with ${words.where}, in this shell's environment.`,
   );
-  const notUsed = projectNotUsedLine(workflow, opts);
-  if (notUsed !== undefined) print(notUsed);
+  if (words.notUsed !== undefined) print(words.notUsed);
   print(
     `This program: ${identityWords(driver)} · project code: ${fitWords(judgeProgramFit(run, registry.identity), run)}.`,
   );
@@ -301,7 +338,7 @@ export async function advanceRunFromShell(
       !run.terminal_state && run.pending_gate !== undefined
         ? await advanceRun(runStore, workflow, {
             runId,
-            command: 'advance',
+            caller: 'advance',
             registry,
             now,
             ...(driver !== undefined ? { driver } : {}),
@@ -319,12 +356,19 @@ export async function advanceRunFromShell(
   print(`Owed to the engine: ${owedList(pending)}.`);
 
   let lastStep: string | undefined;
+  // decision C123: the line that says this call carried out an expired question is printed when it
+  // happens — before the steps it led to — and not again with the reply's other warnings.
+  let expiryLine: string | undefined;
   const result = await advanceRun(runStore, workflow, {
     runId,
-    command: 'advance',
+    caller: 'advance',
     registry,
     now,
     ...(driver !== undefined ? { driver } : {}),
+    onExpiry: (line) => {
+      expiryLine = line;
+      print(`⚠ ${line}`);
+    },
     onStep: (step) => {
       lastStep = step;
       print(`→ ${step}`);
@@ -361,8 +405,15 @@ export async function advanceRunFromShell(
   }
 
   // decision C109: the reply's warnings — the expiry line among them (core prints nothing) — are
-  // this command's to show.
-  for (const warning of result.warnings) print(`⚠ ${warning}`);
+  // this command's to show; the expiry line was shown before the steps (C123).
+  let expirySaid = false;
+  for (const warning of result.warnings) {
+    if (!expirySaid && warning === expiryLine) {
+      expirySaid = true;
+      continue;
+    }
+    print(`⚠ ${warning}`);
+  }
 
   const afterView = describePending(workflow, after, registry, new Date());
   const isCapabilityBlock =
@@ -399,10 +450,7 @@ export const runAdvanceCommand = new Command('advance')
     "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — from this shell, with no model provider and no key",
   )
   .argument('<run-id>', 'ID of the run to advance')
-  .option(
-    '--project <dir>',
-    'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',
-  )
+  .option('--project <dir>', PROJECT_OPTION_HELP)
   .option(
     '--extensions-module <path>',
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",

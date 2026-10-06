@@ -266,7 +266,7 @@ async function runSingleFixture(
       // does not stop the fixture here on its own: the pick below dispatches it, and the fixture
       // fails with the engine's own message, as a chained step that needs it does. Beside a step
       // refused before its claim, it is named here too, with the other steps that cannot run.
-      const pending = describePending(definition, currentRun, fixtureRegistry);
+      const pending = describePending(definition, currentRun, fixtureRegistry, new Date());
       if (cannotRunWayOutApplies(currentRun, pending)) {
         return {
           name: fixture.name,

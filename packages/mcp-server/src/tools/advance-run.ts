@@ -61,7 +61,7 @@ export async function handleAdvanceRun(
   );
   const result = await advanceRun(runStore, definition, {
     runId: args.run_id,
-    command: 'advance_run',
+    caller: 'advance_run',
     ...(registry !== undefined ? { registry } : {}),
     ...(stores?.traceBufferStore !== undefined
       ? { traceBufferStore: stores.traceBufferStore }
@@ -96,8 +96,12 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
           content: [
             {
               type: 'text' as const,
+              // decision C119: `data` and `evidence` are empty in MCP replies, as `execute_step`'s —
+              // the run's evidence is read with get_run_state.
               text: sseJsonStringify({
                 ...result,
+                data: {},
+                evidence: [],
                 ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
               }),
             },

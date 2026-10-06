@@ -443,7 +443,7 @@ export const runCommand = new Command('run')
           // step is not offered — an agent step refused for trust or precondition included
           // (decision C82); when nothing else is eligible, the run cannot go on from here.
           const cannotPrompt = new Set(
-            stepsThatCannotRun(describePending(definition, run, registry))
+            stepsThatCannotRun(describePending(definition, run, registry, new Date()))
               .filter((e) => e.refused_by !== 'input_schema')
               .map((e) => e.step),
           );
@@ -456,7 +456,7 @@ export const runCommand = new Command('run')
             const record = await store.get(runId);
             const cannotGoOn = cannotGoOnLines(
               record,
-              describePending(definition, record, registry),
+              describePending(definition, record, registry, new Date()),
             );
             if (cannotGoOn.length > 0) {
               console.error('\nWorkflow stalled: nothing else can run.');

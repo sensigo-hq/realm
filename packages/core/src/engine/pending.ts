@@ -292,10 +292,37 @@ export function answerableQuestion(pending: PendingView): OpenQuestion | undefin
   return pending.expiry_due === undefined ? pending.open_question : undefined;
 }
 
+/**
+ * The tail of a refused answer's hint (decision C118): the question that IS open — its step and gate
+ * id, to be answered as `next_actions` says — or, when that question's time is up and it declares
+ * `on_expiry` (`expiry_due`), that it can no longer be answered and `advance_run` carries out what
+ * it declares. ` No question is open on this run.` when none is; `''` with no view (a sealed run).
+ */
+export function refusedAnswerTail(pending: PendingView | undefined): string {
+  if (pending === undefined) return '';
+  const expiry = pending.expiry_due;
+  if (expiry !== undefined) {
+    return ` The question on step '${expiry.step}' (gate '${expiry.gate_id}') can no longer be answered: its time is up — call advance_run to carry out its declared ${expiry.on_expiry}.`;
+  }
+  const question = pending.open_question;
+  if (question !== undefined) {
+    return ` The open question is on step '${question.step}' (gate '${question.gate_id}') — answer it as next_actions says.`;
+  }
+  return ' No question is open on this run.';
+}
+
 /** `the question on step '<s>' (choices: a, b)` — an open question, as every line names it. */
 export function openQuestionWords(question: OpenQuestion): string {
   return `the question on step '${question.step}' (choices: ${question.choices.join(', ')})`;
 }
+
+/**
+ * Where the question's text is, for a reply that carries no `gate` object (decision C125): the
+ * opening reply's `gate.display` is the gate's message — else the step's prompt — and of the two,
+ * only the message is kept on the record.
+ */
+const QUESTION_TEXT_WHERE =
+  "The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message.";
 
 /**
  * The ONE composer of the instruction that answers an open question (decision C103): the
@@ -303,7 +330,7 @@ export function openQuestionWords(question: OpenQuestion): string {
  * (the holder slice's one door): the token rides `params` and `call_with`, and the text says to pass
  * it back. `form: 'gate_reply'` is for a reply that carries the `gate` object (the opening reply and
  * the already-open reply) — its text points at `gate.display` and `gate.response_spec.choices`;
- * every other reply names the choices itself.
+ * every other reply names the choices itself and says where the question's text is (C125).
  */
 export function answerAction(
   runId: string,
@@ -330,7 +357,7 @@ export function answerAction(
               ? ' with call_with, passing claim_token back unchanged — it shows that this answer comes from the conversation that opened the question.'
               : '.'
           }`
-        : `Human review required for step '${question.step}'. Ask the user to choose one of: ${question.choices.join(', ')}, then call submit_human_response with their choice.`,
+        : `Human review required for step '${question.step}'. Ask the user to choose one of: ${question.choices.join(', ')}, then call submit_human_response with their choice. ${QUESTION_TEXT_WHERE}`,
     orientation: `Run is paused at gate '${question.gate_id}'. Available choices: ${question.choices.join(', ')}.`,
   };
 }
@@ -552,10 +579,13 @@ export function owedWords(pending: PendingView): { steps: string; them: string }
 }
 
 /**
- * What the run owes, from the record, the definition and (when present) the registry. Pure.
- * A terminal run owes nothing; so does a run with an open gate — except, when the caller passes
- * `now` (decision C95), a question whose time is up and that declares `on_expiry`: carrying it out
- * is owed engine work (`expiry_due`, the `advance_run` act). With no `now` nothing reads a clock.
+ * What the run owes, from the record, the definition and (when present) the registry, at `now`.
+ * Pure. A terminal run owes nothing; so does a run with an open gate — except a question whose time
+ * is up at `now` and that declares `on_expiry` (decision C95): carrying it out is owed engine work
+ * (`expiry_due`, the `advance_run` act), and the question can no longer be answered. The clock is
+ * required (decision C117): a view built without one assumed no question had expired, and offered
+ * an answer that could not be recorded. Each caller passes its own clock — its `now` option, or
+ * `new Date()` at an entry point that has none.
  * An eligible agent step is judged by the checks that read no input
  * ({@link AGENT_PRE_CLAIM_REFUSALS}, decision C82): one the run refuses is listed in
  * `agent_refused`, never in `agent_steps` or `agent_actions`.
@@ -563,8 +593,8 @@ export function owedWords(pending: PendingView): { steps: string; them: string }
 export function describePending(
   definition: WorkflowDefinition,
   run: RunRecord,
-  registry?: ExtensionRegistry,
-  now?: Date,
+  registry: ExtensionRegistry | undefined,
+  now: Date,
 ): PendingView {
   if (run.terminal_state || run.pending_gate !== undefined) {
     const question = openQuestionOf(run);
@@ -577,8 +607,7 @@ export function describePending(
       cannot_run: [],
       ...(question !== undefined ? { open_question: question } : {}),
     };
-    const expiry =
-      run.terminal_state || now === undefined ? undefined : dueExpiry(run.pending_gate, now);
+    const expiry = run.terminal_state ? undefined : dueExpiry(run.pending_gate, now);
     if (expiry === undefined) return empty;
     const words = dueExpiryWords(expiry);
     return {

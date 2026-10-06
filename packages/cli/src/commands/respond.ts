@@ -20,7 +20,12 @@ import {
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
-import { agentReadyReason, laterAdvanceCodeWhere, projectNotUsedLine } from './run-advance.js';
+import {
+  agentReadyReason,
+  laterAdvanceCodeWhere,
+  projectNotUsedLine,
+  PROJECT_OPTION_HELP,
+} from './run-advance.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
@@ -159,7 +164,7 @@ export async function respondToGate(
   // left an agent step ready, the same ready line `realm run advance` prints (decision C96).
   const phase = deriveRunPhase(updatedRun);
   const answeredBy = options.by !== undefined ? ` | answered by ${options.by} (as stated)` : '';
-  const pending = describePending(workflow, updatedRun, effectiveRegistry);
+  const pending = describePending(workflow, updatedRun, effectiveRegistry, new Date());
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
   // that cannot run and the way out — core's lines, never a copy.
   const cannotGoOn = cannotGoOnLines(updatedRun, pending);
@@ -188,10 +193,7 @@ export const respondCommand = new Command('respond')
   .argument('<run-id>', 'ID of the run waiting at a gate')
   .requiredOption('--gate <gate-id>', 'Gate ID from the confirm_required response')
   .requiredOption('--choice <choice>', 'The choice to submit (e.g. approve, reject)')
-  .option(
-    '--project <dir>',
-    'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',
-  )
+  .option('--project <dir>', PROJECT_OPTION_HELP)
   .option(
     '--extensions-module <path>',
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
@@ -248,9 +250,6 @@ export const respondCommand = new Command('respond')
           retryVerb: 'respond again',
           verb: 'respond',
         });
-        // decision C108: a `--project` the workflow's own project overrides is said, first.
-        const notUsed = projectNotUsedLine(workflow, opts);
-        if (notUsed !== undefined) console.log(notUsed);
         let registry: ExtensionRegistry;
         try {
           ({ registry } = await loadProjectExtensions(workflow, {
@@ -266,6 +265,15 @@ export const respondCommand = new Command('respond')
           process.exit(1);
           return;
         }
+        // decisions C108, C121: a `--project` the workflow's own project overrides is said, first —
+        // with whether that project holds code (the registry loaded from it carries a code identity
+        // only when a realm.yaml or a module was found).
+        const notUsed = projectNotUsedLine(
+          workflow,
+          opts,
+          opts.extensionsModule !== undefined || registry.identity !== undefined,
+        );
+        if (notUsed !== undefined) console.log(notUsed);
         const { by: _rawBy, ...rest } = opts;
         const outcome = await respondToGate(
           runId,

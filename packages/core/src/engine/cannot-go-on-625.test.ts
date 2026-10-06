@@ -58,7 +58,7 @@ const wayOut = (id: string): string =>
 describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
   it('a refusal before the claim: each step that cannot run, then the way out (correct the workflow)', async () => {
     await withRun(async (run) => {
-      const view = describePending(def({ x: needsN }), run, new ExtensionRegistry());
+      const view = describePending(def({ x: needsN }), run, new ExtensionRegistry(), new Date());
       expect(cannotGoOnHere(run, view)).toBe(true);
       expect(cannotGoOnLines(run, view)).toEqual([INPUT, wayOut(run.id)]);
     });
@@ -66,7 +66,7 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
 
   it('a capability refusal alone (judged with a registry): the step with its own way out, then the alternative (abandon)', async () => {
     await withRun(async (run) => {
-      const view = describePending(def({ y: missing }), run, new ExtensionRegistry());
+      const view = describePending(def({ y: missing }), run, new ExtensionRegistry(), new Date());
       expect(cannotRunWayOutApplies(run, view)).toBe(false);
       expect(cannotGoOnLines(run, view)).toEqual([
         "'y' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
@@ -87,7 +87,7 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
           },
         },
       };
-      const view = describePending(def({ y: missing }), marked);
+      const view = describePending(def({ y: missing }), marked, undefined, new Date());
       expect(cannotGoOnLines(marked, view)).toEqual([
         `'y' could not run (capability): handler 'missing_h' was not registered in the runner that last attempted it — from a program that has it: realm run advance ${run.id}.`,
         `To end the run instead: realm run abandon ${run.id}.`,
@@ -100,7 +100,12 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
 
   it('both: a refusal before the claim and a capability refusal — both steps, then the way out that corrects the workflow', async () => {
     await withRun(async (run) => {
-      const view = describePending(def({ x: needsN, y: missing }), run, new ExtensionRegistry());
+      const view = describePending(
+        def({ x: needsN, y: missing }),
+        run,
+        new ExtensionRegistry(),
+        new Date(),
+      );
       expect(cannotGoOnLines(run, view)).toEqual([
         INPUT,
         "'y' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
@@ -115,16 +120,23 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
         def({ x: needsN, a: { description: 'A', execution: 'agent', depends_on: [] } }),
         run,
         new ExtensionRegistry(),
+        new Date(),
       );
       expect(cannotGoOnLines(run, withAgent)).toEqual([]);
       const withAct = describePending(
         def({ x: needsN, b: { description: 'B', execution: 'auto', depends_on: [] } }),
         run,
         new ExtensionRegistry(),
+        new Date(),
       );
       expect(withAct.act).toBeDefined();
       expect(cannotGoOnLines(run, withAct)).toEqual([]);
-      const stuck: PendingView = describePending(def({ x: needsN }), run, new ExtensionRegistry());
+      const stuck: PendingView = describePending(
+        def({ x: needsN }),
+        run,
+        new ExtensionRegistry(),
+        new Date(),
+      );
       expect(cannotGoOnLines({ ...run, in_progress_steps: ['z'] }, stuck)).toEqual([]);
       expect(
         cannotGoOnLines({ ...run, pending_gate: { gate_id: 'g' } } as unknown as RunRecord, stuck),

@@ -694,7 +694,7 @@ export async function runDrainAction(
           retryVerb: 'drain again',
           verb: 'drain',
         });
-        return describePending(wf, r);
+        return describePending(wf, r, undefined, now);
       } catch (err) {
         if (!(err instanceof WorkflowError)) throw err;
         return undefined;

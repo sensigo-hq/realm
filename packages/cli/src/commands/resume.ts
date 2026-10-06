@@ -234,7 +234,7 @@ export const resumeCommand = new Command('resume')
           retryVerb: 'resume again',
           verb: 'resume',
         });
-        const pending = describePending(wf, resumed);
+        const pending = describePending(wf, resumed, undefined, new Date());
         view = {
           owedLine:
             pending.act !== undefined
