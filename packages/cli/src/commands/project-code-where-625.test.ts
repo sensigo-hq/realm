@@ -19,6 +19,7 @@ import {
   executeStep,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { projectCodeWhere, laterAdvanceCodeWhere, runAdvanceCommand } from './run-advance.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
