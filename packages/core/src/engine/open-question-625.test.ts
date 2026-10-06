@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { advanceRun, executeChain, executeStep } from './execution-loop.js';
+import { advanceRun, executeChain, executeStep, submitHumanResponse } from './execution-loop.js';
 import {
   answerAction,
   answerOf,
@@ -456,5 +456,28 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     // (a) red when the reply lists the line twice (the named step's warnings carried again); (b)
     // prints the warnings.
     expect(reply.warnings.filter((w) => w.includes('had expired'))).toHaveLength(1);
+  });
+
+  it('C103: an answer with the wrong gate id is refused naming the question that IS open — its answer (no token), on both store kinds', async () => {
+    const d = gated();
+    for (const legacy of [false, true]) {
+      const { runId, gateId } = await atQuestion(d);
+      const target = legacy
+        ? (Object.assign(Object.create(store) as JsonFileStore, {
+            settleStep: undefined,
+          }) as JsonFileStore)
+        : store;
+      const reply = await submitHumanResponse(target, d, {
+        runId,
+        gateId: 'not-the-gate',
+        choice: 'approve',
+      });
+      // (a) red when the refusal offers nothing, or the wrong gate; (b) prints the reply's acts.
+      expect({ legacy, status: reply.status, next: reply.next_actions }).toEqual({
+        legacy,
+        status: 'error',
+        next: [answerAction(runId, { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] })],
+      });
+    }
   });
 });

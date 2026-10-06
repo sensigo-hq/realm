@@ -271,6 +271,9 @@ as next_actions says.`).
   one), and its hint says `Waiting on the question on step '<q>' (choices: <a>, <b>) — answer it with
 submit_human_response.` where 0.46.0 said `No step is ready.` and offered nothing.
   - `get_run_state` at `awaiting_human`: `next_actions` holds that entry (0.46.0: empty).
+  - `start_run` matched by its idempotency key at an open question: the entry, and the hint names
+    the question. `submit_human_response` with a gate id that is not the open one: the refusal holds
+    the open question's entry (0.46.0: nothing to call).
   - `advance_run` and `advanceRun` at an open question run nothing and reply with that entry and
     hint, with no `agent_action`; `realm run advance` prints its `a question is open — realm run
 respond …` line from that reply.

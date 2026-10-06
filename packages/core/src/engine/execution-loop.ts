@@ -5330,14 +5330,18 @@ export async function submitHumanResponse(
               details: { runId: options.runId, gateId: options.gateId },
             },
           );
-          return errorEnvelope(
-            'submit_gate',
-            options.runId,
-            result.run.version,
-            err,
-            err.message,
-            result.run.run_phase,
-          );
+          // issue #625 PR-2a (decision C103): the question that IS open is named by its answer.
+          return {
+            ...errorEnvelope(
+              'submit_gate',
+              options.runId,
+              result.run.version,
+              err,
+              err.message,
+              result.run.run_phase,
+            ),
+            next_actions: result.run.terminal_state ? [] : buildNextActions(definition, result.run),
+          };
         }
         case 'run_terminal': {
           // Composed cancelled-predicate (design record §5 D-4/§11 N10): any gate_cancelled_by_abort
@@ -5529,7 +5533,7 @@ export async function submitHumanResponse(
 
   // 3. Verify gate_id.
   if (run.pending_gate.gate_id !== options.gateId) {
-    return errorEnvelope(
+    const mismatch = errorEnvelope(
       'submit_gate',
       options.runId,
       run.version,
@@ -5541,6 +5545,8 @@ export async function submitHumanResponse(
       }),
       `Gate ID mismatch on run '${options.runId}'.`,
     );
+    // issue #625 PR-2a (decision C103): the question that IS open is named by its answer.
+    return { ...mismatch, next_actions: buildNextActions(definition, run) };
   }
 
   // issue #625 (holder slice): this store has no `settleStep`, so the answer never reaches the
