@@ -6307,6 +6307,14 @@ export interface ExecuteEngineStepOptions {
  * (decision C3). The advance loop runs every step it picks through this; `realm agent`'s exit for
  * an engine step that cannot run here (decision C23) makes its one attempt through it too, so no
  * host composes an engine step's input itself.
+ *
+ * It runs ONLY steps whose `execution` is `'auto'` (decision C83). A step of any other kind — an
+ * agent step (a driver answers it), a guard (settled by the advance loop and the settlement
+ * cascade), a finalizer (run by the drain) — is refused before anything is read or written: the
+ * function throws a `WorkflowError` (`ENGINE_INTERNAL`, `agentAction: 'stop'`) whose message names
+ * the step and its kind, and the run record is unchanged. A host that names such a step has a
+ * wiring defect, the same on every call, so it throws like the admission rule's host tier. A step
+ * the definition does not have is left to `executeStep`'s own refusal.
  */
 export async function executeEngineStep(
   store: RunStore,
@@ -6314,6 +6322,23 @@ export async function executeEngineStep(
   options: ExecuteEngineStepOptions,
 ): Promise<ResponseEnvelope> {
   const { step, run } = options;
+  // decision C83: the engine runs only its own `auto` steps here — before any read or write.
+  const stepDef = definition.steps[step];
+  if (stepDef !== undefined && stepDef.execution !== 'auto') {
+    const kind =
+      stepDef.execution === undefined ? 'no execution' : `execution '${stepDef.execution}'`;
+    throw new WorkflowError(
+      `executeEngineStep runs only 'auto' steps: step '${step}' has ${kind}, and the engine does not run it this way. Nothing was read or written.`,
+      {
+        code: 'ENGINE_INTERNAL',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+        stepId: step,
+        details: { step, execution: stepDef.execution ?? null },
+      },
+    );
+  }
   return executeStep(store, definition, {
     runId: options.runId,
     command: step,

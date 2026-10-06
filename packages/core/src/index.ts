@@ -101,8 +101,9 @@ export {
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from './engine/execution-loop.js';
 export type { SubmitGateOptions, ExecuteChainOptions } from './engine/execution-loop.js';
-// Issue #625 (PR-1). `advanceRun` is the chain's tail (settle eligible guards, then run the next
-// auto step), moved out of `executeChain`, which is its only production caller. The rest is the
+// Issue #625 (PR-1, PR-2a). `advanceRun` runs what the engine owes on a run (settle eligible
+// guards, then run its eligible auto steps); `start_run`, `advance_run`, `realm run advance` and the
+// `realm agent` loop call it. The rest is the
 // ONE mint of what a settlement write's guards mean on a reply and on a screen: the ending reader
 // and its printed lines for a surface holding a settlement result (`realm run drain --expired`,
 // the gate-expiry timer), and the composer for a surface that speaks after an answer

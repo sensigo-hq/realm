@@ -34,7 +34,9 @@ All notable changes to this project are documented here.
     its checks. The view gains `agent_refused` and `cannot_run`.
   - Core also exports `judgeProgramFit`/`PROGRAM_FITS`, `describeRunDriver` and `bareStepOutput`.
   - Core also exports `executeEngineStep`, the one way the engine runs an `auto` step it owns, with
-    its own input.
+    its own input. It runs no other kind of step: named an agent step, a guard or a finalizer, it
+    throws a `WorkflowError` (`ENGINE_INTERNAL`) that names the step and its kind, and writes
+    nothing.
   - Core also exports `guardEndingOfRun`, the guard that ended a run, read off the record.
   - `describeRunDriver(run, definition)` counts only newer entries that could have named a driver:
     step executions and cleanup steps, never an answer or a guard's entry.
