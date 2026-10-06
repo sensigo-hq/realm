@@ -46,7 +46,8 @@ beforeAll(async () => {
 }, SETUP_TIMEOUT);
 
 afterAll(async () => {
-  await layout.cleanup();
+  // A failed `beforeAll` leaves no layout: say nothing more than its own error.
+  await layout?.cleanup();
   for (const dir of scratch) await rm(dir, { recursive: true, force: true });
 });
 
@@ -861,7 +862,7 @@ describe('10 — control: a copy of another release is not recognised (issue #62
       const run = await runWorkflowTest(await codeDir(layout.otherDir, 'flaky'));
       expect(run.status).toBe(1);
       expect(run.output).toContain(
-        "FAIL flaky handler retries: Handler 'flaky' threw a WorkflowError from realm 0.45.1",
+        `FAIL flaky handler retries: Handler 'flaky' threw a WorkflowError from realm ${layout.otherVersion}`,
       );
       expect(run.calls).toBe(1);
     },
@@ -872,7 +873,7 @@ describe('10 — control: a copy of another release is not recognised (issue #62
     '9: a store built with another release’s core is refused before the chain runs',
     async () => {
       const result = await drainWithBusyStore(layout.other.core);
-      expect(result.thrown).toContain('belongs to realm 0.45.1');
+      expect(result.thrown).toContain(`belongs to realm ${layout.otherVersion}`);
       expect(result.status).toBeUndefined();
     },
     TEST_TIMEOUT,
@@ -939,7 +940,8 @@ describe('11 — the layout is what it claims to be', () => {
 // --- Row 12 (issue #620 PR-C): the advisory where project code loads. -------------------------
 
 describe('12 — the advisory: the project’s @sensigo/realm is another version', () => {
-  const ADVISORY = "Your project's @sensigo/realm is 0.45.1";
+  // Built when a test runs: the layout (and so its versions) exists only after `beforeAll`.
+  const advisory = (): string => `Your project's @sensigo/realm is ${layout.otherVersion}`;
   async function cli(args: string[], cwd: string): Promise<ReturnType<typeof runNode>> {
     const home = await tempDir('home');
     return runNode([layout.file(layout.cli.cli, 'dist/index.js'), ...args], { cwd, home });
@@ -955,13 +957,13 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
         diagnostics: Array<{ code: string; release_line?: Record<string, Record<string, string>> }>;
       };
       const d = out.diagnostics.find((x) => x.code === 'REALM_RELEASE_LINE_MISMATCH');
-      expect(d?.release_line?.['project']?.['version']).toBe('0.45.1');
+      expect(d?.release_line?.['project']?.['version']).toBe(layout.otherVersion);
       expect(d?.release_line?.['project']?.['installed_by']).toBe('project');
-      expect(d?.release_line?.['engine']?.['version']).toBe('0.45.0');
-      expect(json.stderr).not.toContain(ADVISORY);
+      expect(d?.release_line?.['engine']?.['version']).toBe(layout.version);
+      expect(json.stderr).not.toContain(advisory());
       const strict = await cli(['workflow', 'validate', workflowDir, '--strict'], root);
       expect(strict.status).toBe(1);
-      expect(strict.stderr + strict.stdout).toContain(ADVISORY);
+      expect(strict.stderr + strict.stdout).toContain(advisory());
       // The whole message (amendment 19): the project's copy and the running core, from the layout.
       const line = (strict.stderr + strict.stdout)
         .split('\n')
@@ -980,7 +982,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
       const { workflowDir } = await writeFlakyProject(root);
       const reg = await cli(['workflow', 'register', workflowDir], root);
       expect(reg.status).toBe(0);
-      expect((reg.stderr + reg.stdout).split(ADVISORY).length - 1).toBe(1);
+      expect((reg.stderr + reg.stdout).split(advisory()).length - 1).toBe(1);
       const strict = await cli(['workflow', 'register', workflowDir, '--strict'], root);
       expect(strict.status).toBe(1);
     },
@@ -997,7 +999,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
         runNode([layout.file(layout.cli.cli, 'dist/index.js'), ...args], { cwd: root, home });
       expect(run(['workflow', 'register', workflowDir]).status).toBe(0);
       const plain = run(['workflow', 'validate', '--registered', 'flaky-flow']);
-      expect((plain.stderr + plain.stdout).split(ADVISORY).length - 1).toBe(1);
+      expect((plain.stderr + plain.stdout).split(advisory()).length - 1).toBe(1);
       const json = run(['workflow', 'validate', '--registered', 'flaky-flow', '--json']);
       const out = JSON.parse(json.stdout) as {
         diagnostics: Array<{ code: string; release_line?: { project: { version: string } } }>;
@@ -1006,7 +1008,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
         out.diagnostics.find((d) => d.code === 'REALM_RELEASE_LINE_MISMATCH')?.release_line?.project
           .version,
       ).toBe(layout.otherVersion);
-      expect(json.stderr).not.toContain(ADVISORY);
+      expect(json.stderr).not.toContain(advisory());
     },
     TEST_TIMEOUT,
   );
@@ -1026,7 +1028,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
           .split('\n')
           .filter((l) => l.startsWith('⚠ '));
         expect(warnings.length, mode.join(' ')).toBeGreaterThan(1);
-        expect(warnings[0]!.startsWith(`⚠ ${ADVISORY}`), mode.join(' ')).toBe(true);
+        expect(warnings[0]!.startsWith(`⚠ ${advisory()}`), mode.join(' ')).toBe(true);
         const json = JSON.parse(run(['workflow', 'validate', ...mode, '--json']).stdout) as {
           diagnostics: Array<{
             code: string;
@@ -1067,8 +1069,8 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
         const r = node(['agent', '--run-id', run.id, '--provider-module', plain, ...flag]);
         return r.stderr + r.stdout;
       };
-      expect((await attach(['--no-release-line-advisory'])).split(ADVISORY).length - 1).toBe(0);
-      expect((await attach([])).split(ADVISORY).length - 1).toBe(1);
+      expect((await attach(['--no-release-line-advisory'])).split(advisory()).length - 1).toBe(0);
+      expect((await attach([])).split(advisory()).length - 1).toBe(1);
     },
     TEST_TIMEOUT,
   );
@@ -1077,7 +1079,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
     'workflow test prints the warning once',
     async () => {
       const run = await runWorkflowTest(await codeDir(layout.otherDir, 'adv'));
-      expect(run.output.split(ADVISORY).length - 1).toBe(1);
+      expect(run.output.split(advisory()).length - 1).toBe(1);
       expect(run.output).not.toMatch(/⚠ ⚠/);
     },
     TEST_TIMEOUT,

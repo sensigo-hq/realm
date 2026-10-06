@@ -9,7 +9,8 @@ Every run leaves a record: what each step received, what it produced, why a step
 `realm run inspect <run-id>` prints the record. Each step that ran has an entry:
 
 ```text
-  3. pay                    success   1ms   hash: 02e8468b
+  3. pay                    success   0ms   hash: 02e8468b
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {}
      Output: {"paid":20}
 ```
@@ -18,6 +19,7 @@ An entry holds:
 
 - the step's name and whether it succeeded or failed;
 - when it started and finished, and how long it took;
+- the program that took the step, on the `Taken by` line (a guard's entry, which the engine makes by itself, has none);
 - what went in and what came out;
 - a **hash** of the output: a short fingerprint that changes if the output changes.
 
@@ -25,6 +27,7 @@ A step that failed has an entry too, marked `error`:
 
 ```text
   3. pay                    error   1ms   hash: 44136fa3
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {}
      Output: {}
 ```

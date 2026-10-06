@@ -2,7 +2,7 @@
 
 <!-- description: Upgrade Realm without surprises: read what changed, upgrade every Realm package together, and check your workflows and runs against the new version. -->
 
-This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.43.0 to 0.45.0.
+This guide takes an installation from one Realm version to a newer one without surprises. You read what changed, upgrade every Realm package together, and check the workflows and runs you already have against the new version. The outputs on this page are from a real upgrade from 0.43.0 to 0.45.0, except the two lines in step 2 that the 0.46.0 `realm` command printed for a project still on 0.43.0.
 
 ## What an upgrade can change
 
@@ -68,19 +68,19 @@ This breaks things quietly. With the two versions above, a handler that threw a 
 ENGINE_HANDLER_FAILED: Handler 'fetch_record' threw: upstream returned 503
 ```
 
-After version 0.45.0 the command also says why. Run with a `realm` command built after 0.45.0 against a project still on 0.43.0, a retryable handler printed the warning first and then failed its step after one attempt, with a note saying what was not used and the way out (over MCP the reply carries `ENGINE_HANDLER_FAILED`):
+From version 0.46.0 the command also says why. Run with the 0.46.0 `realm` command against a project still on 0.43.0, a retryable handler printed the warning first and then failed its step after one attempt, with a note saying what was not used and the way out (over MCP the reply carries `ENGINE_HANDLER_FAILED`). Version 0.43.0 marks none of its classes, so the note is the one for a copy with no release mark:
 
 ```text
-⚠ Your project's @sensigo/realm is 0.43.0 (/srv/shop/node_modules/@sensigo/realm, installed by the project); this realm command runs @sensigo/realm 0.45.0. Realm objects do not cross versions: a WorkflowError your handlers or adapters throw is not recognised — its step fails after one attempt, without that error's own code and retry setting. Install @sensigo/realm@0.45.0 (and every other @sensigo package the project has, at 0.45.0) in the project your code imports it from, or, when you run the realm command, run version 0.43.0 there: npm install --save-dev @sensigo/realm-cli@0.43.0, then npx realm.
+⚠ Your project's @sensigo/realm is 0.43.0 (/srv/shop/node_modules/@sensigo/realm, installed by the project); this realm command runs @sensigo/realm 0.46.0. Realm objects do not cross versions: a WorkflowError your handlers or adapters throw is not recognised — its step fails after one attempt, without that error's own code and retry setting. Install @sensigo/realm@0.46.0 (and every other @sensigo package the project has, at 0.46.0) in the project your code imports it from, or, when you run the realm command, run version 0.43.0 there: npm install --save-dev @sensigo/realm-cli@0.43.0, then npx realm.
 …
-✗ Step 'only' failed: Handler 'flaky' threw: rate limited — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code 'SERVICE_RATE_LIMITED' and its retry setting were not used: install @sensigo/realm@0.45.0 (and every other @sensigo package the project has, at 0.45.0) in the project your code imports it from, or, when you run the realm command, run the version the project has: npm install --save-dev @sensigo/realm-cli@<that version>, then npx realm (npm ls @sensigo/realm shows that version).
+✗ Step 'only' failed: Handler 'flaky' threw: rate limited — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code 'SERVICE_RATE_LIMITED' and its retry setting were not used: install @sensigo/realm@0.46.0 (and every other @sensigo package the project has, at 0.46.0) in the project your code imports it from, or, when you run the realm command, run the version the project has: npm install --save-dev @sensigo/realm-cli@<that version>, then npx realm (npm ls @sensigo/realm shows that version).
 ```
 
 With both copies at a version that carries the release mark, the message names both versions and both folders; the step fails with that message; the reply of the call that ran the step (`start_run` or `execute_step` over MCP) carries the code `ENGINE_RELEASE_LINE_MISMATCH`, and the run record keeps the message only.
 
 With both packages at 0.45.0, the same handler was retried and the run completed.
 
-Two copies of the same version work together: an error or a provider made with one copy is recognised by the other. This was added after version 0.45.0. On 0.45.0, your code and the command must share one copy: run the project's own command with `npx realm`. A `realm` command installed for the whole machine is a second copy, and fails as above even at the same version.
+Two copies of the same version work together: an error or a provider made with one copy is recognised by the other. This was added in 0.46.0. On 0.45.0, your code and the command must share one copy: run the project's own command with `npx realm`. A `realm` command installed for the whole machine is a second copy: even at the same version, a retryable handler fails on its first attempt, as in the output above that begins `ENGINE_HANDLER_FAILED: Handler 'fetch_record' threw`.
 
 ## 3. Check the workflows you have registered
 

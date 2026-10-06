@@ -60,7 +60,7 @@ Checks a workflow and prints the result. It stores nothing. With a path it check
 | `--json`                     | Prints the result as one JSON object and nothing else.                                         |
 | `--extensions-module <path>` | Loads this code file in place of the files named by the workflow's `extensions`.               |
 
-The warning that the `@sensigo/realm` your code imports is another version than the command's ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) counts as a warning for `--strict`. This was added after version 0.45.0.
+The warning that the `@sensigo/realm` your code imports is another version than the command's ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) counts as a warning for `--strict`. This was added in 0.46.0.
 
 ```bash
 realm workflow validate invoice-check
@@ -90,7 +90,7 @@ Checks the file as `validate` does and, if it is accepted, stores a copy as `~/.
 | ---------- | -------------------------------------------------------- |
 | `--strict` | Stores nothing and exits with 1 if there is any warning. |
 
-A project realm of another version ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) is a warning: without `--strict` the workflow is registered and the warning printed; with it, nothing is stored. This was added after version 0.45.0.
+A project realm of another version ([`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes)) is a warning: without `--strict` the workflow is registered and the warning printed; with it, nothing is stored. This was added in 0.46.0.
 
 ```bash
 realm workflow register invoice-check
@@ -203,7 +203,7 @@ A step that does not return `ok` prints a line that starts with `✗`, then the 
   ✗ error (step 'file', run by the engine after 'classify' finished): Handler 'file_ticket' threw: the filing system is down
 ```
 
-This was added after version 0.45.0, which prints `✗ error: …` without naming the step.
+This was added in 0.46.0; version 0.45.0 prints `✗ error: …` without naming the step.
 
 Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:
 

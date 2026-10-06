@@ -129,7 +129,7 @@ At the first prompt, press Enter. Then type a summary:
 ```text
 → [auto] read_note: Read the note from disk.
   Mock output (service: files) — JSON (Enter for {}):
-  ✓ → running | hash: 016723b3... | 2ms
+  ✓ → running | hash: 9016ad33... | 2ms
 
 → [agent] summarise: Summarise the note in one sentence.
   Agent output JSON (Enter for {}): {"summary":"Realm 0.45 adds a replay page."}
@@ -149,7 +149,9 @@ realm run inspect <run-id>
 It prints, for the first step (the paths are shortened here):
 
 ```text
-  1. read_note              success   2ms   hash: 016723b3
+  1. read_note              success   2ms   hash: 9016ad33
+     Taken by: ops@server-1 (from the OS user, via run)
+     Input:  {}
      Resolved: {"path":"/home/you/notes/note.txt"}
      Output: {"content":"Realm 0.45 ships a replay page.\nIt records two real runs.\n","path":"/home/you/notes/…
 ```

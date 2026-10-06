@@ -82,8 +82,8 @@ Realm registers the workflow, starts a run of it, and returns the first step to 
 ```text
 status: ok
 workflow_id: release-notes-86de43b5661ea6e9
-run_id: 6fe03f8d-14bc-4da9-9513-39341907ee0c
-Run '6fe03f8d-14bc-4da9-9513-39341907ee0c' created for workflow 'release-notes-86de43b5661ea6e9'. Ready for the agent: 'collect'.
+run_id: a6f70959-6ffb-470b-87fc-f95cfa193ac1
+Run 'a6f70959-6ffb-470b-87fc-f95cfa193ac1' created for workflow 'release-notes-86de43b5661ea6e9'. Ready for the agent: 'collect'.
 next: execute_step collect
 ```
 
@@ -129,12 +129,15 @@ The run has a record like any other. `realm run inspect <run-id>` shows each ste
 
 ```text
 Phase: completed  ✓
+…
 Completed: collect, group, write
 …
-  1. collect                success   0ms   hash: 8d7a0354
+  1. collect                success   1ms   hash: 8d7a0354
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"changes":["Add replay page","Fix copy button"]}
 …
   2. group                  success   0ms   hash: 3a5f234a
+     Taken by: ops@server-1 (from the OS user, via mcp-stdio)
      Input:  {"whatever":true}
 ```
 

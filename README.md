@@ -46,6 +46,11 @@ workflow-declared project extensions nor the `realm.yaml` deployment manifest.
 npm install @sensigo/realm
 ```
 
+If your project installs `@sensigo/realm` for its own handlers or adapters, install
+`@sensigo/realm-cli` at the same version in the project too and run it as `npx realm`, so the
+command and your code share one copy of realm. A global `realm` of a different version warns
+where it loads your project's code, and its `--strict` checks fail.
+
 **Testing utilities**
 
 ```bash
@@ -60,7 +65,7 @@ npm install --save-dev @sensigo/realm-testing
 realm workflow init my-workflow
 ```
 
-This creates `my-workflow/` with `workflow.yaml`, `schema.json`, `.env.example`, and a `README.md`.
+This creates `my-workflow/` with six files: `workflow.yaml`, `schema.json`, `realm.yaml`, `registry.sample.js`, `.env.example` and a `README.md`.
 
 ### 2. Edit `my-workflow/workflow.yaml`
 
@@ -146,42 +151,42 @@ The agent calls `list_workflows` to discover registered workflows, then `get_wor
 
 When no registered workflow matches the task, the agent calls `create_workflow` with a `steps` array to register a dynamic workflow and immediately start a run — no YAML file or `realm workflow register` required. The run proceeds identically to a YAML workflow from that point.
 
-**Multiple workflows:** register as many as you need with `realm workflow register`. The agent discovers them all via `list_workflows` and picks the right one by ID. Add a `skill.md` alongside each workflow for workflow-specific agent behaviour.
+**Multiple workflows:** register as many as you need with `realm workflow register`. The agent discovers them all via `list_workflows` and picks the right one by ID.
 
 ## Project extensions
 
-Workflows can declare their own custom adapters, step handlers, and processors — no wrapper servers, no per-command wiring:
+Workflows can declare their own custom adapters and step handlers — no wrapper servers, no per-command wiring. (A workflow can also declare processors; realm registers them, but no step runs them yet: issue #642.)
 
 ```yaml
 # workflow.yaml
 extensions: ./registry.js # relative module path(s); the default export declares { adapters, handlers, processors }
 ```
 
-Every step-executing entry point (`run`, `agent`, `listen`, `serve`, `mcp`, `test`, `validate`) resolves the declaration identically, with fail-fast loading and an enforced trust boundary. See [docs/reference/project-extensions.md](docs/reference/project-extensions.md).
+The `realm` commands that check or run a workflow (`workflow validate`, `register`, `watch`, `test`, `workflow run`, `agent`, `listen`, `mcp`, `serve`, `run respond`, `run drain`) load the declared code the same way, with fail-fast loading and an enforced trust boundary; the commands that only read runs (`run list`, `inspect`, `attempts`, `diff`, `replay`, `export`) never load it. See [when each command loads the code](docs/reference/project-extensions.md#when-each-command-loads-the-code).
 
 ## CLI Reference
 
-| Command                          | Description                                                                             |
-| -------------------------------- | --------------------------------------------------------------------------------------- |
-| `realm workflow init <name>`     | Scaffold a new workflow project directory                                               |
-| `realm workflow list`            | List registered workflow definitions                                                    |
-| `realm workflow validate [path]` | Validate a workflow YAML without registering it                                         |
-| `realm workflow register <path>` | Register a workflow in the local store                                                  |
-| `realm workflow watch <path>`    | Watch a workflow YAML and re-register on every change                                   |
-| `realm workflow run <path>`      | Run a workflow interactively (development mode)                                         |
-| `realm agent`                    | Run a workflow autonomously with an LLM — no MCP client or IDE required                 |
-| `realm workflow test <path>`     | Run fixture-based tests against a workflow                                              |
-| `realm run list`                 | List all runs; filter by `--workflow <id>` or `--status <phase>`                        |
-| `realm run resume <run-id>`      | Resume a paused run                                                                     |
-| `realm run respond <run-id>`     | Submit a response to a human gate                                                       |
-| `realm run inspect <run-id>`     | Print the full evidence chain for a run                                                 |
-| `realm run replay <run-id>`      | Re-evaluate preconditions with modified step outputs                                    |
-| `realm run diff <run-a> <run-b>` | Compare evidence chains of two runs side by side                                        |
-| `realm run cleanup`              | Mark idle non-terminal runs as abandoned                                                |
-| `realm workflow migrate`         | Back-fill provenance fields on local workflow definitions from earlier versions         |
-| `realm mcp`                      | Start the MCP server over stdio (for local AI agents)                                   |
-| `realm serve`                    | Start the MCP server over HTTP with Bearer token auth (for hosted platforms)            |
-| `realm listen`                   | Start a webhook server that routes inbound webhooks to workflows (per `trigger:` block) |
+| Command                                   | Description                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| `realm workflow init <name>`              | Scaffold a new workflow project directory                                               |
+| `realm workflow list`                     | List registered workflow definitions                                                    |
+| `realm workflow validate [path]`          | Validate a workflow YAML without registering it                                         |
+| `realm workflow register <path>`          | Register a workflow in the local store                                                  |
+| `realm workflow watch <path>`             | Watch a workflow YAML and re-register on every change                                   |
+| `realm workflow run <path>`               | Run a workflow interactively (development mode)                                         |
+| `realm agent`                             | Run a workflow autonomously with an LLM — no MCP client or IDE required                 |
+| `realm workflow test <path>`              | Run fixture-based tests against a workflow                                              |
+| `realm run list`                          | List all runs; filter by `--workflow <id>` or `--status <phase>`                        |
+| `realm run resume <run-id> --from <step>` | Let a failed step run again, so the run can go on                                       |
+| `realm run respond <run-id>`              | Submit a response to a human gate                                                       |
+| `realm run inspect <run-id>`              | Print the full evidence chain for a run                                                 |
+| `realm run replay <run-id>`               | Re-evaluate preconditions with modified step outputs                                    |
+| `realm run diff <run-a> <run-b>`          | Compare evidence chains of two runs side by side                                        |
+| `realm run cleanup`                       | Mark idle non-terminal runs as abandoned                                                |
+| `realm workflow migrate`                  | Back-fill provenance fields on local workflow definitions from earlier versions         |
+| `realm mcp`                               | Start the MCP server over stdio (for local AI agents)                                   |
+| `realm serve`                             | Start the MCP server over HTTP with Bearer token auth (for hosted platforms)            |
+| `realm listen`                            | Start a webhook server that routes inbound webhooks to workflows (per `trigger:` block) |
 
 Run `realm <command> --help` for full options on any command.
 

@@ -67,11 +67,11 @@ export interface CostView {
  * The closed set of reasons a step's evidence entry carries no `cache` at all. Classification only
  * ever picks between these two — it never asserts a model call happened (see `composeStepViews`
  * rule 5): `tool_calling_step` when the entry declares `tool_calls` (the tool-calling path records
- * no usage yet, issue #610); `not_driven_by_realm` for an agent step whose calls realm's own driver
- * never saw (an outside agent over MCP `execute_step`, an answer typed at a `realm workflow run`
- * prompt, or a record written before usage was measured).
+ * no usage yet, issue #610); `not_measured_by_realm` for an agent step realm has no usage figures
+ * for — for example, an outside agent over MCP `execute_step` made it, a person typed its answer at
+ * a `realm workflow run` prompt, or realm 0.45.0 or earlier recorded it.
  */
-export const COST_UNRECORDED_CAUSES = ['tool_calling_step', 'not_driven_by_realm'] as const;
+export const COST_UNRECORDED_CAUSES = ['tool_calling_step', 'not_measured_by_realm'] as const;
 export type CostUnrecordedCause = (typeof COST_UNRECORDED_CAUSES)[number];
 
 export interface AttemptView {
@@ -321,7 +321,7 @@ export function composeStepViews(
       } else {
         const byDefinition = definitionSaysAgent(stepId, deps?.definition);
         const isAgentStep = byDefinition ?? entry['agent_profile'] !== undefined;
-        if (isAgentStep) attempt.cost_unrecorded = 'not_driven_by_realm';
+        if (isAgentStep) attempt.cost_unrecorded = 'not_measured_by_realm';
         // Otherwise: a handler step. Nothing was ever going to be recorded — no annotation at all.
       }
     }

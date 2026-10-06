@@ -2696,7 +2696,7 @@ async function runVersion(root, journalPath, V, registryFixturePath) {
       }
     }
     console.error(
-      `Error: Tag v${V} already exists on origin, and a v* tag pushed there starts the Publish workflow: this script cannot release that version. If that tag's Publish run failed (see the Actions page, Part B step 6), re-run it (Part B step 9); otherwise choose another version: ${CHOOSE_ANOTHER}`,
+      `Error: Tag v${V} already exists on origin, and a v* tag pushed there starts the Publish workflow: this script cannot release that version. If that tag's Publish run failed (see the Actions page, Part B step 6), re-run it (Part B, "Rollback note"); otherwise choose another version: ${CHOOSE_ANOTHER}`,
     );
     process.exit(1);
   }
