@@ -312,10 +312,12 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
 
       // (a) red when the expiry sentence is printed only when a guard ended the run, or
       //     `Responded:` is printed; (b) prints stdout.
+      // decision C135: after `Not recorded:`, what the run owes — here the agent step `finish` is
+      // ready, the on-time answer's ready line.
       expect(stdout()).toEqual([
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
-        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
       ]);
       expect(code).toBe(0);
       expect(stderr()).toEqual([]);
@@ -353,10 +355,12 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
 
       // (a) red when the refused expiry reply drops `guards` — a person who wanted the other
       //     choice would not learn the guard passed and the run goes on; (b) prints stderr.
+      // decision C135: after `Not recorded:`, what the run owes — the agent step `finish` is ready.
       expect(stderr()).toEqual([
         `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
       ]);
       expect(code).toBe(1);
       expect(stdout()).toEqual([]);
@@ -383,9 +387,10 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // The drain's own write reported the guard; this answer's reply carries none.
       // (a) red when the already-resolved reply for a gate its expiry settled is not marked —
       //     respond would print `Responded:`; (b) prints stdout.
+      // decision C135: after `Not recorded:`, what the run owes — the agent step `finish` is ready.
       expect(stdout()).toEqual([
         LATE_SAME_CHOICE,
-        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
       ]);
       expect(code).toBe(0);
       expect(stderr()).toEqual([]);
@@ -407,6 +412,78 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       ]);
       expect(code).toBe(1);
       expect(stdout()).toEqual([]);
+    });
+  });
+
+  describe('C135, W2-Y2: a late answer says what the run owes, as the on-time answer does', () => {
+    /** `confirm` (a question that settles `approve` at expiry), then `after`, a bare `auto` step. */
+    const gateThenAuto = (id: string): WorkflowDefinition => ({
+      id,
+      name: id,
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        confirm: {
+          description: 'Confirm',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          depends_on: [],
+          gate: { choices: ['approve', 'reject'], ...expiring('approve') },
+        },
+        after: { description: 'After', execution: 'auto', depends_on: ['confirm'] },
+      },
+    });
+
+    /** The on-time answer's owed line on a twin run, with that run's id put back as `<id>`. */
+    async function onTimeOwedLine(id: string): Promise<string> {
+      const { runId, gateId } = await openGate(gateThenAuto(id));
+      logSpy.mockClear();
+      expect(await respond(runId, gateId, 'approve')).toBe(0);
+      const printed = stdout().flatMap((s) => s.split('\n'));
+      logSpy.mockClear();
+      errSpy.mockClear();
+      const owed = printed.filter((l) => l.startsWith('Owed to the engine:'));
+      expect(owed).toHaveLength(1);
+      return owed[0]!.split(runId).join('<id>');
+    }
+
+    it('DIFFERENT choice: refusal, `Not recorded:`, then the owed line the on-time answer prints — stderr, exit 1', async () => {
+      const owed = await onTimeOwedLine('r625-c135-ontime-diff');
+      const { runId, gateId } = await openGate(gateThenAuto('r625-c135-late-diff'));
+      await expireGate(runId);
+      logSpy.mockClear();
+
+      const code = await respond(runId, gateId, 'reject');
+
+      // (a) red when the late arm prints no owed line, or another than the on-time arm's;
+      //     (b) prints stderr.
+      expect(stderr()).toEqual([
+        `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        owed.split('<id>').join(runId),
+      ]);
+      expect(owed).toMatch(/^Owed to the engine: 'after' — realm run advance <id> runs it, with /);
+      expect(code).toBe(1);
+      expect(stdout()).toEqual([]);
+    });
+
+    it('SAME choice: `Not recorded:`, then the owed line the on-time answer prints — stdout, exit 0', async () => {
+      const owed = await onTimeOwedLine('r625-c135-ontime-same');
+      const { runId, gateId } = await openGate(gateThenAuto('r625-c135-late-same'));
+      await expireGate(runId);
+      logSpy.mockClear();
+
+      const code = await respond(runId, gateId, 'approve');
+
+      // (a) red when the late arm prints no owed line, or another than the on-time arm's;
+      //     (b) prints stdout.
+      expect(stdout().flatMap((s) => s.split('\n'))).toEqual([
+        LATE_SAME_CHOICE,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        owed.split('<id>').join(runId),
+      ]);
+      expect(code).toBe(0);
+      expect(stderr()).toEqual([]);
     });
   });
 

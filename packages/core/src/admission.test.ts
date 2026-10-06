@@ -133,6 +133,7 @@ describe('the admission table', () => {
       'store_release_line',
       'registry_release_line',
       'driver_shape',
+      'advance_caller',
     ]);
   });
 
@@ -211,7 +212,12 @@ describe('the source-text witness: each entry admits as its first statement and 
     for (const file of new Set(Object.values(HOME))) {
       const code = strip(readFileSync(join(HERE, file), 'utf8'));
       // (a) red when a file re-adds its own check; (b) prints the file and the call found.
-      for (const name of ['assertReleaseLine', 'assertRegistryLine', 'validateDriver']) {
+      for (const name of [
+        'assertReleaseLine',
+        'assertRegistryLine',
+        'validateDriver',
+        'validateAdvanceCaller',
+      ]) {
         expect(code.match(new RegExp(`\\b${name}\\(`, 'g')) ?? [], `${file}: ${name}`).toEqual([]);
       }
     }

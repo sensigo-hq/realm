@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
-import type { ExtensionRegistry, Attributed } from '@sensigo/realm';
+import type { ExtensionRegistry, Attributed, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import {
   WorkflowError,
   boundStatedName,
@@ -33,6 +33,36 @@ import {
  */
 function notRecordedLine(runId: string, late: { choice: string; phase: string }): string {
   return `Not recorded: ${runId} | gate settled by timeout with choice '${late.choice}' | state '${late.phase}'`;
+}
+
+/**
+ * What the run owes after an answer, in the CLI's words (decisions C11, C96, C62, C64, C135): the
+ * one command that runs the engine's owed work — with where its project code comes from and that its
+ * environment is its shell's (decision C98) —, the ready line for an agent step, and each engine step
+ * that cannot run with the way out. The same lines after `Responded:` and after `Not recorded:`: an
+ * answer the expiry beat leaves the run owing what an on-time answer would have.
+ */
+function nextLines(
+  runId: string,
+  workflow: WorkflowDefinition,
+  run: RunRecord,
+  registry: ExtensionRegistry,
+  hasCode: boolean,
+): string[] {
+  const pending = describePending(workflow, run, registry, new Date());
+  // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
+  // that cannot run and the way out — core's lines, never a copy.
+  const cannotGoOn = cannotGoOnLines(run, pending);
+  const ready = agentReadyReason(runId, pending.agent_steps);
+  return [
+    ...(pending.act !== undefined
+      ? [
+          `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
+        ]
+      : []),
+    ...(ready !== undefined ? [`${ready.charAt(0).toUpperCase()}${ready.slice(1)}.`] : []),
+    ...cannotGoOn,
+  ];
 }
 
 /** What `respondToGate` hands the command to print (issue #625). */
@@ -108,6 +138,11 @@ export async function respondToGate(
       })
     ).registry;
 
+  // decision C107: whether the project the later advance loads holds any code — the registry this
+  // answer loaded from it carries a code identity only when a realm.yaml or a module was found.
+  const hasCode =
+    options.extensionsModule !== undefined || effectiveRegistry.identity !== undefined;
+
   const result = await submitHumanResponse(runStore, workflow, {
     runId,
     gateId: options.gate,
@@ -132,7 +167,12 @@ export async function respondToGate(
       const lateRun = await runStore.get(runId);
       const late = lateAnswerOutcome(result, lateRun);
       if (late !== undefined) {
-        lines = [...describeAnswerEnding(result, lateRun), notRecordedLine(runId, late)];
+        // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
+        lines = [
+          ...describeAnswerEnding(result, lateRun),
+          notRecordedLine(runId, late),
+          ...nextLines(runId, workflow, lateRun, effectiveRegistry, hasCode),
+        ];
       }
     }
     throw new WorkflowError(lines.join('\n'), {
@@ -155,7 +195,11 @@ export async function respondToGate(
       newState: late.phase,
       recorded: false,
       lines,
-      lastLine: notRecordedLine(runId, late),
+      // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
+      lastLine: [
+        notRecordedLine(runId, late),
+        ...nextLines(runId, workflow, updatedRun, effectiveRegistry, hasCode),
+      ].join('\n'),
     };
   }
   // issue #625 PR-2a (decision C11): the recorded answerer when `--by` was given, the DERIVED
@@ -164,27 +208,15 @@ export async function respondToGate(
   // left an agent step ready, the same ready line `realm run advance` prints (decision C96).
   const phase = deriveRunPhase(updatedRun);
   const answeredBy = options.by !== undefined ? ` | answered by ${options.by} (as stated)` : '';
-  const pending = describePending(workflow, updatedRun, effectiveRegistry, new Date());
-  // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
-  // that cannot run and the way out — core's lines, never a copy.
-  const cannotGoOn = cannotGoOnLines(updatedRun, pending);
-  const ready = agentReadyReason(runId, pending.agent_steps);
-  // decision C107: whether the project the later advance loads holds any code — the registry this
-  // answer loaded from it carries a code identity only when a realm.yaml or a module was found.
-  const hasCode =
-    options.extensionsModule !== undefined || effectiveRegistry.identity !== undefined;
   return {
     choice: options.choice,
     newState: phase,
     recorded: true,
     lines,
-    lastLine:
-      `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'` +
-      (pending.act !== undefined
-        ? `\nOwed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`
-        : '') +
-      (ready !== undefined ? `\n${ready.charAt(0).toUpperCase()}${ready.slice(1)}.` : '') +
-      cannotGoOn.map((line) => `\n${line}`).join(''),
+    lastLine: [
+      `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'`,
+      ...nextLines(runId, workflow, updatedRun, effectiveRegistry, hasCode),
+    ].join('\n'),
   };
 }
 

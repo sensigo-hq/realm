@@ -325,12 +325,22 @@ const QUESTION_TEXT_WHERE =
   "The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message.";
 
 /**
+ * The token, for a reply that carries no `gate` object (decision C134): such a reply never carries
+ * the claim token (only the opening reply does), so its instruction says who passes one back — the
+ * conversation that opened the question, with the token it was given then — and only when it was
+ * given one (a store may mint none).
+ */
+const OPENER_PASSES_TOKEN =
+  'The conversation that opened the question passes back the claim_token it was given then, when it was given one.';
+
+/**
  * The ONE composer of the instruction that answers an open question (decision C103): the
  * `submit_human_response` act. The reply that OPENS the question passes its claim token, and only it
  * (the holder slice's one door): the token rides `params` and `call_with`, and the text says to pass
  * it back. `form: 'gate_reply'` is for a reply that carries the `gate` object (the opening reply and
  * the already-open reply) — its text points at `gate.display` and `gate.response_spec.choices`;
- * every other reply names the choices itself and says where the question's text is (C125).
+ * every other reply names the choices itself, says where the question's text is (C125) and that the
+ * conversation that opened the question passes back its token (C134).
  */
 export function answerAction(
   runId: string,
@@ -357,7 +367,7 @@ export function answerAction(
               ? ' with call_with, passing claim_token back unchanged — it shows that this answer comes from the conversation that opened the question.'
               : '.'
           }`
-        : `Human review required for step '${question.step}'. Ask the user to choose one of: ${question.choices.join(', ')}, then call submit_human_response with their choice. ${QUESTION_TEXT_WHERE}`,
+        : `Human review required for step '${question.step}'. Ask the user to choose one of: ${question.choices.join(', ')}, then call submit_human_response with their choice. ${QUESTION_TEXT_WHERE} ${OPENER_PASSES_TOKEN}`,
     orientation: `Run is paused at gate '${question.gate_id}'. Available choices: ${question.choices.join(', ')}.`,
   };
 }

@@ -293,7 +293,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     const act = answerAction(runId, { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] });
     // (a) red when the pointer is dropped or names another field; (b) prints the text.
     expect(act.human_readable).toBe(
-      "Human review required for step 'q'. Ask the user to choose one of: approve, reject, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message.",
+      "Human review required for step 'q'. Ask the user to choose one of: approve, reject, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one.",
     );
     // (a) red when the record does not keep the gate's message where the pointer says; (b) prints it.
     expect((await store.get(runId)).pending_gate?.resolved_message).toBe('Go ahead?');

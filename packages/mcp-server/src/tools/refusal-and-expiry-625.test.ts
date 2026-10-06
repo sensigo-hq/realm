@@ -15,6 +15,9 @@
 //   an expired question offers `advance_run` and says its time is up (on an open one, the answer);
 //   `advance_run`'s reply carries empty `data` and `evidence`; `execute_step` whose own expiry ended
 //   the run replies `blocked` and `stop`.
+// - decisions C135, C136 (the walk on round 16, W2-Y1, W5-Y3): a refused answer whose choice was not
+//   recorded keeps `report_to_user` and its hint ends with what the run owes; a `blocked` reply whose
+//   `next_actions` hold only `advance_run` says to call it.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -230,7 +233,8 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
           }),
         ],
       });
-      expect(JSON.stringify(state.next_actions)).not.toContain('claim_token');
+      // The key, not the word: since C134 the act's text names claim_token (who passes one back).
+      expect(JSON.stringify(state.next_actions)).not.toContain('"claim_token"');
       await handleAdvanceRun({ run_id: runId }, { runStore, workflowStore });
       // (a) red when advance_run settles or aborts this question; (b) prints the gate.
       expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
@@ -463,6 +467,85 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       phase: 'aborted',
       line: [
         `gate '${gateId}' on 'confirm' had expired — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
+      ],
+    });
+  });
+
+  it('C135, W2-Y1: a late answer the expiry beat keeps report_to_user and its hint ends with what the run owes — get_run_state agrees', async () => {
+    const d = gated('rae-c135-late', 'settle_default');
+    const { runId, gateId } = await expiredGate(d, true);
+    const reply = await handleSubmitHumanResponse(
+      { run_id: runId, gate_id: gateId, choice: 'reject' },
+      { runStore, workflowStore },
+    );
+    const state = await handleGetRunState({ run_id: runId }, { runStore, workflowStore });
+    // (a) red when the hint does not say what the run owes, the routing changes, or the refusal's
+    // next_actions are not get_run_state's; (b) prints them.
+    expect({
+      status: reply.status,
+      agent_action: reply.agent_action,
+      recorded: reply.answer_recorded,
+      hint: reply.context_hint,
+      next: reply.next_actions.map((a) => a.instruction?.tool),
+    }).toEqual({
+      status: 'error',
+      agent_action: 'report_to_user',
+      recorded: false,
+      hint: `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded. Owed to the engine: 'after' — call advance_run.`,
+      next: ['advance_run'],
+    });
+    expect(reply.next_actions).toEqual(state.next_actions);
+  });
+
+  it('C135: an answer another choice beat keeps report_to_user and its hint ends with what the run owes', async () => {
+    const d = gated('rae-c135-conflict', undefined);
+    const { runId, gateId } = await expiredGate(d, false);
+    const first = await handleSubmitHumanResponse(
+      { run_id: runId, gate_id: gateId, choice: 'approve' },
+      { runStore, workflowStore },
+    );
+    expect(first.status).toBe('ok');
+    const reply = await handleSubmitHumanResponse(
+      { run_id: runId, gate_id: gateId, choice: 'reject' },
+      { runStore, workflowStore },
+    );
+    // (a) red when the hint does not say what the run owes, or the routing changes; (b) prints it.
+    expect({
+      status: reply.status,
+      agent_action: reply.agent_action,
+      hint: reply.context_hint,
+      next: reply.next_actions.map((a) => a.instruction?.tool),
+    }).toEqual({
+      status: 'error',
+      agent_action: 'report_to_user',
+      hint: `Gate '${gateId}' was already resolved with choice 'approve' — your choice 'reject' was not recorded. Owed to the engine: 'after' — call advance_run.`,
+      next: ['advance_run'],
+    });
+  });
+
+  it("C136, W5-Y3: execute_step on the question's own step after that call carried its expiry out — the suggestion says to call advance_run, the only call next_actions holds", async () => {
+    const d = gated('rae-c136', 'settle_default');
+    const { runId, gateId } = await expiredGate(d, true);
+    const reply = await handleExecuteStep(
+      { run_id: runId, command: 'confirm', params: {} },
+      { runStore, workflowStore },
+    );
+    // (a) red when the suggestion names steps next_actions does not hold, or the reply changes;
+    // (b) prints the reply.
+    expect({
+      ...routing(reply),
+      suggestion: reply.blocked_reason?.suggestion,
+      hint: reply.context_hint,
+      line: reply.warnings,
+    }).toEqual({
+      status: 'blocked',
+      agent_action: 'resolve_precondition',
+      next: ['advance_run:'],
+      eligible_steps: ['after'],
+      suggestion: 'Call advance_run, as next_actions says.',
+      hint: "Step 'confirm' cannot be called now: it has already completed. Owed to the engine: 'after' — call advance_run.",
+      line: [
+        `gate '${gateId}' on 'confirm' had expired — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`,
       ],
     });
   });

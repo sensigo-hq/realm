@@ -79,6 +79,7 @@ import { computeBackoff } from './backoff.js';
 import { evaluateAllPreconditions, evaluateGuardConditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { admitEntry } from '../admission.js';
+import type { AdvanceCaller } from './advance-caller.js';
 import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
@@ -858,13 +859,18 @@ function refusedAnswerAction(
 
 /**
  * `blocked_reason.suggestion` of a reply that refuses the step it was asked for (decisions C94,
- * C104), from its own `next_actions`.
+ * C104, C136), from its own `next_actions` — the view's: agent steps (`execute_step`) and the act
+ * (`advance_run`), or the open question's answer (`submit_human_response`).
  */
 function refusalSuggestion(nextActions: readonly NextAction[]): string {
   if (nextActions.length === 0) return 'No other step can be called now.';
-  if (nextActions.every((a) => a.instruction?.tool === 'submit_human_response')) {
-    return 'Answer the open question first, as next_actions says.';
-  }
+  const only = (tool: string): boolean => nextActions.every((a) => a.instruction?.tool === tool);
+  if (only('submit_human_response')) return 'Answer the open question first, as next_actions says.';
+  // decision C136: only the act — the engine's owed work, e.g. after this call carried out an
+  // expired question — names no step to call; the sentence names the call next_actions holds.
+  if (only('advance_run')) return 'Call advance_run, as next_actions says.';
+  // Otherwise the list holds agent steps (an open question's answer never sits beside a step or the
+  // act: while a question is open no step is eligible, and an expired one is not answerable).
   return 'Call one of the steps indicated in next_actions instead.';
 }
 
@@ -1389,13 +1395,8 @@ const DORMANCY_ADVISORY =
   'settled via the legacy compatibility path — this store does not declare atomic settlement ' +
   '(RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)';
 
-/**
- * The callers of {@link advanceRun} (decision C124): each names itself — on the reply's `command`
- * and, when the call carries out an expired question, on that line's `enacted_via`. `advanceRun`
- * is a program's own call (the library default); `advance_run` the MCP tool; `advance`
- * `realm run advance`; `start_run` and `agent` the other hosts that call it.
- */
-export type AdvanceCaller = 'advanceRun' | 'advance_run' | 'advance' | 'start_run' | 'agent';
+// The callers of {@link advanceRun} (decisions C124, C133) — a closed set, checked at admission.
+export type { AdvanceCaller };
 
 /**
  * The vocabulary of `enacted_via` (decisions C95, C105, C122, C124): the call that carried out an
@@ -5086,22 +5087,26 @@ async function composeExpiryReply(
         },
       },
     );
+    // issue #625 PR-2a (decision C9): another default settled the question and the run moved on —
+    // a refused reply still names what the run owes now (the agent steps, the advance act). Decision
+    // C135: the person's answer was not recorded, so `report_to_user` stays, and the hint ends with
+    // the view's next sentence — what the run owes — as the on-time answer's hint says it; the same
+    // view gives `next_actions`. A run that has ended owes nothing: no sentence, no actions.
+    const view = finalRun.terminal_state
+      ? undefined
+      : describePending(definition, finalRun, registry, now);
     const envelope = errorEnvelope(
       stepName,
       finalRun.id,
       finalRun.version,
       err,
-      err.message,
+      `${err.message}${view !== undefined ? describeNext(view, finalRun) : ''}`,
       finalRun.run_phase,
     );
-    // issue #625 PR-2a (decision C9): another default settled the question and the run moved on —
-    // a refused reply still names what the run owes now (the agent steps, the advance act).
     return {
       ...envelope,
       warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings),
-      next_actions: finalRun.terminal_state
-        ? []
-        : buildNextActions(definition, finalRun, registry, now),
+      next_actions: view !== undefined ? nextActionsOf(view, finalRun.id) : [],
     };
   }
 
@@ -5384,21 +5389,25 @@ export async function submitHumanResponse(
               },
             },
           );
+          // issue #625 PR-2a (decision C9): someone else settled the question and the run moved on —
+          // the refusal names what the run owes now. Decision C135: the person's answer was not
+          // recorded, so `report_to_user` stays, and the hint ends with the view's next sentence, as
+          // the on-time answer's hint says it; the same view gives `next_actions`.
+          const conflictView = result.run.terminal_state
+            ? undefined
+            : describePending(definition, result.run, options.registry, now);
           const conflictReply = errorEnvelope(
             stepName ?? 'submit_gate',
             options.runId,
             result.run.version,
             err,
-            err.message,
+            `${err.message}${conflictView !== undefined ? describeNext(conflictView, result.run) : ''}`,
             result.run.run_phase,
           );
-          // issue #625 PR-2a (decision C9): someone else settled the question and the run moved on —
-          // the refusal names what the run owes now.
           const conflictWithNext = {
             ...conflictReply,
-            next_actions: result.run.terminal_state
-              ? []
-              : buildNextActions(definition, result.run, options.registry, now),
+            next_actions:
+              conflictView !== undefined ? nextActionsOf(conflictView, options.runId) : [],
           };
           // issue #625: see `already_settled` above — a gate its expiry settled.
           return gateSettledByTimeout(result.run, stepName)
@@ -7295,7 +7304,8 @@ export interface AdvanceRunOptions {
    * The caller, naming itself (decision C124): the `enacted_via` of the line that says this call
    * carried out an expired question (`this <caller> call …`), and the reply's `command` unless
    * `command` is given. Default `'advanceRun'` (a program's own call); the MCP tool passes
-   * `'advance_run'`, `realm run advance` `'advance'`.
+   * `'advance_run'`, `realm run advance` `'advance'`. Any other value THROWS before anything is
+   * read or written (decision C133, the admission step).
    */
   caller?: AdvanceCaller;
   /** Labels the reply only. Default: the caller. */
@@ -7324,6 +7334,7 @@ export async function advanceRun(
     storeKind: 'run store',
     registry: options.registry,
     driver: options.driver,
+    caller: options.caller,
   });
 
   const caller: AdvanceCaller = options.caller ?? 'advanceRun';

@@ -69,7 +69,7 @@ function stranded(withB: boolean): WorkflowDefinition {
 }
 
 const NOT_A_GATE_REPLY_TEXT =
-  "Human review required for step 'q'. Ask the user to choose one of: approve, reject, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message.";
+  "Human review required for step 'q'. Ask the user to choose one of: approve, reject, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one.";
 
 describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named everywhere', () => {
   let store: JsonFileStore;
