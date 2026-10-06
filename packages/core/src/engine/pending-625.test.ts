@@ -1475,7 +1475,10 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       expect(reply.error_code).toBe('VALIDATION_TRUST_VALUE');
       expect(reply.errors).toEqual([DISPATCH_VOICE]);
       expect(reply.context_hint).toBe("Error during 'work'. Run phase: 'running'.");
-      expect(reply.next_actions).toEqual([]);
+      // decision C94: what the caller can call instead — the view's, never the refused step.
+      expect(reply.agent_action).toBe('resolve_precondition');
+      expect(reply.next_actions.map((a) => a.instruction.params['command'])).toEqual(['ask']);
+      expect(reply.blocked_reason?.eligible_steps).toEqual(['ask']);
     });
   });
 

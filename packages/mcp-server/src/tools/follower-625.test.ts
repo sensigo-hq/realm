@@ -450,7 +450,7 @@ describe('#625 PR-2a — L4 Follower over real MCP stdio', () => {
       const d = Object.fromEntries(tools.map((t) => [t.name, t.description]));
       expect(d['start_run']).toBe('Create a new workflow run and run its first automatic steps.');
       expect(d['advance_run']).toBe(
-        "Run the guards and automatic steps a run owes, in this server's environment. Call it when next_actions names it.",
+        "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — in this server's environment. Call it when next_actions names it.",
       );
       expect(d['start_run_batch']).toBe(
         "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",

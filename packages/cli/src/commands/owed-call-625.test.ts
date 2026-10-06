@@ -91,7 +91,9 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(responded.status).toBe(0);
       expect(responded.stdout.trim()).toBe(
         `Responded: ${run.id} | choice 'approve' | answered by alice (as stated) | new state 'running'\n` +
-          `Owed to the engine: 'after' — realm run advance ${run.id} runs it from this shell.`,
+          // decision C98: where the code comes from (this definition has no trust_root: the folder
+          // advance runs in) and that the environment is that shell's.
+          `Owed to the engine: 'after' — realm run advance ${run.id} runs it, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.`,
       );
 
       const inspected = realm(home, ['run', 'inspect', run.id]);
@@ -108,7 +110,9 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       const advanced = realm(home, ['run', 'advance', run.id]);
       expect(advanced.status).toBe(0);
       const lines = advanced.stdout.trim().split('\n');
-      expect(lines[0]).toBe(`Advancing run ${run.id} (workflow 'cli-owed-wf') from ${home}.`);
+      expect(lines[0]).toBe(
+        `Advancing run ${run.id} (workflow 'cli-owed-wf') with the project code under ${home}, in this shell's environment.`,
+      );
       expect(lines[1]).toBe(
         'This program: tester (from REALM_OPERATOR) · project code: neither side records project code.',
       );

@@ -665,7 +665,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
           new ExtensionRegistry(),
         );
         expect(out.lastLine.split('\n')[1]).toBe(
-          `Owed to the engine: ${owed.map((n) => `'${n}'`).join(', ')} — realm run advance ${run.id} runs ${them} from this shell.`,
+          `Owed to the engine: ${owed.map((n) => `'${n}'`).join(', ')} — realm run advance ${run.id} runs ${them}, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.`,
         );
       } finally {
         rmSync(home, { recursive: true, force: true });

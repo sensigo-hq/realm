@@ -76,7 +76,8 @@ describe('#625 PR-2a — respond prints the derived phase', () => {
         new ExtensionRegistry(),
       );
       expect(outcome.lastLine).toBe(
-        `Responded: ${run.id} | choice 'approve' | new state 'running'`,
+        `Responded: ${run.id} | choice 'approve' | new state 'running'\n` +
+          `An agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

@@ -215,7 +215,9 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
     //     (b) prints the whole stdout.
     expect(stdout()).toEqual([
       "Guard step 'check' passed.",
-      `Responded: ${runId} | choice 'approve' | new state 'running'`,
+      `Responded: ${runId} | choice 'approve' | new state 'running'\n` +
+        // #625 PR-2a, decision C96: the agent step the answer left ready, in `realm run advance`'s words.
+        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
     ]);
     expect(code).toBe(0);
     expect(stderr()).toEqual([]);

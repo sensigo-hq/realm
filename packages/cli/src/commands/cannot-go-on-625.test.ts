@@ -122,7 +122,8 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
       expect(out.lastLine).toBe(
         `Responded: ${id} | choice 'approve' | new state 'running'\n${clause}\n${wayOut(id)}`,
       );
-      // Control: an agent step is ready after the answer — the run can go on; nothing is added.
+      // Control: an agent step is ready after the answer — the run can go on; no cannot-run line and
+      // no way out, only the ready line `realm run advance` prints (decision C96).
       const [cid, cg] = await atGate(runs, ready);
       const ctl = await respondToGate(
         cid,
@@ -131,7 +132,10 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
         workflows,
         new ExtensionRegistry(),
       );
-      expect(ctl.lastLine).toBe(`Responded: ${cid} | choice 'approve' | new state 'running'`);
+      expect(ctl.lastLine).toBe(
+        `Responded: ${cid} | choice 'approve' | new state 'running'\n` +
+          `An agent step is ready: 'ask' — drive it with realm agent --run-id ${cid} --provider <provider> --model <model>.`,
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

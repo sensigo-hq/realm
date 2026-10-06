@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadWorkflowFromString } from './yaml-loader.js';
 import { executeStep, executeChain } from '../engine/execution-loop.js';
+import { findEligibleSteps } from '../engine/eligibility.js';
 import type { StepDispatcher } from '../engine/execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -463,9 +464,13 @@ describe('dead failure condition — the claimed consequences, executed (issue #
       dispatcher: echo,
     });
     expect(envelope.status).toBe('blocked');
-    // It is offered as eligible and refused on every attempt — that is the wedge, not a skip.
-    expect(envelope.blocked_reason?.eligible_steps).toContain('cleanup');
     const after = await store.get(run.id);
+    // It is eligible on the record and refused on every attempt — that is the wedge, not a skip.
+    // (#625 PR-2a, decision C94: the refusal never names the refused step as one that can be
+    // called, and with nothing else to call it says to report to the user.)
+    expect(findEligibleSteps(definition, after)).toContain('cleanup');
+    expect(envelope.blocked_reason?.eligible_steps).toEqual([]);
+    expect(envelope.agent_action).toBe('report_to_user');
     expect(after.completed_steps).not.toContain('cleanup');
     expect(after.failed_steps).not.toContain('cleanup');
     expect(after.skipped_steps).not.toContain('cleanup');
