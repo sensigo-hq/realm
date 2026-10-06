@@ -182,4 +182,29 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     ]);
     expect((await runs.get(runId)).completed_steps).toEqual([]);
   }, 60_000);
+
+  it('C98, every member of the words: trust_root wins over the shell and --project; no trust_root: --project, else the shell; --extensions-module names its module and the root', () => {
+    // (a) red when a member names the wrong folder or drops a clause; (b) prints the words.
+    expect(projectCodeWhere({ trust_root: '/p/proj' }, { project: 'other' }, '/sh')).toBe(
+      'the project code under /p/proj',
+    );
+    expect(projectCodeWhere({}, { project: 'deploy' }, '/sh')).toBe(
+      'the project code under /sh/deploy',
+    );
+    expect(projectCodeWhere({}, {}, '/sh')).toBe('the project code under /sh');
+    expect(
+      projectCodeWhere({ trust_root: '/p/proj' }, { extensionsModule: 'fix/mod.mjs' }, '/sh'),
+    ).toBe('the module /sh/fix/mod.mjs (--extensions-module) and the realm.yaml of /p/proj');
+    expect(laterAdvanceCodeWhere({ trust_root: '/p/proj' })).toBe('the project code under /p/proj');
+    expect(laterAdvanceCodeWhere({})).toBe(
+      'the project code under the folder it runs in (or its --project)',
+    );
+  });
+
+  it("C95: `realm run advance`'s help says it carries out an expired question's declared on_expiry", () => {
+    // (a) red when the description drops the expiry; (b) prints it.
+    expect(runAdvanceCommand.description()).toBe(
+      "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — from this shell, with no model provider and no key",
+    );
+  });
 });
