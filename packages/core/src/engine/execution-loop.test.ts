@@ -113,7 +113,9 @@ describe('executeStep', () => {
     // issue #625 PR-2a: step-one (auto) is owed to the engine — the one act names it
     expect(envelope.next_actions).toHaveLength(1);
     expect(envelope.next_actions[0]!.instruction!.tool).toBe('advance_run');
-    expect(envelope.blocked_reason?.suggestion).toContain('step');
+    // decision C136: next_actions holds only the act, so the suggestion names it (it said "Call one
+    // of the steps indicated in next_actions" while none was).
+    expect(envelope.blocked_reason?.suggestion).toBe('Call advance_run, as next_actions says.');
     expect(envelope.context_hint).toContain('step-two');
   });
 
