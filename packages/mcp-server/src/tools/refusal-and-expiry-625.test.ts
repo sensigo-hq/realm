@@ -25,6 +25,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  ExtensionRegistry,
   executeStep,
   answerAction,
   type WorkflowDefinition,
@@ -387,10 +388,20 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
   });
 
   it("C119, W1-R1: advance_run's MCP reply carries empty data and evidence, as execute_step's", async () => {
-    const d = gated('rae-w1r1', 'settle_default');
+    const base = gated('rae-w1r1', 'settle_default');
+    // `after` runs a handler whose output is not empty, so neither half would be empty by chance.
+    const d: WorkflowDefinition = {
+      ...base,
+      steps: { ...base.steps, after: { ...base.steps['after']!, handler: 'stamp' } },
+    };
     const { runId } = await expiredGate(d, true);
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'stamp', {
+      id: 'stamp',
+      execute: async () => ({ data: { stamped: true } }),
+    } as never);
     const server = new McpServer({ name: 'test', version: '0' });
-    registerAdvanceRun(server, { runStore, workflowStore });
+    registerAdvanceRun(server, { runStore, workflowStore, registry });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client({ name: 'test-client', version: '0' });
@@ -410,6 +421,19 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       }).toEqual({ data: {}, evidence: [], ran: ['after'], phase: 'completed' });
       // (a) red when the run's own evidence is lost (the reply empties; the record keeps); (b) prints it.
       expect((await runStore.get(runId)).evidence.map((e) => e.step_id)).toContain('after');
+      // (a) red when the core reply was empty anyway (the cell would prove nothing); (b) prints it.
+      const core = await handleAdvanceRun(
+        { run_id: (await expiredGate(d, true)).runId },
+        {
+          runStore,
+          workflowStore,
+          registry,
+        },
+      );
+      expect({ data: core.data, evidence: core.evidence.length > 0 }).toEqual({
+        data: { stamped: true },
+        evidence: true,
+      });
     } finally {
       await client.close();
     }
