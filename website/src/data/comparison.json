@@ -871,7 +871,7 @@
   "strengths": {
     "realm": {
       "stronger": "Drives an outside agent step by step and refuses out-of-order steps and wrong-shape answers; works with any MCP client and no model key; records why each step was skipped and why the run ended, which program took each step, and each gate answer; refuses a misspelt trust level or an invalid schema when the workflow is loaded.",
-      "weaker": "No UI: no visual editor or dashboard; runs are stored as JSON files on one machine; nothing resumes a run after a crash; a gate records the name the answerer gives and checks nothing; after a gate is answered, the next automatic step waits for a call; agent steps can use tools only from local (stdio) MCP servers, and only under realm agent."
+      "weaker": "No UI: no visual editor or dashboard; no loops: a workflow cannot go back to an earlier step, repeat a step until a condition holds, or run a step once per item of a list (only a retry of the same step, or a separate run per item); runs are stored as JSON files on one machine; nothing resumes a run after a crash; a gate records the name the answerer gives and checks nothing; after a gate is answered, the next automatic step waits for a call; agent steps can use tools only from local (stdio) MCP servers, and only under realm agent."
     },
     "langgraph": {
       "stronger": "Time travel and forking from any checkpoint; per-node retries, timeouts and caching; Postgres and MongoDB with encryption; Studio debugger; LangSmith tracing; Python and JS.",

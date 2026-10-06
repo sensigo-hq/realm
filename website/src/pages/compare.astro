@@ -39,6 +39,12 @@ const TITLE_NAMES = ['LangGraph', 'CrewAI', 'Temporal', 'n8n'];
 for (const name of TITLE_NAMES) {
   if (!tools.some((t) => t.name === name)) throw new Error(`compare.astro: the page title names ${name}, which is not a tool in src/data/comparison.json`);
 }
+// The introduction says what only Realm does; that is the claim of the row "drive". If that row stops
+// being "Only Realm", the sentence would be false, so the build stops instead.
+const driveRow = rows.find((r) => r.id === 'drive');
+if (!driveRow || driveRow.verdict.kind !== 'lead') {
+  throw new Error('compare.astro: the introduction says only Realm can be walked step by step from outside, but the row "drive" in src/data/comparison.json is missing or not "lead"');
+}
 const pageTitle = `How Realm compares with ${TITLE_NAMES.slice(0, -1).join(', ')}, ${TITLE_NAMES.at(-1)} and others`;
 
 const checkedDates = [...new Set(tools.map((t) => t.checked))].sort();
@@ -80,6 +86,7 @@ const groupsOf = [
    then every tool's answer to each question in one table per question, a table of what each
    tool does better and worse, and how it was checked. */
 :root { --danger: var(--c-danger); --danger-soft: color-mix(in srgb, var(--c-danger) 14%, var(--c-panel)); }
+.hero .diff { color: var(--ink); font-size: 17px; line-height: 1.55; max-width: 68ch; }
 .hero .checked { font: 500 13px/1.4 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); margin-top: 8px; }
 .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px; }
 .sbox { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px; }
@@ -178,6 +185,7 @@ button.openall:hover { border-color: var(--muted); }
     <h1>How Realm compares</h1>
     <p class="checked">Checked {checkedRange}</p>
     <p class="lede">Realm against {othersWord} tools people consider for the same job: getting an AI agent to do multi-step work reliably. Every answer below cites the tool's own code or docs, and each column names the release that was checked and when. Where Realm is behind, the page says so.</p>
+    <p class="diff">The difference that matters most: the other {othersWord} run the work themselves and call the model when they need it. Realm can do that too, but an outside assistant, such as Claude or Cursor, can also work through a Realm workflow one step at a time. Realm refuses a step taken out of order, and an answer that breaks the schema the step declares.</p>
   </header>
 
   <div class="summary">
