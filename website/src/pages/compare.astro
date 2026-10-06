@@ -71,7 +71,8 @@ const groupsOf = [
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
 <style is:global>
 /* The comparison: a summary in four groups, one wide table that scrolls inside its own box,
-   then every answer with its source, one card per tool, and how it was checked. */
+   then every tool's answer to each question in one table per question, a table of what each
+   tool does better and worse, and how it was checked. */
 :root { --danger: var(--c-danger); --danger-soft: color-mix(in srgb, var(--c-danger) 14%, var(--c-panel)); }
 .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px; }
 .sbox { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px; }
@@ -94,8 +95,13 @@ thead .rowhead { background: var(--panel2); z-index: 2; }
 .rowhead a { color: var(--ink); text-decoration: none; display: block; }
 .rowhead a:hover { text-decoration: underline; }
 .rowhead .vchip { margin-top: 6px; }
-.matrix .realm { background: var(--accent-soft); }
-.matrix thead th.realm { box-shadow: inset 0 3px 0 var(--accent); }
+/* Realm stands out the same way everywhere: a slightly lighter, neutral background on its column
+   and its rows. Never the accent green, which is the colour of a "Yes" answer. */
+:root { --realm-tint: color-mix(in srgb, var(--c-ink) 7%, var(--c-panel)); }
+:root[data-theme='light'] { --realm-tint: color-mix(in srgb, var(--c-ink) 5%, var(--c-panel)); }
+.matrix .realm { background: var(--realm-tint); }
+.matrix a.cellink { display: inline-block; border-radius: 999px; text-decoration: none; }
+.matrix a.cellink:hover .pill { text-decoration: underline; }
 .matrix tr.sep th, .matrix tr.sep td { background: var(--panel2); font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-block: 6px; }
 .matrix tr.fact td { font-size: 12.5px; color: var(--body); max-width: 170px; min-width: 120px; text-align: left; line-height: 1.4; font-variant-numeric: tabular-nums; }
 .pill { display: inline-block; font: 500 12px/1 'IBM Plex Sans', system-ui, sans-serif; padding: 5px 9px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
@@ -114,21 +120,40 @@ section.q { border-top: 1px solid var(--line); padding-top: 22px; scroll-margin-
 .qtop h3 { font-size: 19px; font-weight: 600; }
 .ask { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
 .verdict { margin: 10px 0 0; max-width: 78ch; color: var(--ink); }
-ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr)); gap: 12px; }
-.cell { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 8px; padding: 12px 14px; min-width: 0; }
-.cell.realm { border-color: var(--accent); background: var(--accent-soft); }
-.chead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.cname { color: var(--ink); font-weight: 600; font-size: 14px; }
-.cell p { margin: 8px 0 0; font-size: 14px; line-height: 1.5; }
-.cell p.src { font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); overflow-wrap: anywhere; }
+/* One table per question, and one for the tools: one row per tool, in the main table's column order. */
+.box { border: 1px solid var(--line-soft); border-radius: 10px; background: var(--panel); overflow: hidden; margin-top: 14px; }
+table.rowsof { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+.rowsof th, .rowsof td { padding: 11px 16px; border-top: 1px solid var(--line-soft); vertical-align: top; text-align: left; }
+.rowsof tbody tr:first-child > * { border-top: 0; }
+.rowsof thead th { background: var(--panel2); font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-top: 0; }
+.rowsof tbody th { color: var(--ink); font-weight: 600; width: 190px; }
+.rowsof tr.realm { background: var(--realm-tint); }
+.rowsof td.ans { width: 96px; }
+.rowsof p { margin: 0; max-width: 76ch; line-height: 1.5; }
+.rowsof p.src { margin-top: 4px; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); overflow-wrap: anywhere; }
+.rowsof .tmeta { display: block; font: 400 11.5px/1.45 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); font-weight: 400; margin-top: 2px; white-space: nowrap; }
+.rowsof tr:target { outline: 2px solid var(--muted); outline-offset: -2px; }
+.rowsof tr { scroll-margin-top: 16px; }
+details.box > summary { cursor: pointer; padding: 11px 16px; color: var(--ink); font-weight: 600; font-size: 14.5px; list-style-position: inside; }
+details.box > summary:hover { background: var(--panel2); }
+details.box[open] > summary { border-bottom: 1px solid var(--line-soft); }
+details.box > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tally { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; max-width: none; font-size: 14.5px; }
+.tally .tg { display: inline-flex; align-items: baseline; gap: 7px; }
+.qtools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+button.openall { font: 500 14px/1 'IBM Plex Sans', system-ui, sans-serif; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+button.openall:hover { border-color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .lab { color: var(--ink); background: var(--panel2); border-radius: 3px; padding: 1px 4px; margin-right: 4px; white-space: nowrap; }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 14px; margin-top: 14px; }
-.card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px; min-width: 0; }
-.card.realm { border-color: var(--accent); }
-.card h3 { font-size: 17px; font-weight: 600; }
-.cgroup { font: 400 11.5px/1.4 'IBM Plex Mono', ui-monospace, monospace; color: var(--muted); margin: 4px 0 0; }
-.card h4 { font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 14px 0 0; }
-.card p { margin: 6px 0 0; font-size: 14px; }
+/* On a phone each row stacks: the tool and its answer on one line, the note under them. */
+@media (max-width: 640px) {
+  .rowsof thead { display: none; }
+  .rowsof tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 14px; border-top: 1px solid var(--line-soft); }
+  .rowsof tbody tr:first-child { border-top: 0; }
+  .rowsof th, .rowsof td { display: block; padding: 0; border: 0; width: auto; }
+  .rowsof td.wide { grid-column: 1 / -1; }
+  .rowsof td[data-label]::before { content: attr(data-label); display: block; font: 500 11px/1.3 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+}
 @media (max-width: 520px) { .rowhead { min-width: 160px; max-width: 180px; } }
 </style>
 </head>
@@ -161,7 +186,7 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
   <section aria-labelledby="table">
     <div class="eyebrow">The table</div>
     <h2 id="table">{totalWord.charAt(0).toUpperCase() + totalWord.slice(1)} tools, {rows.length} questions</h2>
-    <p>Each row is a question. Its name links to every tool's answer, with the source. The highlighted column is Realm.</p>
+    <p>Each row is a question. Its name links to every tool's answer to it; each answer links to its own explanation and source. The shaded column is Realm.</p>
     <div class="legend"><span class="pill yes">Yes</span><span class="pill part">Partial</span><span class="pill no">No</span><span>Partial always means something is missing; the answers below say what.</span></div>
     <div class="scroll" role="region" aria-label="Comparison table" tabindex="0">
       <table class="matrix">
@@ -183,7 +208,7 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
             <tr>
               <th scope="row" class="rowhead"><a href={`#${r.id}`}>{r.title}</a><span class={`vchip ${VERDICT[r.verdict.kind][0]}`}>{VERDICT[r.verdict.kind][1]}</span></th>
               {tools.map((t) => (
-                <td class={t.key === 'realm' ? 'realm' : undefined} title={`${t.name}: ${r.cells[t.key].note}`}><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></td>
+                <td class={t.key === 'realm' ? 'realm' : undefined}><a class="cellink" href={`#${r.id}-${t.key}`} title={`${t.name}: ${r.cells[t.key].note}`} aria-label={`${t.name}, ${r.title}: ${r.cells[t.key].value}. Read the answer and its source.`}><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></a></td>
               ))}
             </tr>
           ))}
@@ -202,22 +227,38 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
   <section aria-labelledby="answers">
     <div class="eyebrow">Question by question</div>
     <h2 id="answers">Every answer, with its source</h2>
-    <p>Each answer says how it was checked: <span class="lab">CODE</span> read in the tool's source, <span class="lab">DOCS</span> stated in its own docs, <span class="lab">EXECUTED</span> run, <span class="lab">INFERRED</span> reasoned from what was read.</p>
+    <p>Each question shows the verdict and which tools gave which answer. Open it for every tool's explanation and its source. Each source says how it was checked: <span class="lab">CODE</span> read in the tool's source, <span class="lab">DOCS</span> stated in its own docs, <span class="lab">EXECUTED</span> run, <span class="lab">INFERRED</span> reasoned from what was read.</p>
+    <div class="qtools"><button type="button" class="openall" id="openall" hidden>Open all answers</button></div>
     <div class="qrows">
       {rows.map((r) => (
         <section class="q" id={r.id}>
           <div class="qtop"><h3>{r.title}</h3><span class={`vchip ${VERDICT[r.verdict.kind][0]}`}>{VERDICT[r.verdict.kind][1]}</span></div>
           <p class="ask">{r.ask}</p>
           <p class="verdict">{linkParts(r.verdict.text).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
-          <ul class="cells">
-            {tools.map((t) => (
-              <li class={t.key === 'realm' ? 'cell realm' : 'cell'}>
-                <div class="chead"><span class="cname">{t.name}</span><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></div>
-                <p>{linkParts(r.cells[t.key].note).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
-                <p class="src"><span class="lab">{r.cells[t.key].label}</span> {r.cells[t.key].source}</p>
-              </li>
-            ))}
-          </ul>
+          <p class="tally">
+            {['Yes', 'Partial', 'No', 'N/A'].map((v) => {
+              const names = tools.filter((t) => r.cells[t.key].value === v).map((t) => t.name);
+              return names.length > 0 ? <span class="tg"><span class={`pill ${PILL[v]}`}>{v}</span><span>{names.join(', ')}</span></span> : null;
+            })}
+          </p>
+          <details class="box">
+            <summary>Every tool's answer, with its explanation and source</summary>
+            <table class="rowsof">
+              <caption class="sr">Every tool's answer: {r.title}</caption>
+              <tbody>
+                {tools.map((t) => (
+                  <tr class={t.key === 'realm' ? 'realm' : undefined} id={`${r.id}-${t.key}`}>
+                    <th scope="row">{t.name}</th>
+                    <td class="ans"><span class={`pill ${PILL[r.cells[t.key].value]}`}>{r.cells[t.key].value}</span></td>
+                    <td class="wide">
+                      <p>{linkParts(r.cells[t.key].note).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
+                      <p class="src"><span class="lab">{r.cells[t.key].label}</span> {r.cells[t.key].source}</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
         </section>
       ))}
     </div>
@@ -227,15 +268,19 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
     <div class="eyebrow">Tool by tool</div>
     <h2 id="tools">What each one does better, and where it falls short</h2>
     <p>Where each tool is stronger than Realm, and where it falls short for making an agent follow steps and show what it did.</p>
-    <div class="cards">
-      {tools.map((t) => (
-        <article class={t.key === 'realm' ? 'card realm' : 'card'}>
-          <h3>{t.name}</h3>
-          <p class="cgroup">{t.group} · {t.version} · checked {t.checked}</p>
-          <h4>Stronger at</h4><p>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
-          <h4>Weaker at</h4><p>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p>
-        </article>
-      ))}
+    <div class="box">
+      <table class="rowsof">
+        <thead><tr><th scope="col">Tool</th><th scope="col">Stronger at</th><th scope="col">Weaker at</th></tr></thead>
+        <tbody>
+          {tools.map((t) => (
+            <tr class={t.key === 'realm' ? 'realm' : undefined}>
+              <th scope="row">{t.name}<span class="tmeta">{t.group}</span><span class="tmeta">{t.version}</span><span class="tmeta">checked {t.checked}</span></th>
+              <td class="wide" data-label="Stronger at"><p>{linkParts(strengths[t.key].stronger).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p></td>
+              <td class="wide" data-label="Weaker at"><p>{linkParts(strengths[t.key].weaker).map((p) => (p.issue ? <a href={`${SOURCE_URL}/issues/${p.issue}`}>#{p.issue}</a> : p.text))}</p></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   </section>
 
@@ -251,6 +296,39 @@ ul.cells { list-style: none; margin: 16px 0 0; padding: 0; display: grid; grid-t
       <li>Something wrong or out of date? <a href={issueUrl}>Open an issue</a> with a link to the tool's own code or docs, and we will check it and correct the page.</li>
     </ul>
   </section>
+
+  <script is:inline>
+    (function () {
+      function openFor(hash) {
+        if (!hash || hash.length < 2) return;
+        var el = document.getElementById(decodeURIComponent(hash.slice(1)));
+        var fold = el && el.closest('details');
+        if (fold && !fold.open) fold.open = true;
+      }
+      document.addEventListener('click', function (e) {
+        var a = e.target.closest && e.target.closest('a[href^="#"]');
+        if (a) openFor(a.getAttribute('href'));
+      });
+      window.addEventListener('hashchange', function () { openFor(location.hash); });
+      openFor(location.hash);
+      if (location.hash) { var t = document.getElementById(decodeURIComponent(location.hash.slice(1))); if (t) t.scrollIntoView(); }
+      var btn = document.getElementById('openall');
+      var folds = document.querySelectorAll('section.q details');
+      function label() {
+        var allOpen = Array.prototype.every.call(folds, function (d) { return d.open; });
+        btn.textContent = allOpen ? 'Close all answers' : 'Open all answers';
+      }
+      if (btn && folds.length) {
+        btn.hidden = false;
+        btn.addEventListener('click', function () {
+          var open = !Array.prototype.every.call(folds, function (d) { return d.open; });
+          folds.forEach(function (d) { d.open = open; });
+          label();
+        });
+        folds.forEach(function (d) { d.addEventListener('toggle', label); });
+      }
+    })();
+  </script>
 
   <footer class="site">
     <p>Realm is an open-source workflow state machine for AI agents. Apache&#8209;2.0 &middot; <a href="https://github.com/sensigo-hq/realm">github.com/sensigo-hq/realm</a></p>
