@@ -2,6 +2,10 @@
   "schema": 1,
   "about": "The main comparison document. The public page /compare/ (website/src/pages/compare.astro) is built from this file, so every fact is edited here and nowhere else. Each tool's 'checked' is the date its column was last read at the version named.",
   "checked_on": "2026-10-06",
+  "order": {
+    "by": "GitHub stars",
+    "on": "2026-10-06"
+  },
   "tools": [
     {
       "key": "realm",
@@ -9,55 +13,6 @@
       "group": "This project",
       "version": "0.46.0 (npm)",
       "checked": "2026-10-06"
-    },
-    {
-      "key": "langgraph",
-      "name": "LangGraph",
-      "group": "Agent frameworks",
-      "version": "1.2.13",
-      "checked": "2026-10-06"
-    },
-    {
-      "key": "crewai",
-      "name": "CrewAI",
-      "group": "Agent frameworks",
-      "version": "1.15.23",
-      "checked": "2026-10-05"
-    },
-    {
-      "key": "openai",
-      "name": "OpenAI Agents SDK",
-      "group": "Agent frameworks",
-      "version": "0.23.1",
-      "checked": "2026-10-05"
-    },
-    {
-      "key": "mastra",
-      "name": "Mastra",
-      "group": "Agent frameworks",
-      "version": "core 1.74.0",
-      "checked": "2026-10-05"
-    },
-    {
-      "key": "maf",
-      "name": "Microsoft Agent Framework",
-      "group": "Agent frameworks",
-      "version": "python 1.20.0",
-      "checked": "2026-10-05"
-    },
-    {
-      "key": "temporal",
-      "name": "Temporal",
-      "group": "Durable execution",
-      "version": "server 1.32.0",
-      "checked": "2026-10-05"
-    },
-    {
-      "key": "inngest",
-      "name": "Inngest",
-      "group": "Durable execution",
-      "version": "server 1.45.1",
-      "checked": "2026-10-05"
     },
     {
       "key": "n8n",
@@ -72,6 +27,48 @@
       "group": "Visual platforms",
       "version": "1.17.1",
       "checked": "2026-10-05"
+    },
+    {
+      "key": "crewai",
+      "name": "CrewAI",
+      "group": "Agent frameworks",
+      "version": "1.15.23",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "langgraph",
+      "name": "LangGraph",
+      "group": "Agent frameworks",
+      "version": "1.2.13",
+      "checked": "2026-10-06"
+    },
+    {
+      "key": "mastra",
+      "name": "Mastra",
+      "group": "Agent frameworks",
+      "version": "core 1.74.0",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "temporal",
+      "name": "Temporal",
+      "group": "Durable execution",
+      "version": "server 1.32.0",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "maf",
+      "name": "Microsoft Agent Framework",
+      "group": "Agent frameworks",
+      "version": "python 1.20.0",
+      "checked": "2026-10-05"
+    },
+    {
+      "key": "inngest",
+      "name": "Inngest",
+      "group": "Durable execution",
+      "version": "server 1.45.1",
+      "checked": "2026-10-05"
     }
   ],
   "rows": [
@@ -81,7 +78,7 @@
       "ask": "Can an assistant such as Claude or Cursor work through a workflow step by step, and be refused when it skips ahead or answers in the wrong shape?",
       "verdict": {
         "kind": "lead",
-        "text": "Realm is the only one of the ten that does this built in. The others give an outside agent, at most, tools that run a whole workflow."
+        "text": "Only Realm does this built in. The others give an outside agent, at most, tools that run a whole workflow."
       },
       "cells": {
         "realm": {
@@ -100,12 +97,6 @@
           "value": "No",
           "note": "No MCP server in the open-source code; outside callers start a crew through A2A or the paid platform's API.",
           "source": "grep lib/ @1.15.23; processes.mdx",
-          "label": "CODE + DOCS"
-        },
-        "openai": {
-          "value": "No",
-          "note": "A library with no server; nothing lets an outside agent drive it.",
-          "source": "docs/mcp.md; grep src/ @v0.23.1",
           "label": "CODE + DOCS"
         },
         "mastra": {
@@ -173,12 +164,6 @@
           "source": "processes.mdx:17-19, 53-60",
           "label": "DOCS"
         },
-        "openai": {
-          "value": "No",
-          "note": "The model decides tool calls and handoffs until it gives a final output (max 10 turns by default). A fixed order needs your own code.",
-          "source": "docs/multi_agent.md; run_config.py:45",
-          "label": "DOCS + CODE"
-        },
         "mastra": {
           "value": "Yes",
           "note": "Workflows run a graph fixed in code; in agent networks a routing LLM picks the next agent.",
@@ -242,12 +227,6 @@
           "value": "Partial",
           "note": "output_pydantic and guardrails check output and retry with the error up to 3 times; on the output_json path a failed conversion can let the run continue on raw text.",
           "source": "task.py:1382-1390; converter.py:150-174",
-          "label": "CODE + DOCS"
-        },
-        "openai": {
-          "value": "Yes",
-          "note": "output_type becomes a strict JSON schema; a mismatch raises an error. It does not retry the model call.",
-          "source": "agent_output.py:85; turn_resolution.py:1010-1030",
           "label": "CODE + DOCS"
         },
         "mastra": {
@@ -315,12 +294,6 @@
           "source": "human_input.py:364; flow-hitl-management.md",
           "label": "CODE + DOCS"
         },
-        "openai": {
-          "value": "Partial",
-          "note": "Pauses on tool calls marked as needing approval only. No time limit.",
-          "source": "docs/human_in_the_loop.md",
-          "label": "DOCS"
-        },
         "mastra": {
           "value": "Partial",
           "note": "A step can suspend and be resumed with data. No time limit found.",
@@ -384,12 +357,6 @@
           "value": "Partial",
           "note": "Open source: no answerer recorded. Paid platform: the reviewer's identity is recorded and checked against a signed token (docs only).",
           "source": "flow/human_feedback.py:180-185; flow-hitl-management.md",
-          "label": "CODE + DOCS"
-        },
-        "openai": {
-          "value": "No",
-          "note": "approve/reject take no reviewer; the docs leave authentication to your app.",
-          "source": "run_state.py:1321-1345",
           "label": "CODE + DOCS"
         },
         "mastra": {
@@ -457,12 +424,6 @@
           "source": "kickoff_task_outputs_storage.py:49-58",
           "label": "CODE"
         },
-        "openai": {
-          "value": "Partial",
-          "note": "Traces go to OpenAI's dashboard by default; sessions store conversation items.",
-          "source": "docs/tracing.md",
-          "label": "DOCS"
-        },
         "mastra": {
           "value": "Yes",
           "note": "Each step's input, output and timestamps in the run snapshot, with persistent storage.",
@@ -507,7 +468,7 @@
       "ask": "Is the record hashed, chained or signed so an edit can be detected?",
       "verdict": {
         "kind": "open",
-        "text": "Nobody among the ten does this. LangGraph's optional encryption comes closest: an edited value fails to decrypt."
+        "text": "None of the tools here does this. LangGraph's optional encryption comes closest: an edited value fails to decrypt."
       },
       "cells": {
         "realm": {
@@ -526,12 +487,6 @@
           "value": "No",
           "note": "No hashing or signing in the open-source code. The paid platform claims immutable audit logs for reviews (not checked).",
           "source": "grep state/, flow/persistence/",
-          "label": "CODE"
-        },
-        "openai": {
-          "value": "No",
-          "note": "Its hashes are internal fingerprints, not record integrity.",
-          "source": "session_persistence.py:909-915",
           "label": "CODE"
         },
         "mastra": {
@@ -599,12 +554,6 @@
           "source": "checkpointing.mdx:31-47",
           "label": "DOCS"
         },
-        "openai": {
-          "value": "Partial",
-          "note": "A paused run can be saved and resumed; crash recovery needs Temporal, Dapr, Restate or DBOS.",
-          "source": "docs/running_agents.md:575-593",
-          "label": "DOCS"
-        },
         "mastra": {
           "value": "Yes",
           "note": "With persistent storage, active runs restart from the last active step.",
@@ -649,7 +598,7 @@
       "ask": "Can an MCP client (Claude, Cursor, …) connect to it?",
       "verdict": {
         "kind": "level",
-        "text": "Level: n8n, Dify, Mastra and Inngest have one too, and LangGraph and Microsoft's in part. What only Realm does is the first row: its tools work one step at a time, where the others run whole workflows. CrewAI and the OpenAI SDK have no MCP server; Temporal's own MCP server searches its docs and runs no workflows."
+        "text": "Level: n8n, Dify, Mastra and Inngest have one too, and LangGraph and Microsoft's in part. What only Realm does is the first row: its tools work one step at a time, where the others run whole workflows. CrewAI has no MCP server; Temporal's own MCP server searches its docs and runs no workflows."
       },
       "cells": {
         "realm": {
@@ -669,12 +618,6 @@
           "note": "No MCP server in the open-source code.",
           "source": "grep lib/",
           "label": "CODE"
-        },
-        "openai": {
-          "value": "No",
-          "note": "Client only.",
-          "source": "docs/mcp.md",
-          "label": "DOCS"
         },
         "mastra": {
           "value": "Yes",
@@ -741,12 +684,6 @@
           "source": "mcp/overview.mdx",
           "label": "DOCS"
         },
-        "openai": {
-          "value": "Yes",
-          "note": "Hosted, Streamable HTTP, SSE, stdio, with approvals and filters.",
-          "source": "docs/mcp.md",
-          "label": "DOCS"
-        },
         "mastra": {
           "value": "Yes",
           "note": "MCPClient over stdio and Streamable HTTP.",
@@ -794,7 +731,6 @@
         "realm": "YAML + JSON Schema; JavaScript extensions",
         "langgraph": "Python or JS/TS code",
         "crewai": "Python + JSONC/YAML; visual editor on the paid platform",
-        "openai": "Python code (TS SDK separate)",
         "mastra": "TypeScript code; JSON (beta)",
         "maf": "Python, C#, Go code; YAML",
         "temporal": "Code, 8 SDKs",
@@ -810,7 +746,6 @@
         "realm": "CLI, MCP, library, webhooks. No UI",
         "langgraph": "Library, CLI, API, Studio, cloud",
         "crewai": "CLI, SDK, platform UI and API",
-        "openai": "SDK only",
         "mastra": "CLI, SDK, API, Studio UI, cloud",
         "maf": "SDK; DevUI sample; Azure Foundry",
         "temporal": "CLI, SDKs, Web UI, Cloud",
@@ -826,7 +761,6 @@
         "realm": "Self-hosted; JSON files on one machine",
         "langgraph": "Both; SQLite, Postgres, MongoDB (server: Postgres + Redis)",
         "crewai": "Both; SQLite, LanceDB",
-        "openai": "In your process; optional session stores",
         "mastra": "Both; about 20 storage adapters",
         "maf": "Both; file, Cosmos DB, Foundry",
         "temporal": "Both; Cassandra, Postgres, MySQL",
@@ -842,7 +776,6 @@
         "realm": "Apache-2.0",
         "langgraph": "MIT (Agent Server: Elastic-2.0)",
         "crewai": "MIT",
-        "openai": "MIT",
         "mastra": "Apache-2.0 + source-available ee/",
         "maf": "MIT",
         "temporal": "MIT",
@@ -858,7 +791,6 @@
         "realm": "2026-06",
         "langgraph": "2024-01",
         "crewai": "2023-11",
-        "openai": "2025-03",
         "mastra": "2024-10",
         "maf": "2025-10",
         "temporal": "2020-09 (1.0)",
@@ -880,10 +812,6 @@
     "crewai": {
       "stronger": "Role-based multi-agent crews; memory and knowledge; A2A; a large tool catalogue; on the paid platform, email review with the reviewer checked.",
       "weaker": "A manager LLM can decide the order; output_json can continue unvalidated; open-source reviews record no one and have no time limit; no MCP server."
-    },
-    "openai": {
-      "stronger": "Few concepts; handoffs and guardrails; tracing with a hosted dashboard; strict JSON schema by default; voice and realtime agents.",
-      "weaker": "The model decides the next step; a schema failure ends the run with no retry; approvals cover tool calls only; no crash recovery of its own."
     },
     "mastra": {
       "stronger": "One TypeScript stack for agents, memory, RAG and evals; about 20 storage backends; Studio with time travel; scheduled workflows; MCP on the latest spec.",

@@ -55,20 +55,15 @@ function check(d) {
     if (Date.parse(`${t.checked}T00:00:00Z`) > today + DAY)
       fail(`tool ${t.key} checked`, `${t.checked} is in the future`);
   }
-  if (!keys.includes('realm'))
-    fail('tools', 'has no tool with key "realm"; the page highlights and summarises that column');
-  // The table header joins neighbouring tools of one group under one heading, so a group must be contiguous.
-  const seen = [];
-  for (const t of d.tools) {
-    if (seen.at(-1) !== t.group) {
-      if (seen.includes(t.group))
-        fail(
-          `tool ${t.key} group`,
-          `"${t.group}" appears in two places; list a group's tools together`,
-        );
-      seen.push(t.group);
-    }
-  }
+  if (keys[0] !== 'realm')
+    fail('tools', 'must start with the tool whose key is "realm"; the page shows Realm first');
+  // The other tools are listed in an order the page states, so the document must say what it rests on.
+  object('order', d.order);
+  text('order by', d.order.by);
+  if (!DATE.test(d.order.on ?? '') || Number.isNaN(Date.parse(`${d.order.on}T00:00:00Z`)))
+    fail('order on', 'is not a YYYY-MM-DD date');
+  if (Date.parse(`${d.order.on}T00:00:00Z`) > today + DAY)
+    fail('order on', `${d.order.on} is in the future`);
 
   const perTool = (where, cells) => {
     object(where, cells);
@@ -168,6 +163,8 @@ for (const t of doc.tools) {
 
 export const comparison = doc;
 export const tools = doc.tools;
+/** What the order of the tools after Realm rests on, and the date it was read. */
+export const order = doc.order;
 export const rows = doc.rows;
 /** The facts rows; the page shows every one of them. */
 export const facts = doc.facts;
