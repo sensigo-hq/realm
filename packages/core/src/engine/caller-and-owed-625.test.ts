@@ -1,6 +1,7 @@
 // caller-and-owed-625.test.ts — issue #625 PR-2a, round 17 (the scoped walk on round 16):
 // - decision C133 (W3-R1): `advanceRun`'s `caller` is one of five words; any other value throws at
-//   the admission step, before anything is read or written — the value named, the five listed;
+//   the admission step, before anything is read or written — the value named, the five listed (its
+//   code `VALIDATION_CALLER_INVALID` since decision C144);
 // - decision C134 (W1-Y2): the answer act outside the opening reply says the conversation that opened
 //   the question passes back the claim_token it was given then (the opening reply is unchanged);
 // - decision C135 (W2-Y1): a refused answer whose choice was not recorded — a late answer the expiry
@@ -19,7 +20,7 @@ import {
   expiryCarriedOutLine,
   submitHumanResponse,
 } from './execution-loop.js';
-import { ADVANCE_CALLERS } from './advance-caller.js';
+import { ADVANCE_CALLERS } from './callers.js';
 import { answerAction, describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -102,8 +103,9 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
           onExpiry: (line) => lines.push(line),
         }),
       ).rejects.toMatchObject({
-        code: 'ENGINE_INTERNAL',
-        agentAction: 'stop',
+        code: 'VALIDATION_CALLER_INVALID',
+        category: 'VALIDATION',
+        agentAction: 'report_to_user',
         message: `advanceRun's caller is one of advanceRun, advance_run, advance, start_run, agent; it was given ${named}. To label the reply with a word of your own, pass command. Nothing was read or written.`,
       });
       // (a) red when the refusal read or wrote the store, or told onExpiry; (b) prints them.
@@ -293,7 +295,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
           gateId,
           'q',
           { on_expiry: 'settle_default', choice: 'approve' },
-          'execute_step',
+          'executeStep',
         ),
       ],
     });

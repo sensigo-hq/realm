@@ -91,6 +91,9 @@ export type ErrorCode =
   // environment-supplied name) is malformed — empty, over 200 characters, carrying a control
   // character, or not a well-formed `Attributed`. Refused before anything is read or written.
   | 'VALIDATION_ACTOR_INVALID'
+  // issue #625 PR-2a (decisions C144, C151): a `caller` a host passed to an engine entry is not one
+  // of that entry's words (`ENTRY_CALLERS`). Refused before anything is read or written.
+  | 'VALIDATION_CALLER_INVALID'
   | 'STEP_HANDLER_ERROR'
   // ENGINE
   | 'ENGINE_INTERNAL'

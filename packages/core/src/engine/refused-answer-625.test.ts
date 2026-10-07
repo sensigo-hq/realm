@@ -3,8 +3,8 @@
 //   offers `advance_run` and says its time is up, never the answer (which could not be recorded);
 // - decision C118 (W1-Y2): a refused answer routes by C94's rule and its hint names the open question
 //   (its step and gate id) — or says its time is up — or that none is open;
-// - decision C122 (W3-Y1): the late answer's line is C105's — this submit_human_response call carried
-//   the expiry out, or another call had;
+// - decision C122 (W3-Y1): the late answer's line is C105's — this call carried the expiry out, or
+//   another call had (a program's own `submitHumanResponse` names itself since decision C151);
 // - decision C124 (W3-Y3): `advanceRun`'s caller names itself, on the reply and on the line;
 // - decision C125 (W1-Y1): the answer act outside the opening reply says where the question's text is.
 //
@@ -21,6 +21,7 @@ import {
   type AdvanceCaller,
   type EnactedVia,
 } from './execution-loop.js';
+import { ENTRY_CALLERS } from './callers.js';
 import { answerAction, describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { RunStore } from '../store/store-interface.js';
@@ -193,8 +194,8 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         });
         const line =
           onExpiry === 'settle_default'
-            ? `gate '${gateId}' on 'q' had expired — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit).`
-            : `gate '${gateId}' on 'q' had expired — this submit_human_response call first carried out its declared abort: the run ended (enacted_via: submit).`;
+            ? `gate '${gateId}' on 'q' had expired — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`
+            : `gate '${gateId}' on 'q' had expired — this submitHumanResponse call first carried out its declared abort: the run ended (enacted_via: submitHumanResponse).`;
         // (a) red when the line says "before this response arrived", "expired 0m ago", or is not the
         // composer's; (b) prints the warnings.
         expect({ legacy, onExpiry, choice, warnings: reply.warnings.slice(0, 1) }).toEqual({
@@ -257,16 +258,28 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
   });
 
   it("C124: expiryCarriedOutLine, every member of enacted_via's vocabulary — the call each word names; another call's line", () => {
+    // decision C151: each word is the call it names — the library functions, the MCP tools, the CLI
+    // commands — and `timer`; every entry's callers are members.
     const members: Array<[EnactedVia, string]> = [
       ['advanceRun', 'advanceRun'],
       ['advance_run', 'advance_run'],
       ['advance', 'advance'],
       ['start_run', 'start_run'],
       ['agent', 'agent'],
+      ['executeStep', 'executeStep'],
+      ['executeEngineStep', 'executeEngineStep'],
+      ['executeChain', 'executeChain'],
       ['execute_step', 'execute_step'],
-      ['submit', 'submit_human_response'],
+      ['run', 'run'],
+      ['submitHumanResponse', 'submitHumanResponse'],
+      ['submit_human_response', 'submit_human_response'],
+      ['respond', 'respond'],
       ['timer', 'timer'],
     ];
+    // (a) red when an entry gains a caller this list does not hold; (b) prints both sets.
+    expect(new Set([...Object.values(ENTRY_CALLERS).flat(), 'timer'])).toEqual(
+      new Set(members.map(([via]) => via)),
+    );
     for (const [via, call] of members) {
       // (a) red when a member names the wrong call or drops enacted_via; (b) prints the line.
       expect(expiryCarriedOutLine('g1', 's', { on_expiry: 'abort' }, via)).toBe(
@@ -279,7 +292,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         'g1',
         's',
         { on_expiry: 'settle_default', choice: 'c' },
-        'submit',
+        'submitHumanResponse',
         false,
       ),
     ).toBe(

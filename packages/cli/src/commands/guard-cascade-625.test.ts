@@ -18,6 +18,7 @@ import {
   JsonWorkflowStore,
   ExtensionRegistry,
   executeStep,
+  expiryCarriedOutLine,
   drainFinalizers,
   captureEvidence,
   DRAIN_LEASE_MAX,
@@ -40,6 +41,18 @@ const DRAIN_DEPS: DrainRuntimeDeps = {
   captureEvidence,
   drainLeaseMax: DRAIN_LEASE_MAX,
 };
+
+/**
+ * decision C146: the first line a late `realm run respond` prints — this command carried out the
+ * question's expiry, in core's words, with `realm run advance`'s `⚠ `.
+ */
+const respondCarriedOut = (gateId: string, choice?: string): string =>
+  `⚠ ${expiryCarriedOutLine(
+    gateId,
+    'confirm',
+    choice !== undefined ? { on_expiry: 'settle_default', choice } : { on_expiry: 'abort' },
+    'respond',
+  )}`;
 
 const LATE_SAME_CHOICE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
@@ -292,6 +305,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when respond prints `Responded:` for an answer the expiry beat, joins the expiry
       //     sentence and the guard's on one line, or drops any of the four; (b) prints stdout.
       expect(stdout()).toEqual([
+        respondCarriedOut(gateId, 'reject'),
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
         `Reason: ${NOT_APPROVED}`,
@@ -315,6 +329,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // decision C135: after `Not recorded:`, what the run owes — here the agent step `finish` is
       // ready, the on-time answer's ready line.
       expect(stdout()).toEqual([
+        respondCarriedOut(gateId, 'approve'),
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
@@ -336,6 +351,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when the refused late answer does not say the run ended, drops `guards` from the
       //     refused reply, or omits the state line; (b) prints stderr.
       expect(stderr()).toEqual([
+        respondCarriedOut(gateId, 'reject'),
         `Gate '${gateId}' was settled by timeout with choice 'reject' — your choice 'approve' was not recorded.`,
         "Guard step 'check' aborted the run.",
         `Reason: ${NOT_APPROVED}`,
@@ -357,6 +373,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       //     choice would not learn the guard passed and the run goes on; (b) prints stderr.
       // decision C135: after `Not recorded:`, what the run owes — the agent step `finish` is ready.
       expect(stderr()).toEqual([
+        respondCarriedOut(gateId, 'approve'),
         `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
@@ -408,6 +425,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when a `Not recorded:` line with an invented choice is printed for a gate whose
       //     expiry settled none; (b) prints stderr.
       expect(stderr()).toEqual([
+        respondCarriedOut(gateId),
         `Gate '${gateId}' on 'confirm' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.`,
       ]);
       expect(code).toBe(1);
@@ -458,6 +476,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when the late arm prints no owed line, or another than the on-time arm's;
       //     (b) prints stderr.
       expect(stderr()).toEqual([
+        respondCarriedOut(gateId, 'approve'),
         `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
         owed.split('<id>').join(runId),
@@ -478,6 +497,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when the late arm prints no owed line, or another than the on-time arm's;
       //     (b) prints stdout.
       expect(stdout().flatMap((s) => s.split('\n'))).toEqual([
+        respondCarriedOut(gateId, 'approve'),
         LATE_SAME_CHOICE,
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
         owed.split('<id>').join(runId),

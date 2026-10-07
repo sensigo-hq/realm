@@ -138,6 +138,8 @@ export async function handleSubmitHumanResponse(
     runId: args.run_id,
     gateId: args.gate_id,
     choice: args.choice,
+    // decision C151: an expiry this late answer carries out names the tool.
+    caller: 'submit_human_response',
     ...(registry !== undefined ? { registry } : {}),
     // issue #279 (increment 2, PR-D; design record D-5): stored as checked above (spaces at either
     // end removed); never verified.

@@ -111,8 +111,12 @@ export const PROOF_ABSENT_WORDS: Record<
   proof_unreadable: 'the recorded proof cannot be read',
 };
 
-/** The line an answer the gate's expiry wrote reads after its choice: no answerer, no proof. */
-const SETTLED_BY_EXPIRY_WORDS = "settled by the gate's expiry (no one answered)";
+/**
+ * The line an answer the gate's expiry wrote reads after its choice: no answerer, no proof. The
+ * words hold in every case (decision C147): no answer was recorded in time — none came, or one came
+ * after the time was up and was not recorded (it may itself have carried the expiry out).
+ */
+const SETTLED_BY_EXPIRY_WORDS = "settled by the gate's expiry (no answer in time)";
 
 function describeProof(
   proof: GateClaimVerdict | undefined,
@@ -139,7 +143,7 @@ function describeProof(
  * One answer, one line: `Answer: <choice> · answered by <name> (as stated, not verified) ·
  * proof: <words>`. The answerer is the caller-STATED, unverified name — or `(not stated)` — or,
  * with no parentheses around it so nothing nests, the one unshowable phrase. An answer the gate's
- * expiry wrote reads `Answer: <choice> · settled by the gate's expiry (no one answered)`: no
+ * expiry wrote reads `Answer: <choice> · settled by the gate's expiry (no answer in time)`: no
  * answerer part and no proof part, since both would repeat the same fact.
  */
 export function renderAnswerLine(answer: AnswerView): string {

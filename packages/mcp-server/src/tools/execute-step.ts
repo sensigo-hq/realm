@@ -274,6 +274,8 @@ export async function handleExecuteStep(
   const result = await executeChain(runStore, definition, {
     runId: args.run_id,
     command: args.command,
+    // decision C151: an expiry this call carries out names the tool.
+    caller: 'execute_step',
     input: params,
     dispatcher: makeParamsDispatcher(params),
     ...(registry !== undefined ? { registry } : {}),

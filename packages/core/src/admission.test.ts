@@ -133,7 +133,7 @@ describe('the admission table', () => {
       'store_release_line',
       'registry_release_line',
       'driver_shape',
-      'advance_caller',
+      'caller',
     ]);
   });
 
@@ -216,7 +216,7 @@ describe('the source-text witness: each entry admits as its first statement and 
         'assertReleaseLine',
         'assertRegistryLine',
         'validateDriver',
-        'validateAdvanceCaller',
+        'validateCaller',
       ]) {
         expect(code.match(new RegExp(`\\b${name}\\(`, 'g')) ?? [], `${file}: ${name}`).toEqual([]);
       }

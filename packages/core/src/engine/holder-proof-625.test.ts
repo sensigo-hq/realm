@@ -686,7 +686,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
     // (a) red when the gate-claim sentence repeats "not recorded" or keeps "Only the conversation
     //     that opened the question has one to pass."; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${o.gateId}' on 'confirm' had expired — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit).`,
+      `gate '${o.gateId}' on 'confirm' had expired — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
       'No claim_token was passed.',
     ]);
     expect(reply.warnings.some((w) => w.includes('Only the conversation'))).toBe(false);

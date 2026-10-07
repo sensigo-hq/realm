@@ -79,7 +79,7 @@ import { computeBackoff } from './backoff.js';
 import { evaluateAllPreconditions, evaluateGuardConditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { admitEntry } from '../admission.js';
-import type { AdvanceCaller } from './advance-caller.js';
+import type { AdvanceCaller, AnswerCaller, ChainCaller, StepCaller } from './callers.js';
 import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
@@ -201,6 +201,14 @@ export interface ExecuteStepOptions {
    * what the caller's dispatcher returned). Ignored for every step that is not a bare `auto` step.
    */
   outputSource?: OutputSource;
+  /**
+   * The caller, naming itself (decision C151): the call the expiry line names (`this <caller> call
+   * …`, `enacted_via`) when this call carries out an expired question first. Default
+   * `'executeStep'` (a program's own call); `executeEngineStep` passes its own name (or its
+   * caller's: `realm agent` passes `'agent'`). Any other value THROWS `VALIDATION_CALLER_INVALID`
+   * before anything is read or written (the admission step).
+   */
+  caller?: StepCaller;
 }
 
 export interface SubmitGateOptions {
@@ -245,6 +253,14 @@ export interface SubmitGateOptions {
    * absent ⇒ none recorded.
    */
   driver?: Attributed;
+  /**
+   * The caller, naming itself (decision C151): the call the expiry line names (`this <caller> call
+   * …`, `enacted_via`) when this late answer carries out the question's expiry. Default
+   * `'submitHumanResponse'` (a program's own call); the MCP tool passes `'submit_human_response'`,
+   * `realm run respond` `'respond'`, `realm workflow run` `'run'`, `realm agent` `'agent'`. Any other value
+   * THROWS `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
+   */
+  caller?: AnswerCaller;
 }
 
 export interface ExecuteChainOptions {
@@ -266,6 +282,14 @@ export interface ExecuteChainOptions {
   driver?: Attributed;
   /** @see ExecuteStepOptions.now — threaded to the named step and every step the chain runs. */
   now?: Date;
+  /**
+   * The caller, naming itself (decision C151): the call the expiry line names (`this <caller> call
+   * …`, `enacted_via`) when this call carries out an expired question first — before its named step
+   * or before a step it chains into. Default `'executeChain'` (a program's own call); the MCP tool
+   * passes `'execute_step'`, `realm agent` `'agent'`, `realm workflow run` `'run'`. Any other value THROWS
+   * `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
+   */
+  caller?: ChainCaller;
 }
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
@@ -859,18 +883,26 @@ function refusedAnswerAction(
 
 /**
  * `blocked_reason.suggestion` of a reply that refuses the step it was asked for (decisions C94,
- * C104, C136), from its own `next_actions` — the view's: agent steps (`execute_step`) and the act
- * (`advance_run`), or the open question's answer (`submit_human_response`).
+ * C104, C136, C149), from its own `next_actions` — the view's: agent steps (`execute_step`) and the
+ * act (`advance_run`), or the open question's answer (`submit_human_response`). One sentence per mix
+ * the list can hold, and the act is never called a step: nothing; the answer; the act; steps; steps
+ * and the act. The answer never sits beside a step or the act — while a question is open no step is
+ * eligible, and a question whose time is up is not answerable (round 17's constructed fan-out run
+ * gave the answer alone) — so a list holding it is the answer's.
  */
 function refusalSuggestion(nextActions: readonly NextAction[]): string {
   if (nextActions.length === 0) return 'No other step can be called now.';
-  const only = (tool: string): boolean => nextActions.every((a) => a.instruction?.tool === tool);
-  if (only('submit_human_response')) return 'Answer the open question first, as next_actions says.';
+  const holds = (tool: string): boolean => nextActions.some((a) => a.instruction?.tool === tool);
+  if (holds('submit_human_response'))
+    return 'Answer the open question first, as next_actions says.';
+  const steps = holds('execute_step');
   // decision C136: only the act — the engine's owed work, e.g. after this call carried out an
   // expired question — names no step to call; the sentence names the call next_actions holds.
-  if (only('advance_run')) return 'Call advance_run, as next_actions says.';
-  // Otherwise the list holds agent steps (an open question's answer never sits beside a step or the
-  // act: while a question is open no step is eligible, and an expired one is not answerable).
+  if (!steps) return 'Call advance_run, as next_actions says.';
+  // decision C149: steps beside the act — the sentence names both, and never calls the act a step.
+  if (holds('advance_run')) {
+    return 'Call one of the steps indicated in next_actions, or advance_run, instead.';
+  }
   return 'Call one of the steps indicated in next_actions instead.';
 }
 
@@ -1395,28 +1427,18 @@ const DORMANCY_ADVISORY =
   'settled via the legacy compatibility path — this store does not declare atomic settlement ' +
   '(RunStore.settleStep); upgrade the store to close the fan-out seal race (issue #279)';
 
-// The callers of {@link advanceRun} (decisions C124, C133) — a closed set, checked at admission.
-export type { AdvanceCaller };
+// The callers of the engine's entries (decisions C124, C133, C151) — each entry's closed list,
+// checked at admission (`ENTRY_CALLERS`).
+export type { AdvanceCaller, AnswerCaller, ChainCaller, StepCaller };
 
 /**
- * The vocabulary of `enacted_via` (decisions C95, C105, C122, C124): the call that carried out an
- * expired question's declared `on_expiry`, the word its line ends with. A caller of `advanceRun`
- * ({@link AdvanceCaller}); `execute_step`, a call to another step of the run (its Step 1.5);
- * `submit`, a late answer (`submit_human_response`); `timer`, the process waiting at the question.
+ * The vocabulary of `enacted_via` (decisions C95, C105, C122, C124, C151): the call that carried out
+ * an expired question's declared `on_expiry`, the word its line ends with — the caller of the entry
+ * that carried it out (`advanceRun`, `executeStep`, `executeChain`, `submitHumanResponse`, or the
+ * name the host passed: an MCP tool, a CLI command), or `timer`, the waiting process's own timer
+ * (`realm agent`, `realm workflow run`), which writes a line of its own.
  */
-export type EnactedVia = AdvanceCaller | 'execute_step' | 'submit' | 'timer';
-
-/** The call each `enacted_via` word names on the line — `this <call> call`. */
-const ENACTED_VIA_CALL: Readonly<Record<EnactedVia, string>> = {
-  advanceRun: 'advanceRun',
-  advance_run: 'advance_run',
-  advance: 'advance',
-  start_run: 'start_run',
-  agent: 'agent',
-  execute_step: 'execute_step',
-  submit: 'submit_human_response',
-  timer: 'timer',
-};
+export type EnactedVia = AdvanceCaller | StepCaller | ChainCaller | AnswerCaller | 'timer';
 
 /**
  * The ONE line that says an expired question's declared `on_expiry` was carried out (decisions
@@ -1437,7 +1459,7 @@ export function expiryCarriedOutLine(
       ? `settle_default: the default choice '${outcome.choice}' was recorded`
       : 'abort: the run ended';
   return byThisCall
-    ? `gate '${gateId}' on '${step}' had expired — this ${ENACTED_VIA_CALL[via]} call first carried out its declared ${did} (enacted_via: ${via}).`
+    ? `gate '${gateId}' on '${step}' had expired — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`
     : `gate '${gateId}' on '${step}' had expired — another call had already carried out its declared ${did}.`;
 }
 
@@ -1465,10 +1487,10 @@ async function enactExpiredGateIfDue(
   // issue #625 (holder slice): the program whose call enacts the expiry — named on the cleanup
   // steps its drain runs.
   driver: Attributed | undefined,
-  // issue #625 PR-2a (decisions C95, C124): the call that carries the expiry out, named on the
-  // disclosure line — `execute_step` (Step 1.5) or the advance call's caller (`advanceRun`,
-  // `advance_run`, `advance`, …).
-  via: EnactedVia = 'execute_step',
+  // issue #625 PR-2a (decisions C95, C124, C151): the call that carries the expiry out, named on the
+  // disclosure line — the caller of the entry whose call this is (`executeStep`'s Step 1.5, or an
+  // advance call): its library name, or the name its host passed.
+  via: EnactedVia,
 ): Promise<{ run: RunRecord; disclosure?: string; enacted: boolean }> {
   const gate = run.pending_gate;
   // decision C95: the one predicate the run's view reads too (`dueExpiry`), so the view never
@@ -1495,7 +1517,7 @@ async function enactExpiredGateIfDue(
     return {
       run,
       enacted: false,
-      disclosure: `gate '${gate.gate_id}' on '${gate.step_name}' had expired, but this ${ENACTED_VIA_CALL[via]} call could not carry out its declared ${gate.on_expiry} (${err instanceof Error ? err.message : String(err)}); it went on with the run as it was.`,
+      disclosure: `gate '${gate.gate_id}' on '${gate.step_name}' had expired, but this ${via} call could not carry out its declared ${gate.on_expiry} (${err instanceof Error ? err.message : String(err)}); it went on with the run as it was.`,
     };
   }
 
@@ -1719,11 +1741,26 @@ export async function executeStep(
     storeKind: 'run store',
     registry: options.registry,
     driver: options.driver,
+    caller: options.caller,
   });
+  return executeStepAs(store, definition, options, options.caller ?? 'executeStep');
+}
+
+/**
+ * {@link executeStep} after the admission step, naming the call that carries out an expired question
+ * as `via` (decision C151): its own caller, or — for the named step of `executeChain` and each step
+ * the advance loop runs — the caller of the entry that admitted the call.
+ */
+async function executeStepAs(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteStepOptions,
+  via: EnactedVia,
+): Promise<ResponseEnvelope> {
   // decisions C109, C110: the line Step 1.5's expiry enactment writes rides EVERY reply this call
   // returns, once — core prints nothing, so a reply that dropped it would hide the enactment.
   const expiry: { line?: string } = {};
-  const reply = await executeStepBody(store, definition, options, expiry);
+  const reply = await executeStepBody(store, definition, options, expiry, via);
   return withExpiryLineOnce(reply, expiry.line);
 }
 
@@ -1733,6 +1770,7 @@ async function executeStepBody(
   definition: WorkflowDefinition,
   options: ExecuteStepOptions,
   expiry: { line?: string },
+  via: EnactedVia,
 ): Promise<ResponseEnvelope> {
   // Step 1: Load run.
   let run: RunRecord;
@@ -1766,6 +1804,7 @@ async function executeStepBody(
       options.registry,
       gateExpiryCheckNow,
       options.driver,
+      via,
     );
     run = enacted.run;
     gateExpiryDisclosure = enacted.disclosure;
@@ -4967,6 +5006,8 @@ async function composeExpiredGateEnvelope(
   // issue #625: the verdict the late answer already earned (judged when its gate id matched,
   // before the expiry was found) and the engine inputs the reply's sentence needs.
   answerClaim: { verdict: AnswerClaim | undefined; tokenPresented: boolean },
+  // decision C151: the call this late answer is — named on the expiry line when it carried it out.
+  via: AnswerCaller,
 ): Promise<ResponseEnvelope> {
   const expiryReply = await composeExpiryReply(
     store,
@@ -4977,6 +5018,7 @@ async function composeExpiredGateEnvelope(
     originalChoice,
     now,
     expireResult,
+    via,
   );
   // issue #625 — two facts, both kept, on every form of this reply:
   //  1. this answer was NOT recorded — the gate's expiry beat it. `answer_recorded: false` is the
@@ -5023,6 +5065,7 @@ async function composeExpiryReply(
   originalChoice: string,
   now: Date,
   expireResult: SettlementResult,
+  via: AnswerCaller,
 ): Promise<ResponseEnvelope> {
   let finalRun = expireResult.run;
   let drainWarnings: string[] = [];
@@ -5037,8 +5080,9 @@ async function composeExpiryReply(
       ];
     }
   }
-  // decision C122: the line is C105's — this submit_human_response call carried the expiry out
-  // (`enacted_via: submit`), or, when a racing call had already settled it, that call did.
+  // decisions C122, C151: the line is C105's — this call carried the expiry out (`enacted_via` its
+  // caller: `submitHumanResponse`, or the name its host passed), or, when a racing call had already
+  // settled it, that call did.
   const byThisCall = expireResult.applied;
 
   // settle_default disposition: a 'gate' settled entry bearing this gateId, resolved_by:'timeout'.
@@ -5051,7 +5095,7 @@ async function composeExpiryReply(
       originalGateId,
       stepName,
       { on_expiry: 'settle_default', choice: entry.choice ?? '' },
-      'submit',
+      via,
       byThisCall,
     );
     if (entry.choice === originalChoice) {
@@ -5120,7 +5164,7 @@ async function composeExpiryReply(
       originalGateId,
       stepName,
       { on_expiry: 'abort' },
-      'submit',
+      via,
       byThisCall,
     );
     const err = new WorkflowError(
@@ -5186,7 +5230,10 @@ export async function submitHumanResponse(
     storeKind: 'run store',
     registry: options.registry,
     driver: options.driver,
+    caller: options.caller,
   });
+  // decision C151: the call a late answer that carries out the question's expiry is named by.
+  const via: AnswerCaller = options.caller ?? 'submitHumanResponse';
 
   // 1. Load run.
   let run: RunRecord;
@@ -5310,6 +5357,7 @@ export async function submitHumanResponse(
             now,
             expireResult,
             { verdict: result.gateClaim, tokenPresented: options.claimToken !== undefined },
+            via,
           );
         }
         case 'already_settled': {
@@ -5724,6 +5772,7 @@ export async function submitHumanResponse(
         now,
         expireOutcome,
         { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
+        via,
       );
     }
     let persistedExpiry: RunRecord;
@@ -5758,6 +5807,7 @@ export async function submitHumanResponse(
       now,
       { ...expireOutcome, run: persistedExpiry },
       { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
+      via,
     );
   }
 
@@ -6530,6 +6580,12 @@ export interface ExecuteEngineStepOptions {
   traceBufferStore?: TraceBufferStore;
   driver?: Attributed;
   now?: Date;
+  /**
+   * The caller, naming itself (decision C151): the call the expiry line names when this call
+   * carries out an expired question first. Default `'executeEngineStep'`; `realm agent` passes
+   * `'agent'`. Checked as `executeStep`'s `caller` (the admission step).
+   */
+  caller?: StepCaller;
 }
 
 /**
@@ -6552,6 +6608,21 @@ export async function executeEngineStep(
   definition: WorkflowDefinition,
   options: ExecuteEngineStepOptions,
 ): Promise<ResponseEnvelope> {
+  return engineStepAs(store, definition, options, undefined);
+}
+
+/**
+ * {@link executeEngineStep}'s body. `via` absent: a call of `executeEngineStep` itself — the step
+ * runs through `executeStep`, whose admission step checks the wiring and the caller (default
+ * `'executeEngineStep'`). `via` given: a step of the advance loop, inside an `advanceRun` or
+ * `executeChain` call that admitted its wiring — the step runs naming that call (decision C151).
+ */
+async function engineStepAs(
+  store: RunStore,
+  definition: WorkflowDefinition,
+  options: ExecuteEngineStepOptions,
+  via: EnactedVia | undefined,
+): Promise<ResponseEnvelope> {
   const { step, run } = options;
   // decision C83: the engine runs only its own `auto` steps here — before any read or write.
   const stepDef = definition.steps[step];
@@ -6570,7 +6641,7 @@ export async function executeEngineStep(
       },
     );
   }
-  return executeStep(store, definition, {
+  const stepOptions: ExecuteStepOptions = {
     runId: options.runId,
     command: step,
     input: engineStepInput(definition, run, step),
@@ -6584,7 +6655,13 @@ export async function executeEngineStep(
       : {}),
     ...(options.driver !== undefined ? { driver: options.driver } : {}),
     ...(options.now !== undefined ? { now: options.now } : {}),
-  });
+  };
+  return via === undefined
+    ? executeStep(store, definition, {
+        ...stepOptions,
+        caller: options.caller ?? 'executeEngineStep',
+      })
+    : executeStepAs(store, definition, stepOptions, via);
 }
 
 /**
@@ -6639,6 +6716,11 @@ interface AdvanceLoopContext {
   onTaken?: (step: string, run: RunRecord) => void;
   /** The step `executeChain` ran before the loop (its warnings are rescued); absent for advanceRun. */
   namedStep?: string;
+  /**
+   * The call the loop runs for (decision C151): the caller of the `advanceRun` or `executeChain`
+   * call that admitted it — the call a step's Step 1.5 names when it carries out an expired question.
+   */
+  via: EnactedVia;
 }
 
 /**
@@ -7141,17 +7223,22 @@ async function advanceLoop(
     options.onStep?.(nextAutoStep);
     executions += 1;
     const stepResult = stampStoppedStep(
-      await executeEngineStep(store, definition, {
-        runId: options.runId,
-        step: nextAutoStep,
-        run,
-        registry: options.registry,
-        ...(options.traceBufferStore !== undefined
-          ? { traceBufferStore: options.traceBufferStore }
-          : {}),
-        ...(options.driver !== undefined ? { driver: options.driver } : {}),
-        ...(options.now !== undefined ? { now: options.now } : {}),
-      }),
+      await engineStepAs(
+        store,
+        definition,
+        {
+          runId: options.runId,
+          step: nextAutoStep,
+          run,
+          registry: options.registry,
+          ...(options.traceBufferStore !== undefined
+            ? { traceBufferStore: options.traceBufferStore }
+            : {}),
+          ...(options.driver !== undefined ? { driver: options.driver } : {}),
+          ...(options.now !== undefined ? { now: options.now } : {}),
+        },
+        options.via,
+      ),
       nextAutoStep,
     );
     if (stepResult.status === 'blocked' && stepResult.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
@@ -7382,6 +7469,7 @@ export async function advanceRun(
       ...(options.now !== undefined ? { now: options.now } : {}),
       ...(options.onStep !== undefined ? { onStep: options.onStep } : {}),
       ...(options.onTaken !== undefined ? { onTaken: options.onTaken } : {}),
+      via: caller,
     },
     {
       run: stored,
@@ -7447,7 +7535,11 @@ export async function executeChain(
     storeKind: 'run store',
     registry: options.registry,
     driver: options.driver,
+    caller: options.caller,
   });
+  // decision C151: the call an expiry this call carries out is named by — before its named step or
+  // a step it chains into.
+  const via: ChainCaller = options.caller ?? 'executeChain';
 
   // Defense-in-depth: never drive a run that is already terminal. The eligibility guard
   // (findEligibleSteps) makes this unreachable in normal operation, but guarding the chain
@@ -7493,8 +7585,9 @@ export async function executeChain(
     };
   }
 
-  const effectiveOptions: ExecuteChainOptions = {
-    ...options,
+  const { caller: _caller, ...stepOptions } = options;
+  const effectiveOptions: ExecuteStepOptions = {
+    ...stepOptions,
     registry: options.registry ?? createDefaultRegistry(),
   };
   const chained: ChainedStepEntry[] = [];
@@ -7507,7 +7600,7 @@ export async function executeChain(
 
   // The named step, through the caller's dispatcher (a bare named step records `driven_step`).
   const named = stampStoppedStep(
-    await executeStep(store, definition, effectiveOptions),
+    await executeStepAs(store, definition, effectiveOptions, via),
     options.command,
   );
   let result: ResponseEnvelope = named;
@@ -7551,6 +7644,7 @@ export async function executeChain(
           ...(options.driver !== undefined ? { driver: options.driver } : {}),
           ...(options.now !== undefined ? { now: options.now } : {}),
           namedStep: options.command,
+          via,
         },
         { run, result: named, chainedSteps: chained, depth0Warnings, takenSteps },
       );

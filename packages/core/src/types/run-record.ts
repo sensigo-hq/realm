@@ -439,7 +439,7 @@ export interface EvidenceSnapshot {
    * supplied. RECORDED, not enforced (D-5: the bearer-gateId-as-sole-credential model stays the
    * authority; no arm reads this field). Present on `gate_response` evidence entries whose caller
    * supplied `respondedBy`/`responded_by` — and on the entry the gate's EXPIRY writes, as the literal
-   * `'timeout'` beside `resolution` (no one answered; never migrated — the step view reads such an
+   * `'timeout'` beside `resolution` (no answer was recorded in time; never migrated — the step view reads such an
    * entry as `settled_by_expiry`, keyed on `resolution`).
    */
   responded_by?: string;

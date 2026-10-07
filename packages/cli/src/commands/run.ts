@@ -389,6 +389,8 @@ export const runCommand = new Command('run')
               runId,
               gateId: g.gate_id,
               choice,
+              // decision C151: an expiry this late answer carries out names `realm workflow run`.
+              caller: 'run',
               // Thread the resolved project registry so a gate-completed run fires its
               // finalizers with project handlers (same registry passed to executeChain below).
               registry,
@@ -510,6 +512,8 @@ export const runCommand = new Command('run')
           const result = await executeChain(store, definition, {
             runId,
             command: stepName,
+            // decision C151: an expiry this call carries out names `realm workflow run`.
+            caller: 'run',
             input: userOutput,
             dispatcher,
             registry,

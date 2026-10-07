@@ -392,6 +392,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           runId,
           gateId: gate.gate_id,
           choice: exactMatch,
+          // decision C151: an expiry this late answer carries out names `realm agent`.
+          caller: 'agent',
           ...(registry !== undefined ? { registry } : {}),
           ...(driver !== undefined ? { driver } : {}),
         });

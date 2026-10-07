@@ -18,6 +18,9 @@
 // - decisions C135, C136 (the walk on round 16, W2-Y1, W5-Y3): a refused answer whose choice was not
 //   recorded keeps `report_to_user` and its hint ends with what the run owes; a `blocked` reply whose
 //   `next_actions` hold only `advance_run` says to call it.
+// - decision C151 (the walk on the final build, W5-Y2): each tool that carries out an expired question
+//   names itself on the line — `execute_step`, `submit_human_response` — while a program's own call
+//   of the library function names the function.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -549,4 +552,34 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       ],
     });
   });
+  it.each([['settle_default'], ['abort']] as const)(
+    'C151, W5-Y2: execute_step and submit_human_response that carry out an expired %s name the tool on the line',
+    async (onExpiry) => {
+      const lines: Record<string, string[]> = {};
+      for (const tool of ['execute_step', 'submit_human_response'] as const) {
+        const d = gated(`rae-c151-${tool}-${onExpiry}`, onExpiry);
+        const { runId, gateId } = await expiredGate(d, true);
+        const reply =
+          tool === 'execute_step'
+            ? await handleExecuteStep(
+                { run_id: runId, command: 'after', params: {} },
+                { runStore, workflowStore },
+              )
+            : await handleSubmitHumanResponse(
+                { run_id: runId, gate_id: gateId, choice: 'reject' },
+                { runStore, workflowStore },
+              );
+        const did =
+          onExpiry === 'settle_default'
+            ? "settle_default: the default choice 'approve' was recorded"
+            : 'abort: the run ended';
+        lines[tool] = reply.warnings.filter((w) => w.includes('had expired'));
+        // (a) red when the tool stops passing its own name (the library default, executeChain or
+        // submitHumanResponse, shows instead); (b) prints the lines.
+        expect(lines[tool]).toEqual([
+          `gate '${gateId}' on 'confirm' had expired — this ${tool} call first carried out its declared ${did} (enacted_via: ${tool}).`,
+        ]);
+      }
+    },
+  );
 });

@@ -122,12 +122,17 @@ export {
 export type {
   AdvanceRunOptions,
   AdvanceCaller,
+  StepCaller,
+  ChainCaller,
+  AnswerCaller,
   EnactedVia,
   ExecuteEngineStepOptions,
   OutputSource,
   GuardEnding,
 } from './engine/execution-loop.js';
 export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/execution-loop.js';
+// Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
+export { ENTRY_CALLERS } from './engine/callers.js';
 // Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
 export {
   PRE_CLAIM_REFUSALS,

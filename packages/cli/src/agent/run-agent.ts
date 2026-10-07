@@ -681,6 +681,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               exitReply = await executeEngineStep(deps.store, definition, {
                 runId,
                 step: first,
+                // decision C151: an expiry this call carries out names `realm agent`.
+                caller: 'agent',
                 run: currentRun,
                 registry: deps.registry,
                 ...(deps.traceBufferStore !== undefined
@@ -1472,6 +1474,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           result = await executeChain(deps.store, definition, {
             runId,
             command: stepName,
+            // decision C151: an expiry this call carries out names `realm agent`.
+            caller: 'agent',
             input: stepInput,
             dispatcher: async () => stepInput,
             registry: deps.registry,

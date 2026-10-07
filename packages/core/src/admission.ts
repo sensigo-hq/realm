@@ -20,7 +20,7 @@
  */
 import { assertReleaseLine, assertRegistryLine } from './release-line.js';
 import { validateDriver } from './engine/holder.js';
-import { validateAdvanceCaller } from './engine/advance-caller.js';
+import { validateCaller } from './engine/callers.js';
 import { ExtensionRegistry } from './extensions/registry.js';
 
 /** The engine functions that admit their calls here. A source-text witness pins each call. */
@@ -43,7 +43,10 @@ export interface HostWiring {
   storeKind: 'run store' | 'workflow store';
   registry?: unknown;
   driver?: unknown;
-  /** `advanceRun`'s `caller` (decision C133): one of five words, never a free label. */
+  /**
+   * The entry's `caller` (decisions C133, C151): a word from the entry's own list
+   * (`ENTRY_CALLERS`), never a free label.
+   */
   caller?: unknown;
 }
 
@@ -68,8 +71,8 @@ export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
     check: (_entry, w) => validateDriver(w.driver),
   },
   {
-    id: 'advance_caller',
-    check: (_entry, w) => validateAdvanceCaller(w.caller),
+    id: 'caller',
+    check: (entry, w) => validateCaller(entry, w.caller),
   },
 ];
 

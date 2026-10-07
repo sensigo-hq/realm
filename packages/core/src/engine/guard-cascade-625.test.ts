@@ -1038,7 +1038,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(ran.status).toBe('ok');
       // (a) red when the disclosure line does not name the guard the expiry's write settled;
       //     (b) prints the warnings that mention the enactment.
-      expect(ran.warnings.filter((w) => w.includes('enacted_via: execute_step'))).toEqual([
+      expect(ran.warnings.filter((w) => w.includes('(enacted_via: executeStep).'))).toEqual([
         expect.stringContaining("Guard step 'check' passed."),
       ]);
 
@@ -1057,7 +1057,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       });
       // (a) red when the disclosure line does not say the guard ended the run, or drops its
       //     reason; (b) prints the warnings that mention the enactment.
-      expect(refused.warnings.filter((w) => w.includes('enacted_via: execute_step'))).toEqual([
+      expect(refused.warnings.filter((w) => w.includes('(enacted_via: executeStep).'))).toEqual([
         expect.stringContaining(
           "Guard step 'check' aborted the run. Reason: Not approved (timed out to reject).",
         ),

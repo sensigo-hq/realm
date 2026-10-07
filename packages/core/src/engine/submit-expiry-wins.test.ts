@@ -115,7 +115,9 @@ describe.each([
       expect(envelope.context_hint).toBe(
         'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
       );
-      expect(envelope.warnings?.some((w) => w.includes('enacted_via: submit'))).toBe(true);
+      expect(
+        envelope.warnings?.some((w) => w.includes('(enacted_via: submitHumanResponse).')),
+      ).toBe(true);
 
       const finalRun = await store.get(run.id);
       expect(finalRun.settled?.['approve']).toMatchObject({

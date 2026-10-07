@@ -46,7 +46,7 @@ export const ACTOR_ABSENT_CAUSES = [
   'name_unreadable',
   // An answer whose caller stated no name (produced by the step view).
   'not_stated',
-  // An answer the gate's expiry wrote: no one answered (produced by the step view).
+  // An answer the gate's expiry wrote: no answer was recorded in time (produced by the step view).
   'settled_by_expiry',
 ] as const;
 export type ActorAbsentCause = (typeof ACTOR_ABSENT_CAUSES)[number];
