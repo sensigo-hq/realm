@@ -1,0 +1,105 @@
+---
+// The site menu of the home, how-it-works and comparison pages: the logo, the links (src/data/nav.js)
+// and the light/dark switch. The docs pages show the same links through Starlight's header
+// (src/components/DocsHeaderLinks.astro).
+//
+// On a screen narrower than 50rem, the width below which Starlight folds the docs header into its
+// own menu button, the links and the switch fold behind a menu button too, as the docs header does.
+// The button comes before them in the page, so a keyboard user who opens the menu tabs straight into
+// it. The folding needs the scripts below: a browser with scripts off never sees the button (the
+// styles show it only under the `site-menu-js` class), and the links stay on show under the logo.
+import { nav } from '../data/nav.js';
+import Logo from './Logo.astro';
+import ThemeToggle from './ThemeToggle.astro';
+
+interface Props {
+  /** The link of the page being shown, marked as the current page in the menu. */
+  current?: string;
+}
+const { current } = Astro.props;
+---
+
+<script is:inline>
+  // Runs before the menu is drawn: from here on the panel stays folded on a narrow screen until opened,
+  // so it never shows for a moment while the page loads.
+  document.documentElement.classList.add('site-menu-js');
+</script>
+<nav class="site" aria-label="Site" data-site-nav>
+  <a class="brand" href="/" aria-label="Realm"><Logo /></a>
+  <button class="menu-btn" type="button" aria-label="Menu" aria-controls="site-menu" aria-expanded="false">
+    <svg class="open-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
+      ><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"></path></svg
+    >
+    <svg class="close-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
+      ><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"></path></svg
+    >
+  </button>
+  <div class="nav-panel" id="site-menu">
+    <div class="links">
+      {nav.map((l) => <a href={l.href} aria-current={l.href === current ? 'page' : undefined}>{l.label}</a>)}
+    </div>
+    <ThemeToggle />
+  </div>
+</nav>
+<script is:inline>
+  (function () {
+    var nav = document.querySelector('[data-site-nav]');
+    if (!nav) return;
+    var btn = nav.querySelector('.menu-btn');
+    var panel = nav.querySelector('#site-menu');
+    var wide = window.matchMedia('(min-width: 50rem)');
+    function isOpen() {
+      return nav.getAttribute('data-menu') === 'open';
+    }
+    function set(open) {
+      nav.setAttribute('data-menu', open ? 'open' : 'closed');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    set(false);
+    btn.addEventListener('click', function () {
+      set(!isOpen());
+    });
+    function inMenu(el) {
+      return el === btn || panel.contains(el);
+    }
+    // Escape closes the menu while focus is on the button or in the menu, and gives focus back to the
+    // button. Pressed elsewhere on the page, it leaves the menu alone, so the page does not jump.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && isOpen() && inMenu(document.activeElement)) {
+        set(false);
+        btn.focus();
+      }
+    });
+    // Leaving the page closes the menu, so coming Back to it shows the menu closed. Opening a link in a
+    // new tab or window does not leave the page, so the menu stays as it was.
+    window.addEventListener('pagehide', function () {
+      set(false);
+    });
+    // Crossing 50rem hides either the button (wider) or the folded menu (narrower), and focus moves to
+    // what is now on show in its place: from the button to the first link, from a link or the switch
+    // to the button.
+    function refocus(lost) {
+      if (wide.matches) {
+        if (lost === btn) panel.querySelector('a').focus();
+      } else if (!isOpen() && panel.contains(lost)) {
+        btn.focus();
+      }
+    }
+    wide.addEventListener('change', function () {
+      var had = inMenu(document.activeElement) ? document.activeElement : null;
+      set(false);
+      if (had) refocus(had);
+    });
+    // The browser sometimes drops focus from the hidden element before the change above runs. Losing
+    // focus to nothing (no relatedTarget) is what hiding causes; a Tab or a click on another control
+    // names where focus went and is left alone, and so is a click on plain page text, which leaves the
+    // element on show.
+    nav.addEventListener('focusout', function (e) {
+      if (e.relatedTarget) return;
+      var lost = e.target;
+      setTimeout(function () {
+        if (document.activeElement === document.body && lost.offsetParent === null) refocus(lost);
+      });
+    });
+  })();
+</script>

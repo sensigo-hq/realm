@@ -101,3 +101,10 @@ h1#_top {
 .expressive-code .frame pre {
   border-radius: 3px;
 }
+
+/* The 404 page (written by scripts/sync-docs.mjs) is the site's only Starlight hero, and it has no
+   image. Starlight still keeps a second column for one on a wide screen, which pushed the last button
+   onto a row of its own; without an image the hero uses the full width. */
+.hero:not(:has(> img, > .hero-html)) {
+  grid-template-columns: 100%;
+}

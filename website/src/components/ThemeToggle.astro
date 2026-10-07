@@ -1,11 +1,11 @@
 ---
-// The light/dark switch in the menu of the home and how-it-works pages.
+// The light/dark switch in the site menu (src/components/SiteNav.astro).
 // It shows the icon of the theme in use, as the docs' switch does, and saves the choice under the
 // same key (src/lib/theme-init.mjs), so a choice made on any page holds on every page.
 import { THEME_KEY } from '../lib/theme-init.mjs';
 ---
 
-<button class="theme-btn" type="button" data-theme-toggle>
+<button class="theme-btn" type="button" data-theme-toggle hidden>
   <svg class="moon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"
     ><path fill="currentColor" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path></svg
   >
@@ -23,6 +23,8 @@ import { THEME_KEY } from '../lib/theme-init.mjs';
     var d = document.documentElement;
     var btn = document.querySelector('[data-theme-toggle]');
     if (!btn) return;
+    // Hidden in the page's markup: without this script it would be a button with no name that does nothing.
+    btn.hidden = false;
     function label() {
       var next = d.dataset.theme === 'light' ? 'dark' : 'light';
       btn.setAttribute('aria-label', 'Switch to the ' + next + ' theme');

@@ -11,13 +11,13 @@ import {
   jsonLdText,
   markdownPath,
 } from './lib/site-meta.mjs';
-import { DOCS_INDEX_ID } from './data/docs-sidebar.mjs';
+import { DOCS_INDEX_ID, isDocsPageId } from './data/docs-sidebar.mjs';
 
 export const onRequest = defineRouteMiddleware((context) => {
   const route = context.locals.starlightRoute;
   const id = route.id;
-  // Only the docs pages; Starlight's 404 page has no source and no copy.
-  if (id !== DOCS_INDEX_ID && !id.startsWith(`${DOCS_INDEX_ID}/`)) return;
+  // Only the docs pages; the 404 page has no source in ../docs and no copy.
+  if (!isDocsPageId(id)) return;
   const title = route.entry.data.title;
 
   const trail = [

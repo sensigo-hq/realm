@@ -105,6 +105,11 @@ export const DOCS_SIDEBAR = [
 // The docs index (docs/README.md) is reached from the header, not the sidebar.
 export const DOCS_INDEX_ID = 'docs';
 
+/** Whether a content entry is a docs page. The other entry is the 404 page (scripts/sync-docs.mjs). */
+export function isDocsPageId(id) {
+  return id === DOCS_INDEX_ID || id.startsWith(`${DOCS_INDEX_ID}/`);
+}
+
 // Pages kept at their old addresses so that old links still work. Each one only links to the pages
 // that replaced it, so the sidebar and llms.txt leave them out.
 export const REPLACED_PAGE_IDS = [
