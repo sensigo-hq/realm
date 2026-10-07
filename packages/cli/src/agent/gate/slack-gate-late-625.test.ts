@@ -13,9 +13,10 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { JsonFileStore, executeStep, expiryCarriedOutLine } from '@sensigo/realm';
 import type { PendingGate, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { handleBidirectionalGate } from './slack-gate-notifier.js';
@@ -23,6 +24,19 @@ import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 import { LlmProvider } from '../providers/llm-provider.js';
+
+/** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
+const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
+function claimGates215(): void {
+  const page = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../../docs/reference/workflow/gates.md',
+    ),
+    'utf8',
+  ).replace(/\s+/g, ' ');
+  expect(page, `gates.md no longer says: ${GATES_MD_215}`).toContain(GATES_MD_215);
+}
 
 vi.mock('./slack-gate-server.js', () => ({
   startSlackGateServer: vi.fn().mockReturnValue({ close: vi.fn() }),
@@ -166,6 +180,7 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   ): string => `⚠ ${expiryCarriedOutLine(gateId, 'confirm', did, 'agent')}`;
 
   it('C146: another choice — `⚠ … this agent call first carried out …`, the refusal, the guard; posted once and printed once, no "try again"', async () => {
+    claimGates215();
     const def = gated('slack-late-other', 'settle_default');
     const { runId, gate } = await expiredQuestion(def);
 
@@ -185,6 +200,7 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   });
 
   it('C146: the same choice — the line, then the same-choice sentence; posted once and printed once', async () => {
+    claimGates215();
     const def = gated('slack-late-same', 'settle_default');
     const { runId, gate } = await expiredQuestion(def);
 
@@ -202,6 +218,7 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   });
 
   it('C146: abort — the line (`… its declared abort: the run ended …`), then the refusal; posted once and printed once', async () => {
+    claimGates215();
     const def = gated('slack-late-abort', 'abort');
     const { runId, gate } = await expiredQuestion(def);
 

@@ -1,6 +1,9 @@
 // run-agent.test.ts — Tests for runAgent() and MCP tool dispatch.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { InvalidArgumentError } from 'commander';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import type {
@@ -830,6 +833,13 @@ class ConcurrentWriterStore extends InMemoryStore {
 
 describe('runAgent — schema-feedback repair loop (issue #217)', () => {
   it('test 1: repair-success — 2 provider calls; attempt-2 prompt carries the summary, never the raw AJV leak (enum.allowedValues)', async () => {
+    // #625 PR-2a, C163: tools.md's run_version row says this repair reads the refusal's run_version.
+    expect(
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/mcp/tools.md'),
+        'utf8',
+      ).replace(/\s+/g, ' '),
+    ).toContain("`realm agent`'s repair of an answer reads that.");
     const def = agentWorkflow({
       output_schema: {
         type: 'object',

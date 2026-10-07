@@ -182,6 +182,13 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     'C155/C163: %s takes exactly the words its row lists; any other throws VALIDATION_CALLER_INVALID naming it, nothing read or written',
     async (fn, sentence, words) => {
       claim(sentence);
+      claim(
+        'Each of these functions takes a `caller` option for a host that names the call itself; see below.',
+      );
+      claim('The call the expiry line names when this call carries out an expired question first.');
+      claim(
+        'Any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID` before anything is read or written.',
+      );
       const d = gated();
       const { runId, gateId } = await atQuestion(d);
       const call = async (caller: unknown) => {
@@ -265,6 +272,19 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       "Its `context_hint` says `Gate 'decide' resolved with choice 'approve'. Owed to the engine: 'file' — call advance_run.`, and its `next_actions` holds `advance_run`.",
     );
     claim('It runs no `auto` step: call `advanceRun` for the steps the answer made ready.');
+    claim(
+      'Their hints and `next_actions` name MCP tools — `get_run_state` to read the run, `advance_run` to run what the engine owes — which a program does not have.',
+    );
+    claim(
+      'A program reads the run with `store.get(runId)`, asks `describePending` what the run is waiting for, and calls `advanceRun` where a hint names `advance_run`, or `submitHumanResponse` where `next_actions` names `submit_human_response`',
+    );
+    claim(
+      'Your program then calls `advanceRun` (also imported from `@sensigo/realm`), which runs `file`:',
+    );
+    claim(
+      'Say the workflow has one more step, `file` (`execution: auto`, `depends_on: [decide]`).',
+    );
+    claim('reply = await advanceRun(store, definition, { runId: run.id, registry });');
     const d: WorkflowDefinition = {
       id: 'dc-decide',
       name: 'decide',
@@ -384,6 +404,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   // --- now (lines 102, 119: C150, C157) -------------------------------------------------------
   it('C163 line 102: advanceRun given a number or a string as now throws a TypeError at an open question, before anything is written; with none it runs its steps', async () => {
     claim(
+      "`now` is a `Date`, the time the call judges a question's expiry by (default: the current time).",
+    );
+    claim(
       'Pass a `Date`: given a number or a string, a call that meets an open question throws a `TypeError` (`now.getTime is not a function`) before anything is written, and a call that meets none runs its steps.',
     );
     const d = gated();
@@ -432,6 +455,46 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   );
 
   // --- executeEngineStep, dispatcher, describePending (lines 103, 104, 117) ----------------------
+  it('C163 line 104: executeEngineStep runs one auto step the way the engine runs it — ok, the step completed', async () => {
+    claim('Runs one `auto` step the way the engine runs it.');
+    const d: WorkflowDefinition = {
+      id: 'dc-eng',
+      name: 'e',
+      version: 1,
+      steps: { only: { description: 'O.', execution: 'auto', depends_on: [] } },
+    };
+    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const r = await executeEngineStep(store, d, {
+      runId: run.id,
+      step: 'only',
+      run: await store.get(run.id),
+    });
+    expect([r.status, r.run_phase, (await store.get(run.id)).completed_steps]).toEqual([
+      'ok',
+      'completed',
+      ['only'],
+    ]);
+  });
+
+  it('C163 line 122: submitHumanResponse takes respondedBy — the answer records that name', async () => {
+    claim(
+      '`submitHumanResponse` takes `runId`, `gateId`, `choice`, and optionally, among others, `registry`, `respondedBy` and `caller`.',
+    );
+    const d = gated();
+    const { runId, gateId } = await atQuestion(d);
+    const r = await submitHumanResponse(store, d, {
+      runId,
+      gateId,
+      choice: 'approve',
+      respondedBy: 'alice',
+    });
+    expect(r.status).toBe('ok');
+    const { composeStepViews } = await import('./step-view.js');
+    expect(composeStepViews(await store.get(runId))['q']?.answers?.[0]?.answered_by).toMatchObject({
+      by: 'alice',
+    });
+  });
+
   it('C163 line 104: executeEngineStep on an agent step throws a WorkflowError and writes nothing', async () => {
     claim('For an agent, guard or finalizer step it throws a `WorkflowError` and writes nothing.');
     const d: WorkflowDefinition = {
@@ -453,6 +516,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'A function Realm calls for the step `command` names when it is an agent step, or an `auto` step with neither `uses_service` nor `handler`.',
     );
     claim('`executeChain` does not call it for the steps it runs after that one.');
+    claim(
+      "What it returns is recorded as the agent step's answer, or as that `auto` step's output.",
+    );
     const d: WorkflowDefinition = {
       id: 'dc-disp',
       name: 'd',
@@ -484,10 +550,23 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       dispatcher: async (step: string) => (calls2.push(step), {}),
     });
     expect(calls2).toEqual(['bare']);
+    const ev = (await store.get(run.id)).evidence.find((e) => e.step_id === 'a') as unknown as {
+      output_summary?: unknown;
+    };
+    const ev2 = (await store.get(run2.id)).evidence.find(
+      (e) => e.step_id === 'bare',
+    ) as unknown as { output_summary?: unknown };
+    expect([JSON.stringify(ev?.output_summary), JSON.stringify(ev2?.output_summary)]).toEqual([
+      '{"ok":true}',
+      '{}',
+    ]);
   });
 
   it('C163 line 103: describePending says what a run waits for, with every field the row names', async () => {
     claim('`registry` may be `undefined`; `now` is required — pass `new Date()`.');
+    claim(
+      'Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer) and `agent_actions` (the call for each), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why),',
+    );
     const d = gated();
     const { runId, gateId } = await atQuestion(d);
     const p = describePending(d, await store.get(runId), undefined, new Date());
@@ -508,6 +587,14 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       choices: ['approve', 'reject'],
     });
     expect(describePending(d, await store.get(runId), undefined, LATER()).expiry_due).toBeDefined();
+    expect(describePending(d, await store.get(runId), undefined, LATER()).act).toBeDefined();
+    expect(describePending(d, await store.get(runId), undefined, new Date()).act).toBeUndefined();
+    await submitHumanResponse(store, d, { runId, gateId, choice: 'approve' });
+    const owed = describePending(d, await store.get(runId), undefined, new Date());
+    expect(owed.engine_runnable.map((e) => [e.step, typeof e.runnable_here])).toEqual([
+      ['after', 'boolean'],
+    ]);
+    expect(owed.act).toBeDefined();
   });
 
   // --- driver (lines 125–133) -----------------------------------------------------------------
@@ -553,6 +640,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     claim('The name: text of 1 to 200 characters, not only spaces, with no control character.');
     claim(
       'Your own word for the way the call came in: 1 to 64 characters of `a`–`z`, `0`–`9`, `_` and `-`, such as `cron`.',
+    );
+    claim(
+      'How the name is known: `stated` (your program says it), `ambient` (from the environment, as `REALM_OPERATOR` is) or `derived` (from the OS user).',
     );
     const plain: WorkflowDefinition = {
       id: 'dc-drv',

@@ -13,9 +13,10 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
 vi.mock('node:readline/promises', () => ({
@@ -24,6 +25,16 @@ vi.mock('node:readline/promises', () => ({
 
 import { runCommand } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+
+/** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
+const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
+function claimGates215(): void {
+  const page = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/workflow/gates.md'),
+    'utf8',
+  ).replace(/\s+/g, ' ');
+  expect(page, `gates.md no longer says: ${GATES_MD_215}`).toContain(GATES_MD_215);
+}
 
 const NOT_APPROVED = 'Not approved — stopping the run.';
 const LATE_SAME_CHOICE =
@@ -281,6 +292,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       `  ⚠ gate '${gateId()}' on 'confirm' had expired — this run call first carried out its declared ${did} (enacted_via: run).`;
 
     it('DIFFERENT choice: `⚠ … this run call first carried out …` once, then the refusal and `✗ not recorded`, on stderr', async () => {
+      claimGates215();
       answerPrompts('reject', { pastDeadlineFirst: true });
 
       const code = await run(
@@ -301,6 +313,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }, 30_000);
 
     it('SAME choice: the line once, then the same-choice sentence and `✗ not recorded`, on stdout', async () => {
+      claimGates215();
       answerPrompts('approve', { pastDeadlineFirst: true });
 
       const code = await run(
@@ -320,6 +333,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }, 30_000);
 
     it('abort: the line once, then the refusal and `✗ not recorded → aborted`, on stderr', async () => {
+      claimGates215();
       answerPrompts('approve', { pastDeadlineFirst: true });
 
       const code = await run(workflowYaml({ id: 'prompt-625-race-abort', aborts: true }));
