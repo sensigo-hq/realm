@@ -1,5 +1,6 @@
 ---
-// The light/dark switch in the site menu (src/components/SiteNav.astro).
+// The light/dark switch in the site menu on a wide screen (src/components/SiteNav.astro); on a narrow
+// one the menu ends with the Light/Dark/Auto choice instead (src/components/SiteThemeSelect.astro).
 // It shows the icon of the theme in use, as the docs' switch does, and saves the choice under the
 // same key (src/lib/theme-init.mjs), so a choice made on any page holds on every page.
 import { THEME_KEY } from '../lib/theme-init.mjs';

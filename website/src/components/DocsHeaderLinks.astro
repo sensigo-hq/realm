@@ -1,13 +1,14 @@
 ---
-// The site menu's links in the docs header. It replaces Starlight's SocialIcons (astro.config.mjs ->
-// components), which Starlight shows in two places: at the right of the header on a wide screen, and
-// at the bottom of its menu on a narrow one. The links come from src/data/nav.js, the list the home,
-// how-it-works and comparison pages use (src/components/SiteNav.astro), so every page offers the
-// same ones. A link with an `icon` shows as that icon in the header and as its name in the menu.
+// The site menu's links in the docs header on a wide screen. It replaces Starlight's SocialIcons
+// (astro.config.mjs -> components), which Starlight shows at the right of the header. The links come
+// from src/data/nav.js, the list the home, how-it-works and comparison pages use
+// (src/components/SiteNav.astro), so every page offers the same ones. A link with an `icon` shows as
+// that icon. On a narrow screen the same links sit at the bottom of the menu
+// (src/components/MobileMenuFooter.astro).
 import { Icon } from '@astrojs/starlight/components';
-import { nav } from '../data/nav.js';
+import { ariaCurrent, nav } from '../data/nav.js';
 
-const inDocs = Astro.url.pathname.startsWith('/docs/');
+const here = Astro.url.pathname;
 ---
 
 <nav class="site-links" aria-label="Site">
@@ -15,8 +16,8 @@ const inDocs = Astro.url.pathname.startsWith('/docs/');
     nav.map((l) => (
       <a
         href={l.href}
-        class:list={[{ 'has-icon': l.icon, 'here-link': l.href === '/docs/' && inDocs }]}
-        aria-current={l.href === '/docs/' && inDocs ? 'true' : undefined}
+        class:list={[{ 'has-icon': l.icon, 'here-link': l.href === '/docs/' && ariaCurrent(l.href, here) }]}
+        aria-current={ariaCurrent(l.href, here)}
       >
         {l.icon && <Icon name={l.icon} />}
         <span class="label">{l.label}</span>
@@ -79,33 +80,5 @@ const inDocs = Astro.url.pathname.startsWith('/docs/');
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-  /* In Starlight's menu on a narrow screen: every link by name, one per line, above the theme switch. */
-  :global(.mobile-preferences .social-icons) {
-    flex-basis: 100%;
-  }
-  :global(.mobile-preferences) .site-links {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0;
-    width: 100%;
-    font-size: var(--sl-text-base);
-  }
-  :global(.mobile-preferences) .site-links a {
-    display: inline-flex;
-    padding: 0.6rem 0;
-  }
-  :global(.mobile-preferences) .site-links a + a {
-    border-top: 1px solid var(--sl-color-hairline);
-  }
-  :global(.mobile-preferences) .site-links a.has-icon :global(svg) {
-    display: none;
-  }
-  :global(.mobile-preferences) .site-links a.has-icon .label {
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip-path: none;
   }
 </style>

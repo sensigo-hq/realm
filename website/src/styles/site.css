@@ -116,14 +116,42 @@ ul {
   max-width: 68ch;
 }
 
+/* The bar at the top of the home, how-it-works and comparison pages (src/components/SiteNav.astro).
+   Like the docs header it stays on screen while the page scrolls and runs the whole width, with the
+   docs header's soft line under it: it takes back the body's 16px side padding, and the menu inside
+   keeps the page's 1100px column. The space under it is the page grid's gap, which the menu had when
+   it sat inside the grid. */
+.site-header {
+  z-index: 10;
+  margin: 0 -16px clamp(28px, 4vw, 44px);
+  padding-inline: 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line-soft);
+}
+/* A browser without popovers has no menu button and shows the links as a row of their own under the
+   logo (below), a bar too tall to keep on screen, so there the bar scrolls away with the page. */
+@supports selector(:popover-open) {
+  .site-header {
+    position: sticky;
+    top: 0;
+  }
+}
+/* A link target, or what a Tab reaches, is never left under the bar: the browser keeps 5rem clear
+   above anything in the page when it scrolls it into view. The bar's own links and buttons have no
+   such margin, so focusing them never scrolls the page (a scroll-padding on the whole page would). */
+.wrap,
+.wrap * {
+  scroll-margin-top: 5rem;
+}
 nav.site {
+  max-width: 1100px;
+  margin: 0 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 10px 24px;
   padding: 18px 0;
-  border-bottom: 1px solid var(--line);
 }
 /* The logo (src/components/Logo.astro) is the link; it takes its colours from the palette. */
 .brand {
@@ -153,15 +181,14 @@ nav.site {
   color: var(--accent);
 }
 /* The links and the light/dark switch (src/components/ThemeToggle.astro) sit together at the right
-   end of the menu. On a narrow screen they fold behind the menu button (src/components/SiteNav.astro). */
+   end of the menu. On a narrow screen they give way to the menu button (src/components/SiteNav.astro). */
 nav.site .nav-panel {
   display: flex;
   align-items: center;
   gap: 10px 24px;
   margin-left: auto;
 }
-.theme-btn,
-.menu-btn {
+.theme-btn {
   align-self: center;
   display: inline-grid;
   place-items: center;
@@ -174,8 +201,7 @@ nav.site .nav-panel {
   color: var(--muted);
   border: 1px solid var(--line);
 }
-.theme-btn:hover,
-.menu-btn:hover {
+.theme-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -191,23 +217,70 @@ nav.site .nav-panel {
 :root[data-theme='light'] .theme-btn .sun {
   display: block;
 }
-.menu-btn {
-  display: none;
-}
-.menu-btn .close-icon,
-.menu-btn[aria-expanded='true'] .open-icon {
-  display: none;
-}
-.menu-btn[aria-expanded='true'] .close-icon {
-  display: block;
-}
 /* The switch needs its script for its name and its action, so it shows only once that has run. */
 .theme-btn[hidden] {
   display: none;
 }
+
+/* The menu button and the sheet it opens. The docs pages draw the same button
+   (src/styles/tokens.css, .sl-menu-button) and the same sheet (Starlight's): three plain lines in the
+   colour of the docs' search icon, which turn into an X while the menu is open, and a page-wide panel
+   from the bottom of the header to the bottom of the screen. The button is a 44px target. */
+.menu-btn {
+  display: none;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+/* Only where there is a pointer that hovers: after a tap on a phone the browser keeps the hover
+   state, and the button would stay green. */
+@media (hover: hover) {
+  .menu-btn:hover {
+    color: var(--accent);
+  }
+}
+.menu-btn .close-icon,
+.menu-btn:has(+ :popover-open) .open-icon {
+  display: none;
+}
+.menu-btn:has(+ :popover-open) .close-icon {
+  display: block;
+}
+/* Closed, the sheet is not drawn. A browser without popovers drops the rule below, as it cannot read
+   :popover-open, so the sheet never covers the page there. The sheet holds the block the docs menu
+   ends with (src/components/MenuBottom.astro); here it is the whole menu, so the line it has above it
+   in the docs, under the docs contents, is left out. */
+.menu-sheet {
+  display: none;
+}
+.menu-sheet:popover-open {
+  display: block;
+  position: fixed;
+  inset: 3.5rem 0 0 0;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  padding: 0 16px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  background: var(--bg);
+  color: var(--body);
+}
+.menu-sheet .menu-bottom {
+  border-top: 0;
+}
 /* 50rem is where Starlight folds the docs header into its menu button; the site's pages fold here too.
-   `site-menu-js` is set by src/components/SiteNav.astro before the menu is drawn. With scripts off it
-   is never set: there is no button, and the links show as a row of their own under the logo. */
+   A browser without popovers keeps the links, as a row of their own under the logo. */
 @media (max-width: 49.99rem) {
   nav.site .nav-panel {
     flex-basis: 100%;
@@ -215,37 +288,39 @@ nav.site .nav-panel {
     justify-content: space-between;
     margin-left: 0;
   }
-  :root.site-menu-js nav.site .menu-btn {
-    display: inline-grid;
-  }
-  :root.site-menu-js nav.site:not([data-menu='open']) .nav-panel {
-    display: none;
-  }
-  /* 40px, larger than Starlight's 32px menu button, so both are easy to tap. */
-  .menu-btn,
+  /* The switch in that row keeps the button size of a phone. */
   nav.site .theme-btn {
     width: 40px;
     height: 40px;
   }
-  nav.site[data-menu='open'] .nav-panel {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0;
+  /* With the menu button, the bar takes the docs header's measures (Starlight's 3.5rem, line
+     included, and its 1.75rem logo), so the logo, the button and the top of the sheet sit where they
+     sit on a docs page. The 1px at the top centres them as the docs header does. */
+  @supports selector(:popover-open) {
+    nav.site {
+      --site-logo-height: 1.75rem;
+      box-sizing: border-box;
+      height: calc(3.5rem - 1px);
+      padding: 1px 0 0;
+    }
+    nav.site .nav-panel {
+      display: none;
+    }
+    nav.site .menu-btn {
+      display: inline-grid;
+    }
   }
-  nav.site[data-menu='open'] .links {
-    flex-direction: column;
-    gap: 0;
-    font-size: 16px;
-  }
-  nav.site[data-menu='open'] .links a {
-    padding: 11px 0;
-    border-top: 1px solid var(--line);
-  }
-  nav.site[data-menu='open'] .theme-btn {
-    align-self: flex-start;
-    margin-top: 12px;
+  /* The page under the open sheet stays still, as under the docs menu. */
+  body:has(#site-menu:popover-open) {
+    overflow: hidden;
   }
 }
+@media (min-width: 50rem) {
+  .menu-sheet:popover-open {
+    display: none;
+  }
+}
+
 header.hero {
   display: grid;
   gap: 14px;
