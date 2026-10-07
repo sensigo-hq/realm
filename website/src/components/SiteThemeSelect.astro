@@ -1,0 +1,150 @@
+---
+// The Light/Dark/Auto choice at the bottom of the menu on the home, how-it-works and comparison pages
+// (src/components/SiteNav.astro). It copies the one at the bottom of the docs menu, Starlight's
+// ThemeSelect (src/components/MobileMenuFooter.astro): the same words, icons and look, and the same
+// saved value under the same key (src/lib/theme-init.mjs) — 'dark', 'light', or '' for Auto, which
+// follows the system setting — so a choice made on any page holds on every page. Starlight's own
+// component cannot be used here: it needs Starlight's page around it.
+import { Icon } from '@astrojs/starlight/components';
+import { THEME_KEY } from '../lib/theme-init.mjs';
+---
+
+<label class="theme-select" data-site-theme-select hidden>
+  <span class="sr-only">Select theme</span>
+  <Icon name="sun" class="icon label-icon light" />
+  <Icon name="moon" class="icon label-icon dark" />
+  <Icon name="laptop" class="icon label-icon auto" />
+  <select autocomplete="off">
+    <option value="dark">Dark</option>
+    <option value="light">Light</option>
+    <option value="auto" selected>Auto</option>
+  </select>
+  <Icon name="down-caret" class="icon caret" />
+</label>
+
+<script is:inline define:vars={{ THEME_KEY }}>
+  (function () {
+    var d = document.documentElement;
+    var box = document.querySelector('[data-site-theme-select]');
+    if (!box) return;
+    var select = box.querySelector('select');
+    // Hidden in the page's markup: without this script it would be a choice that changes nothing.
+    box.hidden = false;
+    function stored() {
+      var v = null;
+      try {
+        v = localStorage.getItem(THEME_KEY);
+      } catch (e) {}
+      return v === 'light' || v === 'dark' ? v : 'auto';
+    }
+    function system() {
+      return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    // Shows the saved choice: the option and its icon.
+    function show(choice) {
+      select.value = choice;
+      box.setAttribute('data-choice', choice);
+    }
+    function apply(choice) {
+      show(choice);
+      var theme = choice === 'auto' ? system() : choice;
+      if (d.dataset.theme !== theme) d.dataset.theme = theme;
+      try {
+        localStorage.setItem(THEME_KEY, choice === 'auto' ? '' : choice);
+      } catch (e) {}
+    }
+    select.addEventListener('change', function () {
+      apply(select.value === 'light' || select.value === 'dark' ? select.value : 'auto');
+    });
+    // Auto follows the system setting while the page is open, as it does in the docs.
+    matchMedia('(prefers-color-scheme: light)').addEventListener('change', function () {
+      if (stored() === 'auto') apply('auto');
+    });
+    // The choice can change without this control: the switch in the wide menu (ThemeToggle.astro),
+    // another tab, or coming back with the Back button.
+    new MutationObserver(function () {
+      show(stored());
+    }).observe(d, { attributes: true, attributeFilter: ['data-theme'] });
+    window.addEventListener('storage', function (e) {
+      if (e.key === THEME_KEY) show(stored());
+    });
+    window.addEventListener('pageshow', function () {
+      show(stored());
+    });
+    show(stored());
+  })();
+</script>
+
+<style>
+  /* Starlight's Select (@astrojs/starlight/components/Select.astro), with its widths for this menu. */
+  .theme-select {
+    --label-icon-size: 0.875rem;
+    --caret-size: 1.25rem;
+    --inline-padding: 0.5rem;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    width: max-content;
+    color: var(--c-body);
+  }
+  .theme-select[hidden] {
+    display: none;
+  }
+  .theme-select:hover {
+    color: var(--c-ink);
+  }
+  .icon {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+  .label-icon {
+    display: none;
+    font-size: var(--label-icon-size);
+    inset-inline-start: 0;
+  }
+  .theme-select[data-choice='light'] .label-icon.light,
+  .theme-select[data-choice='dark'] .label-icon.dark,
+  .theme-select:not([data-choice='light'], [data-choice='dark']) .label-icon.auto {
+    display: block;
+  }
+  .caret {
+    font-size: var(--caret-size);
+    inset-inline-end: 0;
+  }
+  select {
+    border: 0;
+    padding-block: 0.625rem;
+    padding-inline: calc(var(--label-icon-size) + var(--inline-padding) + 0.25rem)
+      calc(var(--caret-size) + var(--inline-padding) + 0.25rem);
+    margin-inline: calc(var(--inline-padding) * -1);
+    width: calc(6.25em + var(--inline-padding) * 2);
+    background-color: transparent;
+    font: inherit;
+    text-overflow: ellipsis;
+    color: inherit;
+    cursor: pointer;
+    appearance: none;
+  }
+  select:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+  option {
+    background-color: var(--c-bg);
+    color: var(--c-ink);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+</style>

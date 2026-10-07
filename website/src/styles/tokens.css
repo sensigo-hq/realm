@@ -108,3 +108,30 @@ h1#_top {
 .hero:not(:has(> img, > .hero-html)) {
   grid-template-columns: 100%;
 }
+
+/* The menu button on a narrow screen: the same 40px outlined square as on the home, how-it-works and
+   comparison pages (src/styles/site.css, .menu-btn), in place of Starlight's round filled one. The
+   size is Starlight's own setting, so the header still keeps the room the button needs. Starlight's
+   styles sit in cascade layers, so these win over its light-theme and open-menu colours too. */
+:root {
+  --sl-menu-button-size: 2.5rem;
+}
+.sl-menu-button {
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background-color: var(--sl-color-bg-nav);
+  color: var(--c-muted);
+  box-shadow: none;
+  font-size: 1.25rem;
+}
+.sl-menu-button:hover {
+  color: var(--c-accent);
+  border-color: var(--c-accent);
+}
+.sl-menu-button:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}

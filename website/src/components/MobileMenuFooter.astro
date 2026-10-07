@@ -1,0 +1,18 @@
+---
+// The bottom of the docs menu on a narrow screen: Starlight's Light/Dark/Auto choice alone. Starlight
+// also puts its social icons here; the site links they stand for open the menu instead
+// (src/components/DocsSidebar.astro). The site's other pages end their menu the same way
+// (src/components/SiteNav.astro, src/components/SiteThemeSelect.astro).
+import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+---
+
+<div class="mobile-preferences sl-flex">
+  <ThemeSelect />
+</div>
+
+<style>
+  .mobile-preferences {
+    border-top: 1px solid var(--c-line-soft);
+    padding: 0.5rem 0;
+  }
+</style>

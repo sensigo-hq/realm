@@ -1,0 +1,47 @@
+---
+// The docs pages' sidebar, with the site links (src/components/MenuLinks.astro) above it in the menu
+// on a narrow screen, so the docs menu and the menu of the home, how-it-works and comparison pages
+// (src/components/SiteNav.astro) open on the same rows. On a wide screen the links sit in the header
+// (src/components/DocsHeaderLinks.astro) and the sidebar is Starlight's alone. Starlight's own Sidebar
+// still draws the contents and, at the bottom of the menu, src/components/MobileMenuFooter.astro.
+import Default from '@astrojs/starlight/components/Sidebar.astro';
+import MenuLinks from './MenuLinks.astro';
+---
+
+<div class="md:sl-hidden">
+  <MenuLinks />
+</div>
+<Default />
+<script is:inline>
+  // Crossing 50rem hides what had focus: widening hides the menu's site links and theme choice (the
+  // header now shows them), narrowing hides the header's. Focus then falls to the page, so it is
+  // moved to what took their place: the header's links or theme choice when wider, the menu button
+  // when narrower, as on the site's other pages (src/components/SiteNav.astro). Losing focus to
+  // nothing (no relatedTarget) is what hiding causes; a Tab or a click names where focus went and is
+  // left alone.
+  (function () {
+    var wide = window.matchMedia('(min-width: 50em)');
+    document.addEventListener('focusout', function (e) {
+      var lost = e.target;
+      if (e.relatedTarget || !(lost instanceof Element)) return;
+      var fromMenu = lost.closest('.menu-links, .mobile-preferences');
+      var fromHeader = lost.closest('.header .right-group');
+      if (!fromMenu && !fromHeader) return;
+      setTimeout(function () {
+        if (document.activeElement !== document.body || lost.offsetParent !== null) return;
+        var to = null;
+        if (fromMenu && wide.matches) {
+          to =
+            lost.tagName === 'SELECT'
+              ? document.querySelector('.header .right-group select')
+              : Array.prototype.find.call(document.querySelectorAll('.header .site-links a'), function (a) {
+                  return a.offsetParent !== null;
+                });
+        } else if (fromHeader && !wide.matches) {
+          to = document.querySelector('.sl-menu-button');
+        }
+        if (to) to.focus();
+      });
+    });
+  })();
+</script>

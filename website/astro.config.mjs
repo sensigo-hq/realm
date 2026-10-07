@@ -15,11 +15,14 @@ export default defineConfig({
       // the description of a page without its own: only the 404 page (every docs page has one)
       description: HOME_DESCRIPTION,
       customCss: ['./src/styles/tokens.css'],
-      // the Realm logo in place of the title text, and the site menu's links (src/data/nav.js) where
-      // Starlight puts its social icons: the header's right side, and its menu on a narrow screen
+      // the Realm logo in place of the title text; the site menu's links (src/data/nav.js) where
+      // Starlight puts its social icons, at the header's right side; and on a narrow screen the same
+      // menu as the site's other pages: the links at the top, the Light/Dark/Auto choice at the bottom
       components: {
         SiteTitle: './src/components/SiteTitle.astro',
         SocialIcons: './src/components/DocsHeaderLinks.astro',
+        Sidebar: './src/components/DocsSidebar.astro',
+        MobileMenuFooter: './src/components/MobileMenuFooter.astro',
       },
       // each docs page's preview image, Markdown copy link and breadcrumb (src/route-data.mjs)
       routeMiddleware: './src/route-data.mjs',
