@@ -6,16 +6,19 @@
 // that listener suppresses commander's own unknown-command handling entirely (silence, exit 0),
 // and replacing it by hand would lose the near-miss suggestion commander already gives. G2b is
 // the cell that holds that no-regression property down.
-import { describe, it, expect, beforeAll } from 'vitest';
+//
+// The intercept lives in index.ts, which these cells reach only through the built dist (#440).
+// This file never builds: a build during the test run rewrites the built files other test
+// processes are loading (a `realm` child once found `run-agent.js` empty mid-rewrite). The run's
+// global setup, `scripts/vitest-build-is-current.mjs`, refuses to start when the build is older
+// than the source, so these cells always drive the current index.ts.
+import { describe, it, expect } from 'vitest';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CLI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_CLI = join(CLI_DIR, 'dist', 'index.js');
-const run = promisify(execFile);
 
 function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
@@ -25,14 +28,6 @@ function runCli(args: string[]): Promise<{ code: number; stdout: string; stderr:
     });
   });
 }
-
-beforeAll(async () => {
-  // The intercept lives in index.ts, which these cells reach only through the built dist (#440).
-  // INCREMENTAL, never --force: a forced build rewrites core's shared dist too and races other
-  // workers' spawned children mid-read — the #371 flake shape. Incremental still picks up edits.
-  await run('npx', ['tsc', '--build', CLI_DIR], { cwd: join(CLI_DIR, '..', '..') });
-  expect(existsSync(DIST_CLI)).toBe(true);
-}, 120_000);
 
 describe('realm run <path> — the did-you-mean pointer (issue #427)', () => {
   it('G1 a path-shaped token gets the pointer at the right command', async () => {

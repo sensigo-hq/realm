@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The npm packages no longer include test-only files.** `@sensigo/realm`, `@sensigo/realm-cli` and `@sensigo/realm-mcp` published 32 test-only files: the test helpers under `dist/**/test-support/` (two stand-in model servers, an MCP server entry, a journey helper, and the helper that marks test doubles) and the CLI's tool-schema fixtures under `dist/agent/fixtures/`. No product code used them and the packages' `exports` never exposed them; nothing else in the packages changes.
+
 ### Security
 
 - **`@modelcontextprotocol/sdk` 1.30.0 → 1.31.0** — one HIGH advisory,
