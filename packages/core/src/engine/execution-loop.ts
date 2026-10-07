@@ -7621,15 +7621,12 @@ export async function executeChain(
     // now throws a typed I/O error (rather than mapping it to STATE_RUN_NOT_FOUND) when the run
     // record exists but can't actually be read. Swallow ONLY the expected "doesn't exist" case
     // and fall through to the normal path (which re-attempts the read and surfaces its own
-    // not-found reply); answer everything else at once with its own error reply rather than
+    // properly-typed ENGINE_STORE_FAILED); re-throw everything else immediately rather than
     // silently treating a real I/O failure as "the run doesn't exist."
     if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
       entryRun = undefined;
     } else {
-      // round 20 (the C156 class): a record this call cannot read is answered as `executeStep` and
-      // `advanceRun` answer it — the store's own `WorkflowError`, or `ENGINE_STORE_FAILED` — as an
-      // error reply naming the step, never a throw. It is never read as "the run does not exist".
-      return stampStoppedStep(firstReadRefusal(options, err), options.command);
+      throw err;
     }
   }
   // issue #279 (increment 2, PR-C — D-3 leg v): keyed on terminal_state, never the persisted
