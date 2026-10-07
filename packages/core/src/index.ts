@@ -123,6 +123,7 @@ export type {
   AdvanceRunOptions,
   AdvanceCaller,
   StepCaller,
+  EngineStepCaller,
   ChainCaller,
   AnswerCaller,
   EnactedVia,

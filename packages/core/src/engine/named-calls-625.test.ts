@@ -133,6 +133,16 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       (s, d, runId, gateId, caller) =>
         submitHumanResponse(s, d, { runId, gateId, choice: 'approve', caller: caller as never }),
     ],
+    [
+      'executeEngineStep',
+      async (s, d, runId, _g, caller) =>
+        executeEngineStep(s, d, {
+          runId,
+          step: 'after',
+          run: await store.get(runId),
+          caller: caller as never,
+        }),
+    ],
   ];
   it.each(REFUSE)(
     'C144, W1-Y1: %s refuses a caller outside its words with VALIDATION_CALLER_INVALID — before anything is read or written',
@@ -169,6 +179,29 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       expect(JSON.stringify(await store.get(runId))).toBe(before);
     },
   );
+
+  it("C155, W1-Y1: executeEngineStep's refusal names executeEngineStep — the entry the program called — and its own words, its default first", async () => {
+    const d = gated('settle_default');
+    const { runId } = await atQuestion(d);
+    const before = JSON.stringify(await store.get(runId));
+    // (a) red when executeEngineStep's caller is checked as executeStep's again (the message would
+    // name executeStep and list executeStep first); (b) prints what was thrown.
+    await expect(
+      executeEngineStep(store, d, {
+        runId,
+        step: 'after',
+        run: await store.get(runId),
+        caller: 'executeChain' as never,
+      }),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_CALLER_INVALID',
+      message:
+        "executeEngineStep's caller is one of executeEngineStep, executeStep, agent; it was given 'executeChain'. Nothing was read or written.",
+      details: { entry: 'executeEngineStep' },
+    });
+    // (a) red when the refusal wrote; (b) prints the record.
+    expect(JSON.stringify(await store.get(runId))).toBe(before);
+  });
 
   it("C144: a word from another entry's list is refused too — executeChain is not executeStep", async () => {
     const d = gated('settle_default');

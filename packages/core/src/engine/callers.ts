@@ -8,13 +8,14 @@ import { WorkflowError } from '../types/workflow-error.js';
  * word of each list is the default: the library function itself, a program's own call. The others
  * are the hosts that call it and pass their own name — the MCP tools (`advance_run`, `start_run`,
  * `execute_step`, `submit_human_response`) and the CLI commands (`advance` is `realm run advance`,
- * `agent` is `realm agent`, `run` is `realm workflow run`, `respond` is `realm run respond`). `executeStep`
- * also hears `executeEngineStep`, which runs its step through it. Never a free string: `command` is
+ * `agent` is `realm agent`, `run` is `realm workflow run`, `respond` is `realm run respond`).
+ * `executeStep` and `executeEngineStep` hear each other's name. Never a free string: `command` is
  * `advanceRun`'s free label.
  */
 export const ENTRY_CALLERS = {
   advanceRun: ['advanceRun', 'advance_run', 'advance', 'start_run', 'agent'],
   executeStep: ['executeStep', 'executeEngineStep', 'agent'],
+  executeEngineStep: ['executeEngineStep', 'executeStep', 'agent'],
   executeChain: ['executeChain', 'execute_step', 'agent', 'run'],
   submitHumanResponse: ['submitHumanResponse', 'submit_human_response', 'respond', 'run', 'agent'],
 } as const;
@@ -27,6 +28,11 @@ export const ADVANCE_CALLERS = ENTRY_CALLERS.advanceRun;
 export type AdvanceCaller = (typeof ENTRY_CALLERS.advanceRun)[number];
 /** `executeStep`'s callers (decision C151). */
 export type StepCaller = (typeof ENTRY_CALLERS.executeStep)[number];
+/**
+ * `executeEngineStep`'s callers (decisions C151, C155): the same words as `executeStep`'s, its own
+ * default first — it admits its own call, so a refusal names `executeEngineStep`.
+ */
+export type EngineStepCaller = (typeof ENTRY_CALLERS.executeEngineStep)[number];
 /** `executeChain`'s callers (decision C151). */
 export type ChainCaller = (typeof ENTRY_CALLERS.executeChain)[number];
 /** `submitHumanResponse`'s callers (decision C151). */

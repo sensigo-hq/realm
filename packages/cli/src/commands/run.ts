@@ -18,7 +18,9 @@ import {
   describePending,
   stepsThatCannotRun,
   cannotGoOnLines,
+  composeStepViews,
 } from '@sensigo/realm';
+import { renderAnswerLine } from '../lib/holder-render.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import type {
@@ -26,6 +28,7 @@ import type {
   StepDefinition,
   ExtensionRegistry,
   RunRecord,
+  RunStore,
 } from '@sensigo/realm';
 import type { ResponseEnvelope, StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
@@ -141,6 +144,56 @@ export function renderDetachMap(
   lines.push(`  Inspect:   realm run inspect ${record.id}`);
   lines.push(`  Discard:   realm run abandon ${record.id}`);
   return lines.join('\n');
+}
+
+/** How often the open prompt reads the run to see its question settled elsewhere (decision C158). */
+export const QUESTION_WATCH_MS = 500;
+
+/**
+ * Reads the run every {@link QUESTION_WATCH_MS} while a prompt waits on the question `gateId`, and
+ * calls `onClosed` once when that question is no longer open: the run ended, or its open question
+ * is another one or none (decision C158). A read that fails is tried again at the next tick.
+ * Returns the stop.
+ */
+function watchQuestion(
+  store: Pick<RunStore, 'get'>,
+  runId: string,
+  gateId: string,
+  onClosed: () => void,
+): () => void {
+  let stopped = false;
+  const timer = setInterval(() => {
+    void store.get(runId).then(
+      (r) => {
+        if (stopped) return;
+        if (r.terminal_state === true || r.pending_gate?.gate_id !== gateId) {
+          stopped = true;
+          clearInterval(timer);
+          onClosed();
+        }
+      },
+      () => undefined,
+    );
+  }, QUESTION_WATCH_MS);
+  return (): void => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
+/**
+ * The line the prompt prints when its question was settled while it waited (decision C158): the
+ * answer the record holds for the step, as `realm run inspect` prints it (`Answer: <choice> · …`),
+ * or — when no answer was recorded (an `on_expiry: abort`, an abandoned run) — the run's phase.
+ */
+export function questionClosedLine(run: RunRecord, step: string): string {
+  const answers = composeStepViews(run)[step]?.answers ?? [];
+  const last = answers[answers.length - 1];
+  const what =
+    last !== undefined
+      ? renderAnswerLine(last)
+      : `no answer was recorded; the run is '${deriveRunPhase(run)}'`;
+  return `This prompt is closed: the question on '${step}' is no longer open — ${what}.`;
 }
 
 /**
@@ -374,16 +427,40 @@ export const runCommand = new Command('run')
             // lookup-first arm NOOPs harmlessly, and if the human answers after an unattended
             // enactment already won, `submitHumanResponse` below composes the honest late-response
             // envelope exactly as any other late submit does.
+            //
+            // decision C158: the prompt closes when its question is settled by anything else — this
+            // timer's write, or another process (`realm run respond` in another terminal, `realm run
+            // advance`, `drain --expired`, `listen`), seen by a read of the record every
+            // QUESTION_WATCH_MS — and says what settled it; it never waits on a question that can no
+            // longer be answered. An answer read before the close is submitted as before.
+            const settledElsewhere = new AbortController();
             const clearExpiryTimer = scheduleGateExpiryTimer(runId, g, {
               store,
               definition,
               registry,
               ...(driver !== undefined ? { driver } : {}),
+              onApplied: () => settledElsewhere.abort(),
             });
+            const stopWatching = watchQuestion(store, runId, g.gate_id, () =>
+              settledElsewhere.abort(),
+            );
             promptStep = g.step_name;
-            const raw = await rl.question(`  Choice [${g.choices.join('/')}]: `).finally(() => {
+            let raw: string;
+            try {
+              raw = await rl.question(`  Choice [${g.choices.join('/')}]: `, {
+                signal: settledElsewhere.signal,
+              });
+            } catch (err) {
+              // Not this close: the operator's cancel (#447), handled below as before.
+              if (!settledElsewhere.signal.aborted) throw err;
+              run = await store.get(runId);
+              // readline ends the prompt's line when the question is closed.
+              console.log(`  ${questionClosedLine(run, g.step_name)}`);
+              continue;
+            } finally {
               clearExpiryTimer();
-            });
+              stopWatching();
+            }
             const choice = raw.trim();
             // decision C146: the answer the composer speaks for — this gate, named as this command.
             const answered = { gateId: g.gate_id, via: 'run' as const };

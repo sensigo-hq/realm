@@ -79,7 +79,13 @@ import { computeBackoff } from './backoff.js';
 import { evaluateAllPreconditions, evaluateGuardConditions } from './precondition.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { admitEntry } from '../admission.js';
-import type { AdvanceCaller, AnswerCaller, ChainCaller, StepCaller } from './callers.js';
+import type {
+  AdvanceCaller,
+  AnswerCaller,
+  ChainCaller,
+  EngineStepCaller,
+  StepCaller,
+} from './callers.js';
 import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
@@ -1218,6 +1224,28 @@ function makeErrorEnvelope(
 }
 
 /**
+ * The reply to a call whose first read of the run fails (decision C156): the store's own
+ * `WorkflowError` as an error reply — `STATE_RUN_NOT_FOUND` for a run that does not exist — or,
+ * for anything else it throws, `ENGINE_STORE_FAILED`. Never a throw: `executeStep` (and through it
+ * `executeEngineStep`, `submitHumanResponse`) and `advanceRun` answer a run they cannot read alike.
+ */
+function firstReadRefusal(
+  options: Pick<ExecuteStepOptions, 'command' | 'runId'>,
+  err: unknown,
+): ResponseEnvelope {
+  const refusal =
+    err instanceof WorkflowError
+      ? err
+      : new WorkflowError('Failed to load run from store', {
+          code: 'ENGINE_STORE_FAILED',
+          category: 'ENGINE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+  return makeErrorEnvelope(options as ExecuteStepOptions, null, refusal);
+}
+
+/**
  * Design record §6: a claim-time refusal envelope's advisory line when the fresh run carries
  * finalizer_ledger pendings — points the caller at the recovery verb. `undefined` when there is
  * nothing pending (the common case — never emits an empty/placeholder advisory).
@@ -1429,7 +1457,7 @@ const DORMANCY_ADVISORY =
 
 // The callers of the engine's entries (decisions C124, C133, C151) — each entry's closed list,
 // checked at admission (`ENTRY_CALLERS`).
-export type { AdvanceCaller, AnswerCaller, ChainCaller, StepCaller };
+export type { AdvanceCaller, AnswerCaller, ChainCaller, EngineStepCaller, StepCaller };
 
 /**
  * The vocabulary of `enacted_via` (decisions C95, C105, C122, C124, C151): the call that carried out
@@ -1777,16 +1805,7 @@ async function executeStepBody(
   try {
     run = await store.get(options.runId);
   } catch (err) {
-    if (err instanceof WorkflowError) {
-      return makeErrorEnvelope(options, null, err);
-    }
-    const internal = new WorkflowError('Failed to load run from store', {
-      code: 'ENGINE_STORE_FAILED',
-      category: 'ENGINE',
-      agentAction: 'stop',
-      retryable: false,
-    });
-    return makeErrorEnvelope(options, null, internal);
+    return firstReadRefusal(options, err);
   }
 
   // Step 1.5 (issue #291, D1 "execute_step pre-refusal" enactment point): if this run's gate has
@@ -6621,9 +6640,10 @@ export interface ExecuteEngineStepOptions {
   /**
    * The caller, naming itself (decision C151): the call the expiry line names when this call
    * carries out an expired question first. Default `'executeEngineStep'`; `realm agent` passes
-   * `'agent'`. Checked as `executeStep`'s `caller` (the admission step).
+   * `'agent'`. Any other value THROWS `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`
+   * (decision C155), before anything is read or written (the admission step).
    */
-  caller?: StepCaller;
+  caller?: EngineStepCaller;
 }
 
 /**
@@ -6646,20 +6666,27 @@ export async function executeEngineStep(
   definition: WorkflowDefinition,
   options: ExecuteEngineStepOptions,
 ): Promise<ResponseEnvelope> {
-  return engineStepAs(store, definition, options, undefined);
+  admitEntry('executeEngineStep', {
+    store,
+    storeKind: 'run store',
+    registry: options.registry,
+    driver: options.driver,
+    caller: options.caller,
+  });
+  return engineStepAs(store, definition, options, options.caller ?? 'executeEngineStep');
 }
 
 /**
- * {@link executeEngineStep}'s body. `via` absent: a call of `executeEngineStep` itself — the step
- * runs through `executeStep`, whose admission step checks the wiring and the caller (default
- * `'executeEngineStep'`). `via` given: a step of the advance loop, inside an `advanceRun` or
- * `executeChain` call that admitted its wiring — the step runs naming that call (decision C151).
+ * {@link executeEngineStep}'s body, after an admission step: `executeEngineStep`'s own (its call
+ * names itself, or its caller's word — decisions C151, C155), or that of the `advanceRun` or
+ * `executeChain` call whose advance loop runs the step — the step then runs naming that call. The
+ * step runs through `executeStep`'s body, which admits nothing again.
  */
 async function engineStepAs(
   store: RunStore,
   definition: WorkflowDefinition,
   options: ExecuteEngineStepOptions,
-  via: EnactedVia | undefined,
+  via: EnactedVia,
 ): Promise<ResponseEnvelope> {
   const { step, run } = options;
   // decision C83: the engine runs only its own `auto` steps here — before any read or write.
@@ -6694,12 +6721,7 @@ async function engineStepAs(
     ...(options.driver !== undefined ? { driver: options.driver } : {}),
     ...(options.now !== undefined ? { now: options.now } : {}),
   };
-  return via === undefined
-    ? executeStep(store, definition, {
-        ...stepOptions,
-        caller: options.caller ?? 'executeEngineStep',
-      })
-    : executeStepAs(store, definition, stepOptions, via);
+  return executeStepAs(store, definition, stepOptions, via);
 }
 
 /**
@@ -7466,7 +7488,14 @@ export async function advanceRun(
   const command = options.command ?? caller;
   const registry = options.registry ?? createDefaultRegistry();
   const now = options.now ?? new Date();
-  let stored = await store.get(options.runId);
+  let stored: RunRecord;
+  try {
+    stored = await store.get(options.runId);
+  } catch (err) {
+    // decision C156: a run this call cannot read is answered as its siblings answer it — the same
+    // error reply, labelled with this call's `command` — never a throw.
+    return firstReadRefusal({ command, runId: options.runId }, err);
+  }
   // decision C95: an open question whose time is up and that declares `on_expiry` is carried out
   // first — the same function `executeStep`'s Step 1.5 calls, with its race behaviour (a refusal is
   // absorbed; the fresh record is what the loop then reads) — and then what it made owed runs.

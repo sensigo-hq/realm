@@ -37,6 +37,11 @@ export interface GateExpiryTimerDeps {
    * steps its drain runs (`driven_by`).
    */
   driver?: Attributed;
+  /**
+   * Called once this timer's own write has carried the expiry out (after its line and its drain) —
+   * so a host waiting on the question (`realm workflow run`'s prompt) closes it (decision C158).
+   */
+  onApplied?: () => void;
 }
 
 /**
@@ -100,6 +105,7 @@ export function scheduleGateExpiryTimer(
           );
           for (const w of drainOutcome.warnings) console.warn(`⚠ ${w}`);
         }
+        deps.onApplied?.();
       }
       // A refusal (already_settled/not_expired/gate_mismatch/run_terminal) is a benign race with
       // another enactment point — silently absorbed, exactly like enactExpiredGateIfDue's own

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { admitEntry, ENGINE_ENTRIES, HOST_WIRING_CHECKS, type EngineEntry } from './admission.js';
 import {
   executeStep,
+  executeEngineStep,
   executeChain,
   advanceRun,
   submitHumanResponse,
@@ -82,6 +83,13 @@ const CALLS: Record<
       dispatcher,
       ...opt(registry, driver),
     }),
+  executeEngineStep: (s, registry, driver) =>
+    executeEngineStep(s, def, {
+      runId: 'r',
+      step: 'work',
+      run: { id: 'r', version: 0 } as unknown as RunRecord,
+      ...opt(registry, driver),
+    }),
   executeChain: (s, registry, driver) =>
     executeChain(s, def, {
       runId: 'r',
@@ -117,9 +125,10 @@ const CALLS: Record<
     ),
 };
 
-/** The entries that take a registry and a driver; the other three take a store only. */
+/** The entries that take a registry and a driver; the other three take a store only (C155: executeEngineStep admits its own call). */
 const FULL: readonly EngineEntry[] = [
   'executeStep',
+  'executeEngineStep',
   'executeChain',
   'advanceRun',
   'submitHumanResponse',
@@ -187,6 +196,7 @@ describe('every entry admits first, in order (each cell stacks defects; the firs
 describe('the source-text witness: each entry admits as its first statement and checks nothing itself', () => {
   const HOME: Record<EngineEntry, string> = {
     executeStep: 'engine/execution-loop.ts',
+    executeEngineStep: 'engine/execution-loop.ts',
     submitHumanResponse: 'engine/execution-loop.ts',
     drainFinalizers: 'engine/execution-loop.ts',
     advanceRun: 'engine/execution-loop.ts',

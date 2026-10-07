@@ -506,9 +506,22 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       const heldCapabilityReplies = new Map<string, Awaited<ReturnType<typeof advanceRun>>>();
       const keepsClaims = deps.store.persistsClaims === true;
 
+      // decision C159: the questions whose due expiry this drive has handed to `advanceRun` — each
+      // once, so a question the call could not carry out is announced (and timed) as before.
+      const expiryAttempted = new Set<string>();
       while (!currentRun.terminal_state) {
         // --- Gate handling ---
-        if (currentRun.pending_gate !== undefined) {
+        // decision C159: a question whose time is up and whose `on_expiry` the engine carries out is
+        // never announced as live (no `Waiting for approval…`, no `--choice` commands an answer could
+        // no longer be recorded through): the engine's work below — `advanceRun` — carries the
+        // expiry out first and prints its line.
+        const dueExpiry =
+          currentRun.pending_gate !== undefined &&
+          !expiryAttempted.has(currentRun.pending_gate.gate_id) &&
+          describePending(definition, currentRun, deps.registry, new Date()).expiry_due !==
+            undefined;
+        if (dueExpiry) expiryAttempted.add(currentRun.pending_gate!.gate_id);
+        if (currentRun.pending_gate !== undefined && !dueExpiry) {
           const gate = currentRun.pending_gate;
 
           console.log(`\n⏸  Gate: ${gate.step_name} | ID: ${gate.gate_id}`);
@@ -571,6 +584,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const advanced = await advanceRun(deps.store, definition, {
           runId,
           caller: 'agent',
+          // decision C159: the line that says this call carried out an expired question, first.
+          onExpiry: (line) => console.log(`⚠ ${line}`),
           registry: deps.registry,
           ...(deps.traceBufferStore !== undefined
             ? { traceBufferStore: deps.traceBufferStore }

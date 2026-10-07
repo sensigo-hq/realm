@@ -336,4 +336,115 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect(code).toBe(1);
     }, 30_000);
   });
+
+  describe('C158, W2-Y2 — the prompt closes when its question is settled by anything else, and says what settled it', () => {
+    /**
+     * The gate's prompt as readline answers it: it waits (nothing is typed) and, when the signal it
+     * was handed aborts, rejects with readline's AbortError. `whileWaiting` runs once the prompt is
+     * open (another process acting on the run). Every other prompt is answered empty.
+     */
+    function waitAtPrompt(whileWaiting?: () => Promise<void>): { choicePrompts: () => number } {
+      let asked = 0;
+      mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
+        if (prompt.startsWith('  Choice ')) {
+          asked += 1;
+          return new Promise<string>((_resolve, reject) => {
+            const signal = opts?.signal;
+            if (signal === undefined) return; // no close: the cell's timeout says so
+            signal.addEventListener(
+              'abort',
+              () =>
+                reject(
+                  Object.assign(new Error('The operation was aborted'), {
+                    name: 'AbortError',
+                    code: 'ABORT_ERR',
+                  }),
+                ),
+              { once: true },
+            );
+            if (whileWaiting !== undefined) void whileWaiting();
+          });
+        }
+        if (prompt.startsWith('  Mock output') || prompt.startsWith('  Agent output')) {
+          return Promise.resolve('');
+        }
+        return Promise.reject(new Error(`fixture: an unexpected prompt: ${prompt}`));
+      });
+      return { choicePrompts: () => asked };
+    }
+
+    it('the attending timer settles the default while the prompt waits: the prompt closes, prints the answer the expiry recorded, and the run goes on — no `was not recorded`', async () => {
+      const prompts = waitAtPrompt();
+
+      const code = await run(
+        workflowYaml({ id: 'prompt-625-c158-timer', finish: true, expiresTo: 'approve' }),
+      );
+
+      const after = afterTheGate();
+      // (a) red when the prompt stays open after the timer's write (no close line, or a refused
+      //     answer), or the line names another answer; (b) prints what the prompt printed.
+      expect(after.filter((l) => l.startsWith('  This prompt is closed:'))).toEqual([
+        "  This prompt is closed: the question on 'confirm' is no longer open — Answer: approve · settled by the gate's expiry (no answer in time).",
+      ]);
+      expect(after.findIndex((l) => l.startsWith('⏰ gate '))).toBeLessThan(
+        after.findIndex((l) => l.startsWith('  This prompt is closed:')),
+      );
+      expect(
+        [...after, ...errored()].filter(
+          (l) => l.includes('was not recorded') || l.includes('not recorded —'),
+        ),
+      ).toEqual([]);
+      expect(prompts.choicePrompts()).toBe(1);
+      expect((await readRecord()).run_phase).toBe('completed');
+      expect(code).toBe(0);
+    }, 30_000);
+
+    it('another process answers while the prompt waits: the prompt closes and prints that answer — never re-asks, never refuses', async () => {
+      const prompts = waitAtPrompt(async () => {
+        const { JsonFileStore, loadWorkflowFromString, submitHumanResponse } =
+          await import('@sensigo/realm');
+        const def = loadWorkflowFromString(
+          workflowYaml({ id: 'prompt-625-c158-other', finish: true }),
+        );
+        const reply = await submitHumanResponse(new JsonFileStore(), def, {
+          runId: runId(),
+          gateId: gateId(),
+          choice: 'approve',
+          caller: 'respond',
+        });
+        if (reply.status !== 'ok')
+          throw new Error(`fixture: the other answer was refused: ${reply.errors.join(', ')}`);
+      });
+
+      const code = await run(workflowYaml({ id: 'prompt-625-c158-other', finish: true }));
+
+      const after = afterTheGate();
+      // (a) red when the prompt does not watch the record (it would wait forever: the cell times
+      //     out), or prints no close line; (b) prints what the prompt printed.
+      const closed = after.filter((l) => l.startsWith('  This prompt is closed:'));
+      expect(closed).toHaveLength(1);
+      expect(closed[0]).toMatch(
+        /^ {2}This prompt is closed: the question on 'confirm' is no longer open — Answer: approve · answered by .+\.$/,
+      );
+      expect([...after, ...errored()].filter((l) => l.includes('not recorded'))).toEqual([]);
+      expect(prompts.choicePrompts()).toBe(1);
+      expect((await readRecord()).run_phase).toBe('completed');
+      expect(code).toBe(0);
+    }, 30_000);
+
+    it('the attending timer carries out an abort while the prompt waits: the prompt closes and says no answer was recorded, the run aborted', async () => {
+      const prompts = waitAtPrompt();
+
+      const code = await run(workflowYaml({ id: 'prompt-625-c158-abort', aborts: true }));
+
+      const after = afterTheGate();
+      // (a) red when the prompt stays open after the abort, or the line claims an answer; (b) prints
+      //     what the prompt printed.
+      expect(after.filter((l) => l.startsWith('  This prompt is closed:'))).toEqual([
+        "  This prompt is closed: the question on 'confirm' is no longer open — no answer was recorded; the run is 'aborted'.",
+      ]);
+      expect(prompts.choicePrompts()).toBe(1);
+      expect(code).toBe(1);
+    }, 30_000);
+  });
 });

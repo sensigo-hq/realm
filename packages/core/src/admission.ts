@@ -26,6 +26,7 @@ import { ExtensionRegistry } from './extensions/registry.js';
 /** The engine functions that admit their calls here. A source-text witness pins each call. */
 export const ENGINE_ENTRIES = [
   'executeStep',
+  'executeEngineStep',
   'submitHumanResponse',
   'drainFinalizers',
   'advanceRun',
