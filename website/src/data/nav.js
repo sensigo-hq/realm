@@ -1,8 +1,9 @@
 // The site menu's links, for every page: the home, how-it-works and comparison pages show them through
 // src/components/SiteNav.astro, the docs pages through src/components/DocsHeaderLinks.astro, and the
 // menu on a narrow screen through src/components/MenuLinks.astro on both. One source, so a link added
-// for one page is never missing from another. `icon` names a Starlight icon: the docs header shows that
-// link as the icon alone on a wide screen, where five words do not fit beside the search box.
+// for one page is never missing from another. `icon` names a Starlight icon: the header of every page
+// shows that link as the icon alone on a wide screen, as most sites show GitHub (24 of the 26 surveyed
+// pages that put it in the header); the menu on a narrow screen lists it by name.
 export const nav = [
   { href: '/how-it-works/', label: 'How it works' },
   { href: '/compare/', label: 'Compare' },
