@@ -1,7 +1,12 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "//": "issue #367 (part 2): globalDependencies covers the files a verification task READS at runtime but that live outside every package's hash. Both entries were executed as real cache holes before being added: a mutated eslint rule served a FULL TURBO green (the lint task's hash never saw the root config), and a new terminal writer in scripts/ served a cached census green (the census is homed in cli, whose hash never sees root scripts/). eslint.config.ts imports only external packages today — if it ever imports a local helper, that file needs an entry here too.",
-  "globalDependencies": ["eslint.config.ts", "scripts/**/*.mjs"],
+  "//": "issue #367 (part 2): globalDependencies covers the files a verification task READS at runtime but that live outside every package's hash. Both entries were executed as real cache holes before being added: a mutated eslint rule served a FULL TURBO green (the lint task's hash never saw the root config), and a new terminal writer in scripts/ served a cached census green (the census is homed in cli, whose hash never sees root scripts/). eslint.config.ts imports only external packages today — if it ever imports a local helper, that file needs an entry here too. Build integrity: tsconfig.base.json (every package's compiler options) and vitest.config.mts (every test run's settings) were holes of the same kind — a compiler-option change was served the old build from cache. Every test task waits for all four package builds: tests load other packages' built files (core's tests load realm-testing's, a dependency core cannot declare without a cycle), and no build may write built files while tests run.",
+  "globalDependencies": [
+    "eslint.config.ts",
+    "scripts/**/*.mjs",
+    "tsconfig.base.json",
+    "vitest.config.mts"
+  ],
   "concurrency": "2",
   "tasks": {
     "build": {
@@ -9,7 +14,12 @@
       "outputs": ["dist/**"]
     },
     "test": {
-      "dependsOn": ["build"]
+      "dependsOn": [
+        "@sensigo/realm#build",
+        "@sensigo/realm-testing#build",
+        "@sensigo/realm-mcp#build",
+        "@sensigo/realm-cli#build"
+      ]
     },
     "lint": {}
   }
