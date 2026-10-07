@@ -14,6 +14,12 @@
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "astro": "^7.3.3",
     "opentype.js": "^2.0.0",
-    "sharp": "^0.35.4"
+    "sharp": "^0.35.5"
+  },
+  "//overrides": "@expressive-code/core 0.44.x asks for postcss-nested ^6, which uses postcss-selector-parser 6; 6.x has no fix for GHSA-rj75-hqrm-r3gf (fixed in 7.1.6). postcss-nested 7 uses the fixed parser. The override names core's 0.44 line, so it stops applying, and the alert returns, when core moves on; then check whether core's new range still needs it.",
+  "overrides": {
+    "@expressive-code/core@~0.44.2": {
+      "postcss-nested": "^7.0.2"
+    }
   }
 }
