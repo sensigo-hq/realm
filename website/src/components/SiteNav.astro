@@ -59,28 +59,47 @@ const { current } = Astro.props;
     btn.addEventListener('click', function () {
       set(!isOpen());
     });
-    // Escape closes the menu while focus is in it, and gives focus back to the button. Pressed
-    // elsewhere on the page, it leaves the menu alone, so the page does not jump under the reader.
+    function inMenu(el) {
+      return el === btn || panel.contains(el);
+    }
+    // Escape closes the menu while focus is on the button or in the menu, and gives focus back to the
+    // button. Pressed elsewhere on the page, it leaves the menu alone, so the page does not jump.
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && isOpen() && nav.contains(document.activeElement)) {
+      if (e.key === 'Escape' && isOpen() && inMenu(document.activeElement)) {
         set(false);
         btn.focus();
       }
     });
-    // Following a link closes the menu, so coming Back to this page shows it closed. Opening the link
-    // in a new tab or window (Ctrl, Cmd, Shift, or a middle click) keeps this page as it was.
-    panel.addEventListener('click', function (e) {
-      if (!e.target.closest('a')) return;
-      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    // Leaving the page closes the menu, so coming Back to it shows the menu closed. Opening a link in a
+    // new tab or window does not leave the page, so the menu stays as it was.
+    window.addEventListener('pagehide', function () {
       set(false);
     });
-    // Widened past 50rem the button disappears: the menu closes, and focus on the button moves to the
-    // first link, which is now on show in the row.
+    // Crossing 50rem hides either the button (wider) or the folded menu (narrower), and focus moves to
+    // what is now on show in its place: from the button to the first link, from a link or the switch
+    // to the button.
+    function refocus(lost) {
+      if (wide.matches) {
+        if (lost === btn) panel.querySelector('a').focus();
+      } else if (!isOpen() && panel.contains(lost)) {
+        btn.focus();
+      }
+    }
     wide.addEventListener('change', function () {
-      if (!wide.matches) return;
-      var hadFocus = document.activeElement === btn;
+      var had = inMenu(document.activeElement) ? document.activeElement : null;
       set(false);
-      if (hadFocus) panel.querySelector('a').focus();
+      if (had) refocus(had);
+    });
+    // The browser sometimes drops focus from the hidden element before the change above runs. Losing
+    // focus to nothing (no relatedTarget) is what hiding causes; a Tab or a click on another control
+    // names where focus went and is left alone, and so is a click on plain page text, which leaves the
+    // element on show.
+    nav.addEventListener('focusout', function (e) {
+      if (e.relatedTarget) return;
+      var lost = e.target;
+      setTimeout(function () {
+        if (document.activeElement === document.body && lost.offsetParent === null) refocus(lost);
+      });
     });
   })();
 </script>

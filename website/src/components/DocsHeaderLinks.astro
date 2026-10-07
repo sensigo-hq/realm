@@ -50,17 +50,26 @@ const inDocs = Astro.url.pathname.startsWith('/docs/');
   :global(.header) .site-links a.here-link {
     display: none;
   }
+  /* The icons keep the size and padding Starlight gives its own social icons: each is a 32px target
+     (28px between 800 and 840px). */
+  :global(.header) .site-links a.has-icon {
+    font-size: var(--sl-text-base);
+    padding: 0.5em;
+    margin: -0.5em;
+  }
   @media (max-width: 52.49rem) {
     :global(.header) .site-links {
       gap: 0.5rem;
       font-size: var(--sl-text-xs);
     }
-  }
-  /* The icons keep the size and padding Starlight gives its own social icons: each is a 32px target. */
-  :global(.header) .site-links a.has-icon {
-    font-size: var(--sl-text-base);
-    padding: 0.5em;
-    margin: -0.5em;
+    /* With the smaller gap, the targets of two icons side by side would overlap; this one starts where
+       the one before it ends. The icons are a little smaller here (28px targets) to make room. */
+    :global(.header) .site-links a.has-icon {
+      font-size: var(--sl-text-sm);
+    }
+    :global(.header) .site-links a.has-icon + a.has-icon {
+      margin-inline-start: 0;
+    }
   }
   /* In the header, a link with an icon shows the icon alone; its name stays for screen readers. */
   .site-links a.has-icon .label {

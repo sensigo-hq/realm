@@ -221,7 +221,7 @@ nav.site .nav-panel {
   :root.site-menu-js nav.site:not([data-menu='open']) .nav-panel {
     display: none;
   }
-  /* 40px, as Starlight's own menu button, so both are easy to tap. */
+  /* 40px, larger than Starlight's 32px menu button, so both are easy to tap. */
   .menu-btn,
   nav.site .theme-btn {
     width: 40px;
