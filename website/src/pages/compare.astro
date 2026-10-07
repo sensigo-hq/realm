@@ -2,12 +2,10 @@
 // The public comparison page. Everything on it is derived from the main comparison document,
 // src/data/comparison.json, through src/lib/comparison.mjs, which stops the build if the document
 // is incomplete. Edit the facts there, never here. The document holds only what this page shows.
-import { nav } from '../data/nav.js';
+import SiteNav from '../components/SiteNav.astro';
 import '../styles/site.css';
-import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT } from '../lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
-import Logo from '../components/Logo.astro';
 import PageMeta from '../components/PageMeta.astro';
 import { COMPARE_DESCRIPTION } from '../lib/site-meta.mjs';
 import { tools, rows, facts, strengths } from '../lib/comparison.mjs';
@@ -138,11 +136,7 @@ button.openall:hover { border-color: var(--muted); }
 <body>
 <div class="wrap">
 
-  <nav class="site">
-    <a class="brand" href="/" aria-label="Realm"><Logo /></a>
-    <div class="links">{nav.map((l) => <a href={l.href} aria-current={l.href === '/compare' ? 'page' : undefined}>{l.label}</a>)}</div>
-    <ThemeToggle />
-  </nav>
+  <SiteNav current="/compare/" />
 
   <header class="hero">
     <div class="eyebrow">Comparison</div>

@@ -14,10 +14,13 @@ export default defineConfig({
       title: 'Realm',
       // the description of a page without its own: only the 404 page (every docs page has one)
       description: HOME_DESCRIPTION,
-      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/sensigo-hq/realm' }],
       customCss: ['./src/styles/tokens.css'],
-      // the Realm logo in place of the title text
-      components: { SiteTitle: './src/components/SiteTitle.astro' },
+      // the Realm logo in place of the title text, and the site menu's links (src/data/nav.js) where
+      // Starlight puts its social icons: the header's right side, and its menu on a narrow screen
+      components: {
+        SiteTitle: './src/components/SiteTitle.astro',
+        SocialIcons: './src/components/DocsHeaderLinks.astro',
+      },
       // each docs page's preview image, Markdown copy link and breadcrumb (src/route-data.mjs)
       routeMiddleware: './src/route-data.mjs',
       // Starlight writes the link for this one itself; the rest of the icon set is added in head below

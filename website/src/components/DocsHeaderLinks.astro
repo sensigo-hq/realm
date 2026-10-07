@@ -1,0 +1,94 @@
+---
+// The site menu's links in the docs header. It replaces Starlight's SocialIcons (astro.config.mjs ->
+// components), which Starlight shows in two places: at the right of the header on a wide screen, and
+// at the bottom of its menu on a narrow one. The links come from src/data/nav.js, the list the home,
+// how-it-works and comparison pages use (src/components/SiteNav.astro), so every page offers the
+// same ones. A link with an `icon` shows as that icon in the header and as its name in the menu.
+import { Icon } from '@astrojs/starlight/components';
+import { nav } from '../data/nav.js';
+
+const inDocs = Astro.url.pathname.startsWith('/docs/');
+---
+
+<nav class="site-links" aria-label="Site">
+  {
+    nav.map((l) => (
+      <a
+        href={l.href}
+        class:list={[{ 'has-icon': l.icon, 'docs-link': l.href === '/docs/', 'npm-link': l.icon === 'npm' }]}
+        aria-current={l.href === '/docs/' && inDocs ? 'true' : undefined}
+      >
+        {l.icon && <Icon name={l.icon} />}
+        <span class="label">{l.label}</span>
+      </a>
+    ))
+  }
+</nav>
+
+<style>
+  .site-links {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 1rem;
+    font-size: var(--sl-text-sm);
+  }
+  .site-links a {
+    display: inline-flex;
+    align-items: center;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .site-links a:hover,
+  .site-links a[aria-current] {
+    color: var(--sl-color-text-accent);
+  }
+  /* In the header the reader is already in the docs, so "Docs" shows only in the menu. Just above the
+     width where Starlight folds the header into its menu (50rem), the npm icon does not fit either. */
+  .site-links a.docs-link {
+    display: none;
+  }
+  @media (max-width: 52.49rem) {
+    :global(.header) .site-links a.npm-link {
+      display: none;
+    }
+  }
+  /* In the header, a link with an icon shows the icon alone; its name stays for screen readers. */
+  .site-links a.has-icon .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* In Starlight's menu on a narrow screen: every link by name, one per line, above the theme switch. */
+  :global(.mobile-preferences .social-icons) {
+    flex-basis: 100%;
+  }
+  :global(.mobile-preferences) .site-links {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    width: 100%;
+    font-size: var(--sl-text-base);
+  }
+  :global(.mobile-preferences) .site-links a {
+    display: inline-flex;
+    padding: 0.6rem 0;
+  }
+  :global(.mobile-preferences) .site-links a + a {
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+  :global(.mobile-preferences) .site-links a.has-icon :global(svg) {
+    display: none;
+  }
+  :global(.mobile-preferences) .site-links a.has-icon .label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+</style>
