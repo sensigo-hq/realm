@@ -32,11 +32,13 @@ import {
   PROJECT_OPTION_HELP,
 } from './run-advance.js';
 import { respondCommand } from './respond.js';
+import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
   throw new Error(`cli dist not built — run \`npm run build\` first (looked for: ${CLI_ENTRY})`);
 }
+const children = printChildrenWhenATestFails();
 
 const YAML = (onExpiry: string) => `id: pcw-${onExpiry}
 name: project code where
@@ -81,6 +83,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
       cwd,
       encoding: 'utf8',
     });
+    children.record({ args: [CLI_ENTRY, ...args], ...r });
     return { stdout: r.stdout, stderr: r.stderr, status: r.status ?? -1 };
   }
 

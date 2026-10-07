@@ -29,10 +29,12 @@ import {
 } from '@sensigo/realm-testing';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CLI = process.env['FOLLOWER_CLI_ENTRY'] ?? join(ROOT, 'packages/cli/dist/index.js');
 const EXAMPLES = join(ROOT, 'examples');
+const children = printChildrenWhenATestFails();
 
 type Reply = Record<string, unknown> & {
   status: string;
@@ -75,8 +77,15 @@ function realm(
       env: { ...process.env, HOME: home },
     });
     let out = '';
+    let stdout = '';
+    let stderr = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (out += d));
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (code, signal) =>
+      children.record({ args: [CLI, ...args], status: code, signal, stdout, stderr }),
+    );
     child.on('close', (code) => resolve({ code, out }));
   });
 }
@@ -164,12 +173,16 @@ describe('#625 PR-2a — L4 Follower on examples 01–09 (realm mcp --project, r
         const def: WorkflowDefinition = loadWorkflowFromFile(join(proj, 'workflow.yaml'));
         const client = new Client({ name: 'follower-examples', version: '0' });
         await client.connect(
-          new StdioClientTransport({
-            command: process.execPath,
-            args: [CLI, 'mcp', '--project', proj],
-            cwd: proj,
-            env: { ...process.env, HOME: home } as Record<string, string>,
-          }),
+          children.watch(
+            'realm mcp',
+            new StdioClientTransport({
+              command: process.execPath,
+              args: [CLI, 'mcp', '--project', proj],
+              cwd: proj,
+              env: { ...process.env, HOME: home } as Record<string, string>,
+              stderr: 'pipe',
+            }),
+          ),
         );
         try {
           const call = async (name: string, args: Record<string, unknown>): Promise<Reply> => {

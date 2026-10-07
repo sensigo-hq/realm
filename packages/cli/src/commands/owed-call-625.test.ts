@@ -16,11 +16,13 @@ import {
   type WorkflowDefinition,
   type RunRecord,
 } from '@sensigo/realm';
+import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
   throw new Error(`cli dist not built — run \`npm run build\` first (looked for: ${CLI_ENTRY})`);
 }
+const children = printChildrenWhenATestFails();
 
 function realm(home: string, args: string[]): { stdout: string; stderr: string; status: number } {
   const r = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
@@ -28,6 +30,7 @@ function realm(home: string, args: string[]): { stdout: string; stderr: string; 
     cwd: home,
     encoding: 'utf8',
   });
+  children.record({ args: [CLI_ENTRY, ...args], ...r });
   return { stdout: r.stdout, stderr: r.stderr, status: r.status ?? -1 };
 }
 
@@ -179,6 +182,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         cwd: home,
         encoding: 'utf8',
       });
+      children.record({ args: [CLI_ENTRY, 'run', 'advance', run.id], ...r });
       expect(r.status).toBe(1);
       expect(r.stdout).toBe('');
       expect(r.stderr.trim().split('\n')).toHaveLength(1);

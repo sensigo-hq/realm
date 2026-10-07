@@ -20,6 +20,7 @@ import {
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 
 const SERVER_ENTRY =
   process.env['FOLLOWER_SERVER_ENTRY'] ??
@@ -27,6 +28,7 @@ const SERVER_ENTRY =
 if (!existsSync(SERVER_ENTRY)) {
   throw new Error(`mcp-server dist not built — run the build first (looked for: ${SERVER_ENTRY})`);
 }
+const children = printChildrenWhenATestFails();
 
 type Reply = Record<string, unknown> & {
   status: string;
@@ -75,11 +77,15 @@ async function withServer<T>(
   for (const d of defs) await workflows.register(d);
   const client = new Client({ name: 'follower', version: '0' });
   await client.connect(
-    new StdioClientTransport({
-      command: process.execPath,
-      args: [opts.withHandler === true ? handlerEntry(home) : SERVER_ENTRY],
-      env: { ...process.env, HOME: home } as Record<string, string>,
-    }),
+    children.watch(
+      'the MCP server',
+      new StdioClientTransport({
+        command: process.execPath,
+        args: [opts.withHandler === true ? handlerEntry(home) : SERVER_ENTRY],
+        env: { ...process.env, HOME: home } as Record<string, string>,
+        stderr: 'pipe',
+      }),
+    ),
   );
   try {
     return await fn(client, home);

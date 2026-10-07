@@ -14,8 +14,10 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
+const children = printChildrenWhenATestFails();
 
 describe('#625 PR-2a — resume names the owed call', () => {
   it('`To run the step(s) the engine owes (…) without a model: realm run advance <id>.` — the noun by count', async () => {
@@ -51,6 +53,7 @@ describe('#625 PR-2a — resume names the owed call', () => {
         cwd: home,
         encoding: 'utf8',
       });
+      children.record({ args: [CLI_ENTRY, 'run', 'resume', run.id, '--from', 'a'], ...r });
       expect(r.status).toBe(0);
       expect(r.stdout).toContain(
         `To run the step the engine owes ('a') without a model: realm run advance ${run.id}.`,

@@ -24,11 +24,13 @@ import {
 } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 import { sweepExpiredGates } from './listen.js';
+import { printChildrenWhenATestFails } from '../test-support/child-output.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
   throw new Error(`cli dist not built — run \`npm run build\` first (looked for: ${CLI_ENTRY})`);
 }
+const children = printChildrenWhenATestFails();
 
 function realm(home: string, args: string[]): { stdout: string; stderr: string; status: number } {
   const r = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
@@ -36,6 +38,7 @@ function realm(home: string, args: string[]): { stdout: string; stderr: string; 
     cwd: home,
     encoding: 'utf8',
   });
+  children.record({ args: [CLI_ENTRY, ...args], ...r });
   return { stdout: r.stdout, stderr: r.stderr, status: r.status ?? -1 };
 }
 
