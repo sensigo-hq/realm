@@ -360,6 +360,7 @@ as it was.`
   - `realm run respond`, answering after the time is up, prints the line first when this answer
     carried the expiry out — `⚠ … this respond call first carried out its declared … (enacted_via:
 respond).` — before the refusal (stderr) or the same-choice sentence (stdout).
+  - `realm workflow run`'s prompt (`this run call …`) and a Slack reply to `realm agent` (`this agent call …`, posted in the gate's thread and printed) say it the same way, through the one composer: **BREAKING**, `describeAnswerEnding(reply, run, { gateId, via })` takes the gate and the caller's word; a late Slack reply now posts these lines and stops waiting, in place of `Couldn't record your response … Try again`.
   - **Upgrading:** a program that matched the old text, or read the line from stderr, reads the
     reply's `warnings`.
 - **`realm run list --stuck` names the command for an expired question the engine carries out

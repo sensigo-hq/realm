@@ -17,7 +17,6 @@ import {
   owedList,
   owedWords,
   cannotGoOnLines,
-  expiryCarriedOutLine,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -34,32 +33,6 @@ import {
  */
 function notRecordedLine(runId: string, late: { choice: string; phase: string }): string {
   return `Not recorded: ${runId} | gate settled by timeout with choice '${late.choice}' | state '${late.phase}'`;
-}
-
-/**
- * decision C146: the line that says which call carried out the question's expiry, for an answer the
- * expiry beat — this command (`this respond call first carried out …`), or another call that had
- * done it first — exactly as the reply carries it: core composes it (`expiryCarriedOutLine`, the
- * composer of the MCP reply and `realm run advance`), and the warning that equals one of the two
- * forms for this gate, read off the run record, is it. Printed with `realm run advance`'s `⚠ `.
- */
-function expiryLines(
-  reply: { command: string; warnings: readonly string[] },
-  run: RunRecord,
-  gateId: string,
-): string[] {
-  const settled = run.settled?.[reply.command];
-  const outcome =
-    settled?.outcome === 'gate' && settled.resolved_by === 'timeout'
-      ? { on_expiry: 'settle_default' as const, choice: settled.choice ?? '' }
-      : run.skip_details?.[reply.command]?.kind === 'gate_expired'
-        ? { on_expiry: 'abort' as const }
-        : undefined;
-  if (outcome === undefined) return [];
-  const forms = [true, false].map((byThisCall) =>
-    expiryCarriedOutLine(gateId, reply.command, outcome, 'respond', byThisCall),
-  );
-  return reply.warnings.filter((w) => forms.includes(w)).map((w) => `⚠ ${w}`);
 }
 
 /**
@@ -195,18 +168,18 @@ export async function respondToGate(
     if (result.answer_recorded === false) {
       const lateRun = await runStore.get(runId);
       const late = lateAnswerOutcome(result, lateRun);
-      // decision C146: first, which call carried out the question's expiry (this one, or another).
-      const expiry = expiryLines(result, lateRun, options.gate);
-      lines =
-        late !== undefined
+      // decision C146: the composer starts with which call carried out the question's expiry
+      // (this one, or another), then the refusal and what the expiry's guards did.
+      lines = [
+        ...describeAnswerEnding(result, lateRun, { gateId: options.gate, via: 'respond' }),
+        ...(late !== undefined
           ? [
-              ...expiry,
-              ...describeAnswerEnding(result, lateRun),
               notRecordedLine(runId, late),
               // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
               ...nextLines(runId, workflow, lateRun, effectiveRegistry, hasCode),
             ]
-          : [...expiry, ...lines];
+          : []),
+      ];
     }
     throw new WorkflowError(lines.join('\n'), {
       code: 'STATE_BLOCKED',
@@ -217,7 +190,7 @@ export async function respondToGate(
   }
 
   const updatedRun = await runStore.get(runId);
-  const lines = describeAnswerEnding(result, updatedRun);
+  const lines = describeAnswerEnding(result, updatedRun, { gateId: options.gate, via: 'respond' });
   // issue #625: an `ok` reply is not always a recorded answer — when the gate's expiry had
   // already settled it with the same choice, the call succeeds and the answer was NOT recorded.
   // The typed fact decides the last line; the reply's prose is never matched.
@@ -227,8 +200,8 @@ export async function respondToGate(
       choice: options.choice,
       newState: late.phase,
       recorded: false,
-      // decision C146: first, which call carried out the question's expiry (this one, or another).
-      lines: [...expiryLines(result, updatedRun, options.gate), ...lines],
+      // decision C146: the composer's lines start with which call carried out the expiry.
+      lines,
       // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
       lastLine: [
         notRecordedLine(runId, late),

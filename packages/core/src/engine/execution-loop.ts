@@ -4872,14 +4872,45 @@ const LATE_SAME_CHOICE_SENTENCE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
 
 /**
+ * The line a late answer's reply carries about the question's expiry (decisions C146, C151), as a
+ * surface prints it — `⚠ ` and the line: `this <via> call first carried out its declared …` when
+ * the answering call carried the expiry out, or `another call had already carried out …`. Picked
+ * from the reply's `warnings` by composing both forms with {@link expiryCarriedOutLine} (the line's
+ * one composer) for this gate, the outcome read off the run record — never by matching prose.
+ * Empty when the reply carries neither form (the expiry had already been carried out before this
+ * answer came: its reply is the `already resolved` refusal).
+ */
+function lateExpiryLines(
+  reply: ResponseEnvelope,
+  run: RunRecord,
+  answer: { gateId: string; via: AnswerCaller },
+): string[] {
+  const settled = run.settled?.[reply.command];
+  const outcome =
+    settled?.outcome === 'gate' && settled.resolved_by === 'timeout'
+      ? { on_expiry: 'settle_default' as const, choice: settled.choice ?? '' }
+      : run.skip_details?.[reply.command]?.kind === 'gate_expired'
+        ? { on_expiry: 'abort' as const }
+        : undefined;
+  if (outcome === undefined) return [];
+  const forms = [true, false].map((byThisCall) =>
+    expiryCarriedOutLine(answer.gateId, reply.command, outcome, answer.via, byThisCall),
+  );
+  return reply.warnings.filter((w) => forms.includes(w)).map((w) => `⚠ ${w}`);
+}
+
+/**
  * issue #625: what a surface that speaks after an ANSWER prints about what the answer's write
  * settled — the ONE composer for `realm run respond`, the Slack gate notifier and the terminal run
- * prompt. `run` is the record the surface reads after the call (finalizers already drained).
+ * prompt. `run` is the record the surface reads after the call (finalizers already drained);
+ * `answer` is the gate answered and the surface's own `caller` word (`respond`, `agent`, `run`).
  *
- *  - a LATE answer (`answer_recorded: false` — the gate's expiry beat it): the expiry sentence
- *    first, on its own line, whether or not a guard ended the run; then the guard lines (the
- *    ending sentence and its `Reason:`, or one passed line per guard); then, when a guard ended
- *    the run, each finalizer's outcome;
+ *  - a LATE answer (`answer_recorded: false` — the gate's expiry beat it): first the line that says
+ *    which call carried the expiry out (decision C146: `⚠ … this <via> call first carried out …`,
+ *    or another call), when the reply carries it; then the expiry sentence, on its own line,
+ *    whether or not a guard ended the run; then the guard lines (the ending sentence and its
+ *    `Reason:`, or one passed line per guard); then, when a guard ended the run, each finalizer's
+ *    outcome;
  *  - a recorded answer that ENDED the run (`ended_by`): the reply's own sentence first, then
  *    `Reason: <reason>` when there is one, then each finalizer's outcome;
  *  - a recorded answer whose guards passed and the run goes on: one passed line per guard;
@@ -4887,7 +4918,11 @@ const LATE_SAME_CHOICE_SENTENCE =
  *
  * Each finalizer line reads `finalizer '<name>': <status>`, in the ledger's rank order.
  */
-export function describeAnswerEnding(reply: ResponseEnvelope, run: RunRecord): string[] {
+export function describeAnswerEnding(
+  reply: ResponseEnvelope,
+  run: RunRecord,
+  answer: { gateId: string; via: AnswerCaller },
+): string[] {
   const finalizerLines = (): string[] =>
     Object.entries(run.finalizer_ledger ?? {})
       .sort(([, a], [, b]) => a.rank - b.rank)
@@ -4896,9 +4931,12 @@ export function describeAnswerEnding(reply: ResponseEnvelope, run: RunRecord): s
   if (reply.answer_recorded === false) {
     const expirySentence =
       reply.status === 'ok' ? LATE_SAME_CHOICE_SENTENCE : (reply.errors[0] ?? reply.context_hint);
-    return reply.ended_by !== undefined
-      ? [expirySentence, ...describeEndedBy(reply), ...finalizerLines()]
-      : [expirySentence, ...passedLines()];
+    return [
+      ...lateExpiryLines(reply, run, answer),
+      ...(reply.ended_by !== undefined
+        ? [expirySentence, ...describeEndedBy(reply), ...finalizerLines()]
+        : [expirySentence, ...passedLines()]),
+    ];
   }
   if (reply.ended_by === undefined) return passedLines();
   return [

@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import {
+  expiryCarriedOutLine,
   advanceRun,
   describeAnswerEnding,
   describeEndedBy,
@@ -407,7 +408,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // What a surface prints after this answer: the ending first, the reason, then the finalizer.
       // (a) red when the composer drops a line, reorders them, or rewords the finalizer line;
       //     (b) prints the lines.
-      expect(describeAnswerEnding(reply, record)).toEqual([
+      expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
         "Guard step 'check' aborted the run.",
         'Reason: Not approved — stopping.',
         "finalizer 'notify': completed",
@@ -834,7 +835,8 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(lateAnswerOutcome(reply, record)).toEqual({ choice: 'reject', phase: 'aborted' });
       // (a) red when the composer drops the expiry sentence or joins it to the guard's on one
       //     line; (b) prints the lines.
-      expect(describeAnswerEnding(reply, record)).toEqual([
+      expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse')}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -872,7 +874,8 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(lateAnswerOutcome(reply, record)).toEqual({ choice: 'reject', phase: 'aborted' });
       // (a) red when the refused form's lines lose the refusal, the ending or the reason;
       //     (b) prints the lines.
-      expect(describeAnswerEnding(reply, record)).toEqual([
+      expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse')}`,
         refusal,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -902,7 +905,13 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         choice: 'approve',
         phase: 'running',
       });
-      expect(describeAnswerEnding(sameReply, sameRecord)).toEqual([
+      expect(
+        describeAnswerEnding(sameReply, sameRecord, {
+          gateId: same.gateId,
+          via: 'submitHumanResponse',
+        }),
+      ).toEqual([
+        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse')}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
       ]);
@@ -925,7 +934,13 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         choice: 'approve',
         phase: 'running',
       });
-      expect(describeAnswerEnding(otherReply, otherRecord)).toEqual([
+      expect(
+        describeAnswerEnding(otherReply, otherRecord, {
+          gateId: other.gateId,
+          via: 'submitHumanResponse',
+        }),
+      ).toEqual([
+        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse')}`,
         `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
       ]);
@@ -979,7 +994,9 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       const record = await store.get(runId);
       expect(lateAnswerOutcome(same, record)).toEqual({ choice: 'approve', phase: 'running' });
       // (a) red when the composer prints nothing for this reply; (b) prints the lines.
-      expect(describeAnswerEnding(same, record)).toEqual([LATE_SAME_CHOICE]);
+      expect(describeAnswerEnding(same, record, { gateId, via: 'submitHumanResponse' })).toEqual([
+        LATE_SAME_CHOICE,
+      ]);
 
       const different = await submitHumanResponse(store, def, {
         runId,
@@ -1350,7 +1367,10 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
     expect(describeEndedBy(base)).toEqual([]);
     // A recorded answer whose write settled no guard prints nothing extra.
     expect(
-      describeAnswerEnding({ ...base, status: 'ok', errors: [] }, gateOpenRecord(gateThenGuard())),
+      describeAnswerEnding({ ...base, status: 'ok', errors: [] }, gateOpenRecord(gateThenGuard()), {
+        gateId: 'g',
+        via: 'submitHumanResponse',
+      }),
     ).toEqual([]);
   });
 });

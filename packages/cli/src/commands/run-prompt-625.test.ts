@@ -4,7 +4,9 @@
 // The prompt says what the answer's write did BEFORE its state line: the guard that ended the
 // run (its sentence, `Reason:`), or one passed line per guard. A late answer — this process's own
 // timer enacted the gate's expiry while the prompt was open — never reads as recorded: its last
-// line is `✗ not recorded — … → <phase>`, never `✓ →`.
+// line is `✗ not recorded — … → <phase>`, never `✓ →`. When the answer is handled after the time
+// is up and before that timer runs (#625 PR-2a, decision C146), the answer carries the expiry out
+// itself and its first line says so: `⚠ … this run call first carried out …`.
 //
 // In-process through the real command, with `node:readline/promises` mocked (the #447 harness):
 // each prompt is answered by its own text, so a cell cannot answer the wrong question.
@@ -28,7 +30,12 @@ const LATE_SAME_CHOICE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
 
 /** gate `confirm` → guard `check` (aborts unless approved) [→ agent step `finish`]. */
-function workflowYaml(opts: { id: string; finish?: boolean; expiresTo?: string }): string {
+function workflowYaml(opts: {
+  id: string;
+  finish?: boolean;
+  expiresTo?: string;
+  aborts?: boolean;
+}): string {
   return [
     `id: ${opts.id}`,
     `name: ${opts.id}`,
@@ -48,6 +55,7 @@ function workflowYaml(opts: { id: string; finish?: boolean; expiresTo?: string }
           `      default_choice: ${opts.expiresTo}`,
         ]
       : []),
+    ...(opts.aborts === true ? ['      timeout_seconds: 1', '      on_expiry: abort'] : []),
     '  check:',
     '    description: Check',
     '    execution: guard',
@@ -128,9 +136,23 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
    * Answers each prompt by its own text. `choice` answers the gate; when `afterExpiry` is set
    * the gate's answer is held until this process's own timer has enacted the expiry.
    */
-  function answerPrompts(choice: string, opts?: { afterExpiry?: boolean }): void {
+  function answerPrompts(
+    choice: string,
+    opts?: { afterExpiry?: boolean; pastDeadlineFirst?: boolean },
+  ): void {
     mocks.question.mockImplementation(async (prompt: string) => {
       if (prompt.startsWith('  Choice ')) {
+        if (opts?.pastDeadlineFirst === true) {
+          // decision C146's race: the answer is handled after the question's time is up and
+          // before this process's own timer runs — as when the event loop is busy as the deadline
+          // passes and the typed line is read first. The loop is held (synchronously) past the
+          // deadline; the answer's promise then settles, its `finally` cancels the timer, and the
+          // answer carries out the expiry itself. The timer is the real one, not stubbed.
+          const expiresAt = new Date((await readRecord()).pending_gate!.expires_at!).getTime();
+          while (Date.now() <= expiresAt + 20) {
+            // hold the event loop past the deadline
+          }
+        }
         if (opts?.afterExpiry === true) {
           const deadline = Date.now() + 15_000;
           for (;;) {
@@ -251,6 +273,67 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         '→ [agent] finish: Finish',
       ]);
       expect(code).toBe(0);
+    }, 30_000);
+  });
+  describe('C146 follow-up — the answer carries out the expiry before the attending timer fires', () => {
+    /** The line this prompt's answer prints first: `run` names `realm workflow run`. */
+    const runCarriedOut = (did: string): string =>
+      `  ⚠ gate '${gateId()}' on 'confirm' had expired — this run call first carried out its declared ${did} (enacted_via: run).`;
+
+    it('DIFFERENT choice: `⚠ … this run call first carried out …` once, then the refusal and `✗ not recorded`, on stderr', async () => {
+      answerPrompts('reject', { pastDeadlineFirst: true });
+
+      const code = await run(
+        workflowYaml({ id: 'prompt-625-race-diff', finish: true, expiresTo: 'approve' }),
+      );
+
+      // (a) red when the composer drops the line, prints it twice, or names another call (the
+      //     timer's `⏰` line would mean the race was not reached); (b) prints stderr.
+      expect(errored().slice(0, 4)).toEqual([
+        runCarriedOut("settle_default: the default choice 'approve' was recorded"),
+        `  Gate '${gateId()}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
+        "  Guard step 'check' passed.",
+        "  ✗ not recorded — gate settled by timeout with choice 'approve' → running\n",
+      ]);
+      expect([...logged(), ...errored()].filter((l) => l.includes('had expired'))).toHaveLength(1);
+      expect(logged().some((l) => l.startsWith('⏰'))).toBe(false);
+      expect(code).toBe(0);
+    }, 30_000);
+
+    it('SAME choice: the line once, then the same-choice sentence and `✗ not recorded`, on stdout', async () => {
+      answerPrompts('approve', { pastDeadlineFirst: true });
+
+      const code = await run(
+        workflowYaml({ id: 'prompt-625-race-same', finish: true, expiresTo: 'approve' }),
+      );
+
+      // (a) red when the same-choice arm drops the line or prints it twice; (b) prints stdout.
+      expect(afterTheGate().slice(0, 4)).toEqual([
+        runCarriedOut("settle_default: the default choice 'approve' was recorded"),
+        `  ${LATE_SAME_CHOICE}`,
+        "  Guard step 'check' passed.",
+        "  ✗ not recorded — gate settled by timeout with choice 'approve' → running\n",
+      ]);
+      expect([...logged(), ...errored()].filter((l) => l.includes('had expired'))).toHaveLength(1);
+      expect(code).toBe(0);
+      expect(errored()).toEqual([]);
+    }, 30_000);
+
+    it('abort: the line once, then the refusal and `✗ not recorded → aborted`, on stderr', async () => {
+      answerPrompts('approve', { pastDeadlineFirst: true });
+
+      const code = await run(workflowYaml({ id: 'prompt-625-race-abort', aborts: true }));
+
+      // (a) red when the abort arm prints only the bare refusal (no line, no state); (b) prints
+      //     stderr.
+      expect(errored().slice(0, 3)).toEqual([
+        runCarriedOut('abort: the run ended'),
+        `  Gate '${gateId()}' on 'confirm' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.`,
+        '  ✗ not recorded → aborted\n',
+      ]);
+      expect([...logged(), ...errored()].filter((l) => l.includes('had expired'))).toHaveLength(1);
+      // `realm workflow run` exits 1 for a run that ended aborted (as realm-run-acting.md says).
+      expect(code).toBe(1);
     }, 30_000);
   });
 });

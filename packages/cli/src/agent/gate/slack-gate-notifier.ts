@@ -397,7 +397,29 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           ...(registry !== undefined ? { registry } : {}),
           ...(driver !== undefined ? { driver } : {}),
         });
-        if (result.status === 'error') {
+        if (result.answer_recorded === false) {
+          // decision C146: an answer that came after the question's time was up was not recorded —
+          // the expiry settled the gate (or ended the run), so there is nothing to try again. The
+          // composer's lines go to the thread and to this terminal, as `realm run respond` and the
+          // run prompt print them: which call carried out the expiry (`this agent call …`, or
+          // another call), the refusal or the same-choice sentence, what the expiry's guards did.
+          let lateLines: string[];
+          try {
+            lateLines = describeAnswerEnding(result, await store.get(runId), {
+              gateId: gate.gate_id,
+              via: 'agent',
+            });
+          } catch {
+            // The record could not be read (only the finalizer outcomes need it): the reply's own
+            // sentence, so the person still learns the answer was not recorded.
+            lateLines = [result.errors[0] ?? result.context_hint];
+          }
+          for (const line of lateLines) console.log(line);
+          if (gateThreadTs !== undefined) {
+            await postSlackReply(slackBotToken, slackChannelId, gateThreadTs, lateLines.join('\n'));
+          }
+          abortController.abort();
+        } else if (result.status === 'error') {
           await postSubmitError(result.errors[0] ?? result.context_hint ?? 'unknown error');
         } else {
           // Success — resolution IS the store write inside submitHumanResponse. Confirm + stop.
@@ -414,7 +436,10 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
             if (result.ended_by !== undefined) {
               let endingLines: string[];
               try {
-                endingLines = describeAnswerEnding(result, await store.get(runId));
+                endingLines = describeAnswerEnding(result, await store.get(runId), {
+                  gateId: gate.gate_id,
+                  via: 'agent',
+                });
               } catch {
                 // The answer IS recorded — a failed read here must not reach the catch below and
                 // post "Couldn't record your response". Only the finalizer outcomes need the

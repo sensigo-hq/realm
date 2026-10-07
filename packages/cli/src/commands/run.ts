@@ -385,6 +385,8 @@ export const runCommand = new Command('run')
               clearExpiryTimer();
             });
             const choice = raw.trim();
+            // decision C146: the answer the composer speaks for — this gate, named as this command.
+            const answered = { gateId: g.gate_id, via: 'run' as const };
             const respondResult = await submitHumanResponse(store, definition, {
               runId,
               gateId: g.gate_id,
@@ -404,7 +406,9 @@ export const runCommand = new Command('run')
               // guard that ended the run (its sentence, `Reason:`, each finalizer's outcome) or
               // one passed line per guard; for an answer the gate's expiry beat, the expiry
               // sentence comes first. One composer with `realm run respond` and the Slack notifier.
-              for (const line of describeAnswerEnding(respondResult, run)) console.log(`  ${line}`);
+              for (const line of describeAnswerEnding(respondResult, run, answered)) {
+                console.log(`  ${line}`);
+              }
               const late = lateAnswerOutcome(respondResult, run);
               if (late !== undefined) {
                 // The call succeeded and the answer was NOT recorded (this process's own timer
@@ -422,15 +426,18 @@ export const runCommand = new Command('run')
               // exactly what this read converges: the next iteration sees the real state and
               // either re-prompts honestly or reaches the stall/tail. Mirrors the ok arm above.
               run = await store.get(runId);
-              // issue #625: a refused LATE answer (the expiry settled the other choice) says what
-              // the run is doing now — the refusal, what the expiry's guards did, then the state.
+              // issue #625: a refused LATE answer (the expiry settled the other choice, or ended the
+              // run) says what the run is doing now — which call carried out the expiry (decision
+              // C146), the refusal, what the expiry's guards did, then the state.
               const late = lateAnswerOutcome(respondResult, run);
-              if (late !== undefined) {
-                for (const line of describeAnswerEnding(respondResult, run)) {
+              if (respondResult.answer_recorded === false) {
+                for (const line of describeAnswerEnding(respondResult, run, answered)) {
                   console.error(`  ${line}`);
                 }
                 console.error(
-                  `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`,
+                  late !== undefined
+                    ? `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`
+                    : `  ✗ not recorded → ${deriveRunPhase(run)}\n`,
                 );
               } else {
                 console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
