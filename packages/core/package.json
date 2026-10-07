@@ -55,6 +55,8 @@
   },
   "files": [
     "dist",
+    "!dist/tsconfig.tsbuildinfo",
+    "!dist/**/test-support/**",
     "README.md"
   ]
 }

@@ -1,5 +1,9 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+// `.mts`, so Node and Vite load it as the ES module it is (the root package.json has no "type";
+// as `.ts` Vite warned it would stop loading it, and `import.meta` was refused).
+//
 // Root vitest config — DISCOVERED and applied by each package's own `vitest run` (verified for
 // vitest 4.1.8: `root` resolves to the package cwd, so every package still runs only its own
 // files). Deliberately NOT using `projects` — that breaks `npm run test --workspace <pkg>` (its
@@ -46,5 +50,8 @@ export default defineConfig({
     // (fails-then-passes is still broken). Quarantine a specific test if ever mid-fix — never a
     // global retry.
     retry: 0,
+    // Tests read built output and never build: the run refuses to start when the build is older
+    // than the source (the reason, and how the check stays read-only, are in the file).
+    globalSetup: [fileURLToPath(new URL('./scripts/vitest-build-is-current.mjs', import.meta.url))],
   },
 });

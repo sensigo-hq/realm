@@ -152,12 +152,16 @@ nav.site {
 .links a[aria-current='page'] {
   color: var(--accent);
 }
-/* The light/dark switch (src/components/ThemeToggle.astro). It sits at the right end of the menu.
-   On a narrow screen the links move to a row of their own, under the brand and the switch. */
-nav.site .links {
+/* The links and the light/dark switch (src/components/ThemeToggle.astro) sit together at the right
+   end of the menu. On a narrow screen they fold behind the menu button (src/components/SiteNav.astro). */
+nav.site .nav-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px 24px;
   margin-left: auto;
 }
-.theme-btn {
+.theme-btn,
+.menu-btn {
   align-self: center;
   display: inline-grid;
   place-items: center;
@@ -170,11 +174,13 @@ nav.site .links {
   color: var(--muted);
   border: 1px solid var(--line);
 }
-.theme-btn:hover {
+.theme-btn:hover,
+.menu-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
-.theme-btn:focus-visible {
+.theme-btn:focus-visible,
+.menu-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -185,14 +191,59 @@ nav.site .links {
 :root[data-theme='light'] .theme-btn .sun {
   display: block;
 }
-@media (max-width: 460px) {
-  nav.site .links {
-    order: 1;
+.menu-btn {
+  display: none;
+}
+.menu-btn .close-icon,
+.menu-btn[aria-expanded='true'] .open-icon {
+  display: none;
+}
+.menu-btn[aria-expanded='true'] .close-icon {
+  display: block;
+}
+/* The switch needs its script for its name and its action, so it shows only once that has run. */
+.theme-btn[hidden] {
+  display: none;
+}
+/* 50rem is where Starlight folds the docs header into its menu button; the site's pages fold here too.
+   `site-menu-js` is set by src/components/SiteNav.astro before the menu is drawn. With scripts off it
+   is never set: there is no button, and the links show as a row of their own under the logo. */
+@media (max-width: 49.99rem) {
+  nav.site .nav-panel {
     flex-basis: 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
     margin-left: 0;
   }
-  .theme-btn {
-    margin-left: auto;
+  :root.site-menu-js nav.site .menu-btn {
+    display: inline-grid;
+  }
+  :root.site-menu-js nav.site:not([data-menu='open']) .nav-panel {
+    display: none;
+  }
+  /* 40px, larger than Starlight's 32px menu button, so both are easy to tap. */
+  .menu-btn,
+  nav.site .theme-btn {
+    width: 40px;
+    height: 40px;
+  }
+  nav.site[data-menu='open'] .nav-panel {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  nav.site[data-menu='open'] .links {
+    flex-direction: column;
+    gap: 0;
+    font-size: 16px;
+  }
+  nav.site[data-menu='open'] .links a {
+    padding: 11px 0;
+    border-top: 1px solid var(--line);
+  }
+  nav.site[data-menu='open'] .theme-btn {
+    align-self: flex-start;
+    margin-top: 12px;
   }
 }
 header.hero {

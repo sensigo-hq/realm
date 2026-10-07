@@ -1,7 +1,8 @@
 // Generates Starlight content from ../docs — the single source of truth.
 // The engine's docs stay free of frontmatter so they read cleanly on GitHub;
 // this derives the title from the first H1, strips it (Starlight renders its own),
-// and writes into src/content/docs/docs/** which is gitignored.
+// and writes into src/content/docs/docs/** which is gitignored. It also writes the 404 page
+// (src/content/docs/404.md), from the site menu's links.
 //
 // Each page carries its own description for search results and link previews, as a comment on the
 // line after the H1, which GitHub does not show:
@@ -16,6 +17,7 @@
 import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, relative, posix, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nav } from '../src/data/nav.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // REALM_DOCS_SRC points the site at another checkout's docs (the docs-rebuild preview).
@@ -124,4 +126,26 @@ for (const { rel, title, description, body } of pages) {
   );
 }
 
-console.log(`sync-docs: ${files.length} files -> src/content/docs/docs/`);
+// The 404 page. Starlight's own has no menu on a narrow screen (it has no sidebar), so a visitor on a
+// phone would have only the logo and the search box. This one offers the home page and the site
+// menu's links (src/data/nav.js) as buttons.
+const notFound = {
+  title: 'Page not found',
+  template: 'splash',
+  editUrl: false,
+  pagefind: false,
+  hero: {
+    tagline: 'Nothing is at this address. Search the docs, or go to one of these pages.',
+    actions: [
+      { text: 'Home', link: '/', variant: 'primary' },
+      ...nav.map((l) => ({ text: l.label, link: l.href, variant: 'minimal' })),
+    ],
+  },
+};
+// JSON is valid YAML, so the front matter is written as JSON.
+await writeFile(
+  join(here, '..', 'src', 'content', 'docs', '404.md'),
+  `---\n${JSON.stringify(notFound, null, 2)}\n---\n`,
+);
+
+console.log(`sync-docs: ${files.length} files -> src/content/docs/docs/, and the 404 page`);

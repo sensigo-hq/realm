@@ -1,10 +1,8 @@
 ---
-import { nav } from '../data/nav.js';
+import SiteNav from '../components/SiteNav.astro';
 import '../styles/site.css';
-import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT } from '../lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
-import Logo from '../components/Logo.astro';
 import PageMeta from '../components/PageMeta.astro';
 import { HOW_IT_WORKS_DESCRIPTION } from '../lib/site-meta.mjs';
 ---
@@ -75,11 +73,7 @@ import { HOW_IT_WORKS_DESCRIPTION } from '../lib/site-meta.mjs';
 <body>
 <div class="wrap">
 
-  <nav class="site">
-    <a class="brand" href="/" aria-label="Realm"><Logo /></a>
-    <div class="links">{nav.map((l) => <a href={l.href} aria-current={l.href === '/how-it-works' ? 'page' : undefined}>{l.label}</a>)}</div>
-    <ThemeToggle />
-  </nav>
+  <SiteNav current="/how-it-works/" />
 
   <header class="hero">
     <div class="eyebrow">How it works</div>

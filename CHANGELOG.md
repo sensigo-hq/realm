@@ -356,6 +356,8 @@ as it was.`
 loaded from there.`, or `… <folder> (no project code there).` when that folder holds none. Their
   `--project` help says it is used only for a workflow registered without a project folder.
 
+- **The npm packages no longer include test-only files.** `@sensigo/realm`, `@sensigo/realm-cli` and `@sensigo/realm-mcp` published 32 test-only files: the test helpers under `dist/**/test-support/` (two stand-in model servers, an MCP server entry, a journey helper, and the helper that marks test doubles) and the CLI's tool-schema fixtures under `dist/agent/fixtures/`. No product code used them and the packages' `exports` never exposed them; nothing else in the packages changes.
+
 ### Fixed
 
 - **A reply lists each warning once (issue #625, PR-2a).** When the last step a call ran gave the

@@ -1,0 +1,111 @@
+---
+// The site menu's links in the docs header. It replaces Starlight's SocialIcons (astro.config.mjs ->
+// components), which Starlight shows in two places: at the right of the header on a wide screen, and
+// at the bottom of its menu on a narrow one. The links come from src/data/nav.js, the list the home,
+// how-it-works and comparison pages use (src/components/SiteNav.astro), so every page offers the
+// same ones. A link with an `icon` shows as that icon in the header and as its name in the menu.
+import { Icon } from '@astrojs/starlight/components';
+import { nav } from '../data/nav.js';
+
+const inDocs = Astro.url.pathname.startsWith('/docs/');
+---
+
+<nav class="site-links" aria-label="Site">
+  {
+    nav.map((l) => (
+      <a
+        href={l.href}
+        class:list={[{ 'has-icon': l.icon, 'here-link': l.href === '/docs/' && inDocs }]}
+        aria-current={l.href === '/docs/' && inDocs ? 'true' : undefined}
+      >
+        {l.icon && <Icon name={l.icon} />}
+        <span class="label">{l.label}</span>
+      </a>
+    ))
+  }
+</nav>
+
+<style>
+  .site-links {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 1rem;
+    font-size: var(--sl-text-sm);
+  }
+  .site-links a {
+    display: inline-flex;
+    align-items: center;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .site-links a:hover,
+  .site-links a[aria-current] {
+    color: var(--sl-color-text-accent);
+  }
+  /* On a docs page the reader is already in the docs, so the header leaves out "Docs" (the menu on a
+     narrow screen keeps it). Just above the width where Starlight folds the header into its menu
+     (50rem), the links sit closer and smaller so all of them still fit beside the search box. */
+  :global(.header) .site-links a.here-link {
+    display: none;
+  }
+  /* The icons keep the size and padding Starlight gives its own social icons: each is a 32px target
+     (28px between 800 and 840px). */
+  :global(.header) .site-links a.has-icon {
+    font-size: var(--sl-text-base);
+    padding: 0.5em;
+    margin: -0.5em;
+  }
+  @media (max-width: 52.49rem) {
+    :global(.header) .site-links {
+      gap: 0.5rem;
+      font-size: var(--sl-text-xs);
+    }
+    /* With the smaller gap, the targets of two icons side by side would overlap; this one starts where
+       the one before it ends. The icons are a little smaller here (28px targets) to make room. */
+    :global(.header) .site-links a.has-icon {
+      font-size: var(--sl-text-sm);
+    }
+    :global(.header) .site-links a.has-icon + a.has-icon {
+      margin-inline-start: 0;
+    }
+  }
+  /* In the header, a link with an icon shows the icon alone; its name stays for screen readers. */
+  .site-links a.has-icon .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* In Starlight's menu on a narrow screen: every link by name, one per line, above the theme switch. */
+  :global(.mobile-preferences .social-icons) {
+    flex-basis: 100%;
+  }
+  :global(.mobile-preferences) .site-links {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    width: 100%;
+    font-size: var(--sl-text-base);
+  }
+  :global(.mobile-preferences) .site-links a {
+    display: inline-flex;
+    padding: 0.6rem 0;
+  }
+  :global(.mobile-preferences) .site-links a + a {
+    border-top: 1px solid var(--sl-color-hairline);
+  }
+  :global(.mobile-preferences) .site-links a.has-icon :global(svg) {
+    display: none;
+  }
+  :global(.mobile-preferences) .site-links a.has-icon .label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+</style>

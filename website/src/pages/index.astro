@@ -1,10 +1,8 @@
 ---
-import { nav } from '../data/nav.js';
+import SiteNav from '../components/SiteNav.astro';
 import '../styles/site.css';
-import ThemeToggle from '../components/ThemeToggle.astro';
 import { THEME_INIT } from '../lib/theme-init.mjs';
 import { ICON_LINKS, THEME_COLOR } from '../lib/favicon.mjs';
-import Logo from '../components/Logo.astro';
 import Replay from '../components/Replay.astro';
 import PageMeta from '../components/PageMeta.astro';
 import { HOME_DESCRIPTION, PUBLISHER, SITE_NAME, absolute } from '../lib/site-meta.mjs';
@@ -124,11 +122,7 @@ svg.loop-narrow .n-t{font-size:13px}
 <body>
 <div class="wrap">
 
-  <nav class="site">
-    <a class="brand" href="/" aria-label="Realm"><Logo /></a>
-    <div class="links">{nav.map((l) => <a href={l.href}>{l.label}</a>)}</div>
-    <ThemeToggle />
-  </nav>
+  <SiteNav />
 
   <header class="hero">
     <p class="eyebrow">Workflow engine for AI agents</p>
