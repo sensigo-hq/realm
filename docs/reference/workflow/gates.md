@@ -275,7 +275,7 @@ Over MCP these replies carry `answer_recorded: false`. See [`submit_human_respon
 Gate '638d412e-ee8a-492c-ae80-750d2a26cbc2' on 'approve' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.
 ```
 
-An answer that arrives after something else carried out the abort gets the refusal that every ended run gives, without that field:
+An answer that arrives after something else carried out the abort is refused with `STATE_RUN_TERMINAL`, without that field — as is every answer to a question that recorded no choice on a run that has ended (see [A run that has ended](../mcp/tools.md#a-run-that-has-ended)):
 
 ```text
 Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.

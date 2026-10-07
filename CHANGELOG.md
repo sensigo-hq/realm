@@ -121,6 +121,20 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
 
 ### Changed
 
+- **`realm workflow run`'s gate prompt closes when something else settles its question (issue #625,
+  PR-2a).** While the prompt waits, this process's own expiry timer, or another process (`realm run
+respond` in another terminal, `realm run advance`, `realm run drain --expired`, `realm listen`),
+  may settle the question. The prompt then closes and prints what the record holds, as `realm run
+inspect` prints it: `This prompt is closed: the question on '<step>' is no longer open — Answer:
+<choice> · …` (or `— no answer was recorded; the run is '<phase>'.`), and the run goes on. It no
+  longer waits for an answer that can no longer be recorded (pressing Enter printed `your choice ''
+was not recorded`). The prompt reads the record twice a second while it waits.
+- **`realm agent` carries out a question already past its time before announcing it (issue #625,
+  PR-2a).** On a run whose question's time is up and whose `on_expiry` the engine carries out,
+  `realm agent` no longer prints the gate, `Waiting for approval...` and `realm run respond …
+--choice` commands an answer could not be recorded through: it carries the expiry out first and
+  prints `⚠ gate '<g>' on '<s>' had expired — this agent call first carried out its declared … (enacted_via: agent).`,
+  then runs what the expiry made owed. A question whose time is not up is announced as before.
 - **BREAKING — the owed call replaces three silent states (issue #625, PR-2a).** `get_run_state`'s
   `next_actions_status` value `auto_pending` (documented as "not awaiting the agent") is removed and
   replaced by `advance_owed`.
@@ -243,9 +257,14 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
     Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via` vocabulary, which
     gains `advanceRun`), `ENTRY_CALLERS` (each function's words) and `expiryCarriedOutLine`, the
     line's one composer.
+  - A run it cannot read gets an error reply, as from `executeStep` — never a throw:
+    `STATE_RUN_NOT_FOUND` for a run that does not exist (labelled with the call's `command`,
+    `run_version: 0`); an error the store throws as a `WorkflowError` keeps its code, and any other
+    is `ENGINE_STORE_FAILED`. `executeStep` and `advanceRun` share the one rule.
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
     `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them);
-    `caller` names the call, and `command` only labels the reply (default: the caller).
+    `caller` names the call, and `command` only labels the reply (default: the caller). Read
+    `status: 'error'` on its reply as on its siblings'; it does not throw for a missing run.
 - **BREAKING — a refusal before the claim says what can be called instead (issue #625, PR-2a).** A step
   `executeStep` refuses before its claim — a failed precondition (`blocked`) or an invalid `trust`
   (`error`, `VALIDATION_TRUST_VALUE`), an agent step or an `auto` step — now carries the run view's
@@ -345,7 +364,11 @@ its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_ex
     `submitHumanResponse` and `executeEngineStep` take a `caller` option, a word from the
     function's own list (`ENTRY_CALLERS`) — the MCP tools and the CLI pass theirs; any other value
     throws `VALIDATION_CALLER_INVALID` before anything is read or written. Core exports the types
-    `StepCaller`, `ChainCaller` and `AnswerCaller`.
+    `StepCaller`, `ChainCaller`, `AnswerCaller` and `EngineStepCaller`.
+  - `executeEngineStep` admits its own call, first: its store, registry, driver and `caller` are
+    checked as `executeEngineStep`'s, before its check that the step is `auto`, and a refusal names
+    it — `executeEngineStep's caller is one of executeEngineStep, executeStep, agent; it was given
+'<value>'. Nothing was read or written.`
   - A late answer's line is this one too (0.46.0: `gate '<g>' expired <n>m ago and was enacted
 (settle_default: '<c>') before this response arrived — enacted_via: submit.`). When another call
     had already carried the expiry out, it says so: `… had expired — another call had already
