@@ -11,10 +11,15 @@ import {
   absolute,
   markdownPath,
 } from '../lib/site-meta.mjs';
-import { DOCS_INDEX_ID, DOCS_SIDEBAR, assertDocsListed } from '../data/docs-sidebar.mjs';
+import {
+  DOCS_INDEX_ID,
+  DOCS_SIDEBAR,
+  assertDocsListed,
+  isDocsPageId,
+} from '../data/docs-sidebar.mjs';
 
 export async function GET() {
-  const pages = await getCollection('docs');
+  const pages = await getCollection('docs', (page) => isDocsPageId(page.id));
   assertDocsListed(pages.map((p) => p.id));
   const byId = new Map(pages.map((p) => [p.id, p.data]));
   const link = (id) =>

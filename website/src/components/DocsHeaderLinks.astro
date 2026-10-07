@@ -15,7 +15,7 @@ const inDocs = Astro.url.pathname.startsWith('/docs/');
     nav.map((l) => (
       <a
         href={l.href}
-        class:list={[{ 'has-icon': l.icon, 'docs-link': l.href === '/docs/', 'npm-link': l.icon === 'npm' }]}
+        class:list={[{ 'has-icon': l.icon, 'here-link': l.href === '/docs/' && inDocs }]}
         aria-current={l.href === '/docs/' && inDocs ? 'true' : undefined}
       >
         {l.icon && <Icon name={l.icon} />}
@@ -44,15 +44,23 @@ const inDocs = Astro.url.pathname.startsWith('/docs/');
   .site-links a[aria-current] {
     color: var(--sl-color-text-accent);
   }
-  /* In the header the reader is already in the docs, so "Docs" shows only in the menu. Just above the
-     width where Starlight folds the header into its menu (50rem), the npm icon does not fit either. */
-  .site-links a.docs-link {
+  /* On a docs page the reader is already in the docs, so the header leaves out "Docs" (the menu on a
+     narrow screen keeps it). Just above the width where Starlight folds the header into its menu
+     (50rem), the links sit closer and smaller so all of them still fit beside the search box. */
+  :global(.header) .site-links a.here-link {
     display: none;
   }
   @media (max-width: 52.49rem) {
-    :global(.header) .site-links a.npm-link {
-      display: none;
+    :global(.header) .site-links {
+      gap: 0.5rem;
+      font-size: var(--sl-text-xs);
     }
+  }
+  /* The icons keep the size and padding Starlight gives its own social icons: each is a 32px target. */
+  :global(.header) .site-links a.has-icon {
+    font-size: var(--sl-text-base);
+    padding: 0.5em;
+    margin: -0.5em;
   }
   /* In the header, a link with an icon shows the icon alone; its name stays for screen readers. */
   .site-links a.has-icon .label {

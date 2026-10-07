@@ -201,8 +201,13 @@ nav.site .nav-panel {
 .menu-btn[aria-expanded='true'] .close-icon {
   display: block;
 }
+/* The switch needs its script for its name and its action, so it shows only once that has run. */
+.theme-btn[hidden] {
+  display: none;
+}
 /* 50rem is where Starlight folds the docs header into its menu button; the site's pages fold here too.
-   With scripts off there is no button, and the panel shows as a row of its own under the logo. */
+   `site-menu-js` is set by src/components/SiteNav.astro before the menu is drawn. With scripts off it
+   is never set: there is no button, and the links show as a row of their own under the logo. */
 @media (max-width: 49.99rem) {
   nav.site .nav-panel {
     flex-basis: 100%;
@@ -210,11 +215,17 @@ nav.site .nav-panel {
     justify-content: space-between;
     margin-left: 0;
   }
-  nav.site[data-menu] .menu-btn {
+  :root.site-menu-js nav.site .menu-btn {
     display: inline-grid;
   }
-  nav.site[data-menu='closed'] .nav-panel {
+  :root.site-menu-js nav.site:not([data-menu='open']) .nav-panel {
     display: none;
+  }
+  /* 40px, as Starlight's own menu button, so both are easy to tap. */
+  .menu-btn,
+  nav.site .theme-btn {
+    width: 40px;
+    height: 40px;
   }
   nav.site[data-menu='open'] .nav-panel {
     flex-direction: column;

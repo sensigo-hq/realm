@@ -6,8 +6,8 @@
 // On a screen narrower than 50rem, the width below which Starlight folds the docs header into its
 // own menu button, the links and the switch fold behind a menu button too, as the docs header does.
 // The button comes before them in the page, so a keyboard user who opens the menu tabs straight into
-// it. The script below does the folding: a browser with scripts off never sees the button, and the
-// links and the switch stay on show under the logo.
+// it. The folding needs the scripts below: a browser with scripts off never sees the button (the
+// styles show it only under the `site-menu-js` class), and the links stay on show under the logo.
 import { nav } from '../data/nav.js';
 import Logo from './Logo.astro';
 import ThemeToggle from './ThemeToggle.astro';
@@ -19,9 +19,14 @@ interface Props {
 const { current } = Astro.props;
 ---
 
+<script is:inline>
+  // Runs before the menu is drawn: from here on the panel stays folded on a narrow screen until opened,
+  // so it never shows for a moment while the page loads.
+  document.documentElement.classList.add('site-menu-js');
+</script>
 <nav class="site" aria-label="Site" data-site-nav>
   <a class="brand" href="/" aria-label="Realm"><Logo /></a>
-  <button class="menu-btn" type="button" aria-label="Menu" aria-controls="site-menu" aria-expanded="false" hidden>
+  <button class="menu-btn" type="button" aria-label="Menu" aria-controls="site-menu" aria-expanded="false">
     <svg class="open-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
       ><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"></path></svg
     >
@@ -41,26 +46,41 @@ const { current } = Astro.props;
     var nav = document.querySelector('[data-site-nav]');
     if (!nav) return;
     var btn = nav.querySelector('.menu-btn');
+    var panel = nav.querySelector('#site-menu');
+    var wide = window.matchMedia('(min-width: 50rem)');
+    function isOpen() {
+      return nav.getAttribute('data-menu') === 'open';
+    }
     function set(open) {
       nav.setAttribute('data-menu', open ? 'open' : 'closed');
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
     set(false);
-    btn.hidden = false;
     btn.addEventListener('click', function () {
-      set(nav.getAttribute('data-menu') !== 'open');
+      set(!isOpen());
     });
+    // Escape closes the menu while focus is in it, and gives focus back to the button. Pressed
+    // elsewhere on the page, it leaves the menu alone, so the page does not jump under the reader.
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && nav.getAttribute('data-menu') === 'open') {
-        var inside = nav.contains(document.activeElement);
+      if (e.key === 'Escape' && isOpen() && nav.contains(document.activeElement)) {
         set(false);
-        // Back to the button only from inside the menu, so focus elsewhere on the page stays put.
-        if (inside) btn.focus();
+        btn.focus();
       }
     });
-    // A link to a part of the same page (#…) keeps the page, so the menu closes itself.
-    nav.querySelector('#site-menu').addEventListener('click', function (e) {
-      if (e.target.closest('a')) set(false);
+    // Following a link closes the menu, so coming Back to this page shows it closed. Opening the link
+    // in a new tab or window (Ctrl, Cmd, Shift, or a middle click) keeps this page as it was.
+    panel.addEventListener('click', function (e) {
+      if (!e.target.closest('a')) return;
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      set(false);
+    });
+    // Widened past 50rem the button disappears: the menu closes, and focus on the button moves to the
+    // first link, which is now on show in the row.
+    wide.addEventListener('change', function () {
+      if (!wide.matches) return;
+      var hadFocus = document.activeElement === btn;
+      set(false);
+      if (hadFocus) panel.querySelector('a').focus();
     });
   })();
 </script>

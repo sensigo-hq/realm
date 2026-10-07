@@ -4,11 +4,11 @@
 import { getCollection } from 'astro:content';
 import { HOME_DESCRIPTION } from '../../lib/site-meta.mjs';
 import { docsPreviewPng, sitePreviewPng } from '../../lib/preview-image.mjs';
-import { groupOf } from '../../data/docs-sidebar.mjs';
+import { groupOf, isDocsPageId } from '../../data/docs-sidebar.mjs';
 import { pageTitle as compareTitle } from '../../lib/compare-text.mjs';
 
 export async function getStaticPaths() {
-  const pages = await getCollection('docs');
+  const pages = await getCollection('docs', (page) => isDocsPageId(page.id));
   return [
     { params: { slug: 'site' }, props: { kind: 'site' } },
     { params: { slug: 'compare' }, props: { kind: 'compare' } },
