@@ -22,7 +22,7 @@ import {
   INELIGIBLE_NO_OPTIONALS_SCHEMA,
   CONVERTER_DERIVED_WITH_CAVEATS_SCHEMA,
   eligibleWithOptionals,
-} from './fixtures/tool-schemas.js';
+} from './test-support/tool-schemas.js';
 
 type ToolArgs = NonNullable<StructuredOutputMeta['tool_args']>;
 
