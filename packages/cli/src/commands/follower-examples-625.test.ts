@@ -76,16 +76,10 @@ function realm(
       cwd,
       env: { ...process.env, HOME: home },
     });
+    children.track([CLI, ...args], child);
     let out = '';
-    let stdout = '';
-    let stderr = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (out += d));
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    child.on('close', (code, signal) =>
-      children.record({ args: [CLI, ...args], status: code, signal, stdout, stderr }),
-    );
     child.on('close', (code) => resolve({ code, out }));
   });
 }
