@@ -60,6 +60,8 @@ Use Realm when a job has steps that must happen in order, when a person must app
 
 Do not reach for it when the job is one prompt and one answer, or when nothing bad happens if a step is skipped. A plain model call is less work.
 
+To weigh Realm against other workflow tools, [How Realm compares](https://realmengine.dev/compare/) answers the same questions for each of them, with a source for every answer, and shows where Realm is behind.
+
 ## What you install
 
 Realm is open source under the Apache-2.0 licence and runs on your own machine. The `realm` command-line tool is one npm package, `@sensigo/realm-cli`. Workflows and run records are stored as files under `~/.realm/`. There is nothing to sign up for.
