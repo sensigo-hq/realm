@@ -1372,7 +1372,7 @@ describe('JsonFileStore.deleteAllForRun — purge correctness (issue #184)', () 
   // for genuinely slow, real-timing tests. 20s (4× the ~5s nominal budget), not 10s: measured
   // flaky at 10s under `npm run test`'s full-monorepo concurrent load (turbo running all 4
   // packages' vitest suites at once — this repo's OWN documented "nested-parallelism CPU
-  // starvation" concern, vitest.config.ts) — a real-timer budget needs headroom against
+  // starvation" concern, vitest.config.mts) — a real-timer budget needs headroom against
   // scheduling jitter under load, not just against its own nominal value.
   it('ELOCKED: refuses (STATE_RUN_BUSY, reason locked) when another writer holds the run-file lock, and the run file survives untouched', async () => {
     const { store, dir } = await makeTmpStore();

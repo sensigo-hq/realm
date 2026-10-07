@@ -34,17 +34,19 @@
 // | the `lint` task                          | root `eslint.config.ts`      | the task's hash never saw it — a mutated rule      |
 // |                                          |                              | served "FULL TURBO" green. Now in                  |
 // |                                          |                              | `globalDependencies`.                              |
-// | settlement.test.ts (in CORE)             | core/src/engine +            | DOCUMENTED-COLD, and the one row that is not       |
-// |                                          | mcp-server/src               | closed. Core is the base package, so nothing flows |
-// |                                          |                              | upward: an mcp-server change does NOT re-hash      |
-// |                                          |                              | core's test (executed: "2 cached, 2 total"). CI is |
-// |                                          |                              | safe because it runs with an EMPTY turbo cache —   |
-// |                                          |                              | no remote cache is configured and `.turbo/` is     |
-// |                                          |                              | gitignored — so the guard always runs there. The   |
-// |                                          |                              | residual is LOCAL staleness only. Not added to     |
-// |                                          |                              | `globalDependencies` because mcp-server/src is a   |
-// |                                          |                              | frequently-changing tree and the entry would       |
-// |                                          |                              | re-hash every task on every edit. See the report.  |
+// | settlement.test.ts (in CORE)             | core/src/engine +            | CLOSED (build integrity). It was the one cold row: |
+// |                                          | mcp-server/src               | core's test hashed only core's build, so an        |
+// |                                          |                              | mcp-server change did not re-hash it. Every test   |
+// |                                          |                              | task now depends on all four package builds        |
+// |                                          |                              | (turbo.json), whose hashes flow into it. Executed: |
+// |                                          |                              | an mcp-server src edit changes core's test hash on |
+// |                                          |                              | this tree and leaves it unchanged on the tree      |
+// |                                          |                              | before.                                            |
+// | every package's build                    | root `tsconfig.base.json`    | no build task's hash saw it — a compiler-option    |
+// |                                          |                              | change was served the old build. Now in            |
+// |                                          |                              | `globalDependencies`.                              |
+// | every package's test run                 | root `vitest.config.mts`     | no test task's hash saw it. Now in                 |
+// |                                          |                              | `globalDependencies`.                              |
 // | own-package readers (provider-conformance| their own package's src      | covered by that package's own hash, by definition. |
 // | agent-manifest-gate, claim-liveness,     | or its own dist              |                                                    |
 // | json-trace-buffer-store-lock-guard,      |                              |                                                    |
@@ -332,14 +334,20 @@ describe('#367 — the terminal-writer census', () => {
   });
 
   it("turbo.json globalDependencies matches the sweep table's join-list", () => {
-    // A text pin is weak, but it makes a silent removal red something. Both entries are here
+    // A text pin is weak, but it makes a silent removal red something. Every entry is here
     // because each was EXECUTED as a real cache hole: without them, a mutated lint rule and a new
-    // writer in `scripts/` both served cached greens. If a row in the table above moves into the
+    // writer in `scripts/` both served cached greens, and a compiler-option change in
+    // `tsconfig.base.json` was served the old build. If a row in the table above moves into the
     // join-list, it moves here too — that is what stops the table drifting from the config.
     const turbo = JSON.parse(readFileSync(join(REPO_ROOT, 'turbo.json'), 'utf8')) as {
       globalDependencies?: string[];
     };
-    expect(turbo.globalDependencies).toEqual(['eslint.config.ts', 'scripts/**/*.mjs']);
+    expect(turbo.globalDependencies).toEqual([
+      'eslint.config.ts',
+      'scripts/**/*.mjs',
+      'tsconfig.base.json',
+      'vitest.config.mts',
+    ]);
   });
 
   it('the post-strip total is 80 across 14 files — the figure the map is built from', () => {
