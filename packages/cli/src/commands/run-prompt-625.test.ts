@@ -461,7 +461,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect(code).toBe(0);
     }, 30_000);
 
-    it('C158, finding 10: with the watch neutralised, the attending timer’s own write closes the prompt at once — onApplied is the closer', async () => {
+    it('C158, finding 10: with the watch neutralised, the attending timer’s own write closes the prompt — onApplied is the only closer', async () => {
       claimWorkflowPage(PROMPT_CLOSES);
       // The watch reads the record once an hour here: only the timer's `onApplied` can close the prompt.
       const restoreWatch = setQuestionWatchIntervalForTests(3_600_000);
@@ -474,11 +474,14 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             expiresAt = new Date(r.pending_gate!.expires_at!).getTime();
           });
           return new Promise<string>((resolve, reject) => {
-            // Without a close, an answer comes 4 s later — the late-answer path, not a close.
+            // Without a close, an answer comes 8 s later — the late-answer path, not a close. With the
+            // watch neutralised, only `onApplied` can close the prompt before it: that is the proof. (A
+            // bound on how soon is not asserted: under a loaded suite the timer's callback itself was
+            // measured 1.5 s late.)
             const fallback = setTimeout(() => {
               fellBack = true;
               resolve('reject');
-            }, 4_000);
+            }, 8_000);
             opts?.signal?.addEventListener(
               'abort',
               () => {
@@ -508,11 +511,13 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         restoreWatch();
       }
       // (a) red when the timer does not tell the prompt it carried the expiry out (s8: `run.ts` stops
-      //     passing `onApplied`) — the prompt then waits for the answer that comes 4 s later; (b)
+      //     passing `onApplied`) — the prompt then waits for the answer that comes 8 s later; (b)
       //     prints when it closed.
       expect(fellBack).toBe(false);
       expect([closedAt === undefined, expiresAt === undefined]).toEqual([false, false]);
-      expect(closedAt! - expiresAt!).toBeLessThan(1_000);
+      // It closed after the question's time was up, and well before the fallback.
+      expect(closedAt! - expiresAt!).toBeGreaterThanOrEqual(0);
+      expect(closedAt! - expiresAt!).toBeLessThan(7_000);
       expect(afterTheGate().filter((l) => l.startsWith('  This prompt is closed:'))).toEqual([
         "  This prompt is closed: the question on 'confirm' is no longer open — Answer: approve · settled by the gate's expiry (no answer in time).",
       ]);
