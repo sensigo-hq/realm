@@ -128,8 +128,12 @@ h1#_top {
   box-shadow: none;
   font-size: 1.25rem;
 }
-.sl-menu-button:hover {
-  color: var(--c-accent);
+/* Only where there is a pointer that hovers: after a tap on a phone the browser keeps the hover
+   state, and the button would stay green. */
+@media (hover: hover) {
+  .sl-menu-button:hover {
+    color: var(--c-accent);
+  }
 }
 .sl-menu-button:focus-visible {
   outline: 2px solid var(--c-accent);

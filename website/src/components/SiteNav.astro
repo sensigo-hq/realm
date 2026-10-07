@@ -11,7 +11,7 @@
 // the browser opens and closes it, with or without scripts, and closes it on Escape or a tap outside
 // it. A browser that has no popovers never shows the button, and the links stay on show under the
 // logo (src/styles/site.css).
-import { Icon } from '@astrojs/starlight/components';
+import Icon from './SiteIcon.astro';
 import { ariaCurrent, nav } from '../data/nav.js';
 import Logo from './Logo.astro';
 import MenuBottom from './MenuBottom.astro';
@@ -84,9 +84,9 @@ const here = Astro.url.pathname;
     }
     function refocus(lost) {
       if (wide.matches) {
-        if (inSheet(lost)) row.querySelector('a').focus();
+        if (inSheet(lost)) row.querySelector('a').focus({ preventScroll: true });
       } else if (row.contains(lost)) {
-        btn.focus();
+        btn.focus({ preventScroll: true });
       }
     }
     wide.addEventListener('change', function () {

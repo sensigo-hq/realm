@@ -122,17 +122,26 @@ ul {
    keeps the page's 1100px column. The space under it is the page grid's gap, which the menu had when
    it sat inside the grid. */
 .site-header {
-  position: sticky;
-  top: 0;
   z-index: 10;
   margin: 0 -16px clamp(28px, 4vw, 44px);
   padding-inline: 16px;
   background: var(--bg);
   border-bottom: 1px solid var(--line-soft);
 }
-/* A link target, or what a Tab reaches, is never left under the bar. */
-html {
-  scroll-padding-top: 5rem;
+/* A browser without popovers has no menu button and shows the links as a row of their own under the
+   logo (below), a bar too tall to keep on screen, so there the bar scrolls away with the page. */
+@supports selector(:popover-open) {
+  .site-header {
+    position: sticky;
+    top: 0;
+  }
+}
+/* A link target, or what a Tab reaches, is never left under the bar: the browser keeps 5rem clear
+   above anything in the page when it scrolls it into view. The bar's own links and buttons have no
+   such margin, so focusing them never scrolls the page (a scroll-padding on the whole page would). */
+.wrap,
+.wrap * {
+  scroll-margin-top: 5rem;
 }
 nav.site {
   max-width: 1100px;
@@ -230,8 +239,12 @@ nav.site .nav-panel {
   font-size: 1.25rem;
   cursor: pointer;
 }
-.menu-btn:hover {
-  color: var(--accent);
+/* Only where there is a pointer that hovers: after a tap on a phone the browser keeps the hover
+   state, and the button would stay green. */
+@media (hover: hover) {
+  .menu-btn:hover {
+    color: var(--accent);
+  }
 }
 .menu-btn .close-icon,
 .menu-btn:has(+ :popover-open) .open-icon {
