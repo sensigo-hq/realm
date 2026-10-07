@@ -28,6 +28,19 @@ import { clearProjectExtensionsCache } from '../extensions/load-project-extensio
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
 const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
+/** C158: (a) red when realm-workflow.md no longer holds the sentence, word for word; (b) prints it. */
+function claimWorkflowPage(sentence: string): void {
+  const page = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../docs/reference/cli/realm-workflow.md',
+    ),
+    'utf8',
+  ).replace(/\s+/g, ' ');
+  expect(page, `realm-workflow.md no longer says: ${sentence}`).toContain(sentence);
+}
+const PROMPT_CLOSES =
+  "A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`. It then prints what the run's record holds, in the words of `realm run inspect`, and the run goes on:";
 function claimGates215(): void {
   const page = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/workflow/gates.md'),
@@ -388,6 +401,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }
 
     it('the attending timer settles the default while the prompt waits: the prompt closes, prints the answer the expiry recorded, and the run goes on — no `was not recorded`', async () => {
+      claimWorkflowPage(PROMPT_CLOSES);
       const prompts = waitAtPrompt();
 
       const code = await run(
@@ -414,6 +428,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }, 30_000);
 
     it('another process answers while the prompt waits: the prompt closes and prints that answer — never re-asks, never refuses', async () => {
+      claimWorkflowPage(PROMPT_CLOSES);
       const prompts = waitAtPrompt(async () => {
         const { JsonFileStore, loadWorkflowFromString, submitHumanResponse } =
           await import('@sensigo/realm');
@@ -447,6 +462,10 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }, 30_000);
 
     it('the attending timer carries out an abort while the prompt waits: the prompt closes and says no answer was recorded, the run aborted', async () => {
+      claimWorkflowPage(PROMPT_CLOSES);
+      claimWorkflowPage(
+        "When no answer was recorded (an `on_expiry: abort`), the line ends `— no answer was recorded; the run is 'aborted'.`",
+      );
       const prompts = waitAtPrompt();
 
       const code = await run(workflowYaml({ id: 'prompt-625-c158-abort', aborts: true }));

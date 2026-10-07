@@ -257,7 +257,7 @@ was not recorded`). The prompt reads the record twice a second while it waits.
     Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via` vocabulary, which
     gains `advanceRun`), `ENTRY_CALLERS` (each function's words) and `expiryCarriedOutLine`, the
     line's one composer.
-  - A run it cannot read gets an error reply, as from `executeStep` — never a throw:
+  - **BREAKING:** a run it cannot read gets an error reply, as from `executeStep` — never a throw:
     `STATE_RUN_NOT_FOUND` for a run that does not exist (labelled with the call's `command`,
     `run_version: 0`); an error the store throws as a `WorkflowError` keeps its code, and any other
     is `ENGINE_STORE_FAILED`. `executeStep` and `advanceRun` share the one rule.

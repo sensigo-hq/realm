@@ -6,6 +6,9 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
   createDefaultRegistry,
@@ -76,6 +79,17 @@ async function atQuestion(def: WorkflowDefinition, expired: boolean) {
   return { store, runId: run.id, gateId: gate.gate_id };
 }
 
+/** C159: (a) red when realm-agent.md no longer holds the row's words; (b) prints them. */
+const AGENT_ROW =
+  "The expiry it carried out, in place of the gate's lines: such a question is not shown, since an answer could no longer be recorded.";
+function claimAgentRow(): void {
+  const page = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/cli/realm-agent.md'),
+    'utf8',
+  ).replace(/\s+/g, ' ');
+  expect(page, `realm-agent.md no longer says: ${AGENT_ROW}`).toContain(AGENT_ROW);
+}
+
 const provider = () =>
   new (class extends LlmProvider {
     callStep = vi.fn();
@@ -102,6 +116,7 @@ describe('#625 PR-2a, C159 — realm agent carries out a question that is alread
   ] as const)(
     'C159, W2-Y3: %s — the expiry line first, no `Waiting for approval…`, no `--choice` command; then what it made owed',
     async (kind, tail, phase, after) => {
+      claimAgentRow();
       const def = gated(kind);
       const { store, runId, gateId } = await atQuestion(def, true);
       const llm = provider();
