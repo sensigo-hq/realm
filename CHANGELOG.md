@@ -271,8 +271,8 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
     `Step '<s>' is not eligible in the current run state.`, even with nothing to call, and its
     `blocked_reason.suggestion` read `No eligible steps available. Check run_phase and
 completed_steps.` (now `No other step can be called now.`, `Answer the open question first,
-as next_actions says.`, or, when `next_actions` holds only `advance_run`, `Call advance_run, as
-next_actions says.`).
+as next_actions says.`, `Call one of the steps indicated in next_actions instead.`, or, when
+    `next_actions` holds only `advance_run`, `Call advance_run, as next_actions says.`).
   - **Upgrading:** a client that matched the old hint, or followed `resolve_precondition` into an
     empty `next_actions`, follows `next_actions`; with `report_to_user`, it shows `context_hint` to
     the person.
