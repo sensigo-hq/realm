@@ -1,8 +1,8 @@
 ---
 // The few icons the header and the menu need on the home, how-it-works and comparison pages, drawn
-// as Starlight draws them (its Icons set, MIT licence), so they match the docs pages exactly. They are copied
-// here because importing Starlight's Icon component from '@astrojs/starlight/components' brings the
-// whole of Starlight's stylesheet into these pages with it.
+// as Starlight draws them (its Icons set, MIT licence), so they match the docs pages exactly. They
+// are copied here because importing Starlight's Icon component from '@astrojs/starlight/components'
+// brings the whole of Starlight's stylesheet into these pages with it.
 const paths = {
   bars: 'M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z',
   close:
@@ -23,6 +23,11 @@ interface Props {
   class?: string;
 }
 const { name } = Astro.props;
+// A name with no drawing here (say a new `icon` in src/data/nav.js) would draw nothing inside a link
+// that can still be tabbed to; the build stops instead, naming the icon to add.
+if (!(name in paths)) {
+  throw new Error(`SiteIcon: no drawing for "${name}". Copy it from Starlight's Icons set into src/components/SiteIcon.astro.`);
+}
 ---
 
 <svg

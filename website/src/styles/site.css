@@ -168,6 +168,7 @@ nav.site {
 .links {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px 22px;
   font-size: 14.5px;
 }
@@ -183,9 +184,6 @@ nav.site {
 /* GitHub and npm show as their icons, as in the docs header (src/components/DocsHeaderLinks.astro):
    a 16px icon in a 32px target, which reaches into the gap around it rather than widening the row.
    The link's name is its aria-label. */
-.links {
-  align-items: center;
-}
 .links a.has-icon {
   display: inline-flex;
   padding: 8px;
