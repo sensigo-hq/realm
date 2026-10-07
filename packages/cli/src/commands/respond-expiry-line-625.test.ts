@@ -3,14 +3,17 @@
 //   line that says which call carried out the expiry — `this respond call …` (or another call) —
 //   through core's composer, the one the MCP reply and `realm run advance` print; first, with
 //   `realm run advance`'s `⚠ `; both `on_expiry` kinds;
+// - decision C151 (W5-Y2): every CLI call of an engine function that can carry out an expiry passes
+//   its command's own name as `caller` (a source-text witness: the hosts that print no reply line);
 // - decision C147 (W3-Y2): `realm run inspect` then says `settled by the gate's expiry (no answer in
 //   time)` — true when a late answer came and was not recorded, and when none came.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -201,5 +204,45 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     expect(await answerLine(runId)).toBe(
       "     Answer: approve · settled by the gate's expiry (no answer in time)",
     );
+  });
+});
+
+describe('#625 PR-2a, C151 — every CLI call that can carry out an expiry names its command', () => {
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), '..');
+  /** Each file's engine calls, in order, and the `caller` each passes (`-` when none). */
+  function callersIn(file: string): string[] {
+    const code = readFileSync(join(SRC, file), 'utf8');
+    const out: string[] = [];
+    for (const m of code.matchAll(
+      /await (executeChain|submitHumanResponse|executeEngineStep|advanceRun)\(/g,
+    )) {
+      let i = code.indexOf('{', m.index);
+      const start = i;
+      for (let depth = 0; i < code.length; i++) {
+        if (code[i] === '{') depth++;
+        else if (code[i] === '}' && --depth === 0) break;
+      }
+      const options = code.slice(start, i + 1);
+      out.push(`${m[1]}:${/\bcaller: '([a-zA-Z_]+)'/.exec(options)?.[1] ?? '-'}`);
+    }
+    return out;
+  }
+
+  it('C151, W5-Y2: realm agent, realm workflow run, realm run respond and realm run advance pass their own names', () => {
+    // (a) red when a call stops passing its command's name (the library default would name the
+    //     function), or a new engine call passes none; (b) prints each file's calls.
+    expect({
+      'agent/run-agent.ts': callersIn('agent/run-agent.ts'),
+      'agent/gate/slack-gate-notifier.ts': callersIn('agent/gate/slack-gate-notifier.ts'),
+      'commands/run.ts': callersIn('commands/run.ts'),
+      'commands/respond.ts': callersIn('commands/respond.ts'),
+      'commands/run-advance.ts': callersIn('commands/run-advance.ts'),
+    }).toEqual({
+      'agent/run-agent.ts': ['advanceRun:agent', 'executeEngineStep:agent', 'executeChain:agent'],
+      'agent/gate/slack-gate-notifier.ts': ['submitHumanResponse:agent'],
+      'commands/run.ts': ['submitHumanResponse:run', 'executeChain:run'],
+      'commands/respond.ts': ['submitHumanResponse:respond'],
+      'commands/run-advance.ts': ['advanceRun:advance', 'advanceRun:advance'],
+    });
   });
 });
