@@ -201,14 +201,14 @@ nav.site .nav-panel {
 .menu-btn {
   display: none;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 2.5rem;
+  height: 2.5rem;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font-size: 20px;
+  font-size: 1.25rem;
   cursor: pointer;
 }
 .menu-btn:hover {
@@ -249,6 +249,10 @@ nav.site .nav-panel {
   border-top: 1px solid var(--line-soft);
   padding: 0.5rem 0;
 }
+/* With scripts off the theme choice cannot work and stays hidden; so does the line above it. */
+.menu-sheet-footer:has(> .theme-select[hidden]) {
+  display: none;
+}
 /* 50rem is where Starlight folds the docs header into its menu button; the site's pages fold here too.
    A browser without popovers keeps the links, as a row of their own under the logo. */
 @media (max-width: 49.99rem) {
@@ -258,7 +262,23 @@ nav.site .nav-panel {
     justify-content: space-between;
     margin-left: 0;
   }
+  /* The switch in that row keeps the button size of a phone. */
+  nav.site .theme-btn {
+    width: 40px;
+    height: 40px;
+  }
+  /* With the menu button, the header takes the docs header's measures (Starlight's 3.5rem bar, its
+     1.75rem logo, a line across the whole width), so the logo, the button and the top of the sheet
+     sit where they sit on a docs page. The 1px at the top centres them as the docs header does. */
   @supports selector(:popover-open) {
+    nav.site {
+      --site-logo-height: 1.75rem;
+      box-sizing: border-box;
+      height: 3.5rem;
+      margin-inline: -16px;
+      padding: 1px 16px 0;
+      border-bottom-color: var(--line-soft);
+    }
     nav.site .nav-panel {
       display: none;
     }

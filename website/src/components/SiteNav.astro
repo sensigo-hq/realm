@@ -21,7 +21,7 @@ const here = Astro.url.pathname;
 ---
 
 <nav class="site" aria-label="Site" data-site-nav>
-  <a class="brand" href="/" aria-label="Realm"><Logo /></a>
+  <a class="brand" href="/" aria-label="Realm"><Logo height="var(--site-logo-height, 30px)" /></a>
   <div class="nav-panel">
     <div class="links">
       {nav.map((l) => <a href={l.href} aria-current={ariaCurrent(l.href, here)}>{l.label}</a>)}
@@ -49,15 +49,22 @@ const here = Astro.url.pathname;
     if (!sheet || typeof sheet.showPopover !== 'function') return;
     var wide = window.matchMedia('(min-width: 50rem)');
     var benched = [];
-    // The sheet starts under the header wherever the page is scrolled to.
+    btn.setAttribute('aria-expanded', 'false');
+    // The header scrolls with the page. Opening the menu first brings all of it back on screen, so the
+    // close button is never left above the top while the page under the sheet cannot scroll; the
+    // sheet then starts under the header.
     sheet.addEventListener('beforetoggle', function (e) {
-      if (e.newState === 'open') {
-        sheet.style.setProperty('--menu-top', Math.max(0, nav.getBoundingClientRect().bottom) + 'px');
-      }
+      if (e.newState !== 'open') return;
+      var top = nav.getBoundingClientRect().top;
+      if (top < 0) window.scrollBy(0, top);
+      sheet.style.setProperty('--menu-top', Math.max(0, nav.getBoundingClientRect().bottom) + 'px');
     });
     // While the sheet is open, the page under it is out of reach: Tab moves only between the header and
     // the sheet, as in the docs menu.
     sheet.addEventListener('toggle', function (e) {
+      // The browser works out the button's open/closed state from popovertarget; saying it outright
+      // also covers screen readers that do not.
+      btn.setAttribute('aria-expanded', e.newState === 'open' ? 'true' : 'false');
       benched.forEach(function (el) {
         el.inert = false;
       });
