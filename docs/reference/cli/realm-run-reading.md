@@ -310,7 +310,7 @@ The answerer is the name the caller gave with `realm run respond --by` or `respo
 
 The proof never decides whether the answer was recorded. See [The claim token](../mcp/tools.md#the-claim-token).
 
-An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no one answered)`, with no answerer and no proof part. An `on_expiry: abort` expiry answers nothing: the step has no `Answer:` line, the expiry's entry prints no lines, and the step is listed under `Skipped:` as `gate_expired`. The run's `Cause:` line says the gate expired and the run aborted.
+An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no answer in time)`, with no answerer and no proof part: no answer came before the time was up, or one came after it and was not recorded. An `on_expiry: abort` expiry answers nothing: the step has no `Answer:` line, the expiry's entry prints no lines, and the step is listed under `Skipped:` as `gate_expired`. The run's `Cause:` line says the gate expired and the run aborted.
 
 **Exit code:** 0, or 1 if the run is not in the store.
 

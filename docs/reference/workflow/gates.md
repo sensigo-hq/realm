@@ -200,7 +200,7 @@ The two dispositions the engine carries out name `realm run advance`, which carr
 Drained 2/2 run(s).
 ```
 
-After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. On the gate's step, `realm run inspect` prints `Answer: hold · settled by the gate's expiry (no one answered)`, and `get_run_state` gives that answer `answered_by: { "by": null, "absent_cause": "settled_by_expiry" }`. When the expiry itself completed the run, with nothing left to run after the gate, `inspect` also shows `Sealed by: gate_expiry_default (approve)`.
+After `settle_default`, the record says that the answer came from the time limit: it holds `"choice": "hold", "resolved_by": "timeout"` for the step. On the gate's step, `realm run inspect` prints `Answer: hold · settled by the gate's expiry (no answer in time)` — no answer came before the time was up, or one came after it and was not recorded — and `get_run_state` gives that answer `answered_by: { "by": null, "absent_cause": "settled_by_expiry" }`. When the expiry itself completed the run, with nothing left to run after the gate, `inspect` also shows `Sealed by: gate_expiry_default (approve)`.
 
 After `abort`, the run reads:
 
@@ -212,7 +212,7 @@ Cause: Gate 'approve' expired and the run aborted per the workflow's declared on
 
 Nothing was answered: `inspect` prints no `Answer:` line for the step, it lists the step under `Skipped:` as `gate_expired`, and `get_run_state` gives the step no `answers` entry.
 
-Over MCP, the call that carries out an expiry says so in its `warnings`, naming itself — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit`). `realm run advance`, `realm run drain` and the process waiting at the gate print a line of their own; `realm run advance` prints it before the steps it runs. Afterwards, `realm run inspect` and `get_run_state` do not show which call carried it out.
+The call that carries out an expiry says so in its `warnings`, naming itself: over MCP the tool — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit_human_response`) — and from a program the library function (`enacted_via: submitHumanResponse`, `executeChain`, …). `realm run advance` and `realm run respond` print that line first, after `⚠ ` (`this advance call …`, `this respond call …`): `realm run advance` before the steps it runs, `realm run respond` before the refusal or the `Not recorded:` line. `realm run drain` and the process waiting at the gate print a line of their own. Afterwards, `realm run inspect` and `get_run_state` do not show which call carried it out.
 
 ### A guard after the gate
 

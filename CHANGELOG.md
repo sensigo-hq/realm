@@ -237,10 +237,12 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - `caller` names the caller — `advanceRun` (the default: a program's own call), `advance_run`
     (the MCP tool), `advance` (`realm run advance`), `start_run` or `agent` — on the reply's
     `command` and on that line's `enacted_via`. Any other value throws a `WorkflowError`
-    (`ENGINE_INTERNAL`) before anything is read or written, naming the value and the five words: a
-    program in plain JavaScript gets no type error, and the word would otherwise reach the reply
-    and the line (`this undefined call …`). Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via`
-    vocabulary, which gains `advanceRun`) and `expiryCarriedOutLine`, the line's one composer.
+    (`VALIDATION_CALLER_INVALID`, category `VALIDATION`, a new code) before anything is read or
+    written, naming the value and the five words: a program in plain JavaScript gets no type
+    error, and the word would otherwise reach the reply and the line (`this undefined call …`).
+    Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via` vocabulary, which
+    gains `advanceRun`), `ENTRY_CALLERS` (each function's words) and `expiryCarriedOutLine`, the
+    line's one composer.
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
     `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them);
     `caller` names the call, and `command` only labels the reply (default: the caller).
@@ -272,7 +274,9 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
     `blocked_reason.suggestion` read `No eligible steps available. Check run_phase and
 completed_steps.` (now `No other step can be called now.`, `Answer the open question first,
 as next_actions says.`, `Call one of the steps indicated in next_actions instead.`, or, when
-    `next_actions` holds only `advance_run`, `Call advance_run, as next_actions says.`).
+    `next_actions` holds only `advance_run`, `Call advance_run, as next_actions says.`, and when it
+    holds steps and `advance_run`, `Call one of the steps indicated in next_actions, or advance_run,
+instead.` — the act is never called a step).
   - **Upgrading:** a client that matched the old hint, or followed `resolve_precondition` into an
     empty `next_actions`, follows `next_actions`; with `report_to_user`, it shows `context_hint` to
     the person.
@@ -329,9 +333,19 @@ run, registry, now)` and `describePending(definition, run, registry, now)` take 
   `on_expiry` now reads `gate '<g>' on '<s>' had expired — this <call> call first carried out its
 declared settle_default: the default choice '<c>' was recorded (enacted_via: <via>).`, or `…
 its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_expiry> before this
-<call> call (enacted_via: <call>).`). `<call>` names the call: `execute_step`, `advance_run`,
-  `advance` (`realm run advance`), `advanceRun` (a program's own call) or `submit_human_response`
-  (a late answer, `enacted_via: submit`).
+<call> call (enacted_via: <call>).`). `<call>` names the call, and `enacted_via` is the same word:
+  the MCP tool (`execute_step`, `advance_run`, `start_run`, `submit_human_response` for a late
+  answer), the CLI command (`advance` for `realm run advance`, `respond` for `realm run respond`,
+  `agent` for `realm agent`, `run` for `realm workflow run`), or, for a program's own call, the
+  library function: `advanceRun`, `executeStep`, `executeChain`, `submitHumanResponse` or
+  `executeEngineStep`.
+  - **BREAKING:** a late answer's `enacted_via` is `submit_human_response` over MCP (0.46.0:
+    `submit`), and a program's own `executeStep`, `executeChain` and `submitHumanResponse` name
+    themselves (0.46.0: `execute_step`, `submit`). `executeStep`, `executeChain`,
+    `submitHumanResponse` and `executeEngineStep` take a `caller` option, a word from the
+    function's own list (`ENTRY_CALLERS`) — the MCP tools and the CLI pass theirs; any other value
+    throws `VALIDATION_CALLER_INVALID` before anything is read or written. Core exports the types
+    `StepCaller`, `ChainCaller` and `AnswerCaller`.
   - A late answer's line is this one too (0.46.0: `gate '<g>' expired <n>m ago and was enacted
 (settle_default: '<c>') before this response arrived — enacted_via: submit.`). When another call
     had already carried the expiry out, it says so: `… had expired — another call had already
@@ -343,6 +357,9 @@ as it was.`
   - `realm run advance` prints the expiry line when it carries the expiry out, before the steps it
     led to, and every other line of its reply's `warnings` as `⚠ <line>` after the steps it ran
     (0.46.0 printed only the expiry line, on stderr, from the engine, after the steps).
+  - `realm run respond`, answering after the time is up, prints the line first when this answer
+    carried the expiry out — `⚠ … this respond call first carried out its declared … (enacted_via:
+respond).` — before the refusal (stderr) or the same-choice sentence (stdout).
   - **Upgrading:** a program that matched the old text, or read the line from stderr, reads the
     reply's `warnings`.
 - **`realm run list --stuck` names the command for an expired question the engine carries out
@@ -355,6 +372,10 @@ as it was.`
   `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is
 loaded from there.`, or `… <folder> (no project code there).` when that folder holds none. Their
   `--project` help says it is used only for a workflow registered without a project folder.
+- **`realm run inspect` says `no answer in time` for an answer the gate's expiry wrote (issue #625,
+  PR-2a).** The line reads `Answer: <choice> · settled by the gate's expiry (no answer in time)`
+  (0.46.0: `(no one answered)`, false when an answer came after the time was up and was not
+  recorded).
 
 - **The npm packages no longer include test-only files.** `@sensigo/realm`, `@sensigo/realm-cli` and `@sensigo/realm-mcp` published 32 test-only files: the test helpers under `dist/**/test-support/` (two stand-in model servers, an MCP server entry, a journey helper, and the helper that marks test doubles) and the CLI's tool-schema fixtures under `dist/agent/fixtures/`. No product code used them and the packages' `exports` never exposed them; nothing else in the packages changes.
 
