@@ -177,7 +177,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     }
   });
 
-  it("C122: the late answer's line is C105's — this submit_human_response call carried the expiry out (settle_default, both choices; abort), no 'ago', on both store kinds", async () => {
+  it("C122: the late answer's line is C105's — this call carried the expiry out, naming itself (settle_default, both choices; abort), no 'ago', on both store kinds", async () => {
     for (const legacy of [false, true]) {
       for (const [onExpiry, choice] of [
         ['settle_default', 'approve'],
