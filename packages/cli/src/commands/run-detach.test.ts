@@ -365,7 +365,11 @@ steps:
       await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
       expect(mocks.question).toHaveBeenCalledTimes(3);
-      expect(mocks.question).toHaveBeenLastCalledWith('  Choice [approve/reject]: ');
+      // #625 PR-2a, C158: the gate's prompt is handed the signal that closes it when its question is
+      // settled elsewhere — the one additive argument.
+      expect(mocks.question).toHaveBeenLastCalledWith('  Choice [approve/reject]: ', {
+        signal: expect.any(AbortSignal),
+      });
       const lines = errLines();
       expect(lines.filter((l) => l.includes("Choice 'aprove' is not valid"))).toHaveLength(1);
       expect(logged()).toContain('Run complete. Phase: completed');

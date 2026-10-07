@@ -119,6 +119,8 @@ The reply's `Owed to the engine` sentence and this form of `advanceRun` were add
 | `now`        | No       | A `Date`, the time the call judges an open question's expiry by (default: the current time): the call carries out an expired question's declared `on_expiry` first only when the question's time is up at `now`.                                                                                                                                                                                              |
 | `caller`     | No       | The call the expiry line names when this call carries out an expired question first. `executeStep` takes `executeStep` (the default), `executeEngineStep` or `agent`; `executeChain` takes `executeChain` (the default), `execute_step`, `agent` or `run`. Any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID` before anything is read or written. Added after version 0.46.0. |
 
+`executeStep` and `executeChain` answer a run they cannot read with an error reply, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError`, and `ENGINE_STORE_FAILED` for any other (a `JsonFileStore` record that is not JSON, for one).
+
 `submitHumanResponse` takes `runId`, `gateId`, `choice`, and optionally, among others, `registry`, `respondedBy` and `caller`. `caller` is the call the expiry line names when an answer that comes after the question's time is up carries out its expiry: `submitHumanResponse` (the default), `submit_human_response`, `respond`, `run` or `agent`; any other value throws as above (added after version 0.46.0).
 
 ### `driver`

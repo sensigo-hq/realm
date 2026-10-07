@@ -260,7 +260,9 @@ was not recorded`). The prompt reads the record twice a second while it waits.
   - **BREAKING:** a run it cannot read gets an error reply, as from `executeStep` — never a throw:
     `STATE_RUN_NOT_FOUND` for a run that does not exist (labelled with the call's `command`,
     `run_version: 0`); an error the store throws as a `WorkflowError` keeps its code, and any other
-    is `ENGINE_STORE_FAILED`. `executeStep` and `advanceRun` share the one rule.
+    is `ENGINE_STORE_FAILED`. `executeStep` and `advanceRun` share the one rule, and `executeChain`
+    now follows it too (it threw the store's error for a record it could not read, a JSON parse error
+    included).
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
     `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them);
     `caller` names the call, and `command` only labels the reply (default: the caller). Read
