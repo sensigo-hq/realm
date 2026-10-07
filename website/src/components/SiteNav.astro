@@ -1,8 +1,8 @@
 ---
-// The site menu of the home, how-it-works and comparison pages: the logo, the links (src/data/nav.js)
-// and the light/dark switch, in a bar that stays at the top of the screen while the page scrolls, as
-// the docs header does. The docs pages show the same links through Starlight's header
-// (src/components/DocsHeaderLinks.astro).
+// The site menu of the home, how-it-works and comparison pages: the logo, the links (src/data/nav.js;
+// GitHub and npm as icons, as in the docs header) and the light/dark switch, in a bar that stays at
+// the top of the screen while the page scrolls, as the docs header does. The docs pages show the
+// same links through Starlight's header (src/components/DocsHeaderLinks.astro).
 //
 // On a screen narrower than 50rem, the width below which Starlight folds the docs header into its
 // menu button, this menu folds the same way: the same button, and a sheet under the header with the
@@ -26,7 +26,19 @@ const here = Astro.url.pathname;
     <a class="brand" href="/" aria-label="Realm"><Logo height="var(--site-logo-height, 30px)" /></a>
     <div class="nav-panel">
       <div class="links">
-        {nav.map((l) => <a href={l.href} aria-current={ariaCurrent(l.href, here)}>{l.label}</a>)}
+        {
+          nav.map((l) =>
+            l.icon ? (
+              <a href={l.href} class="has-icon" aria-label={l.label}>
+                <Icon name={l.icon} />
+              </a>
+            ) : (
+              <a href={l.href} aria-current={ariaCurrent(l.href, here)}>
+                {l.label}
+              </a>
+            ),
+          )
+        }
       </div>
       <ThemeToggle />
     </div>
