@@ -37,6 +37,12 @@ function claim(sentence: string): void {
   );
 }
 
+/** (a) red when gates.md no longer holds the sentence word for word; (b) prints it. */
+function claimGates(sentence: string): void {
+  const page = readFileSync(join(dirname(PAGE), 'workflow/gates.md'), 'utf8');
+  expect(flat(page), `gates.md no longer says: ${sentence}`).toContain(flat(sentence));
+}
+
 /** `q` (a question, 60 s, `on_expiry` as given), then `after` (a bare `auto` step). */
 function gated(onExpiry: 'settle_default' | 'abort' = 'settle_default'): WorkflowDefinition {
   return {
@@ -117,6 +123,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     'C163 line 80: %s carries out an expired question — the line is in warnings, names the function, and nothing is printed',
     async (fn, call) => {
       claim(NAMES_THE_CALL);
+      claimGates(
+        'and from a program the library function (`enacted_via: submitHumanResponse`, `executeChain`, …).',
+      );
       const d = gated();
       const { runId, gateId } = await atQuestion(d);
       const printed: unknown[] = [];
@@ -138,6 +147,9 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
 
   it('C163 line 80: submitHumanResponse carries out an expired question — the line names submitHumanResponse', async () => {
     claim(NAMES_THE_CALL);
+    claimGates(
+      'and from a program the library function (`enacted_via: submitHumanResponse`, `executeChain`, …).',
+    );
     const d = gated();
     const { runId, gateId } = await atQuestion(d);
     const reply = await submitHumanResponse(store, d, {

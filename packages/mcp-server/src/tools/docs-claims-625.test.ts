@@ -1720,6 +1720,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const act = (r['next_actions'] as Array<{ human_readable: string; orientation: string }>)[1]!;
     claim('mcp/tools.md', '"tool": "advance_run",');
     claim('mcp/tools.md', '"call_with": { "run_id": "<run>" }');
+    claim('mcp/tools.md', '"params": { "run_id": "<run>" },');
     const actInstruction = (
       r['next_actions'] as Array<{
         instruction: { tool: string; params: unknown; call_with: unknown };
@@ -1899,5 +1900,155 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
         `gate '${gateId}' on 'confirm' had expired — this ${tool} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${tool}).`,
       );
     }
+  });
+});
+
+/** `b` (agent) → `a` (agent, precondition `b.output.go == true`) → `c` (agent, after `a`). */
+const STUCK_CHAIN: WorkflowDefinition = {
+  ...STUCK,
+  id: 'docs-stuck-chain',
+  name: 'docs-stuck-chain',
+  steps: { ...STUCK.steps, c: { description: 'C.', execution: 'agent', depends_on: ['a'] } },
+} as WorkflowDefinition;
+
+describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names that the cells above leave out', () => {
+  it('C163 chained_auto_steps: from start_run too — the auto steps it ran', async () => {
+    claim(
+      'mcp/tools.md',
+      'From `start_run`, `execute_step` and `advance_run` (added after version 0.46.0).',
+    );
+    const { call, workflowStore } = await connect();
+    const def = {
+      id: 'docs-start-chain',
+      name: 'docs-start-chain',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        one: { description: 'One.', execution: 'auto', depends_on: [] },
+        ask: { description: 'Ask.', execution: 'agent', depends_on: ['one'] },
+      },
+    } as WorkflowDefinition;
+    await workflowStore.register(def);
+    const r = await call('start_run', { workflow_id: def.id });
+    expect((r['chained_auto_steps'] as Array<{ step: string }>).map((e) => e.step)).toEqual([
+      'one',
+    ]);
+  });
+
+  it('C163 stopped_step: from execute_step on an error a chained step produced, and from advance_run on the question it opened', async () => {
+    claim(
+      'mcp/tools.md',
+      "From `execute_step`, `start_run` and `advance_run` (added after version 0.46.0), on an `error`, `blocked` or `confirm_required` reply that a step's call produced",
+    );
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register(STEPS);
+    const runId = (
+      await call('start_run', { workflow_id: STEPS.id, params: { path: '/no/such/file-625' } })
+    )['run_id'] as string;
+    const r = await call('execute_step', { run_id: runId, command: 'a', params: { go: false } });
+    expect([r['status'], r['stopped_step'], r['command']]).toEqual(['error', 'fails', 'a']);
+    const def = {
+      id: 'docs-adv-stop',
+      name: 'docs-adv-stop',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
+        confirm: { ...gated('x').steps['confirm']!, depends_on: ['ask'] },
+      },
+    } as WorkflowDefinition;
+    await workflowStore.register(def);
+    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await executeStep(runStore, def, {
+      runId: run.id,
+      command: 'ask',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    const adv = await call('advance_run', { run_id: run.id });
+    expect([adv['status'], adv['stopped_step']]).toEqual(['confirm_required', 'confirm']);
+  });
+
+  it('C163 start_run: an agent step refused before its claim (an invalid trust) is named as a step that cannot run and never offered', async () => {
+    claim(
+      'mcp/tools.md',
+      '— an `auto` step, or an agent step refused before its claim for a failed precondition or an invalid `trust`, which is never offered in `next_actions`',
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(TRUSTY);
+    const r = await call('start_run', { workflow_id: TRUSTY.id });
+    expect(String(r['context_hint'])).toMatch(/'t' cannot run \(trust\): /);
+    expect(next(r)).toEqual(['execute_step:ok']);
+  });
+
+  it('C163 not ready: a step whose dependency cannot run — named, then the way out', async () => {
+    claim(
+      'mcp/tools.md',
+      'a step it depends on cannot run (named — then what the run can still do, or the way out);',
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(STUCK_CHAIN);
+    const runId = (await call('start_run', { workflow_id: STUCK_CHAIN.id }))['run_id'] as string;
+    await call('execute_step', { run_id: runId, command: 'b', params: { go: false } });
+    const r = await call('execute_step', { run_id: runId, command: 'c', params: {} });
+    expect(String(r['context_hint'])).toMatch(
+      /^Step 'c' cannot be called now: a step it depends on cannot run \('a'\)/,
+    );
+    expect(String(r['context_hint']).endsWith(WAY_OUT)).toBe(true);
+    expect([r['agent_action'], next(r)]).toEqual(['report_to_user', []]);
+  });
+
+  it('C163 submit_human_response: a gate ID that is not the open one with nothing to offer — report_to_user, No question is open on this run.', async () => {
+    claim(
+      'mcp/tools.md',
+      'and its `agent_action` is `resolve_precondition` (`report_to_user` when `next_actions` is empty).',
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(STUCK);
+    const runId = (await call('start_run', { workflow_id: STUCK.id }))['run_id'] as string;
+    await call('execute_step', { run_id: runId, command: 'b', params: { go: false } });
+    const r = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: 'x',
+      choice: 'approve',
+    });
+    expect([r['agent_action'], next(r)]).toEqual(['report_to_user', []]);
+    expect(String(r['context_hint'])).toContain('No question is open on this run.');
+  });
+
+  it('C163 start_run_batch: a repeat matched by an item’s idempotency_key — Matched existing run …', async () => {
+    claim('mcp/tools.md', '(or `Matched existing run …` for a repeat)');
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(AGENT_THEN_AUTO);
+    const first = (await call('start_run_batch', {
+      workflow_id: AGENT_THEN_AUTO.id,
+      items: [{ params: {}, idempotency_key: 'k' }],
+    })) as Reply & { started: Reply[] };
+    const again = (await call('start_run_batch', {
+      workflow_id: AGENT_THEN_AUTO.id,
+      items: [{ params: {}, idempotency_key: 'k' }],
+    })) as Reply & { started: Reply[] };
+    const runId = String(first.started[0]!['run_id']);
+    expect(again.started[0]!['context_hint']).toBe(
+      `Matched existing run '${runId}' (idempotent) in phase 'running'; no new run created. Ready for the agent: 'ask'.`,
+    );
+  });
+
+  it('C163 advance_run: offered after resume — a failed auto step made runnable again is engine work owed', async () => {
+    claim(
+      'mcp/tools.md',
+      "every reply and `get_run_state` end `next_actions` with this act whenever engine work is owed and nobody is running it — after a gate is answered, when a question's time is up and it declares `on_expiry`, after `resume`, and for a run `start_run_batch` created.",
+    );
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register(STEPS);
+    const runId = (
+      await call('start_run', { workflow_id: STEPS.id, params: { path: '/no/such/file-625' } })
+    )['run_id'] as string;
+    await call('execute_step', { run_id: runId, command: 'a', params: { go: false } });
+    await call('abandon_run', { run_id: runId });
+    const { applyResume } = await import('@sensigo/realm');
+    await runStore.update(applyResume(await runStore.get(runId), 'fails', STEPS).run);
+    const state = await call('get_run_state', { run_id: runId });
+    expect(next(state).at(-1)).toBe('advance_run:');
   });
 });

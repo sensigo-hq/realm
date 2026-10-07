@@ -20,6 +20,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { sweepExpiredGates } from './listen.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DOCS = join(HERE, '../../../../docs/reference');
@@ -163,6 +164,16 @@ describe('#625 PR-2a, C163 — gates.md: what the commands print, sentence by se
     const drained = realm('run', 'drain', b.runId, '--expired', '--force');
     expect(drained.code, drained.err.join('\n')).toBe(0);
     expect((await runStore.get(b.runId)).pending_gate).toBeUndefined();
+  });
+
+  it('C163 gates.md: the sweep `realm listen --sweep-expired-gates` runs on its interval carries an expired question out', async () => {
+    claim('workflow/gates.md', 'or `realm listen` started with `--sweep-expired-gates`.');
+    const { runId } = await atQuestion(gateThenAuto('dc-listen', 'settle_default'));
+    const logger = { info: () => {}, warn: () => {}, error: () => {} };
+    const swept = await sweepExpiredGates({ runStore, workflowStore, logger } as never);
+    // (a) red when the sweep leaves an expired, enactable question open; (b) prints its result.
+    expect(swept.enacted).toBe(1);
+    expect((await runStore.get(runId)).pending_gate).toBeUndefined();
   });
 
   it('C163 gates.md: realm run advance prints the expiry line first, after ⚠, naming advance — before the steps it runs', async () => {
