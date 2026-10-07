@@ -16,12 +16,12 @@ export default defineConfig({
       description: HOME_DESCRIPTION,
       customCss: ['./src/styles/tokens.css'],
       // the Realm logo in place of the title text; the site menu's links (src/data/nav.js) where
-      // Starlight puts its social icons, at the header's right side; and on a narrow screen the same
-      // menu as the site's other pages: the links at the top, the Light/Dark/Auto choice at the bottom
+      // Starlight puts its social icons, at the header's right side; and on a narrow screen, under the
+      // docs contents, the block the site's other pages show as their whole menu: the links, then the
+      // Light/Dark/Auto choice
       components: {
         SiteTitle: './src/components/SiteTitle.astro',
         SocialIcons: './src/components/DocsHeaderLinks.astro',
-        Sidebar: './src/components/DocsSidebar.astro',
         MobileMenuFooter: './src/components/MobileMenuFooter.astro',
       },
       // each docs page's preview image, Markdown copy link and breadcrumb (src/route-data.mjs)

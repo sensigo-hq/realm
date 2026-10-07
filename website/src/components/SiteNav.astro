@@ -1,44 +1,46 @@
 ---
 // The site menu of the home, how-it-works and comparison pages: the logo, the links (src/data/nav.js)
-// and the light/dark switch. The docs pages show the same links through Starlight's header
+// and the light/dark switch, in a bar that stays at the top of the screen while the page scrolls, as
+// the docs header does. The docs pages show the same links through Starlight's header
 // (src/components/DocsHeaderLinks.astro).
 //
 // On a screen narrower than 50rem, the width below which Starlight folds the docs header into its
-// menu button, this menu folds the same way and opens the same menu as the docs: a full-page sheet
-// under the header with the site links (src/components/MenuLinks.astro) at the top and the
-// Light/Dark/Auto choice (src/components/SiteThemeSelect.astro) at the bottom. Like Starlight's, it is
-// a popover: the browser opens and closes it, with or without scripts, and closes it on Escape or a
-// tap outside it. A browser that has no popovers never shows the button, and the links stay on show
-// under the logo (src/styles/site.css).
+// menu button, this menu folds the same way: the same button, and a sheet under the header with the
+// block the docs menu ends with (src/components/MenuBottom.astro): the site links, then the
+// Light/Dark/Auto choice (src/components/SiteThemeSelect.astro). Like Starlight's, it is a popover:
+// the browser opens and closes it, with or without scripts, and closes it on Escape or a tap outside
+// it. A browser that has no popovers never shows the button, and the links stay on show under the
+// logo (src/styles/site.css).
 import { Icon } from '@astrojs/starlight/components';
 import { ariaCurrent, nav } from '../data/nav.js';
 import Logo from './Logo.astro';
-import MenuLinks from './MenuLinks.astro';
+import MenuBottom from './MenuBottom.astro';
 import SiteThemeSelect from './SiteThemeSelect.astro';
 import ThemeToggle from './ThemeToggle.astro';
 
 const here = Astro.url.pathname;
 ---
 
-<nav class="site" aria-label="Site" data-site-nav>
-  <a class="brand" href="/" aria-label="Realm"><Logo height="var(--site-logo-height, 30px)" /></a>
-  <div class="nav-panel">
-    <div class="links">
-      {nav.map((l) => <a href={l.href} aria-current={ariaCurrent(l.href, here)}>{l.label}</a>)}
+<header class="site-header">
+  <nav class="site" aria-label="Site" data-site-nav>
+    <a class="brand" href="/" aria-label="Realm"><Logo height="var(--site-logo-height, 30px)" /></a>
+    <div class="nav-panel">
+      <div class="links">
+        {nav.map((l) => <a href={l.href} aria-current={ariaCurrent(l.href, here)}>{l.label}</a>)}
+      </div>
+      <ThemeToggle />
     </div>
-    <ThemeToggle />
-  </div>
-  <button class="menu-btn" type="button" popovertarget="site-menu" aria-label="Menu">
-    <Icon name="bars" class="open-icon" />
-    <Icon name="close" class="close-icon" />
-  </button>
-  <div class="menu-sheet" id="site-menu" popover>
-    <MenuLinks />
-    <div class="menu-sheet-footer">
-      <SiteThemeSelect />
+    <button class="menu-btn" type="button" popovertarget="site-menu" aria-label="Menu">
+      <Icon name="bars" class="open-icon" />
+      <Icon name="close" class="close-icon" />
+    </button>
+    <div class="menu-sheet" id="site-menu" popover>
+      <MenuBottom>
+        <SiteThemeSelect />
+      </MenuBottom>
     </div>
-  </div>
-</nav>
+  </nav>
+</header>
 <script is:inline>
   (function () {
     var nav = document.querySelector('[data-site-nav]');
@@ -50,15 +52,6 @@ const here = Astro.url.pathname;
     var wide = window.matchMedia('(min-width: 50rem)');
     var benched = [];
     btn.setAttribute('aria-expanded', 'false');
-    // The header scrolls with the page. Opening the menu first brings all of it back on screen, so the
-    // close button is never left above the top while the page under the sheet cannot scroll; the
-    // sheet then starts under the header.
-    sheet.addEventListener('beforetoggle', function (e) {
-      if (e.newState !== 'open') return;
-      var top = nav.getBoundingClientRect().top;
-      if (top < 0) window.scrollBy(0, top);
-      sheet.style.setProperty('--menu-top', Math.max(0, nav.getBoundingClientRect().bottom) + 'px');
-    });
     // While the sheet is open, the page under it is out of reach: Tab moves only between the header and
     // the sheet, as in the docs menu.
     sheet.addEventListener('toggle', function (e) {

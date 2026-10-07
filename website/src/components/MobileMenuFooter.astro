@@ -1,18 +1,60 @@
 ---
-// The bottom of the docs menu on a narrow screen: Starlight's Light/Dark/Auto choice alone. Starlight
-// also puts its social icons here; the site links they stand for open the menu instead
-// (src/components/DocsSidebar.astro). The site's other pages end their menu the same way
-// (src/components/SiteNav.astro, src/components/SiteThemeSelect.astro).
+// The bottom of the docs menu on a narrow screen, under the docs contents: the site links and
+// Starlight's Light/Dark/Auto choice (src/components/MenuBottom.astro). It replaces Starlight's
+// MobileMenuFooter, which shows its social icons there; the site's other pages end their menu with
+// the same block (src/components/SiteNav.astro).
 import ThemeSelect from '@astrojs/starlight/components/ThemeSelect.astro';
+import MenuBottom from './MenuBottom.astro';
 ---
 
-<div class="mobile-preferences sl-flex">
+<MenuBottom>
   <ThemeSelect />
-</div>
-
-<style>
-  .mobile-preferences {
-    border-top: 1px solid var(--c-line-soft);
-    padding: 0.5rem 0;
-  }
-</style>
+</MenuBottom>
+<script is:inline>
+  // Three things the menu on the site's other pages does too (src/components/SiteNav.astro), so the
+  // two menus behave alike.
+  (function () {
+    var wide = window.matchMedia('(min-width: 50em)');
+    var sheet = document.getElementById('starlight__sidebar');
+    var btn = document.querySelector('.sl-menu-button');
+    // The button says whether the menu is open, for screen readers that do not work it out from
+    // popovertarget.
+    if (sheet && btn) {
+      btn.setAttribute('aria-expanded', 'false');
+      sheet.addEventListener('toggle', function (e) {
+        btn.setAttribute('aria-expanded', e.newState === 'open' ? 'true' : 'false');
+      });
+    }
+    // Leaving the page closes the menu, so coming Back to it shows the menu closed.
+    window.addEventListener('pagehide', function () {
+      if (sheet && sheet.matches(':popover-open')) sheet.hidePopover();
+    });
+    // Crossing 50rem hides what had focus: widening hides the menu button and the menu's site links
+    // and theme choice (the header now shows them), narrowing hides the header's. Focus then falls
+    // to the page, so it is moved to what took their place: the header's links or theme choice when
+    // wider, the menu button when narrower. Losing focus to nothing (no relatedTarget) is what hiding
+    // causes; a Tab or a click names where focus went and is left alone.
+    document.addEventListener('focusout', function (e) {
+      var lost = e.target;
+      if (e.relatedTarget || !(lost instanceof Element)) return;
+      var fromMenu = lost.closest('.menu-bottom, .sl-menu-button');
+      var fromHeader = lost.closest('.header .right-group');
+      if (!fromMenu && !fromHeader) return;
+      setTimeout(function () {
+        if (document.activeElement !== document.body || lost.offsetParent !== null) return;
+        var to = null;
+        if (fromMenu && wide.matches) {
+          to =
+            lost.tagName === 'SELECT'
+              ? document.querySelector('.header .right-group select')
+              : Array.prototype.find.call(document.querySelectorAll('.header .site-links a'), function (a) {
+                  return a.offsetParent !== null;
+                });
+        } else if (fromHeader && !wide.matches) {
+          to = document.querySelector('.sl-menu-button');
+        }
+        if (to) to.focus();
+      });
+    });
+  })();
+</script>

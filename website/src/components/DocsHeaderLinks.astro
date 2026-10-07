@@ -3,7 +3,8 @@
 // (astro.config.mjs -> components), which Starlight shows at the right of the header. The links come
 // from src/data/nav.js, the list the home, how-it-works and comparison pages use
 // (src/components/SiteNav.astro), so every page offers the same ones. A link with an `icon` shows as
-// that icon. On a narrow screen the same links open the menu instead (src/components/DocsSidebar.astro).
+// that icon. On a narrow screen the same links sit at the bottom of the menu
+// (src/components/MobileMenuFooter.astro).
 import { Icon } from '@astrojs/starlight/components';
 import { ariaCurrent, nav } from '../data/nav.js';
 

@@ -1,8 +1,7 @@
 ---
-// The site links (src/data/nav.js) as the first rows of the menu on a narrow screen. Both menus show
-// them: the docs pages' (src/components/DocsSidebar.astro, above the docs contents) and the one of the
-// home, how-it-works and comparison pages (src/components/SiteNav.astro). The colours are the shared
-// palette's (src/styles/palette.css), which both kinds of page load.
+// The site links (src/data/nav.js) as rows in the menu on a narrow screen, in the block both menus
+// end with (src/components/MenuBottom.astro). The colours are the shared palette's
+// (src/styles/palette.css), which both kinds of page load.
 import { ariaCurrent, nav } from '../data/nav.js';
 
 const here = Astro.url.pathname;
@@ -21,8 +20,10 @@ const here = Astro.url.pathname;
 </ul>
 
 <style>
-  /* The site pages give every list a grid gap and a reading width (src/styles/site.css); the rows here
-     sit edge to edge across the whole menu, as in the docs. */
+  /* The rows the docs menu has shown since the site links moved into it: the body text, 0.6rem above
+     and below, a soft line between rows, the current part of the site in the accent colour. The site
+     pages give every list a grid gap and a reading width (src/styles/site.css); these rows sit edge
+     to edge across the whole menu, as in the docs. */
   .menu-links {
     display: block;
     max-width: none;
@@ -30,7 +31,6 @@ const here = Astro.url.pathname;
     margin: 0;
     padding: 0;
     font-size: 1rem;
-    line-height: 1.5;
   }
   .menu-links li {
     margin: 0;
@@ -40,9 +40,8 @@ const here = Astro.url.pathname;
   }
   .menu-links a {
     display: block;
-    padding: 0.6875rem 0;
-    color: var(--c-ink);
-    font-weight: 500;
+    padding: 0.6rem 0;
+    color: var(--c-body);
     text-decoration: none;
   }
   .menu-links a:hover,

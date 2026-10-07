@@ -116,14 +116,33 @@ ul {
   max-width: 68ch;
 }
 
+/* The bar at the top of the home, how-it-works and comparison pages (src/components/SiteNav.astro).
+   Like the docs header it stays on screen while the page scrolls and runs the whole width, with the
+   docs header's soft line under it: it takes back the body's 16px side padding, and the menu inside
+   keeps the page's 1100px column. The space under it is the page grid's gap, which the menu had when
+   it sat inside the grid. */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin: 0 -16px clamp(28px, 4vw, 44px);
+  padding-inline: 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line-soft);
+}
+/* A link target, or what a Tab reaches, is never left under the bar. */
+html {
+  scroll-padding-top: 5rem;
+}
 nav.site {
+  max-width: 1100px;
+  margin: 0 auto;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 10px 24px;
   padding: 18px 0;
-  border-bottom: 1px solid var(--line);
 }
 /* The logo (src/components/Logo.astro) is the link; it takes its colours from the palette. */
 .brand {
@@ -195,25 +214,24 @@ nav.site .nav-panel {
 }
 
 /* The menu button and the sheet it opens. The docs pages draw the same button
-   (src/styles/tokens.css, .sl-menu-button) and the same sheet (Starlight's, around
-   src/components/DocsSidebar.astro): a 40px outlined square, and a page-wide panel from the bottom of
-   the header to the bottom of the screen. */
+   (src/styles/tokens.css, .sl-menu-button) and the same sheet (Starlight's): three plain lines in the
+   colour of the docs' search icon, which turn into an X while the menu is open, and a page-wide panel
+   from the bottom of the header to the bottom of the screen. The button is a 44px target. */
 .menu-btn {
   display: none;
   place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.75rem;
+  height: 2.75rem;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--muted);
+  color: var(--ink);
   font-size: 1.25rem;
   cursor: pointer;
 }
 .menu-btn:hover {
   color: var(--accent);
-  border-color: var(--accent);
 }
 .menu-btn .close-icon,
 .menu-btn:has(+ :popover-open) .open-icon {
@@ -223,35 +241,30 @@ nav.site .nav-panel {
   display: block;
 }
 /* Closed, the sheet is not drawn. A browser without popovers drops the rule below, as it cannot read
-   :popover-open, so the sheet never covers the page there. */
+   :popover-open, so the sheet never covers the page there. The sheet holds the block the docs menu
+   ends with (src/components/MenuBottom.astro); here it is the whole menu, so the line it has above it
+   in the docs, under the docs contents, is left out. */
 .menu-sheet {
   display: none;
 }
 .menu-sheet:popover-open {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+  display: block;
   position: fixed;
-  inset: var(--menu-top, 77px) 0 0 0;
+  inset: 3.5rem 0 0 0;
   width: 100%;
   max-width: none;
   height: auto;
   max-height: none;
   margin: 0;
   border: 0;
-  padding: 1rem 16px 0;
+  padding: 0 16px;
   overflow-y: auto;
   scrollbar-gutter: stable;
   background: var(--bg);
   color: var(--body);
 }
-.menu-sheet-footer {
-  border-top: 1px solid var(--line-soft);
-  padding: 0.5rem 0;
-}
-/* With scripts off the theme choice cannot work and stays hidden; so does the line above it. */
-.menu-sheet-footer:has(> .theme-select[hidden]) {
-  display: none;
+.menu-sheet .menu-bottom {
+  border-top: 0;
 }
 /* 50rem is where Starlight folds the docs header into its menu button; the site's pages fold here too.
    A browser without popovers keeps the links, as a row of their own under the logo. */
@@ -267,17 +280,15 @@ nav.site .nav-panel {
     width: 40px;
     height: 40px;
   }
-  /* With the menu button, the header takes the docs header's measures (Starlight's 3.5rem bar, its
-     1.75rem logo, a line across the whole width), so the logo, the button and the top of the sheet
-     sit where they sit on a docs page. The 1px at the top centres them as the docs header does. */
+  /* With the menu button, the bar takes the docs header's measures (Starlight's 3.5rem, line
+     included, and its 1.75rem logo), so the logo, the button and the top of the sheet sit where they
+     sit on a docs page. The 1px at the top centres them as the docs header does. */
   @supports selector(:popover-open) {
     nav.site {
       --site-logo-height: 1.75rem;
       box-sizing: border-box;
-      height: 3.5rem;
-      margin-inline: -16px;
-      padding: 1px 16px 0;
-      border-bottom-color: var(--line-soft);
+      height: calc(3.5rem - 1px);
+      padding: 1px 0 0;
     }
     nav.site .nav-panel {
       display: none;

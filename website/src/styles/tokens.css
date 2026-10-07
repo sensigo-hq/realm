@@ -109,27 +109,27 @@ h1#_top {
   grid-template-columns: 100%;
 }
 
-/* The menu button on a narrow screen: the same 40px outlined square as on the home, how-it-works and
-   comparison pages (src/styles/site.css, .menu-btn), in place of Starlight's round filled one. The
-   size is Starlight's own setting, so the header still keeps the room the button needs. Starlight's
-   styles sit in cascade layers, so these win over its light-theme and open-menu colours too. */
+/* The menu button on a narrow screen: three plain lines in the colour of the search icon beside it,
+   with no disc and no frame, as on the home, how-it-works and comparison pages (src/styles/site.css,
+   .menu-btn), in place of Starlight's white disc. The 44px size is Starlight's own setting, so the
+   header still keeps the room the button needs. Starlight's styles sit in cascade layers, so these
+   win over its light-theme and open-menu colours too. */
 :root {
-  --sl-menu-button-size: 2.5rem;
+  --sl-menu-button-size: 2.75rem;
 }
 .sl-menu-button {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid var(--c-line);
+  border: 0;
   border-radius: 8px;
-  background-color: var(--sl-color-bg-nav);
-  color: var(--c-muted);
+  background-color: transparent;
+  color: var(--c-ink);
   box-shadow: none;
   font-size: 1.25rem;
 }
 .sl-menu-button:hover {
   color: var(--c-accent);
-  border-color: var(--c-accent);
 }
 .sl-menu-button:focus-visible {
   outline: 2px solid var(--c-accent);
