@@ -109,18 +109,15 @@ function describeWatched(watched: Watched): string {
 }
 
 /**
- * The command line a transport was created with. The SDK keeps its parameters in `_serverParams`
- * (1.31.0 `client/stdio.js:51`) and has no public reader; only `command` and `args` are read,
- * never `env`. An SDK that moves them prints that the arguments are not known.
+ * The arguments a transport was created with (after its command, as `record`'s are). The SDK keeps
+ * its parameters in `_serverParams` (1.31.0 `client/stdio.js:51`) and has no public reader; only
+ * `args` is read, never `env`. An SDK that moves them prints that the arguments are not known.
  */
 function transportArgs(transport: StdioClientTransport): string {
-  const held = transport as unknown as { _serverParams?: { command?: unknown; args?: unknown } };
-  const command = held._serverParams?.command;
-  const args = held._serverParams?.args ?? [];
-  if (typeof command !== 'string' || !Array.isArray(args)) {
-    return '(not known: this SDK does not keep them where 1.31.0 did)';
-  }
-  return formatArgs([command, ...args.map(String)]);
+  const params = (transport as unknown as { _serverParams?: { args?: unknown } })._serverParams;
+  const args = params === undefined ? undefined : (params.args ?? []);
+  if (!Array.isArray(args)) return '(not known: this SDK does not keep them where 1.31.0 did)';
+  return formatArgs(args.map(String));
 }
 
 /** Registers the per-test print; returns the recorder the file's spawn helpers report to. */
