@@ -210,9 +210,9 @@ export interface ExecuteStepOptions {
   /**
    * The caller, naming itself (decision C151): the call the expiry line names (`this <caller> call
    * …`, `enacted_via`) when this call carries out an expired question first. Default
-   * `'executeStep'` (a program's own call); `executeEngineStep` passes its own name (or its
-   * caller's: `realm agent` passes `'agent'`). Any other value THROWS `VALIDATION_CALLER_INVALID`
-   * before anything is read or written (the admission step).
+   * `'executeStep'` (a program's own call); the one other word is `'agent'` (round 20's finding 5
+   * trimmed `executeEngineStep`, which no longer calls through here). Any other value THROWS
+   * `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
    */
   caller?: StepCaller;
 }
@@ -1226,8 +1226,10 @@ function makeErrorEnvelope(
 /**
  * The reply to a call whose first read of the run fails (decision C156): the store's own
  * `WorkflowError` as an error reply — `STATE_RUN_NOT_FOUND` for a run that does not exist — or,
- * for anything else it throws, `ENGINE_STORE_FAILED`. Never a throw: `executeStep` (and through it
- * `executeEngineStep`, `submitHumanResponse`) and `advanceRun` answer a run they cannot read alike.
+ * for anything else it throws, `ENGINE_STORE_FAILED` naming the cause (`Failed to load run from
+ * store: <its message>`). Never a throw: `executeStep` (and through it `executeEngineStep`,
+ * `submitHumanResponse`), `executeChain` and `advanceRun` answer a run they cannot read alike. Such
+ * a reply names no `run_phase`: no run was read.
  */
 function firstReadRefusal(
   options: Pick<ExecuteStepOptions, 'command' | 'runId'>,
@@ -1236,7 +1238,7 @@ function firstReadRefusal(
   const refusal =
     err instanceof WorkflowError
       ? err
-      : new WorkflowError('Failed to load run from store', {
+      : new WorkflowError(`Failed to load run from store: ${describeThrown(err)}`, {
           code: 'ENGINE_STORE_FAILED',
           category: 'ENGINE',
           agentAction: 'stop',
@@ -1466,7 +1468,8 @@ export type { AdvanceCaller, AnswerCaller, ChainCaller, EngineStepCaller, StepCa
  * name the host passed: an MCP tool, a CLI command), or `timer`, the waiting process's own timer
  * (`realm agent`, `realm workflow run`), which writes a line of its own.
  */
-export type EnactedVia = AdvanceCaller | StepCaller | ChainCaller | AnswerCaller | 'timer';
+export type EnactedVia =
+  AdvanceCaller | StepCaller | EngineStepCaller | ChainCaller | AnswerCaller | 'timer';
 
 /**
  * The ONE line that says an expired question's declared `on_expiry` was carried out (decisions
@@ -7621,12 +7624,14 @@ export async function executeChain(
     // now throws a typed I/O error (rather than mapping it to STATE_RUN_NOT_FOUND) when the run
     // record exists but can't actually be read. Swallow ONLY the expected "doesn't exist" case
     // and fall through to the normal path (which re-attempts the read and surfaces its own
-    // properly-typed ENGINE_STORE_FAILED); re-throw everything else immediately rather than
-    // silently treating a real I/O failure as "the run doesn't exist."
+    // not-found reply). Anything else is answered at once — never read as "the run doesn't
+    // exist" — with the error reply `executeStep` and `advanceRun` give a run they cannot read
+    // (the follow-up to round 20's finding 3): the store's own `WorkflowError`, or
+    // `ENGINE_STORE_FAILED` naming the cause; the step named in `stopped_step`.
     if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') {
       entryRun = undefined;
     } else {
-      throw err;
+      return stampStoppedStep(firstReadRefusal(options, err), options.command);
     }
   }
   // issue #279 (increment 2, PR-C — D-3 leg v): keyed on terminal_state, never the persisted

@@ -196,7 +196,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     ).rejects.toMatchObject({
       code: 'VALIDATION_CALLER_INVALID',
       message:
-        "executeEngineStep's caller is one of executeEngineStep, executeStep, agent; it was given 'executeChain'. Nothing was read or written.",
+        "executeEngineStep's caller is one of executeEngineStep, agent; it was given 'executeChain'. Nothing was read or written.",
       details: { entry: 'executeEngineStep' },
     });
     // (a) red when the refusal wrote; (b) prints the record.

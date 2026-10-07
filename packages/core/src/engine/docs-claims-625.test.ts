@@ -172,8 +172,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     ],
     [
       'executeStep',
-      '`executeStep` takes `executeStep` (the default), `executeEngineStep` or `agent`',
-      ['executeStep', 'executeEngineStep', 'agent'],
+      '`executeStep` takes `executeStep` (the default) or `agent`',
+      ['executeStep', 'agent'],
     ],
     [
       'executeChain',
@@ -187,8 +187,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     ],
     [
       'executeEngineStep',
-      'optionally `caller`: `executeEngineStep` (the default), `executeStep` or `agent`; any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`, before anything is read or written.',
-      ['executeEngineStep', 'executeStep', 'agent'],
+      'optionally `caller`: `executeEngineStep` (the default) or `agent`; any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`, before anything is read or written.',
+      ['executeEngineStep', 'agent'],
     ],
   ] as const)(
     'C155/C163: %s takes exactly the words its row lists; any other throws VALIDATION_CALLER_INVALID naming it, nothing read or written',
@@ -361,7 +361,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
 
   // --- C156: a run advanceRun cannot read -----------------------------------------------------
   const CANNOT_READ =
-    'A run it cannot read gets an error reply, as from `executeStep`, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist; an error the store throws as a `WorkflowError` keeps its code, and any other is `ENGINE_STORE_FAILED` (a `JsonFileStore` record that is not JSON, for one).';
+    'A run it cannot read gets an error reply, as from `executeStep`, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist; an error the store throws as a `WorkflowError` keeps its code, and any other is `ENGINE_STORE_FAILED`, naming its cause (a `JsonFileStore` record that is not JSON, for one).';
   it.each(['advanceRun', 'executeStep'] as const)(
     'C156, W1-Y2: %s on a run that does not exist — an error reply STATE_RUN_NOT_FOUND, run_version 0, never a throw',
     async (fn) => {
@@ -401,11 +401,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     });
     const offline = await advanceRun(typed, d, { runId: 'r' });
     // (a) red when advanceRun throws, or loses the store's own code; (b) prints the replies.
-    expect([broken.status, broken.error_code, broken.errors]).toEqual([
-      'error',
-      'ENGINE_STORE_FAILED',
-      ['Failed to load run from store'],
-    ]);
+    expect([broken.status, broken.error_code]).toEqual(['error', 'ENGINE_STORE_FAILED']);
+    expect(broken.errors[0]).toMatch(/^Failed to load run from store: .*JSON/);
     expect([offline.status, offline.error_code, offline.errors]).toEqual([
       'error',
       'ENGINE_STORE_FAILED',
@@ -414,9 +411,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   });
 
   const STEP_CANNOT_READ =
-    "`executeStep` answers a run it cannot read with an error reply, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError`, and `ENGINE_STORE_FAILED` for any other (a `JsonFileStore` record that is not JSON, for one).";
-  const CHAIN_CANNOT_READ =
-    "`executeChain` answers a run that does not exist the same way, and throws any other error the store's read throws.";
+    "`executeStep` and `executeChain` answer a run they cannot read with an error reply, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError`, and `ENGINE_STORE_FAILED` for any other, naming its cause (`Failed to load run from store: <its message>`; a `JsonFileStore` record that is not JSON, for one).";
+  const NO_PHASE = 'Such a reply names no `run_phase`: no run was read.';
   /** A store whose every read throws the store's own typed error. */
   const offline = () => {
     const typed = Object.create(store) as RunStore;
@@ -433,40 +429,36 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     return typed;
   };
 
-  it('C156 class: executeStep on a run it cannot read — not found, the store’s own WorkflowError, a record that is not JSON — an error reply each, never a throw', async () => {
-    claim(STEP_CANNOT_READ);
-    const d = gated();
-    await writeFile(join(dir, 'broken.json'), '{not json');
-    const call = (s: RunStore, runId: string) =>
-      executeStep(s, d, { runId, command: 'after', input: {}, dispatcher });
-    const replies = [
-      await call(store, 'nope'),
-      await call(offline(), 'r'),
-      await call(store, 'broken'),
-    ];
-    // (a) red when executeStep throws for any of them, or a code changes; (b) prints the replies.
-    expect(replies.map((r) => [r.status, r.error_code, r.errors[0], r.command])).toEqual([
-      ['error', 'STATE_RUN_NOT_FOUND', 'Run not found: nope', 'after'],
-      ['error', 'ENGINE_STORE_FAILED', 'the store is offline', 'after'],
-      ['error', 'ENGINE_STORE_FAILED', 'Failed to load run from store', 'after'],
-    ]);
-  });
-
-  it('C156 class: executeChain — a run that does not exist gets the error reply; any other error the read throws is thrown (finding 3: proposed, not built)', async () => {
-    claim(CHAIN_CANNOT_READ);
-    const d = gated();
-    await writeFile(join(dir, 'broken.json'), '{not json');
-    const call = (s: RunStore, runId: string) =>
-      executeChain(s, d, { runId, command: 'after', input: {}, dispatcher });
-    const missing = await call(store, 'nope');
-    // (a) red when the not-found reply changes, or the other two stop throwing without the page; (b) prints them.
-    expect([missing.status, missing.error_code]).toEqual(['error', 'STATE_RUN_NOT_FOUND']);
-    await expect(call(offline(), 'r')).rejects.toMatchObject({
-      code: 'ENGINE_STORE_FAILED',
-      message: 'the store is offline',
-    });
-    await expect(call(store, 'broken')).rejects.toBeInstanceOf(SyntaxError);
-  });
+  it.each(['executeStep', 'executeChain'] as const)(
+    'C156 class (finding 3 built): %s on a run it cannot read — not found, the store’s own WorkflowError, a record that is not JSON — an error reply each, naming the cause, no run_phase, never a throw',
+    async (fn) => {
+      claim(STEP_CANNOT_READ);
+      claim(NO_PHASE);
+      const d = gated();
+      await writeFile(join(dir, 'broken.json'), '{not json');
+      const call = (s: RunStore, runId: string) =>
+        fn === 'executeStep'
+          ? executeStep(s, d, { runId, command: 'after', input: {}, dispatcher })
+          : executeChain(s, d, { runId, command: 'after', input: {}, dispatcher });
+      const replies = [
+        await call(store, 'nope'),
+        await call(offline(), 'r'),
+        await call(store, 'broken'),
+      ];
+      // (a) red when the call throws for any of them, a code changes, the cause is dropped, or the
+      //     reply names a phase; (b) prints the replies.
+      expect(replies.map((r) => [r.status, r.error_code, r.command, r.run_phase])).toEqual([
+        ['error', 'STATE_RUN_NOT_FOUND', 'after', undefined],
+        ['error', 'ENGINE_STORE_FAILED', 'after', undefined],
+        ['error', 'ENGINE_STORE_FAILED', 'after', undefined],
+      ]);
+      expect(replies.map((r) => r.errors[0])).toEqual([
+        'Run not found: nope',
+        'the store is offline',
+        expect.stringMatching(/^Failed to load run from store: .*JSON/),
+      ]);
+    },
+  );
 
   // --- now (lines 102, 119: C150, C157) -------------------------------------------------------
   it('C163 line 102: advanceRun given a number or a string as now throws a TypeError at an open question, before anything is written; with none it runs its steps', async () => {

@@ -148,9 +148,23 @@ export function renderDetachMap(
 
 /** How often the open prompt reads the run to see its question settled elsewhere (decision C158). */
 export const QUESTION_WATCH_MS = 500;
+let questionWatchMs = QUESTION_WATCH_MS;
 
 /**
- * Reads the run every {@link QUESTION_WATCH_MS} while a prompt waits on the question `gateId`, and
+ * A test seam, not a user option (the architect's review of round 20, finding 10): sets the interval
+ * the prompt's watch reads the run at, and returns the restore. A cell sets it past its own length to
+ * neutralise the watch, so that only the attending timer's `onApplied` can close the prompt.
+ */
+export function setQuestionWatchIntervalForTests(ms: number): () => void {
+  const before = questionWatchMs;
+  questionWatchMs = ms;
+  return (): void => {
+    questionWatchMs = before;
+  };
+}
+
+/**
+ * Reads the run every {@link QUESTION_WATCH_MS} (a cell can change it: {@link setQuestionWatchIntervalForTests}) while a prompt waits on the question `gateId`, and
  * calls `onClosed` once when that question is no longer open: the run ended, or its open question
  * is another one or none (decision C158). A read that fails is tried again at the next tick.
  * Returns the stop.
@@ -174,7 +188,7 @@ function watchQuestion(
       },
       () => undefined,
     );
-  }, QUESTION_WATCH_MS);
+  }, questionWatchMs);
   return (): void => {
     stopped = true;
     clearInterval(timer);

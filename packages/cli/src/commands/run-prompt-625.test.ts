@@ -23,7 +23,7 @@ vi.mock('node:readline/promises', () => ({
   createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
 }));
 
-import { runCommand } from './run.js';
+import { runCommand, setQuestionWatchIntervalForTests } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
@@ -459,6 +459,63 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect(prompts.choicePrompts()).toBe(1);
       expect((await readRecord()).run_phase).toBe('completed');
       expect(code).toBe(0);
+    }, 30_000);
+
+    it('C158, finding 10: with the watch neutralised, the attending timer’s own write closes the prompt at once — onApplied is the closer', async () => {
+      claimWorkflowPage(PROMPT_CLOSES);
+      // The watch reads the record once an hour here: only the timer's `onApplied` can close the prompt.
+      const restoreWatch = setQuestionWatchIntervalForTests(3_600_000);
+      let closedAt: number | undefined;
+      let expiresAt: number | undefined;
+      let fellBack = false;
+      mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
+        if (prompt.startsWith('  Choice ')) {
+          void readRecord().then((r) => {
+            expiresAt = new Date(r.pending_gate!.expires_at!).getTime();
+          });
+          return new Promise<string>((resolve, reject) => {
+            // Without a close, an answer comes 4 s later — the late-answer path, not a close.
+            const fallback = setTimeout(() => {
+              fellBack = true;
+              resolve('reject');
+            }, 4_000);
+            opts?.signal?.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(fallback);
+                closedAt = Date.now();
+                reject(
+                  Object.assign(new Error('The operation was aborted'), {
+                    name: 'AbortError',
+                    code: 'ABORT_ERR',
+                  }),
+                );
+              },
+              { once: true },
+            );
+          });
+        }
+        if (prompt.startsWith('  Mock output') || prompt.startsWith('  Agent output')) {
+          return Promise.resolve('');
+        }
+        return Promise.reject(new Error(`fixture: an unexpected prompt: ${prompt}`));
+      });
+      try {
+        await run(
+          workflowYaml({ id: 'prompt-625-c158-applied', finish: true, expiresTo: 'approve' }),
+        );
+      } finally {
+        restoreWatch();
+      }
+      // (a) red when the timer does not tell the prompt it carried the expiry out (s8: `run.ts` stops
+      //     passing `onApplied`) — the prompt then waits for the answer that comes 4 s later; (b)
+      //     prints when it closed.
+      expect(fellBack).toBe(false);
+      expect([closedAt === undefined, expiresAt === undefined]).toEqual([false, false]);
+      expect(closedAt! - expiresAt!).toBeLessThan(1_000);
+      expect(afterTheGate().filter((l) => l.startsWith('  This prompt is closed:'))).toEqual([
+        "  This prompt is closed: the question on 'confirm' is no longer open — Answer: approve · settled by the gate's expiry (no answer in time).",
+      ]);
     }, 30_000);
 
     it('the attending timer carries out an abort while the prompt waits: the prompt closes and says no answer was recorded, the run aborted', async () => {

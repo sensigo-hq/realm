@@ -260,7 +260,16 @@ was not recorded`). The prompt reads the record twice a second while it waits.
   - **BREAKING:** a run it cannot read gets an error reply, as from `executeStep` — never a throw:
     `STATE_RUN_NOT_FOUND` for a run that does not exist (labelled with the call's `command`,
     `run_version: 0`); an error the store throws as a `WorkflowError` keeps its code, and any other
-    is `ENGINE_STORE_FAILED`. `executeStep` and `advanceRun` share the one rule.
+    is `ENGINE_STORE_FAILED`, naming its cause (`Failed to load run from store: <its message>`; it
+    said `Failed to load run from store` alone). `executeStep`, `executeChain` and `advanceRun` share
+    the one rule; such a reply names no `run_phase`.
+  - **BREAKING:** `executeChain` answers a record it cannot read with that error reply (the step in
+    `stopped_step`) where it threw the store's error (a JSON parse error, an I/O error, any
+    `WorkflowError` but `STATE_RUN_NOT_FOUND`, which it already answered). `realm agent` is
+    unchanged for the operator: on such a reply it raises the store's failure inside the step's
+    attempt, so the drive records the step's billed calls on its last-resort entry and the failure
+    propagates, as when the read threw (the entry's message now names the cause after `Failed to
+load run from store: `).
   - **Upgrading:** pass `runId` and the optional fields above. `AdvanceRunOptions` has no
     `dispatcher` or `params` (the engine runs only its own steps, with the input it gives them);
     `caller` names the call, and `command` only labels the reply (default: the caller). Read
@@ -364,10 +373,12 @@ its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_ex
     `submitHumanResponse` and `executeEngineStep` take a `caller` option, a word from the
     function's own list (`ENTRY_CALLERS`) — the MCP tools and the CLI pass theirs; any other value
     throws `VALIDATION_CALLER_INVALID` before anything is read or written. Core exports the types
-    `StepCaller`, `ChainCaller`, `AnswerCaller` and `EngineStepCaller`.
+    `StepCaller`, `ChainCaller`, `AnswerCaller` and `EngineStepCaller`. Each list holds only the
+    calls that are made: `executeStep` takes `executeStep` or `agent`, `executeEngineStep` takes
+    `executeEngineStep` or `agent`.
   - `executeEngineStep` admits its own call, first: its store, registry, driver and `caller` are
     checked as `executeEngineStep`'s, before its check that the step is `auto`, and a refusal names
-    it — `executeEngineStep's caller is one of executeEngineStep, executeStep, agent; it was given
+    it — `executeEngineStep's caller is one of executeEngineStep, agent; it was given
 '<value>'. Nothing was read or written.`
   - A late answer's line is this one too (0.46.0: `gate '<g>' expired <n>m ago and was enacted
 (settle_default: '<c>') before this response arrived — enacted_via: submit.`). When another call

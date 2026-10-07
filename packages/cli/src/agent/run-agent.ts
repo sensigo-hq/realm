@@ -39,6 +39,7 @@ import type {
   UsageRecord,
   Attributed,
   DriveFailureRecord,
+  ErrorCategory,
 } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
@@ -1524,6 +1525,27 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // this call sits inside the repair loop.
             ...(shouldMintWriterNonce(deps) ? { writerNonce: crypto.randomUUID() } : {}),
           });
+
+          // The follow-up to #625 PR-2a round 20's finding 3: `executeChain` answers a run it cannot read
+          // with an error reply that names no run phase (no run was read) where it used to throw. The
+          // drive's store is failing, as when a read of the drive's own throws: it is raised here,
+          // inside the attempt, so the last-resort catch (chokepoint 3) records the step's billed calls
+          // (nothing was saved) and the failure propagates — the drive's exit 4, as before. A run that
+          // no longer exists keeps its reply and the step's failure line, as before.
+          if (
+            result.status === 'error' &&
+            result.run_phase === undefined &&
+            result.error_code !== undefined &&
+            result.error_code !== 'STATE_RUN_NOT_FOUND'
+          ) {
+            throw new WorkflowError(result.errors.join(', '), {
+              code: result.error_code,
+              category: result.error_code.split('_')[0] as ErrorCategory,
+              agentAction: result.agent_action ?? 'stop',
+              retryable: false,
+              stepId: stepName,
+            });
+          }
 
           // issue #217: the in-drive schema-feedback repair gate. Fires ONLY when ALL SIX conjuncts
           // hold — see plans/issue-217/design-v2.md §Mechanism for the rationale on (i)-(v).
