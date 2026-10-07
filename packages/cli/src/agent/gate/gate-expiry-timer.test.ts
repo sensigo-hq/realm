@@ -141,4 +141,48 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     await expect(vi.advanceTimersByTimeAsync(2000)).resolves.not.toThrow();
     cancel();
   });
+
+  it("#625 PR-2a, C158: onApplied is called once, after the timer's own write carried the expiry out and its line printed", async () => {
+    vi.useFakeTimers();
+    const store = new InMemoryStore();
+    const gate = makeGate({
+      expires_at: new Date(Date.now() + 1000).toISOString(),
+      on_expiry: 'settle_default',
+      default_choice: 'approve',
+    });
+    const run = await seedGatedRun(store, gate);
+    const order: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      order.push(String(line).startsWith('⏰ ') ? 'the timer line' : String(line));
+    });
+    const onApplied = vi.fn(() => order.push('applied'));
+    const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def, onApplied });
+    await vi.advanceTimersByTimeAsync(1500);
+    cancel();
+    log.mockRestore();
+    // (a) red when the timer no longer tells its host it carried the expiry out (the prompt would
+    //     wait for its watch), or tells it before its line; (b) prints the order.
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['the timer line', 'applied']);
+  });
+
+  it('#625 PR-2a, C158: onApplied is not called when another enactment point carried the expiry out first', async () => {
+    vi.useFakeTimers();
+    const store = new InMemoryStore();
+    const gate = makeGate({
+      expires_at: new Date(Date.now() + 1000).toISOString(),
+      on_expiry: 'settle_default',
+      default_choice: 'approve',
+    });
+    const run = await seedGatedRun(store, gate);
+    const onApplied = vi.fn();
+    const cancel = scheduleGateExpiryTimer(run.id, gate, { store, definition: def, onApplied });
+    await store.settleStep!(run.id, { kind: 'expire_gate', gateId: gate.gate_id }, def, {
+      now: new Date(Date.now() + 1500),
+    });
+    await vi.advanceTimersByTimeAsync(2000);
+    cancel();
+    // (a) red when the timer reports a write it did not make; (b) prints the calls.
+    expect(onApplied).not.toHaveBeenCalled();
+  });
 });
