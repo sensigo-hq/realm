@@ -46,5 +46,9 @@ export default defineConfig({
     // (fails-then-passes is still broken). Quarantine a specific test if ever mid-fix — never a
     // global retry.
     retry: 0,
+    // Tests read built output and never build: the run refuses to start when the build is older
+    // than the source (the reason, and how the check stays read-only, are in the file). The path
+    // is relative to the package being tested (vitest's `root`); every package is packages/<name>.
+    globalSetup: ['../../scripts/vitest-build-is-current.mjs'],
   },
 });
