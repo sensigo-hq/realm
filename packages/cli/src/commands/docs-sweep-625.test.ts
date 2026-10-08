@@ -11,8 +11,9 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runAdvanceCommand } from './run-advance.js';
+import { advanceRunFromShell, runAdvanceCommand } from './run-advance.js';
 import {
+  ExtensionRegistry,
   JsonFileStore,
   JsonWorkflowStore,
   advanceRun,
@@ -462,6 +463,86 @@ describe(
         ],
         code: 0,
       });
+    });
+
+    it('C187 (walk c8, W5-1): a guard decided before a step another process takes prints before that step’s taken line', async () => {
+      claim(
+        'docs/reference/cli/realm-run-acting.md',
+        "Each guard it decides prints `Guard step '<guard>' passed.`, also when a later step completes the run, in the order the steps ran: a guard decided before a later step is printed before that step's line.",
+      );
+      // `a` (a handler that returns ok) → guard `g` → `fin`; another process takes `fin` in the
+      // moment before this call's own claim.
+      const def = wf(
+        [
+          'id: c187-taken',
+          'name: c187-taken',
+          'version: 1',
+          'steps:',
+          '  a:',
+          '    description: A.',
+          '    execution: auto',
+          '    handler: ok',
+          '  g:',
+          '    description: G.',
+          '    execution: guard',
+          '    depends_on: [a]',
+          '    abort_unless: ["a.ok == true"]',
+          '  fin:',
+          '    description: Fin.',
+          '    execution: auto',
+          '    depends_on: [g]',
+          '',
+        ].join('\n'),
+      );
+      class RacingStore extends JsonFileStore {
+        raced = false;
+        override async claimStep(
+          ...args: Parameters<JsonFileStore['claimStep']>
+        ): ReturnType<JsonFileStore['claimStep']> {
+          const [id, step, d, claimant] = args;
+          if (!this.raced && step === 'fin') {
+            this.raced = true;
+            await super.claimStep(id, step, d, {
+              by: 'other-terminal',
+              by_source: 'stated',
+              channel: 'agent',
+            });
+          }
+          return super.claimStep(id, step, d, claimant);
+        }
+      }
+      const racing = new RacingStore(join(home, '.realm', 'runs'));
+      await workflowStore.register(def);
+      const { run } = await racing.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'ok', {
+        id: 'ok',
+        execute: async () => ({ data: { ok: true } }),
+      } as never);
+      const lines: string[] = [];
+      await advanceRunFromShell(
+        run.id,
+        { project: home },
+        racing,
+        workflowStore,
+        undefined,
+        (l) => lines.push(l),
+        registry,
+      );
+      // (a) red when the guard's line is printed after the taken line of the step it let through;
+      //     (b) prints the lines.
+      expect(
+        lines
+          .filter((l) => l.startsWith('→ ') || l.startsWith('Guard step') || l.startsWith('• Step'))
+          .map((l) => l.replace(/ at \S+Z;/, ' at <t>;')),
+        lines.join('\n'),
+      ).toEqual([
+        '→ a',
+        "Guard step 'g' passed.",
+        // `→ <step>` is printed as the step starts, before its claim (realm-run-acting.md).
+        '→ fin',
+        "• Step 'fin' was taken by other-terminal (as stated, via agent) at <t>; not run here.",
+      ]);
     });
 
     it.each([
