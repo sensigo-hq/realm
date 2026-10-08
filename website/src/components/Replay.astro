@@ -119,7 +119,8 @@ const liveNotes = JSON.stringify(S.notes);
   </div>
 
   <div class="rp-stage" data-s="2" hidden>
-    <h3 tabindex="-1">{S.gate}</h3>
+    <h3 tabindex="-1" data-rec>{S.gate}</h3>
+    <h3 tabindex="-1" data-live data-say="gate" hidden></h3>
     <p data-rec>{ticks(S.gateShown).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</p>
     <p data-live data-say="gateShown" hidden></p>
     <p data-live data-say="beforeGate" hidden></p>
@@ -166,10 +167,8 @@ const liveNotes = JSON.stringify(S.notes);
             <div class="rp-out" aria-live="polite" data-box="skip"></div>
           </div>
           <p class="rp-why" data-in="C D" data-say="chose" hidden></p>
-          <div class="rp-out" aria-live="polite" data-box="answer"></div>
         </div>
       </div>
-      <p class="rp-why" data-in="E" data-say="failedBeforeGate" hidden></p>
       <div class="rp-picks" data-in="E"><button type="button" data-act="new">{S.newRun}</button></div>
     </div>
   </div>
@@ -186,7 +185,7 @@ const liveNotes = JSON.stringify(S.notes);
             <pre>{`$ ${e.respond.argv}\n${e.respond.stdout}`}</pre>
             {e.other_branch && (
               <>
-                <p class="rp-k">The agent tries the branch that was not chosen</p>
+                <p class="rp-k">{SR(e).otherTried}</p>
                 <pre>{j(e.other_branch.call)}</pre>
                 <p class="rp-k bad">Realm refuses</p>
                 <p class="rp-why">{why(e.other_branch.response)}</p>
@@ -195,9 +194,9 @@ const liveNotes = JSON.stringify(S.notes);
             )}
           </div>
           <div>
-            <p class="rp-k good">Ran: <code>{e.posted.step}</code></p>
+            <p class="rp-k good">{ticks(SR(e).ran).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</p>
             <pre class="good">{j(e.posted.response)}</pre>
-            <p class="rp-k">Skipped, with the reason on the record</p>
+            <p class="rp-k">{SR(e).skippedLabel}</p>
             <pre>{e.skipped}</pre>
           </div>
         </div>
@@ -209,12 +208,20 @@ const liveNotes = JSON.stringify(S.notes);
         <p data-say="agentSends" hidden></p>
         <div class="rp-cols">
           <div>
-            <div class="rp-picks" data-in="C"><button type="button" class="ok" data-act="post">{S.sendLabel}</button></div>
-            <div class="rp-out" aria-live="polite" data-box="post"></div>
-          </div>
-          <div>
+            <div class="rp-out" aria-live="polite" data-box="answer"></div>
             <div class="rp-picks" data-in="C"><button type="button" data-act="other">{S.otherLabel}</button></div>
             <div class="rp-out" aria-live="polite" data-box="other"></div>
+          </div>
+          <div>
+            <div class="rp-picks" data-in="C"><button type="button" class="ok" data-act="post">{S.sendLabel}</button></div>
+            <p class="rp-k good" data-say="ran" hidden></p>
+            <div class="rp-out" aria-live="polite" data-box="post"></div>
+            <div class="rp-group" data-l="sent2" hidden>
+              <p data-say="sentFrom2" hidden></p>
+              <div class="rp-table" role="table" data-l="sent2-row"></div>
+            </div>
+            <p class="rp-k" data-say="skippedLabel" hidden></p>
+            <pre data-l="skip" hidden></pre>
           </div>
         </div>
       </div>
@@ -233,7 +240,7 @@ const liveNotes = JSON.stringify(S.notes);
           {evidenceRows(recordedRun(e)).map((x) => (
             <div role="row">
               <span role="cell"><code>{parts(x.step).map((p, i) => (i ? <>_<wbr />{p}</> : p))}</code></span>
-              <span role="cell">{x.label}</span>
+              <span role="cell">{parts(x.label).map((p, i) => (i ? <>_<wbr />{p}</> : p))}</span>
               <span role="cell"><code title={x.hash}>{h8(x.hash)}…</code></span>
             </div>
           ))}
@@ -302,7 +309,7 @@ const liveNotes = JSON.stringify(S.notes);
   border:1px solid var(--line);background:transparent;color:var(--ink)}
 .rp-picks button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .rp button.ok{background:var(--c-accent);color:var(--c-on-accent);border-color:var(--c-accent)}
-.rp-nav button:disabled{opacity:.45;cursor:not-allowed}
+.rp-nav button:disabled,.rp [data-live-try]:disabled{opacity:.45;cursor:not-allowed}
 .rp-out{display:grid;gap:8px;min-width:0}
 .rp-out > div{display:grid;gap:8px;min-width:0}
 .rp-hint{color:var(--muted)}
@@ -314,7 +321,7 @@ const liveNotes = JSON.stringify(S.notes);
 .rp-table [role="row"]{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,.9fr);gap:10px;padding:8px 12px;border-top:1px solid var(--line-soft)}
 .rp-table [role="row"]:first-child{border-top:0}
 .rp-table [role="cell"]{overflow-wrap:anywhere}
-.rp-table [role="cell"]:first-child{overflow-wrap:normal}
+.rp-table [role="cell"]:first-child,.rp-table [role="cell"]:nth-child(2){overflow-wrap:normal}
 .rp-table .skip{color:var(--muted)}
 .rp-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:4px;border-top:1px solid var(--line-soft);padding-top:12px}
 .rp-pos{font:500 12px "IBM Plex Mono",monospace;color:var(--muted)}
@@ -356,9 +363,12 @@ const liveNotes = JSON.stringify(S.notes);
     root.setAttribute('data-stage', cur);
     prev.disabled = cur === 0;
     var live = root.getAttribute('data-mode') === 'live';
-    var waiting = cur === GATE && (live ? root.getAttribute('data-live-gate') !== 'answered' : !root.getAttribute('data-ending'));
+    // Live: the live layer writes the waiting label (stageSentences' waitLabel) to data-live-wait,
+    // empty when nothing waits at the gate.
+    var lw = root.getAttribute('data-live-wait');
+    var waiting = cur === GATE && (live ? !!lw : !root.getAttribute('data-ending'));
     next.disabled = cur === stages.length - 1 || waiting;
-    next.textContent = waiting ? 'Waiting for a human' : 'Next';
+    next.textContent = waiting ? (live ? lw : 'Waiting for a human') : 'Next';
     pos.textContent = (cur + 1) + ' of ' + stages.length;
     // When the action hid or disabled the focused control, focus the new stage's heading.
     if (focus || ((was === next || was === prev) && was.disabled)) {
@@ -405,7 +415,9 @@ const liveNotes = JSON.stringify(S.notes);
     };
     const tryB = q('[data-live-try]'), note = q('[data-live-note]'), ed = q('[data-l=box]'), sel = q('[data-l=step]'), hint = q('[data-l=hint]');
     const box = (k: string) => q(`[data-box=${k}]`);
-    let M: any, E: any, rid: string, st: any, open: any, thr: any, T: any, gen = 0, busy = false, live = false, dead = false;
+    let SS: any, M: any, E: any, rid: string, st: any, open: any, thr: any, T: any, gen = 0, busy = false, live = false, dead = false;
+    // True once the stage-4 post box holds this run's accepted reply (a new run clears it).
+    let postOk = false;
     const show = (n?: number, focus?: boolean) => root.dispatchEvent(new CustomEvent('rp-show', { detail: { n, focus } }));
     // The second click of a double-click (detail 2) is ignored, so a double-click sends one call even
     // when the first call has already returned.
@@ -423,6 +435,7 @@ const liveNotes = JSON.stringify(S.notes);
       D.mode = 'recorded';
       delete D.liveState;
       D.liveGate = 'closed';
+      delete D.liveWait;
       note.textContent = m;
       note.hidden = false;
       tryB.hidden = true;
@@ -456,7 +469,9 @@ const liveNotes = JSON.stringify(S.notes);
       const r = el('div', null, h ? '' : 'skip'), c = el('code', h ? h.slice(0, 12) + '…' : null);
       r.setAttribute('role', 'row');
       if (h) c.title = h;
-      for (const x of [code(s), l, h ? c : 'no evidence']) {
+      const lab = el('span');
+      l.split('_').forEach((p, i) => (i ? lab.append('_', el('wbr'), p) : lab.append(p)));
+      for (const x of [code(s), lab, h ? c : 'no evidence']) {
         const k = el('span');
         k.setAttribute('role', 'cell');
         k.append(x);
@@ -469,10 +484,22 @@ const liveNotes = JSON.stringify(S.notes);
     const render = async () => {
       const run = await E.run(rid);
       const vs = { ...st, choice: M.answeredChoice(run), threshold: thr, version: M.version, run_id: rid };
-      const S = M.stageSentences('live', vs), L = M.stateLetter(vs);
+      const S = (SS = M.stageSentences('live', vs)), L = M.stateLetter(vs);
       D.liveState = L;
       D.liveGate = L == 'B' ? 'open' : L == 'C' || L == 'D' ? 'answered' : 'closed';
+      if (S.waitLabel) D.liveWait = S.waitLabel;
+      else delete D.liveWait;
       qa('[data-say]').forEach((e: any) => say(e, S[e.dataset.say]));
+      const sk = q('[data-l=skip]');
+      sk.textContent = S.skipped ?? '';
+      sk.hidden = S.skipped == null;
+      // D: "Ran:" shows the stage-4 post box when it holds this run's accepted reply; otherwise the
+      // step was sent from stage 2, so that sentence and the step's row from the record show instead.
+      const from2 = L == 'D' && !postOk;
+      box('post').hidden = from2;
+      q('[data-l=sent2]').hidden = !from2;
+      const sent = from2 ? M.evidenceRows(run).find((x: any) => x.step == M.chosenStep(vs)) : null;
+      q('[data-l=sent2-row]').replaceChildren(...(sent ? [row(sent.step, sent.label, sent.hash)] : []));
       q('[data-l=gate]').textContent = M.gateText(open) ?? '';
       q('[data-l=table]').replaceChildren(
         ...M.evidenceRows(run).map((x: any) => row(x.step, x.label, x.hash)),
@@ -481,7 +508,7 @@ const liveNotes = JSON.stringify(S.notes);
       show();
     };
     // One call at a time; a reply from a run that was replaced meanwhile is dropped.
-    const act = async (tool: string, args: any, b: any) => {
+    const act = async (tool: string, args: any, b: any, noCall = false, who?: string) => {
       if (busy || !live) return;
       const g = gen, before = st;
       setBusy(true);
@@ -492,7 +519,11 @@ const liveNotes = JSON.stringify(S.notes);
         if (r.value.gate?.display) open = r;
         thr = r.value.error_details?.threshold ?? thr;
       }
-      const l = paint(b, M.replyView({ tool, ...args }, r, before, st));
+      const v = M.replyView({ tool, ...args }, r, before, st);
+      if (noCall) v.who = null;
+      else if (who) v.who = who;
+      if (b == box('post')) postOk = v.tone == 'good';
+      const l = paint(b, v);
       await render();
       setBusy(false);
       return l;
@@ -516,6 +547,7 @@ const liveNotes = JSON.stringify(S.notes);
       E = e;
       rid = v.run_id;
       open = thr = null;
+      postOk = false;
       qa('[data-box]').forEach((x: any) => x.replaceChildren());
       hint.hidden = true;
       st = await state();
@@ -587,8 +619,15 @@ const liveNotes = JSON.stringify(S.notes);
         })),
     );
     qa('[data-act=skip]').forEach((b: any) => (b.onclick = one(() => act('execute_step', { command: b.dataset.step, params: {} }, box('skip')))));
-    q('[data-act=post]').onclick = one(() => act('execute_step', { command: M.nextActions(st).send, params: {} }, box('post')));
-    q('[data-act=other]').onclick = one(() => act('execute_step', { command: M.nextActions(st).other, params: {} }, box('other')));
+    // "Ran:" shows the reply without the call, as the recording does; focus goes to stage 4's heading
+    // because the button that had it is gone once the step is sent.
+    q('[data-act=post]').onclick = one(async () => {
+      const l = await act('execute_step', { command: M.nextActions(st).send, params: {} }, box('post'), true);
+      if (l) show(3, true);
+    });
+    q('[data-act=other]').onclick = one(() =>
+      act('execute_step', { command: M.nextActions(st).other, params: {} }, box('other'), false, SS.otherTried),
+    );
     qa('[data-act=new]').forEach(
       (b: any) =>
         (b.onclick = one(async () => {

@@ -190,6 +190,8 @@ const {
   evidenceRows,
   stageSentences,
   stateLetter,
+  skipLine,
+  chosenStep,
   answeredChoice,
   recordedState,
   recordedRun,
@@ -255,6 +257,25 @@ const phLive = (x, ids) =>
     return s;
   });
 const recAttempt = (id) => R.attempts.find((a) => a.id === id);
+// correction 1: the sentences that follow the state (stage 3 heading, Next's waiting label, the
+// stage-4 labels, "Ran:", the stage-2 line, the skip line), in this order.
+const STATE_KEYS = [
+  'gate',
+  'waitLabel',
+  'otherTried',
+  'ran',
+  'sentFrom2',
+  'skippedLabel',
+  'skipped',
+];
+const byState = (S) => Object.fromEntries(STATE_KEYS.map((k) => [k, S[k]]));
+const GATE_B = 'The run stops. The posting steps cannot run until the gate is answered.';
+const GATE_A = 'The run has not reached the gate yet.';
+const GATE_CD = 'The gate is answered.';
+const GATE_E = 'This run failed before reaching the gate.';
+const OTHER_TRIED = 'The agent tries the branch that was not chosen';
+const SKIPPED_LABEL = 'Skipped, with the reason on the record';
+const NONE = { otherTried: null, ran: null, sentFrom2: null, skippedLabel: null, skipped: null };
 const classes = [];
 
 const replies = []; // every raw reply of the guard's runs (for the store-warning check)
@@ -310,6 +331,12 @@ async function runEnding(E, choice, withWrong) {
     'The run reaches the gate once write_review is accepted.',
     stageSentences('live', before).beforeGate,
   );
+  check(
+    prefix +
+      'state sentences (L, A after start): stage 3 heading, Next waits for the agent, no stage-4 lines',
+    { gate: GATE_A, waitLabel: 'Waiting for the agent', ...NONE },
+    byState(stageSentences('live', before)),
+  );
   const send = async (label, tool, a, recorded) => {
     const r = await E.call(tool, { run_id: ids.run, ...a });
     replies.push([choice + '/' + label, r]);
@@ -361,6 +388,11 @@ async function runEnding(E, choice, withWrong) {
       'A',
       stateLetter(states.extra_field.after),
     );
+    check(
+      prefix + 'state sentences (L, A after refusals): stage 3 heading, Next waits for the agent',
+      { gate: GATE_A, waitLabel: 'Waiting for the agent', ...NONE },
+      byState(stageSentences('live', states.extra_field.after)),
+    );
     const after = await J('get_run_state', { run_id: ids.run }, 'state');
     check(
       prefix + 'after_refusals',
@@ -375,8 +407,14 @@ async function runEnding(E, choice, withWrong) {
   check(prefix + 'state letter after the valid review', 'B', stateLetter(states.valid.after));
   check(
     prefix + 'ledger :63 (L): the stop sentence shows once the gate is pending',
-    'The step is complete and the run stops at the gate',
+    'The step is complete and the run stops at the gate.',
     stageSentences('live', states.valid.after).stop,
+  );
+  check(
+    prefix +
+      'state sentences (L, B): stage 3 heading :72, Next waits for a human, no stage-4 lines',
+    { gate: GATE_B, waitLabel: 'Waiting for a human', ...NONE },
+    byState(stageSentences('live', states.valid.after)),
   );
   check(
     prefix + 'ledger :73 (L, B): the at-gate sentence names the live phase',
@@ -420,6 +458,11 @@ async function runEnding(E, choice, withWrong) {
     const atGate = await J('get_run_state', { run_id: ids.run }, 'state');
     check(prefix + 'state at gate', R.gate.state, pick(atGate, ['run_phase', 'completed_steps']));
     check(prefix + 'refused at-gate attempts leave the state letter B', 'B', stateLetter(atGate));
+    check(
+      prefix + 'state sentences (L, B after the at-gate attempts)',
+      { gate: GATE_B, waitLabel: 'Waiting for a human', ...NONE },
+      byState(stageSentences('live', atGate)),
+    );
   }
   const ending = R.endings[choice];
   // the answer, through MCP (the page's path); compared by effect only
@@ -456,6 +499,26 @@ async function runEnding(E, choice, withWrong) {
   );
   const sAns = stageSentences('live', vsAns);
   check(
+    prefix +
+      'state sentences (L, C): gate answered, Next free, stage-4 labels, skip line = the recording',
+    {
+      gate: GATE_CD,
+      waitLabel: null,
+      otherTried: OTHER_TRIED,
+      ran: null,
+      sentFrom2: null,
+      skippedLabel: SKIPPED_LABEL,
+      skipped: ending.skipped,
+    },
+    byState(sAns),
+  );
+  check(
+    prefix + 'view: skipLine(state after the answer) = the recording skipped',
+    ending.skipped,
+    skipLine(afterAns),
+  );
+  check(prefix + 'view: chosenStep after the answer', ending.posted.step, chosenStep(afterAns));
+  check(
     prefix + 'ledger :104 (L): heading and agent-sends sentence after the answer',
     [
       `The reviewer chose \`${choice}\`. Realm closes the other branch.`,
@@ -490,6 +553,19 @@ async function runEnding(E, choice, withWrong) {
       'C',
       stateLetter({ ...states.other_branch.after, choice }),
     );
+    check(
+      prefix + 'state sentences (L, C after the other-branch attempt)',
+      {
+        gate: GATE_CD,
+        waitLabel: null,
+        otherTried: OTHER_TRIED,
+        ran: null,
+        sentFrom2: null,
+        skippedLabel: SKIPPED_LABEL,
+        skipped: ending.skipped,
+      },
+      byState(stageSentences('live', { ...states.other_branch.after, choice })),
+    );
   }
   await send(
     'posted',
@@ -508,6 +584,33 @@ async function runEnding(E, choice, withWrong) {
     sPost.agentSends,
   );
   check(prefix + 'ledger stage 5 (L, D): no not-finished line', null, sPost.notFinished);
+  check(
+    prefix +
+      'state sentences (L, D): gate answered, Ran:, the stage-2 line, skip line = the recording',
+    {
+      gate: GATE_CD,
+      waitLabel: null,
+      otherTried: OTHER_TRIED,
+      ran: `Ran: \`${ending.posted.step}\``,
+      sentFrom2: `The agent sent \`${ending.posted.step}\` from stage 2.`,
+      skippedLabel: SKIPPED_LABEL,
+      skipped: ending.skipped,
+    },
+    byState(sPost),
+  );
+  check(
+    prefix +
+      'view: skipLine(state after the post) and skipLine(run record) = the recording skipped',
+    [ending.skipped, ending.skipped],
+    [skipLine(afterPost), skipLine(run)],
+  );
+  check(
+    prefix + "view: the stage-2 path's row (chosenStep's evidence row) is the posted step's",
+    [ending.posted.step, 'success'],
+    (([x]) => [x?.step, x?.label])(
+      evidenceRows(run).filter((x) => x.step === chosenStep(afterPost)),
+    ),
+  );
   check(
     prefix + 'view: no next action after the post',
     { send: null, other: ending.skipped_steps[0] },
@@ -585,6 +688,20 @@ for (const [choice, ending] of Object.entries(R.endings)) {
     ],
     [rs.run_phase, rs.completed_steps.includes(ending.posted.step), S.branch, S.agentSends],
   );
+  check(
+    `recorded ${choice}: state sentences (R): stage 3 heading :72, no live wait label, stage-4 labels as recorded`,
+    {
+      gate: GATE_B,
+      waitLabel: null,
+      otherTried: OTHER_TRIED,
+      ran: `Ran: \`${ending.posted.step}\``,
+      sentFrom2: null,
+      skippedLabel: SKIPPED_LABEL,
+      skipped: null,
+    },
+    byState(S),
+  );
+  check(`recorded ${choice}: stage 5 heading (R)`, 'What is left behind.', S.recordTitle);
   check(
     `recorded ${choice}: ledger :73 (R) names the recorded phase at the gate`,
     'This is what the reviewer was shown. The run is in phase `gate_waiting` and neither posting step is available to the agent.',
@@ -670,6 +787,7 @@ console.log(
       null,
       null,
       null,
+      'What is left behind.',
       null,
       null,
     ],
@@ -680,9 +798,16 @@ console.log(
       sE.agentSends,
       sE.notFinished,
       sE.recordTitle,
+      sE.recordBody,
       sE.stop,
     ],
   );
+  check(
+    'failed run: state sentences (L, E): stage 3 heading, Next free, no stage-4 lines',
+    { gate: GATE_E, waitLabel: null, ...NONE },
+    byState(sE),
+  );
+  check('failed run: no skip line (the answer closed nothing)', null, skipLine(after));
   check('failed run: no next action', { send: null, other: null }, nextActions(after));
   check(
     'failed run: confirm_review never ran',

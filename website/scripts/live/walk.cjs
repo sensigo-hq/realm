@@ -46,7 +46,7 @@ const NOTE = {
 };
 const S = {
   beforeGate: 'The run reaches the gate once write_review is accepted.',
-  stop: 'The step is complete and the run stops at the gate',
+  stop: 'The step is complete and the run stops at the gate.',
   need4: 'Answer the gate first. This stage opens once the gate is answered.',
   need5: 'Answer the gate first. There is no finished record until the gate is answered.',
   skipLabel: 'Or let the agent try to skip the gate',
@@ -60,6 +60,53 @@ const S = {
     'This run lives only in this page. With Realm installed, realm run inspect <run-id> reads a run back.',
   failed: 'This run failed after 6 counted refusals.',
   failedBeforeGate: 'This run failed before reaching the gate.',
+  // correction 1: the stage 3 heading per state, the stage-4 labels, the stage 5 heading, the footer
+  gateB: 'The run stops. The posting steps cannot run until the gate is answered.',
+  gateA: 'The run has not reached the gate yet.',
+  gateCD: 'The gate is answered.',
+  otherTried: 'The agent tries the branch that was not chosen',
+  skippedLabel: 'Skipped, with the reason on the record',
+  recordTitle: 'What is left behind.',
+  footerEnd: "Long text is shortened with “…”; Full reply shows Realm's reply whole.",
+};
+// Stage 3's heading and Next's label at stage 3, per state.
+const GATE_HEAD = { A: S.gateA, B: S.gateB, C: S.gateCD, D: S.gateCD, E: S.failedBeforeGate };
+const NEXT_AT_3 = {
+  A: ['Waiting for the agent', true],
+  B: ['Waiting for a human', true],
+  C: ['Next', false],
+  D: ['Next', false],
+  E: ['Next', false],
+};
+// Where a label cell breaks a word: a line break between two word characters (a break after "_"
+// or at a space is allowed). Runs in the page; returns the offending cells' text.
+const wordBreaks = (sel) => {
+  const out = [];
+  for (const c of document.querySelectorAll(sel)) {
+    if (!c.getClientRects().length) continue;
+    const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
+    let prevTop = null,
+      prevCh = '';
+    for (let n = w.nextNode(); n; n = w.nextNode())
+      for (let k = 0; k < n.data.length; k++) {
+        const rg = document.createRange();
+        rg.setStart(n, k);
+        rg.setEnd(n, k + 1);
+        const r = rg.getBoundingClientRect();
+        if (!r.width && !r.height) continue;
+        if (
+          prevTop !== null &&
+          r.top > prevTop + 2 &&
+          /\w/.test(prevCh) &&
+          prevCh !== '_' &&
+          /\w/.test(n.data[k])
+        )
+          out.push(c.textContent);
+        prevTop = r.top;
+        prevCh = n.data[k];
+      }
+  }
+  return out;
 };
 const fakeBundle = (startBody) =>
   `export const version = "test"; export async function start() { ${startBody} }`;
@@ -174,8 +221,10 @@ async function walk(which, width) {
     ok(`${stateName}: no horizontal scroll`, sw <= 0, `overflow ${sw}px`);
   }
   // Every cell of the Live state table, for the state the run is in.
-  async function cells(L, ending) {
-    const name = `state ${L}${ending ? ' (' + ending.choice + ')' : ''}`;
+  // path (D only): 'stage4' when the chosen step was sent with stage 4's button, 'stage2' when it
+  // was sent from stage 2's editor.
+  async function cells(L, ending, path = 'stage4') {
+    const name = `state ${L}${ending ? ' (' + ending.choice + (L === 'D' ? ', sent from ' + path : '') + ')' : ''}`;
     ok(`${name}: data-live-state`, (await letter()) === L, String(await letter()));
     // stage 2
     let t = await txt(1);
@@ -191,19 +240,36 @@ async function walk(which, width) {
       (L === 'E') === t.includes(S.failed) &&
         (await nVis('.rp-stage[data-s="1"] [data-act="new"]')) === (L === 'E' ? 1 : 0),
     );
-    ok(`${name} stage 2: the :63 stop sentence only in B`, (L === 'B') === t.includes(S.stop));
+    const stopEl = '.rp-stage[data-s="1"] [data-say="stop"]';
+    ok(
+      `${name} stage 2: the :63 stop sentence (exact) only in B`,
+      L === 'B'
+        ? (await page.isVisible(stopEl)) && (await page.textContent(stopEl)) === S.stop
+        : !(await page.isVisible(stopEl)),
+      JSON.stringify(await page.textContent(stopEl)),
+    );
     // stage 3
     t = await txt(2);
     const answers = await nVis('[data-act="answer"]'),
       skips = await nVis('[data-act="skip"]');
     const next = [await page.textContent('[data-next]'), await page.isDisabled('[data-next]')];
+    const heads3 = await page
+      .locator('.rp-stage[data-s="2"] h3')
+      .filter({ visible: true })
+      .allTextContents();
+    ok(
+      `${name} stage 3: the heading for ${L} and Next "${NEXT_AT_3[L][0]}"${NEXT_AT_3[L][1] ? ' (disabled)' : ''}`,
+      JSON.stringify(heads3) === JSON.stringify([GATE_HEAD[L]]) &&
+        JSON.stringify(next) === JSON.stringify(NEXT_AT_3[L]),
+      JSON.stringify({ heads3, next }),
+    );
     if (L === 'A')
       ok(
         `${name} stage 3: the before-gate sentence, no buttons, Next waits`,
         t.includes(S.beforeGate) &&
           answers + skips === 0 &&
           !(await page.isVisible('[data-l="gate"]')) &&
-          next[0] === 'Waiting for a human' &&
+          next[0] === 'Waiting for the agent' &&
           next[1],
         JSON.stringify(next),
       );
@@ -227,13 +293,11 @@ async function walk(which, width) {
     }
     if (L === 'C' || L === 'D')
       ok(
-        `${name} stage 3: gate text, "The reviewer chose X.", the reviewer's box, NO answer buttons, NO skip attempts, Next enabled`,
+        `${name} stage 3: gate text, "The reviewer chose X.", NO reviewer's box (it is on stage 4), NO answer buttons, NO skip attempts, Next enabled`,
         (await page.textContent('[data-l="gate"]')) === R.gate.display &&
           t.includes(`The reviewer chose ${ending.choice}.`) &&
-          /THE REVIEWER ANSWERS/i.test(t) &&
-          !/^AGENT CALLS$/im.test(
-            await page.innerText('.rp-stage[data-s="2"] [data-box="answer"]'),
-          ) &&
+          !/THE REVIEWER ANSWERS/i.test(t) &&
+          (await page.locator('.rp-stage[data-s="2"] [data-box="answer"]').count()) === 0 &&
           answers === 0 &&
           skips === 0 &&
           !t.includes(S.shown) &&
@@ -243,8 +307,8 @@ async function walk(which, width) {
       );
     if (L === 'E')
       ok(
-        `${name} stage 3: "This run failed before reaching the gate." + Start a new run, no buttons`,
-        t.includes(S.failedBeforeGate) &&
+        `${name} stage 3: "This run failed before reaching the gate." once (the heading) + Start a new run, no buttons`,
+        t.split(S.failedBeforeGate).length === 2 &&
           (await nVis('.rp-stage[data-s="2"] [data-act="new"]')) === 1 &&
           answers + skips === 0 &&
           !(await page.isVisible('[data-l="gate"]')) &&
@@ -272,13 +336,117 @@ async function walk(which, width) {
       );
     if (L === 'D')
       ok(
-        `${name} stage 4: the posted reply, no send button, no agent-sends sentence`,
+        `${name} stage 4: no send button, no other-branch button, no agent-sends sentence`,
         t.startsWith(`The reviewer chose ${ending.choice}. Realm closes the other branch.\n`) &&
           !t.includes(S.agentSends) &&
-          posts + others === 0 &&
-          /REALM ACCEPTS IT/i.test(await page.innerText('[data-box="post"]')),
+          posts + others === 0,
         JSON.stringify(t.slice(0, 160)),
       );
+    if (L === 'C' || L === 'D') {
+      const s4 = '.rp-stage[data-s="3"] ';
+      const ansT = (await page.isVisible(s4 + '[data-box="answer"]'))
+        ? await page.innerText(s4 + '[data-box="answer"]')
+        : '';
+      ok(
+        `${name} stage 4: the reviewer's box (its call and reply), labelled by its actor`,
+        /^THE REVIEWER ANSWERS\n/i.test(ansT) &&
+          ansT.includes('submit_human_response') &&
+          /REALM ACCEPTS IT/i.test(ansT),
+        JSON.stringify(ansT.slice(0, 120)),
+      );
+      const otherT = await page.innerText(s4 + '[data-box="other"]');
+      ok(
+        `${name} stage 4: a tried other branch is labelled "${S.otherTried}", never "Agent calls"`,
+        otherT === '' ||
+          (otherT.toLowerCase().startsWith(S.otherTried.toLowerCase() + '\n') &&
+            !/AGENT CALLS/i.test(otherT)),
+        JSON.stringify(otherT.slice(0, 80)),
+      );
+      // the other-branch button in the left column, the send button in the right (C only)
+      const col = (sel) =>
+        page.evaluate(
+          ([s4, sel]) => {
+            const b = document.querySelector(s4 + sel);
+            const cols = [...document.querySelectorAll(s4 + '.rp-end-live .rp-cols > div')];
+            return cols.findIndex((c) => c.contains(b));
+          },
+          [s4, sel],
+        );
+      if (L === 'C')
+        ok(
+          `${name} stage 4: the other-branch button in the left column, the send button in the right`,
+          (await col('[data-act="other"]')) === 0 && (await col('[data-act="post"]')) === 1,
+        );
+      const skipT = await page
+        .locator(s4 + '[data-l="skip"]')
+        .filter({ visible: true })
+        .allTextContents();
+      ok(
+        `${name} stage 4: "${S.skippedLabel}" + the skip line = the recording`,
+        (await page.textContent(s4 + '[data-say="skippedLabel"]')) === S.skippedLabel &&
+          (await page.isVisible(s4 + '[data-say="skippedLabel"]')) &&
+          JSON.stringify(skipT) === JSON.stringify([ending.skipped]),
+        JSON.stringify(skipT),
+      );
+      const ranVis = await page.isVisible(s4 + '[data-say="ran"]');
+      if (L === 'C') ok(`${name} stage 4: no "Ran:" before the step is sent`, !ranVis);
+      if (L === 'D') {
+        const ranT = ranVis ? await page.innerText(s4 + '[data-say="ran"]') : '';
+        ok(
+          `${name} stage 4: "Ran: ${ending.posted.step}"`,
+          ranT.toLowerCase() === `ran: ${ending.posted.step}`,
+          JSON.stringify(ranT),
+        );
+        const postVis = await page.isVisible(s4 + '[data-box="post"]');
+        const postT = postVis ? await page.innerText(s4 + '[data-box="post"]') : '';
+        const s2Vis = await page.isVisible(s4 + '[data-l="sent2"]');
+        const s2T = s2Vis ? await page.innerText(s4 + '[data-l="sent2"]') : '';
+        const posted = ending.evidence.at(-1);
+        if (path === 'stage4')
+          ok(
+            `${name} stage 4: "Ran:" shows the accepted reply and Full reply, without the call`,
+            /^REALM ACCEPTS IT\n/i.test(postT) &&
+              !/AGENT CALLS/i.test(postT) &&
+              (await page.locator(s4 + '[data-box="post"] > pre').count()) === 1 &&
+              (await page.locator(s4 + '[data-box="post"] details').count()) === 1 &&
+              !s2Vis,
+            JSON.stringify(postT.slice(0, 120)),
+          );
+        else
+          ok(
+            `${name} stage 4: "Ran:" shows "The agent sent ${ending.posted.step} from stage 2." and its row from the record`,
+            !postVis &&
+              s2T.startsWith(`The agent sent ${ending.posted.step} from stage 2.\n`) &&
+              s2T
+                .replace(/\s+/g, ' ')
+                .includes(`${ending.posted.step} success ${posted.hash.slice(0, 12)}…`) &&
+              (await page.getAttribute(s4 + '[data-l="sent2-row"] code[title]', 'title')) ===
+                posted.hash,
+            JSON.stringify(s2T.slice(0, 160)),
+          );
+        ok(
+          `${name} stage 4: not empty below the heading (the reviewer's box, "Ran:", the skip line)`,
+          t.replace(/\s+/g, ' ').length >
+            `The reviewer chose ${ending.choice}. Realm closes the other branch.`.length + 40 &&
+            t.includes(ending.skipped),
+          JSON.stringify(t.slice(0, 200)),
+        );
+        if (width < 600 && otherT) {
+          const tops = await page.evaluate(
+            (s4) =>
+              ['[data-box="answer"]', '[data-box="other"]', '[data-say="ran"]'].map(
+                (x) => document.querySelector(s4 + x).getBoundingClientRect().top,
+              ),
+            s4,
+          );
+          ok(
+            `${name} 375 px stage 4: top to bottom the reviewer's answer, the other-branch attempt, then "Ran:"`,
+            tops[0] < tops[1] && tops[1] < tops[2],
+            JSON.stringify(tops.map(Math.round)),
+          );
+        }
+      }
+    }
     if (L === 'E')
       ok(
         `${name} stage 4: "This run failed before reaching the gate."`,
@@ -316,9 +484,10 @@ async function walk(which, width) {
     }
     if (L === 'E')
       ok(
-        `${name} stage 5: the record so far + "This run failed after 6 counted refusals."`,
+        `${name} stage 5: "What is left behind." (heading only), the record so far + "This run failed after 6 counted refusals."`,
         t.includes(S.failed) &&
-          !t.includes('What is left behind.') &&
+          t.startsWith(S.recordTitle + '\n') &&
+          !t.includes(S.record) &&
           rows[0]?.startsWith('fetch_pr | success') &&
           rows[1]?.startsWith('write_review | error') &&
           !t.includes(S.need5),
@@ -348,6 +517,14 @@ async function walk(which, width) {
         return out;
       });
       ok(`${name} stage 5: step names break only after "_"`, bad.length === 0, JSON.stringify(bad));
+      const lb = await page.evaluate(
+        `(${wordBreaks})('[data-l="table"] [role="cell"]:nth-child(2)')`,
+      );
+      ok(
+        `${name} stage 5: labels (e.g. "human chose request_changes") never break inside a word`,
+        lb.length === 0,
+        JSON.stringify(lb),
+      );
     }
     await collectWarnings();
   }
@@ -397,7 +574,7 @@ async function walk(which, width) {
   ok(
     'live footer',
     (await page.textContent('.rp-foot-live [data-say="footer"]')) ===
-      `Live · Realm ${R.meta.realm_version} running in your browser · run ${runId}. GitHub is a stand-in inside this page; nothing is posted. Runs are kept in memory and disappear when you leave. Long text is shortened with “…”; Full reply shows it whole.`,
+      `Live · Realm ${R.meta.realm_version} running in your browser · run ${runId}. GitHub is a stand-in inside this page; nothing is posted. Runs are kept in memory and disappear when you leave. ${S.footerEnd}`,
   );
   const fs1 = await page.evaluate(() => [
     getComputedStyle(document.querySelector('.rp-foot-live p')).fontSize,
@@ -511,7 +688,7 @@ async function walk(which, width) {
   ok(
     'valid → Realm accepts it + the :63 stop sentence',
     /REALM ACCEPTS IT/i.test(r.txt) &&
-      (await page.innerText('.rp-stage[data-s="1"]')).includes(S.stop),
+      (await page.textContent('.rp-stage[data-s="1"] [data-say="stop"]')) === S.stop,
     r.txt.split('\n').slice(-4).join(' | '),
   );
   const shown = await page.textContent('[data-box="send"] > pre:not(:first-of-type)');
@@ -620,8 +797,38 @@ async function walk(which, width) {
   await page.click('[data-act="post"]');
   await page.waitForFunction(() => document.querySelector('.rp').dataset.liveState === 'D');
   await idle();
+  ok(
+    'a single click on "The agent sends the next step" → stage 4, focus on its heading',
+    (await page.getAttribute('.rp', 'data-stage')) === '3' &&
+      (await focusIs('.rp-stage[data-s="3"] h3[data-say="branch"]')),
+  );
   await cells('D', R.endings.approve);
   await common('state D (approve)');
+
+  // ---- the chosen step sent from stage 2's editor (both endings): stage 4 is not empty in D
+  for (const ending of [R.endings.request_changes, R.endings.approve]) {
+    await page.click('.rp-live-mark [data-act="new"]');
+    await page.waitForFunction(
+      (id) => !document.querySelector('.rp-live-mark p').textContent.endsWith(id),
+      runId,
+    );
+    await idle();
+    runId = (await marker()).slice(-8);
+    await preset('Submit a valid review');
+    await page.click('[data-act="send"]');
+    await idle();
+    await go(2);
+    await page.click(`[data-act="answer"][data-choice="${ending.choice}"]`);
+    await page.waitForFunction(() => document.querySelector('.rp').dataset.liveGate === 'answered');
+    await idle();
+    r = await sendBox(ending.posted.step, '{}');
+    ok(
+      `stage 2 path (${ending.choice}): the chosen step sent from the editor → Realm accepts it, state D`,
+      /REALM ACCEPTS IT/i.test(r.txt) && (await letter()) === 'D',
+      r.txt.split('\n').slice(0, 4).join(' | '),
+    );
+    await cells('D', ending, 'stage2');
+  }
 
   // ---- the failed run (state E): six counted refusals
   await page.click('.rp-live-mark [data-act="new"]');
@@ -729,6 +936,15 @@ async function walk(which, width) {
         (await p.getAttribute('[data-live-try]', 'aria-busy')) === 'true' &&
         (await p.isDisabled('[data-live-try]')),
     );
+    const look = await p.evaluate(() => {
+      const c = getComputedStyle(document.querySelector('[data-live-try]'));
+      return [c.opacity, c.cursor];
+    });
+    ok(
+      'loading: Try has the disabled look (opacity 0.45, cursor not-allowed)',
+      JSON.stringify(look) === JSON.stringify(['0.45', 'not-allowed']),
+      JSON.stringify(look),
+    );
     await p.waitForSelector('.rp[data-mode="live"]', { timeout: 30000 });
     ok(
       'loading (bundle delayed 3 s): then live',
@@ -760,6 +976,28 @@ async function walk(which, width) {
         !(await p.isVisible('[data-live-try]')) &&
         (await p.isVisible('.rp > p.rp-foot')),
       `note after ${after} ms: "${n}"`,
+    );
+    await p.context().close();
+  }
+
+  // ---- recorded mode: the stage-5 labels wrap like the step names (both endings)
+  for (const ending of Object.values(R.endings)) {
+    const { page: p } = await newPage();
+    await p.goto(BASE);
+    await p.click('.rp [data-go="2"]');
+    await p.click(`[data-choose="${ending.choice}"]`);
+    await p.click('.rp [data-go="4"]');
+    const lb = await p.evaluate(`(${wordBreaks})('.rp-end[data-rec] [role="cell"]:nth-child(2)')`);
+    const n = await p.evaluate(
+      () =>
+        [...document.querySelectorAll('.rp-end[data-rec] [role="cell"]:nth-child(2)')].filter(
+          (c) => c.getClientRects().length,
+        ).length,
+    );
+    ok(
+      `recorded ${ending.choice} stage 5: labels never break inside a word`,
+      n > 0 && lb.length === 0,
+      `cells=${n} ${JSON.stringify(lb)}`,
     );
     await p.context().close();
   }

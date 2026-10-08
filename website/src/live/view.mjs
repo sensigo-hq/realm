@@ -127,6 +127,12 @@ export function nextActions(state) {
   return { send, other };
 }
 
+// The posting step the gate answer chose: the one it did not close. Null before the answer.
+export function chosenStep(state) {
+  const { other } = nextActions(state);
+  return other ? POSTING.find((p) => p !== other) : null;
+}
+
 // The Live state table's five states, from the run's state after the last reply: A running, gate
 // not reached · B gate open · C answered, chosen posting step not sent · D completed · E failed.
 export function stateLetter(state) {
@@ -136,6 +142,20 @@ export function stateLetter(state) {
   if (state?.pending_gate) return 'B';
   if (nextActions(state).other) return 'C';
   return 'A';
+}
+
+// The skip line as the CLI prints it (`realm run inspect`), rebuilt from skip_details for the
+// branch the answer closed (kind when_false): `<step>: when_false: <expression> [lhs → <value>]`.
+// get_run_state and the run record both carry skip_details. Null when the answer closed nothing
+// (a failed run skips the posting steps with another kind).
+export function skipLine(state) {
+  const lines = Object.entries(state?.skip_details ?? {})
+    .filter(([, d]) => d?.kind === 'when_false')
+    .map(
+      ([step, d]) =>
+        `${step}: ${d.kind}: ${d.expression} [lhs → ${JSON.stringify(d.leaves?.[0]?.resolved_value)}]`,
+    );
+  return lines.length ? lines.join('\n') : null;
 }
 
 // The choice the gate answer recorded, from the run record's gate-response entry.
@@ -203,10 +223,14 @@ export function recordedState(r, ending) {
 // | :45 | All four are required. Nothing else gets into the record. | missing_field and extra_field are refused; a refused call leaves no entry (#724: `__proto__` is accepted but is not in the record) | R, L | guard (attempt replies, after_refusals) |
 // | :59 | the reply's class label | classify(), from the reply and the state before and after | L | guard (reply classes) |
 // | :63 | The step is complete, and the run stops at the human gate. Go to the next stage. | the recorded valid reply is confirm_required, phase gate_waiting | R | guard (valid reply) |
-// | :63 | The step is complete and the run stops at the gate | shown only while pending_gate is set (a failed run never sets it) | L | guard |
+// | :63 | The step is complete and the run stops at the gate. | shown only while pending_gate is set (a failed run never sets it) | L | guard |
 // | :64 | After every refusal the run still read … No step completed. Refusals of a submission's content are counted toward the limit of six; a step sent out of order is not. | after_refusals is fetch_pr only; the write_review entry counts 3 for the 3 schema refusals; the skip-ahead is `blocked` | R | guard (after_refusals, :140 row) |
 // | :64 | This refusal is counted (n of m). / Nothing was counted. | error_details.rejections and .threshold; `blocked` and MCP-layer refusals never reach the counter | L | guard ((1 of 6), Nothing was counted., MCP then 1) |
-// | :72 | The run stops. The posting steps cannot run until the gate is answered. | both posting steps are refused before the gate and at the gate | R, L | guard (skip-ahead, at-gate attempts) |
+// | :72 | The run stops. The posting steps cannot run until the gate is answered. | both posting steps are refused before the gate and at the gate | R; L (B) | guard (skip-ahead, at-gate attempts; heading per state) |
+// | stage 3 h3 | The run has not reached the gate yet. | state A: write_review not accepted, no pending_gate | L (A) | guard (state after start, after refusals) |
+// | stage 3 h3 | The gate is answered. | the record has the gate-response entry and pending_gate is gone | L (C, D) | guard (after the answer, after the post) |
+// | stage 3 h3 | This run failed before reaching the gate. | the m-th schema refusal fails the run before confirm_review runs | L (E) | guard (failed run) |
+// | Next at stage 3 | Waiting for the agent / Waiting for a human | A: the run waits for write_review; B: pending_gate is set; C, D, E: nothing waits at the gate (Next free) | L (A, B) | guard (state letters) + walk |
 // | :73 | This is what the reviewer was shown. The run is in phase gate_waiting and neither posting step is available to the agent. | at the gate the phase is gate_waiting and both posting steps are refused (V-12) | R, L (B) | guard (state at gate, at-gate attempts) |
 // | stage 3 | The run reaches the gate once write_review is accepted. | the valid write_review reply opens the gate (confirm_review is auto) | L (A) | guard (valid reply carries the gate) |
 // | :84 | Or let the agent try to skip the gate | the two attempts are refused | R, L | guard (at-gate attempts) |
@@ -217,12 +241,17 @@ export function recordedState(r, ending) {
 // | :131 | Answer the gate first. There is no finished record until the gate is answered. | the run is not completed before the answer | R, L | guard (state at gate) |
 // | :134 | What is left behind. One entry for each step that ran and for the gate answer, each with a hash. Refused calls leave no entry; counted refusals are noted on the step's entry. | 5 entries; after 4 refusals evidence_count is 1; write_review's entry carries validation_rejections | R, L (C, D) | guard (rows, after_refusals) |
 // | :140 | accepted after n counted refusal(s) | diagnostics.validation_rejections on a successful entry | R, L | guard (:140 row) |
+// | stage 4 label | The agent tries the branch that was not chosen | the other branch is refused after the answer (blocked, not eligible) | R, L (C, D) | guard (other-branch reply) |
+// | stage 4 label | Ran: `<step>` | the chosen posting step completed (accepted reply, run completed) | R, L (D) | guard (posted reply, final record) |
+// | stage 4 | The agent sent `<step>` from stage 2. | state D with no accepted stage-4 reply in this page (the page's flag, reset by a new run): the only other way to send the step is stage 2's editor | L (D) | guard (sentence) + walk (path) |
+// | stage 4 label | Skipped, with the reason on the record | the closed branch is in skip_details with kind when_false; skipLine() prints it as the CLI does | R, L (C, D) | guard (skip line = the recording's, both endings) |
 // | stage 5 | The run is not finished: the agent has not sent the chosen step yet. | state C: running, chosen posting step not completed | L (C) | guard (:104 condition) |
 // | stages 2–5 | This run failed after m counted refusals. / This run failed before reaching the gate. | the m-th schema refusal (m = error_details.threshold) fails the run before confirm_review runs | L (E) | guard (failed run) |
+// | stage 5 h3 | What is left behind. | heading only in E: the :134 paragraph is false there (no gate answer; the m-th refusal leaves the failed step's entry) | R; L (C, D, E) | guard (failed run) |
 // | :150 | Read it back any time with `realm run inspect <run-id>`, or take the whole record with `realm run export`. | the recorder read the runs back with the CLI | R | hand |
 // | :150 | This run lives only in this page. With Realm installed, `realm run inspect <run-id>` reads a run back. | runs are in an in-memory store; `realm run inspect` exists on 0.46.0 | L | hand |
 // | :160 | … on Realm {v}, driven over MCP; the reviewer answered with the CLI. … | record.mjs drives the steps over MCP and answers with `realm run respond` | R | hand (record.mjs) |
-// | footer | Live · Realm {version} running in your browser … nothing is posted. Runs are kept in memory … | the bundle's fetch is the stand-in (0 page fetches); InMemoryStore | L | guard (page fetch, stand-in log) |
+// | footer | Live · Realm {version} running in your browser … nothing is posted. Runs are kept in memory … Full reply shows Realm's reply whole. | the bundle's fetch is the stand-in (0 page fetches); InMemoryStore; the Full reply toggle shows Realm's reply, not the call | L | guard (page fetch, stand-in log) + walk (Full reply) |
 // | details | What is swapped (each line) | scripts/live/build.mjs and src/live/engine.mjs | L | guard (scan, stub calls) + hand |
 export function stageSentences(mode, state) {
   const live = mode === 'live';
@@ -231,20 +260,37 @@ export function stageSentences(mode, state) {
   const choice = state?.choice ?? null;
   const ar = state?.after_refusals;
   const meta = state?.meta;
+  const chosen = chosenStep(state);
+  const cd = letter === 'C' || letter === 'D';
   return {
     start: 'The agent starts a run. Realm fetches the pull request itself.', // :29
     schema: 'All four are required. Nothing else gets into the record.', // :45
     choose: 'Choose a submission.', // :54
     stop: live
       ? state?.pending_gate
-        ? 'The step is complete and the run stops at the gate' // :63 L
+        ? 'The step is complete and the run stops at the gate.' // :63 L
         : null
       : 'The step is complete, and the run stops at the human gate. Go to the next stage.', // :63 R
     refusals:
       live || !ar
         ? null
         : `After every refusal the run still read \`completed_steps: ${JSON.stringify(ar.completed_steps)}\`, phase \`${ar.run_phase}\`. No step completed. Refusals of a submission's content are counted toward the limit of six; a step sent out of order is not.`, // :64 R
-    gate: 'The run stops. The posting steps cannot run until the gate is answered.', // :72
+    gate:
+      !live || letter === 'B'
+        ? 'The run stops. The posting steps cannot run until the gate is answered.' // :72 (R; L, B)
+        : letter === 'A'
+          ? 'The run has not reached the gate yet.' // stage 3 h3 (L, A)
+          : letter === 'E'
+            ? 'This run failed before reaching the gate.' // stage 3 h3 (L, E)
+            : 'The gate is answered.', // stage 3 h3 (L, C D)
+    // Next at stage 3 while the run waits (L): the inline show() reads it from data-live-wait.
+    waitLabel: !live
+      ? null
+      : letter === 'A'
+        ? 'Waiting for the agent'
+        : letter === 'B'
+          ? 'Waiting for a human'
+          : null,
     gateShown:
       live && letter !== 'B'
         ? null
@@ -259,8 +305,14 @@ export function stageSentences(mode, state) {
     agentSends: na.send ? 'On this release the agent still sends the chosen step itself.' : null, // :104
     sendLabel: 'The agent sends the next step',
     otherLabel: 'The agent tries the other branch',
+    otherTried: !live || cd ? 'The agent tries the branch that was not chosen' : null, // stage 4 (R; L, C D)
+    ran: chosen && (!live || letter === 'D') ? `Ran: \`${chosen}\`` : null, // stage 4 (R; L, D)
+    sentFrom2:
+      chosen && live && letter === 'D' ? `The agent sent \`${chosen}\` from stage 2.` : null, // stage 4 (L, D)
+    skippedLabel: !live || cd ? 'Skipped, with the reason on the record' : null, // stage 4 (R; L, C D)
+    skipped: live && cd ? skipLine(state) : null, // stage 4 (L, C D): the CLI's skip line
     need5: 'Answer the gate first. There is no finished record until the gate is answered.', // :131
-    recordTitle: !live || letter === 'C' || letter === 'D' ? 'What is left behind.' : null, // :134
+    recordTitle: !live || cd || letter === 'E' ? 'What is left behind.' : null, // :134 (R; L, C D E)
     recordBody:
       !live || letter === 'C' || letter === 'D'
         ? "One entry for each step that ran and for the gate answer, each with a hash. Refused calls leave no entry; counted refusals are noted on the step's entry."
@@ -285,7 +337,7 @@ export function stageSentences(mode, state) {
       ? `Live · Realm ${state?.version} in your browser · run ${String(state?.run_id ?? '').slice(0, 8)}`
       : null,
     footer: live
-      ? `Live · Realm ${state?.version} running in your browser · run ${String(state?.run_id ?? '').slice(0, 8)}. GitHub is a stand-in inside this page; nothing is posted. Runs are kept in memory and disappear when you leave. Long text is shortened with “…”; Full reply shows it whole.`
+      ? `Live · Realm ${state?.version} running in your browser · run ${String(state?.run_id ?? '').slice(0, 8)}. GitHub is a stand-in inside this page; nothing is posted. Runs are kept in memory and disappear when you leave. Long text is shortened with “…”; Full reply shows Realm's reply whole.`
       : meta
         ? `Recorded on ${meta.recorded_at.slice(0, 10)} from two real runs of \`${meta.example}\` on Realm ${meta.realm_version}, driven over MCP; the reviewer answered with the CLI. The two runs differ only in the reviewer's answer; the refusals come from the first. GitHub was a local stand-in server, so nothing was posted. Long text is shortened with “…”.` // :160
         : null,
