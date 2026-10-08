@@ -163,7 +163,9 @@ flight, taken by <program> since <time>: waiting up to 60s for the run's record 
 - **`realm run advance` says a waiting `realm workflow run` or `realm agent` goes on by itself, and
   prints each guard where the run decided it (issue #625, PR-2a).** After its line for an agent step
   that is ready it prints the line `realm run respond` prints after its commands. A guard decided
-  before a later step is printed before that step's `→` line; it was printed after every step.
+  before a later step is printed before that step's `→` line; it was printed after every step. The
+  library's `advanceRun` takes `onGuard`, called with each guard the call decides, as it is decided
+  (before the next step's `onStep`).
 - **A late answer that names the choice the question's expiry recorded says so in its fields
   (issue #625, PR-2a).** `submit_human_response`'s `status: ok` reply (`answer_recorded: false`)
   carries `error_details` (`winning_choice`, `resolved_by: "timeout"`) and, while the run goes on,

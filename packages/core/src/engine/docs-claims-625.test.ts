@@ -360,6 +360,54 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     expect([r.status, r.run_phase]).toEqual(['ok', 'completed']);
   });
 
+  it('C187 (walk c8, W5-1), line 102: onGuard is called with each guard the call decides, between the step that decided it and the next step; not for a guard the expiry decided', async () => {
+    claim(
+      "`onGuard` (called with the name of each guard the call decides, after the step whose write decided it and before the next step's `onStep`; a guard decided by the expiry the call carries out is on the expiry line instead; added after version 0.46.0)",
+    );
+    const d: WorkflowDefinition = {
+      ...gated(),
+      id: 'dc-c187',
+      steps: {
+        ...gated().steps,
+        // `after` (auto, after the question) → guard `ok` → `fin` (auto); a guard `early` the
+        // expiry's own write decides.
+        early: {
+          description: 'Decided by the expiry.',
+          execution: 'guard',
+          depends_on: ['q'],
+          abort_unless: ["q.choice == 'approve'"],
+        },
+        ok: {
+          description: 'Decided after `after`.',
+          execution: 'guard',
+          depends_on: ['after'],
+          abort_unless: ["q.choice == 'approve'"],
+        },
+        fin: { description: 'Fin.', execution: 'auto', depends_on: ['ok'] },
+      },
+    };
+    const { runId } = await atQuestion(d);
+    const seen: string[] = [];
+    const r = await advanceRun(store, d, {
+      runId,
+      now: LATER(),
+      onExpiry: () => seen.push('expiry'),
+      onStep: (step) => seen.push(`step: ${step}`),
+      onGuard: (guard) => seen.push(`guard: ${guard}`),
+    });
+    // (a) red when a guard is told after the next step starts, not at all, or a guard the expiry
+    //     decided is told too; (b) prints the order and the reply's chained steps.
+    expect({
+      seen,
+      chained: r.chained_auto_steps?.map((c) => c.step),
+      expiryLine: r.warnings.some((w) => w.includes("Guard step 'early' passed.")),
+    }).toEqual({
+      seen: ['expiry', 'step: after', 'guard: ok', 'step: fin'],
+      chained: ['after', 'ok', 'fin'],
+      expiryLine: true,
+    });
+  });
+
   // --- C156: a run advanceRun cannot read -----------------------------------------------------
   const CANNOT_READ =
     'A run it cannot read gets an error reply, as from `executeStep`, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist; an error the store throws as a `WorkflowError` keeps its code, and any other is `ENGINE_STORE_FAILED`, naming its cause (a `JsonFileStore` record that is not JSON, for one).';
