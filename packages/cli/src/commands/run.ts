@@ -924,7 +924,7 @@ export const runCommand = new Command('run')
           });
 
           // decision C179: a `blocked` reply for this step, read against the record — another process
-          // took or ran it in the moment between this prompt's claim and the engine's.
+          // took or ran it before the engine's own claim for this answer.
           const notRun =
             result.status === 'blocked' && (result.stopped_step ?? stepName) === stepName
               ? answerNotRunLine(await store.get(runId), stepName, store.persistsClaims === true)
@@ -939,9 +939,9 @@ export const runCommand = new Command('run')
             run = await store.get(runId);
             console.log(`  Not run here: ${result.context_hint}\n`);
           } else if (notRun !== undefined) {
-            // decision C179: another process took or ran the step after this prompt let its claim go
-            // and before the engine's own claim for the answer — said; never `✗` with no reason,
-            // never `✓`.
+            // decision C179: another process took or ran the step before the engine's own claim for
+            // the answer (for an agent step, after this prompt let its claim go) — said; never `✗`
+            // with no reason, never `✓`.
             run = await store.get(runId);
             console.log(`  ${notRun}\n`);
           } else if (result.status === 'ok') {
