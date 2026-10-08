@@ -180,7 +180,7 @@ flight, taken by <program> since <time>: waiting up to 60s for the run's record 
   it prints `• Step '<step>' was taken by <program>, and completed; this program's outcome for it was
 not recorded.` (`and failed`; `… at <time>; …` while the other program holds the step; `the run
 ended (<phase>) before …`; or `another process removed the claim this program held on it; …`, and
-  the step is run again), read from the record, goes on with what is left, and exits with the code
+  the step is owed again), read from the record, goes on with what is left, and exits with the code
   for what is left. It printed `Stopped: '<step>' failed: Step '<step>' was already settled …` (or
   `… the claim was lost …`), stopped and exited 1.
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
