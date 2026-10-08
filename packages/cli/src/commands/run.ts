@@ -20,8 +20,16 @@ import {
   cannotGoOnLines,
   composeStepViews,
   describeClaimHolder,
+  classifyInProgressClaims,
+  pendingGateQuestion,
 } from '@sensigo/realm';
-import { renderAnswerLine, quotedForTerminal, takenPhrase } from '../lib/holder-render.js';
+import {
+  renderAnswerLine,
+  questionLines,
+  takenPhrase,
+  inFlightLine,
+} from '../lib/holder-render.js';
+import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import type {
@@ -162,6 +170,40 @@ export function setQuestionWatchIntervalForTests(ms: number): () => void {
   return (): void => {
     questionWatchMs = before;
   };
+}
+
+/**
+ * decision C173: how long the loop watches an unchanged record while a step is in flight in another
+ * process before it names the step — `realm agent`'s {@link IN_FLIGHT_WATCH_MS}. A test seam, not an
+ * option: a cell sets it short and restores it with the returned function.
+ */
+let inFlightWatchMs = IN_FLIGHT_WATCH_MS;
+export function setInFlightWatchForTests(ms: number): () => void {
+  const before = inFlightWatchMs;
+  inFlightWatchMs = ms;
+  return (): void => {
+    inFlightWatchMs = before;
+  };
+}
+
+/**
+ * decision C173: reads the run every {@link QUESTION_WATCH_MS} until its record changes (another
+ * `version`) or `withinMs` passes; the changed record, or `undefined`. A read that fails is tried
+ * again at the next tick.
+ */
+async function recordChange(
+  store: Pick<RunStore, 'get'>,
+  runId: string,
+  version: number,
+  withinMs: number,
+): Promise<RunRecord | undefined> {
+  const end = Date.now() + withinMs;
+  while (Date.now() < end) {
+    await new Promise((resolve) => setTimeout(resolve, questionWatchMs));
+    const fresh = await store.get(runId).catch(() => undefined);
+    if (fresh !== undefined && fresh.version !== version) return fresh;
+  }
+  return undefined;
 }
 
 /**
@@ -482,9 +524,11 @@ export const runCommand = new Command('run')
           if (run.pending_gate !== undefined) {
             const g = run.pending_gate;
             console.log(`  ⏸  Gate: ${g.step_name} | gate_id: ${g.gate_id}`);
-            // decision C167: the question the person answers, as `realm run inspect` quotes it.
-            if (g.resolved_message !== undefined) {
-              console.log(`  Question: ${quotedForTerminal(g.resolved_message)}`);
+            // decisions C167, C175, C176: the question the person answers — from every source the
+            // gate's text comes from — each line as written.
+            const question = pendingGateQuestion(definition, run);
+            if (question !== undefined) {
+              for (const line of questionLines(question)) console.log(line);
             }
             console.log(`  Preview: ${JSON.stringify(g.preview, null, 2)}`);
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer.
@@ -603,6 +647,22 @@ export const runCommand = new Command('run')
             (step) => !cannotPrompt.has(step),
           );
 
+          // decision C173: a step another process holds (`realm run advance`, an `execute_step`
+          // call) is in flight, not stalled — the loop watches the record and goes on when it
+          // changes, as `realm agent` does (D6.2); after the same watch with no change it names the
+          // step and the way out, then hands the run back.
+          const inFlight =
+            eligibleSteps.length === 0
+              ? run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name)
+              : [];
+          if (inFlight.length > 0) {
+            const fresh = await recordChange(store, runId, run.version, inFlightWatchMs);
+            if (fresh !== undefined) {
+              run = fresh;
+              continue;
+            }
+          }
+
           if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
             // The steps that cannot run, and the way out — core's lines (decision C64).
             const record = await store.get(runId);
@@ -619,6 +679,20 @@ export const runCommand = new Command('run')
           }
           if (eligibleSteps.length === 0) {
             console.error(`\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`);
+            if (inFlight.length > 0) {
+              const states = new Map(classifyInProgressClaims(run).map((c) => [c.step, c.state]));
+              for (const step of inFlight) {
+                console.error(
+                  inFlightLine(
+                    runId,
+                    step,
+                    describeClaimHolder(run.claims?.[step], store.persistsClaims === true),
+                    states.get(step) === 'claim_stale',
+                    inFlightWatchMs,
+                  ),
+                );
+              }
+            }
             // issue #468 — hands the run back with a truthful map instead of silently exiting 0.
             // A fresh read: the loop's own snapshot is already current here (nothing awaited
             // since the last read reached this branch in the same iteration), but the fresh read

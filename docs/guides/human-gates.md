@@ -201,7 +201,7 @@ Skipped: send
 ## If you see something else
 
 - **`'gate.on_expiry: settle_default' requires 'gate.default_choice'`** You asked for a default answer without naming it. Add `default_choice`, with one of the gate's choices.
-- **At the `realm workflow run` prompt, the gate shows `Preview:` and raw JSON, not your message.** The hand-run prompt does not use `gate.message`. Drivers that connect over MCP, and `realm agent`, show the message.
+- **At the `realm workflow run` prompt, the gate shows `Preview:` but no `Question:` line.** The gate has no `message` and its step has no `prompt`, so there is no question to show. Add a `message`. Up to version 0.46.0 the hand-run prompt showed no question for any gate.
 
 ## See also
 

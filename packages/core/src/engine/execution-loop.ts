@@ -1256,6 +1256,36 @@ export function runReadError(err: unknown): WorkflowError {
 }
 
 /**
+ * decision C176: the text of the question a run's open gate asks, from every source the gate-opening
+ * reply's `gate.display` takes it from — the gate's rendered `message` (on the record as
+ * `pending_gate.resolved_message`), else the step's `prompt`, rendered with what the step had when the
+ * gate opened (the run's evidence with the step's output, the run's params, the workflow context);
+ * `undefined` when the step has neither, or no gate is open.
+ */
+export function pendingGateQuestion(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+): string | undefined {
+  const gate = run.pending_gate;
+  if (gate === undefined) return undefined;
+  if (gate.resolved_message !== undefined) return gate.resolved_message;
+  const prompt = definition.steps[gate.step_name]?.prompt;
+  if (prompt === undefined) return undefined;
+  return renderTemplate(prompt, {
+    evidenceByStep: { ...buildEvidenceByStep(run), [gate.step_name]: gate.preview },
+    runParams: run.params,
+    ...(run.workflow_context_snapshots !== undefined
+      ? {
+          workflowContext: {
+            snapshots: run.workflow_context_snapshots,
+            wrapper: (definition.context_wrapper ?? 'xml') as ContextWrapperFormat,
+          },
+        }
+      : {}),
+  });
+}
+
+/**
  * The refusal of an answer to a run that has ended (decision C170): `Run '<id>' is terminal
  * (<phase>); cannot submit a gate response — <the way out for that kind of ending>`. A completed run
  * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a failed or
@@ -4933,7 +4963,7 @@ const LATE_SAME_CHOICE_SENTENCE =
  * from the reply's `warnings` by composing both forms with {@link expiryCarriedOutLine} (the line's
  * one composer) for this gate, the outcome read off the run record — never by matching prose.
  * Empty when the reply carries neither form (the expiry had already been carried out before this
- * answer came: its reply is the `already resolved` refusal).
+ * answer came: its reply is the `settled by timeout` refusal, decision C178).
  */
 function lateExpiryLines(
   reply: ResponseEnvelope,
@@ -5511,8 +5541,12 @@ export async function submitHumanResponse(
         }
         case 'gate_choice_conflict': {
           const stepName = findGateStepName(result.run, options.gateId);
+          // decision C178: when the question's expiry recorded the winning choice, the refusal says
+          // so — the words and `resolved_by` the call that carried the expiry out gives — whichever
+          // call carried it out.
+          const byTimeout = gateSettledByTimeout(result.run, stepName);
           const err = new WorkflowError(
-            `Gate '${options.gateId}' was already resolved with choice '${result.winningChoice}' ` +
+            `Gate '${options.gateId}' was ${byTimeout ? 'settled by timeout' : 'already resolved'} with choice '${result.winningChoice}' ` +
               `— your choice '${options.choice}' was not recorded.`,
             {
               code: 'STATE_BLOCKED',
@@ -5523,6 +5557,7 @@ export async function submitHumanResponse(
                 runId: options.runId,
                 gateId: options.gateId,
                 winning_choice: result.winningChoice,
+                ...(byTimeout ? { resolved_by: 'timeout' } : {}),
               },
             },
           );
@@ -5547,9 +5582,7 @@ export async function submitHumanResponse(
               conflictView !== undefined ? nextActionsOf(conflictView, options.runId) : [],
           };
           // issue #625: see `already_settled` above — a gate its expiry settled.
-          return gateSettledByTimeout(result.run, stepName)
-            ? { ...conflictWithNext, answer_recorded: false }
-            : conflictWithNext;
+          return byTimeout ? { ...conflictWithNext, answer_recorded: false } : conflictWithNext;
         }
         case 'choice_not_eligible': {
           // VALIDATION_INPUT_SCHEMA envelope — parity with the legacy path's own step 4 (below).

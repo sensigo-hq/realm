@@ -57,7 +57,7 @@ import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensio
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
 import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js';
-import { takenLine, takenPhrase } from '../lib/holder-render.js';
+import { inFlightLine, takenLine } from '../lib/holder-render.js';
 
 export type AgentRunResult = 'completed' | 'failed';
 
@@ -782,13 +782,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             );
             for (const step of inFlight) {
               const described = describeClaimHolder(currentRun.claims?.[step], keepsClaims);
-              const since = described.since ?? 'an unrecorded time';
               const stale = states.get(step) === 'claim_stale';
-              console.log(
-                `• Step '${step}' has been in flight since ${since}, ${takenPhrase(described)}; the record has not changed for ${Math.round(watchMs / 1000)}s.` +
-                  (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
-                  ` If the program that took it is gone: realm run reclaim ${runId} --step ${step} --force`,
-              );
+              console.log(inFlightLine(runId, step, described, stale, watchMs));
             }
           }
           break;

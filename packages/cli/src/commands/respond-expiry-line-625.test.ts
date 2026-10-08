@@ -195,7 +195,8 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     expect({ code, stderr: stderr(), stdout: stdout() }).toEqual({
       code: 1,
       stderr: [
-        `Gate '${gateId}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
+        // decision C178: the expiry recorded the winning choice, and the refusal says so.
+        `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'completed'`,
       ],
       stdout: [],

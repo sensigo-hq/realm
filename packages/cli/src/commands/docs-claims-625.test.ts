@@ -230,10 +230,10 @@ describe(
       );
     });
 
-    it('C163 gates.md: a late answer after another call carried the expiry out — its first line, Not recorded:, what the run owes; a different choice is told was already resolved', async () => {
+    it('C163 gates.md (C178): a late answer after another call carried the expiry out — its first line, Not recorded:, what the run owes; a different choice is told it was settled by timeout', async () => {
       claim(
         'workflow/gates.md',
-        "The late answer then prints its first line, `Not recorded:` and what the run owes, and a different choice is told `was already resolved with choice 'ship'` in place of `was settled by timeout`:",
+        "The late answer then prints its first line, `Not recorded:` and what the run owes; a different choice is told `was settled by timeout with choice 'ship'`, as the call that carried the expiry out is told:",
       );
       const { runId, gateId } = await atQuestion(
         gateThenAuto('dc-respond-after', 'settle_default'),
@@ -244,7 +244,7 @@ describe(
       const err = r.err.filter((l) => l !== '');
       // (a) red when the refusal or its lines change; (b) prints stderr.
       expect(err[0]).toBe(
-        `Gate '${gateId}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
+        `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
       );
       expect(err[1]).toBe(
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,

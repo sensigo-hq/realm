@@ -255,7 +255,7 @@ Reason: The order was held.
 Not recorded: 71f47780-06a7-421c-87d0-c74d2c8998de | gate settled by timeout with choice 'hold' | state 'aborted'
 ```
 
-The lines about the guard are printed only when this answer is the call that carried out the expiry. If `realm run drain --expired`, the process waiting at the gate, or `realm listen` carried it out first, that call reported the guard. The late answer then prints its first line, `Not recorded:` and what the run owes, and a different choice is told `was already resolved with choice 'ship'` in place of `was settled by timeout`:
+The lines about the guard are printed only when this answer is the call that carried out the expiry. If `realm run drain --expired`, the process waiting at the gate, or `realm listen` carried it out first, that call reported the guard. The late answer then prints its first line, `Not recorded:` and what the run owes; a different choice is told `was settled by timeout with choice 'ship'`, as the call that carried the expiry out is told:
 
 ```text
 the outcome matches your choice, but it was settled by timeout; your response was not recorded.
@@ -263,7 +263,7 @@ Not recorded: 96727c7c-cdf5-495c-92ed-28cd478b19d6 | gate settled by timeout wit
 ```
 
 ```text
-Gate '5f71e609-cf61-40ef-8397-2d46f5dd1a54' was already resolved with choice 'ship' — your choice 'hold' was not recorded.
+Gate '5f71e609-cf61-40ef-8397-2d46f5dd1a54' was settled by timeout with choice 'ship' — your choice 'hold' was not recorded.
 Not recorded: efe0a7c8-65f7-4be4-9fd9-447f5badd0ed | gate settled by timeout with choice 'ship' | state 'running'
 ```
 

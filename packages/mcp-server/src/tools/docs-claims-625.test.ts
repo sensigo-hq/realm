@@ -2277,3 +2277,88 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     },
   );
 });
+
+describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
+  it.each(['completed', 'abandoned'] as const)(
+    'C177, W3-1: abandon_run on a %s run — refused for a run that ended otherwise, the same reply again for an abandoned one',
+    async (kind) => {
+      claim(
+        'mcp/tools.md',
+        "A completed, aborted or failed run is refused with `STATE_RUN_TERMINAL` and `report_to_user`: `Run '<id>' is already terminal (<phase>); cannot abandon a finished run.` An abandoned run is not refused: the reply is the one [`abandon_run`](#abandon_run) gives, and its `note` begins `already abandoned (no change this call).`",
+      );
+      let call: Awaited<ReturnType<typeof connect>>['call'];
+      let runId: string;
+      if (kind === 'completed') {
+        ({ call, runId } = await endedRun());
+      } else {
+        const h = await connect();
+        call = h.call;
+        await h.workflowStore.register(AGENT_THEN_AUTO);
+        runId = (await call('start_run', { workflow_id: AGENT_THEN_AUTO.id }))['run_id'] as string;
+        const first = await call('abandon_run', { run_id: runId });
+        expect(first['run_phase'], 'fixture').toBe('abandoned');
+      }
+      const r = await call('abandon_run', { run_id: runId });
+      // (a) red when an abandoned run is refused, or another ended run is not; (b) prints the reply.
+      if (kind === 'completed') {
+        expect([r['error_code'], r['agent_action'], (r['errors'] as string[])[0]]).toEqual([
+          'STATE_RUN_TERMINAL',
+          'report_to_user',
+          `Run '${runId}' is already terminal (completed); cannot abandon a finished run.`,
+        ]);
+      } else {
+        expect([r['_isError'], r['run_phase'], r['terminal_state']]).toEqual([
+          false,
+          'abandoned',
+          true,
+        ]);
+        expect(String(r['note'])).toMatch(/^already abandoned \(no change this call\)\./);
+      }
+    },
+  );
+
+  it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and error_details carries resolved_by; a person’s recorded choice is not', async () => {
+    claim(
+      'mcp/tools.md',
+      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `error_details`, `resolved_by: \"timeout\"` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` It has no expiry line in `warnings`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `error_details` have no `resolved_by`.",
+    );
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register(gated('r22-exp', 'settle_default'));
+    const runId = (await call('start_run', { workflow_id: 'r22-exp' }))['run_id'] as string;
+    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await call('advance_run', { run_id: runId });
+    const late = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: gateId,
+      choice: 'reject',
+    });
+    // (a) red when the refusal reads as a person's choice, or a program cannot tell from
+    //     error_details; (b) prints the reply.
+    expect([
+      late['error_code'],
+      late['agent_action'],
+      (late['errors'] as string[])[0],
+      late['error_details'],
+      late['answer_recorded'],
+      ((late['warnings'] as string[] | undefined) ?? []).some((w) => w.includes('had expired')),
+    ]).toEqual([
+      'STATE_BLOCKED',
+      'report_to_user',
+      `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
+      { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
+      false,
+      false,
+    ]);
+    const { call: c2, runId: done, gateId: g2 } = await endedRun();
+    const person = await c2('submit_human_response', {
+      run_id: done,
+      gate_id: g2,
+      choice: 'reject',
+    });
+    expect([(person['errors'] as string[])[0], person['error_details']]).toEqual([
+      `Gate '${g2}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
+      { runId: done, gateId: g2, winning_choice: 'approve' },
+    ]);
+  });
+});

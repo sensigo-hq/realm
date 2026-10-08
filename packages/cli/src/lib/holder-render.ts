@@ -82,6 +82,26 @@ export function takenLine(step: string, described: Parameters<typeof takenPhrase
   return `• Step '${step}' was ${takenPhrase(described)}${at}; not run here.`;
 }
 
+/**
+ * issue #625 PR-2a (D6.2; decision C173): the line a driver prints for a step in flight in another
+ * process when the record has not changed for `watchMs` — `realm agent` and `realm workflow run`
+ * print the same words.
+ */
+export function inFlightLine(
+  runId: string,
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  stale: boolean,
+  watchMs: number,
+): string {
+  const since = described.since ?? 'an unrecorded time';
+  return (
+    `• Step '${step}' has been in flight since ${since}, ${takenPhrase(described)}; the record has not changed for ${Math.round(watchMs / 1000)}s.` +
+    (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
+    ` If the program that took it is gone: realm run reclaim ${runId} --step ${step} --force`
+  );
+}
+
 /** The proof part of an answer line, in words — never a code. */
 export const PROOF_WORDS = {
   matched: 'matched the claim_token of the reply that opened this question',
@@ -179,4 +199,26 @@ export function quotedForTerminal(text: string): string {
     /[\u007f-\u009f]/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
   );
+}
+
+/**
+ * decision C175: a question's lines as the gate's prompt shows them — each line as written, every
+ * control character but the line break written as an escape (the terminal-safety rule of
+ * {@link quotedForTerminal}); one line after `Question: `, more than one each on its own line,
+ * indented under it, so no line of a question can stand where the prompt's own lines start.
+ */
+export function questionLines(text: string): string[] {
+  const lines = text
+    .replace(/\n$/, '')
+    .split('\n')
+    .map((line) =>
+      line.replace(
+        // eslint-disable-next-line no-control-regex -- the control characters are what is escaped
+        /[\u0000-\u001f\u007f-\u009f]/g,
+        (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+      ),
+    );
+  return lines.length === 1
+    ? [`  Question: ${lines[0]}`]
+    : ['  Question:', ...lines.map((line) => `    ${line}`)];
 }

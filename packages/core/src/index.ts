@@ -120,6 +120,7 @@ export {
   expiryCarriedOutLine,
   runReadError,
   terminalAnswerRefusalMessage,
+  pendingGateQuestion,
 } from './engine/execution-loop.js';
 export type {
   AdvanceRunOptions,

@@ -23,7 +23,7 @@ vi.mock('node:readline/promises', () => ({
   createInterface: vi.fn(() => ({ question: mocks.question, close: mocks.close })),
 }));
 
-import { runCommand, setQuestionWatchIntervalForTests } from './run.js';
+import { runCommand, setQuestionWatchIntervalForTests, setInFlightWatchForTests } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
@@ -41,6 +41,20 @@ function claimWorkflowPage(sentence: string): void {
 }
 const PROMPT_CLOSES =
   "A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`.";
+/** C173: the wait for a step another process holds (realm-workflow.md). */
+const IN_FLIGHT_WAIT =
+  "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does: when the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back.";
+/** C167, C175, C176: the question on the gate's prompt (realm-workflow.md). */
+const QUESTION_LINES =
+  "The gate's prompt shows the question before its choices: the gate's `message`, or the step's `prompt` when the gate has no `message`, rendered as the reply that opened the gate renders it. Each of its lines is printed as written, with any other control character written as an escape: `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it.";
+/** C176: (a) red when the human-gates guide no longer holds the sentence; (b) prints it. */
+function claimGuidePage(sentence: string): void {
+  const page = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/guides/human-gates.md'),
+    'utf8',
+  ).replace(/\s+/g, ' ');
+  expect(page, `human-gates.md no longer says: ${sentence}`).toContain(sentence);
+}
 function claimGates215(): void {
   const page = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/workflow/gates.md'),
@@ -286,7 +300,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       //     wanted the other choice is not told what the gate settled or where the run is;
       //     (b) prints stderr.
       expect(errored()).toEqual([
-        `  Gate '${gateId()}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
+        // decision C178: the expiry recorded the winning choice, and the refusal says so.
+        `  Gate '${gateId()}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "  ✗ not recorded — gate settled by timeout with choice 'approve' → running\n",
       ]);
       // stdout: the timer's line, then straight on to the next step — no `✓ →` for the answer.
@@ -684,27 +699,52 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           }
           return Promise.resolve('');
         });
-        await run(
-          workflowYaml({
-            id:
-              kase === 'another process holds the step'
-                ? 'prompt-625-c165-hold'
-                : 'prompt-625-c165-end',
-            finish: true,
-          }),
-        );
+        // decision C173: a held step is waited for; this holder never lets go, so the watch is cut
+        // short (its own cell below shows the wait going on when the holder finishes).
+        const restore = setInFlightWatchForTests(1_500);
+        let code: number;
+        try {
+          code = await run(
+            workflowYaml({
+              id:
+                kase === 'another process holds the step'
+                  ? 'prompt-625-c165-hold'
+                  : 'prompt-625-c165-end',
+              finish: true,
+            }),
+          );
+        } finally {
+          restore();
+        }
         // (a) red when the prompt stays open (the cell times out) or says another thing; (b) prints stdout.
         expect(logged().filter((l) => l.startsWith('  This prompt is closed: step'))).toEqual([
           line,
         ]);
+        if (kase === 'another process holds the step') {
+          // C173: (a) red when a step held for the whole watch is not named with its way out, or the
+          //     run is not handed back; (b) prints stderr and the exit code.
+          expect([
+            errored().filter((l) => l.startsWith('• Step ')),
+            errored().some((l) => l.startsWith('Workflow stalled — detached from run')),
+            code,
+          ]).toEqual([
+            [
+              expect.stringMatching(
+                new RegExp(
+                  `^• Step 'finish' has been in flight since .+, taken by other-terminal \\(as stated, via agent\\); the record has not changed for 2s\\. If the program that took it is gone: realm run reclaim ${runId()} --step finish --force$`,
+                ),
+              ),
+            ],
+            true,
+            1,
+          ]);
+        }
       },
       30_000,
     );
 
-    it('C167, W1-Y4: the gate prompt prints the question, quoted as realm run inspect quotes it, before its choices', async () => {
-      claimWorkflowPage(
-        'The gate\'s prompt shows the question before its choices, quoted as `realm run inspect` quotes it: `Question: "Ship it?"`.',
-      );
+    it('C167, W1-Y4 (C175): the gate prompt prints the question before its choices, a control character written as an escape', async () => {
+      claimWorkflowPage(QUESTION_LINES);
       mocks.question.mockImplementation(async (prompt: string) => {
         if (prompt.startsWith('  Choice ')) return 'approve';
         return '';
@@ -719,9 +759,146 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       // (a) red when the question is not shown, shown raw (the escape sequence reaching the
       //     terminal), or after the choices; (b) prints stdout.
       expect(out.slice(at + 1, at + 3)).toEqual([
-        '  Question: "Ship it?\\u001b[31m"',
+        '  Question: Ship it?\\u001b[31m',
         '  Preview: {}',
       ]);
     }, 30_000);
+  });
+  describe('round 22 — C173, C175, C176: a step another process holds; the question from every source, line by line', () => {
+    /** `finish` (agent) → `last` (agent): what "goes on" reaches after the held step. */
+    const withLast = (id: string): string =>
+      `${workflowYaml({ id, finish: true })}  last:\n    description: Last\n    execution: agent\n    depends_on: [finish]\n`;
+
+    it.each([
+      [
+        'takes the step and holds it past the prompt’s re-read, then completes it',
+        1_500,
+        'was taken by ',
+      ],
+      [
+        'takes the step and completes it before the prompt reads the record',
+        0,
+        ', and completed; not run here.',
+      ],
+    ] as const)(
+      'C173, W1-1: another process %s — the prompt closes, waits for it, and goes on to what is ready; never "stalled"',
+      async (_order, holdMs, closeWords) => {
+        claimWorkflowPage(IN_FLIGHT_WAIT);
+        let stepPrompts = 0;
+        mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
+          if (prompt.startsWith('  Choice ')) return Promise.resolve('approve');
+          if (prompt.startsWith('  Agent output')) {
+            stepPrompts += 1;
+            if (stepPrompts > 1) return Promise.resolve('');
+            return new Promise<string>((_resolve, reject) => {
+              opts?.signal?.addEventListener(
+                'abort',
+                () =>
+                  reject(
+                    Object.assign(new Error('The operation was aborted'), {
+                      name: 'AbortError',
+                      code: 'ABORT_ERR',
+                    }),
+                  ),
+                { once: true },
+              );
+              // Another process runs `finish`; its work takes `holdMs`, during which it holds the
+              // step (as `realm run advance` holds a step whose handler takes that long).
+              void (async () => {
+                const { JsonFileStore, loadWorkflowFromString, executeStep } =
+                  await import('@sensigo/realm');
+                const def = loadWorkflowFromString(withLast('prompt-625-c173'));
+                await executeStep(new JsonFileStore(), def, {
+                  runId: runId(),
+                  command: 'finish',
+                  input: {},
+                  dispatcher: async () => {
+                    await new Promise((resolve) => setTimeout(resolve, holdMs));
+                    return { done: true };
+                  },
+                  driver: { by: 'other-terminal', by_source: 'stated', channel: 'agent' },
+                });
+              })();
+            });
+          }
+          if (prompt.startsWith('  Mock output')) return Promise.resolve('');
+          return Promise.reject(new Error(`fixture: an unexpected prompt: ${prompt}`));
+        });
+
+        const code = await run(withLast('prompt-625-c173'));
+
+        const out = logged();
+        const closed = out.filter((l) => l.startsWith("  This prompt is closed: step 'finish'"));
+        // (a) red when the prompt says the run stalled while the other process holds the step, or
+        //     does not go on to `last` once it completed; (b) prints stdout, stderr and the exit.
+        expect({
+          closed: closed.length === 1 && closed[0]!.includes(closeWords),
+          last: out.some((l) => l.startsWith('→ [agent] last: Last')),
+          stalled: errored().filter((l) => l.includes('stalled')),
+          code,
+          stepPrompts,
+        }).toEqual({ closed: true, last: true, stalled: [], code: 0, stepPrompts: 2 });
+        expect((await readRecord()).run_phase).toBe('completed');
+      },
+      30_000,
+    );
+
+    it('C175, W2-3: a question of several lines prints each line as written, indented under `Question:`', async () => {
+      claimWorkflowPage(QUESTION_LINES);
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        return '';
+      });
+      const yaml = workflowYaml({ id: 'prompt-625-c175' }).replace(
+        '      choices: [approve, reject]\n',
+        '      choices: [approve, reject]\n      message: "Subject: OFFICE CLOSED\\nThe office is closed.\\nSay \\"approve\\" to send it.\\n"\n',
+      );
+      await run(yaml);
+      const out = logged();
+      const at = out.findIndex((l) => l.startsWith('  ⏸  Gate: confirm'));
+      // (a) red when the lines print as one escaped line (`\n`, `\"`), or the trailing line break
+      //     prints an empty line; (b) prints stdout.
+      expect(out.slice(at + 1, at + 6)).toEqual([
+        '  Question:',
+        '    Subject: OFFICE CLOSED',
+        '    The office is closed.',
+        '    Say "approve" to send it.',
+        '  Preview: {}',
+      ]);
+    }, 30_000);
+
+    it.each([
+      [
+        'the step’s `prompt` (the gate has no `message`)',
+        '    prompt: "Approve order {{ context.resources.confirm.n }}?"\n',
+        ['  Question: Approve order 7?'],
+      ],
+      ['neither (no `message`, no `prompt`)', '', []],
+    ] as const)(
+      'C176, W2-4: the question’s text from %s',
+      async (_source, promptLine, question) => {
+        claimWorkflowPage(QUESTION_LINES);
+        claimGuidePage(
+          '**At the `realm workflow run` prompt, the gate shows `Preview:` but no `Question:` line.** The gate has no `message` and its step has no `prompt`, so there is no question to show. Add a `message`. Up to version 0.46.0 the hand-run prompt showed no question for any gate.',
+        );
+        mocks.question.mockImplementation(async (prompt: string) => {
+          if (prompt.startsWith('  Choice ')) return 'approve';
+          if (prompt.startsWith('  Mock output')) return '{"n": 7}';
+          return '';
+        });
+        const yaml = workflowYaml({ id: 'prompt-625-c176' }).replace(
+          '    trust: human_confirmed\n',
+          `    trust: human_confirmed\n${promptLine}`,
+        );
+        await run(yaml);
+        const out = logged();
+        const at = out.findIndex((l) => l.startsWith('  ⏸  Gate: confirm'));
+        const preview = out.findIndex((l) => l.startsWith('  Preview:'));
+        // (a) red when a prompt-sourced question is not shown, or a line is shown with neither
+        //     source; (b) prints stdout.
+        expect(out.slice(at + 1, preview)).toEqual([...question]);
+      },
+      30_000,
+    );
   });
 });
