@@ -80,7 +80,8 @@ describe('#625 PR-2a — the realm agent loop', () => {
     vi.restoreAllMocks();
     const since = (await store.get(run.id)).claims?.['review']?.since;
     expect(out).toContain(
-      `• Step 'review' was taken by other@host (from the OS user, via agent) at ${since}; not run here.`,
+      // decision C179 (round 23): the agent step the model answered says its answer was not recorded.
+      `• Step 'review' was taken by other@host (from the OS user, via agent) at ${since}; this drive's answer was not recorded.`,
     );
     expect(out).not.toContain('✓ → running');
   });
@@ -129,8 +130,9 @@ describe('#625 PR-2a — the realm agent loop', () => {
       `If the program that took it is gone: realm run reclaim ${run.id} --step review --force`,
     );
     expect(out).not.toContain('likely died');
-    // Never a bare "Run ended in phase: running" with nothing named before it.
-    expect(err).toContain('Run ended in phase: running');
+    // decision C179 (round 23): the run did not end — the in-flight line is the drive's last, and no
+    // `Run ended in phase: running` follows it.
+    expect(err).not.toContain('Run ended in phase');
     expect(provider.callStep).not.toHaveBeenCalled();
   });
 

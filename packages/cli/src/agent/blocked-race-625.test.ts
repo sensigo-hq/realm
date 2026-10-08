@@ -201,7 +201,12 @@ describe('#625 PR-2a, C85 — a blocked reply on a run another process moved to 
     }).toEqual({
       result: 'failed',
       calls: 1,
-      tail: ['log:   An agent step.', 'error: \nRun ended in phase: abandoned'],
+      // decision C179 (round 23): the answer the ended run did not record is said before the
+      // run-ended line.
+      tail: [
+        "log: • Step 'ask' was not run: the run ended (abandoned) before this drive's answer reached it; the answer was not recorded.",
+        'error: \nRun ended in phase: abandoned',
+      ],
       crosses: [],
     });
     const run = await d.store.get(d.runId);

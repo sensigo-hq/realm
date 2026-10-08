@@ -899,7 +899,8 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(sameReply.answer_recorded).toBe(false);
       expect(sameReply.guards).toEqual([{ step: 'check', outcome: 'pass' }]);
       expect(sameReply.ended_by).toBeUndefined();
-      expect(sameReply.context_hint).toBe(LATE_SAME_CHOICE);
+      // decision C185: what the run owes follows the sentence while the run goes on.
+      expect(sameReply.context_hint).toBe(`${LATE_SAME_CHOICE} Ready for the agent: 'finish'.`);
       const sameRecord = await store.get(same.runId);
       expect(lateAnswerOutcome(sameReply, sameRecord)).toEqual({
         choice: 'approve',
@@ -1135,7 +1136,10 @@ describe('issue #625 — a store WITHOUT settleStep settles no guard in the writ
       expect(reply.ended_by).toBeUndefined();
       // (a) red when the guard's sentence is appended on a store that settled no guard;
       //     (b) prints the sentence.
-      expect(reply.context_hint).toBe(LATE_SAME_CHOICE);
+      // decision C185: what the run owes follows (the guard, owed: this store settled none).
+      expect(reply.context_hint).toBe(
+        `${LATE_SAME_CHOICE} Owed to the engine: 'check' — call advance_run.`,
+      );
       const record = await store.get(runId);
       expect(record.settled?.['confirm']).toMatchObject({
         choice: 'reject',
