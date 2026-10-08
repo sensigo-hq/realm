@@ -1071,6 +1071,11 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       'C179: %s while the agent step’s prompt waits lets the claim go and exits %i (128 + the signal’s number)',
       async (signal, code) => {
         claimWorkflowPage(LETS_GO);
+        // A listener of the cell's own, so that a signal no handler of the command takes is a red
+        // cell, not a test process killed (a dependency's signal-exit handler re-raises a signal it
+        // is the only listener of).
+        const keep = (): void => {};
+        process.on(signal, keep);
         const listenersBefore = process.listenerCount(signal);
         exitSpy.mockImplementation((() => undefined) as never);
         let afterSignal: unknown;
@@ -1098,7 +1103,13 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           }
           return '';
         });
-        await run(workflowYaml({ id: `prompt-625-c179-${signal.toLowerCase()}`, finish: true }));
+        let listenersAfter: number;
+        try {
+          await run(workflowYaml({ id: `prompt-625-c179-${signal.toLowerCase()}`, finish: true }));
+          listenersAfter = process.listenerCount(signal);
+        } finally {
+          process.removeListener(signal, keep);
+        }
         // (a) red when the signal leaves the claim, or the exit code is another; (b) prints the state.
         expect(afterSignal).toEqual({
           held: ['finish'],
@@ -1107,7 +1118,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           exits: [code],
         });
         // The handlers are removed once the claim is let go: (a) red when a listener stays behind.
-        expect(process.listenerCount(signal)).toBe(listenersBefore);
+        expect(listenersAfter).toBe(listenersBefore);
       },
       30_000,
     );
