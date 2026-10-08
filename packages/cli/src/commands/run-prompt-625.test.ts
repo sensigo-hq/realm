@@ -598,6 +598,41 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect([stepPrompts, (await readRecord()).run_phase, code]).toEqual([1, 'completed', 0]);
     }, 30_000);
 
+    it('C165: an answer read after another process ended the run reaches no step — `Not run here:` and the engine’s words, never ✓', async () => {
+      let stepPrompts = 0;
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        if (prompt.startsWith('  Agent output')) {
+          stepPrompts += 1;
+          // The other process runs `finish` (the run completes) before this answer is handed back —
+          // inside the watch's half second, so the prompt never sees it close.
+          const { JsonFileStore, loadWorkflowFromString, executeStep } =
+            await import('@sensigo/realm');
+          const def = loadWorkflowFromString(
+            workflowYaml({ id: 'prompt-625-c165-late', finish: true }),
+          );
+          await executeStep(new JsonFileStore(), def, {
+            runId: runId(),
+            command: 'finish',
+            input: { done: true },
+            dispatcher: async () => ({ done: true }),
+          });
+          return '{"late": true}';
+        }
+        return '';
+      });
+
+      const code = await run(workflowYaml({ id: 'prompt-625-c165-late', finish: true }));
+
+      const out = logged();
+      // (a) red when the ended run's refusal prints ✓ (with `hash: n/a`); (b) prints stdout.
+      expect(out.filter((l) => l.startsWith('  Not run here: '))).toEqual([
+        `  Not run here: Run '${runId()}' is already terminal (completed); no steps executed.\n`,
+      ]);
+      expect(out.filter((l) => l.includes('hash: n/a'))).toEqual([]);
+      expect([stepPrompts, code]).toEqual([1, 0]);
+    }, 30_000);
+
     it('C167, W1-Y4: the gate prompt prints the question, quoted as realm run inspect quotes it, before its choices', async () => {
       claimWorkflowPage(
         'The gate\'s prompt shows the question before its choices, quoted as `realm run inspect` quotes it: `Question: "Ship it?"`.',
