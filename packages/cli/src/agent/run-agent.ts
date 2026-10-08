@@ -1807,6 +1807,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // process opened a gate or ended the run. The loop top handles both — it waits at the gate,
           // or prints the run-ended line — as it did before C82 (5).
           if (currentRun.terminal_state === true || currentRun.pending_gate !== undefined) {
+            // decision C179: a run that ended in that moment did not record this drive's answer —
+            // said, as when `executeChain` finds the run ended.
+            if (
+              engineReply === undefined &&
+              blockedStep === stepName &&
+              currentRun.terminal_state
+            ) {
+              const line = answerNotRecordedLine(currentRun, stepName, keepsClaims);
+              if (line !== undefined) console.log(line);
+            }
             continue;
           }
           // decision C82 (5): any other `blocked` reply — the step's precondition failed on the

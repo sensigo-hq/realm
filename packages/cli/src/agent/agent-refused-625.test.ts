@@ -43,8 +43,10 @@ const PRE_LINE =
   "log: • Step 'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.";
 const TRUST_LINE =
   "log: • Step 'ask' cannot run (trust): 'trust: \"bogus_value\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
+// decision C179 (round 23): for the agent step whose answer the model gave, the line says the
+// answer was not recorded (it said `not run here`, the line an engine step another process took gets).
 const TAKEN_IN_FLIGHT =
-  "log: • Step 'ask' was taken by a program whose name was not recorded at <since>; not run here.";
+  "log: • Step 'ask' was taken by a program whose name was not recorded at <since>; this drive's answer was not recorded.";
 const stopLine = (check: string, step = 'ask'): string =>
   `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run>; or end it: realm run abandon <run>.`;
 
@@ -281,7 +283,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
       result: 'completed',
       calls: 2,
       taken:
-        "log: • Step 'ask' was taken by another process, whose claim is no longer on the record; not run here.",
+        "log: • Step 'ask' was taken by another process, whose claim is no longer on the record, and completed; this drive's answer was not recorded.",
       next: 'log: \n→ [agent] more',
     });
     expect(d.lines.filter((l) => l.startsWith('log:   ✓')).length).toBe(1);
@@ -333,7 +335,7 @@ describe('#625 PR-2a, C82 (5) — the drive’s blocked arm never prints ✓', (
     expect({ calls: d.calls, taken: after[0], next: after[1] }).toEqual({
       calls: 2,
       taken:
-        "log: • Step 'ask' was taken by another process, whose claim is no longer on the record; not run here.",
+        "log: • Step 'ask' was taken by another process, whose claim is no longer on the record, and failed; this drive's answer was not recorded.",
       next: 'log: \n→ [agent] side',
     });
     expect((await d.store.get(d.runId)).failed_steps).toEqual(['ask']);

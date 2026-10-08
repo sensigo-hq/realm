@@ -471,7 +471,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
 
   describe('a `blocked` reply is never followed by ✓', () => {
     const SENTENCE =
-      "A `blocked` reply is never followed by `✓`: a step another process took between the drive's read and the engine's is said as taken (`• Step '<step>' was taken by …; not run here.`); when another process opened a gate or ended the run in that moment, the drive goes on as it does at any gate or end (it waits at the gate, or prints `Run ended in phase: <phase>`); any other `blocked` reply prints its own reason (`✗ Precondition failed for step 'ask'.`) and stops the drive with exit code 1.";
+      "A `blocked` reply is never followed by `✓`: an `auto` step another process took between the drive's read and the engine's is said as taken (`• Step '<step>' was taken by …; not run here.`), and an agent step as below; when another process opened a gate or ended the run in that moment, the drive goes on as it does at any gate or end (it waits at the gate, or prints `Run ended in phase: <phase>`); any other `blocked` reply prints its own reason (`✗ Precondition failed for step 'ask'.`) and stops the drive with exit code 1.";
 
     it('taken: another process completed the step while the model answered — said as taken, no ✓', async () => {
       claim(AGENT_PAGE, SENTENCE);
@@ -492,7 +492,10 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       const after = d.lines.slice(d.lines.indexOf('log: \n→ [agent] ask') + 2);
       // (a) red when the taken step is followed by `✓` or the line's shape changes; (b) prints the
       //     line after the attempt.
-      expect(after[0]).toMatch(/^log: • Step 'ask' was taken by .+; not run here\.$/);
+      // decision C179: the agent step's line says its answer was not recorded.
+      expect(after[0]).toMatch(
+        /^log: • Step 'ask' was taken by .+, and completed; this drive's answer was not recorded\.$/,
+      );
       expect(after[0]).not.toContain('✓');
       expect(after[1]).toBe('log: \n→ [agent] more');
     });
@@ -558,7 +561,11 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       // (a) red when the refused attempt prints `✓` or its own `✗` reason instead of the run-ended
       //     line; (b) prints the last two lines.
       expect({ tail: d.lines.slice(-2), ticks: d.lines.filter((l) => l.includes('✓')) }).toEqual({
-        tail: ['log:   An agent step.', 'error: \nRun ended in phase: abandoned'],
+        // decision C179: the answer the ended run did not record is said, before the run-ended line.
+        tail: [
+          "log: • Step 'ask' was not run: the run ended (abandoned) before this drive's answer reached it; the answer was not recorded.",
+          'error: \nRun ended in phase: abandoned',
+        ],
         ticks: [],
       });
     });

@@ -25,6 +25,7 @@ vi.mock('node:readline/promises', () => ({
 
 import { runCommand, setQuestionWatchIntervalForTests, setInFlightWatchForTests } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { quotedForTerminal } from '../lib/holder-render.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
 const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
@@ -43,10 +44,10 @@ const PROMPT_CLOSES =
   "A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`.";
 /** C173: the wait for a step another process holds (realm-workflow.md). */
 const IN_FLIGHT_WAIT =
-  "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does: when the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back.";
+  "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back.";
 /** C167, C175, C176: the question on the gate's prompt (realm-workflow.md). */
 const QUESTION_LINES =
-  "The gate's prompt shows the question before its choices: the gate's `message`, or the step's `prompt` when the gate has no `message`, rendered as the reply that opened the gate renders it. Each of its lines is printed as written, with any other control character written as an escape: `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it.";
+  "The gate's prompt shows the question before its choices: the gate's `message`, or the step's `prompt` when the gate has no `message`, rendered as the reply that opened the gate renders it. Each of its lines is printed as written, with any other control character written as the escape `realm run inspect` writes in its `Message:` line (a tab as `\\t`, an escape character as `\\u001b`): `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it.";
 /** C176: (a) red when the human-gates guide no longer holds the sentence; (b) prints it. */
 function claimGuidePage(sentence: string): void {
   const page = readFileSync(
@@ -71,6 +72,8 @@ const LATE_SAME_CHOICE =
 function workflowYaml(opts: {
   id: string;
   finish?: boolean;
+  /** decision C179: `finish` as an `auto` step (an agent step's prompt holds its claim). */
+  finishAuto?: boolean;
   expiresTo?: string;
   aborts?: boolean;
 }): string {
@@ -101,7 +104,12 @@ function workflowYaml(opts: {
     `    abort_unless: ["confirm.choice == 'approve'"]`,
     `    abort_message: "${NOT_APPROVED}"`,
     ...(opts.finish === true
-      ? ['  finish:', '    description: Finish', '    execution: agent', '    depends_on: [check]']
+      ? [
+          '  finish:',
+          '    description: Finish',
+          `    execution: ${opts.finishAuto === true ? 'auto' : 'agent'}`,
+          '    depends_on: [check]',
+        ]
       : []),
     '',
   ].join('\n');
@@ -561,12 +569,17 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   describe('round 21 — C165, C167: a step’s prompt closes when another process runs the step; the gate prompt shows the question', () => {
     it('C165, W1-Y2: another process runs the step while its prompt waits — the prompt closes and names who ran it; never ✓ for that work', async () => {
       claimWorkflowPage(
-        "A step's prompt closes the same way when another process takes or runs that step while the prompt waits (`realm run advance`, an `execute_step` call): it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on.",
+        "An `auto` step's prompt closes the same way when another process takes or runs that step while the prompt waits (`realm run advance`, `realm agent`, an `execute_step` call): it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on.",
       );
       let stepPrompts = 0;
+      // decision C179: `finish` is an `auto` step here — an agent step's prompt holds its claim.
+      let gateDone = false;
       mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
-        if (prompt.startsWith('  Choice ')) return Promise.resolve('approve');
-        if (prompt.startsWith('  Agent output')) {
+        if (prompt.startsWith('  Choice ')) {
+          gateDone = true;
+          return Promise.resolve('approve');
+        }
+        if (prompt.startsWith('  Mock output') && gateDone) {
           stepPrompts += 1;
           return new Promise<string>((_resolve, reject) => {
             opts?.signal?.addEventListener(
@@ -585,7 +598,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
               const { JsonFileStore, loadWorkflowFromString, executeStep } =
                 await import('@sensigo/realm');
               const def = loadWorkflowFromString(
-                workflowYaml({ id: 'prompt-625-c165', finish: true }),
+                workflowYaml({ id: 'prompt-625-c165', finish: true, finishAuto: true }),
               );
               await executeStep(new JsonFileStore(), def, {
                 runId: runId(),
@@ -601,7 +614,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         return Promise.reject(new Error(`fixture: an unexpected prompt: ${prompt}`));
       });
 
-      const code = await run(workflowYaml({ id: 'prompt-625-c165', finish: true }));
+      const code = await run(
+        workflowYaml({ id: 'prompt-625-c165', finish: true, finishAuto: true }),
+      );
 
       const out = logged();
       // (a) red when the step's prompt stays open (the cell then times out), or prints ✓ for the
@@ -615,16 +630,20 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
     it('C165: an answer read after another process ended the run reaches no step — `Not run here:` and the engine’s words, never ✓', async () => {
       let stepPrompts = 0;
+      let gateDone = false;
       mocks.question.mockImplementation(async (prompt: string) => {
-        if (prompt.startsWith('  Choice ')) return 'approve';
-        if (prompt.startsWith('  Agent output')) {
+        if (prompt.startsWith('  Choice ')) {
+          gateDone = true;
+          return 'approve';
+        }
+        if (prompt.startsWith('  Mock output') && gateDone) {
           stepPrompts += 1;
           // The other process runs `finish` (the run completes) before this answer is handed back —
           // inside the watch's half second, so the prompt never sees it close.
           const { JsonFileStore, loadWorkflowFromString, executeStep } =
             await import('@sensigo/realm');
           const def = loadWorkflowFromString(
-            workflowYaml({ id: 'prompt-625-c165-late', finish: true }),
+            workflowYaml({ id: 'prompt-625-c165-late', finish: true, finishAuto: true }),
           );
           await executeStep(new JsonFileStore(), def, {
             runId: runId(),
@@ -637,7 +656,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         return '';
       });
 
-      const code = await run(workflowYaml({ id: 'prompt-625-c165-late', finish: true }));
+      const code = await run(
+        workflowYaml({ id: 'prompt-625-c165-late', finish: true, finishAuto: true }),
+      );
 
       const out = logged();
       // (a) red when the ended run's refusal prints ✓ (with `hash: n/a`); (b) prints stdout.
@@ -663,9 +684,13 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         claimWorkflowPage(
           "it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on.",
         );
+        let gateDone = false;
         mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
-          if (prompt.startsWith('  Choice ')) return Promise.resolve('approve');
-          if (prompt.startsWith('  Agent output')) {
+          if (prompt.startsWith('  Choice ')) {
+            gateDone = true;
+            return Promise.resolve('approve');
+          }
+          if (prompt.startsWith('  Mock output') && gateDone) {
             return new Promise<string>((_resolve, reject) => {
               opts?.signal?.addEventListener(
                 'abort',
@@ -684,7 +709,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
                 const store = new JsonFileStore();
                 if (kase === 'another process holds the step') {
                   const def = loadWorkflowFromString(
-                    workflowYaml({ id: 'prompt-625-c165-hold', finish: true }),
+                    workflowYaml({ id: 'prompt-625-c165-hold', finish: true, finishAuto: true }),
                   );
                   await store.claimStep(runId(), 'finish', def, {
                     by: 'other-terminal',
@@ -711,6 +736,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
                   ? 'prompt-625-c165-hold'
                   : 'prompt-625-c165-end',
               finish: true,
+              finishAuto: true,
             }),
           );
         } finally {
@@ -767,7 +793,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
   describe('round 22 — C173, C175, C176: a step another process holds; the question from every source, line by line', () => {
     /** `finish` (agent) → `last` (agent): what "goes on" reaches after the held step. */
     const withLast = (id: string): string =>
-      `${workflowYaml({ id, finish: true })}  last:\n    description: Last\n    execution: agent\n    depends_on: [finish]\n`;
+      `${workflowYaml({ id, finish: true, finishAuto: true })}  last:\n    description: Last\n    execution: agent\n    depends_on: [finish]\n`;
 
     it.each([
       [
@@ -785,11 +811,19 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       async (_order, holdMs, closeWords) => {
         claimWorkflowPage(IN_FLIGHT_WAIT);
         let stepPrompts = 0;
+        let gateDone = false;
         mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
-          if (prompt.startsWith('  Choice ')) return Promise.resolve('approve');
+          if (prompt.startsWith('  Choice ')) {
+            gateDone = true;
+            return Promise.resolve('approve');
+          }
+          // `finish` (auto, after the gate) waits; `last` (agent) is answered at once.
           if (prompt.startsWith('  Agent output')) {
             stepPrompts += 1;
-            if (stepPrompts > 1) return Promise.resolve('');
+            return Promise.resolve('');
+          }
+          if (prompt.startsWith('  Mock output') && gateDone) {
+            stepPrompts += 1;
             return new Promise<string>((_resolve, reject) => {
               opts?.signal?.addEventListener(
                 'abort',
@@ -826,6 +860,18 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         });
 
         const code = await run(withLast('prompt-625-c173'));
+        // decision C182: while the other process holds the step, the prompt says what it waits for
+        //     and who holds it — once. (a) red when the wait is silent, or said more than once;
+        //     (b) prints stdout.
+        if (holdMs > 0) {
+          expect(
+            logged()
+              .filter((l) => l.includes(': waiting up to '))
+              .map((l) => l.replace(/ since \S+Z:/, ' since <t>:')),
+          ).toEqual([
+            "  • Step 'finish' is in flight, taken by other-terminal (as stated, via agent) since <t>: waiting up to 60s for the run's record to change.",
+          ]);
+        }
 
         const out = logged();
         const closed = out.filter((l) => l.startsWith("  This prompt is closed: step 'finish'"));
@@ -900,5 +946,281 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       },
       30_000,
     );
+  });
+
+  describe('round 23 — C179, C183: an agent step’s prompt holds its claim; one escape for a control character', () => {
+    const HOLDS =
+      "While an agent step's prompt waits, the command holds the step's claim, so no other driver does the step's work: `realm run inspect` shows the step taken by this program (`via run`), `realm agent` waits for it and asks no model, and an `execute_step` call is refused with `Step '<step>' cannot be called now: it is in flight (claimed by another call).`";
+    const LETS_GO =
+      "The command lets the claim go when you answer (the engine then takes it for the answer), when you leave the prompt, and when it is ended by SIGHUP, SIGINT or SIGTERM (it then exits with 128 plus the signal's number);";
+    const abortError = (): Error =>
+      Object.assign(new Error('The operation was aborted'), {
+        name: 'AbortError',
+        code: 'ABORT_ERR',
+      });
+    /** `finish` (agent) → `last` (agent): a run that goes on after `finish`. */
+    const withLast = (id: string): string =>
+      `${workflowYaml({ id, finish: true })}  last:\n    description: Last\n    execution: agent\n    depends_on: [finish]\n`;
+    const OTHER = { by: 'other-terminal', by_source: 'stated', channel: 'agent' } as const;
+
+    it('C179, W1-1: the prompt holds the step’s claim while it waits (holder via run); another driver’s call is refused, does no work; the typed answer completes the step', async () => {
+      claimWorkflowPage(HOLDS);
+      claimWorkflowPage(LETS_GO);
+      let atPrompt: unknown;
+      let otherCall: unknown;
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        if (prompt.startsWith('  Agent output')) {
+          const { JsonFileStore, loadWorkflowFromString, executeStep } =
+            await import('@sensigo/realm');
+          const record = await readRecord();
+          atPrompt = {
+            inProgress: record.in_progress_steps,
+            channel: record.claims?.['finish']?.holder?.channel,
+          };
+          let ran = false;
+          const r = await executeStep(
+            new JsonFileStore(),
+            loadWorkflowFromString(workflowYaml({ id: 'prompt-625-c179', finish: true })),
+            {
+              runId: runId(),
+              command: 'finish',
+              input: { by: 'other' },
+              dispatcher: async () => {
+                ran = true;
+                return { by: 'other' };
+              },
+              driver: OTHER,
+            },
+          );
+          otherCall = { status: r.status, hint: r.context_hint, ran };
+          return '{"by": "person"}';
+        }
+        return '';
+      });
+      const code = await run(workflowYaml({ id: 'prompt-625-c179', finish: true }));
+      const record = await readRecord();
+      const ev = record.evidence.find((e) => e.step_id === 'finish');
+      // (a) red when the prompt holds no claim (the other call then runs the step: the walk's double
+      //     answer), the claim names another program, or the answer is not recorded after the claim
+      //     is let go; (b) prints what the record and the other call showed.
+      expect({
+        atPrompt,
+        otherCall,
+        afterwards: {
+          phase: record.run_phase,
+          answer: ev?.output_summary,
+          by: ev?.driven_by?.channel,
+          claims: record.claims?.['finish'],
+        },
+        code,
+      }).toEqual({
+        atPrompt: { inProgress: ['finish'], channel: 'run' },
+        otherCall: {
+          status: 'blocked',
+          hint: "Step 'finish' cannot be called now: it is in flight (claimed by another call).",
+          ran: false,
+        },
+        afterwards: { phase: 'completed', answer: { by: 'person' }, by: 'run', claims: undefined },
+        code: 0,
+      });
+    }, 30_000);
+
+    it('C179: leaving the agent step’s prompt (Ctrl+D) lets the claim go — the detach map’s `Drive it` line finds the step ready', async () => {
+      claimWorkflowPage(LETS_GO);
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        if (prompt.startsWith('  Agent output')) throw abortError();
+        return '';
+      });
+      const code = await run(workflowYaml({ id: 'prompt-625-c179-cancel', finish: true }));
+      const record = await readRecord();
+      // (a) red when the cancel leaves the claim (the step then reads as in flight, and `realm agent`
+      //     waits on a prompt that is gone); (b) prints the record's claim state and stderr.
+      expect({
+        inProgress: record.in_progress_steps,
+        claim: record.claims?.['finish'],
+        drive: errored().some((l) => l.includes('  Drive it:  realm agent --run-id')),
+        code,
+      }).toEqual({ inProgress: [], claim: undefined, drive: true, code: 1 });
+    }, 30_000);
+
+    it('C179: SIGTERM while the agent step’s prompt waits lets the claim go and exits 143 (128 + the signal’s number)', async () => {
+      claimWorkflowPage(LETS_GO);
+      const listenersBefore = process.listenerCount('SIGTERM');
+      exitSpy.mockImplementation((() => undefined) as never);
+      let afterSignal: unknown;
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        if (prompt.startsWith('  Agent output')) {
+          const held = (await readRecord()).in_progress_steps;
+          process.emit('SIGTERM', 'SIGTERM');
+          const deadline = Date.now() + 5_000;
+          while (exitSpy.mock.calls.length === 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          const record = await readRecord();
+          afterSignal = {
+            held,
+            inProgress: record.in_progress_steps,
+            claim: record.claims?.['finish'],
+            exits: exitSpy.mock.calls.map((c: unknown[]) => c[0]),
+          };
+          // End the command: exits throw again, and the prompt is left.
+          exitSpy.mockImplementation(((): never => {
+            throw new Error('process.exit');
+          }) as never);
+          throw abortError();
+        }
+        return '';
+      });
+      await run(workflowYaml({ id: 'prompt-625-c179-term', finish: true }));
+      // (a) red when the signal leaves the claim, or the exit code is another; (b) prints the state.
+      expect(afterSignal).toEqual({
+        held: ['finish'],
+        inProgress: [],
+        claim: undefined,
+        exits: [143],
+      });
+      // The handler is removed once the claim is let go: (a) red when a listener stays behind.
+      expect(process.listenerCount('SIGTERM')).toBe(listenersBefore);
+    }, 30_000);
+
+    it('C179: another process removed the claim while the prompt waited — the prompt closes, says so, and asks again', async () => {
+      claimWorkflowPage(
+        "The agent step's prompt closes when another process removed its claim (`This prompt is closed: the claim it held on step '<step>' was removed by another process, and the step has not run.`; the step is then asked for again) or the run ended.",
+      );
+      let stepPrompts = 0;
+      mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
+        if (prompt.startsWith('  Choice ')) return Promise.resolve('approve');
+        if (prompt.startsWith('  Agent output')) {
+          stepPrompts += 1;
+          if (stepPrompts > 1) return Promise.resolve('{"second": true}');
+          return new Promise<string>((_resolve, reject) => {
+            opts?.signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+            void (async () => {
+              // `realm run reclaim --force`'s effect: the claim and the in-flight mark removed.
+              const { JsonFileStore } = await import('@sensigo/realm');
+              const store = new JsonFileStore();
+              const record = await store.get(runId());
+              const { finish: _gone, ...claims } = record.claims ?? {};
+              await store.update({ ...record, in_progress_steps: [], claims });
+            })();
+          });
+        }
+        return Promise.resolve('');
+      });
+      const code = await run(workflowYaml({ id: 'prompt-625-c179-removed', finish: true }));
+      // (a) red when the prompt stays open on a claim it no longer holds, or says another thing;
+      //     (b) prints stdout.
+      expect({
+        closed: logged().filter((l) => l.startsWith('  This prompt is closed:')),
+        stepPrompts,
+        phase: (await readRecord()).run_phase,
+        code,
+      }).toEqual({
+        closed: [
+          "  This prompt is closed: the claim it held on step 'finish' was removed by another process, and the step has not run.\n",
+        ],
+        stepPrompts: 2,
+        phase: 'completed',
+        code: 0,
+      });
+    }, 30_000);
+
+    it.each(['agent', 'auto'] as const)(
+      'C179: another process runs the step between the typed answer and the engine’s claim (%s step) — `Not run here:`, the answer not recorded; never ✓, never `✗ blocked: `',
+      async (kind) => {
+        claimWorkflowPage(
+          "When another process takes or runs the step between your answer and the engine's claim for it, the answer is not recorded: `Not run here: step '<step>' was taken by <program>, and completed; the answer typed here was not recorded.`",
+        );
+        const yaml =
+          kind === 'agent'
+            ? withLast('prompt-625-c179-between')
+            : `${workflowYaml({ id: 'prompt-625-c179-between', finish: true, finishAuto: true })}  last:\n    description: Last\n    execution: agent\n    depends_on: [finish]\n`;
+        // The watch is neutralised: only the moment between the answer and the engine's claim is in play.
+        const restore = setQuestionWatchIntervalForTests(60_000);
+        let gateDone = false;
+        let finishPrompts = 0;
+        mocks.question.mockImplementation(async (prompt: string) => {
+          if (prompt.startsWith('  Choice ')) {
+            gateDone = true;
+            return 'approve';
+          }
+          const isFinish =
+            gateDone &&
+            finishPrompts === 0 &&
+            (kind === 'agent'
+              ? prompt.startsWith('  Agent output')
+              : prompt.startsWith('  Mock output'));
+          if (!isFinish) return '';
+          finishPrompts += 1;
+          const { JsonFileStore, loadWorkflowFromString, executeStep } =
+            await import('@sensigo/realm');
+          const store = new JsonFileStore();
+          if (kind === 'agent') {
+            // The prompt's claim is removed first (as `realm run reclaim --force` would) …
+            const record = await store.get(runId());
+            const { finish: _gone, ...claims } = record.claims ?? {};
+            await store.update({ ...record, in_progress_steps: [], claims });
+          }
+          // … then another process runs the step, before the typed answer reaches the engine.
+          const r = await executeStep(store, loadWorkflowFromString(yaml), {
+            runId: runId(),
+            command: 'finish',
+            input: { by: 'other' },
+            dispatcher: async () => ({ by: 'other' }),
+            driver: OTHER,
+          });
+          expect(r.status).toBe('ok');
+          return '{"by": "person"}';
+        });
+        let code: number;
+        try {
+          code = await run(yaml);
+        } finally {
+          restore();
+        }
+        const out = logged();
+        const at = out.findIndex((l) => l.startsWith('→ [') && l.includes('] finish: Finish'));
+        // (a) red when the refused answer prints `✗ blocked: ` with no reason, or `✓`, or names no
+        //     program; (b) prints stdout from `finish`'s line on.
+        expect({ after: out.slice(at + 1, at + 3), code }).toEqual({
+          after: [
+            "  Not run here: step 'finish' was taken by other-terminal (as stated, via agent), and completed; the answer typed here was not recorded.\n",
+            '→ [agent] last: Last',
+          ],
+          code: 0,
+        });
+        expect(errored().filter((l) => l.includes('✗ blocked'))).toEqual([]);
+        const ev = (await readRecord()).evidence.find((e) => e.step_id === 'finish');
+        expect(ev?.output_summary).toEqual({ by: 'other' });
+      },
+      30_000,
+    );
+
+    it('C183, W2-c: a tab in the question prints as `\\t` at the prompt — the escape `realm run inspect` writes in its `Message:` line', async () => {
+      claimWorkflowPage(QUESTION_LINES);
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        return '';
+      });
+      const yaml = workflowYaml({ id: 'prompt-625-c183' }).replace(
+        '      choices: [approve, reject]\n',
+        '      choices: [approve, reject]\n      message: "tab\\there \\u001b[31mred\\u0007"\n',
+      );
+      await run(yaml);
+      const out = logged();
+      const at = out.findIndex((l) => l.startsWith('  ⏸  Gate: confirm'));
+      // (a) red when the prompt and inspect write a control character two ways (`\u0009` and `\t`);
+      //     (b) prints the prompt's line and inspect's quote of the same text.
+      expect({
+        prompt: out[at + 1],
+        inspect: quotedForTerminal('tab\there \u001b[31mred\u0007'),
+      }).toEqual({
+        prompt: '  Question: tab\\there \\u001b[31mred\\u0007',
+        inspect: '"tab\\there \\u001b[31mred\\u0007"',
+      });
+    }, 30_000);
   });
 });
