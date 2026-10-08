@@ -73,7 +73,7 @@ status: ok
 deduped: false
 run_id: 3fa445f0-6a22-424b-9a64-8a866925039a
 rerun_of: 6c48086c-cb0f-47ea-9c33-6279fe42ffdc
-This run supersedes run '6c48086c-…' under the same idempotency key (on_terminal_match).
+Run '3fa445f0-…' created for workflow 'sync'; it supersedes run '6c48086c-…' under the same idempotency key (on_terminal_match). Ready for the agent: 'fetch'.
 ```
 
 The key now points at the new run. The old run stays in the store, and the new run's record links back to it:

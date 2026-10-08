@@ -77,14 +77,14 @@ registry.register('adapter', 'my-adapter', myAdapter);
 
 ### Engine
 
-| Symbol                | Notes                                                           |
-| --------------------- | --------------------------------------------------------------- |
-| `executeStep`         | Advance a run by one step. Returns `ResponseEnvelope`.          |
-| `executeChain`        | Auto-chain through auto steps until an agent step is reached.   |
-| `submitHumanResponse` | Resolve an open human gate.                                     |
-| `buildNextActions`    | Build `NextAction[]` for all currently eligible agent steps.    |
-| `findEligibleSteps`   | Return names of steps ready to execute given current run state. |
-| `propagateSkips`      | Propagate skip flags through dependent steps.                   |
+| Symbol                | Notes                                                                                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `executeStep`         | Advance a run by one step. Returns `ResponseEnvelope`.                                                                                                                       |
+| `executeChain`        | Auto-chain through auto steps until an agent step is reached.                                                                                                                |
+| `submitHumanResponse` | Resolve an open human gate.                                                                                                                                                  |
+| `buildNextActions`    | Build `NextAction[]` for what the run waits on: the agent steps that can be called, `advance_run` when the engine owes work, or the open question's `submit_human_response`. |
+| `findEligibleSteps`   | Return names of steps ready to execute given current run state.                                                                                                              |
+| `propagateSkips`      | Propagate skip flags through dependent steps.                                                                                                                                |
 
 ### Store
 

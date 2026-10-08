@@ -111,7 +111,7 @@ realm workflow register ./
 
 ## 4. Run it
 
-Start a run with a quantity of 4, with whichever driver you use. The engine runs `total` in the first call, and the next step's prompt shows the result:
+Start a run with a quantity of 4 from an assistant connected over MCP. The engine runs `total` in the first call, `start_run`, whose reply says so, and the next step's prompt shows the result:
 
 ```text
 Step 'total' completed. Ready for the agent: 'confirm'.

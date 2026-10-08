@@ -2,11 +2,12 @@
 
 <!-- description: Reference for the realm run subcommands that change a run or the store: their arguments, flags, output and exit codes. -->
 
-`realm run` has sixteen subcommands. This page covers the ten that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
+`realm run` has seventeen subcommands. This page covers the eleven that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
 
 | Subcommand                | What it does                                                  | Acts when                   |
 | ------------------------- | ------------------------------------------------------------- | --------------------------- |
 | [`respond`](#respond)     | Answers a gate.                                               | Always                      |
+| [`advance`](#advance)     | Runs what a run owes the engine, with no model.               | Always                      |
 | [`resume`](#resume)       | Makes a failed step runnable again.                           | Always                      |
 | [`abandon`](#abandon)     | Ends an open run.                                             | Always                      |
 | [`cleanup`](#cleanup)     | Abandons every open run that has been idle for a given time.  | Unless `--dry-run` is given |
@@ -118,15 +119,19 @@ An answer that arrives after the gate's time is up is not recorded, and for a ga
 
 The refusals:
 
-| Case                                                           | Message                                                                                                                                                                                                                                                                            |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--gate` is not the open gate                                  | `Gate 'wrong' is not the open gate and matches no committed resolution.`                                                                                                                                                                                                           |
-| `--choice` is not one of the choices                           | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                                                                                                                                                                    |
-| The gate was answered differently                              | `Gate '70d76b3b-…' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`                                                                                                                                                                            |
-| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.`, after the `⚠` line when this answer carried out the expiry. Then what the guard did, if this answer carried out the expiry, the `Not recorded:` line, and what the run owes. |
-| The run has ended                                              | `Run '00b33778-…' is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.`                                                                                               |
+| Case                                                           | Message                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gate` is not the open gate                                  | `Gate 'wrong' is not the open gate and matches no committed resolution.`                                                                                                                                                                                                                                                                      |
+| `--choice` is not one of the choices                           | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                                                                                                                                                                                                                               |
+| The gate was answered differently                              | `Gate '70d76b3b-…' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`                                                                                                                                                                                                                                       |
+| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.`, after the `⚠` line when this answer carried out the expiry. Then what the guard did, if this answer carried out the expiry, the `Not recorded:` line, and what the run owes.                                                            |
+| The run has ended                                              | `Run '00b33778-…' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 00b33778-… --force' removes its record.` The words after the dash name the way out that kind of ending has, as `submit_human_response` names it: see [A run that has ended](../mcp/tools.md#a-run-that-has-ended). |
 
 ## `advance`
+
+```text
+realm run advance <run-id> [--project <dir>] [--extensions-module <path>]
+```
 
 Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`); then the guards and `auto` steps that are ready. It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
 
@@ -516,7 +521,7 @@ No runs with an actionable pending finalizer.
 
 The third and fourth lines, and the step and the way out on a run in `running`, were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>.` for every run in `running`.
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the four `is not terminal … nothing to drain` lines above, or for one of:
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the five `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.

@@ -28,6 +28,20 @@ import { runCommand } from './run.js';
 import { inspectRun } from './inspect.js';
 import { advanceRunFromShell } from './run-advance.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { readFileSync as readDoc625 } from 'node:fs';
+import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
+import { fileURLToPath as urlDoc625 } from 'node:url';
+
+/** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+function claimDoc625(page: string, sentence: string): void {
+  const text = readDoc625(
+    joinDoc625(dirDoc625(urlDoc625(import.meta.url)), '../../../..', page),
+    'utf8',
+  );
+  expect(text.replace(/\s+/g, ' '), `${page} no longer says: ${sentence}`).toContain(
+    sentence.replace(/\s+/g, ' '),
+  );
+}
 
 const agent = (extra: Partial<StepDefinition> = {}, depends_on: string[] = []): StepDefinition =>
   ({ description: 'Ask.', execution: 'agent', depends_on, ...extra }) as StepDefinition;
@@ -62,6 +76,10 @@ function stores(): { home: string; runs: JsonFileStore; workflows: JsonWorkflowS
 
 describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a refused agent step', () => {
   it('inspect: `Cannot run` for the agent step, then the way out; CONTROL: a ready agent step beside it — named, no way out', async () => {
+    claimDoc625(
+      'docs/reference/cli/realm-run-reading.md',
+      '| `Cannot run`, `Could not run` | When an owed `auto` step, or an agent step, is refused before its claim | The step, the check that refused it, and why. Added after version 0.46.0. |',
+    );
     const { home, runs, workflows } = stores();
     try {
       const stuck = wf('c82-inspect', { ask: agent(PRE) });

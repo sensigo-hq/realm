@@ -216,7 +216,7 @@ The call that carries out an expiry says so in its `warnings`, naming itself: ov
 
 ### A guard after the gate
 
-A guard step that the settled choice makes ready is decided in the same write as the expiry. In the examples below the gate's step is followed by a guard, `only_if_shipping`, which stops the run unless the choice is `ship`.
+A guard step that the settled choice makes ready is decided in the same write as the expiry. In the examples below the gate's step, `approve`, is followed by a guard, `only_if_shipping`, which stops the run unless the choice is `ship`, and then by an agent step, `ship`.
 
 For one run, `realm run drain <run-id> --expired` names the choice it would settle and says what the guard would then do. With `--force` it carries the expiry out and says what the guard did:
 
@@ -241,14 +241,18 @@ See [`drain`](../cli/realm-run-acting.md#drain) for the other forms.
 If the answer is the choice the gate was settled with, the command exits 0:
 
 ```text
+⚠ gate '1a42b4b0-1fa1-42c9-b9ca-099c040b43f2' on 'approve' had expired — this respond call first carried out its declared settle_default: the default choice 'ship' was recorded (enacted_via: respond).
 the outcome matches your choice, but it was settled by timeout; your response was not recorded.
 Guard step 'only_if_shipping' passed.
 Not recorded: e428e60c-a362-410f-8819-008e40456639 | gate settled by timeout with choice 'ship' | state 'running'
+An agent step is ready: 'ship' — drive it with realm agent --run-id e428e60c-a362-410f-8819-008e40456639 --provider <provider> --model <model>.
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
 
 If the answer is a different choice, it is refused. Every line goes to the error stream, and the command exits 1:
 
 ```text
+⚠ gate '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb' on 'approve' had expired — this respond call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: respond).
 Gate '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.
 Guard step 'only_if_shipping' aborted the run.
 Reason: The order was held.
@@ -260,11 +264,15 @@ The lines about the guard are printed only when this answer is the call that car
 ```text
 the outcome matches your choice, but it was settled by timeout; your response was not recorded.
 Not recorded: 96727c7c-cdf5-495c-92ed-28cd478b19d6 | gate settled by timeout with choice 'ship' | state 'running'
+An agent step is ready: 'ship' — drive it with realm agent --run-id 96727c7c-cdf5-495c-92ed-28cd478b19d6 --provider <provider> --model <model>.
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
 
 ```text
 Gate '5f71e609-cf61-40ef-8397-2d46f5dd1a54' was settled by timeout with choice 'ship' — your choice 'hold' was not recorded.
 Not recorded: efe0a7c8-65f7-4be4-9fd9-447f5badd0ed | gate settled by timeout with choice 'ship' | state 'running'
+An agent step is ready: 'ship' — drive it with realm agent --run-id efe0a7c8-65f7-4be4-9fd9-447f5badd0ed --provider <provider> --model <model>.
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
 
 Over MCP these replies carry `answer_recorded: false`. See [`submit_human_response`](../mcp/tools.md#submit_human_response).

@@ -137,7 +137,11 @@ It prints:
 
 ```text
 Responded: 64993bb2-6f65-47d9-801c-d008e9291a00 | choice 'send' | new state 'running'
+Owed to the engine: 'send' — realm run advance 64993bb2-6f65-47d9-801c-d008e9291a00 runs it, with no project code (nothing to load under /home/me/announce), in the environment of the shell it runs in.
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
+
+The second line names the step the answer leaves to the engine and the command that runs it; the third is printed with it. Both were added after version 0.46.0.
 
 The answer names its answerer only if you say who with `--by`:
 
@@ -147,7 +151,7 @@ realm run respond 64993bb2-6f65-47d9-801c-d008e9291a00 --gate 39792a3a-f9c3-470a
 
 Realm records the name as you give it, without spaces at either end, and does not check it. It takes at most 200 characters, with no control characters, and `realm run inspect` shows it as `answered by alice (as stated, not verified)`. Without `--by` it shows `(not stated)`. `--by` names a person. It is never filled in from the operating system or from `REALM_OPERATOR`, which name a program.
 
-An AI assistant connected over MCP answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. That call carries the `claim_token` from the reply that opened the gate. See [The claim token](../reference/mcp/tools.md#the-claim-token).
+An AI assistant connected over MCP answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. In the reply that opened the gate, that call carries the gate's `claim_token`; the same call in a later reply, such as `get_run_state`'s, has none. See [The claim token](../reference/mcp/tools.md#the-claim-token).
 
 A choice that is not on the list is refused, and the gate stays open:
 

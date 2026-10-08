@@ -21,6 +21,20 @@ import { executeChain, executeEngineStep, executeStep } from './execution-loop.j
 import { WorkflowError } from '../types/workflow-error.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
+import { readFileSync as readDoc625 } from 'node:fs';
+import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
+import { fileURLToPath as urlDoc625 } from 'node:url';
+
+/** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+function claimDoc625(page: string, sentence: string): void {
+  const text = readDoc625(
+    joinDoc625(dirDoc625(urlDoc625(import.meta.url)), '../../../..', page),
+    'utf8',
+  );
+  expect(text.replace(/\s+/g, ' '), `${page} no longer says: ${sentence}`).toContain(
+    sentence.replace(/\s+/g, ' '),
+  );
+}
 
 async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T> {
   const dir = await mkdtempP(join(tmpdir(), 'realm-engine-step-625-'));
@@ -163,6 +177,10 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
   });
 
   it('CONTROL — an auto step runs as before: ok, completed, its bare output from the run params', async () => {
+    claimDoc625(
+      'docs/reference/run-record-and-export.md',
+      "| `output_source` | text | No | On a bare `auto` step's entry only, where its output came from: `driven_step` (the output the caller that named the step gave), `dependency` (its one `depends_on` step's output), `run_params` (the run's params; it has no `depends_on`) or `none` (`{}`). Added after version 0.46.0. |",
+    );
     await withStore(async (store) => {
       const { run } = await store.create({
         workflowId: agentDef.id,

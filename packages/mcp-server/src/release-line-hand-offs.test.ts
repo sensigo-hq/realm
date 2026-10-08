@@ -37,6 +37,20 @@ import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { readFileSync as readDoc625 } from 'node:fs';
+import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
+import { fileURLToPath as urlDoc625 } from 'node:url';
+
+/** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+function claimDoc625(page: string, sentence: string): void {
+  const text = readDoc625(
+    joinDoc625(dirDoc625(urlDoc625(import.meta.url)), '../../..', page),
+    'utf8',
+  );
+  expect(text.replace(/\s+/g, ' '), `${page} no longer says: ${sentence}`).toContain(
+    sentence.replace(/\s+/g, ' '),
+  );
+}
 
 const OTHER = createRealmBrand('@sensigo/realm', '9.9.9', 'file:///tmp/other-realm/');
 const V = REALM_BRAND.version;
@@ -180,6 +194,10 @@ describe('H1 createRealmMcpServer', () => {
 
 describe('a registry the server’s registry provider returned is named by the tool (round 4, walk Y6)', () => {
   it('over MCP, the six tools that resolve a registry: each reply names its tool and the provider, never the handler', async () => {
+    claimDoc625(
+      'docs/reference/cli/realm-mcp-and-serve.md',
+      '(or `start_run_batch`, `execute_step`, `submit_human_response`, `get_run_state`, `advance_run`).',
+    );
     const reg = {};
     Object.defineProperty(reg, Symbol.for('@sensigo/realm/ExtensionRegistry'), { value: OTHER });
     const runStore = new JsonFileStore(dir);

@@ -17,6 +17,7 @@ import {
   executeEngineStep,
   executeStep,
   submitHumanResponse,
+  buildNextActions,
 } from './execution-loop.js';
 import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
@@ -559,7 +560,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
 
   it('C169, W3-Y2: executeEngineStep, given run, answers a run that does not exist or cannot be read as executeStep does; without run it throws a TypeError', async () => {
     claim(
-      "A run that does not exist or cannot be read gets the error reply `executeStep` gives (below). `run` is required: without it the call throws a `TypeError` (`Cannot read properties of undefined (reading 'evidence')`).",
+      "A run that does not exist or cannot be read gets the error reply `executeStep` gives (below). `run` is required: without it the call throws a `TypeError` (`Cannot read properties of undefined (reading '<field>')`, the first field of the record it reads).",
     );
     const d = gated();
     const { runId } = await atQuestion(d);
@@ -585,6 +586,21 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     await expect(executeEngineStep(store, d, { runId, step: 'after' } as never)).rejects.toThrow(
       "Cannot read properties of undefined (reading 'evidence')",
     );
+    // C174: a step with no `depends_on` reads the run's params first — another field, the same throw.
+    const lone: WorkflowDefinition = {
+      id: 'dc-lone',
+      name: 'l',
+      version: 1,
+      steps: { only: { description: 'Only.', execution: 'auto', depends_on: [] } },
+    };
+    const { run: loneRun } = await store.create({
+      workflowId: lone.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await expect(
+      executeEngineStep(store, lone, { runId: loneRun.id, step: 'only' } as never),
+    ).rejects.toThrow(/^Cannot read properties of undefined \(reading '(params|evidence)'\)$/);
   });
 
   it('C163 line 104: executeEngineStep on an agent step throws a WorkflowError and writes nothing', async () => {
@@ -754,5 +770,58 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       ) as unknown as { driven_by?: { by: string } };
       expect(ev?.driven_by?.by).toBe('n'.repeat(200));
     }
+  });
+});
+
+describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the library', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const page = (p: string) => readFileSync(join(ROOT, p), 'utf8').replace(/\s+/g, ' ');
+  let store: JsonFileStore;
+  beforeEach(async () => {
+    store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-sweep-625-')));
+  });
+  async function atQuestion(d: WorkflowDefinition) {
+    const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    await executeStep(store, d, { runId: run.id, command: 'q', input: {}, dispatcher });
+    return { runId: run.id };
+  }
+
+  it('packages/core/README.md: buildNextActions builds the calls for what the run waits on — agent steps, advance_run, the open question', async () => {
+    const sentence =
+      "| `buildNextActions` | Build `NextAction[]` for what the run waits on: the agent steps that can be called, `advance_run` when the engine owes work, or the open question's `submit_human_response`. |";
+    expect(page('packages/core/README.md'), 'README no longer says it').toContain(sentence);
+    const owes: WorkflowDefinition = {
+      id: 'dc-owes',
+      name: 'o',
+      version: 1,
+      steps: {
+        x: { description: 'X.', execution: 'agent', depends_on: [] },
+        y: { description: 'Y.', execution: 'auto', depends_on: [] },
+      },
+    };
+    const { run } = await store.create({ workflowId: owes.id, workflowVersion: 1, params: {} });
+    const toolsOf = (a: ReturnType<typeof buildNextActions>) => a.map((n) => n.instruction?.tool);
+    const d = gated();
+    const { runId } = await atQuestion(d);
+    // (a) red when advance_run or the question's answer is left out; (b) prints both lists.
+    expect([
+      toolsOf(buildNextActions(owes, await store.get(run.id), undefined, new Date())),
+      toolsOf(buildNextActions(d, await store.get(runId), undefined, new Date())),
+    ]).toEqual([['execute_step', 'advance_run'], ['submit_human_response']]);
+  });
+
+  it('error-codes.md: the page counts every code the ErrorCode type defines', () => {
+    const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
+    const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
+    const end = lines.findIndex((l) => /^\s*\| '[A-Z0-9_]+';/.test(l));
+    const defined = new Set(
+      lines
+        .slice(0, end + 1)
+        .map((l) => /^\s*\| '([A-Z0-9_]+)'/.exec(l)?.[1])
+        .filter((c) => c !== undefined),
+    );
+    const text = page('docs/reference/error-codes.md');
+    // (a) red when the page's count is not the type's; (b) prints both.
+    expect(text).toContain(`This page lists all ${defined.size} codes that Realm defines`);
   });
 });

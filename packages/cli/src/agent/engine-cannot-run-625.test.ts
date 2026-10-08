@@ -28,6 +28,20 @@ import {
 } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { readFileSync as readDoc625 } from 'node:fs';
+import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
+import { fileURLToPath as urlDoc625 } from 'node:url';
+
+/** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+function claimDoc625(page: string, sentence: string): void {
+  const text = readDoc625(
+    joinDoc625(dirDoc625(urlDoc625(import.meta.url)), '../../../..', page),
+    'utf8',
+  );
+  expect(text.replace(/\s+/g, ' '), `${page} no longer says: ${sentence}`).toContain(
+    sentence.replace(/\s+/g, ' '),
+  );
+}
 
 type Member = 'trust' | 'precondition' | 'input_schema' | 'capability_first' | 'capability_later';
 const MEMBERS: Member[] = [
@@ -263,6 +277,10 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
   });
 
   it('MR-14: two steps that cannot run — the drive stops on the FIRST in definition order', async () => {
+    claimDoc625(
+      'docs/reference/cli/realm-agent.md',
+      "| `✗ Step '<step>' …`, `✗ The drive stops: …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
+    );
     // `zeta` comes first in the definition and last by name, so neither the name order nor the
     // order the checks run in can pass for definition order.
     const def: WorkflowDefinition = {

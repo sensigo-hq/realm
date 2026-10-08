@@ -2,7 +2,7 @@
 
 <!-- description: Reference for the realm run subcommands that only read (list, inspect, attempts, diff, replay and export): their flags, output and exit codes. -->
 
-`realm run` has sixteen subcommands. This page covers the six that only read: they change no run. The other ten are in [`realm run`: commands that act](realm-run-acting.md). Every output shown came from a run of the command.
+`realm run` has seventeen subcommands. This page covers the six that only read: they change no run. The other eleven are in [`realm run`: commands that act](realm-run-acting.md). Every output shown came from a run of the command.
 
 | Subcommand              | What it does                                                  |
 | ----------------------- | ------------------------------------------------------------- |
@@ -92,7 +92,7 @@ realm run inspect <run-id> [--verbose] [--check-drift]
 
 Prints the run's record: where it stands, then one entry for each step that ran.
 
-The outputs in this section are from version 0.46.0. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
+The outputs in this section are from version 0.46.0, except the lines marked as added after it and the `Answer:` line of an answer the gate's expiry wrote, which 0.46.0 prints as `(no one answered)`. Version 0.45.0 prints the `Diagnostics` line as `~10 tokens | no preconditions`: it has no `(estimate, step input)`, no measured token figures and no cache part. It also prints no `cost` line, and no `usage` line under a drive failure.
 
 | Flag            | What it does                                                                                              |
 | --------------- | --------------------------------------------------------------------------------------------------------- |
@@ -139,19 +139,19 @@ Evidence (3 steps):
 
 ### The lines at the top
 
-| Line                                            | Printed                                                   | Holds                                                                                                                               |
-| ----------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `Run`, `Workflow`, `Phase`                      | Always                                                    | The run's ID, the workflow's `id` and `version`, and the phase.                                                                     |
-| `Rerun of`                                      | When the run replaced an earlier one                      | The ID of the run it replaced. See [Idempotency and batches](../../guides/idempotency-and-batches.md).                              |
-| `Sealed by`                                     | When the run has ended                                    | What ended it, such as `complete`, `step_failure` or `handler_abort (total)`.                                                       |
-| `Cause`                                         | When the run has ended                                    | The same, as a sentence.                                                                                                            |
-| `Completed`, `In Progress`, `Failed`, `Skipped` | Always                                                    | The names of the steps in each state. Under `Skipped`, one line for each skipped step gives the reason.                             |
-| `Defaulted (settled by default)`                | When a step was given its default output                  | The names of those steps.                                                                                                           |
-| `Created`, `Updated`                            | Always                                                    | When the run was started and when it last changed, in UTC.                                                                          |
-| `Gate`, `Choices`                               | When the run is in `gate_waiting`                         | The step, the gate's ID, how long it has been open, and the choices it accepts.                                                     |
-| `Owed to the engine`                            | When guards or `auto` steps are owed                      | The steps, and the `realm run advance` command that runs them. Added after version 0.46.0.                                          |
-| `Cannot run`, `Could not run`                   | When an owed `auto` step cannot run                       | The step, the check that refused it, and why. Added after version 0.46.0.                                                           |
-| `Run <id> stays open`                           | When the run cannot go on until its workflow is corrected | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.46.0. |
+| Line                                            | Printed                                                                    | Holds                                                                                                                                                         |
+| ----------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Run`, `Workflow`, `Phase`                      | Always                                                                     | The run's ID, the workflow's `id` and `version`, and the phase.                                                                                               |
+| `Rerun of`                                      | When the run replaced an earlier one                                       | The ID of the run it replaced. See [Idempotency and batches](../../guides/idempotency-and-batches.md).                                                        |
+| `Sealed by`                                     | When the run has ended                                                     | What ended it, such as `complete`, `step_failure` or `handler_abort (total)`.                                                                                 |
+| `Cause`                                         | When the run has ended                                                     | The same, as a sentence.                                                                                                                                      |
+| `Completed`, `In Progress`, `Failed`, `Skipped` | Always                                                                     | The names of the steps in each state. Under `Skipped`, one line for each skipped step gives the reason.                                                       |
+| `Defaulted (settled by default)`                | When a step was given its default output                                   | The names of those steps.                                                                                                                                     |
+| `Created`, `Updated`                            | Always                                                                     | When the run was started and when it last changed, in UTC.                                                                                                    |
+| `Gate`, `Choices`                               | When the run is in `gate_waiting`                                          | The step, the gate's ID, how long it has been open, and the choices it accepts.                                                                               |
+| `Owed to the engine`                            | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them. Added after version 0.46.0. |
+| `Cannot run`, `Could not run`                   | When an owed `auto` step, or an agent step, is refused before its claim    | The step, the check that refused it, and why. Added after version 0.46.0.                                                                                     |
+| `Run <id> stays open`                           | When the run cannot go on until its workflow is corrected                  | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.46.0.                           |
 
 Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added in 0.46.0:
 
@@ -161,7 +161,7 @@ In Progress: classify, review
   review: question opened through ops@server-1 (from the OS user, via mcp-stdio), 0m ago
 ```
 
-The name is the program's, not a person's: `from the OS user` is the OS user and host name, `from REALM_OPERATOR` is that variable, `as stated` is a name an embedding program gave. `via` names the door the program came through: `agent`, `run`, `mcp-stdio`, `mcp-http`. A step whose question is open reads `question opened through`, and says nothing about anyone working on it now. When a claim has no name, the line says why instead: `no program name was recorded on this claim`, `claimed before program names were recorded`, `no claim is recorded for this step` or `this run store keeps no claims`. A name that cannot be shown keeps the verb: `taken by a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
+The name is the program's, not a person's: `from the OS user` is the OS user and host name, `from REALM_OPERATOR` is that variable, `as stated` is a name an embedding program gave. `via` names the door the program came through: `agent`, `run`, `advance`, `mcp-stdio`, `mcp-http`. A step whose question is open reads `question opened through`, and says nothing about anyone working on it now. When a claim has no name, the line says why instead: `no program name was recorded on this claim`, `claimed before program names were recorded`, `no claim is recorded for this step` or `this run store keeps no claims`. A name that cannot be shown keeps the verb: `taken by a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
 
 A skipped step's reason looks like this:
 

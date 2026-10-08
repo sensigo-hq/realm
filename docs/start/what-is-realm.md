@@ -41,7 +41,11 @@ must have required property 'risk'
 
 A field the step never asked for is refused the same way. A refused answer is not kept as the step's output.
 
-**Human gates.** A step can be marked as needing a person. The run stops there, and the steps after it cannot run until an answer is recorded. While the gate was open, the agent's attempt to post anyway got the same refusal as above, and the run stayed where it was.
+**Human gates.** A step can be marked as needing a person. The run stops there, and the steps after it cannot run until an answer is recorded. While the gate was open, the agent's attempt to post anyway was refused, and the run stayed where it was:
+
+```text
+Step 'post_approval' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes) — answer it with submit_human_response.
+```
 
 **A record.** Every step that runs leaves an entry: what went in, what came out, how long it took, and a hash (a short fingerprint) of the output. A step that was skipped has its reason recorded, for example:
 

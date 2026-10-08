@@ -2,7 +2,7 @@
 
 <!-- description: Every error code Realm defines: when each one is raised and what it tells the caller to do, and the codes that nothing raises. -->
 
-Every error Realm raises on purpose has a code. This page lists all 86 codes that Realm defines: the 71 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
+Every error Realm raises on purpose has a code. This page lists all 87 codes that Realm defines: the 72 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises. The lists were made by a script that read the `ErrorCode` type and every place in Realm's code that raises one. The replies shown came from calls to a running server.
 
 ## Where a code appears
 
@@ -21,7 +21,7 @@ Every error Realm raises on purpose has a code. This page lists all 86 codes tha
 }
 ```
 
-`get_run_state` is an exception: its reply for a run that does not exist has the message and no `error_code`.
+`get_run_state`'s reply for a run that does not exist carries `STATE_RUN_NOT_FOUND` too. Up to version 0.46.0 it had the message and no `error_code`.
 
 ## What an error carries
 
@@ -130,7 +130,7 @@ The last two columns are what the error carries where it is raised. Where a code
 | Code                             | Raised when                                                                                                                                                                                   | `agentAction`                     | `retryable` |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ----------- |
 | `ENGINE_INTERNAL`                | An error Realm did not expect, or a call that breaks an internal rule.                                                                                                                        | `stop`                            | No          |
-| `ENGINE_STORE_FAILED`            | The store failed while a step was being run.                                                                                                                                                  | `stop`                            | Varies      |
+| `ENGINE_STORE_FAILED`            | The store failed while a step was being run, or a run's record could not be read (`execute_step`, `submit_human_response`, `advance_run`, `get_run_state`, and the library calls).            | `stop`                            | Varies      |
 | `ENGINE_ARTIFACT_DELETE_FAILED`  | A store could not delete a run's files. `details.failures` lists each one.                                                                                                                    | `report_to_user`                  | Varies      |
 | `ENGINE_ADAPTER_FAILED`          | An adapter threw an ordinary error, or was asked for an operation it does not have.                                                                                                           | `report_to_user`, `stop`          | No          |
 | `ENGINE_ADAPTER_NOT_REGISTERED`  | A step's adapter is not registered. The step is blocked, and the run stays open.                                                                                                              | `stop`                            | No          |

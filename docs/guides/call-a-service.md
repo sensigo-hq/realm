@@ -218,10 +218,10 @@ services:
     trust: engine_delivered
 ```
 
-If `realm.yaml` is missing, a step that uses the adapter is blocked, and the run waits:
+If `realm.yaml` is missing, a step that uses the adapter is blocked, and the run waits. Over MCP, `start_run` replies `ok` and names the step in `warnings` (`Step '<step>' is blocked: …`), and `execute_step` on the step is refused with:
 
 ```text
-Adapter 'github' for service 'files' is not registered. Declare this adapter under 'adapters:' in realm.yaml …
+Adapter 'github' for service 'github' is not registered. Declare this adapter under 'adapters:' in realm.yaml …
 ```
 
 If the secret is missing, nothing starts, and Realm names it:

@@ -15,6 +15,20 @@ import {
 } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
+import { readFileSync as readDoc625 } from 'node:fs';
+import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
+import { fileURLToPath as urlDoc625 } from 'node:url';
+
+/** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+function claimDoc625(page: string, sentence: string): void {
+  const text = readDoc625(
+    joinDoc625(dirDoc625(urlDoc625(import.meta.url)), '../../../..', page),
+    'utf8',
+  );
+  expect(text.replace(/\s+/g, ' '), `${page} no longer says: ${sentence}`).toContain(
+    sentence.replace(/\s+/g, ' '),
+  );
+}
 
 const BLOCKED_LINE =
   "log: • Step 'compute' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it";
@@ -103,5 +117,57 @@ describe('#625 PR-2a, C64 — realm agent: a chained step this runner lacks the 
     expect(d.lines.indexOf('log: \n→ [agent] ask2')).toBeGreaterThan(named);
     expect(d.lines.filter((l) => l === BLOCKED_LINE)).toHaveLength(1);
     expect(d.lines.at(-1)).toBe(EXIT_LINE);
+  });
+});
+
+describe('#625 PR-2a, C174 — realm-agent.md: when a drive attempts a step whose handler is missing', () => {
+  it('the first drive of a run attempts it as soon as it is owed, before a ready agent step; once the block is on the record, a later drive only when nothing else is left', async () => {
+    claimDoc625(
+      'docs/reference/cli/realm-agent.md',
+      "A step whose handler or adapter is missing is attempted once by each drive (`→ [auto] <step>`), and each attempt is recorded in the run's `capability_blocks`: the first drive of a run attempts it as soon as it is owed, before any agent step that is ready; a later drive, once the run's record holds the block, attempts it only when it has nothing else to run;",
+    );
+    const def: WorkflowDefinition = {
+      id: 'c174-first-drive',
+      name: 'c174 first drive',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        fetch: { description: 'Fetch.', execution: 'auto', depends_on: [], handler: 'missing_h' },
+        classify: { description: 'Classify.', execution: 'agent', depends_on: [] },
+      },
+    };
+    const store = new InMemoryStore();
+    const provider = new (class extends LlmProvider {
+      callStep = vi.fn().mockResolvedValue({});
+    })();
+    const lines: string[] = [];
+    for (const kind of ['log', 'error', 'warn'] as const) {
+      vi.spyOn(console, kind).mockImplementation((...a: unknown[]) => {
+        lines.push(`${kind}: ${a.join(' ')}`);
+      });
+    }
+    const deps = {
+      store,
+      workflowStore: {
+        async register() {},
+        async get() {
+          return def;
+        },
+        async list() {
+          return [def];
+        },
+      },
+      provider,
+      registry: createDefaultRegistry(),
+    };
+    await runAgent(deps, { definition: def, params: {}, inFlightPollMs: 5, inFlightWatchMs: 20 });
+    vi.restoreAllMocks();
+    // An agent step's line begins with a blank line (`\n→ [agent] …`).
+    const order = lines.filter((l) => /^log: \n?→ \[/.test(l)).map((l) => l.replace('\n', ''));
+    const runId = (await store.list())[0]!.id;
+    // (a) red when the first drive runs the ready agent step before attempting the blocked step;
+    //     (b) prints the step lines.
+    expect(order.slice(0, 2)).toEqual(['log: → [auto] fetch', 'log: → [agent] classify']);
+    expect(Object.keys((await store.get(runId)).capability_blocks ?? {})).toEqual(['fetch']);
   });
 });

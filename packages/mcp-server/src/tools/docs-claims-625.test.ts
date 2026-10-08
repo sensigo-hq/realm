@@ -548,7 +548,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
   it('C154 abandon_run: STATE_RUN_TERMINAL, report_to_user', async () => {
     claim(
       'mcp/tools.md',
-      "Refused with `STATE_RUN_TERMINAL` and `report_to_user`: `Run '<id>' is already terminal (<phase>); cannot abandon a finished run.`",
+      "A completed, aborted or failed run is refused with `STATE_RUN_TERMINAL` and `report_to_user`: `Run '<id>' is already terminal (<phase>); cannot abandon a finished run.`",
     );
     const { call, runId } = await endedRun();
     const r = await call('abandon_run', { run_id: runId });
@@ -1541,7 +1541,11 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      "The reply has the same shape as a step's, with `data` and `evidence` empty as in every MCP reply (read the run with `get_run_state`): `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled, and when a step opens a question the reply is `confirm_required` with the gate.",
+      "The reply has the same shape as a step's, with `data` and `evidence` empty as in every MCP reply (read the run with `get_run_state`): `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled",
+    );
+    claim(
+      'mcp/tools.md',
+      'The run ended (<phase>).`), and when a step opens a question the reply is `confirm_required` with the gate.',
     );
     claim(
       'mcp/tools.md',

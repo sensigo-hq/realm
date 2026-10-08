@@ -105,9 +105,10 @@ It prints:
 Resumed run '4a0eafe2-afff-40ca-8b89-ad0e92db1a9c': step 'fetch' re-enabled and run reset to 'running'.
 Drive it with: realm agent --run-id 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c --provider <provider> --model <model>
 Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c shows the extension module the run loaded).
+To run the step the engine owes ('fetch') without a model: realm run advance 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c.
 ```
 
-The run is open again. Steps that had completed stay completed; the named step will run again. Then start a driver on it, as the second line says, with `<provider>` and `<model>` filled in as above. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
+The run is open again. Steps that had completed stay completed; the named step will run again. Then start a driver on it, as the second line says, with `<provider>` and `<model>` filled in as above. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line. The fourth line, printed when the step is one the engine runs, was added after version 0.46.0.
 
 `--from` must name a step the run lists under `Failed`. For any other step, the command refuses:
 

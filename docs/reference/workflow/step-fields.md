@@ -128,9 +128,9 @@ See [Gates](gates.md).
 | `abort_unless`  | condition, or list of conditions | Required on a guard | The run is aborted if any condition is false.       |
 | `abort_message` | string                           | None                | The message recorded when the guard aborts the run. |
 
-A guard is never called. It is decided inside the write that makes it ready: a step that finishes, an answer to a gate, or a gate whose time runs out. The reply to that call says what the guard did. See [The reply](../mcp/tools.md#the-reply).
+A guard is never called by name. It is decided inside the write that makes it ready: a step that finishes, an answer to a gate, or a gate whose time runs out. The reply to that call says what the guard did. See [The reply](../mcp/tools.md#the-reply).
 
-A guard that is already ready when a run is created or resumed is not decided by that act. It is decided by the run's next such write. A workflow whose only first step is a guard has no such write, so that guard is never decided. The run then carries the finding [`guard_awaiting_settlement`](../mcp/run-state-and-health.md#the-14-findings).
+A guard that is already ready when a run is created is decided by `start_run`, in the call that creates the run. One that is ready some other way — a run created by `start_run_batch` or by a program, or opened again by `realm run resume` at a failed guard — is decided by the run's next such write or by `advance_run` (`realm run advance`), which the run's `next_actions` then names. Until then the run carries the finding [`guard_awaiting_settlement`](../mcp/run-state-and-health.md#the-14-findings). Deciding a guard in `start_run` and in `advance_run` was added after version 0.46.0.
 
 If a condition refers to a value that does not exist, the run fails, and is not recorded as aborted. The same holds for a guard whose `when` or `abort_unless` cannot be evaluated at all: the guard is recorded as failed, and the write that made it ready still succeeds.
 

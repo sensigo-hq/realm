@@ -21,6 +21,20 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { sweepExpiredGates } from './listen.js';
+import { readFileSync as readDoc625 } from 'node:fs';
+import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
+import { fileURLToPath as urlDoc625 } from 'node:url';
+
+/** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+function claimDoc625(page: string, sentence: string): void {
+  const text = readDoc625(
+    joinDoc625(dirDoc625(urlDoc625(import.meta.url)), '../../../..', page),
+    'utf8',
+  );
+  expect(text.replace(/\s+/g, ' '), `${page} no longer says: ${sentence}`).toContain(
+    sentence.replace(/\s+/g, ' '),
+  );
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DOCS = join(HERE, '../../../../docs/reference');
@@ -133,6 +147,10 @@ describe(
         ?.trim() ?? '<no Answer line>';
 
     it('C163 gates.md: realm run list --stuck names realm run advance for settle_default and abort, realm run respond for finding_only', async () => {
+      claimDoc625(
+        'docs/reference/mcp/run-state-and-health.md',
+        '| `<step>=gate_expired(<on_expiry>) (realm run advance)`, or `<step>=gate_expired(finding_only) (realm run respond)` |',
+      );
       claim(
         'workflow/gates.md',
         'The two dispositions the engine carries out name `realm run advance`, which carries them out now; the finding-only one names `realm run respond`.',
@@ -254,6 +272,10 @@ describe(
     });
 
     it('C147/C163 gates.md: inspect prints `(no answer in time)` — when no answer came, and when one came late and was not recorded', async () => {
+      claimDoc625(
+        'docs/reference/cli/realm-run-reading.md',
+        "The outputs in this section are from version 0.46.0, except the lines marked as added after it and the `Answer:` line of an answer the gate's expiry wrote, which 0.46.0 prints as `(no one answered)`.",
+      );
       claim(
         'workflow/gates.md',
         "On the gate's step, `realm run inspect` prints `Answer: hold · settled by the gate's expiry (no answer in time)` — no answer came before the time was up, or one came after it and was not recorded —",
@@ -410,6 +432,10 @@ describe(
     });
 
     it('C170 gates.md: an answer after the abort is refused with the aborted run’s way out (realm run respond)', async () => {
+      claimDoc625(
+        'docs/reference/cli/realm-run-acting.md',
+        "| The run has ended | `Run '00b33778-…' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 00b33778-… --force' removes its record.` The words after the dash name the way out that kind of ending has, as `submit_human_response` names it: see [A run that has ended](../mcp/tools.md#a-run-that-has-ended). |",
+      );
       claim(
         'workflow/gates.md',
         "Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c --force' removes its record.",
