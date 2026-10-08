@@ -555,6 +555,84 @@ describe(
         });
       },
     );
+
+    it('the same code from a guard of the drive’s own chain names no step: the drive’s answer was recorded — no not-recorded line', async () => {
+      // `write` and `a` (agents), guard `g` after `a`, `fin` after both. After the drive's own settle
+      // of `write`, another writer records `a` (ok: false) with a plain update (it settles no guard), so
+      // the chain meets `g` and decides abort; at that settle another call settles `g` first (pass):
+      // STATE_STEP_ALREADY_SETTLED with no `stopped_step`.
+      const def = wf({
+        write: agent(),
+        a: agent(),
+        g: {
+          description: 'Guard.',
+          execution: 'guard',
+          depends_on: ['a'],
+          abort_unless: ['a.ok == true'],
+        } as StepDefinition,
+        fin: auto(['g', 'write']),
+      });
+      const seen: string[] = [];
+      const d = await drive(def, {
+        before: async (store) => {
+          const original = store.settleStep!.bind(store);
+          store.settleStep = async (id, delta, d2, o) => {
+            if (
+              delta.kind === 'settle_guard' &&
+              delta.step === 'g' &&
+              delta.outcome === 'abort' &&
+              !seen.includes('raced')
+            ) {
+              seen.push('raced');
+              // Another call's pass: the same delta without the abort's own fields.
+              const { abort: _abort, ...rest } = delta;
+              void _abort;
+              await original(id, { ...rest, outcome: 'pass' }, d2, o);
+            }
+            const r = await original(id, delta, d2, o);
+            if (delta.kind === 'settle_step' && delta.step === 'write' && !seen.includes('a')) {
+              seen.push('a');
+              const cur = await store.get(id);
+              const now = new Date().toISOString();
+              await store.update({
+                ...cur,
+                completed_steps: [...cur.completed_steps, 'a'],
+                evidence: [
+                  ...cur.evidence,
+                  {
+                    step_id: 'a',
+                    started_at: now,
+                    completed_at: now,
+                    duration_ms: 0,
+                    input_summary: {},
+                    output_summary: { ok: false },
+                    status: 'success',
+                    evidence_hash: 'r24',
+                  },
+                ],
+              });
+            }
+            if (delta.kind === 'settle_guard') {
+              seen.push(`this call: ${r.applied ? 'applied' : r.reason}`);
+            }
+            return r;
+          };
+        },
+      });
+      // (a) red when the guard's refusal is read as the drive's own step's (its answer, recorded, then
+      //     said not recorded), or the race is not the one built; (b) prints the lines and the race.
+      expect({
+        seen,
+        notRecorded: d.lines.filter((l) => l.includes('answer was not recorded')),
+        result: d.result,
+        writeRecorded: (await d.store.get(d.runId)).completed_steps.includes('write'),
+      }).toEqual({
+        seen: ['a', 'raced', 'this call: settled_outcome_divergence'],
+        notRecorded: [],
+        result: 'failed',
+        writeRecorded: true,
+      });
+    });
   },
 );
 

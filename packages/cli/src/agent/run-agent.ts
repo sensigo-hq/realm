@@ -1703,10 +1703,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // (`STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` — its claim was removed, as
         // `realm run reclaim --force` removes it). The answer was not recorded: said as C179's line
         // from the record, never `✗ … failed`, and the loop goes on (a step still held is waited for).
+        // `stopped_step` names this step only on its own call's refusal: the same code from a guard
+        // of the chain (a concurrent settle that diverged from its abort) names no step, and keeps
+        // the stop below — this drive's answer was recorded there.
         if (
           engineReply === undefined &&
           result.status === 'error' &&
-          (result.stopped_step ?? stepName) === stepName &&
+          result.stopped_step === stepName &&
           (result.error_code === 'STATE_STEP_ALREADY_SETTLED' ||
             result.error_code === 'STATE_CLAIM_LOST')
         ) {
