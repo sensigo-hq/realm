@@ -910,6 +910,92 @@ describe(
       });
     });
 
+    it('advance, C191 (walk c9, W3-Y1): `Last recorded driver:` names the program on the newest entry that names one — after an answer, still the program that opened the question; inspect shows who answered; newer entries with no program are counted', async () => {
+      claim(
+        PAGE,
+        "`Last recorded driver:` names the program on the run's newest evidence entry that names one, with that entry's step and time: `<program> at step '<step>', <time>.`, or `none recorded.` A step's own entry names the program that ran it; an answer to a question names none, and neither does a guard's decision. So after `realm run respond`, the line still names the program that ran the question's step and opened the question; `realm run inspect` shows who answered, on that step's `Answer:` line (`answered by <name>`, the name `--by` gave, or `answered by (not stated)`). When newer entries of steps name no program (a library call made without `driver`), the line ends `; 1 newer entry records no driver.` (or `; <n> newer entries record no driver.`).",
+      );
+      const { def } = await project(
+        'cli-c191-wf',
+        [
+          CONFIRM(),
+          '  g:',
+          '    description: g.',
+          '    execution: guard',
+          '    depends_on: [confirm]',
+          `    abort_unless: ["confirm.choice == 'approve'"]`,
+          autoStep('after', ['g']),
+          agentStep('later', ['after']),
+          agentStep('more', ['after']),
+        ].join('\n'),
+        false,
+      );
+      const id = await started(def);
+      const as = (who: string) => ({ env: { REALM_OPERATOR: who } });
+      const driverLine = (who: string) => realm(['run', 'advance', id], as(who)).out[2];
+      // `opener` runs `confirm`, whose question opens; `answerer` answers it (`--by alice`), and the
+      // answer's write decides the guard `g`.
+      const opened = realm(['run', 'advance', id], as('opener'));
+      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const answered = realm(
+        ['run', 'respond', id, '--gate', gateId, '--choice', 'approve', '--by', 'alice'],
+        as('answerer'),
+      );
+      const confirmAt = (await runStore.get(id)).evidence.find(
+        (e) => e.step_id === 'confirm' && e.kind !== 'gate_response',
+      )!.completed_at;
+      const afterAnswer = driverLine('third');
+      const inspect = realm(['run', 'inspect', id]).out;
+      const afterAt = (await runStore.get(id)).evidence.find(
+        (e) => e.step_id === 'after',
+      )!.completed_at;
+      const afterStep = driverLine('fourth');
+      // Two library calls without `driver`: their entries name no program.
+      for (const step of ['later', 'more']) {
+        const r = await executeStep(runStore, def, {
+          runId: id,
+          command: step,
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        expect(r.status, JSON.stringify(r)).toBe('ok');
+        if (step === 'later') {
+          // (a) red when one newer entry is not counted in the singular; (b) prints the line.
+          expect(driverLine('fifth')).toBe(
+            `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}; 1 newer entry records no driver.`,
+          );
+        }
+      }
+      // (a) red when the line names the answerer, counts the answer or the guard as an entry with no
+      //     program, or inspect does not show who answered and who opened the question; (b) prints all.
+      expect({
+        opened: opened.out[2],
+        answered: answered.code,
+        afterAnswer,
+        answerLine: inspect.find((l) => l.trim().startsWith('Answer: ')),
+        openedThrough: inspect.find((l) => l.trim().startsWith('Question opened through: ')),
+        afterStep,
+        two: driverLine('sixth'),
+      }).toEqual({
+        opened: 'Last recorded driver: none recorded.',
+        answered: 0,
+        afterAnswer: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'confirm', ${confirmAt}.`,
+        answerLine: expect.stringMatching(
+          /^\s+Answer: approve · answered by alice \(as stated, not verified\) · proof: /,
+        ),
+        openedThrough: '     Question opened through: opener (from REALM_OPERATOR, via advance)',
+        afterStep: `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}.`,
+        two: `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}; 2 newer entries record no driver.`,
+      });
+      // An answer without `--by`: `answered by (not stated)`.
+      const other = await atQuestion(def);
+      expect(respond(other, 'approve').code).toBe(0);
+      // (a) red when an unstated answerer is shown otherwise; (b) prints the line.
+      expect(
+        realm(['run', 'inspect', other.id]).out.find((l) => l.trim().startsWith('Answer: ')),
+      ).toMatch(/^\s+Answer: approve · answered by \(not stated\) · proof: /);
+    });
+
     it('advance, L148 (open question): at an open question advance runs nothing, and its line is the reply’s respond command', async () => {
       claim(
         PAGE,

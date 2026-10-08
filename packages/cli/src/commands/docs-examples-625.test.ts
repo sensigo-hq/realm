@@ -83,6 +83,8 @@ const CELLS = {
   operate: 'operate-runs: every realm run line on a real run',
   handlers: 'step-handlers: the handler, the workflow, validate, register and a run',
   coreQuickStart: 'core README: the quick start program runs a step',
+  coreQuickStartNext:
+    "core README: the quick start's comment gives advanceRun's call, and that call runs the step the run then owes the engine",
   coreAdapter: 'core README: the adapter fragment serves a step through executeStep',
   embedded: 'mcp-server README: the embedded server program serves 11 tools over stdio',
   provider: 'cli README: the custom provider module drives realm agent',
@@ -1027,6 +1029,64 @@ describe(
         { code: r.status, out: r.stdout, runs: runs.map((x) => [x.run_phase, x.completed_steps]) },
         r.stderr,
       ).toEqual({ code: 0, out: 'ok\n', runs: [['completed', ['my_step']]] });
+    });
+
+    it(CELLS.coreQuickStartNext, async () => {
+      // decision C192: the comment's call, as written, after the quick start — on a workflow whose
+      // my_step leaves an `auto` step owed, so next_actions names advance_run.
+      const dir = nodeProject();
+      mkdirSync(join(dir, 'my-workflow'));
+      writeFileSync(
+        join(dir, 'my-workflow', 'workflow.yaml'),
+        [
+          'id: my-workflow',
+          'name: My workflow',
+          'version: 1',
+          'steps:',
+          '  my_step:',
+          '    description: Answer.',
+          '    execution: agent',
+          '  after:',
+          '    description: After.',
+          '    execution: auto',
+          '    depends_on: [my_step]',
+          '',
+        ].join('\n'),
+      );
+      const quickStart = fence('packages/core/README.md', 'loadWorkflowFromFile, JsonFileStore');
+      const call = /advanceRun\(.*?\}\)/.exec(quickStart)?.[0];
+      // (a) red when the comment no longer gives the call; (b) prints the block.
+      expect(call, quickStart).toBe('advanceRun(store, definition, { runId: run.id })');
+      writeFileSync(
+        join(dir, 'main.ts'),
+        [
+          quickStart,
+          // what the comment says: import it beside executeStep, and call it when next_actions names
+          // advance_run
+          "import { advanceRun } from '@sensigo/realm';",
+          "if (response.next_actions[0]?.instruction.tool === 'advance_run') {",
+          `  const next = await ${call};`,
+          '  console.log(next.status, next.run_phase, next.next_actions.length);',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      const r = spawnSync(process.execPath, ['main.ts'], {
+        cwd: dir,
+        env: env(),
+        encoding: 'utf8',
+      });
+      const runs = await runStore.list();
+      // (a) red when the comment's call does not run as written (a wrong argument, a missing one), or
+      //     does not run the step the run owes; (b) prints its stderr.
+      expect(
+        { code: r.status, out: r.stdout, runs: runs.map((x) => [x.run_phase, x.completed_steps]) },
+        r.stderr,
+      ).toEqual({
+        code: 0,
+        out: 'ok\nok completed 0\n',
+        runs: [['completed', ['my_step', 'after']]],
+      });
     });
 
     it(CELLS.coreAdapter, () => {

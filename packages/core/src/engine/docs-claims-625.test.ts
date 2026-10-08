@@ -69,6 +69,10 @@ function gated(onExpiry: 'settle_default' | 'abort' = 'settle_default'): Workflo
   };
 }
 
+/** decision C193: core-library.md's `onGuard` sentence (MR-147: it names every guard the call records). */
+const ONGUARD_SENTENCE =
+  "`onGuard` (called with the name of each guard decided while the call runs, as the call records it and before the next step's `onStep`: one decided by the write of a step the call ran, one the call decides itself, and one another call decided first, which the call finds already settled; a guard decided by the expiry the call carries out is on the expiry line instead; added after version 0.46.0)";
+
 const dispatcher = async () => ({});
 const LATER = () => new Date(Date.now() + 120_000);
 const EARLIER = () => new Date(Date.now() - 120_000);
@@ -362,9 +366,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   });
 
   it('C187 (walk c8, W5-1), line 102: onGuard is called with each guard the call decides, between the step that decided it and the next step; not for a guard the expiry decided', async () => {
-    claim(
-      "`onGuard` (called with the name of each guard the call decides, after the step whose write decided it and before the next step's `onStep`; a guard decided by the expiry the call carries out is on the expiry line instead; added after version 0.46.0)",
-    );
+    // decision C193: the sentence re-quoted — it names every guard the call records (MR-147).
+    claim(ONGUARD_SENTENCE);
     const d: WorkflowDefinition = {
       ...gated(),
       id: 'dc-c187',
@@ -408,6 +411,86 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       expiryLine: true,
     });
   });
+
+  it.each([
+    ['the call decides it itself', false],
+    ['another call decided it first, and the call finds it already settled', true],
+  ] as const)(
+    'C193 (MR-147), line 102: onGuard is called for a guard decided while the call runs that no step of the call decided — %s',
+    async (_kase, raced) => {
+      claim(ONGUARD_SENTENCE);
+      // `a` is recorded completed by a plain update (a write that decides no guard), so the guard
+      // `g` is eligible when advanceRun reads the run: the call's own settle decides it.
+      const d: WorkflowDefinition = {
+        id: 'dc-c193',
+        name: 'docs claims',
+        version: 1,
+        steps: {
+          a: { description: 'A.', execution: 'auto', depends_on: [] },
+          g: {
+            description: 'Guard.',
+            execution: 'guard',
+            depends_on: ['a'],
+            abort_unless: ['a.ok == true'],
+          },
+          fin: { description: 'Fin.', execution: 'auto', depends_on: ['g'] },
+        },
+      };
+      const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const now = new Date().toISOString();
+      await store.update({
+        ...run,
+        completed_steps: ['a'],
+        evidence: [
+          {
+            step_id: 'a',
+            started_at: now,
+            completed_at: now,
+            duration_ms: 0,
+            input_summary: {},
+            output_summary: { ok: true },
+            status: 'success',
+            evidence_hash: 'c193',
+          },
+        ],
+      });
+      const original = store.settleStep.bind(store);
+      const settles: string[] = [];
+      let first = true;
+      // Another call settles `g` with the same delta just before this call's own settle reaches the
+      // store (the race the code's already_settled arm meets).
+      store.settleStep = async (id, delta, def, o) => {
+        if (raced && first && delta.kind === 'settle_guard') {
+          first = false;
+          settles.push(`other: ${(await original(id, delta, def, o)).applied}`);
+        }
+        const mine = await original(id, delta, def, o);
+        if (delta.kind === 'settle_guard') {
+          settles.push(`this call: ${mine.applied ? 'applied' : mine.reason}`);
+        }
+        return mine;
+      };
+      const seen: string[] = [];
+      const r = await advanceRun(store, d, {
+        runId: run.id,
+        onStep: (step) => seen.push(`step: ${step}`),
+        onGuard: (guard) => seen.push(`guard: ${guard}`),
+      });
+      // (a) red when a guard no step of the call decided is not told, is told after the next step
+      //     starts, or the race is not the one built; (b) prints the order, the settles and the reply.
+      expect({
+        settles,
+        seen,
+        chained: r.chained_auto_steps?.map((c) => c.step),
+        phase: r.run_phase,
+      }).toEqual({
+        settles: raced ? ['other: true', 'this call: already_settled'] : ['this call: applied'],
+        seen: ['guard: g', 'step: fin'],
+        chained: ['g', 'fin'],
+        phase: 'completed',
+      });
+    },
+  );
 
   it('C186 (walk c8, W4-c): advanceRun that only carries out an expired question names every guard its write decided — two, in the plural', async () => {
     const d: WorkflowDefinition = {

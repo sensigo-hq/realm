@@ -44,7 +44,7 @@ const PROMPT_CLOSES =
   "A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`.";
 /** C173: the wait for a step another process holds (realm-workflow.md). */
 const IN_FLIGHT_WAIT =
-  "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back.";
+  "While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back at that step, with the ways on that fit a step another program is still running: `realm run advance`, once the step is no longer in flight, runs what the engine then owes and names an agent step or a question that is ready.";
 /** C167, C175, C176: the question on the gate's prompt (realm-workflow.md). */
 const QUESTION_LINES =
   "The gate's prompt shows the question before its choices: the gate's `message`, or the step's `prompt` when the gate has no `message`, rendered as the reply that opened the gate renders it. Each of its lines is printed as written, with any other control character written as the escape `realm run inspect` writes in its `Message:` line (a tab as `\\t`, an escape character as `\\u001b`): `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it.";
@@ -749,9 +749,12 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         if (kase === 'another process holds the step') {
           // C173: (a) red when a step held for the whole watch is not named with its way out, or the
           //     run is not handed back; (b) prints stderr and the exit code.
+          // C188: handed back at the held step, never "stalled".
           expect([
             errored().filter((l) => l.startsWith('• Step ')),
-            errored().some((l) => l.startsWith('Workflow stalled — detached from run')),
+            errored().some((l) =>
+              l.startsWith(`Stopped waiting — detached from run '${runId()}' at step 'finish'`),
+            ),
             code,
           ]).toEqual([
             [
@@ -1349,6 +1352,423 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       }).toEqual({
         prompt: '  Question: tab\\there \\u001b[31mred\\u0007',
         inspect: '"tab\\there \\u001b[31mred\\u0007"',
+      });
+    }, 30_000);
+  });
+
+  describe('round 24 — C188: the hand-back after the watch on a step another process holds', () => {
+    /** The walk's W4b: agent `a`, then `sleep` (auto) that another process holds; `extra` steps after. */
+    const walkYaml = (id: string, extra: string[]): string[] => [
+      `id: ${id}`,
+      `name: ${id}`,
+      'version: 1',
+      'steps:',
+      '  a:',
+      '    description: Note a.',
+      '    execution: agent',
+      '  sleep:',
+      '    description: Slow step.',
+      '    execution: auto',
+      ...extra,
+      '',
+    ];
+    const autoAfter = (name: string, deps: string[]): string[] => [
+      `  ${name}:`,
+      `    description: ${name}.`,
+      '    execution: auto',
+      `    depends_on: [${deps.join(', ')}]`,
+    ];
+    /** The program `realm run advance` writes on the claim it holds (the page's screen names it). */
+    const ADVANCE = { by: 'mihai@host', by_source: 'derived', channel: 'advance' } as const;
+    const ADVANCE_WORDS = 'mihai@host (from the OS user, via advance)';
+    const PAGE_RUN = '7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17';
+    const PAGE_SINCE = '2026-10-08T12:34:50.336Z';
+
+    /**
+     * Another process (as `realm run advance` does) takes each of `steps` and holds it until
+     * `release()`; `done` settles when it has run them all. Resolves once every claim is on the record.
+     */
+    async function holdElsewhere(
+      yaml: string,
+      steps: string[],
+    ): Promise<{ release: () => void; done: Promise<void> }> {
+      const { JsonFileStore, loadWorkflowFromString, executeStep } = await import('@sensigo/realm');
+      const def = loadWorkflowFromString(yaml);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // One at a time, each claim on the record before the next is taken: the record lists them in
+      // this order.
+      const settled: Array<Promise<void>> = [];
+      for (const step of steps) {
+        settled.push(
+          executeStep(new JsonFileStore(), def, {
+            runId: runId(),
+            command: step,
+            input: {},
+            dispatcher: async () => {
+              await gate;
+              return { slept: true };
+            },
+            driver: ADVANCE,
+          }).then((r) => {
+            expect(r.status, JSON.stringify(r)).toBe('ok');
+          }),
+        );
+        const deadline = Date.now() + 10_000;
+        while ((await readRecord()).claims?.[step] === undefined) {
+          if (Date.now() > deadline)
+            throw new Error(`fixture: the other process never took ${step}`);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      }
+      const done = Promise.all(settled).then(() => undefined);
+      return { release, done };
+    }
+
+    /** `realm run advance <run>` from the built CLI, the workflow registered first (advance reads it). */
+    async function advance(yaml: string): Promise<string[]> {
+      const { JsonWorkflowStore, loadWorkflowFromString } = await import('@sensigo/realm');
+      const store = new JsonWorkflowStore();
+      const def = loadWorkflowFromString(yaml);
+      if ((await store.list()).every((w) => w.id !== def.id)) await store.register(def);
+      const { spawnSync } = await import('node:child_process');
+      const cli = join(dirname(fileURLToPath(import.meta.url)), '../../dist/index.js');
+      const r = spawnSync(process.execPath, [cli, 'run', 'advance', runId()], {
+        cwd: home,
+        env: {
+          PATH: process.env['PATH'] ?? '',
+          HOME: home,
+          NO_COLOR: '1',
+          REALM_OPERATOR: 'tester',
+        },
+        encoding: 'utf8',
+      });
+      return `${r.stdout}${r.stderr}`
+        .split('\n')
+        .filter((l) => l !== '')
+        .map((l) => l.split(runId()).join('<run>'));
+    }
+
+    /** The page's screen of the hand-back (realm-workflow.md), its values put in place. */
+    function pageScreen(since: string, watchWords: string): string[] {
+      const text = readFileSync(
+        join(
+          dirname(fileURLToPath(import.meta.url)),
+          '../../../../docs/reference/cli/realm-workflow.md',
+        ),
+        'utf8',
+      );
+      const blocks = text.split(/^```[a-z]*\n/m).filter((_, i) => i % 2 === 1);
+      const found = blocks.find((b) => b.includes('Stopped waiting — detached from run'));
+      if (found === undefined) throw new Error('realm-workflow.md has no hand-back screen');
+      return found
+        .replace(/\n```[\s\S]*$/, '')
+        .split('\n')
+        .filter((l) => l !== '')
+        .map((l) =>
+          l
+            .split(PAGE_RUN)
+            .join(runId())
+            .split(PAGE_SINCE)
+            .join(since)
+            .split('mihai@host (from the OS user, via advance)')
+            .join(ADVANCE_WORDS)
+            .replace('changed for 60s', `changed for ${watchWords}`),
+        );
+    }
+
+    /** Answers each prompt by its step; at `a`'s prompt another process takes `held` first. */
+    function answerHolding(
+      yaml: string,
+      held: string[],
+      onHeld?: (h: { release: () => void; done: Promise<void> }) => void,
+    ): string[] {
+      const asked: string[] = [];
+      mocks.question.mockImplementation(async (prompt: string) => {
+        asked.push(prompt);
+        if (prompt.startsWith('  Agent output') && asked.length === 1) {
+          onHeld?.(await holdElsewhere(yaml, held));
+        }
+        return '';
+      });
+      return asked;
+    }
+
+    const errLines = (): string[] =>
+      errored()
+        .flatMap((l) => l.split('\n'))
+        .filter((l) => l !== '');
+
+    it('C188, W4-R1 (the walk’s case): the watch ends unchanged — the in-flight line, then the run handed back at the held step: no "stalled", no map at the last prompted step, no `Drive it`; exit 1; `realm run advance` runs what is owed once the step is done', async () => {
+      claimWorkflowPage(IN_FLIGHT_WAIT);
+      claimWorkflowPage(
+        '1 if it ended in any other way, if nothing else could run, if it stopped waiting for a step another program holds,',
+      );
+      const yaml = walkYaml('prompt-625-c188', autoAfter('done', ['a', 'sleep'])).join('\n');
+      let holder: { release: () => void; done: Promise<void> } | undefined;
+      const asked = answerHolding(yaml, ['sleep'], (h) => {
+        holder = h;
+      });
+      const restore = setInFlightWatchForTests(1_500);
+      let code: number;
+      try {
+        code = await run(yaml);
+      } finally {
+        restore();
+      }
+      const since = (await readRecord()).claims!['sleep']!.since!;
+      // (a) red when the hand-back says the run stalled, names the last prompted step `a` (completed)
+      //     rather than the held `sleep`, offers `Drive it` (no agent step is ready) or `Discard`, or
+      //     differs from the page's screen; (b) prints stderr, the prompts and the exit.
+      expect({
+        asked: asked.map((p) => p.trim().split(' ')[0]),
+        err: errLines(),
+        code,
+      }).toEqual({
+        asked: ['Agent'],
+        err: pageScreen(since, '2s'),
+        code: 1,
+      });
+      expect(errored().filter((l) => /stalled|Drive it|Discard/.test(l))).toEqual([]);
+      // The way on: while `sleep` is held, advance runs nothing and says why; once it is done,
+      // advance runs what the engine then owes (`done`). (a) red when the hand-back's way on does not
+      // do what the page says; (b) prints both runs' last lines.
+      const whileHeld = await advance(yaml);
+      holder!.release();
+      await holder!.done;
+      const after = await advance(yaml);
+      expect({ whileHeld: whileHeld.at(-1), after: after.slice(-2) }).toEqual({
+        whileHeld:
+          "The engine can run nothing now: 'sleep' is in flight in another program — wait for it, or see realm run inspect <run>.",
+        after: ['→ done', "Run <run>: phase 'completed'"],
+      });
+    }, 30_000);
+
+    it.each([
+      [
+        'an agent step',
+        ['  later:', '    description: Later.', '    execution: agent', '    depends_on: [sleep]'],
+        [
+          "Nothing is owed to the engine: an agent step is ready: 'later' — drive it with realm agent --run-id <run> --provider <provider> --model <model>.",
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+        ],
+      ],
+      [
+        'a question',
+        [
+          '  review:',
+          '    description: Review.',
+          '    execution: auto',
+          '    trust: human_confirmed',
+          '    depends_on: [sleep]',
+          '    gate:',
+          '      choices: [send, hold]',
+        ],
+        [
+          '→ review',
+          expect.stringMatching(
+            /^Stopped: a question is open — realm run respond <run> --gate \S+ --choice <one of: send, hold>$/,
+          ),
+          "Run <run>: phase 'gate_waiting'",
+        ],
+      ],
+    ] as const)(
+      'C188: the hand-back’s way on, once the held step is done, names %s that is then ready',
+      async (_kase, extra, tail) => {
+        const yaml = walkYaml('prompt-625-c188-next', [...extra]).join('\n');
+        let holder: { release: () => void; done: Promise<void> } | undefined;
+        answerHolding(yaml, ['sleep'], (h) => {
+          holder = h;
+        });
+        const restore = setInFlightWatchForTests(1_500);
+        let code: number;
+        try {
+          code = await run(yaml);
+        } finally {
+          restore();
+        }
+        holder!.release();
+        await holder!.done;
+        const after = await advance(yaml);
+        // (a) red when the run is not handed back at the held step, or advance after it does not
+        //     name what is then ready; (b) prints the hand-back, the exit and advance's last lines.
+        expect({
+          handBack: errLines().filter((l) => l.startsWith('Stopped waiting')),
+          code,
+          tail: after.slice(-tail.length),
+        }).toEqual({
+          handBack: [
+            `Stopped waiting — detached from run '${runId()}' at step 'sleep' (phase: running). The run is saved.`,
+          ],
+          code: 1,
+          tail: [...tail],
+        });
+      },
+      30_000,
+    );
+
+    it('C188: an agent step ready beside the held step is asked for at this prompt — the loop never reaches the hand-back with one, so the hand-back offers no `Drive it`', async () => {
+      const yaml = walkYaml('prompt-625-c188-beside', [
+        '  b:',
+        '    description: Note b.',
+        '    execution: agent',
+        ...autoAfter('done', ['a', 'sleep', 'b']),
+      ]).join('\n');
+      let holder: { release: () => void; done: Promise<void> } | undefined;
+      const asked = answerHolding(yaml, ['sleep'], (h) => {
+        holder = h;
+      });
+      const restore = setInFlightWatchForTests(1_500);
+      let code: number;
+      try {
+        code = await run(yaml);
+      } finally {
+        restore();
+        holder?.release();
+        await holder?.done;
+      }
+      const out = logged();
+      const bAt = out.findIndex((l) => l.startsWith('→ [agent] b: Note b.'));
+      const waitAt = out.findIndex((l) => l.includes(': waiting up to '));
+      // (a) red when the ready agent step is not asked for before the wait, or the hand-back offers
+      //     `Drive it`; (b) prints the prompts, where `b` and the wait are, stderr and the exit.
+      expect({
+        asked: asked.map((p) => p.trim().split(' ')[0]),
+        bBeforeTheWait: bAt !== -1 && waitAt > bAt,
+        drive: errored().filter((l) => l.includes('Drive it')),
+        handBack: errLines().filter((l) => l.startsWith('Stopped waiting')).length,
+        code,
+      }).toEqual({
+        asked: ['Agent', 'Agent'],
+        bBeforeTheWait: true,
+        drive: [],
+        handBack: 1,
+        code: 1,
+      });
+    }, 30_000);
+
+    it('C188: the held step completes inside the watch — the record changes, the loop goes on (as before); no hand-back', async () => {
+      const yaml = walkYaml('prompt-625-c188-changed', autoAfter('done', ['a', 'sleep'])).join(
+        '\n',
+      );
+      answerHolding(yaml, ['sleep'], (h) => {
+        setTimeout(h.release, 300);
+      });
+      const restore = setInFlightWatchForTests(5_000);
+      let code: number;
+      try {
+        code = await run(yaml);
+      } finally {
+        restore();
+      }
+      // (a) red when a change inside the watch is handed back, or the loop does not go on to `done`;
+      //     (b) prints stdout's step lines, stderr and the exit.
+      expect({
+        steps: logged().filter((l) => l.startsWith('→ ')),
+        err: errLines(),
+        code,
+        phase: (await readRecord()).run_phase,
+      }).toEqual({
+        steps: ['→ [agent] a: Note a.', '→ [auto] done: done.'],
+        err: [],
+        code: 0,
+        phase: 'completed',
+      });
+    }, 30_000);
+
+    it('C188: a change that lands after the watch’s last read and before the hand-back — the last read sees it and the loop goes on; no hand-back', async () => {
+      const yaml = walkYaml('prompt-625-c188-last-read', autoAfter('done', ['a', 'sleep'])).join(
+        '\n',
+      );
+      let holder: { release: () => void; done: Promise<void> } | undefined;
+      let armedAt: number | undefined;
+      const asked: string[] = [];
+      mocks.question.mockImplementation(async (prompt: string) => {
+        asked.push(prompt);
+        if (prompt.startsWith('  Agent output')) {
+          holder = await holdElsewhere(yaml, ['sleep']);
+          armedAt = Date.now();
+        }
+        return '';
+      });
+      const { JsonFileStore } = await import('@sensigo/realm');
+      const original = JsonFileStore.prototype.get;
+      let fired = false;
+      // The first read 1.5 s (the watch) after the answer is the watch's last: it returns the record
+      // it read, and the other process completes `sleep` before that read's caller sees it.
+      vi.spyOn(JsonFileStore.prototype, 'get').mockImplementation(async function (
+        this: InstanceType<typeof JsonFileStore>,
+        ...args: Parameters<typeof original>
+      ) {
+        const r = await original.apply(this, args);
+        if (!fired && armedAt !== undefined && Date.now() - armedAt >= 1_500) {
+          fired = true;
+          holder!.release();
+          await holder!.done;
+        }
+        return r;
+      });
+      const restoreWatch = setInFlightWatchForTests(1_500);
+      const restoreReads = setQuestionWatchIntervalForTests(1_000);
+      let code: number;
+      try {
+        code = await run(yaml);
+      } finally {
+        restoreWatch();
+        restoreReads();
+      }
+      // (a) red when the hand-back uses the watch's record without a last read (the run handed back
+      //     though the step is done), or the change never landed after the watch; (b) prints all.
+      expect({
+        fired,
+        steps: logged().filter((l) => l.startsWith('→ ')),
+        handBack: errLines().filter((l) => l.startsWith('Stopped waiting')),
+        code,
+      }).toEqual({
+        fired: true,
+        steps: ['→ [agent] a: Note a.', '→ [auto] done: done.'],
+        handBack: [],
+        code: 0,
+      });
+    }, 30_000);
+
+    it('C188: two held steps — both in-flight lines, then the run handed back at both, in the plural', async () => {
+      const yaml = walkYaml('prompt-625-c188-two', [
+        '  nap:',
+        '    description: Another slow step.',
+        '    execution: auto',
+        ...autoAfter('done', ['a', 'sleep', 'nap']),
+      ]).join('\n');
+      let holder: { release: () => void; done: Promise<void> } | undefined;
+      answerHolding(yaml, ['sleep', 'nap'], (h) => {
+        holder = h;
+      });
+      const restore = setInFlightWatchForTests(1_500);
+      let code: number;
+      try {
+        code = await run(yaml);
+      } finally {
+        restore();
+        holder?.release();
+        await holder?.done;
+      }
+      // (a) red when a held step is left out, or the plural is wrong; (b) prints stderr and the exit.
+      expect({
+        inFlight: errLines()
+          .filter((l) => l.startsWith('• Step '))
+          .map((l) => /^• Step '(\w+)' has been in flight/.exec(l)?.[1]),
+        handBack: errLines().filter((l) => !l.startsWith('• Step ')),
+        code,
+      }).toEqual({
+        inFlight: ['sleep', 'nap'],
+        handBack: [
+          `Stopped waiting — detached from run '${runId()}' at steps 'sleep', 'nap' (phase: running). The run is saved.`,
+          `  Go on:     once 'sleep', 'nap' are no longer in flight, realm run advance ${runId()}`,
+          `  Inspect:   realm run inspect ${runId()}`,
+        ],
+        code: 1,
       });
     }, 30_000);
   });
