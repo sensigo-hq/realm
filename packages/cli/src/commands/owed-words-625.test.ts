@@ -2,9 +2,10 @@
 // that no journey cell reaches: `realm run advance`'s fit words, identity and driver words and every
 // `Stopped:` reason; `inspect`'s refused-step line; listen's sweeper `owed` field.
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -18,7 +19,10 @@ import {
   type ExtensionIdentityEntry,
   answerAction,
   abandonRun,
+  advanceRun,
+  reclaimStep,
   loadWorkflowFromString,
+  type Attributed,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, stoppedReasons, advanceRunFromShell } from './run-advance.js';
 import { inspectRun } from './inspect.js';
@@ -1051,6 +1055,355 @@ describe('#625 PR-2a, round 24 (the architect, m174a) — the guard line when an
       // ending for a run that another program ended.
       expect(lines, lines.join('\n')).toContain("Guard step 'g' passed.");
       expect(lines.join('\n')).not.toMatch(/Guard step 'g' (aborted|ended|completed)/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+const ACTING = 'docs/reference/cli/realm-run-acting.md';
+const flat = (t: string): string => t.replace(/\s+/g, ' ');
+
+/** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
+function claim(page: string, sentence: string): void {
+  expect(
+    flat(readFileSync(join(ROOT, page), 'utf8')),
+    `${page} no longer says: ${sentence}`,
+  ).toContain(flat(sentence));
+}
+
+/** The lines of the page's first fenced block that holds `marker`. */
+function block(page: string, marker: string): string[] {
+  const text = readFileSync(join(ROOT, page), 'utf8');
+  const blocks = text.split(/^```[a-z]*\n/m).filter((_, i) => i % 2 === 1);
+  const found = blocks.find((b) => b.includes(marker));
+  if (found === undefined) throw new Error(`${page} has no block with: ${marker}`);
+  return found.replace(/\n```[\s\S]*$/, '').split('\n');
+}
+
+describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when another program settles or takes over the step it is running', () => {
+  const RACER: Attributed = { by: 'racer-b', by_source: 'ambient', channel: 'advance' };
+  const RACER_WORDS = 'racer-b (from REALM_OPERATOR, via advance)';
+  type Kase = 'ran-all' | 'ran-it' | 'failed' | 'held' | 'released' | 'aborted';
+
+  /**
+   * `process` (auto) then `notify` (auto, after it). While this command's `process` handler runs,
+   * another program acts on the same store first: `realm run reclaim --force` frees this program's
+   * claim (`reclaimStep`), then the other program runs the step (and, for `ran-all`, the rest), takes
+   * it and holds it, or does nothing more. `refusals` is what the store answered this program's own
+   * settle of `process`.
+   */
+  async function race(kase: Kase) {
+    const { home, runs, workflows } = stores();
+    const d = loadWorkflowFromString(
+      [
+        `id: adv-race-${kase}`,
+        `name: adv-race-${kase}`,
+        'version: 1',
+        'steps:',
+        '  process:',
+        '    description: Process.',
+        '    execution: auto',
+        '    handler: slow',
+        '  notify:',
+        '    description: Notify.',
+        '    execution: auto',
+        '    handler: quick',
+        '    depends_on: [process]',
+      ].join('\n'),
+    );
+    await workflows.register(d);
+    const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const other = new ExtensionRegistry();
+    other.register('handler', 'slow', {
+      id: 'slow',
+      execute: async () => {
+        if (kase === 'failed') throw new Error('it broke there');
+        if (kase === 'aborted') return { abort: { message: 'stopped there' } };
+        return { data: { by: 'racer-b' } };
+      },
+    });
+    other.register('handler', 'quick', { id: 'quick', execute: async () => ({ data: {} }) });
+    let handlerRuns = 0;
+    const here = new ExtensionRegistry();
+    here.register('handler', 'slow', {
+      id: 'slow',
+      execute: async () => {
+        handlerRuns += 1;
+        if (handlerRuns > 1) return { data: { by: 'here' } };
+        await reclaimStep(runs, run.id, 'process');
+        if (kase === 'ran-all') {
+          await advanceRun(runs, d, {
+            runId: run.id,
+            caller: 'advance',
+            registry: other,
+            driver: RACER,
+          });
+        } else if (kase === 'ran-it' || kase === 'failed' || kase === 'aborted') {
+          await executeStep(runs, d, {
+            runId: run.id,
+            command: 'process',
+            input: {},
+            registry: other,
+            driver: RACER,
+          });
+        } else if (kase === 'held') {
+          await runs.claimStep(run.id, 'process', d, RACER);
+        }
+        return { data: { by: 'here' } };
+      },
+    });
+    here.register('handler', 'quick', { id: 'quick', execute: async () => ({ data: {} }) });
+    // What the store answers this program's own settle of `process` (the race's code).
+    const refusals: string[] = [];
+    const watched = new Proxy(runs, {
+      get(target, prop) {
+        if (prop === 'settleStep') {
+          return async (...a: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+            const r = await target.settleStep!(...a);
+            if (a[1].kind === 'settle_step' && a[1].step === 'process' && !r.applied) {
+              refusals.push(r.reason);
+            }
+            return r;
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    try {
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        watched,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        here,
+      );
+      const after = await runs.get(run.id);
+      return {
+        id: run.id,
+        code,
+        refusals,
+        handlerRuns,
+        since: after.claims?.['process']?.since,
+        lines: lines.slice(lines.indexOf('→ process')),
+        after,
+      };
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  const NOT_RECORDED = "this program's outcome for it was not recorded";
+
+  it('the page’s screen: another program ran the step (STATE_STEP_ALREADY_SETTLED) — the line from the record, never "failed", and the command goes on with what is left; exit 0', async () => {
+    claim(
+      ACTING,
+      "When another program settles the step, or takes it over, while this one is running it (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
+    );
+    const r = await race('ran-it');
+    // (a) red when the refused settle is said as `'process' failed: …`, the command stops instead of
+    //     going on with `notify`, the exit code is 1, or the race is not the one built; (b) prints them.
+    expect({ refusals: r.refusals, code: r.code, lines: r.lines }).toEqual({
+      refusals: ['already_settled_by_other'],
+      code: 0,
+      lines: block(ACTING, "this program's outcome for it was not recorded")
+        .filter((l) => l !== '')
+        .map((l) => l.replace('65d2afc8-2cb3-4401-808c-1d83a40bf989', r.id)),
+    });
+    expect(r.after.completed_steps).toEqual(['process', 'notify']);
+  });
+
+  it.each([
+    [
+      'another program ran it and the rest (STATE_STEP_ALREADY_SETTLED): completed — no Stopped line',
+      'ran-all' as const,
+      'already_settled_by_other',
+      0,
+      (id: string) => [
+        '→ process',
+        `• Step 'process' was taken by ${RACER_WORDS}, and completed; ${NOT_RECORDED}.`,
+        `Run ${id}: phase 'completed'`,
+      ],
+    ],
+    [
+      'another program’s run of it failed (STATE_STEP_ALREADY_SETTLED): `, and failed`, and exit 0 — it did not fail here',
+      'failed' as const,
+      'already_settled_by_other',
+      0,
+      (id: string) => [
+        '→ process',
+        `• Step 'process' was taken by ${RACER_WORDS}, and failed; ${NOT_RECORDED}.`,
+        'Stopped: the run has ended (failed)',
+        `Run ${id}: phase 'failed'`,
+      ],
+    ],
+    [
+      'another program’s run of it ended the run without settling it: the run ended',
+      'aborted' as const,
+      'already_settled_by_other',
+      0,
+      (id: string) => [
+        '→ process',
+        "• Step 'process': the run ended (aborted) before this program's outcome for it was recorded.",
+        'Stopped: the run has ended (aborted)',
+        `Run ${id}: phase 'aborted'`,
+      ],
+    ],
+    [
+      'another program took it over and holds it (STATE_CLAIM_LOST): taken at <time>; in flight in another program',
+      'held' as const,
+      'claim_lost',
+      0,
+      (id: string, since?: string) => [
+        '→ process',
+        `• Step 'process' was taken by ${RACER_WORDS} at ${since}; ${NOT_RECORDED}.`,
+        `Stopped: 'process' is in flight in another program — wait for it, or see realm run inspect ${id}`,
+        `Run ${id}: phase 'running'`,
+      ],
+    ],
+    [
+      'no program holds it and it has not settled (STATE_CLAIM_LOST): the claim was removed — the command runs it again, then what is left',
+      'released' as const,
+      'claim_lost',
+      0,
+      (id: string) => [
+        '→ process',
+        `• Step 'process': another process removed the claim this program held on it; ${NOT_RECORDED}.`,
+        '→ process',
+        '→ notify',
+        `Run ${id}: phase 'completed'`,
+      ],
+    ],
+  ])('%s', async (_name, kase, refusal, exit, expected) => {
+    const r = await race(kase);
+    // (a) red when the race's line, what follows it or the exit code changes, or the race is not the
+    //     one built; (b) prints them.
+    expect({ refusals: r.refusals, code: r.code, lines: r.lines }).toEqual({
+      refusals: [refusal],
+      code: exit,
+      lines: expected(r.id, r.since),
+    });
+    expect(r.handlerRuns).toBe(kase === 'released' ? 2 : 1);
+  });
+
+  it('the page’s sentences on the other forms and the exit code', () => {
+    claim(
+      ACTING,
+      "The line ends `, and failed; …` when the other program's run of the step failed. While the other program still holds the step it reads `• Step '<step>' was taken by <program> at <time>; this program's outcome for it was not recorded.`, and when the run ended without the step settling, `• Step '<step>': the run ended (<phase>) before this program's outcome for it was recorded.` When no program holds the step and it has not settled, it reads `• Step '<step>': another process removed the claim this program held on it; this program's outcome for it was not recorded.`, and the command runs the step again, as it runs any step that is owed. A step whose outcome was not recorded did not fail here, also when the other program's run of it failed: the exit code is the one for what is left.",
+    );
+    claim(ACTING, 'Exit code 1 when a step failed here or cannot run, else 0.');
+  });
+
+  it('the same code from a guard of the chain names no step: today’s line, exit 1 — never the race’s line', async () => {
+    // `x` (auto) runs in this call; after its write another writer records `a` (ok: false) with a plain
+    // update (it settles no guard), so the call meets guard `g` and decides abort; at that settle
+    // another call settles `g` first (pass): STATE_STEP_ALREADY_SETTLED with no `stopped_step`.
+    const { home, runs, workflows } = stores();
+    try {
+      const d = loadWorkflowFromString(
+        [
+          'id: adv-guard-diverged',
+          'name: adv-guard-diverged',
+          'version: 1',
+          'steps:',
+          '  x:',
+          '    description: X.',
+          '    execution: auto',
+          '    handler: ok',
+          '  a:',
+          '    description: A.',
+          '    execution: agent',
+          '  g:',
+          '    description: G.',
+          '    execution: guard',
+          '    depends_on: [a]',
+          '    abort_unless: ["a.ok == true"]',
+        ].join('\n'),
+      );
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'ok', { id: 'ok', execute: async () => ({ data: {} }) });
+      const seen: string[] = [];
+      const racing = new Proxy(runs, {
+        get(target, prop) {
+          if (prop === 'settleStep') {
+            return async (...args: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+              const [id, delta, d2, o] = args;
+              if (
+                delta.kind === 'settle_guard' &&
+                delta.step === 'g' &&
+                delta.outcome === 'abort' &&
+                !seen.includes('raced')
+              ) {
+                seen.push('raced');
+                const { abort: _abort, ...rest } = delta;
+                void _abort;
+                await target.settleStep!(id, { ...rest, outcome: 'pass' }, d2, o);
+              }
+              const r = await target.settleStep!(...args);
+              if (delta.kind === 'settle_step' && delta.step === 'x' && !seen.includes('a')) {
+                seen.push('a');
+                const cur = await target.get(id);
+                const now = new Date().toISOString();
+                await target.update({
+                  ...cur,
+                  completed_steps: [...cur.completed_steps, 'a'],
+                  evidence: [
+                    ...cur.evidence,
+                    {
+                      step_id: 'a',
+                      started_at: now,
+                      completed_at: now,
+                      duration_ms: 0,
+                      input_summary: {},
+                      output_summary: { ok: false },
+                      status: 'success',
+                      evidence_hash: 'r25',
+                    },
+                  ],
+                });
+              }
+              if (delta.kind === 'settle_guard') {
+                seen.push(`this call: ${r.applied ? 'applied' : r.reason}`);
+              }
+              return r;
+            };
+          }
+          const v = Reflect.get(target, prop, target) as unknown;
+          return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+        },
+      });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        racing,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        registry,
+      );
+      // (a) red when the guard's refusal is read as the race on `x` (the step this call ran), or the
+      //     race is not the one built; (b) prints the lines and the race.
+      expect({
+        seen,
+        code,
+        failed: lines.filter((l) => l.startsWith("Stopped: 'x' failed:")),
+        notRecorded: lines.filter((l) => l.includes('was not recorded') && l.startsWith('•')),
+      }).toEqual({
+        seen: ['a', 'raced', 'this call: settled_outcome_divergence'],
+        code: 1,
+        failed: [
+          "Stopped: 'x' failed: Guard step 'g' was already settled (persisted: 'complete') by a different attempt — your abort was NOT recorded.",
+        ],
+        notRecorded: [],
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

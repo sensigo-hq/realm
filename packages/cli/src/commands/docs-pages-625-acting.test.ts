@@ -1019,7 +1019,7 @@ describe(
         "`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`), the run ended (`the run has ended (<phase>)`), a question opened (with the `realm run respond` command), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several; put the provider and model you drive the run with in place of the two placeholders; the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`.",
       );
       claim(PAGE, 'A run the command completes gets no `Stopped:` line: the phase line says it.');
-      claim(PAGE, 'Exit code 1 when a step failed or cannot run, else 0.');
+      claim(PAGE, 'Exit code 1 when a step failed here or cannot run, else 0.');
       const go = async (id: string, steps: string) => {
         const { def } = await project(id, steps, true);
         const runId = await started(def);

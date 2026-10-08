@@ -33,7 +33,13 @@ import {
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
-import { BY_SOURCE_WORDS, describeProgram, takenLine, takenPhrase } from '../lib/holder-render.js';
+import {
+  BY_SOURCE_WORDS,
+  describeProgram,
+  outcomeNotRecordedLine,
+  takenLine,
+  takenPhrase,
+} from '../lib/holder-render.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
 export const FIT_WORDS: Record<ProgramFit, string> = {
@@ -385,30 +391,49 @@ export async function advanceRunFromShell(
     }
     decidedGuards = [];
   };
-  const result = await advanceRun(runStore, workflow, {
-    runId,
-    caller: 'advance',
-    registry,
-    now,
-    ...(driver !== undefined ? { driver } : {}),
-    onExpiry: (line) => {
-      expiryLine = line;
-      print(`⚠ ${line}`);
-    },
-    onGuard: (guard) => {
-      decidedGuards.push(guard);
-    },
-    onStep: (step) => {
-      sayDecidedGuards();
-      lastStep = step;
-      print(`→ ${step}`);
-    },
-    // D6.1: a step another process took is said as a past-tense fact — never "cannot run here".
-    onTaken: (step, record) => {
-      sayDecidedGuards();
-      print(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
-    },
-  });
+  const advanceOnce = () =>
+    advanceRun(runStore, workflow, {
+      runId,
+      caller: 'advance',
+      registry,
+      now,
+      ...(driver !== undefined ? { driver } : {}),
+      onExpiry: (line) => {
+        expiryLine = line;
+        print(`⚠ ${line}`);
+      },
+      onGuard: (guard) => {
+        decidedGuards.push(guard);
+      },
+      onStep: (step) => {
+        sayDecidedGuards();
+        lastStep = step;
+        print(`→ ${step}`);
+      },
+      // D6.1: a step another process took is said as a past-tense fact — never "cannot run here".
+      onTaken: (step, record) => {
+        sayDecidedGuards();
+        print(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
+      },
+    });
+  let result = await advanceOnce();
+  // decision C194: the step this call ran was settled, or taken over, by another process before its
+  // own outcome was recorded — that step's own refusal (`stopped_step`). Said from the record, never
+  // "failed", and the command goes on with what is left, as for a step another process took before
+  // this one ran it. The same code from a guard of the chain (a concurrent settle that diverged from
+  // its abort) names no step and keeps its line below. The refusal's own warnings are said with the
+  // last reply's.
+  const raceWarnings: string[] = [];
+  while (
+    result.status === 'error' &&
+    result.stopped_step !== undefined &&
+    result.stopped_step === lastStep &&
+    (result.error_code === 'STATE_STEP_ALREADY_SETTLED' || result.error_code === 'STATE_CLAIM_LOST')
+  ) {
+    print(outcomeNotRecordedLine(await runStore.get(runId), lastStep, keepsClaims));
+    raceWarnings.push(...result.warnings);
+    result = await advanceOnce();
+  }
 
   // decision C28: PR-1's lines for the guards this call settled. A reply carrying `ended_by` (a
   // guard a step's own write settled) gives the ending and its reason. Otherwise one passed line
@@ -440,7 +465,7 @@ export async function advanceRunFromShell(
   // decision C109: the reply's warnings — the expiry line among them (core prints nothing) — are
   // this command's to show; the expiry line was shown before the steps (C123).
   let expirySaid = false;
-  for (const warning of result.warnings) {
+  for (const warning of [...raceWarnings, ...result.warnings]) {
     if (!expirySaid && warning === expiryLine) {
       expirySaid = true;
       continue;

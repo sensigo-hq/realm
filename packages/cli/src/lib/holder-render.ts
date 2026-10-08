@@ -168,6 +168,30 @@ export function answerNotRecordedLine(
   return undefined;
 }
 
+/**
+ * decision C194: the line `realm run advance` prints, never "failed", when the step it was running was
+ * settled or taken over by another process before its own outcome was recorded (that step's own
+ * `STATE_STEP_ALREADY_SETTLED` or `STATE_CLAIM_LOST`: another program ran it after a `realm run
+ * reclaim --force` freed this one's claim, for one). Read off the record after the refusal: the
+ * claim's holder while another process holds the step, the program that ran it once it settled, the
+ * run's ending, or else the claim this program held was removed. Its own work on the step may have
+ * run here: the line says only that its outcome was not recorded, never "not run here".
+ */
+export function outcomeNotRecordedLine(run: RunRecord, step: string, keepsClaims: boolean): string {
+  const notRecorded = "this program's outcome for it was not recorded";
+  if (run.in_progress_steps.includes(step)) {
+    const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+    const at = described.since !== undefined ? ` at ${described.since}` : '';
+    return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
+  }
+  const ran = ranElsewherePhrase(run, step);
+  if (ran !== undefined) return `• Step '${step}' was ${ran}; ${notRecorded}.`;
+  if (run.terminal_state === true) {
+    return `• Step '${step}': the run ended (${deriveRunPhase(run)}) before this program's outcome for it was recorded.`;
+  }
+  return `• Step '${step}': another process removed the claim this program held on it; ${notRecorded}.`;
+}
+
 /** The proof part of an answer line, in words — never a code. */
 export const PROOF_WORDS = {
   matched: 'matched the claim_token of the reply that opened this question',

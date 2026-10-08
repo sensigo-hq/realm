@@ -171,6 +171,17 @@ When another program holds an owed step, the preview says so before anything run
 • Step 'process' was taken by racer-a (from REALM_OPERATOR, via advance) at 2026-10-05T00:02:25.302Z; not run here.
 ```
 
+When another program settles the step, or takes it over, while this one is running it (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:
+
+```text
+→ process
+• Step 'process' was taken by racer-b (from REALM_OPERATOR, via advance), and completed; this program's outcome for it was not recorded.
+→ notify
+Run 65d2afc8-2cb3-4401-808c-1d83a40bf989: phase 'completed'
+```
+
+The line ends `, and failed; …` when the other program's run of the step failed. While the other program still holds the step it reads `• Step '<step>' was taken by <program> at <time>; this program's outcome for it was not recorded.`, and when the run ended without the step settling, `• Step '<step>': the run ended (<phase>) before this program's outcome for it was recorded.` When no program holds the step and it has not settled, it reads `• Step '<step>': another process removed the claim this program held on it; this program's outcome for it was not recorded.`, and the command runs the step again, as it runs any step that is owed. A step whose outcome was not recorded did not fail here, also when the other program's run of it failed: the exit code is the one for what is left. Added after version 0.46.0.
+
 When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reasons>.` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reasons>.` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the one way out — correcting the workflow and registering it again is the fix, since the run picks up the corrected definition:
 
 ```text
@@ -185,7 +196,7 @@ In flight: 'process' is in flight, taken by crown (from REALM_OPERATOR, via adva
 The engine can run nothing now: 'process' is in flight in another program — wait for it, or see realm run inspect 65d2afc8-2cb3-4401-808c-1d83a40bf989.
 ```
 
-Exit code 1 when a step failed or cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
+Exit code 1 when a step failed here or cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
 
 ## `resume`
 
