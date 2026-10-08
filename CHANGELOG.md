@@ -174,6 +174,23 @@ flight, taken by <program> since <time>: waiting up to 60s for the run's record 
   library's `advanceRun` takes `onGuard`, called with each guard its reply lists in
   `chained_auto_steps` — decided by the write of a step it ran, by the call itself, or first by
   another call — as the call reaches it (before the next step's `onStep`).
+- **`realm run advance` never says a step failed that another program settled or took over while
+  it ran it (issue #625, PR-2a).** When another program ran the step after this one's claim was freed
+  (`realm run reclaim --force`), or took it over, the outcome this program reached is not recorded;
+  it prints `• Step '<step>' was taken by <program>, and completed; this program's outcome for it was
+not recorded.` (`and failed`; `… at <time>; …` while the other program holds the step; `the run
+ended (<phase>) before …`; or `another process removed the claim this program held on it; …`, and
+  the step is run again), read from the record, goes on with what is left, and exits with the code
+  for what is left. It printed `Stopped: '<step>' failed: Step '<step>' was already settled …` (or
+  `… the claim was lost …`), stopped and exited 1.
+- **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
+  After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
+--run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back
+  gives `realm run advance`; it offered only `realm run reclaim … --force`.
+- **`realm workflow run`'s detach map says a waiting `realm agent` goes on by itself (issue #625,
+  PR-2a).** Under its `Drive it:` line it prints the line `realm run respond` and `realm run advance`
+  print after theirs: `If a realm workflow run or realm agent is still waiting on this run, it goes
+on by itself; the line above is for when none is.`
 - **A late answer that names the choice the question's expiry recorded says so in its fields
   (issue #625, PR-2a).** `submit_human_response`'s `status: ok` reply (`answer_recorded: false`)
   carries `error_details` (`winning_choice`, `resolved_by: "timeout"`) and, while the run goes on,

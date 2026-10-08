@@ -32,6 +32,7 @@ import {
   inFlightLine,
   waitingLine,
   ranElsewherePhrase,
+  goOnLine,
 } from '../lib/holder-render.js';
 import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
@@ -47,6 +48,7 @@ import type {
 import type { ResponseEnvelope, StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { buildReattachFlags } from './agent.js';
+import { attendingLine } from './run-advance.js';
 import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 
 /**
@@ -155,6 +157,9 @@ export function renderDetachMap(
   lines.push(
     `  Drive it:  realm agent --run-id ${record.id} --provider <provider> --model <model>${driveFlags}`,
   );
+  // decision C196: a `realm agent` waiting on this run goes on by itself — the line `realm run
+  // respond` and `realm run advance` print after theirs, from the same composer, under `Drive it`.
+  lines.push(`             ${attendingLine(1)}`);
   lines.push(`  Inspect:   realm run inspect ${record.id}`);
   lines.push(`  Discard:   realm run abandon ${record.id}`);
   return lines.join('\n');
@@ -176,10 +181,9 @@ export function renderDetachMap(
 export function renderInFlightHandBack(record: RunRecord, held: readonly string[]): string {
   const names = held.map((s) => `'${s}'`).join(', ');
   const steps = held.length === 1 ? `step ${names}` : `steps ${names}`;
-  const are = held.length === 1 ? 'is' : 'are';
   return [
     `Stopped waiting — detached from run '${record.id}' at ${steps} (phase: ${deriveRunPhase(record)}). The run is saved.`,
-    `  Go on:     once ${names} ${are} no longer in flight, realm run advance ${record.id}`,
+    goOnLine(held, `realm run advance ${record.id}`),
     `  Inspect:   realm run inspect ${record.id}`,
   ].join('\n');
 }

@@ -105,6 +105,18 @@ export function inFlightLine(
 }
 
 /**
+ * decisions C188, C195: the way on a driver gives when it stops waiting for steps another process
+ * holds — `  Go on:     once '<s>' is no longer in flight, <command>` (`'<a>', '<b>' are` for
+ * several). `realm workflow run` gives `realm run advance <run>`; `realm agent` gives itself again,
+ * with the flags it was started with.
+ */
+export function goOnLine(held: readonly string[], command: string): string {
+  const names = held.map((s) => `'${s}'`).join(', ');
+  const are = held.length === 1 ? 'is' : 'are';
+  return `  Go on:     once ${names} ${are} no longer in flight, ${command}`;
+}
+
+/**
  * decision C182: the line a driver prints when it starts waiting for a step another process holds —
  * `• Step '<s>' is in flight, <taken phrase> since <since>: waiting up to <n>s for the run's record
  * to change.` (no ` since <since>` when the claim has none). `realm workflow run` and `realm agent`

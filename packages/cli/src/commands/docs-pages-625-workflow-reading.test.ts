@@ -29,7 +29,8 @@ import {
   loadWorkflowFromString,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
-import { runCommand } from './run.js';
+import { runCommand, renderDetachMap } from './run.js';
+import { attendingLine } from './run-advance.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -885,6 +886,120 @@ describe(
       expect({ code: r.code, out: r.out }, r.err.join('\n')).toEqual({
         code: 1,
         out: put(block(WF_PAGE, 'FAIL one: Workflow stalled'), {}),
+      });
+    });
+
+    it('round 25, C196 (walk c10, W3-4): leaving the prompt — the map’s `Drive it:` line is followed by the line `realm run respond` and `realm run advance` print after theirs, from the same composer; the page’s screen', async () => {
+      claim(
+        WF_PAGE,
+        'Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:',
+      );
+      mocks.question.mockImplementation(async () => {
+        throw Object.assign(new Error('The operation was aborted'), {
+          name: 'AbortError',
+          code: 'ABORT_ERR',
+        });
+      });
+      const code = await run([
+        'id: leave-note',
+        'name: leave-note',
+        'version: 1',
+        'steps:',
+        '  note:',
+        '    description: Note.',
+        '    execution: agent',
+      ]);
+      const id = runIds()[0]!;
+      const map = errored()
+        .join('\n')
+        .split('\n')
+        .filter((l) => l !== '');
+      const at = map.findIndex((l) => l.startsWith('Prompt cancelled'));
+      // (a) red when the line under `Drive it:` is missing, moved or reworded, or the screen differs
+      //     from the page's; (b) prints stderr and the exit.
+      expect({ code, map: map.slice(at) }).toEqual({
+        code: 1,
+        map: put(block(WF_PAGE, 'Prompt cancelled — detached from run'), {
+          '00ac2e9c-6728-4fb4-8ba0-234617eff305': id,
+        }),
+      });
+      // The same composer's words.
+      expect(map[at + 2]!.trim()).toBe(attendingLine(1));
+    });
+
+    it('round 25, C196: wherever the map prints `Drive it:` (the stall route too) the line follows it; a map with no `Drive it:` line (a question open, the run ended) has none', async () => {
+      const record = {
+        id: 'r',
+        params: {},
+        completed_steps: [],
+        in_progress_steps: [],
+        failed_steps: [],
+        skipped_steps: [],
+        evidence: [],
+        terminal_state: false,
+        run_phase: 'running',
+      } as never;
+      const stalled = renderDetachMap(record, 'x', { headline: 'Workflow stalled' }).split('\n');
+      const gate = renderDetachMap(
+        {
+          ...(record as object),
+          pending_gate: { gate_id: 'g', step_name: 'x', choices: ['a', 'b'] },
+        } as never,
+        'x',
+      );
+      const ended = renderDetachMap(
+        {
+          ...(record as object),
+          terminal_state: true,
+          sealed_by: { arm: 'complete' },
+          run_phase: 'completed',
+        } as never,
+        'x',
+      );
+      // (a) red when the stall route's map lacks the line under `Drive it:`, or a map with no
+      //     `Drive it:` line gains it; (b) prints the maps.
+      expect({
+        stalled: stalled.slice(1, 3),
+        others: [gate, ended].map((m) => m.includes('goes on by itself')),
+      }).toEqual({
+        stalled: [
+          '  Drive it:  realm agent --run-id r --provider <provider> --model <model>',
+          `             ${attendingLine(1)}`,
+        ],
+        others: [false, false],
+      });
+    });
+
+    it('round 25, C198 (walk c10, W3-1): `realm workflow run` cannot join a run it did not start — it has no option that names a run, and each call starts a new run; the page says so beside C190’s sentence', async () => {
+      claim(
+        WF_PAGE,
+        '`realm agent` holds nothing while its model works on a step, so on a run this command started (it cannot join a run it did not start), a prompt opened during that call takes the step with no word of the call:',
+      );
+      mocks.question.mockImplementation(async () => {
+        throw Object.assign(new Error('The operation was aborted'), {
+          name: 'AbortError',
+          code: 'ABORT_ERR',
+        });
+      });
+      const lines = [
+        'id: join-note',
+        'name: join-note',
+        'version: 1',
+        'steps:',
+        '  note:',
+        '    description: Note.',
+        '    execution: agent',
+      ];
+      await run(lines);
+      await run(lines);
+      // (a) red when the command gains an option that names a run, or a second call joins the first
+      //     call's run; (b) prints the options and the runs.
+      expect({
+        options: runCommand.options.map((o) => o.long),
+        runs: runIds().length,
+      }).toEqual({
+        options: ['--params', '--extensions-module', '--project', '--mint-writer-nonce'],
+        runs: 2,
       });
     });
   },

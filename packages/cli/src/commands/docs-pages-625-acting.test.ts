@@ -913,7 +913,7 @@ describe(
     it('advance, C191 (walk c9, W3-Y1): `Last recorded driver:` names the program on the newest entry that names one — after an answer, still the program that opened the question; inspect shows who answered; newer entries with no program are counted', async () => {
       claim(
         PAGE,
-        "`Last recorded driver:` names the program on the run's newest evidence entry that names one, with that entry's step and time: `<program> at step '<step>', <time>.`, or `none recorded.` A step's own entry names the program that ran it when that program recorded its name; an answer to a question names none, and neither does a guard's decision. So the program that answered a question is not named here: after an answer whose write ran no cleanup step, the line still names the program that ran the question's step and opened the question. `realm run inspect` shows who answered, on that step's `Answer:` line (`answered by <name>`, the name `--by` gave, or `answered by (not stated)`). When newer entries of steps name no program (a library call made without `driver`), the line ends `; 1 newer entry records no driver.` (or `; <n> newer entries record no driver.`).",
+        "`Last recorded driver:` names the program on the run's newest evidence entry that names one, with that entry's step and time: `<program> at step '<step>', <time>.`, or `none recorded.` A step's own entry names the program that ran it when that program recorded its name; an answer to a question names none, and neither does a guard's decision. So the program that answered a question is not named here: after an answer whose write ran no cleanup step, the line still names the program that ran the question's step and opened the question. `realm run inspect` shows who answered, on that step's `Answer:` line (`answered by <name>`, the name `--by` gave, or `answered by (not stated)`). When newer entries name no program, the line ends `; 1 newer entry records no driver.` (or `; <n> newer entries record no driver.`). Each one counts but a question's answer, the choice its expiry made and a guard's decision: a step run by a program that recorded no name (a library call made without `driver`, for one), and an entry realm writes without running a step, such as the one `realm run reclaim` writes for the step whose claim it frees.",
       );
       const { def } = await project(
         'cli-c191-wf',
@@ -994,6 +994,71 @@ describe(
       expect(
         realm(['run', 'inspect', other.id]).out.find((l) => l.trim().startsWith('Answer: ')),
       ).toMatch(/^\s+Answer: approve · answered by \(not stated\) · proof: /);
+    });
+
+    it('advance, C197 (walk c10, W4-3): `realm run reclaim`’s entry is one newer entry that records no driver; the choice a question’s expiry made is not counted', async () => {
+      claim(
+        PAGE,
+        "Each one counts but a question's answer, the choice its expiry made and a guard's decision: a step run by a program that recorded no name (a library call made without `driver`, for one), and an entry realm writes without running a step, such as the one `realm run reclaim` writes for the step whose claim it frees.",
+      );
+      const as = (who: string) => ({ env: { REALM_OPERATOR: who } });
+      // `opener` runs `a`; another program takes the agent step `b`; `realm run reclaim --force` frees
+      // it — the reclaim's entry is the newest, and names no program.
+      const { def } = await project(
+        'cli-c197-reclaim',
+        [autoStep('a', []), agentStep('b', ['a'])].join('\n'),
+        false,
+      );
+      const id = await started(def);
+      expect(realm(['run', 'advance', id], as('opener')).code).toBe(0);
+      await runStore.claimStep(id, 'b', def, {
+        by: 'holder',
+        by_source: 'ambient',
+        channel: 'agent',
+      });
+      const reclaimed = realm(['run', 'reclaim', id, '--step', 'b', '--force']);
+      const record = await runStore.get(id);
+      const aAt = record.evidence.find((e) => e.step_id === 'a')!.completed_at;
+      const newest = record.evidence.at(-1)!;
+      // The question's expiry: `opener` runs `confirm`, whose question opens; its time is up, and
+      // `expirer` carries out its declared default — the expiry's entry is the newest, and is not
+      // counted.
+      const { def: q } = await project('cli-c197-expiry', CONFIRM('settle_default'), false);
+      const qid = await started(q);
+      expect(realm(['run', 'advance', qid], as('opener')).code).toBe(0);
+      const open = await runStore.get(qid);
+      await runStore.update({
+        ...open,
+        pending_gate: {
+          ...open.pending_gate!,
+          opened_at: '2020-01-01T00:00:00.000Z',
+          expires_at: '2020-01-01T01:00:00.000Z',
+        },
+      });
+      expect(realm(['run', 'advance', qid], as('expirer')).code).toBe(0);
+      const expired = await runStore.get(qid);
+      const confirmAt = expired.evidence.find(
+        (e) => e.step_id === 'confirm' && e.kind !== 'gate_response',
+      )!.completed_at;
+      // (a) red when the reclaim's entry is not counted, the expiry's choice is, or the fixture's
+      //     entries are not the ones named; (b) prints the lines and the entries.
+      expect({
+        reclaimed: reclaimed.code,
+        newest: {
+          step: newest.step_id,
+          reclaimed: newest.output_summary['reclaimed'],
+          by: newest.driven_by,
+        },
+        reclaimLine: realm(['run', 'advance', id], as('third')).out[2],
+        expiry: { kind: expired.evidence.at(-1)!.kind, by: expired.evidence.at(-1)!.responded_by },
+        expiryLine: realm(['run', 'advance', qid], as('third')).out[2],
+      }).toEqual({
+        reclaimed: 0,
+        newest: { step: 'b', reclaimed: true, by: undefined },
+        reclaimLine: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'a', ${aAt}; 1 newer entry records no driver.`,
+        expiry: { kind: 'gate_response', by: 'timeout' },
+        expiryLine: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'confirm', ${confirmAt}.`,
+      });
     });
 
     it('advance, L148 (open question): at an open question advance runs nothing, and its line is the reply’s respond command', async () => {

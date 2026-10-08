@@ -79,10 +79,17 @@ async function drive(
     /** decision C189: runs once while the drive waits at a question (after `Waiting for approval...`). */
     atGate?: (store: InMemoryStore, runId: string) => Promise<void>;
     watchMs?: number;
+    /** decision C195: the flags the drive was started with (`AgentDeps.reattachFlags`). */
+    reattachFlags?: string;
+    /** decision C195: drive this run of this store again (`realm agent --run-id`), not a new one. */
+    attach?: { store: InMemoryStore; runId: string };
   } = {},
 ): Promise<Drive> {
-  const store = new InMemoryStore();
-  const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+  const store = o.attach?.store ?? new InMemoryStore();
+  const { run } =
+    o.attach !== undefined
+      ? { run: await store.get(o.attach.runId) }
+      : await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
   await o.before?.(store, run.id);
   let calls = 0;
   const provider = new (class extends LlmProvider {
@@ -125,6 +132,7 @@ async function drive(
         },
         provider,
         registry: createDefaultRegistry(),
+        ...(o.reattachFlags !== undefined ? { reattachFlags: o.reattachFlags } : {}),
       },
       {
         definition: def,
@@ -318,11 +326,11 @@ describe(
     it('a step still held when the watch ends: the in-flight line, the drive stops (failed) — and no `Run ended in phase` line: the run did not end', async () => {
       claim(
         AGENT_PAGE,
-        "after 60 seconds with no change it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and stops with exit code 1, the run still open.",
+        "after 60 seconds with no change it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force`, then the way on once that program is done with the step, `  Go on:     once '<step>' is no longer in flight, realm agent --run-id <run> <flags>` (with the flags this drive was started with, as the re-attach command in [When it stops](#when-it-stops) repeats them), and stops with exit code 1, the run still open.",
       );
       claim(
         AGENT_PAGE,
-        'which the drive prints instead when it ends with neither line and the run not completed (for example, a guard aborted it) — except when it stops on a step another process holds, whose in-flight line (above) is the last.',
+        'which the drive prints instead when it ends with neither line and the run not completed (for example, a guard aborted it) — except when it stops on a step another process holds, whose `Go on:` line (above) is the last.',
       );
       const def = wf({ write: agent() });
       const d = await drive(def, {
@@ -338,9 +346,49 @@ describe(
         lines: [
           `log: • Step 'write' is in flight, taken by ${PROMPT_WORDS} since <t>: waiting up to 0s for the run's record to change.`,
           `log: • Step 'write' has been in flight since <t>, taken by ${PROMPT_WORDS}; the record has not changed for 0s. If the program that took it is gone: realm run reclaim <run> --step write --force`,
+          // decision C195: the way on; a host that gave no flags gets the placeholders.
+          "log:   Go on:     once 'write' is no longer in flight, realm agent --run-id <run> --provider <provider> --model <model>",
         ],
       });
       expect((await d.store.get(d.runId)).run_phase).toBe('running');
+    });
+
+    it('C195 (walk c10, W3-3): the stop gives the way on — this drive again, with the flags it was started with, one line for every step held; followed once the holder lets go, it completes the run', async () => {
+      const def = wf({ write: agent(), check: agent() });
+      const FLAGS = "--provider-module ./prov.mjs --project './my project'";
+      const d = await drive(def, {
+        before: async (store, runId) => {
+          await store.claimStep(runId, 'write', def, PROMPT);
+          await store.claimStep(runId, 'check', def, PROMPT);
+        },
+        watchMs: 50,
+        reattachFlags: FLAGS,
+      });
+      // (a) red when the line is missing, names one step of two, drops or changes the flags, or is
+      //     not the last line; (b) prints the screen.
+      expect({ calls: d.calls, result: d.result, last: d.lines.slice(-1) }).toEqual({
+        calls: 0,
+        result: 'failed',
+        last: [
+          `log:   Go on:     once 'write', 'check' are no longer in flight, realm agent --run-id <run> ${FLAGS}`,
+        ],
+      });
+      expect(d.lines.filter((l) => l.includes('has been in flight since'))).toHaveLength(2);
+      // The program that held both lets them go (its prompt is left): the line's command — this drive
+      // again, on the same run — goes on and completes the run.
+      for (const step of ['write', 'check']) {
+        const held = await d.store.get(d.runId);
+        await d.store.settleStep!(
+          d.runId,
+          { kind: 'release_step', step, claimToken: held.claims![step]!.token! },
+          def,
+        );
+      }
+      const again = await drive(def, { attach: { store: d.store, runId: d.runId } });
+      expect({ result: again.result, calls: again.calls }).toEqual({
+        result: 'completed',
+        calls: 2,
+      });
     });
   },
 );
@@ -643,11 +691,11 @@ describe(
     it('a prompt opened during the model call takes the step: the answer is not recorded, the drive waits, and when the prompt lets the step go unanswered the model is asked again', async () => {
       claim(
         AGENT_PAGE,
-        "The drive itself holds nothing while its model works on a step: a `realm workflow run` prompt opened during the model call takes the step; if the prompt still holds it when the model answers, the model's answer is not recorded (`• Step '<step>' was taken by <program> at <time>; this drive's answer was not recorded.`), and the drive then waits for the step as for any step another process holds — when the prompt lets it go unanswered, the model is asked for it again.",
+        "The drive itself holds nothing while its model works on a step: on a run that `realm workflow run` started (it cannot join a run it did not start), a prompt it opens during the model call takes the step; if the prompt still holds it when the model answers, the model's answer is not recorded (`• Step '<step>' was taken by <program> at <time>; this drive's answer was not recorded.`), and the drive then waits for the step as for any step another process holds — when the prompt lets it go unanswered, the model is asked for it again.",
       );
       claim(
         WORKFLOW_PAGE,
-        "`realm agent` holds nothing while its model works on a step, so a prompt opened during that call takes the step with no word of the call: if the prompt still holds the step when the model answers, the model's answer is not recorded, and if you then leave the prompt while that drive still waits for the step, its model is asked again.",
+        "`realm agent` holds nothing while its model works on a step, so on a run this command started (it cannot join a run it did not start), a prompt opened during that call takes the step with no word of the call: if the prompt still holds the step when the model answers, the model's answer is not recorded, and if you then leave the prompt while that drive still waits for the step, its model is asked again.",
       );
       const def = wf({ write: agent() });
       const during: Array<{ claimed: boolean; inFlight: boolean }> = [];

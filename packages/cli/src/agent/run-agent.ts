@@ -61,6 +61,7 @@ import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js'
 import {
   answerNotRecordedLine,
   describeProgram,
+  goOnLine,
   inFlightLine,
   takenLine,
   waitingLine,
@@ -834,6 +835,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               const stale = states.get(step) === 'claim_stale';
               console.log(inFlightLine(runId, step, described, stale, watchMs));
             }
+            // decision C195: the way on once the program holding the step is done with it — this
+            // drive again, with the flags it was started with (`realm workflow run`'s hand-back,
+            // C188, gives `realm run advance` the same way).
+            const flags = deps.reattachFlags ?? '--provider <provider> --model <model>';
+            console.log(
+              goOnLine(inFlight, `realm agent --run-id ${runId}${flags === '' ? '' : ` ${flags}`}`),
+            );
             // decision C179: the drive stops on the step another process holds; the run did not end,
             // so no `Run ended in phase` line follows.
             stoppedOnInFlight = true;

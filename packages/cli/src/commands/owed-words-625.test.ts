@@ -1145,6 +1145,8 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
             runId: run.id,
             command: 'process',
             input: {},
+            // `process` has a handler: the engine runs it, not this dispatcher.
+            dispatcher: async () => ({}),
             registry: other,
             driver: RACER,
           });
