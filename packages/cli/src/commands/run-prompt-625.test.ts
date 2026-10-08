@@ -1088,7 +1088,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
     it('C179: another process removed the claim while the prompt waited — the prompt closes, says so, and asks again', async () => {
       claimWorkflowPage(
-        "The agent step's prompt closes when another process removed its claim (`This prompt is closed: the claim it held on step '<step>' was removed by another process, and the step has not run.`; the step is then asked for again) or the run ended.",
+        "The agent step's prompt closes when another process removed its claim (`This prompt is closed: the claim it held on step '<step>' was removed by another process, and the step has not run.`; the step is asked for again if it is still ready) or the run ended.",
       );
       let stepPrompts = 0;
       mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
@@ -1132,7 +1132,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       'C179: another process runs the step between the typed answer and the engine’s claim (%s step) — `Not run here:`, the answer not recorded; never ✓, never `✗ blocked: `',
       async (kind) => {
         claimWorkflowPage(
-          "When another process takes or runs the step between your answer and the engine's claim for it, the answer is not recorded: `Not run here: step '<step>' was taken by <program>, and completed; the answer typed here was not recorded.`",
+          "When another process takes or runs the step between your answer and the engine's claim for it, the answer is not recorded: `Not run here: step '<step>' was taken by <program>, and completed; the answer typed here was not recorded.` (or `… was taken by <program>; …` while that process holds it)",
         );
         const yaml =
           kind === 'agent'
