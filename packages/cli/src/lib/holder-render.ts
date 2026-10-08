@@ -4,6 +4,7 @@
 // Every phrase here is a RENDER of a typed field the core composes — the field's WORDS stay data on
 // the MCP carriers. The wording rule on every surface: a PROGRAM, past tense ("taken by", "question
 // opened through"), with how its name is known. Never "is running", "is driving", "attended by".
+import { deriveRunPhase, describeClaimHolder } from '@sensigo/realm';
 import type {
   AnswerView,
   Attributed,
@@ -11,6 +12,7 @@ import type {
   ClaimHolderAbsentCause,
   ClaimProofAbsentCause,
   GateClaimVerdict,
+  RunRecord,
 } from '@sensigo/realm';
 
 /**
@@ -100,6 +102,70 @@ export function inFlightLine(
     (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
     ` If the program that took it is gone: realm run reclaim ${runId} --step ${step} --force`
   );
+}
+
+/**
+ * decision C182: the line a driver prints when it starts waiting for a step another process holds —
+ * `• Step '<s>' is in flight, <taken phrase> since <since>: waiting up to <n>s for the run's record
+ * to change.` (no ` since <since>` when the claim has none). `realm workflow run` and `realm agent`
+ * print the same words; {@link inFlightLine} is the line when the wait ends with no change.
+ */
+export function waitingLine(
+  step: string,
+  described: Parameters<typeof takenPhrase>[0],
+  watchMs: number,
+): string {
+  const since = described.since !== undefined ? ` since ${described.since}` : '';
+  return `• Step '${step}' is in flight, ${takenPhrase(described)}${since}: waiting up to ${Math.round(watchMs / 1000)}s for the run's record to change.`;
+}
+
+/**
+ * decisions C165, C179: who ran a step that another process settled, and how it ended — `taken by
+ * <program>, and completed` (or `, and failed`), the program read off the step's own evidence
+ * (`driven_by`), since its claim is gone once it settled. `undefined` while the step has not
+ * settled.
+ */
+export function ranElsewherePhrase(run: RunRecord, step: string): string | undefined {
+  const done = run.completed_steps.includes(step)
+    ? 'completed'
+    : run.failed_steps.includes(step)
+      ? 'failed'
+      : undefined;
+  if (done === undefined) return undefined;
+  const ev = [...run.evidence]
+    .reverse()
+    .find((e) => e.step_id === step && e.kind !== 'gate_response');
+  const by =
+    ev?.driven_by !== undefined
+      ? takenPhrase({ holder: ev.driven_by })
+      : takenPhrase({ by: null, absent_cause: 'no_claim' });
+  return `${by}, and ${done}`;
+}
+
+/**
+ * decision C179: the line `realm agent` prints, never `✓`, when the agent step its model answered
+ * was taken or run by another process before the answer reached the engine — the claim's holder
+ * while that process holds the step, the program that ran it once it settled, or the run's ending
+ * when the run ended without it. `undefined` when none of these holds (the reply is then the
+ * drive's to explain).
+ */
+export function answerNotRecordedLine(
+  run: RunRecord,
+  step: string,
+  keepsClaims: boolean,
+): string | undefined {
+  const notRecorded = "this drive's answer was not recorded";
+  if (run.in_progress_steps.includes(step)) {
+    const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+    const at = described.since !== undefined ? ` at ${described.since}` : '';
+    return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
+  }
+  const ran = ranElsewherePhrase(run, step);
+  if (ran !== undefined) return `• Step '${step}' was ${ran}; ${notRecorded}.`;
+  if (run.terminal_state === true) {
+    return `• Step '${step}' was not run: the run ended (${deriveRunPhase(run)}) before this drive's answer reached it; the answer was not recorded.`;
+  }
+  return undefined;
 }
 
 /** The proof part of an answer line, in words — never a code. */

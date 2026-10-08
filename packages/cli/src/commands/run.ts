@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { createInterface } from 'node:readline/promises';
 import { join } from 'node:path';
+import { constants as osConstants } from 'node:os';
 import {
   validateRunParams,
   loadWorkflowFromFile,
@@ -27,7 +28,10 @@ import {
   renderAnswerLine,
   questionLines,
   takenPhrase,
+  takenLine,
   inFlightLine,
+  waitingLine,
+  ranElsewherePhrase,
 } from '../lib/holder-render.js';
 import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
@@ -38,6 +42,7 @@ import type {
   ExtensionRegistry,
   RunRecord,
   RunStore,
+  Attributed,
 } from '@sensigo/realm';
 import type { ResponseEnvelope, StepDispatcher } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
@@ -273,32 +278,117 @@ export function questionClosedLine(run: RunRecord, step: string): string {
 }
 
 /**
+ * What the record shows of a step another process took or ran (decisions C165, C179): `was taken by
+ * <program>` while its claim is on the record, `was taken by <program>, and completed` (or `failed`)
+ * once it settled, the program read off its evidence (`driven_by`). A claim with `ownClaimToken` is
+ * this prompt's own (an agent step's prompt holds the step's claim while it waits) and is no other
+ * process's. `undefined` when neither holds.
+ */
+function elsewherePhrase(
+  run: RunRecord,
+  step: string,
+  storeKeepsClaims: boolean,
+  ownClaimToken?: string,
+): string | undefined {
+  const claim = run.claims?.[step];
+  if (claim !== undefined && (ownClaimToken === undefined || claim.token !== ownClaimToken)) {
+    return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims))}`;
+  }
+  const ran = ranElsewherePhrase(run, step);
+  return ran !== undefined ? `was ${ran}` : undefined;
+}
+
+/**
  * The line a step's prompt prints when the step stopped waiting for its answer while the prompt was
  * open (decision C165): another process took it (its claim names the program), or ran it (its
  * evidence names the program, `driven_by`), or the run ended. The same past-tense phrase `realm
- * agent` prints for a step another process took (`takenPhrase`).
+ * agent` prints for a step another process took (`takenPhrase`). For an agent step, whose claim the
+ * prompt holds (decision C179), `ownClaimToken` is that claim's token: the prompt also closes when
+ * another process removed the claim (`realm run reclaim --force`), and the step is asked for again.
  */
-export function stepClosedLine(run: RunRecord, step: string, storeKeepsClaims: boolean): string {
-  const claim = run.claims?.[step];
-  if (claim !== undefined) {
-    return `This prompt is closed: step '${step}' was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims))}; not run here.`;
+export function stepClosedLine(
+  run: RunRecord,
+  step: string,
+  storeKeepsClaims: boolean,
+  ownClaimToken?: string,
+): string {
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, ownClaimToken);
+  if (elsewhere !== undefined) {
+    return `This prompt is closed: step '${step}' ${elsewhere}; not run here.`;
   }
-  const done = run.completed_steps.includes(step)
-    ? 'completed'
-    : run.failed_steps.includes(step)
-      ? 'failed'
-      : undefined;
-  if (done !== undefined) {
-    const ev = [...run.evidence]
-      .reverse()
-      .find((e) => e.step_id === step && e.kind !== 'gate_response');
-    const by =
-      ev?.driven_by !== undefined
-        ? takenPhrase({ holder: ev.driven_by })
-        : takenPhrase({ by: null, absent_cause: 'no_claim' });
-    return `This prompt is closed: step '${step}' was ${by}, and ${done}; not run here.`;
+  if (ownClaimToken !== undefined && !run.terminal_state && run.claims?.[step] === undefined) {
+    return `This prompt is closed: the claim it held on step '${step}' was removed by another process, and the step has not run.`;
   }
   return `This prompt is closed: step '${step}' no longer waits for an answer — the run is '${deriveRunPhase(run)}'.`;
+}
+
+/**
+ * decision C179: the line after an agent step's typed answer when another process took or ran the
+ * step between the moment the prompt let its claim go and the engine's own claim for the answer.
+ * `undefined` when the record shows neither (the reply is then the engine's to explain).
+ */
+export function answerNotRunLine(
+  run: RunRecord,
+  step: string,
+  storeKeepsClaims: boolean,
+): string | undefined {
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims);
+  return elsewhere === undefined
+    ? undefined
+    : `Not run here: step '${step}' ${elsewhere}; the answer typed here was not recorded.`;
+}
+
+/**
+ * decision C179: while `realm workflow run` waits for an agent step's typed output it holds the
+ * step's claim (holder: this program, via `run`), so another driver — `realm agent`, an
+ * `execute_step` call — sees the step taken and does no work for it. The claim is released before
+ * the answer goes to the engine (which claims the step again for the answer), when the prompt is
+ * cancelled or closed, and when the process is ended by SIGHUP, SIGINT or SIGTERM (it then exits
+ * 128 + the signal's number). `undefined` when another process took the step first.
+ */
+async function holdStepClaim(
+  store: RunStore,
+  runId: string,
+  step: string,
+  definition: WorkflowDefinition,
+  driver: Attributed | undefined,
+): Promise<
+  { run: RunRecord; token: string | undefined; release: () => Promise<void> } | undefined
+> {
+  let claimed: RunRecord;
+  try {
+    claimed = await store.claimStep(runId, step, definition, driver);
+  } catch (err) {
+    if (
+      err instanceof WorkflowError &&
+      (err.code === 'STATE_STEP_ALREADY_CLAIMED' || err.code === 'STATE_STEP_NOT_ELIGIBLE')
+    ) {
+      return undefined;
+    }
+    throw err;
+  }
+  const token = claimed.claims?.[step]?.token;
+  let released = false;
+  const onSignal = (signal: NodeJS.Signals): void => {
+    void release().finally(() => process.exit(128 + (osConstants.signals[signal] ?? 0)));
+  };
+  const signals: NodeJS.Signals[] = ['SIGHUP', 'SIGINT', 'SIGTERM'];
+  for (const signal of signals) process.once(signal, onSignal);
+  async function release(): Promise<void> {
+    if (released) return;
+    released = true;
+    for (const signal of signals) process.removeListener(signal, onSignal);
+    // A release the record no longer allows (another process settled or took the step, the run
+    // ended, the claim is gone) changes nothing: the next read shows what happened.
+    await store
+      .settleStep?.(
+        runId,
+        { kind: 'release_step', step, ...(token !== undefined ? { claimToken: token } : {}) },
+        definition,
+      )
+      .catch(() => undefined);
+  }
+  return { run: claimed, token, release };
 }
 
 /**
@@ -517,6 +607,15 @@ export const runCommand = new Command('run')
       // question. The block-scoped names below are not visible from the catch, and the catch is
       // where this is needed.
       let promptStep: string | undefined;
+      // decision C179: the claim this process holds while an agent step's prompt waits, if any.
+      let heldClaim: Awaited<ReturnType<typeof holdStepClaim>> = undefined;
+      // decision C182: the claims the loop has said it waits on (step and claim), each said once.
+      const waitingSaid = new Set<string>();
+      const releaseHeldClaim = async (): Promise<void> => {
+        const held = heldClaim;
+        heldClaim = undefined;
+        if (held !== undefined) await held.release();
+      };
 
       try {
         while (!run.terminal_state) {
@@ -656,6 +755,16 @@ export const runCommand = new Command('run')
               ? run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name)
               : [];
           if (inFlight.length > 0) {
+            // decision C182: what it waits for and who holds it, said once for each claim it waits on.
+            for (const step of inFlight) {
+              const claim = run.claims?.[step];
+              const key = `${step}\u0000${claim?.token ?? claim?.since ?? ''}`;
+              if (waitingSaid.has(key)) continue;
+              waitingSaid.add(key);
+              console.log(
+                `  ${waitingLine(step, describeClaimHolder(claim, store.persistsClaims === true), inFlightWatchMs)}`,
+              );
+            }
             const fresh = await recordChange(store, runId, run.version, inFlightWatchMs);
             if (fresh !== undefined) {
               run = fresh;
@@ -711,6 +820,21 @@ export const runCommand = new Command('run')
           const stepName = eligibleSteps[0]!;
           const stepDef: StepDefinition = definition.steps[stepName]!;
 
+          // decision C179: an agent step's claim is held while its prompt waits, so another driver
+          // sees it taken and asks no model. Another process that took it first is said as taken.
+          if (stepDef.execution === 'agent') {
+            const hold = await holdStepClaim(store, runId, stepName, definition, driver);
+            if (hold === undefined) {
+              run = await store.get(runId);
+              console.log(
+                `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], store.persistsClaims === true))}\n`,
+              );
+              continue;
+            }
+            heldClaim = hold;
+            run = hold.run;
+          }
+
           console.log(`→ [${stepDef.execution}] ${stepName}: ${stepDef.description}`);
 
           // Build dispatcher output based on execution type
@@ -719,12 +843,20 @@ export const runCommand = new Command('run')
           // waiting for this answer — another process took it or ran it (`realm run advance`, an
           // `execute_step` call), or the run ended — and says what the record shows; never `✓` for
           // work done elsewhere. Any other rejection is the operator's cancel (#447), rethrown.
+          // decision C179: for an agent step, whose claim this prompt holds, the step stops waiting
+          // when that claim is no longer this prompt's (taken over, or removed), or the run ended.
+          const holding = heldClaim !== undefined;
+          const ownToken = heldClaim?.token;
           const stepGone = new AbortController();
           const stopStepWatch = watchRun(
             store,
             runId,
             (r) =>
-              r.terminal_state === true || !findEligibleSteps(definition, r).includes(stepName),
+              r.terminal_state === true ||
+              (holding
+                ? !r.in_progress_steps.includes(stepName) ||
+                  (ownToken !== undefined && r.claims?.[stepName]?.token !== ownToken)
+                : !findEligibleSteps(definition, r).includes(stepName)),
             () => stepGone.abort(),
           );
           promptStep = stepName;
@@ -751,12 +883,17 @@ export const runCommand = new Command('run')
             }
           } catch (err) {
             if (!stepGone.signal.aborted) throw err;
+            await releaseHeldClaim();
             run = await store.get(runId);
-            console.log(`  ${stepClosedLine(run, stepName, store.persistsClaims === true)}\n`);
+            console.log(
+              `  ${stepClosedLine(run, stepName, store.persistsClaims === true, ownToken)}\n`,
+            );
             continue;
           } finally {
             stopStepWatch();
           }
+          // decision C179: the answer goes to the engine, which claims the step for it.
+          await releaseHeldClaim();
 
           const dispatcher: StepDispatcher = async () => userOutput;
 
@@ -777,6 +914,12 @@ export const runCommand = new Command('run')
             ...(mintWriterNonce ? { writerNonce: crypto.randomUUID() } : {}),
           });
 
+          // decision C179: a `blocked` reply for this step, read against the record — another process
+          // took or ran it in the moment between this prompt's claim and the engine's.
+          const notRun =
+            result.status === 'blocked' && (result.stopped_step ?? stepName) === stepName
+              ? answerNotRunLine(await store.get(runId), stepName, store.persistsClaims === true)
+              : undefined;
           if (
             result.status === 'ok' &&
             result.agent_action === 'stop' &&
@@ -786,6 +929,12 @@ export const runCommand = new Command('run')
             // finished it) — the call ran nothing, so no `✓`: the engine's own words say why.
             run = await store.get(runId);
             console.log(`  Not run here: ${result.context_hint}\n`);
+          } else if (notRun !== undefined) {
+            // decision C179: another process took or ran the step after this prompt let its claim go
+            // and before the engine's own claim for the answer — said; never `✗` with no reason,
+            // never `✓`.
+            run = await store.get(runId);
+            console.log(`  ${notRun}\n`);
           } else if (result.status === 'ok') {
             run = await store.get(runId);
             const ev = result.evidence[0];
@@ -859,6 +1008,9 @@ export const runCommand = new Command('run')
         // its own errors. So ABORT_ERR reaching here means the prompt, and only the prompt.
         // ADDING ANY AbortSignal-CONSUMING AWAIT TO THIS LOOP REQUIRES RE-ESTABLISHING THAT.
         if ((err as { code?: string })?.code === 'ABORT_ERR') {
+          // decision C179: the claim an agent step's prompt held is let go first, so the map's
+          // `Drive it` line finds the step ready.
+          await releaseHeldClaim();
           // A FRESH read, not the loop's `run`: while this process sat blocked on the prompt,
           // another terminal's `realm run respond` or an expiry enactment may have moved it —
           // the #291 race. The map is only as good as the state it forks on.
@@ -886,6 +1038,7 @@ export const runCommand = new Command('run')
           // so 130 would claim a death that did not happen.
           process.exit(1);
         }
+        await releaseHeldClaim();
         throw err;
       } finally {
         rl.close();

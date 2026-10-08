@@ -57,7 +57,13 @@ import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensio
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
 import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js';
-import { inFlightLine, takenLine } from '../lib/holder-render.js';
+import {
+  answerNotRecordedLine,
+  describeProgram,
+  inFlightLine,
+  takenLine,
+  waitingLine,
+} from '../lib/holder-render.js';
 
 export type AgentRunResult = 'completed' | 'failed';
 
@@ -382,6 +388,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // path always assigns it, and keying the moved re-read on the value rather than on the option
   // is what keeps control-flow analysis satisfied.
   let currentRun: RunRecord | undefined;
+  // decision C179: the agent steps this drive answered — the `Result` line names the program that
+  // gave any other answer.
+  const answeredHere = new Set<string>();
 
   if (options.existingRunId !== undefined) {
     // --run-id path: attach to existing run
@@ -502,6 +511,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       // issue #625 PR-2a (decisions C17, C23): an engine step that cannot run HERE — refused before
       // its claim, or capability-blocked — is named once per drive.
       const reportedRefusals = new Set<string>();
+      // decision C182: the claims the drive has said it waits on (step and claim), each said once.
+      const waitingSaid = new Set<string>();
       // decision C23: a capability block's reply from the loop-top `advanceRun`, held per step — it is
       // this drive's exit only when nothing else can run.
       const heldCapabilityReplies = new Map<string, Awaited<ReturnType<typeof advanceRun>>>();
@@ -764,6 +775,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           if (inFlight.length > 0) {
             const pollMs = options.inFlightPollMs ?? IN_FLIGHT_POLL_MS;
             const watchMs = options.inFlightWatchMs ?? IN_FLIGHT_WATCH_MS;
+            // decision C182: what the drive waits for and who holds it, said once for each claim it
+            // waits on — `realm workflow run`'s line.
+            for (const step of inFlight) {
+              const claim = currentRun.claims?.[step];
+              const key = `${step}\u0000${claim?.token ?? claim?.since ?? ''}`;
+              if (waitingSaid.has(key)) continue;
+              waitingSaid.add(key);
+              console.log(waitingLine(step, describeClaimHolder(claim, keepsClaims), watchMs));
+            }
             const startVersion = currentRun.version;
             const watchStarted = Date.now();
             let changed = false;
@@ -1637,6 +1657,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         ) {
           heldCapabilityReplies.set(result.stopped_step, result);
           currentRun = await deps.store.get(runId);
+          answeredHere.add(stepName);
           console.log(`  ✓ → ${currentRun.run_phase}`);
           continue;
         }
@@ -1733,6 +1754,19 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         }
 
         currentRun = await deps.store.get(runId);
+        // decision C179: the run ended before this drive's answer reached the engine — the call ran
+        // nothing (`executeChain`'s reply for a run that has ended), so the answer was not recorded:
+        // said, with who ran the step when another process did, never `✓`.
+        if (
+          engineReply === undefined &&
+          result.status === 'ok' &&
+          result.agent_action === 'stop' &&
+          result.evidence.length === 0
+        ) {
+          const line = answerNotRecordedLine(currentRun, stepName, keepsClaims);
+          if (line !== undefined) console.log(line);
+          continue;
+        }
         if (result.status === 'blocked') {
           // A `blocked` reply is never `✓` (decision C82 (5)). Which step it belongs to is the reply's
           // own `stopped_step` (decision C74): this step's, or a step the engine ran after it.
@@ -1747,12 +1781,20 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // issue #625 PR-2a (D6.1, D3.2): another process took the step — on the claim, or between
             // this drive's read and the engine's (the step is then "not eligible", but in flight,
             // done or failed on the record) — say who and when, as past-tense facts read off its
-            // claim, never `✓ → running`; then re-read and continue.
+            // claim, never `✓ → running`; then re-read and continue. Decision C179: for the agent
+            // step this drive's model answered, the line says the answer was not recorded, and names
+            // the program that ran the step once it settled.
             console.log(
-              takenLine(
-                blockedStep,
-                describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
-              ),
+              engineReply === undefined && blockedStep === stepName
+                ? (answerNotRecordedLine(currentRun, blockedStep, keepsClaims) ??
+                    takenLine(
+                      blockedStep,
+                      describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
+                    ))
+                : takenLine(
+                    blockedStep,
+                    describeClaimHolder(currentRun.claims?.[blockedStep], keepsClaims),
+                  ),
             );
             continue;
           }
@@ -1770,6 +1812,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           console.error(`\n✗ ${result.context_hint}`);
           return 'failed';
         }
+        if (engineReply === undefined) answeredHere.add(stepName);
         console.log(`  ✓ → ${currentRun.run_phase}`);
       }
     } finally {
@@ -1830,7 +1873,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           definition.steps[snapshot.step_id]?.execution === 'agent',
       );
     if (lastAgentEvidence !== undefined) {
-      console.log(`\nResult (${lastAgentEvidence.step_id}):`);
+      // decision C179: an answer this drive did not give is said to be another program's.
+      const givenElsewhere = answeredHere.has(lastAgentEvidence.step_id)
+        ? ''
+        : ` — given by ${lastAgentEvidence.driven_by !== undefined ? describeProgram(lastAgentEvidence.driven_by) : 'another process'}, not by this drive`;
+      console.log(`\nResult (${lastAgentEvidence.step_id})${givenElsewhere}:`);
       const stepDef = definition.steps[lastAgentEvidence.step_id];
       const formatted =
         stepDef?.display !== undefined
