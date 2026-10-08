@@ -154,6 +154,15 @@ export function agentReadyReason(runId: string, agentSteps: readonly string[]): 
 }
 
 /**
+ * The line after the commands a run's state leaves (decisions C164, C181) — `realm run respond`
+ * prints it after its owed lines, `realm run advance` after its ready line for an agent step: true
+ * whether or not a process attends the run.
+ */
+export function attendingLine(commands: number): string {
+  return `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; ${commands === 1 ? 'the line above is' : 'the lines above are'} for when none is.`;
+}
+
+/**
  * Where the project code of a run's steps is loaded from (decision C98) — the folder
  * `loadProjectExtensions` anchors on: the workflow's own `trust_root` (its declared modules are
  * resolved under it, and its realm.yaml is read there) whatever folder the shell is in; for a
@@ -344,9 +353,13 @@ export async function advanceRunFromShell(
             ...(driver !== undefined ? { driver } : {}),
           })
         : undefined;
-    print(
-      `${opening}: ${withFullStop(stoppedReasons(runId, run, pending, reply?.next_actions).join('; '))}`,
-    );
+    const reasons = stoppedReasons(runId, run, pending, reply?.next_actions);
+    print(`${opening}: ${withFullStop(reasons.join('; '))}`);
+    // decision C181: the ready line for an agent step is followed by the line `realm run respond`
+    // prints after its commands — a `realm workflow run` or `realm agent` waiting on the run goes on
+    // by itself.
+    const readyPreview = agentReadyReason(runId, pending.agent_steps);
+    if (readyPreview !== undefined && reasons.includes(readyPreview)) print(attendingLine(1));
     if (cannotRunWayOutApplies(run, pending)) print(cannotRunWayOut(run));
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
@@ -359,6 +372,19 @@ export async function advanceRunFromShell(
   // decision C123: the line that says this call carried out an expired question is printed when it
   // happens — before the steps it led to — and not again with the reply's other warnings.
   let expiryLine: string | undefined;
+  // decision C187: the guards decided since the last step started. A step the loop picks after them
+  // (it starts, or another process holds it) means each passed — a guard that ended the run lets no
+  // step be picked — so their lines are printed before its line, in the order the steps ran. Those
+  // left when the call returns are said below.
+  let decidedGuards: string[] = [];
+  const guardsSaid = new Set<string>();
+  const sayDecidedGuards = (): void => {
+    for (const guard of decidedGuards) {
+      print(guardPassedLine(guard));
+      guardsSaid.add(guard);
+    }
+    decidedGuards = [];
+  };
   const result = await advanceRun(runStore, workflow, {
     runId,
     caller: 'advance',
@@ -369,12 +395,17 @@ export async function advanceRunFromShell(
       expiryLine = line;
       print(`⚠ ${line}`);
     },
+    onGuard: (guard) => {
+      decidedGuards.push(guard);
+    },
     onStep: (step) => {
+      sayDecidedGuards();
       lastStep = step;
       print(`→ ${step}`);
     },
     // D6.1: a step another process took is said as a past-tense fact — never "cannot run here".
     onTaken: (step, record) => {
+      sayDecidedGuards();
       print(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
     },
   });
@@ -387,7 +418,7 @@ export async function advanceRunFromShell(
   const endingLines = describeEndedBy(result);
   const chainedGuards = (result.chained_auto_steps ?? [])
     .map((c) => c.step)
-    .filter((step) => workflow.steps[step]?.execution === 'guard');
+    .filter((step) => workflow.steps[step]?.execution === 'guard' && !guardsSaid.has(step));
   const after = await runStore.get(runId);
   if (endingLines.length > 0) {
     for (const line of endingLines) print(line);
@@ -435,7 +466,13 @@ export async function advanceRunFromShell(
   // decision C37: a run that completed is not a stop — the phase line below says it, so its ending
   // gets no `Stopped:` line (any other reason that holds still does).
   const completedEnding = 'the run has ended (completed)';
-  for (const reason of reasons.filter((r) => r !== completedEnding)) print(`Stopped: ${reason}`);
+  // decision C181: right after the ready line for an agent step, the line `realm run respond` prints
+  // after its commands.
+  const ready = agentReadyReason(runId, afterView.agent_steps);
+  for (const reason of reasons.filter((r) => r !== completedEnding)) {
+    print(`Stopped: ${reason}`);
+    if (reason === ready) print(attendingLine(1));
+  }
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
   // last line is the way out (it carries the phase); otherwise the phase line.
   print(

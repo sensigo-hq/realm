@@ -1585,7 +1585,7 @@ async function enactExpiredGateIfDue(
   // disclosure line — the caller of the entry whose call this is (`executeStep`'s Step 1.5, or an
   // advance call): its library name, or the name its host passed.
   via: EnactedVia,
-): Promise<{ run: RunRecord; disclosure?: string; enacted: boolean }> {
+): Promise<{ run: RunRecord; disclosure?: string; enacted: boolean; guards?: string[] }> {
   const gate = run.pending_gate;
   // decision C95: the one predicate the run's view reads too (`dueExpiry`), so the view never
   // offers an expiry this function would not carry out.
@@ -1664,7 +1664,14 @@ async function enactExpiredGateIfDue(
   // decision C109: core prints nothing (it is I/O-free) — every caller puts this line in its
   // reply's `warnings` (`executeStep` on every reply it returns, `advanceRun` on its own), and a
   // host that shows a person the outcome renders the reply's warnings.
-  return { run: finalRun, disclosure: disclosureParts.join(' '), enacted: true };
+  // decision C186: the guards the expiry's write decided — a caller that says what ran names them.
+  const guards = (expireOutcome.guards ?? []).map((g) => g.step);
+  return {
+    run: finalRun,
+    disclosure: disclosureParts.join(' '),
+    enacted: true,
+    ...(guards.length > 0 ? { guards } : {}),
+  };
 }
 
 /**
@@ -4957,6 +4964,19 @@ const LATE_SAME_CHOICE_SENTENCE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
 
 /**
+ * decision C185: the `error_details` of a late answer that names the choice the question's expiry
+ * recorded — the fields the refusal of another choice carries (decisions C171, C178), so a client
+ * that reads fields learns the expiry chose it.
+ */
+function lateSameChoiceDetails(
+  runId: string,
+  gateId: string,
+  choice: string | undefined,
+): Record<string, unknown> {
+  return { runId, gateId, winning_choice: choice, resolved_by: 'timeout' };
+}
+
+/**
  * The line a late answer's reply carries about the question's expiry (decisions C146, C151), as a
  * surface prints it — `⚠ ` and the line: `this <via> call first carried out its declared …` when
  * the answering call carried the expiry out, or `another call had already carried out …`. Picked
@@ -5223,6 +5243,11 @@ async function composeExpiryReply(
     );
     if (entry.choice === originalChoice) {
       // [F12]'s own pinned string — same choice, still honestly not "your" recorded response.
+      // Decision C185: the fields and the owed sentence the other choice's refusal carries —
+      // `error_details` with `resolved_by`, and, while the run goes on, what it owes.
+      const view = finalRun.terminal_state
+        ? undefined
+        : describePending(definition, finalRun, registry, now);
       return {
         command: stepName,
         run_id: finalRun.id,
@@ -5232,7 +5257,8 @@ async function composeExpiryReply(
         evidence: [],
         warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings),
         errors: [],
-        context_hint: LATE_SAME_CHOICE_SENTENCE,
+        error_details: lateSameChoiceDetails(finalRun.id, originalGateId, entry.choice),
+        context_hint: `${LATE_SAME_CHOICE_SENTENCE}${view !== undefined ? describeNext(view, finalRun) : ''}`,
         run_phase: finalRun.run_phase,
         next_actions: finalRun.terminal_state
           ? []
@@ -5523,9 +5549,19 @@ export async function submitHumanResponse(
                 ? { answer_recorded: false as const }
                 : {}),
               // decision C171: when the question's expiry recorded that choice, the hint says so — the
-              // sentence a late answer of that choice gets (and `realm run respond` prints).
+              // sentence a late answer of that choice gets (and `realm run respond` prints); decision
+              // C185: with `error_details` and, while the run goes on, what it owes.
+              ...(gateSettledByTimeout(noopRun, stepName)
+                ? {
+                    error_details: lateSameChoiceDetails(
+                      options.runId,
+                      options.gateId,
+                      noopRun.settled?.[stepName]?.choice ?? options.choice,
+                    ),
+                  }
+                : {}),
               context_hint: gateSettledByTimeout(noopRun, stepName)
-                ? LATE_SAME_CHOICE_SENTENCE
+                ? `${LATE_SAME_CHOICE_SENTENCE}${noopRun.terminal_state ? '' : describeNext(describePending(definition, noopRun, options.registry, now), noopRun)}`
                 : `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
               run_phase: noopRun.run_phase,
               next_actions: noopRun.terminal_state
@@ -6844,6 +6880,7 @@ interface AdvanceLoopContext {
   now?: Date;
   onStep?: (step: string) => void;
   onTaken?: (step: string, run: RunRecord) => void;
+  onGuard?: (guard: string) => void;
   /** The step `executeChain` ran before the loop (its warnings are rescued); absent for advanceRun. */
   namedStep?: string;
   /**
@@ -6878,6 +6915,12 @@ async function advanceLoop(
 ): Promise<ResponseEnvelope> {
   const { chainedSteps, depth0Warnings, takenSteps } = state;
   let { run, result } = state;
+  // decision C187: a guard the loop records is told to the host as it is recorded, so a host that
+  // prints as the steps run prints it in its place.
+  const pushGuard = (entry: ChainedStepEntry): void => {
+    chainedSteps.push(entry);
+    options.onGuard?.(entry.step);
+  };
   const budget = Object.keys(definition.steps).length;
   let executions = 0;
   let resultIsNamedStep = options.namedStep !== undefined;
@@ -7007,7 +7050,7 @@ async function advanceLoop(
             if (guardSettleResult.reason !== 'gate_open_wait') {
               // "quiet" end-of-pass for gate_open_wait only — nothing was decided, so nothing is
               // recorded; already_settled/divergence DID decide something (elsewhere), so it is.
-              chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
+              pushGuard({ step: guardName, run_phase: guardSettleResult.run.run_phase });
             }
             run = guardSettleResult.run;
             // Drain: on already_settled ∧ pending ledger entries non-empty (design record §6, "same
@@ -7107,7 +7150,7 @@ async function advanceLoop(
         }
 
         // applied: true.
-        chainedSteps.push({ step: guardName, run_phase: guardSettleResult.run.run_phase });
+        pushGuard({ step: guardName, run_phase: guardSettleResult.run.run_phase });
 
         if (guardSettleResult.transitioned) {
           // Drain IMMEDIATELY after a transitioned settle result, BEFORE building the in-loop
@@ -7251,7 +7294,7 @@ async function advanceLoop(
       }
 
       // Record in chained_auto_steps for visibility.
-      chainedSteps.push({ step: guardName, run_phase: persistedGuardRun.run_phase });
+      pushGuard({ step: guardName, run_phase: persistedGuardRun.run_phase });
 
       if (persistedGuardRun.terminal_state) {
         // Run is terminal via this guard. Adjacent pre-existing bug fixed: a PASSING guard that
@@ -7444,7 +7487,7 @@ async function advanceLoop(
     });
     cascadedGuards.forEach((guard, index) => {
       const endedTheRun = index === cascadedGuards.length - 1 && stepResult.ended_by !== undefined;
-      chainedSteps.push({
+      pushGuard({
         step: guard.step,
         run_phase: endedTheRun ? (stepResult.run_phase ?? run.run_phase) : 'running',
       });
@@ -7483,12 +7526,18 @@ function nothingRanHint(
   registry: ExtensionRegistry,
   now: Date,
   expiryCarriedOut: boolean,
+  // decision C186: the guards the expiry's write decided — they ran.
+  expiryGuards: readonly string[] = [],
 ): string {
   if (expiryCarriedOut) {
     const outcome = run.terminal_state
       ? ` The run ended (${deriveRunPhase(run)}).`
       : describeNext(describePending(definition, run, registry, now), run);
-    return `Run '${run.id}': its expired question was carried out as declared (see warnings); no step ran.${outcome}`;
+    if (expiryGuards.length === 0) {
+      return `Run '${run.id}': its expired question was carried out as declared (see warnings); no step ran.${outcome}`;
+    }
+    const guards = `${expiryGuards.length === 1 ? 'guard' : 'guards'} ${expiryGuards.map((g) => `'${g}'`).join(', ')}`;
+    return `Run '${run.id}': its expired question was carried out as declared, and that decided ${guards} (see warnings); no other step ran.${outcome}`;
   }
   if (run.terminal_state) {
     return `Run '${run.id}' is already terminal (${deriveRunPhase(run)}); nothing ran.`;
@@ -7517,6 +7566,13 @@ export interface AdvanceRunOptions {
    * from the re-read record's claim.
    */
   onTaken?: (step: string, run: RunRecord) => void;
+  /**
+   * Called with the name of each guard this call decides, as it is decided — after the step whose
+   * write decided it, before the next step's `onStep` (decision C187) — in the order of
+   * `chained_auto_steps`, where each is listed too. A guard the expiry this call carried out
+   * decided is not among them: its sentence is on the expiry's line (`onExpiry`).
+   */
+  onGuard?: (guard: string) => void;
   /**
    * The caller, naming itself (decision C124): the `enacted_via` of the line that says this call
    * carried out an expired question (`this <caller> call …`), and the reply's `command` unless
@@ -7572,6 +7628,7 @@ export async function advanceRun(
   // A question with no `on_expiry`, or not yet expired, is never touched.
   let expiryDisclosure: string | undefined;
   let expiryCarriedOut = false;
+  let expiryGuards: string[] = [];
   if (stored.pending_gate !== undefined) {
     const enacted = await enactExpiredGateIfDue(
       store,
@@ -7588,6 +7645,7 @@ export async function advanceRun(
     // decision C109: a line can say the expiry could NOT be carried out — the hint then never says
     // it was.
     expiryCarriedOut = enacted.enacted;
+    expiryGuards = enacted.guards ?? [];
   }
   const chained: ChainedStepEntry[] = [];
   const depth0Warnings: string[] = [];
@@ -7606,6 +7664,7 @@ export async function advanceRun(
       ...(options.now !== undefined ? { now: options.now } : {}),
       ...(options.onStep !== undefined ? { onStep: options.onStep } : {}),
       ...(options.onTaken !== undefined ? { onTaken: options.onTaken } : {}),
+      ...(options.onGuard !== undefined ? { onGuard: options.onGuard } : {}),
       via: caller,
     },
     {
@@ -7619,7 +7678,14 @@ export async function advanceRun(
         evidence: [],
         warnings: [],
         errors: [],
-        context_hint: nothingRanHint(definition, stored, registry, now, expiryCarriedOut),
+        context_hint: nothingRanHint(
+          definition,
+          stored,
+          registry,
+          now,
+          expiryCarriedOut,
+          expiryGuards,
+        ),
         run_phase: deriveRunPhase(stored),
         next_actions: stored.terminal_state
           ? []
@@ -7636,7 +7702,7 @@ export async function advanceRun(
   let endHint: string | undefined;
   if (chained.length === 0 && advanced.status === 'ok') {
     const end = await store.get(options.runId).catch(() => stored);
-    endHint = nothingRanHint(definition, end, registry, now, expiryCarriedOut);
+    endHint = nothingRanHint(definition, end, registry, now, expiryCarriedOut, expiryGuards);
   }
   // decision C110: each line once — a chained step's warnings are not listed again when the final
   // reply is that step's own.

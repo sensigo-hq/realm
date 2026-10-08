@@ -254,35 +254,38 @@ export function renderAnswerLine(answer: AnswerView): string {
 }
 
 /**
+ * decision C183: the ONE spelling of a control character a terminal line shows — JSON's: `\t`,
+ * `\n`, `\r`, `\b`, `\f`, and `\u00XX` for the others below U+0020; `\uXXXX` for U+007F–U+009F
+ * (the house's control set, `holder.ts`; U+009B starts a terminal sequence), which JSON leaves raw.
+ * `realm run inspect`'s `Message:` line and `realm workflow run`'s question print the same escape.
+ */
+export function controlEscape(c: string): string {
+  const code = c.charCodeAt(0);
+  return code < 0x20 ? JSON.stringify(c).slice(1, -1) : `\\u${code.toString(16).padStart(4, '0')}`;
+}
+
+/**
  * A question's text as the terminal shows it (decision C167; `realm run inspect`'s `Message:` line):
- * quoted, on one line, every control character written as an escape — a run parameter in it may
- * carry a newline or a terminal sequence. JSON quoting escapes U+0000–U+001F; the house's control
- * set (`holder.ts`) also holds U+007F–U+009F (U+009B starts a terminal sequence), which JSON leaves
- * raw, so those are escaped too.
+ * quoted, on one line, every control character written as an escape ({@link controlEscape}) — a
+ * run parameter in it may carry a newline or a terminal sequence.
  */
 export function quotedForTerminal(text: string): string {
-  return JSON.stringify(text).replace(
-    /[\u007f-\u009f]/g,
-    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  );
+  return JSON.stringify(text).replace(/[\u007f-\u009f]/g, controlEscape);
 }
 
 /**
  * decision C175: a question's lines as the gate's prompt shows them — each line as written, every
- * control character but the line break written as an escape (the terminal-safety rule of
- * {@link quotedForTerminal}); one line after `Question: `, more than one each on its own line,
- * indented under it, so no line of a question can stand where the prompt's own lines start.
+ * control character but the line break written as an escape, the same as `realm run inspect`'s
+ * (decision C183, {@link controlEscape}); one line after `Question: `, more than one each on its
+ * own line, indented under it, so no line of a question can stand where the prompt's own lines start.
  */
 export function questionLines(text: string): string[] {
   const lines = text
     .replace(/\n$/, '')
     .split('\n')
     .map((line) =>
-      line.replace(
-        // eslint-disable-next-line no-control-regex -- the control characters are what is escaped
-        /[\u0000-\u001f\u007f-\u009f]/g,
-        (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
-      ),
+      // eslint-disable-next-line no-control-regex -- the control characters are what is escaped
+      line.replace(/[\u0000-\u001f\u007f-\u009f]/g, controlEscape),
     );
   return lines.length === 1
     ? [`  Question: ${lines[0]}`]
