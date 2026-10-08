@@ -105,8 +105,11 @@ export interface ResponseEnvelope {
    */
   error_code?: ErrorCode;
   /**
-   * Additional structured context from the WorkflowError. Only present when
-   * error_code is set and the error carries non-empty details.
+   * Additional structured context. On an error: the WorkflowError's details, present when
+   * error_code is set and the error carries non-empty details. On a late answer that names the
+   * choice the question's expiry recorded (`status: 'ok'`, `answer_recorded: false`, decision
+   * C185): `runId`, `gateId`, `winning_choice` and `resolved_by: 'timeout'` — the fields the
+   * refusal of another choice carries.
    */
   error_details?: Record<string, unknown>;
   agent_action?: AgentAction;

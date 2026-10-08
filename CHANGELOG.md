@@ -130,8 +130,8 @@ inspect` prints it: `This prompt is closed: the question on '<step>' is no longe
   longer waits for an answer that can no longer be recorded (pressing Enter printed `your choice ''
 was not recorded`). The prompt reads the record twice a second while it waits.
 - **`realm workflow run`'s step prompt closes when another process runs the step; its gate prompt
-  shows the question (issue #625, PR-2a).** While the prompt for an agent or `auto` step waits,
-  another process may take or run that step (`realm run advance`, an MCP `execute_step`). The prompt
+  shows the question (issue #625, PR-2a).** While the prompt for an `auto` step waits, another
+  process may take or run that step (`realm run advance`, `realm agent`, an MCP `execute_step`). The prompt
   then closes and says so — `This prompt is closed: step '<step>' was taken by <program>, and
 completed; not run here.` — where it kept the prompt open and printed `✓ → completed | hash: n/a… |
 n/a` for the other process's work; an answer that reaches the engine after the run ended prints
@@ -141,7 +141,37 @@ n/a` for the other process's work; an answer that reaches the engine after the r
   (it printed `No eligible steps in phase 'running'. Workflow stalled.` and exited 1 at once). The
   gate prompt prints the question before its choices — the gate's `message`, or the step's `prompt`
   when the gate has none, as the reply that opened the gate renders it — each line as written:
-  `Question: <text>`, or `Question:` with the lines indented below it; it printed only the preview.
+  `Question: <text>`, or `Question:` with the lines indented below it, any other control character
+  written as `realm run inspect` writes it in its `Message:` line (a tab as `\t`); it printed only
+  the preview.
+- **`realm workflow run` holds an agent step while its prompt waits; `realm agent` never says `✓`
+  for an answer it did not give (issue #625, PR-2a).** The prompt for an agent step takes the
+  step's claim (`realm run inspect`: taken by this program, `via run`) and lets it go when the
+  answer is typed, the prompt is left, or the command gets SIGHUP, SIGINT or SIGTERM (exit 128 plus
+  the signal's number). Another driver does no work for the step meanwhile: `realm agent` waits and
+  asks no model, an `execute_step` call is refused (`it is in flight`); `realm run list --stuck`
+  lists the run while the prompt waits (`<step>=claim_unknown_age`). `realm agent` asked its model
+  and, when the typed answer reached the engine first, printed `✓ → completed` and the other answer
+  as its `Result`; it now prints `• Step '<step>' was taken by <program>, and completed; this
+drive's answer was not recorded.` (or `… at <time>; …` while the other process holds the step, or
+  `… was not run: the run ended (<phase>) …`), and its `Result` line names the program that gave an
+  answer it did not: `Result (<step>) — given by <program>, not by this drive:`. An answer typed at
+  the prompt that another process beats to the engine prints `Not run here: step '<step>' was taken
+by <program>, and completed; the answer typed here was not recorded.` (it printed `✗ blocked: `).
+  Both drivers say what they wait for while another process holds a step: `• Step '<step>' is in
+flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.`
+- **`realm run advance` says a waiting `realm workflow run` or `realm agent` goes on by itself, and
+  prints each guard where the run decided it (issue #625, PR-2a).** After its line for an agent step
+  that is ready it prints the line `realm run respond` prints after its commands. A guard decided
+  before a later step is printed before that step's `→` line; it was printed after every step.
+- **A late answer that names the choice the question's expiry recorded says so in its fields
+  (issue #625, PR-2a).** `submit_human_response`'s `status: ok` reply (`answer_recorded: false`)
+  carries `error_details` (`winning_choice`, `resolved_by: "timeout"`) and, while the run goes on,
+  ends its `context_hint` with what the run owes, as the refusal of another choice does; it had
+  neither.
+- **`advance_run` says which guards the expiry it carried out decided (issue #625, PR-2a).** Its
+  `context_hint` reads `… its expired question was carried out as declared, and that decided guard
+'<guard>' (see warnings); no other step ran. …`; it said `no step ran` beside a guard that ran.
 - **`realm run respond` says a waiting `realm workflow run` or `realm agent` goes on by itself
   (issue #625, PR-2a).** After the line that names a command (`Owed to the engine: …`, `An agent step
 is ready: …`) it prints `If a realm workflow run or realm agent is still waiting on this run, it

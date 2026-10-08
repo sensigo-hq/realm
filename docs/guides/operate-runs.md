@@ -81,7 +81,13 @@ See [Add a human gate](human-gates.md#6-answer-it).
 
 ## Open, with no driver
 
-A run in `running` moves only when a driver calls it. If the driver has stopped, start one on the same run:
+A run in `running` moves only when a driver calls it. If the driver has stopped, start one on the same run. When the run owes the engine work — an `auto` step or a guard, as the `Owed to the engine:` line of `realm run inspect` says — run it from your shell, with no model and no key:
+
+```bash
+realm run advance <run-id>
+```
+
+It stops where the run next needs something else, such as an agent step or a question, and says which. An agent step needs a driver with a model:
 
 ```bash
 realm agent --run-id <run-id> --model <model>

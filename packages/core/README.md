@@ -22,7 +22,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const definition = loadWorkflowFromFile(path.join(__dirname, 'my-workflow/workflow.yaml'));
 
 const store = new JsonFileStore(); // defaults to ~/.realm/runs/
-const run = await store.create({
+const { run } = await store.create({
   workflowId: definition.id,
   workflowVersion: definition.version,
   params: { input: 'hello' },
@@ -82,6 +82,7 @@ registry.register('adapter', 'my-adapter', myAdapter);
 | `executeStep`         | Advance a run by one step. Returns `ResponseEnvelope`.                                                                                                                       |
 | `executeChain`        | Auto-chain through auto steps until an agent step is reached.                                                                                                                |
 | `submitHumanResponse` | Resolve an open human gate.                                                                                                                                                  |
+| `advanceRun`          | Run what a run owes the engine — an expired question's declared `on_expiry`, then its guards and `auto` steps. Returns `ResponseEnvelope`.                                   |
 | `buildNextActions`    | Build `NextAction[]` for what the run waits on: the agent steps that can be called, `advance_run` when the engine owes work, or the open question's `submit_human_response`. |
 | `findEligibleSteps`   | Return names of steps ready to execute given current run state.                                                                                                              |
 | `propagateSkips`      | Propagate skip flags through dependent steps.                                                                                                                                |

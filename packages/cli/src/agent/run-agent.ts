@@ -391,6 +391,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // decision C179: the agent steps this drive answered — the `Result` line names the program that
   // gave any other answer.
   const answeredHere = new Set<string>();
+  // decision C179: the drive stopped on a step another process holds (the 60s watch ended unchanged).
+  let stoppedOnInFlight = false;
 
   if (options.existingRunId !== undefined) {
     // --run-id path: attach to existing run
@@ -805,6 +807,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               const stale = states.get(step) === 'claim_stale';
               console.log(inFlightLine(runId, step, described, stale, watchMs));
             }
+            // decision C179: the drive stops on the step another process holds; the run did not end,
+            // so no `Run ended in phase` line follows.
+            stoppedOnInFlight = true;
           }
           break;
         }
@@ -1889,6 +1894,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     return 'completed';
   }
 
+  if (stoppedOnInFlight) return 'failed';
   console.error(`\nRun ended in phase: ${currentRun.run_phase}`);
   return 'failed';
 }

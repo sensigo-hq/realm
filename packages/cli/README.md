@@ -24,15 +24,16 @@ npm install -g @sensigo/realm-cli
 
 ### realm run \<command\>
 
-| Command   | Description                        |
-| --------- | ---------------------------------- |
-| `list`    | List all runs                      |
-| `inspect` | Inspect a run's steps and evidence |
-| `replay`  | Replay a completed run             |
-| `diff`    | Diff two run records               |
-| `resume`  | Resume a paused run                |
-| `respond` | Submit a response to a human gate  |
-| `cleanup` | Delete old or terminal runs        |
+| Command   | Description                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list`    | List all runs                                                                                                                                                       |
+| `inspect` | Inspect a run's steps and evidence                                                                                                                                  |
+| `replay`  | Replay a completed run                                                                                                                                              |
+| `diff`    | Diff two run records                                                                                                                                                |
+| `resume`  | Resume a paused run                                                                                                                                                 |
+| `respond` | Submit a response to a human gate                                                                                                                                   |
+| `advance` | Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — from this shell, with no model provider and no key |
+| `cleanup` | Delete old or terminal runs                                                                                                                                         |
 
 ### Top-level commands
 
