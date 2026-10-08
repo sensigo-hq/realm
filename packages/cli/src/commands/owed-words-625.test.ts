@@ -17,6 +17,8 @@ import {
   type WorkflowDefinition,
   type ExtensionIdentityEntry,
   answerAction,
+  abandonRun,
+  loadWorkflowFromString,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, stoppedReasons, advanceRunFromShell } from './run-advance.js';
 import { inspectRun } from './inspect.js';
@@ -972,6 +974,83 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
         "Cannot run 'x' (trust): 'trust: \"nope\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.",
       );
       expect(screen).not.toContain('parked');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('#625 PR-2a, round 24 (the architect, m174a) — the guard line when another program ends the run', () => {
+  it('a guard that passed is said as passed when another program ends the run after it (the record names no guard as the ending), never as the run’s ending', async () => {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = loadWorkflowFromString(
+        [
+          'id: adv-guard-then-abandoned',
+          'name: adv-guard-then-abandoned',
+          'version: 1',
+          'steps:',
+          '  x:',
+          '    description: X.',
+          '    execution: auto',
+          '    handler: ok',
+          '  g:',
+          '    description: G.',
+          '    execution: guard',
+          '    depends_on: [x]',
+          '    abort_unless: ["x.ok == true"]',
+          '  y:',
+          '    description: Y.',
+          '    execution: agent',
+          '    depends_on: [g]',
+        ].join('\n'),
+      );
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'ok', {
+        id: 'ok',
+        execute: async () => ({ data: { ok: true } }),
+      });
+      // Another program abandons the run in the moment after the guard's write: the first read that
+      // finds `g` settled abandons the run first, as a second terminal's `realm run abandon` would.
+      let abandoned = false;
+      const racing = new Proxy(runs, {
+        get(target, prop) {
+          if (prop === 'get') {
+            return async (id: string): Promise<RunRecord> => {
+              const rec = await target.get(id);
+              if (!abandoned && rec.completed_steps.includes('g')) {
+                abandoned = true;
+                await abandonRun(target, id, 'another program');
+                return target.get(id);
+              }
+              return rec;
+            };
+          }
+          const v = Reflect.get(target, prop, target) as unknown;
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      });
+      const lines: string[] = [];
+      await advanceRunFromShell(
+        run.id,
+        { project: home },
+        racing,
+        workflows,
+        undefined,
+        (l) => lines.push(l),
+        registry,
+      );
+      // CONTROL: the race happened, and no guard ended the run.
+      expect(abandoned).toBe(true);
+      const after = await runs.get(run.id);
+      expect(after.terminal_state).toBe(true);
+      expect(after.abandoned_at).toBeDefined();
+      // The guard passed (the record says so), and the command says so; it never prints a guard
+      // ending for a run that another program ended.
+      expect(lines, lines.join('\n')).toContain("Guard step 'g' passed.");
+      expect(lines.join('\n')).not.toMatch(/Guard step 'g' (aborted|ended|completed)/);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
