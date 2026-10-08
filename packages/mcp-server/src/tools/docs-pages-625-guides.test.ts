@@ -761,7 +761,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
   it('packages/core/README.md: next_actions[0] names the next step; when it names advance_run, call advanceRun — repeat until next_actions is empty', async () => {
     claim(
       'packages/core/README.md',
-      '// response.next_actions[0] carries the next step to execute; when it names advance_run, call advanceRun —\n// repeat until next_actions is empty',
+      // decision C192: the comment gives the call.
+      '// response.next_actions[0] carries the next step to execute; when it names advance_run, call\n// advanceRun(store, definition, { runId: run.id }) (import it beside executeStep) —\n// repeat until next_actions is empty',
     );
     const dir = await mkdtemp(join(tmpdir(), 'realm-pages-625-e2-readme-'));
     const store = new JsonFileStore(dir);

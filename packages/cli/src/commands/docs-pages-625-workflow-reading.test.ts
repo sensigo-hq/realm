@@ -757,7 +757,8 @@ describe(
     it('line 241: the exit code — 0 completed; 1 for any other ending, nothing else could run, a left prompt (Ctrl+C or Ctrl+D), no terminal', async () => {
       claim(
         WF_PAGE,
-        '**Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal.',
+        // decision C188: the hand-back's exit is pinned by its own cell (run-prompt-625, round 24).
+        '**Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if it stopped waiting for a step another program holds, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal.',
       );
       const agentStep = [
         'id: exit-ok',
