@@ -968,6 +968,10 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       claimWorkflowPage(LETS_GO);
       let atPrompt: unknown;
       let otherCall: unknown;
+      let views: unknown;
+      claimWorkflowPage(
+        'Like any claim on an agent step, it has no time limit: `realm run list --stuck` lists the run (`<step>=claim_unknown_age`) while the prompt waits.',
+      );
       mocks.question.mockImplementation(async (prompt: string) => {
         if (prompt.startsWith('  Choice ')) return 'approve';
         if (prompt.startsWith('  Agent output')) {
@@ -994,6 +998,18 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
             },
           );
           otherCall = { status: r.status, hint: r.context_hint, ran };
+          // What `realm run inspect` and `realm run list --stuck` show meanwhile (the built CLI).
+          const { spawnSync } = await import('node:child_process');
+          const cli = join(dirname(fileURLToPath(import.meta.url)), '../../dist/index.js');
+          const env = { PATH: process.env['PATH'] ?? '', HOME: home, NO_COLOR: '1' };
+          const show = (args: string[]) =>
+            spawnSync(process.execPath, [cli, ...args], { env, encoding: 'utf8' }).stdout;
+          views = {
+            inspect: /^\s*finish: taken by .+, via run\), \d+m ago$/m.test(
+              show(['run', 'inspect', runId()]),
+            ),
+            stuck: show(['run', 'list', '--stuck']).includes('finish=claim_unknown_age'),
+          };
           return '{"by": "person"}';
         }
         return '';
@@ -1007,6 +1023,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect({
         atPrompt,
         otherCall,
+        views,
         afterwards: {
           phase: record.run_phase,
           answer: ev?.output_summary,
@@ -1021,6 +1038,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
           hint: "Step 'finish' cannot be called now: it is in flight (claimed by another call).",
           ran: false,
         },
+        views: { inspect: true, stuck: true },
         afterwards: { phase: 'completed', answer: { by: 'person' }, by: 'run', claims: undefined },
         code: 0,
       });
@@ -1045,45 +1063,94 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       }).toEqual({ inProgress: [], claim: undefined, drive: true, code: 1 });
     }, 30_000);
 
-    it('C179: SIGTERM while the agent step’s prompt waits lets the claim go and exits 143 (128 + the signal’s number)', async () => {
-      claimWorkflowPage(LETS_GO);
-      const listenersBefore = process.listenerCount('SIGTERM');
-      exitSpy.mockImplementation((() => undefined) as never);
-      let afterSignal: unknown;
-      mocks.question.mockImplementation(async (prompt: string) => {
-        if (prompt.startsWith('  Choice ')) return 'approve';
-        if (prompt.startsWith('  Agent output')) {
-          const held = (await readRecord()).in_progress_steps;
-          process.emit('SIGTERM', 'SIGTERM');
-          const deadline = Date.now() + 5_000;
-          while (exitSpy.mock.calls.length === 0 && Date.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
+    it.each([
+      ['SIGHUP', 129],
+      ['SIGINT', 130],
+      ['SIGTERM', 143],
+    ] as const)(
+      'C179: %s while the agent step’s prompt waits lets the claim go and exits %i (128 + the signal’s number)',
+      async (signal, code) => {
+        claimWorkflowPage(LETS_GO);
+        const listenersBefore = process.listenerCount(signal);
+        exitSpy.mockImplementation((() => undefined) as never);
+        let afterSignal: unknown;
+        mocks.question.mockImplementation(async (prompt: string) => {
+          if (prompt.startsWith('  Choice ')) return 'approve';
+          if (prompt.startsWith('  Agent output')) {
+            const held = (await readRecord()).in_progress_steps;
+            process.emit(signal, signal);
+            const deadline = Date.now() + 5_000;
+            while (exitSpy.mock.calls.length === 0 && Date.now() < deadline) {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            const record = await readRecord();
+            afterSignal = {
+              held,
+              inProgress: record.in_progress_steps,
+              claim: record.claims?.['finish'],
+              exits: exitSpy.mock.calls.map((c: unknown[]) => c[0]),
+            };
+            // End the command: exits throw again, and the prompt is left.
+            exitSpy.mockImplementation(((): never => {
+              throw new Error('process.exit');
+            }) as never);
+            throw abortError();
           }
-          const record = await readRecord();
-          afterSignal = {
-            held,
-            inProgress: record.in_progress_steps,
-            claim: record.claims?.['finish'],
-            exits: exitSpy.mock.calls.map((c: unknown[]) => c[0]),
-          };
-          // End the command: exits throw again, and the prompt is left.
-          exitSpy.mockImplementation(((): never => {
-            throw new Error('process.exit');
-          }) as never);
-          throw abortError();
-        }
-        return '';
+          return '';
+        });
+        await run(workflowYaml({ id: `prompt-625-c179-${signal.toLowerCase()}`, finish: true }));
+        // (a) red when the signal leaves the claim, or the exit code is another; (b) prints the state.
+        expect(afterSignal).toEqual({
+          held: ['finish'],
+          inProgress: [],
+          claim: undefined,
+          exits: [code],
+        });
+        // The handlers are removed once the claim is let go: (a) red when a listener stays behind.
+        expect(process.listenerCount(signal)).toBe(listenersBefore);
+      },
+      30_000,
+    );
+
+    it('C179: a claim the prompt left behind (the command killed outright) is released by `realm run reclaim --step --force`', async () => {
+      claimWorkflowPage(
+        'a command killed outright (SIGKILL) leaves it, and `realm run reclaim <run> --step <step> --force` releases it.',
+      );
+      // The record a killed prompt leaves: the agent step's claim, holder via `run`, no time limit.
+      const { JsonFileStore, loadWorkflowFromString } = await import('@sensigo/realm');
+      const def = loadWorkflowFromString(
+        workflowYaml({ id: 'prompt-625-c179-killed', finish: true }),
+      );
+      const store = new JsonFileStore();
+      const { run: created } = await store.create({
+        workflowId: def.id,
+        workflowVersion: 1,
+        params: {},
       });
-      await run(workflowYaml({ id: 'prompt-625-c179-term', finish: true }));
-      // (a) red when the signal leaves the claim, or the exit code is another; (b) prints the state.
-      expect(afterSignal).toEqual({
-        held: ['finish'],
-        inProgress: [],
-        claim: undefined,
-        exits: [143],
+      await store.update({ ...created, completed_steps: ['confirm', 'check'] });
+      await store.claimStep(created.id, 'finish', def, {
+        by: 'person-at-t1',
+        by_source: 'stated',
+        channel: 'run',
       });
-      // The handler is removed once the claim is let go: (a) red when a listener stays behind.
-      expect(process.listenerCount('SIGTERM')).toBe(listenersBefore);
+      const { spawnSync } = await import('node:child_process');
+      const cli = join(dirname(fileURLToPath(import.meta.url)), '../../dist/index.js');
+      const env = { PATH: process.env['PATH'] ?? '', HOME: home, NO_COLOR: '1' };
+      const reclaim = spawnSync(
+        process.execPath,
+        [cli, 'run', 'reclaim', created.id, '--step', 'finish', '--force'],
+        { env, encoding: 'utf8' },
+      );
+      const after = await store.get(created.id);
+      // (a) red when the left claim cannot be released this way; (b) prints the command's output.
+      expect(
+        {
+          code: reclaim.status,
+          inProgress: after.in_progress_steps,
+          claim: after.claims?.['finish'],
+        },
+        reclaim.stdout + reclaim.stderr,
+      ).toEqual({ code: 0, inProgress: [], claim: undefined });
     }, 30_000);
 
     it('C179: another process removed the claim while the prompt waited — the prompt closes, says so, and asks again', async () => {
