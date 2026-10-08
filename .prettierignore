@@ -7,3 +7,5 @@ brand-kit/
 # commit hook after a local website build would format or report generated files.
 website/.astro/
 website/src/content/
+website/public/live/
+website/src/live/manifest.json

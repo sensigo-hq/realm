@@ -1,7 +1,13 @@
 ---
 // Interactive replay of two recorded runs (scripts/replay/record.mjs -> distill.mjs -> replay.json).
 // Every engine response shown is copied from the recording; only labels and blurbs are ours.
+// Live mode (#624): "Try it yourself" loads the real engine into the page (src/live/, built by
+// scripts/live/build.mjs) and every live answer comes from it; the live path never reads replay.json.
+// Every visitor sentence, in both modes, comes from stageSentences() in src/live/view.mjs (the claim
+// ledger sits above it); recorded mode calls it here, at build time.
 import r from '../data/replay.json';
+import manifest from '../live/manifest.json';
+import { stageSentences, recordedState, recordedRun, evidenceRows, swappedLines } from '../live/view.mjs';
 const short = (v: unknown): unknown =>
   typeof v === 'string' ? (v.length > 64 ? v.slice(0, 61) + '…' : v)
   : Array.isArray(v) ? v.map(short)
@@ -16,9 +22,26 @@ const stages = ['Start', 'Agent step', 'Human gate', 'Write', 'Evidence'];
 const endings = Object.values(r.endings);
 const why = (x: any): string => x.error_details?.errors?.[0]?.message ?? x.context_hint;
 const h8 = (h: string) => h.slice(0, 12);
-const date = r.meta.recorded_at.slice(0, 10);
+// Backtick spans in a sentence are code.
+const ticks = (s: string) => s.split('`');
+// Step names wrap after an underscore, never inside a word.
+const parts = (s: string) => s.split('_');
+// Recorded mode's sentences, from the state after the answer derived from each ending.
+const SR = (e: any) => stageSentences('recorded', recordedState(r, e));
+const S = SR(endings[0]);
+const swapped = swappedLines(manifest);
+// Live-mode inputs, read at build: the bundle's URL, the start call, the five presets (inputs only)
+// and the texts the page needs before the bundle has loaded.
+const liveBundle = '/live/' + manifest.file;
+const liveStart = JSON.stringify({ workflow_id: r.start.call.workflow_id, params: r.start.call.params });
+const livePresets = JSON.stringify(Object.fromEntries(r.attempts.map((a) => [a.id, { command: a.call.command, params: a.call.params }])));
+const liveNotes = JSON.stringify(S.notes);
 ---
-<div class="rp" data-stage="0" data-ending="">
+<div class="rp" data-stage="0" data-ending="" data-mode="recorded" data-live-gate="closed" data-live-bundle={liveBundle} data-live-start={liveStart} data-live-presets={livePresets} data-live-notes={liveNotes} data-live-loading={S.loading}>
+  <div class="rp-live-mark" data-live>
+    <p data-say="marker"></p>
+    <div class="rp-picks"><button type="button" data-act="new">{S.newRun}</button></div>
+  </div>
   <ol class="rp-rail" role="tablist" aria-label="Run stages">
     {stages.map((s, i) => (
       <li><button type="button" role="tab" data-go={i} aria-selected={i === 0 ? 'true' : 'false'}><span>{String(i + 1).padStart(2, '0')}</span>{s}</button></li>
@@ -26,32 +49,52 @@ const date = r.meta.recorded_at.slice(0, 10);
   </ol>
 
   <div class="rp-stage" data-s="0">
-    <h3>The agent starts a run. Realm fetches the pull request itself.</h3>
+    <h3 tabindex="-1">{S.start}</h3>
     <p>The first step is marked <code>auto</code>, so the engine runs it and no model is involved. The agent only learns what comes next.</p>
-    <div class="rp-cols">
+    <div class="rp-cols" data-rec>
       <div><p class="rp-k">Agent calls</p><pre>{j(r.start.call)}</pre></div>
       <div><p class="rp-k">Realm answers</p><pre>{j(r.start.response)}</pre></div>
     </div>
-    <p class="rp-k">What the step fetched — {r.start.pr.pr_title}, {r.start.pr.files_changed.length} files</p>
-    <pre class="rp-diff">{r.start.pr.diff_text.split('\n\n')[0]}</pre>
-    <p class="rp-ev">Evidence recorded for <code>fetch_pr</code> · hash <code title={r.start.evidence.hash}>{h8(r.start.evidence.hash)}…</code></p>
+    <p class="rp-k" data-rec>What the step fetched — {r.start.pr.pr_title}, {r.start.pr.files_changed.length} files</p>
+    <pre class="rp-diff" data-rec>{r.start.pr.diff_text.split('\n\n')[0]}</pre>
+    <p class="rp-ev" data-rec>Evidence recorded for <code>fetch_pr</code> · hash <code title={r.start.evidence.hash}>{h8(r.start.evidence.hash)}…</code></p>
+    <div class="rp-cols" data-live>
+      <div><p class="rp-k">Agent calls</p><pre data-l="start-call"></pre></div>
+      <div><p class="rp-k">Realm answers</p><pre data-l="start-reply"></pre><details><summary>Full reply</summary><pre data-l="start-full"></pre></details></div>
+    </div>
+    <p class="rp-k" data-live data-l="pr-head"></p>
+    <pre class="rp-diff" data-live data-l="pr"></pre>
+    <p class="rp-ev" data-live>Evidence recorded for <code>fetch_pr</code> · hash <code data-l="pr-hash"></code></p>
   </div>
 
   <div class="rp-stage" data-s="1" hidden>
-    <h3>Realm hands the agent one task and one schema.</h3>
-    <p>{r.task.human_readable.replace(/^Execute step '[^']+': /, '')} Pick what the agent sends back and see what Realm answered.</p>
+    <h3 tabindex="-1">Realm hands the agent one task and one schema.</h3>
+    <p data-rec>{r.task.human_readable.replace(/^Execute step '[^']+': /, '')} Pick what the agent sends back and see what Realm answered.</p>
+    <p data-live>{r.task.human_readable.replace(/^Execute step '[^']+': /, '')} Pick or edit what the agent sends back, choose the step, and press Send.</p>
+    <div data-rec>
+      <div class="rp-picks"><button type="button" class="ok" data-live-try hidden>{S.tryLabel}</button></div>
+      <p class="rp-hint" data-live-note hidden></p>
+    </div>
     <div class="rp-cols">
       <div>
-        <p class="rp-k">The schema for <code>{r.task.step}</code> — all required, nothing extra allowed</p>
+        <p class="rp-k">The schema for <code>{r.task.step}</code> — {S.schema}</p>
         <pre>{props.map((p) => `${p.name}: ${p.type}`).join('\n')}</pre>
         <div class="rp-picks" role="group" aria-label="What the agent submits">
           {r.attempts.map((a) => (
             <button type="button" data-pick={a.id} class={a.id === 'valid' ? 'ok' : ''}>{a.label}</button>
           ))}
         </div>
+        <div class="rp-form" data-live>
+          <label class="rp-k" for="rp-live-step">Step</label>
+          <select id="rp-live-step" data-l="step"></select>
+          <label class="rp-k" for="rp-live-box">Parameters (JSON)</label>
+          <textarea id="rp-live-box" data-l="box" rows="12" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+          <p class="rp-hint">The page sends at most 16 KB and 32 levels of nesting. These limits are the page's own, not Realm's.</p>
+          <div class="rp-picks"><button type="button" class="ok" data-act="send">Send</button></div>
+        </div>
       </div>
-      <div class="rp-out" aria-live="polite">
-        <p class="rp-hint" data-out="none">Choose a submission on the left.</p>
+      <div class="rp-out" aria-live="polite" data-rec>
+        <p class="rp-hint" data-out="none">{S.choose}</p>
         {r.attempts.map((a) => (
           <div data-out={a.id} hidden>
             <p>{a.blurb}</p>
@@ -60,18 +103,27 @@ const date = r.meta.recorded_at.slice(0, 10);
             {a.id !== 'valid' && <p class="rp-why">{why(a.response)}</p>}
             <pre class={a.id === 'valid' ? 'good' : 'bad'}>{j(a.response)}</pre>
             {a.id === 'valid'
-              ? <p class="rp-ev">The step is complete, and the run stops at the human gate. Go to the next stage.</p>
-              : <p class="rp-ev">After every refusal the run still read <code>completed_steps: {JSON.stringify(r.after_refusals.completed_steps)}</code>, phase <code>{r.after_refusals.run_phase}</code>. Nothing entered the record.</p>}
+              ? <p class="rp-ev">{S.stop}</p>
+              : <p class="rp-ev">{ticks(S.refusals).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</p>}
           </div>
         ))}
+      </div>
+      <div class="rp-group" aria-live="polite" data-live>
+        <p class="rp-hint" data-l="hint" hidden>{S.pressSend}</p>
+        <div class="rp-out" data-box="send"></div>
+        <p class="rp-ev" data-say="stop" hidden></p>
+        <p class="rp-why" data-in="E" data-say="failed" hidden></p>
+        <div class="rp-picks" data-in="E"><button type="button" data-act="new">{S.newRun}</button></div>
       </div>
     </div>
   </div>
 
   <div class="rp-stage" data-s="2" hidden>
-    <h3>The run stops. Only a person can move it.</h3>
-    <p>This is what the reviewer was shown. The run is in phase <code>{r.gate.state.run_phase}</code> and neither posting step is available to the agent.</p>
-    <div class="rp-cols">
+    <h3 tabindex="-1">{S.gate}</h3>
+    <p data-rec>{ticks(S.gateShown).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</p>
+    <p data-live data-say="gateShown" hidden></p>
+    <p data-live data-say="beforeGate" hidden></p>
+    <div class="rp-cols" data-rec>
       <div>
         <p class="rp-k">Gate message</p>
         <pre class="rp-msg">{r.gate.display}</pre>
@@ -81,7 +133,7 @@ const date = r.meta.recorded_at.slice(0, 10);
         <div class="rp-picks">
           {r.gate.choices.map((c) => <button type="button" class="ok" data-choose={c}>{c === 'approve' ? 'Approve' : 'Request changes'}</button>)}
         </div>
-        <p class="rp-k">Or let the agent try to get past</p>
+        <p class="rp-k">{S.skipLabel}</p>
         <div class="rp-picks">
           {r.gate.agent_attempts.map((a) => <button type="button" data-pick={a.id}>{a.label}</button>)}
         </div>
@@ -95,13 +147,39 @@ const date = r.meta.recorded_at.slice(0, 10);
         </div>
       </div>
     </div>
+    <div data-live>
+      <div class="rp-cols" data-in="B C D">
+        <div>
+          <p class="rp-k">Gate message</p>
+          <pre class="rp-msg" data-l="gate"></pre>
+        </div>
+        <div>
+          <div class="rp-group" data-in="B">
+            <p class="rp-k">You are the reviewer</p>
+            <div class="rp-picks">
+              {r.gate.choices.map((c) => <button type="button" class="ok" data-act="answer" data-choice={c}>{c === 'approve' ? 'Approve' : 'Request changes'}</button>)}
+            </div>
+            <p class="rp-k">{S.skipLabel}</p>
+            <div class="rp-picks">
+              {r.gate.agent_attempts.map((a) => <button type="button" data-act="skip" data-step={a.call.command}>{a.label}</button>)}
+            </div>
+            <div class="rp-out" aria-live="polite" data-box="skip"></div>
+          </div>
+          <p class="rp-why" data-in="C D" data-say="chose" hidden></p>
+          <div class="rp-out" aria-live="polite" data-box="answer"></div>
+        </div>
+      </div>
+      <p class="rp-why" data-in="E" data-say="failedBeforeGate" hidden></p>
+      <div class="rp-picks" data-in="E"><button type="button" data-act="new">{S.newRun}</button></div>
+    </div>
   </div>
 
   <div class="rp-stage" data-s="3" hidden>
-    <p class="rp-hint rp-need">Answer the gate first. The run cannot reach this stage without a human choice.</p>
+    <p class="rp-hint rp-need">{S.need4}</p>
     {endings.map((e) => (
-      <div class="rp-end" data-end={e.choice}>
-        <h3>The reviewer chose <code>{e.choice}</code>. Realm runs that branch and skips the other.</h3>
+      <div class="rp-end" data-end={e.choice} data-rec>
+        <h3 tabindex="-1">{ticks(SR(e).branch).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</h3>
+        <p>{SR(e).agentSends}</p>
         <div class="rp-cols">
           <div>
             <p class="rp-k">The reviewer answers</p>
@@ -125,31 +203,57 @@ const date = r.meta.recorded_at.slice(0, 10);
         </div>
       </div>
     ))}
+    <div data-live>
+      <div class="rp-end-live" data-in="C D">
+        <h3 tabindex="-1" data-say="branch"></h3>
+        <p data-say="agentSends" hidden></p>
+        <div class="rp-cols">
+          <div>
+            <div class="rp-picks" data-in="C"><button type="button" class="ok" data-act="post">{S.sendLabel}</button></div>
+            <div class="rp-out" aria-live="polite" data-box="post"></div>
+          </div>
+          <div>
+            <div class="rp-picks" data-in="C"><button type="button" data-act="other">{S.otherLabel}</button></div>
+            <div class="rp-out" aria-live="polite" data-box="other"></div>
+          </div>
+        </div>
+      </div>
+      <p class="rp-why" data-in="E" data-say="failedBeforeGate" hidden></p>
+    </div>
   </div>
 
   <div class="rp-stage" data-s="4" hidden>
-    <p class="rp-hint rp-need">Answer the gate first. There is no finished record until a human has chosen.</p>
+    <p class="rp-hint rp-need">{S.need5}</p>
     {endings.map((e) => (
-      <div class="rp-end" data-end={e.choice}>
-        <h3>What is left behind: one record per step, each with a hash.</h3>
+      <div class="rp-end" data-end={e.choice} data-rec>
+        <h3 tabindex="-1">{S.recordTitle}</h3>
+        <p>{S.recordBody}</p>
         <p>Phase <code>{e.run_phase}</code> · sealed by <code>{e.sealed_by.arm}</code> at <code>{e.sealed_by.step}</code> · run <code>{e.run_id.slice(0, 8)}</code></p>
         <div class="rp-table" role="table">
-          {e.evidence.map((x) => (
+          {evidenceRows(recordedRun(e)).map((x) => (
             <div role="row">
-              <span role="cell"><code>{x.step}</code></span>
-              <span role="cell">{x.kind === 'gate_response' ? `human chose ${x.choice}` : x.step === r.gate.step ? 'gate opened' : x.rejections ? `accepted after ${x.rejections} refusals` : x.status}</span>
+              <span role="cell"><code>{parts(x.step).map((p, i) => (i ? <>_<wbr />{p}</> : p))}</code></span>
+              <span role="cell">{x.label}</span>
               <span role="cell"><code title={x.hash}>{h8(x.hash)}…</code></span>
             </div>
           ))}
           <div role="row" class="skip">
-            <span role="cell"><code>{e.skipped_steps[0]}</code></span>
+            <span role="cell"><code>{parts(e.skipped_steps[0]).map((p, i) => (i ? <>_<wbr />{p}</> : p))}</code></span>
             <span role="cell">skipped</span>
             <span role="cell">no evidence</span>
           </div>
         </div>
-        <p class="rp-ev">Read it back any time with <code>realm run inspect &lt;run-id&gt;</code>, or take the whole record with <code>realm run export</code>.</p>
+        <p class="rp-ev">{ticks(S.readBack).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</p>
       </div>
     ))}
+    <div class="rp-end-live" data-live data-in="C D E">
+      <h3 tabindex="-1" data-say="recordTitle" hidden></h3>
+      <p data-say="recordBody" hidden></p>
+      <div class="rp-table" role="table" data-l="table"></div>
+      <p class="rp-ev" data-say="notFinished" hidden></p>
+      <p class="rp-why" data-say="failed" hidden></p>
+      <p class="rp-ev" data-say="readBack" hidden></p>
+    </div>
   </div>
 
   <div class="rp-nav">
@@ -157,12 +261,21 @@ const date = r.meta.recorded_at.slice(0, 10);
     <span class="rp-pos" aria-live="polite">1 of {stages.length}</span>
     <button type="button" data-next class="ok">Next</button>
   </div>
-  <p class="rp-foot">Recorded on {date} from two real runs of <code>{r.meta.example}</code> on Realm {r.meta.realm_version}, driven over MCP. The two runs differ only in the reviewer's answer; the refusals come from the first. GitHub was a local stand-in server, so nothing was posted. Long text is shortened with “…”.</p>
+  <p class="rp-foot" data-rec>{ticks(S.footer).map((p, i) => (i % 2 ? <code>{p}</code> : p))}</p>
+  <div class="rp-foot-live" data-live>
+    <p data-say="footer"></p>
+    <details>
+      <summary>{swapped.title}</summary>
+      <p>{swapped.opening}</p>
+      <ul>{swapped.lines.map((x) => <li>{x}</li>)}</ul>
+    </details>
+  </div>
 </div>
 
 <style is:global>
 .rp{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:14px;min-width:0}
 .rp h3{font-size:17px}
+.rp [tabindex="-1"]:focus{outline:none}
 .rp p{font-size:14.5px;max-width:none}
 .rp-rail{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px;max-width:none}
 .rp-rail button{font:500 13px/1 "IBM Plex Sans",sans-serif;padding:8px 11px;border-radius:5px;border:1px solid var(--line);
@@ -201,10 +314,32 @@ const date = r.meta.recorded_at.slice(0, 10);
 .rp-table [role="row"]{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,.9fr);gap:10px;padding:8px 12px;border-top:1px solid var(--line-soft)}
 .rp-table [role="row"]:first-child{border-top:0}
 .rp-table [role="cell"]{overflow-wrap:anywhere}
+.rp-table [role="cell"]:first-child{overflow-wrap:normal}
 .rp-table .skip{color:var(--muted)}
 .rp-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:4px;border-top:1px solid var(--line-soft);padding-top:12px}
 .rp-pos{font:500 12px "IBM Plex Mono",monospace;color:var(--muted)}
 .rp-foot{font-size:12.5px!important;color:var(--muted)}
+/* Live mode (#624): two modes on one element; `!important` because .rp[data-ending] .rp-end (0,4,0)
+   beats .rp [hidden] (0,2,0). Live blocks show only in the Live state table's states they name. */
+.rp[data-mode="live"] [data-rec]{display:none!important}
+.rp:not([data-mode="live"]) [data-live]{display:none!important}
+.rp[data-live-state="A"] [data-in]:not([data-in~="A"]),.rp[data-live-state="B"] [data-in]:not([data-in~="B"]),
+.rp[data-live-state="C"] [data-in]:not([data-in~="C"]),.rp[data-live-state="D"] [data-in]:not([data-in~="D"]),
+.rp[data-live-state="E"] [data-in]:not([data-in~="E"]){display:none!important}
+.rp[data-mode="live"]:not([data-live-state="A"]):not([data-live-state="B"]) .rp-need{display:none!important}
+.rp-live-mark{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between}
+.rp .rp-live-mark p{font:500 12px/1.4 "IBM Plex Mono",monospace;color:var(--accent)}
+.rp-end-live{display:grid;gap:10px;min-width:0}
+.rp-group{display:grid;gap:8px;min-width:0}
+.rp-form{display:grid;gap:8px;min-width:0}
+.rp-form select,.rp-form textarea{font:400 12.5px/1.55 "IBM Plex Mono",monospace;color:var(--ink);background:var(--panel2);
+  border:1px solid var(--line-soft);border-radius:6px;padding:8px 10px;width:100%;min-width:0;box-sizing:border-box}
+.rp-form textarea{resize:vertical}
+.rp details summary{cursor:pointer;font:500 12px "IBM Plex Mono",monospace;color:var(--muted)}
+.rp details > pre{margin-top:6px}
+.rp-foot-live,.rp .rp-foot-live p,.rp-foot-live li,.rp-foot-live summary{font-size:12.5px!important;color:var(--muted)}
+.rp-foot-live{display:grid;gap:6px}
+.rp-foot-live ul{margin:6px 0 0;padding-left:18px;display:grid;gap:3px}
 </style>
 
 <script is:inline>
@@ -213,16 +348,23 @@ const date = r.meta.recorded_at.slice(0, 10);
   var stages = root.querySelectorAll('.rp-stage'), tabs = root.querySelectorAll('[data-go]');
   var prev = root.querySelector('[data-prev]'), next = root.querySelector('[data-next]'), pos = root.querySelector('.rp-pos');
   var cur = 0, GATE = 2;
-  function show(n) {
+  function show(n, focus) {
+    var was = document.activeElement;
     cur = Math.max(0, Math.min(stages.length - 1, n));
     stages.forEach(function (s, i) { s.hidden = i !== cur; });
     tabs.forEach(function (t, i) { t.setAttribute('aria-selected', i === cur ? 'true' : 'false'); });
     root.setAttribute('data-stage', cur);
     prev.disabled = cur === 0;
-    var waiting = cur === GATE && !root.getAttribute('data-ending');
+    var live = root.getAttribute('data-mode') === 'live';
+    var waiting = cur === GATE && (live ? root.getAttribute('data-live-gate') !== 'answered' : !root.getAttribute('data-ending'));
     next.disabled = cur === stages.length - 1 || waiting;
     next.textContent = waiting ? 'Waiting for a human' : 'Next';
     pos.textContent = (cur + 1) + ' of ' + stages.length;
+    // When the action hid or disabled the focused control, focus the new stage's heading.
+    if (focus || ((was === next || was === prev) && was.disabled)) {
+      var h = [].find.call(stages[cur].querySelectorAll('h3,.rp-need'), function (x) { return x.getClientRects().length; });
+      if (h) { h.setAttribute('tabindex', '-1'); h.focus(); }
+    }
   }
   tabs.forEach(function (t) { t.addEventListener('click', function () { show(+t.getAttribute('data-go')); }); });
   prev.addEventListener('click', function () { show(cur - 1); });
@@ -235,8 +377,223 @@ const date = r.meta.recorded_at.slice(0, 10);
     });
   });
   root.querySelectorAll('[data-choose]').forEach(function (b) {
-    b.addEventListener('click', function () { root.setAttribute('data-ending', b.getAttribute('data-choose')); show(GATE + 1); });
+    b.addEventListener('click', function () {
+      if (root.getAttribute('data-mode') === 'live') return; // live mode never writes data-ending
+      root.setAttribute('data-ending', b.getAttribute('data-choose')); show(GATE + 1, true);
+    });
   });
+  // The live layer (the processed script below) moves the stepper through this event.
+  root.addEventListener('rp-show', function (e) { show(e.detail.n == null ? cur : e.detail.n, e.detail.focus); });
   show(0);
 })();
+</script>
+
+<script>
+  // Live mode (#624): wires the DOM to the live bundle's exports (view.mjs's decisions, start()).
+  // Text only: every engine or visitor string reaches the page through textContent or text nodes.
+  const root = document.querySelector<HTMLElement>('.rp');
+  if (root) {
+    const D = root.dataset;
+    const N = JSON.parse(D.liveNotes!), START = JSON.parse(D.liveStart!), PRE = JSON.parse(D.livePresets!);
+    const q = (s: string) => root.querySelector<any>(s);
+    const qa = (s: string) => root.querySelectorAll<any>(s);
+    const el = (t: string, x?: string | null, c?: string) => {
+      const e = document.createElement(t);
+      if (x != null) e.textContent = x;
+      if (c) e.className = c;
+      return e;
+    };
+    const tryB = q('[data-live-try]'), note = q('[data-live-note]'), ed = q('[data-l=box]'), sel = q('[data-l=step]'), hint = q('[data-l=hint]');
+    const box = (k: string) => q(`[data-box=${k}]`);
+    let M: any, E: any, rid: string, st: any, open: any, thr: any, T: any, gen = 0, busy = false, live = false, dead = false;
+    const show = (n?: number, focus?: boolean) => root.dispatchEvent(new CustomEvent('rp-show', { detail: { n, focus } }));
+    // The second click of a double-click (detail 2) is ignored, so a double-click sends one call even
+    // when the first call has already returned.
+    const one = (f: any) => (ev: any) => ev.detail > 1 || f(ev);
+    const setBusy = (b: boolean) => {
+      busy = b;
+      qa('[data-act]').forEach((x: any) => (x.disabled = b));
+    };
+    // A fallback keeps the recording, with a note in the Try button's place and no live marker.
+    const fall = (m: string) => {
+      dead = true;
+      live = false;
+      gen++;
+      clearTimeout(T);
+      D.mode = 'recorded';
+      delete D.liveState;
+      D.liveGate = 'closed';
+      note.textContent = m;
+      note.hidden = false;
+      tryB.hidden = true;
+      setBusy(false);
+      show();
+    };
+    const say = (e: any, s: string | null) => {
+      e.hidden = s == null;
+      e.replaceChildren(...(s ?? '').split('`').map((p, i) => (i % 2 ? el('code', p) : p)));
+    };
+    const paint = (b: any, v: any) => {
+      const l = el('p', v.label, 'rp-k ' + v.tone), n: any[] = [];
+      if (v.who) n.push(el('p', v.who, 'rp-k'), el('pre', v.call));
+      n.push(l);
+      if (v.reason) n.push(el('p', v.reason, 'rp-why'));
+      if (v.count) n.push(el('p', v.count, 'rp-ev'));
+      if (v.shown) {
+        const d = el('details');
+        d.append(el('summary', 'Full reply'), el('pre', v.full));
+        n.push(el('pre', v.shown, v.tone), d);
+      }
+      b.replaceChildren(...n);
+      return l;
+    };
+    const code = (s: string) => {
+      const c = el('code');
+      s.split('_').forEach((p, i) => (i ? c.append('_', el('wbr'), p) : c.append(p)));
+      return c;
+    };
+    const row = (s: string, l: string, h?: string) => {
+      const r = el('div', null, h ? '' : 'skip'), c = el('code', h ? h.slice(0, 12) + '…' : null);
+      r.setAttribute('role', 'row');
+      if (h) c.title = h;
+      for (const x of [code(s), l, h ? c : 'no evidence']) {
+        const k = el('span');
+        k.setAttribute('role', 'cell');
+        k.append(x);
+        r.append(k);
+      }
+      return r;
+    };
+    const state = async () => (await E.call('get_run_state', { run_id: rid })).value;
+    // Every live stage is a function of the run's state after the last reply.
+    const render = async () => {
+      const run = await E.run(rid);
+      const vs = { ...st, choice: M.answeredChoice(run), threshold: thr, version: M.version, run_id: rid };
+      const S = M.stageSentences('live', vs), L = M.stateLetter(vs);
+      D.liveState = L;
+      D.liveGate = L == 'B' ? 'open' : L == 'C' || L == 'D' ? 'answered' : 'closed';
+      qa('[data-say]').forEach((e: any) => say(e, S[e.dataset.say]));
+      q('[data-l=gate]').textContent = M.gateText(open) ?? '';
+      q('[data-l=table]').replaceChildren(
+        ...M.evidenceRows(run).map((x: any) => row(x.step, x.label, x.hash)),
+        ...(st.skipped_steps ?? []).map((s: string) => row(s, 'skipped')),
+      );
+      show();
+    };
+    // One call at a time; a reply from a run that was replaced meanwhile is dropped.
+    const act = async (tool: string, args: any, b: any) => {
+      if (busy || !live) return;
+      const g = gen, before = st;
+      setBusy(true);
+      const r = await E.call(tool, { run_id: rid, ...args });
+      if (g != gen) return;
+      st = await state();
+      if (r.kind == 'json') {
+        if (r.value.gate?.display) open = r;
+        thr = r.value.error_details?.threshold ?? thr;
+      }
+      const l = paint(b, M.replyView({ tool, ...args }, r, before, st));
+      await render();
+      setBusy(false);
+      return l;
+    };
+    const newRun = async () => {
+      const g = ++gen;
+      setBusy(true);
+      let e: any, s: any;
+      try {
+        e = await M.start();
+        s = await e.call('start_run', START);
+      } catch {
+        return g == gen && fall(N.failedStart);
+      }
+      if (g != gen) return e.close();
+      const v = s.kind == 'json' && s.value;
+      if (!(v && v.status == 'ok' && typeof v.run_id == 'string'))
+        return fall(N.noStart.replace('{code}', v ? v.error_code ?? v.status : 'no JSON reply'));
+      clearTimeout(T);
+      E?.close();
+      E = e;
+      rid = v.run_id;
+      open = thr = null;
+      qa('[data-box]').forEach((x: any) => x.replaceChildren());
+      hint.hidden = true;
+      st = await state();
+      const sv = M.replyView({ tool: 'start_run', ...START }, s, null, st), f = M.fetched(s);
+      q('[data-l=start-call]').textContent = sv.call;
+      q('[data-l=start-reply]').textContent = sv.shown;
+      q('[data-l=start-full]').textContent = sv.full;
+      q('[data-l=pr-head]').textContent = f?.label ?? '';
+      q('[data-l=pr]').textContent = f?.diff ?? '';
+      const h = (await E.run(rid)).evidence[0]?.evidence_hash ?? '', hc = q('[data-l=pr-hash]');
+      hc.textContent = h.slice(0, 12) + '…';
+      hc.title = h;
+      if (!sel.length) sel.append(...E.steps.map((x: string) => el('option', x)));
+      const na = st.next_actions?.[0]?.instruction;
+      sel.value = na?.params?.command ?? E.steps[1];
+      ed.value = JSON.stringify(na?.call_with?.params ?? {}, null, 2);
+      live = true;
+      D.mode = 'live';
+      D.ending = '';
+      await render();
+      setBusy(false);
+      return true;
+    };
+    if (!isSecureContext) {
+      note.textContent = N.insecure;
+      note.hidden = false;
+    } else {
+      tryB.hidden = false;
+      tryB.onclick = async () => {
+        tryB.disabled = true;
+        tryB.textContent = D.liveLoading;
+        tryB.setAttribute('aria-busy', 'true');
+        T = setTimeout(() => fall(N.timeout), 20000);
+        try {
+          M ??= await import(/* @vite-ignore */ new URL(D.liveBundle!, location.href).href);
+        } catch {
+          return dead || fall(N.noLoad);
+        }
+        if (!dead && (await newRun())) show(1, true);
+      };
+    }
+    q('[data-s="1"]')
+      .querySelectorAll('[data-pick]')
+      .forEach((b: any) =>
+        b.addEventListener('click', () => {
+          if (!live || busy) return;
+          const p = PRE[b.dataset.pick];
+          sel.value = p.command;
+          ed.value = JSON.stringify(p.params, null, 2);
+          box('send').replaceChildren();
+          hint.hidden = false;
+        }),
+      );
+    q('[data-act=send]').onclick = one(async () => {
+      if (!live || busy) return;
+      const p = M.parseInput(ed.value), b = box('send');
+      hint.hidden = true;
+      const l = p.ok
+        ? await act('execute_step', { command: sel.value, params: p.value }, b)
+        : paint(b, M.replyView(null, { kind: 'page', message: p.message }, st, st));
+      if (p.note) b.append(el('p', p.note, 'rp-ev'));
+      if (l) b.scrollIntoView({ block: 'nearest' });
+    });
+    qa('[data-act=answer]').forEach(
+      (b: any) =>
+        (b.onclick = one(async () => {
+          const l = await act('submit_human_response', { gate_id: st.pending_gate?.gate_id, choice: b.dataset.choice }, box('answer'));
+          if (l && D.liveGate == 'answered') show(3, true);
+        })),
+    );
+    qa('[data-act=skip]').forEach((b: any) => (b.onclick = one(() => act('execute_step', { command: b.dataset.step, params: {} }, box('skip')))));
+    q('[data-act=post]').onclick = one(() => act('execute_step', { command: M.nextActions(st).send, params: {} }, box('post')));
+    q('[data-act=other]').onclick = one(() => act('execute_step', { command: M.nextActions(st).other, params: {} }, box('other')));
+    qa('[data-act=new]').forEach(
+      (b: any) =>
+        (b.onclick = one(async () => {
+          if (!busy && (await newRun())) show(1, true);
+        })),
+    );
+  }
 </script>

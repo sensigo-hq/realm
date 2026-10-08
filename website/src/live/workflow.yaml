@@ -1,0 +1,145 @@
+# examples/08-pr-review/workflow.yaml
+# PR Review — fetches a GitHub pull request diff, produces a structured code review,
+# pauses for the engineer to confirm the outcome (approve or request_changes), then
+# posts the review comment to GitHub via whichever branch was chosen.
+#
+# Demonstrates: GitHubAdapter (get_pr_diff, post_comment), pure agent step feeding a
+# separate gate step (trust: human_confirmed), mutually exclusive routed writes where
+# both choices trigger a downstream write to different PR outcomes, resolution_messages,
+# realm agent CLI.
+#
+# Run with: realm agent --workflow examples/08-pr-review/workflow.yaml \
+#           --params '{"repo":"owner/repo","pr_number":42}' \
+#           --provider anthropic --model claude-sonnet-5-5
+id: pr-review
+name: PR Review
+version: 1
+
+params_schema:
+  type: object
+  additionalProperties: false
+  required: [repo, pr_number]
+  properties:
+    repo:
+      type: string
+      description: 'GitHub repository in owner/repo format'
+    pr_number:
+      type: integer
+      description: 'Pull request number to review'
+
+services:
+  github:
+    adapter: github
+    trust: engine_delivered
+
+steps:
+  fetch_pr:
+    description: Fetch the pull request file diff from GitHub.
+    execution: auto
+    depends_on: []
+    uses_service: github
+    service_method: fetch
+    operation: get_pr_diff
+    input_map:
+      repo: run.params.repo
+      pr_number: run.params.pr_number
+
+  write_review:
+    description: >
+      Review the pull request diff and produce a structured code review with risk assessment,
+      key changes, a recommendation, and a review comment ready to post on the PR.
+    execution: agent
+    depends_on: [fetch_pr]
+    prompt: |
+      Review the following GitHub pull request and produce a structured code review.
+
+      Repository: {{ run.params.repo }}
+      PR #{{ run.params.pr_number }}
+
+      Changed files:
+      {{ context.resources.fetch_pr }}
+
+      Produce a complete review:
+      - risk: overall risk level of merging this PR — "low", "medium", or "high"
+      - key_changes: up to 5 bullet-point strings summarising what changed
+      - recommendation: your suggested outcome — "approve" or "request_changes"
+      - review_comment: the full comment to post on the PR — concise, engineering-focused,
+        no greetings, no "thank you for this PR", no customer-facing language; under 200 words;
+        begin with "Approve." or "Changes requested." (capitalized, with a period), then explain
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [risk, key_changes, recommendation, review_comment]
+      properties:
+        risk:
+          type: string
+          enum: [low, medium, high]
+        key_changes:
+          type: array
+          items:
+            type: string
+          description: 'Up to 5 key changes, as bullet-point strings'
+        recommendation:
+          type: string
+          enum: [approve, request_changes]
+        review_comment:
+          type: string
+          description: 'Full review comment text to post on the PR'
+    display: |
+      Risk: {{ risk }}
+      Recommendation: {{ recommendation }}
+
+      Key changes:
+      {{ key_changes | bullets }}
+
+      {{ review_comment }}
+
+  confirm_review:
+    description: >
+      Present the AI-generated code review to the engineer and wait for them to confirm the
+      outcome — approve or request changes — before any write reaches GitHub.
+    execution: auto
+    depends_on: [write_review]
+    trust: human_confirmed
+    gate:
+      choices: [approve, request_changes]
+      message: |
+        PR #{{ run.params.pr_number }} — {{ run.params.repo }}
+
+        Risk: {{ context.resources.write_review.risk | upper }}
+        AI recommendation: {{ context.resources.write_review.recommendation }}
+
+        Key changes:
+        {{ context.resources.write_review.key_changes | bullets }}
+
+        Review comment to post:
+        {{ context.resources.write_review.review_comment }}
+      resolution_messages:
+        approve: 'Approved — review comment posted to GitHub PR.'
+        request_changes: 'Changes requested — review comment posted to GitHub PR.'
+
+  post_approval:
+    description: Post the review comment on the GitHub PR (approve path).
+    execution: auto
+    depends_on: [confirm_review]
+    when: "confirm_review.choice == 'approve'"
+    uses_service: github
+    service_method: create
+    operation: post_comment
+    input_map:
+      repo: run.params.repo
+      pr_number: run.params.pr_number
+      body: context.resources.write_review.review_comment
+
+  post_changes_request:
+    description: Post the review comment on the GitHub PR (request_changes path).
+    execution: auto
+    depends_on: [confirm_review]
+    when: "confirm_review.choice == 'request_changes'"
+    uses_service: github
+    service_method: create
+    operation: post_comment
+    input_map:
+      repo: run.params.repo
+      pr_number: run.params.pr_number
+      body: context.resources.write_review.review_comment

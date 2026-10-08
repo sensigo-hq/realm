@@ -1,7 +1,7 @@
 {
   "meta": {
-    "realm_version": "0.45.0",
-    "recorded_at": "2026-10-01T09:49:34.963Z",
+    "realm_version": "0.46.0",
+    "recorded_at": "2026-10-08T13:28:28.960Z",
     "workflow_id": "pr-review",
     "example": "examples/08-pr-review",
     "register": "Registered: pr-review v1 (5 steps)"
@@ -35,7 +35,7 @@
     "evidence": {
       "step": "fetch_pr",
       "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
-      "duration_ms": 36
+      "duration_ms": 68
     }
   },
   "task": {
@@ -226,7 +226,7 @@
       },
       "response": {
         "status": "confirm_required",
-        "context_hint": "Run is paused at gate 'bcccb547-5975-4362-843c-e34742d66c22'. Available choices: approve, request_changes.",
+        "context_hint": "Run is paused at gate '5494540b-535e-43d4-8162-5ad03bd1a94e'. Available choices: approve, request_changes.",
         "run_phase": "gate_waiting"
       }
     }
@@ -289,11 +289,11 @@
   },
   "endings": {
     "request_changes": {
-      "run_id": "d6f40812-4df9-4053-8adf-064329ae1899",
+      "run_id": "76a4e5a6-3374-4a76-b186-0e8692879886",
       "choice": "request_changes",
       "respond": {
         "argv": "realm run respond <run-id> --gate <gate-id> --choice request_changes",
-        "stdout": "Responded: d6f40812-4df9-4053-8adf-064329ae1899 | choice 'request_changes' | new state 'running'"
+        "stdout": "Responded: 76a4e5a6-3374-4a76-b186-0e8692879886 | choice 'request_changes' | new state 'running'"
       },
       "other_branch": {
         "id": "other_branch",
@@ -320,7 +320,7 @@
         "response": {
           "status": "ok",
           "errors": [],
-          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id 'd6f40812-4df9-4053-8adf-064329ae1899' to retrieve the full evidence record.",
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id '76a4e5a6-3374-4a76-b186-0e8692879886' to retrieve the full evidence record.",
           "run_phase": "completed"
         },
         "body": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
@@ -339,7 +339,7 @@
           "step": "fetch_pr",
           "kind": "step",
           "status": "success",
-          "duration_ms": 36,
+          "duration_ms": 68,
           "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
           "choice": null,
           "rejections": null
@@ -366,7 +366,7 @@
           "step": "confirm_review",
           "kind": "gate_response",
           "status": "success",
-          "duration_ms": 1103,
+          "duration_ms": 1951,
           "hash": "17e0025f9bd2854e37648fe7873bf4f92bf9fd709d1aa1b204417c1358e0be9d",
           "choice": "request_changes",
           "rejections": null
@@ -375,7 +375,7 @@
           "step": "post_changes_request",
           "kind": "step",
           "status": "success",
-          "duration_ms": 9,
+          "duration_ms": 13,
           "hash": "a7297b7f232bdf7a9416d2ea4b9c28029d28577b50b0ec7818868f5ed9a72f3f",
           "choice": null,
           "rejections": null
@@ -383,11 +383,11 @@
       ]
     },
     "approve": {
-      "run_id": "241149f6-def6-4937-a8fb-1ad59156e40c",
+      "run_id": "e164cc71-b9ec-4985-8ec0-281a52da1da7",
       "choice": "approve",
       "respond": {
         "argv": "realm run respond <run-id> --gate <gate-id> --choice approve",
-        "stdout": "Responded: 241149f6-def6-4937-a8fb-1ad59156e40c | choice 'approve' | new state 'running'"
+        "stdout": "Responded: e164cc71-b9ec-4985-8ec0-281a52da1da7 | choice 'approve' | new state 'running'"
       },
       "other_branch": null,
       "posted": {
@@ -395,7 +395,7 @@
         "response": {
           "status": "ok",
           "errors": [],
-          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id '241149f6-def6-4937-a8fb-1ad59156e40c' to retrieve the full evidence record.",
+          "context_hint": "Run completed (phase: 'completed'). Call get_run_state with run_id 'e164cc71-b9ec-4985-8ec0-281a52da1da7' to retrieve the full evidence record.",
           "run_phase": "completed"
         },
         "body": "Changes requested. The retry loop swallows the final failure: after the last attempt throws, the loop ends and deliverWebhook returns normally, so a charge webhook that never got through is reported as delivered. Rethrow the last error (or return a failed result) once attempts run out. Two smaller points: `attempt <= MAX_RETRIES` makes six attempts, not five, and the fixed 1 s sleep retries every error, including 4xx responses that will never succeed — back off exponentially and retry only timeouts and 5xx. Please add a test for the all-attempts-fail case; the current test covers only fail-once-then-succeed."
@@ -414,7 +414,7 @@
           "step": "fetch_pr",
           "kind": "step",
           "status": "success",
-          "duration_ms": 6,
+          "duration_ms": 8,
           "hash": "625650d8cdadff41bb4e27da6a4bff345152b0f296cf075e88b56393c2cc2e27",
           "choice": null,
           "rejections": null
@@ -441,7 +441,7 @@
           "step": "confirm_review",
           "kind": "gate_response",
           "status": "success",
-          "duration_ms": 1010,
+          "duration_ms": 1829,
           "hash": "12b00114fef2242e92601c768ecb962ba5f2b230c60c5d134bed8966d4bb0c1e",
           "choice": "approve",
           "rejections": null
