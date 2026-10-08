@@ -304,7 +304,8 @@ function elsewherePhrase(
  * evidence names the program, `driven_by`), or the run ended. The same past-tense phrase `realm
  * agent` prints for a step another process took (`takenPhrase`). For an agent step, whose claim the
  * prompt holds (decision C179), `ownClaimToken` is that claim's token: the prompt also closes when
- * another process removed the claim (`realm run reclaim --force`), and the step is asked for again.
+ * another process removed the claim (`realm run reclaim --force`, for one), and the step is asked for
+ * again if it is still ready.
  */
 export function stepClosedLine(
   run: RunRecord,
@@ -323,9 +324,9 @@ export function stepClosedLine(
 }
 
 /**
- * decision C179: the line after an agent step's typed answer when another process took or ran the
- * step between the moment the prompt let its claim go and the engine's own claim for the answer.
- * `undefined` when the record shows neither (the reply is then the engine's to explain).
+ * decision C179: the line after a step's typed answer when another process took or ran the step
+ * before the engine's own claim for the answer — for an agent step, after the prompt let its claim
+ * go. `undefined` when the record shows neither (the reply is then the engine's to explain).
  */
 export function answerNotRunLine(
   run: RunRecord,
@@ -825,10 +826,18 @@ export const runCommand = new Command('run')
           if (stepDef.execution === 'agent') {
             const hold = await holdStepClaim(store, runId, stepName, definition, driver);
             if (hold === undefined) {
+              // Another process took or ran the step first: said as the house says it. Anything else
+              // that made the step not ready (the run ended, a question opened) the next pass shows.
               run = await store.get(runId);
-              console.log(
-                `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], store.persistsClaims === true))}\n`,
-              );
+              const keeps = store.persistsClaims === true;
+              const ran = ranElsewherePhrase(run, stepName);
+              if (run.in_progress_steps.includes(stepName)) {
+                console.log(
+                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps))}\n`,
+                );
+              } else if (ran !== undefined) {
+                console.log(`• Step '${stepName}' was ${ran}; not run here.\n`);
+              }
               continue;
             }
             heldClaim = hold;
