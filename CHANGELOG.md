@@ -129,6 +129,34 @@ inspect` prints it: `This prompt is closed: the question on '<step>' is no longe
 <choice> · …` (or `— no answer was recorded; the run is '<phase>'.`), and the run goes on. It no
   longer waits for an answer that can no longer be recorded (pressing Enter printed `your choice ''
 was not recorded`). The prompt reads the record twice a second while it waits.
+- **`realm workflow run`'s step prompt closes when another process runs the step; its gate prompt
+  shows the question (issue #625, PR-2a).** While the prompt for an agent or `auto` step waits,
+  another process may take or run that step (`realm run advance`, an MCP `execute_step`). The prompt
+  then closes and says so — `This prompt is closed: step '<step>' was taken by <program>, and
+completed; not run here.` — where it kept the prompt open and printed `✓ → completed | hash: n/a… |
+n/a` for the other process's work; an answer that reaches the engine after the run ended prints
+  `Not run here: <why>`. The gate prompt prints the question, `Question: "<message>"` (quoted as
+  `realm run inspect` quotes it), before its choices; it printed only the preview.
+- **`realm run respond` says a waiting `realm workflow run` or `realm agent` goes on by itself
+  (issue #625, PR-2a).** After the line that names a command (`Owed to the engine: …`, `An agent step
+is ready: …`) it prints `If a realm workflow run or realm agent is still waiting on this run, it
+goes on by itself; the line above is for when none is.` The run's record does not show whether one
+  is waiting.
+- **An answer to a run that has ended names the way out that kind of ending has (issue #625,
+  PR-2a).** `STATE_RUN_TERMINAL`'s message is `Run '<id>' is terminal (<phase>); cannot submit a gate
+response — …`: nothing for a completed run (`it completed, and nothing is owed.`); `realm run purge
+<id> --force` for an aborted one; `realm run resume <id> --from <the failed step>` or purge for a
+  failed or abandoned one in which a step failed. It offered `realm run resume` for every ended run,
+  which refuses completed and aborted ones and any with no failed step.
+- **Repeating the choice a question's expiry recorded says so over MCP (issue #625, PR-2a).**
+  `submit_human_response` replies `the outcome matches your choice, but it was settled by timeout;
+your response was not recorded.` (`answer_recorded: false`), the sentence `realm run respond`
+  prints, where it said `… was already resolved with choice '<c>' — no action was taken.`
+- **A run that cannot be read is answered alike by the library and the MCP tools (issue #625,
+  PR-2a).** `submitHumanResponse` names the cause (`Failed to load run from store: <its message>`)
+  as its siblings do. `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` answer
+  `ENGINE_STORE_FAILED` with that message where they answered `ENGINE_INTERNAL` (or, `get_run_state`,
+  no code) with the bare parse error.
 - **`realm agent` carries out a question already past its time before announcing it (issue #625,
   PR-2a).** On a run whose question's time is up and whose `on_expiry` the engine carries out,
   `realm agent` no longer prints the gate, `Waiting for approval...` and `realm run respond …

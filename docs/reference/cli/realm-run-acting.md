@@ -52,6 +52,7 @@ When the answer leaves `auto` steps that only the engine can run, one more line 
 ```text
 Responded: b178179a-998d-457e-85e6-6d38439d0585 | choice 'approve' | new state 'running'
 Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them, with the project code under /home/me/project, in the environment of the shell it runs in.
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
 
 When the workflow's own project folder holds no project code (no `realm.yaml`, no extension module), the line says `with no project code (nothing to load under <folder>)` instead. When `--project` is given for a workflow that has its own project folder, the first line says it was not used: `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is loaded from there.`, or, when that folder holds no project code, `… has its own project, <folder> (no project code there).` Both added after version 0.46.0.
@@ -61,7 +62,10 @@ When the answer leaves an agent step ready, the line says so in the words `realm
 ```text
 Responded: 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 | choice 'approve' | new state 'running'
 An agent step is ready: 'finish' — drive it with realm agent --run-id 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 --provider <provider> --model <model>.
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
+
+After the lines that name a command — `Owed to the engine: …`, `An agent step is ready: …` — one more line says that a `realm workflow run` or `realm agent` still waiting on the run goes on by itself (`the lines above are` when there are two): the run's record does not show whether one is waiting, so the line holds either way. Added after version 0.46.0.
 
 When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0:
 

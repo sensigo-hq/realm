@@ -36,6 +36,9 @@ import { respondCommand, respondToGate } from './respond.js';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
+/** #625 PR-2a, decision C164: the attending line after the command an answer leaves. */
+const ATTENDING =
+  'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.';
 const DRAIN_DEPS: DrainRuntimeDeps = {
   drainFinalizers,
   captureEvidence,
@@ -230,7 +233,8 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       "Guard step 'check' passed.",
       `Responded: ${runId} | choice 'approve' | new state 'running'\n` +
         // #625 PR-2a, decision C96: the agent step the answer left ready, in `realm run advance`'s words.
-        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
+        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.\n` +
+        ATTENDING,
     ]);
     expect(code).toBe(0);
     expect(stderr()).toEqual([]);
@@ -332,7 +336,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         respondCarriedOut(gateId, 'approve'),
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
-        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.\n${ATTENDING}`,
       ]);
       expect(code).toBe(0);
       expect(stderr()).toEqual([]);
@@ -378,6 +382,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         "Guard step 'check' passed.",
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
         `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
+        ATTENDING,
       ]);
       expect(code).toBe(1);
       expect(stdout()).toEqual([]);
@@ -407,7 +412,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // decision C135: after `Not recorded:`, what the run owes — the agent step `finish` is ready.
       expect(stdout()).toEqual([
         LATE_SAME_CHOICE,
-        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.\n${ATTENDING}`,
       ]);
       expect(code).toBe(0);
       expect(stderr()).toEqual([]);
@@ -480,6 +485,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
         owed.split('<id>').join(runId),
+        ATTENDING,
       ]);
       expect(owed).toMatch(/^Owed to the engine: 'after' — realm run advance <id> runs it, with /);
       expect(code).toBe(1);
@@ -501,6 +507,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         LATE_SAME_CHOICE,
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
         owed.split('<id>').join(runId),
+        ATTENDING,
       ]);
       expect(code).toBe(0);
       expect(stderr()).toEqual([]);

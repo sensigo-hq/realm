@@ -146,7 +146,9 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     // from; (b) prints the whole stdout.
     expect(responded.stdout.trim()).toBe(
       `Responded: ${runId} | choice 'approve' | new state 'running'\n` +
-        `Owed to the engine: 'after' — realm run advance ${runId} runs it, with the project code under ${proj}, in the environment of the shell it runs in.`,
+        `Owed to the engine: 'after' — realm run advance ${runId} runs it, with the project code under ${proj}, in the environment of the shell it runs in.\n` +
+        // decision C164: the attending line after the command an answer leaves.
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
     );
     const advanced = realm(elsewhere, ['run', 'advance', runId]);
     expect(advanced.status).toBe(0);

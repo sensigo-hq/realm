@@ -166,3 +166,17 @@ export function renderAnswerLine(answer: AnswerView): string {
   }
   return `Answer: ${choice} · answered by ${answerer} · proof: ${describeProof(answer.claim_proof, absent)}`;
 }
+
+/**
+ * A question's text as the terminal shows it (decision C167; `realm run inspect`'s `Message:` line):
+ * quoted, on one line, every control character written as an escape — a run parameter in it may
+ * carry a newline or a terminal sequence. JSON quoting escapes U+0000–U+001F; the house's control
+ * set (`holder.ts`) also holds U+007F–U+009F (U+009B starts a terminal sequence), which JSON leaves
+ * raw, so those are escaped too.
+ */
+export function quotedForTerminal(text: string): string {
+  return JSON.stringify(text).replace(
+    /[\u007f-\u009f]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}

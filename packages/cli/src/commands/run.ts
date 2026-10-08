@@ -19,8 +19,9 @@ import {
   stepsThatCannotRun,
   cannotGoOnLines,
   composeStepViews,
+  describeClaimHolder,
 } from '@sensigo/realm';
-import { renderAnswerLine } from '../lib/holder-render.js';
+import { renderAnswerLine, quotedForTerminal, takenPhrase } from '../lib/holder-render.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import type {
@@ -175,12 +176,31 @@ function watchQuestion(
   gateId: string,
   onClosed: () => void,
 ): () => void {
+  return watchRun(
+    store,
+    runId,
+    (r) => r.terminal_state === true || r.pending_gate?.gate_id !== gateId,
+    onClosed,
+  );
+}
+
+/**
+ * The one watch behind every prompt (decisions C158, C165): reads the run every
+ * {@link QUESTION_WATCH_MS} and calls `onClosed` once `closed(record)` holds. A read that fails is
+ * tried again at the next tick. Returns the stop.
+ */
+function watchRun(
+  store: Pick<RunStore, 'get'>,
+  runId: string,
+  closed: (r: RunRecord) => boolean,
+  onClosed: () => void,
+): () => void {
   let stopped = false;
   const timer = setInterval(() => {
     void store.get(runId).then(
       (r) => {
         if (stopped) return;
-        if (r.terminal_state === true || r.pending_gate?.gate_id !== gateId) {
+        if (closed(r)) {
           stopped = true;
           clearInterval(timer);
           onClosed();
@@ -211,6 +231,35 @@ export function questionClosedLine(run: RunRecord, step: string): string {
 }
 
 /**
+ * The line a step's prompt prints when the step stopped waiting for its answer while the prompt was
+ * open (decision C165): another process took it (its claim names the program), or ran it (its
+ * evidence names the program, `driven_by`), or the run ended. The same past-tense phrase `realm
+ * agent` prints for a step another process took (`takenPhrase`).
+ */
+export function stepClosedLine(run: RunRecord, step: string, storeKeepsClaims: boolean): string {
+  const claim = run.claims?.[step];
+  if (claim !== undefined) {
+    return `This prompt is closed: step '${step}' was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims))}; not run here.`;
+  }
+  const done = run.completed_steps.includes(step)
+    ? 'completed'
+    : run.failed_steps.includes(step)
+      ? 'failed'
+      : undefined;
+  if (done !== undefined) {
+    const ev = [...run.evidence]
+      .reverse()
+      .find((e) => e.step_id === step && e.kind !== 'gate_response');
+    const by =
+      ev?.driven_by !== undefined
+        ? takenPhrase({ holder: ev.driven_by })
+        : takenPhrase({ by: null, absent_cause: 'no_claim' });
+    return `This prompt is closed: step '${step}' was ${by}, and ${done}; not run here.`;
+  }
+  return `This prompt is closed: step '${step}' no longer waits for an answer — the run is '${deriveRunPhase(run)}'.`;
+}
+
+/**
  * Asks until the answer is usable: empty ⇒ {}, invalid JSON or a non-object ⇒ says why
  * and re-asks (issue #459 — operator input gets a re-prompt, never the #123 rethrow;
  * `42`/`null`/`[1]` are valid JSON that would lie through the object cast, MA-executed).
@@ -218,11 +267,12 @@ export function questionClosedLine(run: RunRecord, step: string): string {
  * ABORT_ERR rejection propagates straight to the #447 catch and its detach map.
  */
 async function askJsonObject(
-  rl: { question: (q: string) => Promise<string> },
+  rl: { question: (q: string, opts?: { signal?: AbortSignal }) => Promise<string> },
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   for (;;) {
-    const raw = await rl.question(prompt);
+    const raw = await rl.question(prompt, signal !== undefined ? { signal } : undefined);
     const trimmed = raw.trim();
     if (trimmed === '') return {};
     let parsed: unknown;
@@ -432,6 +482,10 @@ export const runCommand = new Command('run')
           if (run.pending_gate !== undefined) {
             const g = run.pending_gate;
             console.log(`  ⏸  Gate: ${g.step_name} | gate_id: ${g.gate_id}`);
+            // decision C167: the question the person answers, as `realm run inspect` quotes it.
+            if (g.resolved_message !== undefined) {
+              console.log(`  Question: ${quotedForTerminal(g.resolved_message)}`);
+            }
             console.log(`  Preview: ${JSON.stringify(g.preview, null, 2)}`);
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer.
             // CAVEAT (lane-1-verified, stated here per the design's own instruction): this
@@ -589,20 +643,47 @@ export const runCommand = new Command('run')
 
           // Build dispatcher output based on execution type
           let userOutput: Record<string, unknown>;
-
-          if (stepDef.execution === 'agent') {
-            promptStep = stepName;
-            userOutput = await askJsonObject(rl, '  Agent output JSON (Enter for {}): ');
-          } else {
-            // auto step
-            const hint =
-              stepDef.handler !== undefined
-                ? `handler: ${stepDef.handler}`
-                : stepDef.uses_service !== undefined
-                  ? `service: ${stepDef.uses_service}`
-                  : 'auto';
-            promptStep = stepName;
-            userOutput = await askJsonObject(rl, `  Mock output (${hint}) — JSON (Enter for {}): `);
+          // decision C165: the step's prompt closes, as a question's does (C158), when the step stops
+          // waiting for this answer — another process took it or ran it (`realm run advance`, an
+          // `execute_step` call), or the run ended — and says what the record shows; never `✓` for
+          // work done elsewhere. Any other rejection is the operator's cancel (#447), rethrown.
+          const stepGone = new AbortController();
+          const stopStepWatch = watchRun(
+            store,
+            runId,
+            (r) =>
+              r.terminal_state === true || !findEligibleSteps(definition, r).includes(stepName),
+            () => stepGone.abort(),
+          );
+          promptStep = stepName;
+          try {
+            if (stepDef.execution === 'agent') {
+              userOutput = await askJsonObject(
+                rl,
+                '  Agent output JSON (Enter for {}): ',
+                stepGone.signal,
+              );
+            } else {
+              // auto step
+              const hint =
+                stepDef.handler !== undefined
+                  ? `handler: ${stepDef.handler}`
+                  : stepDef.uses_service !== undefined
+                    ? `service: ${stepDef.uses_service}`
+                    : 'auto';
+              userOutput = await askJsonObject(
+                rl,
+                `  Mock output (${hint}) — JSON (Enter for {}): `,
+                stepGone.signal,
+              );
+            }
+          } catch (err) {
+            if (!stepGone.signal.aborted) throw err;
+            run = await store.get(runId);
+            console.log(`  ${stepClosedLine(run, stepName, store.persistsClaims === true)}\n`);
+            continue;
+          } finally {
+            stopStepWatch();
           }
 
           const dispatcher: StepDispatcher = async () => userOutput;
@@ -624,7 +705,16 @@ export const runCommand = new Command('run')
             ...(mintWriterNonce ? { writerNonce: crypto.randomUUID() } : {}),
           });
 
-          if (result.status === 'ok') {
+          if (
+            result.status === 'ok' &&
+            result.agent_action === 'stop' &&
+            result.evidence.length === 0
+          ) {
+            // decision C165: the run ended before this answer reached the engine (another process
+            // finished it) — the call ran nothing, so no `✓`: the engine's own words say why.
+            run = await store.get(runId);
+            console.log(`  Not run here: ${result.context_hint}\n`);
+          } else if (result.status === 'ok') {
             run = await store.get(runId);
             const ev = result.evidence[0];
             const hash = ev !== undefined ? ev.evidence_hash.slice(0, 8) : 'n/a';

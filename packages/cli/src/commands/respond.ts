@@ -54,15 +54,27 @@ function nextLines(
   // that cannot run and the way out — core's lines, never a copy.
   const cannotGoOn = cannotGoOnLines(run, pending);
   const ready = agentReadyReason(runId, pending.agent_steps);
-  return [
+  const commands = [
     ...(pending.act !== undefined
       ? [
           `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
         ]
       : []),
     ...(ready !== undefined ? [`${ready.charAt(0).toUpperCase()}${ready.slice(1)}.`] : []),
+  ];
+  return [
+    ...commands,
+    // decision C164: a `realm workflow run` or `realm agent` waiting on this run goes on by itself,
+    // and the record cannot tell whether one is (it writes nothing while it waits) — so the line says
+    // both cases, and the commands above are not run beside it.
+    ...(commands.length > 0 ? [attendingLine(commands.length)] : []),
     ...cannotGoOn,
   ];
+}
+
+/** The line after the commands an answer leaves (decision C164): true whether or not a process attends. */
+export function attendingLine(commands: number): string {
+  return `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; ${commands === 1 ? 'the line above is' : 'the lines above are'} for when none is.`;
 }
 
 /** What `respondToGate` hands the command to print (issue #625). */

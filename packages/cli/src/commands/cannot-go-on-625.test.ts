@@ -137,7 +137,9 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
       );
       expect(ctl.lastLine).toBe(
         `Responded: ${cid} | choice 'approve' | new state 'running'\n` +
-          `An agent step is ready: 'ask' — drive it with realm agent --run-id ${cid} --provider <provider> --model <model>.`,
+          `An agent step is ready: 'ask' — drive it with realm agent --run-id ${cid} --provider <provider> --model <model>.\n` +
+          // decision C164: the attending line after the command an answer leaves.
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

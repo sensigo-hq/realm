@@ -332,7 +332,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
   it('C163 error_code: on an error — except create_workflow refusing its steps, whose errors say what is wrong', async () => {
     claim(
       'mcp/tools.md',
-      "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and a `get_run_state` or `abandon_run` refusal of an error that carries no code",
+      "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that carries no code",
     );
     const { call } = await connect();
     const r = await call('create_workflow', {
@@ -352,12 +352,12 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
     expect(nf['error_code']).toBe('STATE_RUN_NOT_FOUND');
   });
 
-  it.each(['get_run_state', 'abandon_run'])(
+  it.each(['abandon_run'])(
     'C163 error_code: a %s refusal of an error that carries no code (a record that is not JSON) has none',
     async (tool) => {
       claim(
         'mcp/tools.md',
-        "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and a `get_run_state` or `abandon_run` refusal of an error that carries no code",
+        "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that carries no code",
       );
       const { call, dir } = await connect();
       mkdirSync(join(dir, 'runs'), { recursive: true });
@@ -399,7 +399,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
 
 describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that has ended, as measured', () => {
   const ENDED_ROW =
-    "Never on `confirm_required`, and never on another `ok` reply: on a run that has ended, `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the choice its gate recorded (`… was already resolved with choice '<c>' — no action was taken.`).";
+    "Never on `confirm_required`, and never on another `ok` reply: on a run that has ended, `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the choice its gate recorded (`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).";
   const OK_STOP =
     'On an `ok` reply only as `stop`: from `execute_step` on a run that has already ended, and from a call whose guard step finds the run ended by another process meanwhile';
 
@@ -479,7 +479,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
   it('C154, W4-R1 submit_human_response, another gate ID: STATE_RUN_TERMINAL, report_to_user', async () => {
     claim(
       'mcp/tools.md',
-      "Another gate ID, or the gate of a question that recorded no choice (its `on_expiry: abort` ended the run), is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal; cannot submit a gate response — …`.",
+      "Another gate ID, or the gate of a question that recorded no choice (its `on_expiry: abort` ended the run), is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`, ending with the way out for that kind of ending:",
     );
     const { call, runId } = await endedRun();
     const r = await call('submit_human_response', {
@@ -493,15 +493,16 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
       'report_to_user',
       'submit_gate',
     ]);
-    expect(String(r['context_hint'])).toMatch(
-      new RegExp(`^Run '${runId}' is terminal; cannot submit a gate response — `),
+    // decision C170: a completed run — nothing is owed, and `realm run resume` (which refuses it) is not offered.
+    expect(r['context_hint']).toBe(
+      `Run '${runId}' is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.`,
     );
   });
 
   it('C154 submit_human_response on the gate of a question whose abort ended the run: STATE_RUN_TERMINAL, without answer_recorded (gates.md)', async () => {
     claim(
       'mcp/tools.md',
-      "Another gate ID, or the gate of a question that recorded no choice (its `on_expiry: abort` ended the run), is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal; cannot submit a gate response — …`.",
+      "Another gate ID, or the gate of a question that recorded no choice (its `on_expiry: abort` ended the run), is refused with `STATE_RUN_TERMINAL`: `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`, ending with the way out for that kind of ending:",
     );
     claim(
       'workflow/gates.md',
@@ -2051,4 +2052,169 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
     const state = await call('get_run_state', { run_id: runId });
     expect(next(state).at(-1)).toBe('advance_run:');
   });
+});
+
+describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () => {
+  const PER_KIND =
+    "`it completed, and nothing is owed.` for a completed run; `an aborted run is never resumed; 'realm run purge <id> --force' removes its record.` for an aborted one; `'realm run resume <id> --from <step>' makes the failed step runnable again, or 'realm run purge <id> --force' removes its record.` for a failed or abandoned one in which a step failed (that step named), and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which none did.";
+
+  it.each([
+    'completed',
+    'aborted',
+    'failed',
+    'abandoned',
+    'abandoned after a failed step',
+  ] as const)(
+    'C170, W4-Y1: an answer to a %s run is refused with the way out true for that kind of ending',
+    async (kind) => {
+      claim('mcp/tools.md', PER_KIND);
+      const { call, workflowStore, runStore } = await connect();
+      let runId: string;
+      if (kind === 'completed') {
+        const again = await endedRun();
+        runId = again.runId;
+        const r = await again.call('submit_human_response', {
+          run_id: runId,
+          gate_id: 'other',
+          choice: 'approve',
+        });
+        expect(r['context_hint']).toBe(
+          `Run '${runId}' is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.`,
+        );
+        return;
+      }
+      if (kind === 'aborted') {
+        await workflowStore.register(gated('r21-abort', 'abort'));
+        runId = (await call('start_run', { workflow_id: 'r21-abort' }))['run_id'] as string;
+        await new Promise((resolve) => setTimeout(resolve, 1_100));
+        await call('advance_run', { run_id: runId });
+      } else if (kind === 'failed') {
+        await workflowStore.register({
+          ...SCHEMA,
+          id: 'r21-fail',
+          steps: { ask: { ...SCHEMA.steps['ask']!, validation_exhaustion: { threshold: 1 } } },
+        } as WorkflowDefinition);
+        runId = (await call('start_run', { workflow_id: 'r21-fail' }))['run_id'] as string;
+        for (let i = 0; i < 3; i += 1) {
+          await call('execute_step', { run_id: runId, command: 'ask', params: { n: 'x' } });
+        }
+      } else if (kind === 'abandoned') {
+        await workflowStore.register(AGENT_THEN_AUTO);
+        runId = (await call('start_run', { workflow_id: AGENT_THEN_AUTO.id }))['run_id'] as string;
+        await call('abandon_run', { run_id: runId });
+      } else {
+        await workflowStore.register(STEPS);
+        runId = (
+          await call('start_run', { workflow_id: STEPS.id, params: { path: '/no/such/file-625' } })
+        )['run_id'] as string;
+        await call('execute_step', { run_id: runId, command: 'a', params: { go: false } });
+        await call('abandon_run', { run_id: runId });
+      }
+      const phase = kind === 'abandoned after a failed step' ? 'abandoned' : kind;
+      expect((await runStore.get(runId)).run_phase, 'fixture').toBe(phase);
+      const r = await call('submit_human_response', {
+        run_id: runId,
+        gate_id: 'other',
+        choice: 'approve',
+      });
+      const purge = `'realm run purge ${runId} --force' removes its record`;
+      const wayOut =
+        kind === 'aborted'
+          ? `an aborted run is never resumed; ${purge}.`
+          : kind === 'failed'
+            ? `'realm run resume ${runId} --from ask' makes the failed step runnable again, or ${purge}.`
+            : kind === 'abandoned after a failed step'
+              ? `'realm run resume ${runId} --from fails' makes the failed step runnable again, or ${purge}.`
+              : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
+      // (a) red when the refusal offers a way out that kind of ending does not have; (b) prints it.
+      expect([r['error_code'], r['agent_action'], r['context_hint']]).toEqual([
+        'STATE_RUN_TERMINAL',
+        'report_to_user',
+        `Run '${runId}' is terminal (${phase}); cannot submit a gate response — ${wayOut}`,
+      ]);
+    },
+  );
+
+  it('C171, W4-Y2: repeating the choice the question’s expiry recorded says it was settled by timeout, as the CLI does; a person’s recorded choice repeated still says already resolved', async () => {
+    claim(
+      'mcp/tools.md',
+      "or, when the question's expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.` with `answer_recorded: false`.",
+    );
+    claim(
+      'mcp/tools.md',
+      "(`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).",
+    );
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register(gated('r21-exp', 'settle_default'));
+    const runId = (await call('start_run', { workflow_id: 'r21-exp' }))['run_id'] as string;
+    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await call('advance_run', { run_id: runId });
+    const r = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: gateId,
+      choice: 'approve',
+    });
+    // (a) red when the repeat reads as a person's recorded answer; (b) prints it.
+    expect([r['status'], 'agent_action' in r, r['answer_recorded'], r['context_hint']]).toEqual([
+      'ok',
+      false,
+      false,
+      'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
+    ]);
+    const { call: c2, runId: done, gateId: g2 } = await endedRun();
+    const human = await c2('submit_human_response', {
+      run_id: done,
+      gate_id: g2,
+      choice: 'approve',
+    });
+    expect([human['context_hint'], 'answer_recorded' in human]).toEqual([
+      `Gate '${g2}' was already resolved with choice 'approve' — no action was taken.`,
+      false,
+    ]);
+  });
+
+  const CANNOT_READ_MCP =
+    'A run whose record the store cannot read (a file that is not JSON, an I/O error) is refused by `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` with `ENGINE_STORE_FAILED` and `agent_action: "stop"`, naming the cause — `Failed to load run from store: <its message>` — as the library answers it;';
+  it.each([
+    ['execute_step', { command: 'a', params: {} }],
+    ['submit_human_response', { gate_id: 'g', choice: 'x' }],
+    ['advance_run', {}],
+    ['get_run_state', {}],
+  ] as const)(
+    'C172: %s on a record that is not JSON — ENGINE_STORE_FAILED naming the cause, stop',
+    async (tool, args) => {
+      claim('mcp/tools.md', CANNOT_READ_MCP);
+      const { call, dir } = await connect();
+      mkdirSync(join(dir, 'runs'), { recursive: true });
+      writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
+      const r = await call(tool, { run_id: 'broken', ...args });
+      // (a) red when the tool answers ENGINE_INTERNAL again, or drops the cause; (b) prints it.
+      expect([r['status'], r['error_code'], r['agent_action']]).toEqual([
+        'error',
+        'ENGINE_STORE_FAILED',
+        'stop',
+      ]);
+      expect((r['errors'] as string[])[0]).toMatch(/^Failed to load run from store: .*JSON/);
+    },
+  );
+
+  it.each([
+    ['append_trace', { step_id: 'a', entries: [] }, 'ENGINE_INTERNAL'],
+    ['abandon_run', {}, undefined],
+  ] as const)(
+    'C172 (outside #706’s files, reported): %s on a record that is not JSON — the bare message',
+    async (tool, args, code) => {
+      claim(
+        'mcp/tools.md',
+        '`append_trace` and `abandon_run` refuse it with the bare message: `append_trace` with `ENGINE_INTERNAL`, `abandon_run` with no code.',
+      );
+      const { call, dir } = await connect();
+      mkdirSync(join(dir, 'runs'), { recursive: true });
+      writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
+      const r = await call(tool, { run_id: 'broken', ...args });
+      expect([r['status'], r['error_code']]).toEqual(['error', code]);
+      expect((r['errors'] as string[])[0]).not.toMatch(/^Failed to load run from store/);
+    },
+  );
 });

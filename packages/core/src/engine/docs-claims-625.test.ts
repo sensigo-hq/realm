@@ -411,7 +411,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   });
 
   const STEP_CANNOT_READ =
-    "`executeStep` and `executeChain` answer a run they cannot read with an error reply, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError`, and `ENGINE_STORE_FAILED` for any other, naming its cause (`Failed to load run from store: <its message>`; a `JsonFileStore` record that is not JSON, for one).";
+    "`executeStep`, `executeChain` and `submitHumanResponse` answer a run they cannot read with an error reply, never a throw (`submitHumanResponse`'s names `command: submit_gate`): `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError`, and `ENGINE_STORE_FAILED` for any other, naming its cause (`Failed to load run from store: <its message>`; a `JsonFileStore` record that is not JSON, for one).";
   const NO_PHASE = 'Such a reply names no `run_phase`: no run was read.';
   /** A store whose every read throws the store's own typed error. */
   const offline = () => {
@@ -429,8 +429,8 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     return typed;
   };
 
-  it.each(['executeStep', 'executeChain'] as const)(
-    'C156 class (finding 3 built): %s on a run it cannot read — not found, the store’s own WorkflowError, a record that is not JSON — an error reply each, naming the cause, no run_phase, never a throw',
+  it.each(['executeStep', 'executeChain', 'submitHumanResponse'] as const)(
+    'C156 class (finding 3 built; C168): %s on a run it cannot read — not found, the store’s own WorkflowError, a record that is not JSON — an error reply each, naming the cause, no run_phase, never a throw',
     async (fn) => {
       claim(STEP_CANNOT_READ);
       claim(NO_PHASE);
@@ -439,18 +439,21 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       const call = (s: RunStore, runId: string) =>
         fn === 'executeStep'
           ? executeStep(s, d, { runId, command: 'after', input: {}, dispatcher })
-          : executeChain(s, d, { runId, command: 'after', input: {}, dispatcher });
+          : fn === 'executeChain'
+            ? executeChain(s, d, { runId, command: 'after', input: {}, dispatcher })
+            : submitHumanResponse(s, d, { runId, gateId: 'g', choice: 'approve' });
       const replies = [
         await call(store, 'nope'),
         await call(offline(), 'r'),
         await call(store, 'broken'),
       ];
+      const command = fn === 'submitHumanResponse' ? 'submit_gate' : 'after';
       // (a) red when the call throws for any of them, a code changes, the cause is dropped, or the
       //     reply names a phase; (b) prints the replies.
       expect(replies.map((r) => [r.status, r.error_code, r.command, r.run_phase])).toEqual([
-        ['error', 'STATE_RUN_NOT_FOUND', 'after', undefined],
-        ['error', 'ENGINE_STORE_FAILED', 'after', undefined],
-        ['error', 'ENGINE_STORE_FAILED', 'after', undefined],
+        ['error', 'STATE_RUN_NOT_FOUND', command, undefined],
+        ['error', 'ENGINE_STORE_FAILED', command, undefined],
+        ['error', 'ENGINE_STORE_FAILED', command, undefined],
       ]);
       expect(replies.map((r) => r.errors[0])).toEqual([
         'Run not found: nope',
@@ -552,6 +555,36 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     expect(composeStepViews(await store.get(runId))['q']?.answers?.[0]?.answered_by).toMatchObject({
       by: 'alice',
     });
+  });
+
+  it('C169, W3-Y2: executeEngineStep, given run, answers a run that does not exist or cannot be read as executeStep does; without run it throws a TypeError', async () => {
+    claim(
+      "A run that does not exist or cannot be read gets the error reply `executeStep` gives (below). `run` is required: without it the call throws a `TypeError` (`Cannot read properties of undefined (reading 'evidence')`).",
+    );
+    const d = gated();
+    const { runId } = await atQuestion(d);
+    const record = await store.get(runId);
+    await writeFile(join(dir, 'broken.json'), '{not json');
+    const missing = await executeEngineStep(store, d, {
+      runId: 'nope',
+      step: 'after',
+      run: record,
+    });
+    const broken = await executeEngineStep(store, d, {
+      runId: 'broken',
+      step: 'after',
+      run: record,
+    });
+    // (a) red when either throws or answers otherwise than executeStep; (b) prints them.
+    expect([missing.error_code, missing.errors[0], broken.error_code]).toEqual([
+      'STATE_RUN_NOT_FOUND',
+      'Run not found: nope',
+      'ENGINE_STORE_FAILED',
+    ]);
+    expect(broken.errors[0]).toMatch(/^Failed to load run from store: .*JSON/);
+    await expect(executeEngineStep(store, d, { runId, step: 'after' } as never)).rejects.toThrow(
+      "Cannot read properties of undefined (reading 'evidence')",
+    );
   });
 
   it('C163 line 104: executeEngineStep on an agent step throws a WorkflowError and writes nothing', async () => {

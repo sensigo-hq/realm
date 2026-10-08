@@ -39,6 +39,7 @@ import {
   type DriveFailureCost,
   type Attributed,
   type ActorAbsent,
+  runReadError,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 import {
@@ -333,7 +334,11 @@ export async function handleGetRunState(
 ): Promise<RunStateSummary> {
   assertToolStores(stores, 'handleGetRunState');
   const runStore = stores?.runStore ?? new JsonFileStore();
-  const run = await runStore.get(args.run_id);
+  // decision C172: a run that cannot be read is answered as the library answers it — the store's own
+  // WorkflowError, or ENGINE_STORE_FAILED naming its cause.
+  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+    throw runReadError(err);
+  });
 
   // #134 capability-block detection — definition-free (reads capability_blocks + the four step sets),
   // computed once and used both to refine the status (below) and as the advisory array (in the return).

@@ -54,6 +54,7 @@ import {
   UNSHOWABLE_NAME,
   describeProgram,
   renderAnswerLine,
+  quotedForTerminal,
 } from '../lib/holder-render.js';
 
 /**
@@ -1098,16 +1099,10 @@ export async function inspectRun(
     const answerEntries = snaps.filter((s) => isAnswerEntry(s));
     (view?.answers ?? []).forEach((answer, i) => {
       const message = answerEntries[i]?.gate_message;
-      // The question is printed quoted, on one line, with every control character written as an
-      // escape: a run parameter in it may carry a newline or a terminal sequence. JSON quoting
-      // escapes U+0000–U+001F; the house's control set (`holder.ts`) also holds U+007F–U+009F
-      // (U+009B starts a terminal sequence), which JSON leaves raw, so those are escaped too.
+      // The question is printed quoted, on one line, every control character an escape
+      // (`quotedForTerminal`, shared with `realm workflow run`'s question line).
       if (message !== undefined) {
-        const quoted = JSON.stringify(message).replace(
-          /[\u007f-\u009f]/g,
-          (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
-        );
-        lines.push(`     Message:  ${quoted}`);
+        lines.push(`     Message:  ${quotedForTerminal(message)}`);
       }
       lines.push(`     ${renderAnswerLine(answer)}`);
     });

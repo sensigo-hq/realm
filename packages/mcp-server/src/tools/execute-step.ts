@@ -25,7 +25,11 @@ import {
 import type { HandleRunStores, FailedAttemptStoreLike } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
-import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
+import {
+  assertRegistryLine,
+  ExtensionRegistry as RealmExtensionRegistry,
+  runReadError,
+} from '@sensigo/realm';
 
 /** Maximum `writer_nonce` length (issue #197 PR-2, design §6). */
 const WRITER_NONCE_MAX_LENGTH = 128;
@@ -212,7 +216,11 @@ export async function handleExecuteStep(
   assertToolStores(stores, 'handleExecuteStep');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
-  const run = await runStore.get(args.run_id);
+  // decision C172: a run that cannot be read is answered as the library answers it — the store's own
+  // WorkflowError, or ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
+  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+    throw runReadError(err);
+  });
   // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
   // register command in the sentence is for the human this agent's report_to_user relays to.
   const definition = await getWorkflowForRun(workflowStore, run, {

@@ -29,7 +29,12 @@ const flat = (t: string) => t.replace(/\s+/g, ' ');
 
 /** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
 function claim(
-  page: 'workflow/gates.md' | 'mcp/tools.md' | 'core-library.md',
+  page:
+    | 'workflow/gates.md'
+    | 'mcp/tools.md'
+    | 'core-library.md'
+    | 'cli/realm-workflow.md'
+    | 'cli/realm-run-acting.md',
   sentence: string,
 ): void {
   expect(
@@ -348,5 +353,154 @@ describe(
       });
       expect(again.status).toBe('ok');
     });
+
+    it('C164, W1-Y1/W2-Y1: realm run respond, after the command an answer leaves, says a waiting realm workflow run or realm agent goes on by itself — true whether or not one waits', async () => {
+      claim(
+        'cli/realm-run-acting.md',
+        "After the lines that name a command — `Owed to the engine: …`, `An agent step is ready: …` — one more line says that a `realm workflow run` or `realm agent` still waiting on the run goes on by itself (`the lines above are` when there are two): the run's record does not show whether one is waiting, so the line holds either way.",
+      );
+      const { runId, gateId } = await atQuestion(gateThenAuto('dc-attend'), false);
+      const r = realm('run', 'respond', runId, '--gate', gateId, '--choice', 'approve');
+      const out = r.out.filter((l) => l !== '');
+      // (a) red when the line is gone, comes before the command, or claims to know; (b) prints stdout.
+      expect(out[1]).toMatch(/^Owed to the engine: 'after' — realm run advance /);
+      expect(out[2]).toBe(
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+      );
+      // Nothing on the record tells a waiting process from none (it writes nothing while it waits).
+      const rec = await runStore.get(runId);
+      expect(Object.keys(rec).filter((k) => /attend|lease|watch/.test(k))).toEqual([]);
+    });
+
+    it('C166, W1-Y3: realm run respond, advance and drain act on a run only once its workflow is registered', async () => {
+      claim(
+        'cli/realm-workflow.md',
+        'Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow not found: <id> — …`, and `realm listen` skips the run.',
+      );
+      const def = gateThenAuto('dc-unregistered', 'settle_default');
+      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const opened = await executeStep(runStore, def, {
+        runId: run.id,
+        command: 'confirm',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+      const gateId = opened.gate!.gate_id;
+      // The question's time is up, so `drain --expired` has something to act on.
+      const open = await runStore.get(run.id);
+      await runStore.update({
+        ...open,
+        pending_gate: { ...open.pending_gate!, expires_at: '2020-01-01T00:00:00.000Z' },
+      });
+      for (const args of [
+        ['run', 'respond', run.id, '--gate', gateId, '--choice', 'approve'],
+        ['run', 'advance', run.id],
+        ['run', 'drain', run.id, '--expired', '--force'],
+      ]) {
+        const r = realm(...args);
+        // (a) red when one of them acts on a run whose workflow is not registered; (b) prints stderr.
+        expect([...r.out, ...r.err].join('\n'), args.join(' ')).toContain(
+          `Workflow not found: ${def.id} — `,
+        );
+      }
+      expect((await runStore.get(run.id)).pending_gate?.gate_id).toBe(gateId);
+      const logger = { info: () => {}, warn: () => {}, error: () => {} };
+      const swept = await sweepExpiredGates({ runStore, workflowStore, logger } as never);
+      expect([swept.enacted, swept.skipped_unregistered]).toEqual([0, 1]);
+    });
+
+    it('C170 gates.md: an answer after the abort is refused with the aborted run’s way out (realm run respond)', async () => {
+      claim(
+        'workflow/gates.md',
+        "Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c --force' removes its record.",
+      );
+      const { runId, gateId } = await atQuestion(gateThenAuto('dc-aborted', 'abort'));
+      expect(realm('run', 'advance', runId).code).toBe(0);
+      const r = realm('run', 'respond', runId, '--gate', gateId, '--choice', 'approve');
+      expect(r.err.filter((l) => l !== '')).toContain(
+        `Run '${runId}' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge ${runId} --force' removes its record.`,
+      );
+    });
+
+    it.each(['completed', 'aborted', 'failed', 'abandoned'] as const)(
+      'C170, W4-Y1: realm run resume takes a %s run exactly when the refusal offers it (a failed step); realm run purge --force removes the record',
+      async (kind) => {
+        claim(
+          'mcp/tools.md',
+          "for a failed or abandoned one in which a step failed (that step named), and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which none did.",
+        );
+        let runId: string;
+        let step: string;
+        if (kind === 'completed' || kind === 'aborted') {
+          const def =
+            kind === 'completed' ? gateThenAuto('dc-r-done') : gateThenAuto('dc-r-abort', 'abort');
+          const q = await atQuestion(def, kind === 'aborted');
+          runId = q.runId;
+          step = 'confirm';
+          if (kind === 'completed') {
+            realm('run', 'respond', runId, '--gate', q.gateId, '--choice', 'approve');
+          }
+          realm('run', 'advance', runId);
+        } else {
+          const def = {
+            id: `dc-r-${kind}`,
+            name: 'r',
+            version: 1,
+            schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+            steps: {
+              a: {
+                description: 'A.',
+                execution: 'agent',
+                depends_on: [],
+                validation_exhaustion: { threshold: 1 },
+                input_schema: {
+                  type: 'object',
+                  properties: { n: { type: 'integer' } },
+                  required: ['n'],
+                },
+              },
+            },
+          } as unknown as WorkflowDefinition;
+          await workflowStore.register(def);
+          const { run } = await runStore.create({
+            workflowId: def.id,
+            workflowVersion: 1,
+            params: {},
+          });
+          runId = run.id;
+          step = 'a';
+          if (kind === 'failed') {
+            for (let i = 0; i < 3; i += 1) {
+              await executeStep(runStore, def, {
+                runId,
+                command: 'a',
+                input: { n: 'x' },
+                dispatcher: async () => ({}),
+              });
+            }
+          } else {
+            expect(realm('run', 'abandon', runId).code).toBe(0);
+          }
+        }
+        expect((await runStore.get(runId)).run_phase, 'fixture').toBe(kind);
+        // `realm run purge --force` on a copy of the ended run (purge refuses a run that goes on, so it
+        // is tried while the run is still ended), then `resume` on the run itself.
+        const ended = await runStore.get(runId);
+        const copy = (
+          await runStore.create({ workflowId: ended.workflow_id, workflowVersion: 1, params: {} })
+        ).run;
+        await runStore.update({ ...ended, id: copy.id, version: copy.version });
+        expect((await runStore.get(copy.id)).run_phase, 'fixture copy').toBe(kind);
+        const purged = realm('run', 'purge', copy.id, '--force');
+        expect(purged.code, [...purged.out, ...purged.err].join('\n')).toBe(0);
+        await expect(runStore.get(copy.id)).rejects.toMatchObject({ code: 'STATE_RUN_NOT_FOUND' });
+        const resumed = realm('run', 'resume', runId, '--from', step);
+        // (a) red when resume takes a kind the refusal says it does not, or refuses one it offers; (b) prints it.
+        // `resume` takes the run exactly when the refusal offers it: a failed step to run again.
+        expect(resumed.code, [...resumed.out, ...resumed.err].join('\n')).toBe(
+          kind === 'failed' ? 0 : 1,
+        );
+      },
+    );
   },
 );

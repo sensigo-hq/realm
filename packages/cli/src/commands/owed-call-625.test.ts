@@ -96,7 +96,9 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         `Responded: ${run.id} | choice 'approve' | answered by alice (as stated) | new state 'running'\n` +
           // decision C98: where the code comes from (this definition has no trust_root: the folder
           // advance runs in) and that the environment is that shell's.
-          `Owed to the engine: 'after' — realm run advance ${run.id} runs it, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.`,
+          `Owed to the engine: 'after' — realm run advance ${run.id} runs it, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.\n` +
+          // decision C164: the attending line after the command an answer leaves.
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );
 
       const inspected = realm(home, ['run', 'inspect', run.id]);

@@ -15,7 +15,11 @@ import {
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
-import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
+import {
+  assertRegistryLine,
+  ExtensionRegistry as RealmExtensionRegistry,
+  runReadError,
+} from '@sensigo/realm';
 
 /** The arguments this tool takes. Anything else is named in the reply's `warnings`, not dropped. */
 const KNOWN_ARGS = ['run_id'] as const;
@@ -45,7 +49,11 @@ export async function handleAdvanceRun(
   assertToolStores(stores, 'handleAdvanceRun');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
-  const run = await runStore.get(args.run_id);
+  // decision C172: a run that cannot be read is answered as the library answers it — the store's own
+  // WorkflowError, or ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
+  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+    throw runReadError(err);
+  });
   const definition = await getWorkflowForRun(workflowStore, run, {
     retryVerb: 'retry',
     verb: 'retry',

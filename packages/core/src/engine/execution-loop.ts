@@ -1235,16 +1235,49 @@ function firstReadRefusal(
   options: Pick<ExecuteStepOptions, 'command' | 'runId'>,
   err: unknown,
 ): ResponseEnvelope {
-  const refusal =
-    err instanceof WorkflowError
-      ? err
-      : new WorkflowError(`Failed to load run from store: ${describeThrown(err)}`, {
-          code: 'ENGINE_STORE_FAILED',
-          category: 'ENGINE',
-          agentAction: 'stop',
-          retryable: false,
-        });
-  return makeErrorEnvelope(options as ExecuteStepOptions, null, refusal);
+  return makeErrorEnvelope(options as ExecuteStepOptions, null, runReadError(err));
+}
+
+/**
+ * The error a failed read of a run is answered with (decisions C156, C168, C172): the store's own
+ * `WorkflowError` as it is, or anything else as `ENGINE_STORE_FAILED` naming its cause — `Failed to
+ * load run from store: <its message>`. The library's entries and the MCP tools build their reply from
+ * it, so a run that cannot be read is answered alike everywhere.
+ */
+export function runReadError(err: unknown): WorkflowError {
+  return err instanceof WorkflowError
+    ? err
+    : new WorkflowError(`Failed to load run from store: ${describeThrown(err)}`, {
+        code: 'ENGINE_STORE_FAILED',
+        category: 'ENGINE',
+        agentAction: 'stop',
+        retryable: false,
+      });
+}
+
+/**
+ * The refusal of an answer to a run that has ended (decision C170): `Run '<id>' is terminal
+ * (<phase>); cannot submit a gate response — <the way out for that kind of ending>`. A completed run
+ * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a failed or
+ * abandoned one is resumed only from a step that failed (`resume --from` takes a failed step and
+ * nothing else). `realm run purge <id> --force` removes any ended run's record.
+ */
+export function terminalAnswerRefusalMessage(
+  runId: string,
+  phase: RunPhase,
+  failedSteps: readonly string[],
+): string {
+  const purge = `'realm run purge ${runId} --force' removes its record`;
+  const from = failedSteps.length === 1 ? failedSteps[0] : `<one of: ${failedSteps.join(', ')}>`;
+  const wayOut =
+    phase === 'completed'
+      ? 'it completed, and nothing is owed.'
+      : phase === 'aborted'
+        ? `an aborted run is never resumed; ${purge}.`
+        : failedSteps.length > 0
+          ? `'realm run resume ${runId} --from ${from}' makes the failed step runnable again, or ${purge}.`
+          : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
+  return `Run '${runId}' is terminal (${phase}); cannot submit a gate response — ${wayOut}`;
 }
 
 /**
@@ -5300,16 +5333,8 @@ export async function submitHumanResponse(
   try {
     run = await store.get(options.runId);
   } catch (err) {
-    const e =
-      err instanceof WorkflowError
-        ? err
-        : new WorkflowError('Failed to load run from store', {
-            code: 'ENGINE_STORE_FAILED',
-            category: 'ENGINE',
-            agentAction: 'stop',
-            retryable: false,
-          });
-    return errorEnvelope('submit_gate', options.runId, 0, e);
+    // decision C168: a run this answer cannot read gets the reply its siblings give it.
+    return errorEnvelope('submit_gate', options.runId, 0, runReadError(err));
   }
 
   // issue #291: injectable clock, hoisted here so BOTH the migrated and legacy paths below use
@@ -5467,7 +5492,11 @@ export async function submitHumanResponse(
               ...(gateSettledByTimeout(noopRun, stepName)
                 ? { answer_recorded: false as const }
                 : {}),
-              context_hint: `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
+              // decision C171: when the question's expiry recorded that choice, the hint says so — the
+              // sentence a late answer of that choice gets (and `realm run respond` prints).
+              context_hint: gateSettledByTimeout(noopRun, stepName)
+                ? LATE_SAME_CHOICE_SENTENCE
+                : `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
               run_phase: noopRun.run_phase,
               next_actions: noopRun.terminal_state
                 ? []
@@ -5622,10 +5651,13 @@ export async function submitHumanResponse(
           // Zombie/grandfathered variant — the #282 class: a terminal record may still carry a
           // stale pending_gate (never cleared), which is the best-effort step label here.
           const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
+          // decision C170: the way out the refusal names is true for the run's kind of ending.
           const err = new WorkflowError(
-            `Run '${options.runId}' is terminal; cannot submit a gate response — 'realm run resume' ` +
-              `clears a stale pending gate on a resumable run, or 'realm run purge' removes the ` +
-              `record entirely.`,
+            terminalAnswerRefusalMessage(
+              options.runId,
+              deriveRunPhase(result.run),
+              result.run.failed_steps,
+            ),
             {
               code: 'STATE_RUN_TERMINAL',
               category: 'STATE',
@@ -5737,14 +5769,16 @@ export async function submitHumanResponse(
       'submit_gate',
       options.runId,
       run.version,
-      new WorkflowError(`Run '${options.runId}' is terminal; cannot submit a gate response.`, {
-        code: 'STATE_RUN_TERMINAL',
-        category: 'STATE',
-        agentAction: 'report_to_user',
-        retryable: false,
-        details: { runId: options.runId, run_phase: run.run_phase },
-      }),
-      `Run is terminal (${run.run_phase}); cannot submit a gate response.`,
+      new WorkflowError(
+        terminalAnswerRefusalMessage(options.runId, deriveRunPhase(run), run.failed_steps),
+        {
+          code: 'STATE_RUN_TERMINAL',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: { runId: options.runId, run_phase: run.run_phase },
+        },
+      ),
     );
   }
 

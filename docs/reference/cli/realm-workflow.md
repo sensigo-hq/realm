@@ -205,7 +205,7 @@ A step that does not return `ok` prints a line that starts with `✗`, then the 
 
 This was added in 0.46.0; version 0.45.0 prints `✗ error: …` without naming the step.
 
-A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`. It then prints what the run's record holds, in the words of `realm run inspect`, and the run goes on:
+A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`. Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow not found: <id> — …`, and `realm listen` skips the run. It then prints what the run's record holds, in the words of `realm run inspect`, and the run goes on:
 
 ```text
   Choice [ship/hold]: ⏰ gate '02ebe774-…' on run '81771ac5-…' expired — enacted via the attending-process timer (enacted_via: timer).
@@ -214,6 +214,8 @@ A gate's prompt closes when its question is settled while it waits: by its time 
 ```
 
 When no answer was recorded (an `on_expiry: abort`), the line ends `— no answer was recorded; the run is 'aborted'.` The prompt reads the run's record twice a second while it waits. Added after version 0.46.0, whose prompt stayed open and refused what was typed after the question was settled.
+
+A step's prompt closes the same way when another process takes or runs that step while the prompt waits (`realm run advance`, an `execute_step` call): it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on. The gate's prompt shows the question before its choices, quoted as `realm run inspect` quotes it: `Question: "Ship it?"`. Added after version 0.46.0.
 
 Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:
 

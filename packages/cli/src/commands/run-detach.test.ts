@@ -573,7 +573,8 @@ steps:
       expect(mocks.question).toHaveBeenCalledTimes(2);
       expect(stderr()).toContain("Run '");
       expect(stderr()).toContain(
-        "is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.",
+        // #625 PR-2a, decision C170: the way out is true for the kind of ending (here completed).
+        'is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.',
       );
       expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
         'Run complete. Phase: completed',
@@ -615,7 +616,11 @@ steps:
       await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
       expect(mocks.question).toHaveBeenCalledTimes(5);
-      expect(mocks.question).toHaveBeenLastCalledWith('  Agent output JSON (Enter for {}): ');
+      // #625 PR-2a, decision C165: a step's prompt is handed the signal that closes it when the
+      // step stops waiting for its answer — the one additive argument.
+      expect(mocks.question).toHaveBeenLastCalledWith('  Agent output JSON (Enter for {}): ', {
+        signal: expect.any(AbortSignal),
+      });
       const lines = errLines();
       expect(lines.filter((l) => l.includes('Not valid JSON:'))).toHaveLength(1);
       // Three, one per arm — number, null, array: the predicate's three disjuncts, each pinned.
@@ -653,8 +658,12 @@ steps:
       await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
       expect(mocks.question).toHaveBeenCalledTimes(2);
+      // #625 PR-2a, decision C165: the signal that closes a step's prompt (additive).
       expect(mocks.question).toHaveBeenLastCalledWith(
         '  Mock output (auto) — JSON (Enter for {}): ',
+        {
+          signal: expect.any(AbortSignal),
+        },
       );
       expect(errLines().filter((l) => l.includes('Not valid JSON:'))).toHaveLength(1);
       expect(logged()).toContain('Run complete. Phase: completed');

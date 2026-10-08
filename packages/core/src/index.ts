@@ -118,6 +118,8 @@ export {
   describeAnswerEnding,
   lateAnswerOutcome,
   expiryCarriedOutLine,
+  runReadError,
+  terminalAnswerRefusalMessage,
 } from './engine/execution-loop.js';
 export type {
   AdvanceRunOptions,
