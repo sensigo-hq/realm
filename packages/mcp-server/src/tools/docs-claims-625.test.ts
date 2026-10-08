@@ -1461,7 +1461,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      'When the answer is refused and the run goes on, what the run owes follows it, as above.',
+      "When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
     );
     claim(
       'mcp/tools.md',
@@ -2201,7 +2201,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
   it('C171, W4-Y2: repeating the choice the question’s expiry recorded says it was settled by timeout, as the CLI does; a person’s recorded choice repeated still says already resolved', async () => {
     claim(
       'mcp/tools.md',
-      "or, when the question's expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.` with `answer_recorded: false`.",
+      'or, when the question\'s expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.` with `answer_recorded: false` and `error_details` carrying `resolved_by: "timeout"`.',
     );
     claim(
       'mcp/tools.md',
@@ -2218,12 +2218,20 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
       gate_id: gateId,
       choice: 'approve',
     });
-    // (a) red when the repeat reads as a person's recorded answer; (b) prints it.
-    expect([r['status'], 'agent_action' in r, r['answer_recorded'], r['context_hint']]).toEqual([
+    // (a) red when the repeat reads as a person's recorded answer, or (decision C185) its fields do
+    //     not say the expiry chose it; (b) prints it.
+    expect([
+      r['status'],
+      'agent_action' in r,
+      r['answer_recorded'],
+      r['context_hint'],
+      r['error_details'],
+    ]).toEqual([
       'ok',
       false,
       false,
       'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
+      { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
     ]);
     const { call: c2, runId: done, gateId: g2 } = await endedRun();
     const human = await c2('submit_human_response', {
@@ -2321,10 +2329,77 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     },
   );
 
+  it.each([
+    ['this call carries the expiry out', false],
+    ['an earlier advance_run carried it out', true],
+  ] as const)(
+    'C185 (walk c8, W4-a, b): the late answer that names the expiry’s choice (%s) — error_details with resolved_by, and what the run owes, as the other choice’s refusal has them',
+    async (_case, earlier) => {
+      claim(
+        'mcp/tools.md',
+        "For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry's write decided, a `context_hint` that is the expiry's sentence, and `error_details` with the choice the expiry recorded (`winning_choice`) and `resolved_by: \"timeout\"`. When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
+      );
+      claim(
+        'mcp/tools.md',
+        'An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `error_details` and what the run owes included. Neither has the expiry line in `warnings`; that call printed it.',
+      );
+      const { call, workflowStore, runStore } = await connect();
+      const id = `r23-same-${earlier ? 'earlier' : 'this'}`;
+      await workflowStore.register({
+        id,
+        name: id,
+        version: 1,
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+        steps: {
+          confirm: {
+            description: 'Confirm.',
+            execution: 'auto',
+            trust: 'human_confirmed',
+            depends_on: [],
+            gate: {
+              choices: ['approve', 'reject'],
+              timeout_seconds: 1,
+              on_expiry: 'settle_default',
+              default_choice: 'approve',
+            },
+          },
+          write: { description: 'Write.', execution: 'agent', depends_on: ['confirm'] },
+        },
+      } as WorkflowDefinition);
+      const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
+      const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      if (earlier) await call('advance_run', { run_id: runId });
+      const r = await call('submit_human_response', {
+        run_id: runId,
+        gate_id: gateId,
+        choice: 'approve',
+      });
+      const expiryLine = `gate '${gateId}' on 'confirm' had expired — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`;
+      // (a) red when the same-choice reply has no `resolved_by`, its hint stops before what the run
+      //     owes, or the expiry line is in the wrong reply; (b) prints the reply's fields.
+      expect({
+        status: r['status'],
+        recorded: r['answer_recorded'],
+        details: r['error_details'],
+        hint: r['context_hint'],
+        next: next(r),
+        expiryLine: ((r['warnings'] as string[]) ?? []).includes(expiryLine),
+      }).toEqual({
+        status: 'ok',
+        recorded: false,
+        details: { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
+        hint: "the outcome matches your choice, but it was settled by timeout; your response was not recorded. Ready for the agent: 'write'.",
+        next: ['execute_step:write'],
+        expiryLine: !earlier,
+      });
+    },
+  );
+
   it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and error_details carries resolved_by; a person’s recorded choice is not', async () => {
     claim(
       'mcp/tools.md',
-      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `error_details`, `resolved_by: \"timeout\"` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` It has no expiry line in `warnings`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `error_details` have no `resolved_by`.",
+      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `error_details`, `resolved_by: \"timeout\"` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `error_details` and what the run owes included. Neither has the expiry line in `warnings`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `error_details` have no `resolved_by`.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r22-exp', 'settle_default'));

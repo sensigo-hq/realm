@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runAdvanceCommand } from './run-advance.js';
 import {
   JsonFileStore,
   JsonWorkflowStore,
@@ -414,6 +415,96 @@ describe(
       });
     });
 
+    it('C184 (walk c8, W3-b, W3-c): the CLI README lists `advance` with its own description; operate-runs.md’s “Open, with no driver” names realm run advance for owed engine work', async () => {
+      // (a) red when the CLI README's `realm run` table drops `advance` or words it otherwise than
+      //     the command's own description; (b) prints both.
+      const readme = flat(readFileSync(join(ROOT, 'packages/cli/README.md'), 'utf8'));
+      expect(readme).toContain(`| \`advance\` | ${runAdvanceCommand.description()} |`);
+      claim(
+        'docs/guides/operate-runs.md',
+        'If the driver has stopped, start one on the same run. When the run owes the engine work — an `auto` step or a guard, as the `Owed to the engine:` line of `realm run inspect` says — run it from your shell, with no model and no key:',
+      );
+      claim(
+        'docs/guides/operate-runs.md',
+        'It stops where the run next needs something else, such as an agent step or a question, and says which. An agent step needs a driver with a model:',
+      );
+      const def = wf(
+        [
+          'id: c184-owed',
+          'name: c184-owed',
+          'version: 1',
+          'steps:',
+          '  a:',
+          '    description: A.',
+          '    execution: auto',
+          '  b:',
+          '    description: B.',
+          '    execution: agent',
+          '    depends_on: [a]',
+          '',
+        ].join('\n'),
+      );
+      const id = await started(def);
+      const inspect = realm(['run', 'inspect', id]);
+      const r = realm(['run', 'advance', id]);
+      // (a) red when inspect does not say the run owes the engine `a`, or advance does not run it and
+      //     say it stopped at the agent step; (b) prints both outputs.
+      expect({
+        owed: inspect.out.some((l) => l.includes('Owed to the engine') && l.includes("'a'")),
+        ran: r.out.includes('→ a'),
+        stopped: r.out.filter((l) => l.startsWith('Stopped: ')),
+        code: r.code,
+      }).toEqual({
+        owed: true,
+        ran: true,
+        stopped: [
+          `Stopped: an agent step is ready: 'b' — drive it with realm agent --run-id ${id} --provider <provider> --model <model>`,
+        ],
+        code: 0,
+      });
+    });
+
+    it.each([
+      ['after a step it ran', true],
+      ['in the preview, when only an agent step is ready', false],
+    ] as const)(
+      'C181 (walk c8, W1-a): realm run advance — the ready line for an agent step is followed by the waiting-process line `realm run respond` prints (%s)',
+      async (_case, ranStep) => {
+        claim(
+          'docs/reference/cli/realm-run-acting.md',
+          'the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready',
+        );
+        const def = wf(
+          [
+            `id: adv-c181-${ranStep ? 'ran' : 'preview'}`,
+            'name: adv-c181',
+            'version: 1',
+            'steps:',
+            ...(ranStep ? ['  after:', '    description: After.', '    execution: auto'] : []),
+            '  finish:',
+            '    description: Finish.',
+            '    execution: agent',
+            ...(ranStep ? ['    depends_on: [after]'] : []),
+            '',
+          ].join('\n'),
+        );
+        const id = await started(def);
+        const r = realm(['run', 'advance', id]);
+        const ready = `an agent step is ready: 'finish' — drive it with realm agent --run-id ${id} --provider <provider> --model <model>`;
+        const attending =
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.';
+        // (a) red when the waiting-process line is missing, not right after the ready line, or
+        //     printed twice; (b) prints stdout from the ready line on.
+        const at = r.out.findIndex((l) => l.includes(ready));
+        expect({ code: r.code, tail: r.out.slice(at) }).toEqual({
+          code: 0,
+          tail: ranStep
+            ? [`Stopped: ${ready}`, attending, `Run ${id}: phase 'running'`]
+            : [`Nothing is owed to the engine: ${ready}.`, attending],
+        });
+      },
+    );
+
     it.each([
       ['the expiry’s choice makes a guard ready (F1)', false],
       ['a guard passes, then a later step completes the run (F2)', true],
@@ -424,7 +515,7 @@ describe(
       );
       claim(
         'docs/reference/cli/realm-run-acting.md',
-        "Each guard it decides prints `Guard step '<guard>' passed.`, also when a later step completes the run; the guard that ended the run prints its sentence (`Guard step '<guard>' aborted the run.`) and `Reason:` when it has one.",
+        "Each guard it decides prints `Guard step '<guard>' passed.`, also when a later step completes the run, in the order the steps ran: a guard decided before a later step is printed before that step's line. The guard that ended the run prints its sentence (`Guard step '<guard>' aborted the run.`) and `Reason:` when it has one.",
       );
       const def = wf(
         [
@@ -499,12 +590,20 @@ describe(
         passed: lines.filter((l) => l === "Guard step 'only_if_approved' passed."),
         mcpWords: lines.filter((l) => l.includes('get_run_state')),
         phase: (await runStore.get(id)).run_phase,
+        // decision C187 (walk c8, W5-1): the guard decided between `after` and `finish` prints
+        // between their lines — (a) red when it prints after the later step's arrow.
+        order: r.out.filter(
+          (l) => l.startsWith('→ ') || l === "Guard step 'only_if_approved' passed.",
+        ),
       }).toEqual({
         code: 0,
         expiry: guardLater ? [expiry] : [`${expiry} Guard step 'only_if_approved' passed.`],
         passed: guardLater ? ["Guard step 'only_if_approved' passed."] : [],
         mcpWords: [],
         phase: 'completed',
+        order: guardLater
+          ? ['→ after', "Guard step 'only_if_approved' passed.", '→ finish']
+          : ['→ after'],
       });
     });
   },

@@ -128,7 +128,11 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(lines[5]).toBe(
         `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
       );
-      expect(lines[6]).toBe(`Run ${run.id}: phase 'running'`);
+      // decision C181: the waiting-process line `realm run respond` prints after its commands.
+      expect(lines[6]).toBe(
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+      );
+      expect(lines[7]).toBe(`Run ${run.id}: phase 'running'`);
 
       // A repeat with nothing owed: the preview's last line says why, exit 0.
       const again = realm(home, ['run', 'advance', run.id]);
@@ -138,6 +142,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
           (again.stdout.match(/at step 'after', (\S+)\./)?.[1] ?? '') +
           '.',
         `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.`,
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });

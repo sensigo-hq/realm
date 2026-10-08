@@ -571,63 +571,77 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     // (a) red when the count or the README's list differs from the server's; (b) prints both.
     expect([listed.length, [...inReadme].sort()]).toEqual([11, [...listed].sort()]);
   });
-  it('tools.md: advance_run that carries out an expired question whose guard then ends the run — no guards, no ended_by; the guard in warnings, the hint says the expiry was carried out', async () => {
-    claim(
-      'docs/reference/mcp/tools.md',
-      "(when the call carried out an expired question and a guard then ended the run, neither is there: the guard's sentence is in the expiry's `warnings` line, and the hint reads `Run '<id>': its expired question was carried out as declared (see warnings); no step ran. The run ended (<phase>).`)",
-    );
-    const { call, workflowStore } = await connect();
-    await workflowStore.register(
-      wf(
-        [
-          'id: held',
-          'name: held',
-          'version: 1',
-          'steps:',
-          '  approve:',
-          '    description: Approve.',
-          '    execution: auto',
-          '    trust: human_confirmed',
-          '    gate:',
-          '      choices: [ship, hold]',
-          '      timeout_seconds: 1',
-          '      on_expiry: settle_default',
-          '      default_choice: hold',
-          '  only_if_shipping:',
-          '    description: Ship only when approved.',
-          '    execution: guard',
-          '    depends_on: [approve]',
-          '    abort_unless: ["approve.choice == \'ship\'"]',
-          '    abort_message: The order was held.',
-          '  ship:',
-          '    description: Ship.',
-          '    execution: agent',
-          '    depends_on: [only_if_shipping]',
-          '',
-        ].join('\n'),
-      ),
-    );
-    const runId = (await call('start_run', { workflow_id: 'held' }))['run_id'] as string;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    const r = await call('advance_run', { run_id: runId });
-    // (a) red when the reply carries guards/ended_by, leaves the guard out of warnings, or the
-    //     hint differs; (b) prints the reply.
-    expect({
-      guards: 'guards' in r,
-      ended_by: 'ended_by' in r,
-      guardInWarnings: ((r['warnings'] as string[]) ?? []).some((w) =>
-        w.includes("Guard step 'only_if_shipping' aborted the run"),
-      ),
-      hint: r['context_hint'],
-      phase: r['run_phase'],
-    }).toEqual({
-      guards: false,
-      ended_by: false,
-      guardInWarnings: true,
-      hint: `Run '${runId}': its expired question was carried out as declared (see warnings); no step ran. The run ended (aborted).`,
-      phase: 'aborted',
-    });
-  });
+  it.each([
+    ['hold', 'ends the run'],
+    ['ship', 'passes'],
+  ] as const)(
+    'tools.md, C186 (walk c8, W4-c): advance_run carries out an expired question whose default (%s) makes a guard that %s — the hint names the guard that ran; no guards/ended_by; the guard in warnings',
+    async (dflt, _outcome) => {
+      claim(
+        'docs/reference/mcp/tools.md',
+        "(when the call carried out an expired question and a guard then ended the run, neither is there: the guard's sentence is in the expiry's `warnings` line, and the hint reads `Run '<id>': its expired question was carried out as declared, and that decided guard '<guard>' (see warnings); no other step ran. The run ended (<phase>).`; when that guard passed, the hint ends with what comes next instead, and with no guard it reads `Run '<id>': its expired question was carried out as declared (see warnings); no step ran.`, then what comes next)",
+      );
+      const { call, workflowStore } = await connect();
+      const id = `held-${dflt}`;
+      await workflowStore.register(
+        wf(
+          [
+            `id: ${id}`,
+            `name: ${id}`,
+            'version: 1',
+            'steps:',
+            '  approve:',
+            '    description: Approve.',
+            '    execution: auto',
+            '    trust: human_confirmed',
+            '    gate:',
+            '      choices: [ship, hold]',
+            '      timeout_seconds: 1',
+            '      on_expiry: settle_default',
+            `      default_choice: ${dflt}`,
+            '  only_if_shipping:',
+            '    description: Ship only when approved.',
+            '    execution: guard',
+            '    depends_on: [approve]',
+            '    abort_unless: ["approve.choice == \'ship\'"]',
+            '    abort_message: The order was held.',
+            '  ship:',
+            '    description: Ship.',
+            '    execution: agent',
+            '    depends_on: [only_if_shipping]',
+            '',
+          ].join('\n'),
+        ),
+      );
+      const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      const r = await call('advance_run', { run_id: runId });
+      const ends = dflt === 'hold';
+      // (a) red when the hint says "no step ran" beside the guard that ran, the reply carries
+      //     guards/ended_by, or the guard leaves warnings; (b) prints the reply.
+      expect({
+        guards: 'guards' in r,
+        ended_by: 'ended_by' in r,
+        guardInWarnings: ((r['warnings'] as string[]) ?? []).some((w) =>
+          w.includes(
+            ends
+              ? "Guard step 'only_if_shipping' aborted the run"
+              : "Guard step 'only_if_shipping' passed.",
+          ),
+        ),
+        hint: r['context_hint'],
+        phase: r['run_phase'],
+      }).toEqual({
+        guards: false,
+        ended_by: false,
+        guardInWarnings: true,
+        hint: ends
+          ? `Run '${runId}': its expired question was carried out as declared, and that decided guard 'only_if_shipping' (see warnings); no other step ran. The run ended (aborted).`
+          : `Run '${runId}': its expired question was carried out as declared, and that decided guard 'only_if_shipping' (see warnings); no other step ran. Ready for the agent: 'ship'.`,
+        phase: ends ? 'aborted' : 'running',
+      });
+    },
+  );
   it.each([
     ['passes', true],
     ['ends the run', false],

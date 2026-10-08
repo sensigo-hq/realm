@@ -366,7 +366,11 @@ describe(
       // The words advance uses for the same state: its Stopped: reason.
       const a = realm(['run', 'advance', q.id]);
       // (a) red when advance's words for a ready agent step differ from respond's; (b) prints it.
+      // decision C181: the waiting-process line follows it (respond's too).
       expect(a.out.at(-1)).toBe(
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+      );
+      expect(a.out.at(-2)).toBe(
         `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>.`,
       );
     });
@@ -583,6 +587,7 @@ describe(
           '→ after',
           "Guard step 'only_if_approved' passed.",
           `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>`,
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
           `Run ${q.id}: phase 'running'`,
         ],
       });
@@ -869,7 +874,11 @@ describe(
       const asked = await project('acting-nothing-question', CONFIRM(), false);
       const q = await atQuestion(asked.def);
       const before = await runStore.get(q.id);
-      const last = (runId: string) => realm(['run', 'advance', runId]).out.at(-1);
+      // decision C181: the preview's reason line (a waiting-process line may follow it).
+      const last = (runId: string) =>
+        realm(['run', 'advance', runId])
+          .out.filter((l) => l.startsWith('Nothing is owed') || l.startsWith('The engine can'))
+          .at(-1);
       // (a) red when a reason or its opening words change; (b) prints the three lines.
       expect([last(ended), last(ida), last(q.id)]).toEqual([
         'Nothing is owed to the engine: the run has ended (abandoned).',

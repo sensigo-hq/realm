@@ -131,6 +131,7 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
             code: 0,
             lines: [
               `Nothing is owed to the engine: an agent step is ready: 'ask' — drive it with realm agent --run-id ${id} --provider <provider> --model <model>.`,
+              'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
             ],
           }),
         ],

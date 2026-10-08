@@ -810,6 +810,40 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     ]).toEqual([['execute_step', 'advance_run'], ['submit_human_response']]);
   });
 
+  it('packages/core/README.md (C184, walk c8, W3-a): the Engine table lists advanceRun — it carries out an expired question, then the guards and auto steps owed', async () => {
+    const sentence =
+      "| `advanceRun` | Run what a run owes the engine — an expired question's declared `on_expiry`, then its guards and `auto` steps. Returns `ResponseEnvelope`. |";
+    // (a) red when the README's Engine table drops the row or rewords it; (b) prints the row.
+    expect(
+      page('packages/core/README.md').replace(/ +\|/g, ' |'),
+      'README no longer says it',
+    ).toContain(sentence);
+    const d: WorkflowDefinition = {
+      ...gated(),
+      id: 'dc-c184',
+      steps: {
+        ...gated().steps,
+        ok: {
+          description: 'Only if approved.',
+          execution: 'guard',
+          depends_on: ['q'],
+          abort_unless: ["q.choice == 'approve'"],
+        },
+        after: { description: 'After.', execution: 'auto', depends_on: ['ok'] },
+      },
+    };
+    const { runId } = await atQuestion(d);
+    const reply = await advanceRun(store, d, { runId, now: LATER() });
+    // (a) red when advanceRun does not carry out the expired question first, or leaves the guard or
+    //     the auto step it made owed; (b) prints the reply's fields.
+    expect({
+      status: reply.status,
+      expiry: reply.warnings.some((w) => w.includes('this advanceRun call first carried out')),
+      ran: reply.chained_auto_steps?.map((c) => c.step),
+      phase: (await store.get(runId)).run_phase,
+    }).toEqual({ status: 'ok', expiry: true, ran: ['after'], phase: 'completed' });
+  });
+
   it('error-codes.md: the page counts every code the ErrorCode type defines', () => {
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
