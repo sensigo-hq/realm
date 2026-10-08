@@ -838,9 +838,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // decision C195: the way on once the program holding the step is done with it — this
             // drive again, with the flags it was started with (`realm workflow run`'s hand-back,
             // C188, gives `realm run advance` the same way).
-            const flags = deps.reattachFlags ?? '--provider <provider> --model <model>';
             console.log(
-              goOnLine(inFlight, `realm agent --run-id ${runId}${flags === '' ? '' : ` ${flags}`}`),
+              goOnLine(
+                inFlight,
+                `realm agent --run-id ${runId} ${deps.reattachFlags ?? '--provider <provider> --model <model>'}`,
+              ),
             );
             // decision C179: the drive stops on the step another process holds; the run did not end,
             // so no `Run ended in phase` line follows.

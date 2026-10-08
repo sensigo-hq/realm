@@ -391,8 +391,10 @@ export async function advanceRunFromShell(
     }
     decidedGuards = [];
   };
-  const advanceOnce = () =>
-    advanceRun(runStore, workflow, {
+  // One call of the engine's advance, with this command's callbacks — called again after the race
+  // below (decision C194).
+  async function advanceOnce() {
+    const reply = await advanceRun(runStore, workflow, {
       runId,
       caller: 'advance',
       registry,
@@ -416,6 +418,8 @@ export async function advanceRunFromShell(
         print(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
       },
     });
+    return reply;
+  }
   let result = await advanceOnce();
   // decision C194: the step this call ran was settled, or taken over, by another process before its
   // own outcome was recorded — that step's own refusal (`stopped_step`). Said from the record, never
