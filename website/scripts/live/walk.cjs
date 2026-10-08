@@ -705,7 +705,7 @@ async function walk(which, width) {
   });
   ok(
     'AC 3c: no api.github.com, no host but the page and the font hosts',
-    off.length === 0 && !reqs.some((x) => x.url.includes('api.github.com')),
+    off.length === 0 && !reqs.some((x) => new URL(x.url).hostname === 'api.github.com'),
     off.map((x) => `${x.method} ${x.url} ${x.type}`).join(' '),
   );
   ok('no page errors', errors.length === 0, errors.join(' | ').slice(0, 300));
