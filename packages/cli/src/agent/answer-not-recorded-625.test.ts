@@ -164,7 +164,7 @@ afterEach(() => {
 });
 
 const NOT_RECORDED_SENTENCE =
-  "An agent step's answer that another process's beat to the engine is never followed by `✓` either: the line says the drive's answer was not recorded — `• Step '<step>' was taken by <program> at <time>; this drive's answer was not recorded.` while the other process holds the step, `• Step '<step>' was taken by <program>, and completed; this drive's answer was not recorded.` (or `and failed`) once it ran the step, also when that ended the run, and `• Step '<step>' was not run: the run ended (<phase>) before this drive's answer reached it; the answer was not recorded.` when the run ended without it.";
+  "When another process's answer to an agent step reaches the engine before the drive's own, the drive never prints `✓` for it: the line says the drive's answer was not recorded — `• Step '<step>' was taken by <program> at <time>; this drive's answer was not recorded.` while the other process holds the step, `• Step '<step>' was taken by <program>, and completed; this drive's answer was not recorded.` (or `and failed`) once it ran the step, also when that ended the run, and `• Step '<step>' was not run: the run ended (<phase>) before this drive's answer reached it; the answer was not recorded.` when the run ended without it.";
 
 describe(
   '#625 PR-2a, C179 — realm agent and an agent step another process answered',
@@ -177,7 +177,7 @@ describe(
       );
       claim(
         AGENT_PAGE,
-        "When the only step left is one another process holds, the drive says so — `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` — and goes on when the record changes;",
+        "When nothing else is ready and another process holds a step, the drive says so — `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` — and goes on when the record changes;",
       );
       claim(
         AGENT_PAGE,
