@@ -1199,6 +1199,57 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       30_000,
     );
 
+    it('C179: another process takes the agent step between the loop’s read and the prompt’s claim — said as taken, no prompt; the loop waits for it', async () => {
+      const { JsonFileStore } = await import('@sensigo/realm');
+      const original = JsonFileStore.prototype.claimStep;
+      let raced = false;
+      // The other process's claim lands first, in the moment before this prompt's own claim.
+      vi.spyOn(JsonFileStore.prototype, 'claimStep').mockImplementation(async function (
+        this: InstanceType<typeof JsonFileStore>,
+        ...args: Parameters<typeof original>
+      ) {
+        const [id, step, def, claimant] = args;
+        if (!raced && step === 'finish' && claimant?.channel === 'run') {
+          raced = true;
+          await original.call(this, id, step, def, OTHER);
+        }
+        return original.apply(this, args);
+      });
+      let stepPrompts = 0;
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        if (prompt.startsWith('  Agent output')) stepPrompts += 1;
+        return '';
+      });
+      const restore = setInFlightWatchForTests(1_500);
+      let code: number;
+      try {
+        code = await run(workflowYaml({ id: 'prompt-625-c179-raced', finish: true }));
+      } finally {
+        restore();
+      }
+      const out = logged().map((l) => l.replace(/ (at|since) \S+Z/, ' $1 <t>'));
+      // (a) red when the loop prompts for a step another process took, says nothing, or calls it
+      //     stalled at once; (b) prints stdout, the prompts and the exit.
+      expect({
+        raced,
+        stepPrompts,
+        taken: out.filter((l) => l.startsWith("• Step 'finish' was taken")),
+        waiting: out.filter((l) => l.includes(': waiting up to ')),
+        code,
+      }).toEqual({
+        raced: true,
+        stepPrompts: 0,
+        taken: [
+          "• Step 'finish' was taken by other-terminal (as stated, via agent) at <t>; not run here.\n",
+        ],
+        waiting: [
+          "  • Step 'finish' is in flight, taken by other-terminal (as stated, via agent) since <t>: waiting up to 2s for the run's record to change.",
+        ],
+        code: 1,
+      });
+    }, 30_000);
+
     it('C183, W2-c: a tab in the question prints as `\\t` at the prompt — the escape `realm run inspect` writes in its `Message:` line', async () => {
       claimWorkflowPage(QUESTION_LINES);
       mocks.question.mockImplementation(async (prompt: string) => {
