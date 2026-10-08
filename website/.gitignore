@@ -3,3 +3,6 @@ dist/
 .astro/
 # generated from ../docs at build time — never committed
 src/content/
+# the live demo bundle and its manifest, written by `npm run live:build`
+public/live/
+src/live/manifest.json

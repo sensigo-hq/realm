@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "sync-docs": "node scripts/sync-docs.mjs",
-    "dev": "npm run sync-docs && astro dev",
-    "build": "npm run sync-docs && astro build",
+    "live:build": "node scripts/live/build.mjs && node --experimental-vm-modules --no-warnings=ExperimentalWarning scripts/live/smoke.mjs",
+    "dev": "npm run live:build && npm run sync-docs && astro dev",
+    "build": "npm run live:build && npm run sync-docs && astro build",
     "preview": "astro preview"
   },
   "dependencies": {
@@ -16,10 +17,21 @@
     "opentype.js": "^2.0.0",
     "sharp": "^0.35.5"
   },
-  "//overrides": "@expressive-code/core 0.44.x asks for postcss-nested ^6, which uses postcss-selector-parser 6; 6.x has no fix for GHSA-rj75-hqrm-r3gf (fixed in 7.1.6). postcss-nested 7 uses the fixed parser. The override names core's 0.44 line, so it stops applying, and the alert returns, when core moves on; then check whether core's new range still needs it.",
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "@noble/hashes": "1.8.0",
+    "@sensigo/realm": "0.46.0",
+    "@sensigo/realm-mcp": "0.46.0",
+    "@sensigo/realm-testing": "0.46.0",
+    "acorn": "8.15.0",
+    "esbuild": "0.28.2",
+    "eslint-scope": "8.4.0"
+  },
+  "//overrides": "@expressive-code/core 0.44.x asks for postcss-nested ^6, which uses postcss-selector-parser 6; 6.x has no fix for GHSA-rj75-hqrm-r3gf (fixed in 7.1.6). postcss-nested 7 uses the fixed parser. The override names core's 0.44 line, so it stops applying, and the alert returns, when core moves on; then check whether core's new range still needs it. realm-mcp 0.46.0 pins @modelcontextprotocol/sdk 1.30.0 exactly, which carries GHSA-6qxp-vccf-f47h (fixed in 1.31.0); the override gives the live demo's bundle 1.31.0, and can go once realm-mcp's own pin is 1.31.0 or later.",
   "overrides": {
     "@expressive-code/core@~0.44.2": {
       "postcss-nested": "^7.0.2"
-    }
+    },
+    "@modelcontextprotocol/sdk": "$@modelcontextprotocol/sdk"
   }
 }
