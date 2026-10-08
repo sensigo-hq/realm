@@ -1259,8 +1259,12 @@ export function runReadError(err: unknown): WorkflowError {
  * decision C176: the text of the question a run's open gate asks, from every source the gate-opening
  * reply's `gate.display` takes it from — the gate's rendered `message` (on the record as
  * `pending_gate.resolved_message`), else the step's `prompt`, rendered with what the step had when the
- * gate opened (the run's evidence with the step's output, the run's params, the workflow context);
- * `undefined` when the step has neither, or no gate is open.
+ * gate opened (the run's evidence, the run's params, the workflow context); `undefined` when the step
+ * has neither, or no gate is open. The run's evidence is the one source for the step's own output:
+ * the write that opens the gate appends the step's evidence entry, whose `output_summary` is the
+ * output the gate's `preview` holds, in the same write as `pending_gate` (`applyOpenGate`, and the
+ * legacy path's `update`) — round 23's answer to round 22's finding 10, which found a `preview`
+ * override here equivalent.
  */
 export function pendingGateQuestion(
   definition: WorkflowDefinition,
@@ -1272,7 +1276,7 @@ export function pendingGateQuestion(
   const prompt = definition.steps[gate.step_name]?.prompt;
   if (prompt === undefined) return undefined;
   return renderTemplate(prompt, {
-    evidenceByStep: { ...buildEvidenceByStep(run), [gate.step_name]: gate.preview },
+    evidenceByStep: buildEvidenceByStep(run),
     runParams: run.params,
     ...(run.workflow_context_snapshots !== undefined
       ? {

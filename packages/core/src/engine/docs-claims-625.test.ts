@@ -18,6 +18,7 @@ import {
   executeStep,
   submitHumanResponse,
   buildNextActions,
+  pendingGateQuestion,
 } from './execution-loop.js';
 import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
@@ -438,6 +439,68 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       `Run '${runId}': its expired question was carried out as declared, and that decided guards 'e1', 'e2' (see warnings); no other step ran. Ready for the agent: 'w'.`,
     );
   });
+
+  it.each(['settleStep', 'legacy update'] as const)(
+    'round 22 finding 10 (decided in round 23): the question from the step’s prompt is rendered from the record alone — the gate-open write (%s) carries the step’s evidence entry, its output equal to the gate’s preview, so the prompt’s question equals the reply’s gate.display',
+    async (path) => {
+      const d: WorkflowDefinition = {
+        id: `dc-f10-${path === 'settleStep' ? 'settle' : 'legacy'}`,
+        name: 'docs claims',
+        version: 1,
+        steps: {
+          draft: {
+            description: 'Draft.',
+            execution: 'agent',
+            depends_on: [],
+            trust: 'human_confirmed',
+            prompt:
+              'Send "{{ context.resources.draft.subject }}" ({{ context.resources.draft.lines }} lines)?',
+            gate: { choices: ['send', 'discard'] },
+          },
+        },
+      } as WorkflowDefinition;
+      // A store whose gate-open write takes the legacy path: it declares no `settleStep`.
+      const s: RunStore =
+        path === 'settleStep'
+          ? store
+          : new Proxy(store, {
+              get(target, key) {
+                if (key === 'settleStep') return undefined;
+                const value: unknown = Reflect.get(target, key, target);
+                return typeof value === 'function'
+                  ? (value as (...a: unknown[]) => unknown).bind(target)
+                  : value;
+              },
+            });
+      const { run } = await s.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const output = { subject: 'Office closed', lines: 3 };
+      const opened = await executeStep(s, d, {
+        runId: run.id,
+        command: 'draft',
+        input: output,
+        dispatcher: async () => output,
+      });
+      const record = await s.get(run.id);
+      const entry = [...record.evidence]
+        .reverse()
+        .find((e) => e.step_id === 'draft' && e.kind !== 'gate_response');
+      // (a) red when the gate-open write leaves the step's evidence off the record (the record then
+      //     cannot give the step's output), when that entry's output is not the preview, or when the
+      //     question differs from the reply's display; (b) prints all three.
+      expect({
+        status: opened.status,
+        entryIsPreview:
+          JSON.stringify(entry?.output_summary) === JSON.stringify(record.pending_gate?.preview),
+        question: pendingGateQuestion(d, record),
+        display: opened.gate?.display,
+      }).toEqual({
+        status: 'confirm_required',
+        entryIsPreview: true,
+        question: 'Send "Office closed" (3 lines)?',
+        display: 'Send "Office closed" (3 lines)?',
+      });
+    },
+  );
 
   // --- C156: a run advanceRun cannot read -----------------------------------------------------
   const CANNOT_READ =
