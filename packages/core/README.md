@@ -52,6 +52,7 @@ import {
   type ServiceResponse,
 } from '@sensigo/realm';
 
+// callMyApi: your own client for the API, not defined here
 const myAdapter: ServiceAdapter = {
   id: 'my-api',
   async fetch(operation, params, _config): Promise<ServiceResponse> {
