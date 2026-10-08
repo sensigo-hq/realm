@@ -413,5 +413,99 @@ describe(
         }),
       });
     });
+
+    it.each([
+      ['the expiry’s choice makes a guard ready (F1)', false],
+      ['a guard passes, then a later step completes the run (F2)', true],
+    ] as const)('realm-run-acting.md: realm run advance — %s', async (_case, guardLater) => {
+      claim(
+        'docs/reference/cli/realm-run-acting.md',
+        "when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready.",
+      );
+      claim(
+        'docs/reference/cli/realm-run-acting.md',
+        "Each guard it decides prints `Guard step '<guard>' passed.`, also when a later step completes the run; the guard that ended the run prints its sentence (`Guard step '<guard>' aborted the run.`) and `Reason:` when it has one.",
+      );
+      const def = wf(
+        [
+          `id: adv-guard-${guardLater ? 'later' : 'first'}`,
+          `name: adv-guard-${guardLater ? 'later' : 'first'}`,
+          'version: 1',
+          'steps:',
+          '  confirm:',
+          '    description: Confirm.',
+          '    execution: auto',
+          '    trust: human_confirmed',
+          '    gate:',
+          '      choices: [approve, reject]',
+          '      timeout_seconds: 3600',
+          '      on_expiry: settle_default',
+          '      default_choice: approve',
+          ...(guardLater
+            ? [
+                '  after:',
+                '    description: After.',
+                '    execution: auto',
+                '    depends_on: [confirm]',
+                '  only_if_approved:',
+                '    description: Only if approved.',
+                '    execution: guard',
+                '    depends_on: [after]',
+                `    abort_unless: ["confirm.choice == 'approve'"]`,
+                '  finish:',
+                '    description: Finish.',
+                '    execution: auto',
+                '    depends_on: [only_if_approved]',
+              ]
+            : [
+                '  only_if_approved:',
+                '    description: Only if approved.',
+                '    execution: guard',
+                '    depends_on: [confirm]',
+                `    abort_unless: ["confirm.choice == 'approve'"]`,
+                '  after:',
+                '    description: After.',
+                '    execution: auto',
+                '    depends_on: [only_if_approved]',
+              ]),
+          '',
+        ].join('\n'),
+      );
+      const id = await started(def);
+      await executeStep(runStore, def, {
+        runId: id,
+        command: 'confirm',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+      const record = await runStore.get(id);
+      await runStore.update({
+        ...record,
+        pending_gate: {
+          ...record.pending_gate!,
+          opened_at: '2020-01-01T00:00:00.000Z',
+          expires_at: '2020-01-01T01:00:00.000Z',
+        },
+      });
+      const gateId = record.pending_gate!.gate_id;
+      const r = realm(['run', 'advance', id]);
+      const lines = [...r.out, ...r.err];
+      const expiry = `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
+      // (a) red when the guard's line is lost, printed twice, replaced by the reply's MCP words, or
+      //     the run does not complete; (b) prints the output and the exit.
+      expect({
+        code: r.code,
+        expiry: lines.filter((l) => l.startsWith('⚠ gate ')),
+        passed: lines.filter((l) => l === "Guard step 'only_if_approved' passed."),
+        mcpWords: lines.filter((l) => l.includes('get_run_state')),
+        phase: (await runStore.get(id)).run_phase,
+      }).toEqual({
+        code: 0,
+        expiry: guardLater ? [expiry] : [`${expiry} Guard step 'only_if_approved' passed.`],
+        passed: guardLater ? ["Guard step 'only_if_approved' passed."] : [],
+        mcpWords: [],
+        phase: 'completed',
+      });
+    });
   },
 );

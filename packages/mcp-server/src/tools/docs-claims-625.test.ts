@@ -1541,7 +1541,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      "The reply has the same shape as a step's, with `data` and `evidence` empty as in every MCP reply (read the run with `get_run_state`): `chained_auto_steps` lists what ran, `guards` and `ended_by` what a guard settled",
+      "The reply has the same shape as a step's, with `data` and `evidence` empty as in every MCP reply (read the run with `get_run_state`): `chained_auto_steps` lists what ran, guards included, `guards` and `ended_by` what a guard that ended the run settled",
     );
     claim(
       'mcp/tools.md',

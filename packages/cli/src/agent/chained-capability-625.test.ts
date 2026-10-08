@@ -124,7 +124,7 @@ describe('#625 PR-2a, C174 — realm-agent.md: when a drive attempts a step whos
   it('the first drive of a run attempts it as soon as it is owed, before a ready agent step; once the block is on the record, a later drive only when nothing else is left', async () => {
     claimDoc625(
       'docs/reference/cli/realm-agent.md',
-      "A step whose handler or adapter is missing is attempted once by each drive (`→ [auto] <step>`), and each attempt is recorded in the run's `capability_blocks`: the first drive of a run attempts it as soon as it is owed, before any agent step that is ready; a later drive, once the run's record holds the block, attempts it only when it has nothing else to run;",
+      "A step whose handler or adapter is missing is attempted once by each drive (`→ [auto] <step>`), and each attempt adds an evidence entry and rewrites the step's entry in the run's `capability_blocks`: the first drive of a run attempts it as soon as it is owed, before any agent step that is ready; a later drive, once the run's record holds the block, attempts it only when it has nothing else to run;",
     );
     const def: WorkflowDefinition = {
       id: 'c174-first-drive',

@@ -392,15 +392,17 @@ export async function advanceRunFromShell(
   if (endingLines.length > 0) {
     for (const line of endingLines) print(line);
   } else {
-    chainedGuards.forEach((guard, index) => {
-      const endedTheRun = index === chainedGuards.length - 1 && after.terminal_state;
+    // decision C174 (pinning lane A, F2): only the guard the record names as the run's ending ended
+    // it — a guard that passed, before a later step completed the run, prints its passed line.
+    const guardEnding = guardEndingOfRun(after);
+    chainedGuards.forEach((guard) => {
+      const endedTheRun = guardEnding?.step === guard;
       if (!endedTheRun) {
         print(guardPassedLine(guard));
         return;
       }
       print(result.context_hint);
-      const ending = guardEndingOfRun(after);
-      if (ending?.step === guard && ending.reason !== undefined) print(`Reason: ${ending.reason}`);
+      if (guardEnding.reason !== undefined) print(`Reason: ${guardEnding.reason}`);
     });
   }
 

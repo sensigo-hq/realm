@@ -628,4 +628,59 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
       phase: 'aborted',
     });
   });
+  it.each([
+    ['passes', true],
+    ['ends the run', false],
+  ] as const)(
+    'tools.md: a guard advance_run decides that %s — in chained_auto_steps; in guards only when it ended the run',
+    async (_case, go) => {
+      claim(
+        'docs/reference/mcp/tools.md',
+        "| `guards` | When the call's write decided guard steps; from `advance_run`, only a guard that ended the run |",
+      );
+      claim(
+        'docs/reference/mcp/tools.md',
+        '`chained_auto_steps` lists what ran, guards included, `guards` and `ended_by` what a guard that ended the run settled',
+      );
+      const { call, workflowStore } = await connect();
+      await workflowStore.register(
+        wf(
+          [
+            'id: gmid',
+            'name: gmid',
+            'version: 1',
+            'steps:',
+            '  x:',
+            '    description: X.',
+            '    execution: auto',
+            '  g:',
+            '    description: G.',
+            '    execution: guard',
+            '    depends_on: [x]',
+            '    abort_unless: ["x.go == true"]',
+            '  y:',
+            '    description: Y.',
+            '    execution: auto',
+            '    depends_on: [g]',
+            '',
+          ].join('\n'),
+        ),
+      );
+      const b = await call('start_run_batch', { workflow_id: 'gmid', items: [{ params: { go } }] });
+      const runId = (b['started'] as Array<{ run_id: string }>)[0]!.run_id;
+      const r = await call('advance_run', { run_id: runId });
+      const chained = (r['chained_auto_steps'] as Array<{ step: string }>).map((c) => c.step);
+      // (a) red when a passing guard is missing from chained_auto_steps or appears in guards, or a
+      //     guard that ended the run is not in guards; (b) prints the reply's fields.
+      expect({
+        chained: chained.includes('g'),
+        guards: (r['guards'] as Array<{ step: string; outcome: string }> | undefined) ?? null,
+        ended: 'ended_by' in r,
+      }).toEqual(
+        go
+          ? { chained: true, guards: null, ended: false }
+          : { chained: true, guards: [{ step: 'g', outcome: 'abort' }], ended: true },
+      );
+    },
+  );
 });

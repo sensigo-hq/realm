@@ -824,4 +824,16 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     // (a) red when the page's count is not the type's; (b) prints both.
     expect(text).toContain(`This page lists all ${defined.size} codes that Realm defines`);
   });
+  it('run-record-and-export.md: the page counts the evidence entry’s fields as the type defines them', () => {
+    const types = readFileSync(join(ROOT, 'packages/core/src/types/run-record.ts'), 'utf8');
+    const body = types.slice(types.indexOf('export interface EvidenceSnapshot {'));
+    const fields = body
+      .slice(0, body.indexOf('\n}'))
+      .split('\n')
+      .filter((l) => /^ {2}[a-z_]+\??:/.test(l)).length;
+    // (a) red when the page's count is not the type's; (b) prints both.
+    expect(page('docs/reference/run-record-and-export.md')).toContain(
+      `the ${fields} fields of an evidence entry (28 rows below: two rows hold two fields each),`,
+    );
+  });
 });
