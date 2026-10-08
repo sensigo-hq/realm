@@ -1545,7 +1545,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      'The run ended (<phase>).`), and when a step opens a question the reply is `confirm_required` with the gate.',
+      "and with no guard it reads `Run '<id>': its expired question was carried out as declared (see warnings); no step ran.`, then what comes next), and when a step opens a question the reply is `confirm_required` with the gate.",
     );
     claim(
       'mcp/tools.md',

@@ -225,6 +225,8 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       expect(code).toBe(1);
       expect(lines.slice(3)).toEqual([
         `The engine can run nothing now: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it; an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.`,
+        // decision C181: the waiting-process line follows a preview line that names an agent step.
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       ]);
       expect(lines.join('\n')).not.toContain('failed');
     } finally {
