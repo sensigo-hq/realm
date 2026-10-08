@@ -633,6 +633,74 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       expect([stepPrompts, code]).toEqual([1, 0]);
     }, 30_000);
 
+    it.each([
+      [
+        'another process holds the step',
+        "  This prompt is closed: step 'finish' was taken by other-terminal (as stated, via agent); not run here.\n",
+      ],
+      [
+        'another process ended the run',
+        "  This prompt is closed: step 'finish' no longer waits for an answer — the run is 'abandoned'.\n",
+      ],
+    ] as const)(
+      'C165 (the sweep’s members): %s while the step’s prompt waits — the prompt closes and says so',
+      async (kase, line) => {
+        claimWorkflowPage(
+          "it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on.",
+        );
+        mocks.question.mockImplementation((prompt: string, opts?: { signal?: AbortSignal }) => {
+          if (prompt.startsWith('  Choice ')) return Promise.resolve('approve');
+          if (prompt.startsWith('  Agent output')) {
+            return new Promise<string>((_resolve, reject) => {
+              opts?.signal?.addEventListener(
+                'abort',
+                () =>
+                  reject(
+                    Object.assign(new Error('The operation was aborted'), {
+                      name: 'AbortError',
+                      code: 'ABORT_ERR',
+                    }),
+                  ),
+                { once: true },
+              );
+              void (async () => {
+                const { JsonFileStore, loadWorkflowFromString, abandonRun } =
+                  await import('@sensigo/realm');
+                const store = new JsonFileStore();
+                if (kase === 'another process holds the step') {
+                  const def = loadWorkflowFromString(
+                    workflowYaml({ id: 'prompt-625-c165-hold', finish: true }),
+                  );
+                  await store.claimStep(runId(), 'finish', def, {
+                    by: 'other-terminal',
+                    by_source: 'stated',
+                    channel: 'agent',
+                  });
+                } else {
+                  await abandonRun(store, runId());
+                }
+              })();
+            });
+          }
+          return Promise.resolve('');
+        });
+        await run(
+          workflowYaml({
+            id:
+              kase === 'another process holds the step'
+                ? 'prompt-625-c165-hold'
+                : 'prompt-625-c165-end',
+            finish: true,
+          }),
+        );
+        // (a) red when the prompt stays open (the cell times out) or says another thing; (b) prints stdout.
+        expect(logged().filter((l) => l.startsWith('  This prompt is closed: step'))).toEqual([
+          line,
+        ]);
+      },
+      30_000,
+    );
+
     it('C167, W1-Y4: the gate prompt prints the question, quoted as realm run inspect quotes it, before its choices', async () => {
       claimWorkflowPage(
         'The gate\'s prompt shows the question before its choices, quoted as `realm run inspect` quotes it: `Question: "Ship it?"`.',

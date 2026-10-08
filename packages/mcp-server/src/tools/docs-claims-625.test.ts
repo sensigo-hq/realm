@@ -2135,6 +2135,65 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     },
   );
 
+  it('C170 (the sweep’s member): a run in which two steps failed offers `--from` with both of them to choose from', async () => {
+    claim('mcp/tools.md', PER_KIND);
+    const { call, workflowStore, runStore } = await connect();
+    const twoFail = loadWorkflowFromString(
+      [
+        'id: r21-two-fail',
+        'name: r21-two-fail',
+        'version: 1',
+        'services:',
+        '  files:',
+        '    adapter: filesystem',
+        '    trust: engine_delivered',
+        'steps:',
+        '  a:',
+        '    description: A.',
+        '    execution: agent',
+        ...['one', 'two'].flatMap((s) => [
+          `  ${s}:`,
+          `    description: ${s}.`,
+          '    execution: auto',
+          '    depends_on: [a]',
+          '    uses_service: files',
+          '    operation: read',
+          '    input_map:',
+          '      path: run.params.path',
+        ]),
+        '  last:',
+        '    description: L.',
+        '    execution: agent',
+        '    depends_on: [one, two]',
+        '',
+      ].join('\n'),
+    );
+    await workflowStore.register(twoFail);
+    const runId = (
+      await call('start_run', {
+        workflow_id: 'r21-two-fail',
+        params: { path: '/no/such/file-625' },
+      })
+    )['run_id'] as string;
+    await call('execute_step', { run_id: runId, command: 'a', params: {} });
+    // `one` fails in the chain `a` starts; advance_run runs `two`, which fails too — `last` can never run.
+    await call('advance_run', { run_id: runId });
+    const run = await runStore.get(runId);
+    expect([run.run_phase, [...run.failed_steps].sort()], 'fixture').toEqual([
+      'failed',
+      ['one', 'two'],
+    ]);
+    const r = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: 'other',
+      choice: 'approve',
+    });
+    // red when the refusal names one failed step as the only way back in, or none.
+    expect(r['context_hint']).toBe(
+      `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from <one of: ${run.failed_steps.join(', ')}>' makes the failed step runnable again, or 'realm run purge ${runId} --force' removes its record.`,
+    );
+  });
+
   it('C171, W4-Y2: repeating the choice the question’s expiry recorded says it was settled by timeout, as the CLI does; a person’s recorded choice repeated still says already resolved', async () => {
     claim(
       'mcp/tools.md',

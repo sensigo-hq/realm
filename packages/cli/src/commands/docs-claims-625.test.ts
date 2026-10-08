@@ -502,5 +502,31 @@ describe(
         );
       },
     );
+
+    it('C164 (the sweep’s member): an answer that leaves both a command and an agent step says "the lines above are"', async () => {
+      claim(
+        'cli/realm-run-acting.md',
+        'one more line says that a `realm workflow run` or `realm agent` still waiting on the run goes on by itself (`the lines above are` when there are two)',
+      );
+      const def = {
+        ...gateThenAuto('dc-attend-two'),
+        steps: {
+          ...gateThenAuto('dc-attend-two').steps,
+          ask: { description: 'Ask', execution: 'agent', depends_on: ['confirm'] },
+        },
+      } as WorkflowDefinition;
+      const { runId, gateId } = await atQuestion(def, false);
+      const r = realm('run', 'respond', runId, '--gate', gateId, '--choice', 'approve');
+      const out = r.out.filter((l) => l !== '');
+      // (a) red when the two-command form says "the line above is"; (b) prints stdout.
+      expect(out.slice(1).map((l) => l.slice(0, 30))).toEqual([
+        "Owed to the engine: 'after' — ",
+        "An agent step is ready: 'ask' ",
+        'If a realm workflow run or rea',
+      ]);
+      expect(out[3]).toBe(
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the lines above are for when none is.',
+      );
+    });
   },
 );
