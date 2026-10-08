@@ -1698,6 +1698,26 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           continue;
         }
 
+        // Round 24's finding (C179's sentence made true): the drive's own settle of its answer was
+        // refused because another process settled the step, or took it over, after the drive's claim
+        // (`STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` — its claim was removed, as
+        // `realm run reclaim --force` removes it). The answer was not recorded: said as C179's line
+        // from the record, never `✗ … failed`, and the loop goes on (a step still held is waited for).
+        if (
+          engineReply === undefined &&
+          result.status === 'error' &&
+          (result.stopped_step ?? stepName) === stepName &&
+          (result.error_code === 'STATE_STEP_ALREADY_SETTLED' ||
+            result.error_code === 'STATE_CLAIM_LOST')
+        ) {
+          currentRun = await deps.store.get(runId);
+          const line = answerNotRecordedLine(currentRun, stepName, keepsClaims);
+          if (line !== undefined) {
+            console.log(line);
+            continue;
+          }
+        }
+
         if (result.status === 'error') {
           // #134: a NOT-REGISTERED handler/adapter settles RECOVERABLY — the run is NOT failed, the step
           // is parked awaiting a capable runner. Detect structurally via error_code (not message text) and

@@ -157,7 +157,9 @@ phase 'running'. Workflow stalled.` and exited 1 at once). The
   and, when the typed answer reached the engine first, printed `✓ → completed` and the other answer
   as its `Result`; it now prints `• Step '<step>' was taken by <program>, and completed; this
 drive's answer was not recorded.` (or `… at <time>; …` while the other process holds the step, or
-  `… was not run: the run ended (<phase>) …`), and its `Result` line names the program that gave an
+  `… was not run: the run ended (<phase>) …`) — also when another process settled the step, or took
+  it over, between the drive's claim and its own write (it printed `✗ Step '<step>' failed: …` and
+  stopped; it now goes on) —, and its `Result` line names the program that gave an
   answer it did not: `Result (<step>) — given by <program>, not by this drive:` — which answers it
   gave is read off what its own engine calls recorded, an answer that opened a question included.
   An answer typed at

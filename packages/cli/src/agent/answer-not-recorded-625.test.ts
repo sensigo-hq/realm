@@ -478,6 +478,87 @@ describe(
 );
 
 describe(
+  '#625 PR-2a, round 24 (finding 4) — another process settles or takes over the step between the drive’s claim and its own settle',
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      [
+        'settled it (STATE_STEP_ALREADY_SETTLED)',
+        false,
+        [
+          `log: • Step 'write' was taken by ${PROMPT_WORDS}, and completed; this drive's answer was not recorded.`,
+          'log: \nRun complete: <run>',
+          `log: \nResult (write) — given by ${PROMPT_WORDS}, not by this drive:`,
+          'log: {\n  "from": "person"\n}',
+        ],
+      ],
+      [
+        'took it over and holds it (STATE_CLAIM_LOST), then answers',
+        true,
+        [
+          `log: • Step 'write' was taken by ${PROMPT_WORDS} at <t>; this drive's answer was not recorded.`,
+          `log: • Step 'write' is in flight, taken by ${PROMPT_WORDS} since <t>: waiting up to 2s for the run's record to change.`,
+          'log: \nRun complete: <run>',
+          `log: \nResult (write) — given by ${PROMPT_WORDS}, not by this drive:`,
+          'log: {\n  "from": "person"\n}',
+        ],
+      ],
+    ] as const)(
+      'another process %s: the not-recorded line, never `✗ … failed`; the drive goes on',
+      async (_kase, holds, after) => {
+        claim(AGENT_PAGE, NOT_RECORDED_SENTENCE);
+        const def = wf({ write: agent() });
+        const d = await drive(def, {
+          before: async (store) => {
+            // The drive's own settle of `write` meets another process first: its claim let go (as
+            // `realm run reclaim --force` does), then the step settled — or taken and still held — by
+            // the other process.
+            const original = store.settleStep!.bind(store);
+            let raced = false;
+            store.settleStep = async (id, delta, d2, o) => {
+              if (!raced && delta.kind === 'settle_step' && delta.step === 'write') {
+                raced = true;
+                const held = await store.get(id);
+                await original(
+                  id,
+                  {
+                    kind: 'release_step',
+                    step: 'write',
+                    claimToken: held.claims!['write']!.token!,
+                  },
+                  d2,
+                );
+                if (holds) await store.claimStep(id, 'write', def, PROMPT);
+                else await promptAnswers(store, def, id, 'write');
+              }
+              return original(id, delta, d2, o);
+            };
+          },
+          watching: async (store, runId) => {
+            // The other process answers the step it holds.
+            const held = await store.get(runId);
+            await store.settleStep!(
+              runId,
+              { kind: 'release_step', step: 'write', claimToken: held.claims!['write']!.token! },
+              def,
+            );
+            await promptAnswers(store, def, runId, 'write');
+          },
+        });
+        const at = d.lines.indexOf('log: \n→ [agent] write');
+        // (a) red when the refused settle prints `✗ Step 'write' failed: …` and stops the drive, or
+        //     prints `✓`; (b) prints the lines after the attempt.
+        expect({ calls: d.calls, result: d.result, after: d.lines.slice(at + 2) }).toEqual({
+          calls: 1,
+          result: 'completed',
+          after: [...after],
+        });
+      },
+    );
+  },
+);
+
+describe(
   '#625 PR-2a, C190 — realm agent holds nothing while its model works',
   { timeout: 30_000 },
   () => {
