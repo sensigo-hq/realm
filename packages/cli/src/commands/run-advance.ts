@@ -494,7 +494,8 @@ export async function advanceRunFromShell(
   // "failed" comes from the record, never from the reply's status — only when the record lists the
   // step the refusal is about (`stopped_step`, or the guard the reply names) as failed. Any other
   // refusal names that step with the engine's words (or gives the words alone when it names none),
-  // and that step is not said again as in flight elsewhere: a claim on it is this call's own.
+  // and names it once: never also as in flight in another program, which a claim this call took and
+  // its refusal left on the record would make it read as.
   const about =
     result.stopped_step ??
     (typeof result.error_details?.['step'] === 'string' ? result.error_details['step'] : undefined);
