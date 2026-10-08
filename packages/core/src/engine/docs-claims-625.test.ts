@@ -408,6 +408,37 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     });
   });
 
+  it('C186 (walk c8, W4-c): advanceRun that only carries out an expired question names every guard its write decided — two, in the plural', async () => {
+    const d: WorkflowDefinition = {
+      id: 'dc-c186',
+      name: 'docs claims',
+      version: 1,
+      steps: {
+        q: gated().steps['q']!,
+        e1: {
+          description: 'One.',
+          execution: 'guard',
+          depends_on: ['q'],
+          abort_unless: ["q.choice == 'approve'"],
+        },
+        e2: {
+          description: 'Two.',
+          execution: 'guard',
+          depends_on: ['q'],
+          abort_unless: ["q.choice == 'approve'"],
+        },
+        w: { description: 'W.', execution: 'agent', depends_on: ['e1', 'e2'] },
+      },
+    };
+    const { runId } = await atQuestion(d);
+    const r = await advanceRun(store, d, { runId, now: LATER() });
+    // (a) red when the hint says "no step ran" beside the guards that ran, names one of two, or
+    //     the singular for two; (b) prints the hint.
+    expect(r.context_hint).toBe(
+      `Run '${runId}': its expired question was carried out as declared, and that decided guards 'e1', 'e2' (see warnings); no other step ran. Ready for the agent: 'w'.`,
+    );
+  });
+
   // --- C156: a run advanceRun cannot read -----------------------------------------------------
   const CANNOT_READ =
     'A run it cannot read gets an error reply, as from `executeStep`, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist; an error the store throws as a `WorkflowError` keeps its code, and any other is `ENGINE_STORE_FAILED`, naming its cause (a `JsonFileStore` record that is not JSON, for one).';
