@@ -2396,6 +2396,84 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     },
   );
 
+  it('C185: tools.md’s `error_details` row and its late same-choice example (the guard ends the run) are the reply, field by field', async () => {
+    claim(
+      'mcp/tools.md',
+      "| `error_details` | On some errors, and on a late answer that names the choice the question's expiry recorded | Details that depend on the code, such as the schema rules that were broken; on that late answer, the choice the expiry recorded and `resolved_by`. |",
+    );
+    const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
+    const blocks = page.split(/^```[a-z]*\n/m).filter((_, i) => i % 2 === 1);
+    const example = JSON.parse(
+      blocks
+        .find((b) => b.includes('"the outcome matches your choice'))!
+        .replace(/\n```[\s\S]*$/, ''),
+    ) as Reply;
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register({
+      id: 'r23-example',
+      name: 'r23-example',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        approve: {
+          description: 'Approve.',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          depends_on: [],
+          gate: {
+            choices: ['ship', 'hold'],
+            timeout_seconds: 1,
+            on_expiry: 'settle_default',
+            default_choice: 'hold',
+          },
+        },
+        only_if_shipping: {
+          description: 'Ship only when approved.',
+          execution: 'guard',
+          depends_on: ['approve'],
+          abort_unless: ["approve.choice == 'ship'"],
+          abort_message: 'The order was held.',
+        },
+        ship: { description: 'Ship.', execution: 'agent', depends_on: ['only_if_shipping'] },
+      },
+    } as WorkflowDefinition);
+    const runId = (await call('start_run', { workflow_id: 'r23-example' }))['run_id'] as string;
+    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const r = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: gateId,
+      choice: 'hold',
+    });
+    const ids = (v: unknown) =>
+      JSON.parse(
+        JSON.stringify(v)
+          .split(runId)
+          .join(String(example['run_id']))
+          .split(gateId)
+          .join(String((example['error_details'] as Reply)['gateId'])),
+      ) as unknown;
+    const fields = [
+      'command',
+      'status',
+      'context_hint',
+      'run_phase',
+      'guards',
+      'ended_by',
+      'answer_recorded',
+      'error_details',
+    ] as const;
+    // (a) red when the reply and the page's example differ in any field the example shows (the
+    //     expiry line is compared as the example's first warning); (b) prints both.
+    expect({
+      ...Object.fromEntries(fields.map((f) => [f, ids(r[f])])),
+      warning: ids((r['warnings'] as string[])[0]),
+    }).toEqual({
+      ...Object.fromEntries(fields.map((f) => [f, example[f]])),
+      warning: (example['warnings'] as string[])[0],
+    });
+  });
+
   it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and error_details carries resolved_by; a person’s recorded choice is not', async () => {
     claim(
       'mcp/tools.md',
