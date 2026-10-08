@@ -310,6 +310,10 @@ describe(
         AGENT_PAGE,
         "after 60 seconds with no change it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and stops with exit code 1, the run still open.",
       );
+      claim(
+        AGENT_PAGE,
+        'which the drive prints instead when it ends with neither line and the run not completed (for example, a guard aborted it) — except when it stops on a step another process holds, whose in-flight line (above) is the last.',
+      );
       const def = wf({ write: agent() });
       const d = await drive(def, {
         before: async (store, runId) => {
