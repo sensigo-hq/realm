@@ -138,7 +138,10 @@ n/a` for the other process's work; an answer that reaches the engine after the r
   `Not run here: <why>`. While the other process still holds the step and nothing else is ready,
   the prompt waits for it, as `realm agent` does, and runs what is ready once the record changes;
   after 60 seconds with no change it names the step and `realm run reclaim`, and hands the run back
-  (it printed `No eligible steps in phase 'running'. Workflow stalled.` and exited 1 at once). The
+  at that step, never calling it stalled: `Stopped waiting — detached from run '<run>' at step
+'<step>' (phase: running). The run is saved.`, then `realm run advance <run>`, to run once the step
+  is no longer in flight, and `realm run inspect <run>`; exit 1 (it printed `No eligible steps in
+phase 'running'. Workflow stalled.` and exited 1 at once). The
   gate prompt prints the question before its choices — the gate's `message`, or the step's `prompt`
   when the gate has none, as the reply that opened the gate renders it — each line as written:
   `Question: <text>`, or `Question:` with the lines indented below it, any other control character
@@ -155,7 +158,9 @@ n/a` for the other process's work; an answer that reaches the engine after the r
   as its `Result`; it now prints `• Step '<step>' was taken by <program>, and completed; this
 drive's answer was not recorded.` (or `… at <time>; …` while the other process holds the step, or
   `… was not run: the run ended (<phase>) …`), and its `Result` line names the program that gave an
-  answer it did not: `Result (<step>) — given by <program>, not by this drive:`. An answer typed at
+  answer it did not: `Result (<step>) — given by <program>, not by this drive:` — which answers it
+  gave is read off what its own engine calls recorded, an answer that opened a question included.
+  An answer typed at
   the prompt that another process beats to the engine prints `Not run here: step '<step>' was taken
 by <program>, and completed; the answer typed here was not recorded.` (it printed `✗ blocked: `).
   Both drivers say what they wait for while another process holds a step: `• Step '<step>' is in
@@ -164,7 +169,8 @@ flight, taken by <program> since <time>: waiting up to 60s for the run's record 
   prints each guard where the run decided it (issue #625, PR-2a).** After its line for an agent step
   that is ready it prints the line `realm run respond` prints after its commands. A guard decided
   before a later step is printed before that step's `→` line; it was printed after every step. The
-  library's `advanceRun` takes `onGuard`, called with each guard the call decides, as it is decided
+  library's `advanceRun` takes `onGuard`, called with each guard decided while the call runs — by
+  the write of a step it ran, by the call itself, or first by another call — as the call records it
   (before the next step's `onStep`).
 - **A late answer that names the choice the question's expiry recorded says so in its fields
   (issue #625, PR-2a).** `submit_human_response`'s `status: ok` reply (`answer_recorded: false`)

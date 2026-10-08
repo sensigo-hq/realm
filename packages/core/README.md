@@ -36,7 +36,8 @@ const response = await executeStep(store, definition, {
 });
 
 console.log(response.status);
-// response.next_actions[0] carries the next step to execute; when it names advance_run, call advanceRun —
+// response.next_actions[0] carries the next step to execute; when it names advance_run, call
+// advanceRun(store, definition, { runId: run.id }) (import it beside executeStep) —
 // repeat until next_actions is empty
 ```
 

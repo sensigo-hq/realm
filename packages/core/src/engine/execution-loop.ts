@@ -7571,10 +7571,12 @@ export interface AdvanceRunOptions {
    */
   onTaken?: (step: string, run: RunRecord) => void;
   /**
-   * Called with the name of each guard this call decides, as it is decided — after the step whose
-   * write decided it, before the next step's `onStep` (decision C187) — in the order of
-   * `chained_auto_steps`, where each is listed too. A guard the expiry this call carried out
-   * decided is not among them: its sentence is on the expiry's line (`onExpiry`).
+   * Called with the name of each guard decided while this call runs, as the call records it — in
+   * the order of `chained_auto_steps`, where each is listed too, and before the next step's
+   * `onStep` (decision C187): a guard decided by the write of a step the call ran, one the call
+   * decides itself, and one another call decided first, which this call finds already settled
+   * (decision C193). A guard the expiry this call carried out decided is not among them: its
+   * sentence is on the expiry's line (`onExpiry`).
    */
   onGuard?: (guard: string) => void;
   /**
