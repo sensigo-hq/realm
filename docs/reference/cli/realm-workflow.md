@@ -236,6 +236,8 @@ Prompt cancelled — detached from run '00ac2e9c-6728-4fb4-8ba0-234617eff305' at
   Discard:   realm run abandon 00ac2e9c-6728-4fb4-8ba0-234617eff305
 ```
 
+Ctrl+C typed at a prompt is a key the prompt reads, so it leaves the prompt as above, with exit code 1. A signal sent to the command, SIGINT (`kill -INT <pid>`) or SIGTERM, is not read by the prompt: the command ends at once and prints nothing, none of the lines above. The run is kept; the `Run ID:` line the command printed when it started names it. A shell shows 128 plus the signal's number as the command's exit code (130 for SIGINT).
+
 To drive the run with `realm agent`, fill in `<provider>` and `<model>` with the provider and model you want: a run started by `realm workflow run` has not been driven by a model. The `Drive it` line also repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` you gave `realm workflow run` (none in this example), as you typed them: run it from the folder you started that command in. If the workflow file was never registered, register it first (`realm workflow register <file>`). Until then the command stops with `Error: Workflow not found: <id> — most often this run was created from a file without --register. …`, and after it the same command drives the run. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>` and without those flags.
 
 An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again. A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks — is not asked for. When nothing else can run, the run stops there, names each such step and gives the way out. Added after version 0.46.0:
@@ -248,7 +250,7 @@ Run 2a319588-0843-41c4-b28b-44f88ecb0752 stays open (phase 'running'): correct t
 
 [Install Realm and run a workflow](../../start/install-and-first-run.md) shows a whole session.
 
-**Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if it stopped waiting for a step another program holds, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal.
+**Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if it stopped waiting for a step another program holds, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal. A signal sent to the command gives 128 plus the signal's number, as above.
 
 ## `test`
 

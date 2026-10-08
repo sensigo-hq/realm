@@ -22,7 +22,9 @@ import {
   advanceRun,
   reclaimStep,
   loadWorkflowFromString,
+  WorkflowError,
   type Attributed,
+  type StepHandlerResult,
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, stoppedReasons, advanceRunFromShell } from './run-advance.js';
 import { inspectRun } from './inspect.js';
@@ -1213,7 +1215,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
   it('the page’s screen: another program ran the step (STATE_STEP_ALREADY_SETTLED) — the line from the record, never "failed", and the command goes on with what is left; exit 0', async () => {
     claim(
       ACTING,
-      "When another program settles the step, or takes it over, while this one is running it (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
+      "When another program settles the step or takes it over (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), or ends the run (`realm run abandon`, for one), while this one is running it, the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
     );
     const r = await race('ran-it');
     // (a) red when the refused settle is said as `'process' failed: …`, the command stops instead of
@@ -1323,10 +1325,13 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       ACTING,
       "The line ends `, and failed; …` when the other program's run of the step failed. While the other program still holds the step it reads `• Step '<step>' was taken by <program> at <time>; this program's outcome for it was not recorded.`, and when the run ended without the step settling, `• Step '<step>': the run ended (<phase>) before this program's outcome for it was recorded.` When no program holds the step and it has not settled, it reads `• Step '<step>': another process removed the claim this program held on it; this program's outcome for it was not recorded.`, and the step is owed again: the command goes on with it as with any owed step. A step whose outcome was not recorded did not fail here, also when the other program's run of it failed: the exit code is the one for what is left.",
     );
-    claim(ACTING, 'Exit code 1 when a step failed here or cannot run, else 0.');
+    claim(
+      ACTING,
+      'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0.',
+    );
   });
 
-  it('the same code from a guard of the chain names no step: today’s line, exit 1 — never the race’s line', async () => {
+  it('the same code from a guard of the chain names no step: the guard named with the engine’s words, never "failed" (it passed elsewhere), exit 1 — never the race’s line', async () => {
     // `x` (auto) runs in this call; after its write another writer records `a` (ok: false) with a plain
     // update (it settles no guard), so the call meets guard `g` and decides abort; at that settle
     // another call settles `g` first (pass): STATE_STEP_ALREADY_SETTLED with no `stopped_step`.
@@ -1421,18 +1426,565 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       expect({
         seen,
         code,
-        failed: lines.filter((l) => l.startsWith("Stopped: 'x' failed:")),
+        stopped: lines.filter((l) => l.startsWith('Stopped:')),
         notRecorded: lines.filter((l) => l.includes('was not recorded') && l.startsWith('•')),
       }).toEqual({
         seen: ['a', 'raced', 'this call: settled_outcome_divergence'],
         code: 1,
-        failed: [
-          "Stopped: 'x' failed: Guard step 'g' was already settled (persisted: 'complete') by a different attempt — your abort was NOT recorded.",
+        // decision C199: the record lists `g` as completed (a different attempt passed it): the guard
+        // is named with the engine's words, never "failed", and never `x`, the step this call ran.
+        stopped: [
+          "Stopped: 'g': Guard step 'g' was already settled (persisted: 'complete') by a different attempt — your abort was NOT recorded.",
         ],
         notRecorded: [],
       });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says "failed" only when the run\'s record lists the step the refusal is about as failed', () => {
+  const HERE: Attributed = { by: 'here-a', by_source: 'ambient', channel: 'advance' };
+  const RACER: Attributed = { by: 'racer-b', by_source: 'ambient', channel: 'advance' };
+  type Ctx = { runs: JsonFileStore; d: WorkflowDefinition; runId: string };
+  type Handler = (ctx: Ctx) => Promise<StepHandlerResult>;
+
+  /**
+   * One `realm run advance` (the command's body, with this program named `here-a`) on a fresh run of
+   * `yaml`, with handlers `handlers` and the store wrapped by `wrap` — what another program (or a
+   * failing store) does while this one runs. `lines` are the command's lines from its first `→ `
+   * line (or after `Owed to the engine:` when it ran none), the run id put as `<run>`.
+   */
+  async function advance(
+    yaml: string[],
+    handlers: Record<string, Handler>,
+    wrap: (target: JsonFileStore, ctx: Ctx) => Record<string, unknown> = () => ({}),
+  ) {
+    const { home, runs, workflows } = stores();
+    try {
+      const d = loadWorkflowFromString(yaml.join('\n'));
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      const ctx: Ctx = { runs, d, runId: run.id };
+      const registry = new ExtensionRegistry();
+      for (const [name, h] of Object.entries(handlers)) {
+        registry.register('handler', name, { id: name, execute: async () => h(ctx) });
+      }
+      const overrides = wrap(runs, ctx);
+      const store = new Proxy(runs, {
+        get(target, prop) {
+          if (typeof prop === 'string' && prop in overrides) return overrides[prop];
+          const v = Reflect.get(target, prop, target) as unknown;
+          return typeof v === 'function' ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+        },
+      });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        store,
+        workflows,
+        HERE,
+        (l) => lines.push(l),
+        registry,
+      );
+      const after = await runs.get(run.id);
+      const first = lines.findIndex((l) => l.startsWith('→ '));
+      const from =
+        first >= 0 ? first : lines.findIndex((l) => l.startsWith('Owed to the engine:')) + 1;
+      return {
+        code,
+        lines: lines.slice(from).map((l) => l.split(run.id).join('<run>')),
+        failed: after.failed_steps,
+        inProgress: after.in_progress_steps,
+        phase: after.run_phase,
+      };
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  const sAndDone = (id: string, extra: string[] = []) => [
+    `id: ${id}`,
+    `name: ${id}`,
+    'version: 1',
+    'steps:',
+    '  s:',
+    '    description: S.',
+    '    execution: auto',
+    '    handler: slow',
+    ...extra,
+    '  done:',
+    '    description: Done.',
+    '    execution: auto',
+    '    handler: quick',
+    '    depends_on: [s]',
+  ];
+  const quick: Handler = async () => ({ data: {} });
+
+  it('the walk\'s abandon race (STATE_RUN_TERMINAL): the run-ended line from the record, never "failed"; exit 0 — nothing failed here', async () => {
+    claim(
+      ACTING,
+      "When another program settles the step or takes it over (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), or ends the run (`realm run abandon`, for one), while this one is running it, the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:",
+    );
+    const r = await advance(sAndDone('c199-abandon'), {
+      slow: async ({ runs, runId }) => {
+        await abandonRun(runs, runId, 'another program');
+        return { data: {} };
+      },
+      quick,
+    });
+    // (a) red when the refusal is said as `'s' failed: Run … is terminal …`, the line is not the
+    //     record's run-ended form, or the exit code is 1; (b) prints them.
+    expect(r).toEqual({
+      code: 0,
+      lines: [
+        '→ s',
+        "• Step 's': the run ended (abandoned) before this program's outcome for it was recorded.",
+        'Stopped: the run has ended (abandoned)',
+        "Run <run>: phase 'abandoned'",
+      ],
+      failed: [],
+      inProgress: [],
+      phase: 'abandoned',
+    });
+  });
+
+  it('the run ended by another program\'s step while this one still holds its own (STATE_RUN_TERMINAL): the run-ended line — never "taken by" this program', async () => {
+    const r = await advance(
+      [
+        'id: c199-ended-elsewhere',
+        'name: c199-ended-elsewhere',
+        'version: 1',
+        'steps:',
+        '  s:',
+        '    description: S.',
+        '    execution: auto',
+        '    handler: slow',
+        '  t:',
+        '    description: T.',
+        '    execution: auto',
+        '    handler: aborts',
+      ],
+      {
+        slow: async ({ runs, d, runId }) => {
+          const other = new ExtensionRegistry();
+          other.register('handler', 'aborts', {
+            id: 'aborts',
+            execute: async () => ({ abort: { message: 'stopped there' } }),
+          });
+          await executeStep(runs, d, {
+            runId,
+            command: 't',
+            input: {},
+            dispatcher: async () => ({}),
+            registry: other,
+            driver: RACER,
+          });
+          return { data: {} };
+        },
+        aborts: async () => ({ data: {} }),
+      },
+    );
+    // (a) red when the line names this program's own claim as another's take, or says "failed";
+    //     (b) prints them. `s` is still on the record's in-flight list under this program's claim.
+    expect(r).toEqual({
+      code: 0,
+      lines: [
+        '→ s',
+        "• Step 's': the run ended (aborted) before this program's outcome for it was recorded.",
+        'Stopped: the run has ended (aborted)',
+        "Run <run>: phase 'aborted'",
+      ],
+      failed: [],
+      inProgress: ['s'],
+      phase: 'aborted',
+    });
+  });
+
+  it.each([
+    [
+      'another program ended the run',
+      'ended',
+      ['→ s', 'Stopped: the run has ended (abandoned)', "Run <run>: phase 'abandoned'"],
+    ],
+    [
+      'another program opened a question on another step',
+      'question',
+      [
+        '→ s',
+        /^Stopped: a question is open — realm run respond <run> --gate \S+ --choice <one of: ship, hold>$/,
+        "Run <run>: phase 'gate_waiting'",
+      ],
+    ],
+  ] as const)(
+    'the record changed between this call\'s read and its claim (STATE_STEP_NOT_ELIGIBLE) — %s: the claim ran nothing here, so no line of its own and never "failed"; the stop reasons say what the record shows; exit 0',
+    async (_name, kase, expected) => {
+      let raced = false;
+      const yaml =
+        kase === 'question'
+          ? [
+              ...sAndDone('c199-claim-question'),
+              '  b:',
+              '    description: B.',
+              '    execution: auto',
+              '    trust: human_confirmed',
+              '    gate:',
+              '      choices: [ship, hold]',
+            ]
+          : sAndDone('c199-claim-ended');
+      const r = await advance(yaml, { slow: quick, quick }, (target, ctx) => ({
+        claimStep: async (...a: Parameters<JsonFileStore['claimStep']>) => {
+          if (!raced && a[1] === 's') {
+            raced = true;
+            if (kase === 'question') {
+              await executeStep(target, ctx.d, {
+                runId: ctx.runId,
+                command: 'b',
+                input: {},
+                dispatcher: async () => ({}),
+                driver: RACER,
+              });
+            } else {
+              await abandonRun(target, ctx.runId, 'another program');
+            }
+          }
+          return target.claimStep(...a);
+        },
+      }));
+      // (a) red when the claim's refusal is said as `'s' failed: Step 's' is not eligible …`, a line
+      //     says `s` ran, or the exit code is 1; (b) prints them.
+      expect(r.code).toBe(0);
+      expect(r.lines).toHaveLength(expected.length);
+      expected.forEach((line, i) =>
+        typeof line === 'string' ? expect(r.lines[i]).toBe(line) : expect(r.lines[i]).toMatch(line),
+      );
+      expect(r.failed).toEqual([]);
+    },
+  );
+
+  it("a step that failed here (the record lists it as failed): `'<step>' failed: <error>`, exit 1 — unchanged", async () => {
+    const r = await advance(sAndDone('c199-failed'), {
+      slow: async () => {
+        throw new Error('it broke here');
+      },
+      quick,
+    });
+    // (a) red when a step the record lists as failed is no longer said as failed, or exits 0;
+    //     (b) prints them.
+    expect(r).toMatchObject({ code: 1, failed: ['s'], phase: 'failed' });
+    expect(r.lines[1]).toMatch(/^Stopped: 's' failed: .*it broke here/);
+    expect(r.lines.slice(2)).toEqual([
+      'Stopped: the run has ended (failed)',
+      "Run <run>: phase 'failed'",
+    ]);
+  });
+
+  it.each([
+    [
+      'unresolvable references (GATE_MESSAGE_UNRESOLVABLE)',
+      '{{ nope.x }}',
+      'gate.message has unresolvable references: nope.x',
+    ],
+    [
+      'an unknown filter (FILTER_UNKNOWN)',
+      '{{ s.x | nofilter }}',
+      "gate.message uses unknown filter 'nofilter'",
+    ],
+  ])(
+    'a gated step whose question cannot be shown — %s: the step named with the engine\'s words, never "failed" (the record does not list it) nor "in flight in another program" (the claim is this program\'s); exit 1',
+    async (_name, message, words) => {
+      const r = await advance(
+        sAndDone('c199-gate-message', [
+          '    trust: human_confirmed',
+          '    gate:',
+          '      choices: [ship, hold]',
+          `      message: "${message}"`,
+        ]),
+        { slow: quick, quick },
+      );
+      // (a) red when the refusal is said as failed, or the step this program still holds is called
+      //     in flight in another program, or the exit code is 0; (b) prints them.
+      expect(r).toEqual({
+        code: 1,
+        lines: ['→ s', `Stopped: 's': ${words}`, "Run <run>: phase 'running'"],
+        failed: [],
+        inProgress: ['s'],
+        phase: 'running',
+      });
+    },
+  );
+
+  it("another program opened a question on another step while this one ran its gated step (STATE_BLOCKED): the step named with the engine's words, then the question; exit 1", async () => {
+    const gated = ['    trust: human_confirmed', '    gate:', '      choices: [ship, hold]'];
+    const r = await advance(
+      [
+        'id: c199-gate-elsewhere',
+        'name: c199-gate-elsewhere',
+        'version: 1',
+        'steps:',
+        '  a:',
+        '    description: A.',
+        '    execution: auto',
+        '    handler: slow',
+        ...gated,
+        '  b:',
+        '    description: B.',
+        '    execution: auto',
+        ...gated,
+      ],
+      {
+        slow: async ({ runs, d, runId }) => {
+          await executeStep(runs, d, {
+            runId,
+            command: 'b',
+            input: {},
+            dispatcher: async () => ({}),
+            driver: RACER,
+          });
+          return { data: {} };
+        },
+      },
+    );
+    // (a) red when the refusal is said as `'a' failed: …`, or exits 0; (b) prints them.
+    expect({ code: r.code, failed: r.failed, inProgress: r.inProgress }).toEqual({
+      code: 1,
+      failed: [],
+      inProgress: ['a', 'b'],
+    });
+    expect(r.lines.slice(0, 2)).toEqual([
+      '→ a',
+      "Stopped: 'a': Step 'a': a gate is open on another step — wait for its resolution; this step stays claimed.",
+    ]);
+    expect(r.lines[2]).toMatch(/^Stopped: a question is open — realm run respond <run> --gate /);
+  });
+
+  it.each([
+    [
+      'the claim (a store that throws)',
+      'claimStep',
+      new Error('disk gone'),
+      "Stopped: 's': Failed to claim step",
+      [],
+    ],
+    [
+      'the claim (a busy run)',
+      'claimStep',
+      new WorkflowError('Run is busy: lock held too long', {
+        code: 'STATE_RUN_BUSY',
+        category: 'STATE',
+        agentAction: 'stop',
+        retryable: true,
+      }),
+      "Stopped: 's': Run is busy: lock held too long",
+      [],
+    ],
+    [
+      'the write of its outcome (a store that throws)',
+      'settleStep',
+      new Error('disk gone'),
+      "Stopped: 's': Failed to persist run update",
+      ['s'],
+    ],
+    [
+      'the write of its outcome (a busy run)',
+      'settleStep',
+      new WorkflowError('Run is busy: lock held too long', {
+        code: 'STATE_RUN_BUSY',
+        category: 'STATE',
+        agentAction: 'stop',
+        retryable: true,
+      }),
+      "Stopped: 's': Run is busy: lock held too long",
+      ['s'],
+    ],
+  ] as const)(
+    'the store refuses %s: the step named with the engine\'s words, never "failed"; exit 1',
+    async (_name, method, err, line, held) => {
+      let thrown = false;
+      const r = await advance(
+        sAndDone(`c199-store-${method}`),
+        { slow: quick, quick },
+        (target) => ({
+          [method]: async (...a: unknown[]) => {
+            if (!thrown) {
+              thrown = true;
+              throw err;
+            }
+            return (target[method] as (...x: unknown[]) => Promise<unknown>).apply(target, a);
+          },
+        }),
+      );
+      // (a) red when the refusal is said as failed, the step this program holds is called in flight in
+      //     another program, or the exit code is 0; (b) prints them.
+      expect(r).toEqual({
+        code: 1,
+        lines: ['→ s', line, "Run <run>: phase 'running'"],
+        failed: [],
+        inProgress: held,
+        phase: 'running',
+      });
+    },
+  );
+
+  it.each([
+    [
+      "the step's own read (the reply names the step)",
+      3,
+      [
+        '→ s',
+        "Stopped: 's': Failed to load run from store: disk gone",
+        "Run <run>: phase 'running'",
+      ],
+    ],
+    [
+      "the advance call's first read (the reply names no step)",
+      2,
+      ['Stopped: Failed to load run from store: disk gone', "Run <run>: phase 'running'"],
+    ],
+  ] as const)(
+    'the run cannot be read at %s: the engine\'s words, never "failed"; exit 1',
+    async (_name, nth, expected) => {
+      let reads = 0;
+      const r = await advance(sAndDone(`c199-read-${nth}`), { slow: quick, quick }, (target) => ({
+        get: async (id: string) => {
+          reads += 1;
+          if (reads === nth) throw new Error('disk gone');
+          return target.get(id);
+        },
+      }));
+      // (a) red when a read the store refused is said as a step that failed, or exits 0; (b) prints them.
+      expect({ code: r.code, lines: r.lines }).toEqual({ code: 1, lines: expected });
+    },
+  );
+
+  /**
+   * `x` (auto) runs in this call; after its write another writer records agent step `a` with a plain
+   * update (it settles no guard), so the call meets guard `g` itself — then `settle` decides what the
+   * store does with this call's settle of `g`.
+   */
+  async function guardChain(
+    id: string,
+    okA: boolean,
+    settle: (
+      target: JsonFileStore,
+      args: Parameters<NonNullable<JsonFileStore['settleStep']>>,
+    ) => Promise<unknown>,
+  ) {
+    let wroteA = false;
+    return advance(
+      [
+        `id: ${id}`,
+        `name: ${id}`,
+        'version: 1',
+        'steps:',
+        '  x:',
+        '    description: X.',
+        '    execution: auto',
+        '    handler: quick',
+        '  a:',
+        '    description: A.',
+        '    execution: agent',
+        '  g:',
+        '    description: G.',
+        '    execution: guard',
+        '    depends_on: [a]',
+        '    abort_unless: ["a.ok == true"]',
+      ],
+      { quick },
+      (target) => ({
+        settleStep: async (...args: Parameters<NonNullable<JsonFileStore['settleStep']>>) => {
+          if (args[1].kind === 'settle_guard') return settle(target, args);
+          const r = await target.settleStep!(...args);
+          if (args[1].kind === 'settle_step' && args[1].step === 'x' && !wroteA) {
+            wroteA = true;
+            const cur = await target.get(args[0]);
+            const now = new Date().toISOString();
+            await target.update({
+              ...cur,
+              completed_steps: [...cur.completed_steps, 'a'],
+              evidence: [
+                ...cur.evidence,
+                {
+                  step_id: 'a',
+                  started_at: now,
+                  completed_at: now,
+                  duration_ms: 0,
+                  input_summary: {},
+                  output_summary: { ok: okA },
+                  status: 'success',
+                  evidence_hash: 'r26',
+                },
+              ],
+            });
+          }
+          return r;
+        },
+      }),
+    );
+  }
+
+  it("the guard race, settled as failed elsewhere: the record lists the guard as failed — `'g' failed: …`, naming the guard, never the step this call ran", async () => {
+    const r = await guardChain('c199-guard-failed', false, async (target, [id, delta, d2, o]) => {
+      if (delta.kind === 'settle_guard' && delta.outcome === 'abort') {
+        const { abort: _abort, ...rest } = delta;
+        void _abort;
+        await target.settleStep!(
+          id,
+          {
+            ...rest,
+            outcome: 'resolution_error',
+            resolutionError: { condition: 'a.ok == true', unresolvable_path: 'a.ok' },
+          },
+          d2,
+          o,
+        );
+      }
+      return target.settleStep!(id, delta, d2, o);
+    });
+    // (a) red when the guard the record lists as failed is not said as failed, or the line names `x`;
+    //     (b) prints them.
+    expect({ code: r.code, failed: r.failed, lines: r.lines }).toEqual({
+      code: 1,
+      failed: ['g'],
+      lines: [
+        '→ x',
+        "Stopped: 'g' failed: Guard step 'g' was already settled (persisted: 'fail') by a different attempt — your abort was NOT recorded.",
+        'Stopped: the run has ended (failed)',
+        "Run <run>: phase 'failed'",
+      ],
+    });
+  });
+
+  it('a guard\'s decision cannot be written (the reply names no step): the engine\'s words alone, never "failed" on the step this call ran; exit 1', async () => {
+    const r = await guardChain('c199-guard-persist', true, async () => {
+      throw new Error('disk gone');
+    });
+    // (a) red when the store's refusal is said as `'x' failed: …`, or exits 0; (b) prints them.
+    expect({ code: r.code, failed: r.failed, lines: r.lines }).toEqual({
+      code: 1,
+      failed: [],
+      lines: [
+        '→ x',
+        "Stopped: Failed to persist guard step 'g': disk gone",
+        "Run <run>: phase 'running'",
+      ],
+    });
+  });
+
+  it('the page\'s sentences: "failed" from the record; the engine\'s words otherwise; a claim the record refused; the exit code', () => {
+    claim(
+      ACTING,
+      "a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended",
+    );
+    claim(
+      ACTING,
+      'When the record changed after the command read it and before it claimed the step (another program ended the run, or opened a question on another step), the step did not run here: no line says it did, and the `Stopped:` lines say what the record shows.',
+    );
+    claim(
+      ACTING,
+      'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0.',
+    );
   });
 });

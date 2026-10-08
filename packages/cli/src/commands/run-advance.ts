@@ -421,20 +421,27 @@ export async function advanceRunFromShell(
     return reply;
   }
   let result = await advanceOnce();
-  // decision C194: the step this call ran was settled, or taken over, by another process before its
-  // own outcome was recorded — that step's own refusal (`stopped_step`). Said from the record, never
-  // "failed", and the command goes on with what is left, as for a step another process took before
-  // this one ran it. The same code from a guard of the chain (a concurrent settle that diverged from
-  // its abort) names no step and keeps its line below. The refusal's own warnings are said with the
-  // last reply's.
+  // decisions C194, C199: the step this call ran was settled, or taken over, by another process — or
+  // the run was ended — before its own outcome was recorded: that step's own refusal (`stopped_step`).
+  // Said from the record, never "failed", and the command goes on with what is left, as for a step
+  // another process took before this one ran it. A claim refused because the record changed after
+  // this call read it (the run ended, a question opened) ran nothing here: no line of its own — the
+  // stop reasons below say what the record shows. The same code from a guard of the chain (a
+  // concurrent settle that diverged from its abort) names no step: said below, from the record. The
+  // refusals' own warnings are said with the last reply's.
   const raceWarnings: string[] = [];
   while (
     result.status === 'error' &&
     result.stopped_step !== undefined &&
     result.stopped_step === lastStep &&
-    (result.error_code === 'STATE_STEP_ALREADY_SETTLED' || result.error_code === 'STATE_CLAIM_LOST')
+    (result.error_code === 'STATE_STEP_ALREADY_SETTLED' ||
+      result.error_code === 'STATE_CLAIM_LOST' ||
+      result.error_code === 'STATE_RUN_TERMINAL' ||
+      result.error_code === 'STATE_STEP_NOT_ELIGIBLE')
   ) {
-    print(outcomeNotRecordedLine(await runStore.get(runId), lastStep, keepsClaims));
+    if (result.error_code !== 'STATE_STEP_NOT_ELIGIBLE') {
+      print(outcomeNotRecordedLine(await runStore.get(runId), lastStep, keepsClaims));
+    }
     raceWarnings.push(...result.warnings);
     result = await advanceOnce();
   }
@@ -483,11 +490,30 @@ export async function advanceRunFromShell(
     result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
   const reasons: string[] = [];
   // A failed step is first. A capability block is not a failure (the run is NOT failed): the step
-  // is named below as a step that cannot run here, from the view after the call.
-  if (result.status === 'error' && !isCapabilityBlock) {
-    reasons.push(`'${lastStep ?? result.command}' failed: ${result.errors.join(', ')}`);
+  // is named below as a step that cannot run here, from the view after the call. Decision C199:
+  // "failed" comes from the record, never from the reply's status — only when the record lists the
+  // step the refusal is about (`stopped_step`, or the guard the reply names) as failed. Any other
+  // refusal names that step with the engine's words (or gives the words alone when it names none),
+  // and that step is not said again as in flight elsewhere: a claim on it is this call's own.
+  const about =
+    result.stopped_step ??
+    (typeof result.error_details?.['step'] === 'string' ? result.error_details['step'] : undefined);
+  const refusal = result.status === 'error' && !isCapabilityBlock;
+  if (refusal) {
+    const words = result.errors.join(', ');
+    reasons.push(
+      about === undefined
+        ? words
+        : after.failed_steps.includes(about)
+          ? `'${about}' failed: ${words}`
+          : `'${about}': ${words}`,
+    );
   }
-  reasons.push(...stoppedReasons(runId, after, afterView, result.next_actions));
+  const heldHere =
+    refusal && about !== undefined
+      ? { ...after, in_progress_steps: after.in_progress_steps.filter((s) => s !== about) }
+      : after;
+  reasons.push(...stoppedReasons(runId, heldHere, afterView, result.next_actions));
   if (reasons.length > 1) {
     const none = reasons.indexOf('nothing is ready to run now');
     if (none >= 0) reasons.splice(none, 1);

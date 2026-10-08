@@ -181,17 +181,22 @@ export function answerNotRecordedLine(
 }
 
 /**
- * decision C194: the line `realm run advance` prints, never "failed", when the step it was running was
- * settled or taken over by another process before its own outcome was recorded (that step's own
- * `STATE_STEP_ALREADY_SETTLED` or `STATE_CLAIM_LOST`: another program ran it after a `realm run
- * reclaim --force` freed this one's claim, for one). Read off the record after the refusal: the
- * claim's holder while another process holds the step, the program that ran it once it settled, the
- * run's ending, or else the claim this program held was removed. Its own work on the step may have
- * run here: the line says only that its outcome was not recorded, never "not run here".
+ * decisions C194, C199: the line `realm run advance` prints, never "failed", when the step it was
+ * running was settled or taken over by another process, or the run was ended, before its own outcome
+ * was recorded (that step's own `STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` or
+ * `STATE_RUN_TERMINAL`: another program ran it after a `realm run reclaim --force` freed this one's
+ * claim, or `realm run abandon` ended the run, for one). Read off the record after the refusal: the
+ * claim's holder while another process holds the step on a run that has not ended, the program that
+ * ran it once it settled, the run's ending, or else the claim this program held was removed. Its own
+ * work on the step may have run here: the line says only that its outcome was not recorded, never
+ * "not run here".
  */
 export function outcomeNotRecordedLine(run: RunRecord, step: string, keepsClaims: boolean): string {
   const notRecorded = "this program's outcome for it was not recorded";
-  if (run.in_progress_steps.includes(step)) {
+  // decision C199: on a run that has ended, the ending is said — a claim the ending left on the
+  // record may be this program's own (an ending that is not an abandon leaves the claims of the
+  // steps still running in place), so it is never said as another program's take.
+  if (run.terminal_state !== true && run.in_progress_steps.includes(step)) {
     const described = describeClaimHolder(run.claims?.[step], keepsClaims);
     const at = described.since !== undefined ? ` at ${described.since}` : '';
     return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;

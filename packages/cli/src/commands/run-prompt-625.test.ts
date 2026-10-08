@@ -1126,6 +1126,68 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       30_000,
     );
 
+    it('C201 (walk c11 YELLOW 5): Ctrl+C typed at the prompt is a key — the hand-back, exit 1; a SIGINT sent to the command prints nothing and exits 130', async () => {
+      claimWorkflowPage(
+        "Ctrl+C typed at a prompt is a key the prompt reads, so it leaves the prompt as above, with exit code 1. A signal sent to the command, SIGINT (`kill -INT <pid>`) or SIGTERM, is not read by the prompt: the command ends at once and prints nothing, none of the lines above. The run is kept; the `Run ID:` line the command printed when it started names it. A shell shows 128 plus the signal's number as the command's exit code (130 for SIGINT).",
+      );
+      claimWorkflowPage(
+        "or if there was no terminal. A signal sent to the command gives 128 plus the signal's number, as above.",
+      );
+      // Ctrl+C at the prompt: readline rejects the question with ABORT_ERR (the pty transcript's
+      // error, constructed as this file does).
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        if (prompt.startsWith('  Agent output')) throw abortError();
+        return '';
+      });
+      const keyCode = await run(workflowYaml({ id: 'prompt-625-c201-key', finish: true }));
+      const keyLines = [...logged(), ...errored()];
+      // (a) red when Ctrl+C at the prompt no longer prints the hand-back or exits 1; (b) prints them.
+      expect({
+        code: keyCode,
+        handBack: keyLines.some((l) => l.startsWith('Prompt cancelled — detached from run')),
+        runId: keyLines.some((l) => l.startsWith('Run ID: ')),
+      }).toEqual({ code: 1, handBack: true, runId: true });
+
+      // A SIGINT sent to the command while the prompt waits.
+      logSpy.mockClear();
+      errSpy.mockClear();
+      exitSpy.mockClear();
+      const keep = (): void => {};
+      process.on('SIGINT', keep);
+      exitSpy.mockImplementation((() => undefined) as never);
+      let afterSignal: unknown;
+      mocks.question.mockImplementation(async (prompt: string) => {
+        if (prompt.startsWith('  Choice ')) return 'approve';
+        if (prompt.startsWith('  Agent output')) {
+          const before = logged().length + errored().length;
+          process.emit('SIGINT', 'SIGINT');
+          const deadline = Date.now() + 5_000;
+          while (exitSpy.mock.calls.length === 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          afterSignal = {
+            printed: [...logged(), ...errored()].slice(before),
+            exits: exitSpy.mock.calls.map((c: unknown[]) => c[0]),
+            phase: (await readRecord()).run_phase,
+          };
+          exitSpy.mockImplementation(((): never => {
+            throw new Error('process.exit');
+          }) as never);
+          throw abortError();
+        }
+        return '';
+      });
+      try {
+        await run(workflowYaml({ id: 'prompt-625-c201-signal', finish: true }));
+      } finally {
+        process.removeListener('SIGINT', keep);
+      }
+      // (a) red when the signal prints anything before the command exits, the exit code is not 130,
+      //     or the run is not kept; (b) prints them.
+      expect(afterSignal).toEqual({ printed: [], exits: [130], phase: 'running' });
+    }, 30_000);
+
     it('C179: a claim the prompt left behind (the command killed outright) is released by `realm run reclaim --step --force`', async () => {
       claimWorkflowPage(
         'a command killed outright (SIGKILL) leaves it, and `realm run reclaim <run> --step <step> --force` releases it.',

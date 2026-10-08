@@ -183,6 +183,18 @@ ended (<phase>) before …`; or `another process removed the claim this program 
   the step is owed again), read from the record, goes on with what is left, and exits with the code
   for what is left. It printed `Stopped: '<step>' failed: Step '<step>' was already settled …` (or
   `… the claim was lost …`), stopped and exited 1.
+- **`realm run advance` says "failed" only when the run's record lists the step as failed (issue
+  #625, PR-2a).** When another program ends the run (`realm run abandon`) while this one runs a step,
+  it prints `• Step '<step>': the run ended (<phase>) before this program's outcome for it was
+recorded.` and exits with the code for what is left; it printed `Stopped: '<step>' failed: Run
+'<run>' is terminal; cannot settle step '<step>'.` and exited 1. A claim refused because the record
+  changed after the command read it (the run ended, a question opened on another step) prints no line
+  of its own and goes on; it printed `Stopped: '<step>' failed: Step '<step>' is not eligible …`. Any
+  other refusal that failed no step — a guard another call settled first, a question that cannot be
+  shown, a store that refused a read or a write — names the step it is about with the engine's words
+  (`Stopped: '<step>': <error>`), or gives the words alone when it names no step, and exits 1; it
+  said `'<last step run>' failed: …`. A step the refusal is about is no longer also said to be in
+  flight in another program when the claim on it is this call's own.
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
   After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
 --run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back
