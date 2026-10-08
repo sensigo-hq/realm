@@ -160,6 +160,30 @@ export function renderDetachMap(
   return lines.join('\n');
 }
 
+/**
+ * decision C188: how `realm workflow run` hands the run back when its watch on a step another process
+ * holds (decision C173) ends with the record unchanged. It stops waiting — the run is not stalled: the
+ * other program may still be running the step — so it names the held step, not the last step it
+ * prompted, and offers the ways on that fit a run in that state: `realm run advance`, once the held
+ * step is no longer in flight (it runs what the engine then owes, and names an agent step or a question
+ * that is ready), and `realm run inspect`. No `Drive it` line: an agent step that is ready is asked for
+ * at this command's own prompt, so the loop never reaches this hand-back with one. No `Discard` line:
+ * the run is in another program's hands. The record is the one the watch found unchanged (no gate,
+ * not ended).
+ *
+ * @internal Exported for testing only.
+ */
+export function renderInFlightHandBack(record: RunRecord, held: readonly string[]): string {
+  const names = held.map((s) => `'${s}'`).join(', ');
+  const steps = held.length === 1 ? `step ${names}` : `steps ${names}`;
+  const are = held.length === 1 ? 'is' : 'are';
+  return [
+    `Stopped waiting — detached from run '${record.id}' at ${steps} (phase: ${deriveRunPhase(record)}). The run is saved.`,
+    `  Go on:     once ${names} ${are} no longer in flight, realm run advance ${record.id}`,
+    `  Inspect:   realm run inspect ${record.id}`,
+  ].join('\n');
+}
+
 /** How often the open prompt reads the run to see its question settled elsewhere (decision C158). */
 export const QUESTION_WATCH_MS = 500;
 let questionWatchMs = QUESTION_WATCH_MS;
@@ -771,6 +795,30 @@ export const runCommand = new Command('run')
               run = fresh;
               continue;
             }
+            // decision C188: the watch ended with the record unchanged — C173's own hand-back, never
+            // the stall branch below (the run is in flight, not stalled). A last read: a record that
+            // changed after the watch's last read goes on, as a change inside the watch does.
+            const record = await store.get(runId);
+            if (record.version !== run.version) {
+              run = record;
+              continue;
+            }
+            const states = new Map(classifyInProgressClaims(record).map((c) => [c.step, c.state]));
+            for (const step of inFlight) {
+              console.error(
+                inFlightLine(
+                  runId,
+                  step,
+                  describeClaimHolder(record.claims?.[step], store.persistsClaims === true),
+                  states.get(step) === 'claim_stale',
+                  inFlightWatchMs,
+                ),
+              );
+            }
+            console.error(renderInFlightHandBack(record, inFlight));
+            // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
+            rl.close();
+            process.exit(1);
           }
 
           if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
@@ -788,21 +836,9 @@ export const runCommand = new Command('run')
             }
           }
           if (eligibleSteps.length === 0) {
+            // decision C188: reached with nothing in flight elsewhere (a step another process holds is
+            // waited for above, and handed back there).
             console.error(`\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`);
-            if (inFlight.length > 0) {
-              const states = new Map(classifyInProgressClaims(run).map((c) => [c.step, c.state]));
-              for (const step of inFlight) {
-                console.error(
-                  inFlightLine(
-                    runId,
-                    step,
-                    describeClaimHolder(run.claims?.[step], store.persistsClaims === true),
-                    states.get(step) === 'claim_stale',
-                    inFlightWatchMs,
-                  ),
-                );
-              }
-            }
             // issue #468 — hands the run back with a truthful map instead of silently exiting 0.
             // A fresh read: the loop's own snapshot is already current here (nothing awaited
             // since the last read reached this branch in the same iteration), but the fresh read

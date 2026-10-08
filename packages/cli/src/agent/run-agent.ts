@@ -40,6 +40,7 @@ import type {
   Attributed,
   DriveFailureRecord,
   ErrorCategory,
+  ResponseEnvelope,
 } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
@@ -187,6 +188,32 @@ function shouldMintWriterNonce(deps: Pick<AgentDeps, 'mintWriterNonce'>): boolea
   const v = process.env['REALM_REQUIRE_WRITER_NONCE'];
   const required = v !== undefined && v !== '' && v !== '0' && v !== 'false';
   return deps.mintWriterNonce === true || required;
+}
+
+/**
+ * decision C189: whether this drive's own engine call for the agent step `step` recorded the drive's
+ * answer — read off that call's reply, on every reply branch, never off the line the drive prints:
+ * - a reply that a step the engine ran AFTER `step` produced (`stopped_step` names another step:
+ *   `step`'s own call returned `ok`, so it settled) — a question that step opened, a step that cannot
+ *   run here, a refusal or failure of that step;
+ * - the question the answer opened on `step` itself (`confirm_required` carrying the answer's own
+ *   evidence entry: the write that opens the gate records it), or an `ok` reply carrying evidence;
+ * and never: an `ok` or `confirm_required` reply with no evidence (the run had ended, `step` was
+ * already settled, or another call's question was already open: nothing was written), nor a refusal
+ * or failure of `step` itself. An `error` that names no step (an error of the chain itself) says
+ * nothing about `step`, and is not counted; the drive stops on it with exit code 1 and prints no
+ * `Result` line, the one reader of the answer.
+ *
+ * @internal Exported for testing only.
+ */
+export function answerRecordedByCall(
+  reply: Pick<ResponseEnvelope, 'status' | 'evidence' | 'stopped_step'>,
+  step: string,
+): boolean {
+  if (reply.stopped_step !== undefined && reply.stopped_step !== step) return true;
+  return (
+    (reply.status === 'ok' || reply.status === 'confirm_required') && reply.evidence.length > 0
+  );
 }
 
 export interface AgentRunOptions {
@@ -389,7 +416,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // is what keeps control-flow analysis satisfied.
   let currentRun: RunRecord | undefined;
   // decision C179: the agent steps this drive answered — the `Result` line names the program that
-  // gave any other answer.
+  // gave any other answer. Decision C189: filled from each engine call's reply (`answerRecordedByCall`).
   const answeredHere = new Set<string>();
   // decision C179: the drive stopped on a step another process holds (the 60s watch ended unchanged).
   let stoppedOnInFlight = false;
@@ -1639,6 +1666,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         // `executeChain` saves nothing, so a flag set there would claim a save that never
         // happened and a throw on the next attempt would lose every billed call.
         stepUsageSaved = true;
+        // decision C189: the answers this drive gave, from what its own engine call recorded — on
+        // every reply branch below (the `✓` line, a question the answer opened, any other).
+        if (engineReply === undefined && answerRecordedByCall(result, stepName)) {
+          answeredHere.add(stepName);
+        }
 
         // #134: a NOT-REGISTERED handler or adapter, detected structurally via error_code (never the
         // message text) — the dispositions below, or the hold just after.
@@ -1662,7 +1694,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         ) {
           heldCapabilityReplies.set(result.stopped_step, result);
           currentRun = await deps.store.get(runId);
-          answeredHere.add(stepName);
           console.log(`  ✓ → ${currentRun.run_phase}`);
           continue;
         }
@@ -1827,7 +1858,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           console.error(`\n✗ ${result.context_hint}`);
           return 'failed';
         }
-        if (engineReply === undefined) answeredHere.add(stepName);
         console.log(`  ✓ → ${currentRun.run_phase}`);
       }
     } finally {
