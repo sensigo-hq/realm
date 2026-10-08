@@ -1094,7 +1094,7 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
    * it and holds it, or does nothing more. `refusals` is what the store answered this program's own
    * settle of `process`.
    */
-  async function race(kase: Kase) {
+  async function race(kase: Kase, warnFirst = false) {
     const { home, runs, workflows } = stores();
     const d = loadWorkflowFromString(
       [
@@ -1102,10 +1102,14 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
         `name: adv-race-${kase}`,
         'version: 1',
         'steps:',
+        ...(warnFirst
+          ? ['  prep:', '    description: Prep.', '    execution: auto', '    handler: warns']
+          : []),
         '  process:',
         '    description: Process.',
         '    execution: auto',
         '    handler: slow',
+        ...(warnFirst ? ['    depends_on: [prep]'] : []),
         '  notify:',
         '    description: Notify.',
         '    execution: auto',
@@ -1157,6 +1161,10 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       },
     });
     here.register('handler', 'quick', { id: 'quick', execute: async () => ({ data: {} }) });
+    here.register('handler', 'warns', {
+      id: 'warns',
+      execute: async () => ({ data: {}, warn: { message: 'prep warned' } }),
+    });
     // What the store answers this program's own settle of `process` (the race's code).
     const refusals: string[] = [];
     const watched = new Proxy(runs, {
@@ -1291,6 +1299,23 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       lines: expected(r.id, r.since),
     });
     expect(r.handlerRuns).toBe(kase === 'released' ? 2 : 1);
+  });
+
+  it('the refusal’s own warnings are said with the last reply’s: a step this call ran before the race warned — its ⚠ line follows the steps', async () => {
+    const r = await race('ran-it', true);
+    // (a) red when the warning of the reply the race returned is dropped once the command goes on;
+    //     (b) prints the lines.
+    expect({ refusals: r.refusals, code: r.code, lines: r.lines }).toEqual({
+      refusals: ['already_settled_by_other'],
+      code: 0,
+      lines: [
+        '→ process',
+        `• Step 'process' was taken by ${RACER_WORDS}, and completed; ${NOT_RECORDED}.`,
+        '→ notify',
+        '⚠ prep warned',
+        `Run ${r.id}: phase 'completed'`,
+      ],
+    });
   });
 
   it('the page’s sentences on the other forms and the exit code', () => {
