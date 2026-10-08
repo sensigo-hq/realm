@@ -488,13 +488,11 @@ export const runCommand = new Command('run')
             }
             console.log(`  Preview: ${JSON.stringify(g.preview, null, 2)}`);
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer.
-            // CAVEAT (lane-1-verified, stated here per the design's own instruction): this
-            // process is blocked on `rl.question` below and cannot observe an EXTERNAL
-            // resolution (e.g. a different terminal's `realm run respond`) while waiting — but
-            // that is SAFE: if this timer fires having lost that race, the [F1] `already_settled`
-            // lookup-first arm NOOPs harmlessly, and if the human answers after an unattended
-            // enactment already won, `submitHumanResponse` below composes the honest late-response
-            // envelope exactly as any other late submit does.
+            // Races with another process are SAFE: if this timer fires having lost a race with
+            // another settlement (a different terminal's `realm run respond`, `drain --expired`,
+            // `listen`), the [F1] `already_settled` lookup-first arm NOOPs harmlessly; and an answer
+            // read here after another enactment already won reaches `submitHumanResponse` below,
+            // which composes the honest late-response envelope exactly as any other late submit does.
             //
             // decision C158: the prompt closes when its question is settled by anything else — this
             // timer's write, or another process (`realm run respond` in another terminal, `realm run
