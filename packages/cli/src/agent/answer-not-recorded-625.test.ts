@@ -565,11 +565,11 @@ describe(
     it('a prompt opened during the model call takes the step: the answer is not recorded, the drive waits, and when the prompt lets the step go unanswered the model is asked again', async () => {
       claim(
         AGENT_PAGE,
-        "The drive itself holds nothing while its model works on a step: a `realm workflow run` prompt opened during the model call takes the step, the model's answer is not recorded (`• Step '<step>' was taken by <program> at <time>; this drive's answer was not recorded.`), and the drive then waits for the step as for any step another process holds — when the prompt lets it go unanswered, the model is asked for it again.",
+        "The drive itself holds nothing while its model works on a step: a `realm workflow run` prompt opened during the model call takes the step; if the prompt still holds it when the model answers, the model's answer is not recorded (`• Step '<step>' was taken by <program> at <time>; this drive's answer was not recorded.`), and the drive then waits for the step as for any step another process holds — when the prompt lets it go unanswered, the model is asked for it again.",
       );
       claim(
         WORKFLOW_PAGE,
-        "`realm agent` holds nothing while its model works on a step, so a prompt opened during that call takes the step with no word of the call: the model's answer is then not recorded, and if you leave the prompt while that drive still waits for the step, its model is asked again.",
+        "`realm agent` holds nothing while its model works on a step, so a prompt opened during that call takes the step with no word of the call: if the prompt still holds the step when the model answers, the model's answer is not recorded, and if you then leave the prompt while that drive still waits for the step, its model is asked again.",
       );
       const def = wf({ write: agent() });
       const during: Array<{ claimed: boolean; inFlight: boolean }> = [];

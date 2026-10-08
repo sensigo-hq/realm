@@ -71,7 +71,7 @@ function gated(onExpiry: 'settle_default' | 'abort' = 'settle_default'): Workflo
 
 /** decision C193: core-library.md's `onGuard` sentence (MR-147: it names every guard the call records). */
 const ONGUARD_SENTENCE =
-  "`onGuard` (called with the name of each guard decided while the call runs, as the call records it and before the next step's `onStep`: one decided by the write of a step the call ran, one the call decides itself, and one another call decided first, which the call finds already settled; a guard decided by the expiry the call carries out is on the expiry line instead; added after version 0.46.0)";
+  "`onGuard` (called with the name of each guard the reply lists in `chained_auto_steps`, as the call reaches it and before the next step's `onStep`: one decided by the write of a step the call ran, one the call decides itself, and one another call decided first, which the call finds already settled; a guard decided by the expiry the call carries out is on the expiry line instead; added after version 0.46.0)";
 
 const dispatcher = async () => ({});
 const LATER = () => new Date(Date.now() + 120_000);
