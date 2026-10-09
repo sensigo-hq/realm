@@ -121,8 +121,14 @@ export function checkPreClaim(args: {
         const failed = checkPreconditions(stepDef.preconditions, buildEvidenceByStep(run));
         if (failed !== null) {
           const hint = `Precondition failed for step '${step}'.`;
+          // `executeStep`'s published `blocked_reason.suggestion` stays byte-identical.
           const suggestion = `Precondition failed: '${failed.expression}'. Resolved value: ${String(failed.resolved_value)}.`;
-          return { refused_by: 'precondition', refusal: `${hint} ${suggestion}`, hint, suggestion };
+          // F5 (review A2-3): the view's `refusal` reaches `realm run inspect`, `realm run advance`,
+          // `realm agent`, every reply hint, `get_run_state` and the `realm listen` log, so the value a
+          // step's output gave is rendered through the escaped, bounded value renderer — one line, no
+          // terminal escape, never a line that reads as one of the screen's own.
+          const refusal = `${hint} Precondition failed: '${failed.expression}'. Resolved value: ${escapedBoundedValue(failed.resolved_value)}.`;
+          return { refused_by: 'precondition', refusal, hint, suggestion };
         }
       }
     }

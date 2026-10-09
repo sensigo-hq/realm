@@ -653,6 +653,12 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
 
 ### Fixed
 
+- **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
+  PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
+  replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on
+  one line, its control characters escaped (`Resolved value: "bad\nPhase: completed"`); a newline in
+  the value started a line of its own, and an escape character reached the terminal.
+  `execute_step`'s `blocked_reason.suggestion` is unchanged.
 - **A reply lists each warning once (issue #625, PR-2a).** When the last step a call ran gave the
   call's reply, that step's `warnings` were listed twice (`execute_step`, `advance_run`) — on 0.46.0,
   `execute_step` on the step after an expired `settle_default` question listed the expiry line
