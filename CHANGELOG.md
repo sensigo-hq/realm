@@ -263,6 +263,35 @@ opens a question, fails or ends the run` (it said `then run what it leaves owed`
   comes just before the phase line — from the composer `realm run respond` prints them with
   (`finalizerOutcomeLines`, exported). A cleanup step that failed was named only by `realm run
 inspect`'s `Cause:`.
+- **`realm run advance` says only the cleanup steps its ending ran (issue #625, PR-2a).** After
+  `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
+  ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
+  status, as if it had run in this call.
+- **A `realm.yaml` is named only when one is read (issue #625, PR-2a).** With `--extensions-module`,
+  `realm run advance`'s first line said `… and the realm.yaml of <folder>` for a folder with none, its
+  `--project … was not used` line said the project's code was loaded (the override replaces it), and
+  `realm run respond`'s owed line said a project with no code had some. The loader returns the
+  `realm.yaml` it read (`manifestPath`); one `ProjectLoad` feeds both commands' words.
+- **`realm run purge` counts a run as resumable by resume's own rule (issue #625, PR-2a).** A run
+  whose only failed step is a cleanup step (`realm run resume --from` refuses it) was counted as
+  `resumable via 'realm run resume'`; the count now reads core's `resumeWay`.
+- **Every surface gives the way on for the states the record and the view can express (issue #625,
+  PR-2a).** A step that waits for an open question's answer is named — `realm run advance`'s
+  `Stopped:` and preview lines (`a question is open ('<step>' waits for its answer) — …`), `realm run
+inspect` (`Question open on '<step>': …`), MCP replies at the question and `get_run_state`'s
+  `waiting_on_answer`. Cleanup steps an ending left `pending` are named with the command that runs
+  them (`realm run drain <id> --force`) by `realm run advance`, `realm run respond`, `realm run
+inspect`, `realm workflow run`, `realm agent`, and MCP replies and `get_run_state`'s
+  `cleanup_pending`. An expired question's preview says the call then runs what its default leaves
+  owed. `realm run drain` at a question says that after the answer `realm run respond` names what the
+  run owes next (it named only `realm run abandon`). `start_run`, `execute_step` and a late answer
+  whose expiry's guard failed the run end with `'realm run resume <id> --from <step>' makes the failed
+step runnable again.`, and `get_run_state` gives `resumable`.
+- **No printed command is followed by punctuation a paste would carry (issue #625, PR-2a).** A line
+  that ends with a command ends there (`--choice ok`, not `--choice ok.`, which `realm run respond`
+  refused as a choice); `realm run advance`'s preview prints several reasons one per line; `realm run
+drain` prints its way out on the line after its command; the way-out sentence reads `… then realm
+run advance <id> — or end it: realm run abandon <id>`.
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
   After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
 --run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back

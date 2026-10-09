@@ -635,6 +635,43 @@ steps:
       );
     }, 20_000);
 
+    it('decision C211 (walk c14 W3-4): a run that completes with a cleanup step this program cannot run — the last line, then the command that runs it', async () => {
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  s1:
+    description: s1
+    execution: agent
+  tidy:
+    description: tidy
+    execution: finalizer
+    handler: missing_fin
+    on_outcome: always
+`,
+        'utf8',
+      );
+      mocks.question.mockImplementationOnce(async () => '{}');
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+      const rec = await readRecord();
+      // (a) red when the last line is not followed by the command that runs the pending cleanup
+      //     step; (b) prints the log.
+      expect(logged()).toContain(
+        `Run complete. Phase: completed\nCleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain ${rec.id} --force`,
+      );
+      expect(exitSpy).not.toHaveBeenCalled();
+      // The page says it (C163's rule): (a) red when realm-workflow.md no longer does.
+      const page = readFileSync(
+        new URL('../../../../docs/reference/cli/realm-workflow.md', import.meta.url),
+        'utf8',
+      ).replace(/\s+/g, ' ');
+      expect(page).toContain(
+        "When the ending left cleanup steps `pending`, the next line names the command that runs them: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <run-id> --force` (added after version 0.46.0).",
+      );
+    }, 20_000);
+
     it("B3 a stall hands the run back with a TRUTHFUL map — never 'Prompt cancelled'", async () => {
       // Red-first on main: the stall line alone, exit 0, no map, live run. First-iteration stall
       // (an unsatisfiable `when`) asks no question at all — the else-fork map with the

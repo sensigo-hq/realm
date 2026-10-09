@@ -40,6 +40,15 @@ import {
   owedRunsClause,
   oneOf,
   respondCommand,
+  waitingOnAnswer,
+  waitingWords,
+  pendingCleanupWay,
+  pendingCleanupLine,
+  pendingCleanupSentence,
+  owedCallWords,
+  endsWithCommand,
+  sentenceEnd,
+  type PendingView,
 } from './pending.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -2004,5 +2013,165 @@ describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where 
         "finalizer 'unselected': voided",
       ],
     });
+  });
+});
+
+describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
+  const asRun = (fields: Partial<RunRecord>) =>
+    ({
+      id: 'r1',
+      terminal_state: false,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+      params: {},
+      ...fields,
+    }) as unknown as RunRecord;
+  const def = {
+    id: 'w',
+    name: 'w',
+    version: 1,
+    steps: {
+      g0: { description: 'g0', execution: 'auto', depends_on: [] },
+      q: { description: 'q', execution: 'auto', depends_on: ['g0'] },
+      z: { description: 'z', execution: 'agent', depends_on: ['g0'] },
+      y: { description: 'y', execution: 'auto', depends_on: ['g0'] },
+      later: { description: 'later', execution: 'auto', depends_on: ['q'] },
+    },
+  } as unknown as WorkflowDefinition;
+  const gate = {
+    gate_id: 'gq',
+    step_name: 'q',
+    choices: ['yes', 'no'],
+    opened_at: '',
+    preview: {},
+  };
+
+  it('C211 (walk c14 W2-2): waitingOnAnswer — the steps ready but for the open question, its own step and the steps after it left out; none without a question or on an ended run', () => {
+    const open = asRun({
+      completed_steps: ['g0'],
+      in_progress_steps: ['q'],
+      pending_gate: gate,
+    } as never);
+    const view = describePending(def, open, undefined, new Date());
+    // (a) red when a held step is left out, the question's own step or a step after it is named, or
+    //     a run with no question names any; (b) prints them.
+    expect({
+      waiting: waitingOnAnswer(def, open),
+      view: view.waiting_on_answer,
+      words: waitingWords(view),
+      one: waitingWords({ waiting_on_answer: ['z'] } as PendingView),
+      none: waitingOnAnswer(def, asRun({ completed_steps: ['g0'] })),
+      ended: waitingOnAnswer(def, { ...open, terminal_state: true }),
+      noWords: waitingWords({} as PendingView),
+    }).toEqual({
+      waiting: ['z', 'y'],
+      view: ['z', 'y'],
+      words: "'z', 'y' wait for its answer",
+      one: "'z' waits for its answer",
+      none: [],
+      ended: [],
+      noWords: undefined,
+    });
+  });
+
+  it('C211 (walk c14 W3-4): pendingCleanupWay and its two forms — the pending entries in rank order; none on a run that has not ended', () => {
+    const ledger = {
+      note: { status: 'pending', rank: 1 },
+      tidy: { status: 'pending', rank: 0 },
+      done: { status: 'completed', rank: 2 },
+    };
+    const ended = asRun({ terminal_state: true, finalizer_ledger: ledger } as never);
+    const one = asRun({
+      terminal_state: true,
+      finalizer_ledger: { tidy: { status: 'pending', rank: 0 } },
+    } as never);
+    // (a) red when a completed entry is named, the order is not the rank order, or a live run gets a
+    //     line; (b) prints them.
+    expect({
+      way: pendingCleanupWay(ended),
+      line: pendingCleanupLine(ended),
+      oneLine: pendingCleanupLine(one),
+      sentence: pendingCleanupSentence(one),
+      live: [
+        pendingCleanupWay({ ...ended, terminal_state: false }),
+        pendingCleanupSentence({ ...ended, terminal_state: false }),
+      ],
+    }).toEqual({
+      way: { steps: ['tidy', 'note'], command: 'realm run drain r1 --force' },
+      line: "Cleanup steps left pending: 'tidy', 'note' — to run them with code that has their handlers: realm run drain r1 --force",
+      oneLine:
+        "Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain r1 --force",
+      sentence:
+        " Cleanup step left pending: 'tidy' — 'realm run drain r1 --force' runs it with code that has its handler.",
+      live: [undefined, ''],
+    });
+  });
+
+  it('C211 (walk c14 W2-1): an expired question — owedRunsClause and owedCallWords say the call then runs what a declared default leaves owed; nothing for an abort', () => {
+    const view = (on_expiry: 'settle_default' | 'abort') =>
+      ({ expiry_due: { step: 'g', gate_id: 'x', on_expiry } }) as unknown as PendingView;
+    const several = {
+      pending_guards: [],
+      engine_runnable: [
+        { step: 'a', runnable_here: true },
+        { step: 'b', runnable_here: true },
+      ],
+    } as unknown as PendingView;
+    // (a) red when a default's call is said to stop at the expiry, an abort is said to run more, or
+    //     several owed lose their stop words; (b) prints them.
+    expect({
+      clause: [owedRunsClause(view('settle_default')), owedRunsClause(view('abort'))],
+      call: [
+        owedCallWords(view('settle_default')),
+        owedCallWords(view('abort')),
+        owedCallWords(several),
+      ],
+    }).toEqual({
+      clause: [
+        '; then it runs what that leaves owed until a step opens a question, fails or ends the run',
+        '',
+      ],
+      call: [
+        ' carries it out, then runs what that leaves owed until a step opens a question, fails or ends the run',
+        '',
+        ' runs them until a step opens a question, fails or ends the run',
+      ],
+    });
+  });
+
+  it('C212 (walk c14 W1-1): the one rule — a sentence that ends with a command gets no full stop; a command followed by words, or none, does', () => {
+    // (a) red when a command ending a sentence gets a full stop, or prose ending in words loses one;
+    //     (b) prints them.
+    expect(
+      [
+        'a question is open — realm run respond r1 --gate g --choice ok',
+        'a question is open — realm run respond r1 --gate g --choice <one of: ship, hold>',
+        "an agent step is ready: 'w' — drive it with realm agent --run-id r1 --provider <provider> --model <model>",
+        "'p' is in flight in another program — wait for it, or see realm run inspect r1",
+        "the run has ended (failed) — to make 's' runnable again: realm run resume r1 --from s",
+        'To run them: realm run drain r1 --force',
+        'realm run advance r1 runs them until a step opens a question, fails or ends the run',
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself',
+        'the run has ended (completed)',
+        'nothing is ready to run now.',
+      ].map((t) => [
+        endsWithCommand(t),
+        sentenceEnd(t) === t ? 'as printed' : sentenceEnd(t) === `${t}.` ? 'full stop' : 'other',
+      ]),
+    ).toEqual([
+      [true, 'as printed'],
+      [true, 'as printed'],
+      [true, 'as printed'],
+      [true, 'as printed'],
+      [true, 'as printed'],
+      [true, 'as printed'],
+      [false, 'full stop'],
+      [false, 'full stop'],
+      [false, 'full stop'],
+      [false, 'as printed'],
+    ]);
   });
 });

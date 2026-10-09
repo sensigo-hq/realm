@@ -167,6 +167,50 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe(
+  "#625 PR-2a, round 30 — C211 (walk c14 W3-4): realm agent names the cleanup steps a drive's ending left pending",
+  { timeout: 60_000 },
+  () => {
+    const tidy = {
+      description: 'Tidy.',
+      execution: 'finalizer',
+      handler: 'missing_fin',
+      on_outcome: 'always',
+    } as unknown as StepDefinition;
+    it('a completed run: `Run complete:`, then the command that runs the cleanup step on stdout; a failed run: after the stop lines, on stderr', async () => {
+      claim(
+        AGENT_PAGE,
+        "When the run ended with cleanup steps left `pending` (the drive has no handler for them), one more line names the command that runs them, `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <run-id> --force`: on stdout after `Run complete: <run-id>`, on stderr after the lines above (added after version 0.46.0).",
+      );
+      const line =
+        "Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain <run> --force";
+      const done = await drive(wf({ a: agent(), tidy }), { answer: {} });
+      const registry = createDefaultRegistry();
+      registry.register('handler', 'boom', {
+        id: 'boom',
+        execute: async () => {
+          throw new Error('it broke');
+        },
+      });
+      const failed = await drive(wf({ a: agent(), s: auto({ handler: 'boom' }, ['a']), tidy }), {
+        answer: {},
+        registry,
+      });
+      // (a) red when the command is missing or on the wrong stream; (b) prints the lines.
+      expect({
+        done: [done.result, done.lines[done.lines.indexOf('log: \nRun complete: <run>') + 1]],
+        failed: [
+          failed.result,
+          failed.lines.filter((l) => l.includes('Cleanup step left pending')),
+        ],
+      }).toEqual({
+        done: ['completed', `log: ${line}`],
+        failed: ['failed', [`error: ${line}`]],
+      });
+    });
+  },
+);
+
 describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout: 60_000 }, () => {
   it('the table row `• Step … cannot run (<check>)`: an auto step that cannot run is named once per drive, and the drive goes on with the ready agent step', async () => {
     claim(

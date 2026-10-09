@@ -2767,3 +2767,273 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     ]);
   });
 });
+
+describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2, W3-4): the ways back in on every tool's reply, over a real MCP client", () => {
+  const RUN_STATE = 'mcp/run-state-and-health.md';
+  const say = (page: string, sentence: string): void =>
+    expect(
+      flat(readFileSync(join(DOCS, page), 'utf8')),
+      `${page} no longer says: ${sentence}`,
+    ).toContain(flat(sentence));
+  async function connectWith() {
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'boom', {
+      id: 'boom',
+      execute: async () => {
+        throw new Error('it broke');
+      },
+    });
+    registry.register('handler', 'quick', { id: 'quick', execute: async () => ({ data: {} }) });
+    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-c211-'));
+    const runStore = new JsonFileStore(join(dir, 'runs'));
+    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const server = createRealmMcpServer({ runStore, workflowStore, registry });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'docs-claims-625-c211', version: '0' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const call = async (name: string, args: Record<string, unknown>): Promise<Reply> => {
+      const raw = (await client.callTool({ name, arguments: args })) as {
+        content: Array<{ text: string }>;
+      };
+      return JSON.parse(raw.content[0]!.text) as Reply;
+    };
+    return { call, runStore, workflowStore };
+  }
+  const steps = (id: string, lines: string[]): WorkflowDefinition =>
+    loadWorkflowFromString(
+      ['id: ' + id, 'name: ' + id, 'version: 1', 'steps:', ...lines, ''].join('\n'),
+    );
+  const auto = (n: string, h: string, deps: string[] = []) => [
+    `  ${n}:`,
+    `    description: ${n}.`,
+    '    execution: auto',
+    `    handler: ${h}`,
+    ...(deps.length > 0 ? [`    depends_on: [${deps.join(', ')}]`] : []),
+  ];
+  const offer = (id: string, step: string) =>
+    ` 'realm run resume ${id} --from ${step}' makes the failed step runnable again.`;
+  const cleanupSentence = (id: string) =>
+    ` Cleanup step left pending: 'tidy' — 'realm run drain ${id} --force' runs it with code that has its handler.`;
+  const tidy = [
+    '  tidy:',
+    '    description: Tidy.',
+    '    execution: finalizer',
+    '    handler: missing_fin',
+    '    on_outcome: always',
+  ];
+
+  it('start_run, execute_step: a reply on a run that ended — own step failed, a chained step failed, the run had ended, a key that matched it — ends with the way back in', async () => {
+    say(
+      'mcp/tools.md',
+      "A reply of `execute_step`, `start_run` or `advance_run` on a run that ended — this call's own step failed, or the run had ended before it — ends with the ways back in: for a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.`, and for cleanup steps the ending left `pending`, ` Cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.`;",
+    );
+    say(
+      'mcp/tools.md',
+      "`ok` with `agent_action: \"stop\"`: `Run '<id>' is already terminal (<phase>); no steps executed.`, and for a run that ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it",
+    );
+    const { call, runStore, workflowStore } = await connectWith();
+    await workflowStore.register(
+      steps('c211-start', [...auto('s', 'boom'), ...auto('done', 'quick', ['s'])]),
+    );
+    const started = await call('start_run', { workflow_id: 'c211-start', idempotency_key: 'k1' });
+    const sid = started['run_id'] as string;
+    const ended = await call('execute_step', { run_id: sid, command: 'done', params: {} });
+    const matched = await call('start_run', { workflow_id: 'c211-start', idempotency_key: 'k1' });
+    await workflowStore.register(
+      steps('c211-exec', [
+        '  a:',
+        '    description: A.',
+        '    execution: agent',
+        ...auto('s', 'boom', ['a']),
+      ]),
+    );
+    const { run: chained } = await runStore.create({
+      workflowId: 'c211-exec',
+      workflowVersion: 1,
+      params: {},
+    });
+    const viaChain = await call('execute_step', { run_id: chained.id, command: 'a', params: {} });
+    await workflowStore.register(steps('c211-own', [...auto('s', 'boom')]));
+    const { run: own } = await runStore.create({
+      workflowId: 'c211-own',
+      workflowVersion: 1,
+      params: {},
+    });
+    const viaOwn = await call('execute_step', { run_id: own.id, command: 's', params: {} });
+    // (a) red when a reply on the ended run lacks the way back in; (b) prints the hints.
+    expect([
+      started['context_hint'],
+      ended['context_hint'],
+      matched['context_hint'],
+      viaChain['context_hint'],
+      viaOwn['context_hint'],
+    ]).toEqual([
+      `Step 's' failed. Run is terminated.${offer(sid, 's')}`,
+      `Run '${sid}' is already terminal (failed); no steps executed.${offer(sid, 's')}`,
+      `Matched existing run '${sid}' (idempotent) in phase 'failed'; no new run created.${offer(sid, 's')}`,
+      `Step 's' failed. Run is terminated.${offer(chained.id, 's')}`,
+      `Step 's' failed. Run is terminated.${offer(own.id, 's')}`,
+    ]);
+  });
+
+  it('advance_run and submit_human_response: an ending that left a cleanup step pending ends with the command that runs it', async () => {
+    const { call, runStore, workflowStore } = await connectWith();
+    await workflowStore.register(steps('c211-p', [...auto('a', 'quick'), ...tidy]));
+    const { run } = await runStore.create({ workflowId: 'c211-p', workflowVersion: 1, params: {} });
+    const advanced = await call('advance_run', { run_id: run.id });
+    const again = await call('advance_run', { run_id: run.id });
+    await workflowStore.register(
+      steps('c211-p-answer', [
+        '  g:',
+        '    description: G.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    gate:',
+        '      choices: [ship, hold]',
+        '  check:',
+        '    description: Check.',
+        '    execution: guard',
+        '    depends_on: [g]',
+        `    abort_unless: ["g.choice == 'ship'"]`,
+        ...tidy,
+      ]),
+    );
+    const { run: q } = await runStore.create({
+      workflowId: 'c211-p-answer',
+      workflowVersion: 1,
+      params: {},
+    });
+    await call('advance_run', { run_id: q.id });
+    const gate = (await runStore.get(q.id)).pending_gate!.gate_id;
+    const answered = await call('submit_human_response', {
+      run_id: q.id,
+      gate_id: gate,
+      choice: 'hold',
+    });
+    // (a) red when a reply on the ended run does not name the command; (b) prints the hints.
+    expect([advanced['context_hint'], again['context_hint'], answered['context_hint']]).toEqual([
+      `Run completed (phase: 'completed'). Call get_run_state with run_id '${run.id}' to retrieve the full evidence record.${cleanupSentence(run.id)}`,
+      `Run '${run.id}' is already terminal (completed); nothing ran.${cleanupSentence(run.id)}`,
+      `Guard step 'check' aborted the run.${cleanupSentence(q.id)}`,
+    ]);
+  });
+
+  it("submit_human_response: a late answer whose expiry's default made a guard fail the run ends with the way back in", async () => {
+    say(
+      'mcp/tools.md',
+      "`submit_human_response`'s reply on an answer that ended the run ends with the same sentences, a late answer whose expiry's guard failed the run included (added after version 0.46.0).",
+    );
+    const { call, runStore, workflowStore } = await connectWith();
+    await workflowStore.register(
+      steps('c211-late', [
+        '  g:',
+        '    description: G.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    gate:',
+        '      choices: [ship, hold]',
+        '      timeout_seconds: 60',
+        '      on_expiry: settle_default',
+        '      default_choice: hold',
+        '  check:',
+        '    description: Check.',
+        '    execution: guard',
+        '    depends_on: [g]',
+        '    abort_unless: ["nope.x == 1"]',
+      ]),
+    );
+    const { run } = await runStore.create({
+      workflowId: 'c211-late',
+      workflowVersion: 1,
+      params: {},
+    });
+    await call('advance_run', { run_id: run.id });
+    const r = await runStore.get(run.id);
+    await runStore.update({
+      ...r,
+      pending_gate: { ...r.pending_gate!, expires_at: new Date(Date.now() - 60_000).toISOString() },
+    });
+    const late = await call('submit_human_response', {
+      run_id: run.id,
+      gate_id: r.pending_gate!.gate_id,
+      choice: 'ship',
+    });
+    // (a) red when the late reply lacks the way back in; (b) prints the hint.
+    expect([late['answer_recorded'], late['context_hint']]).toEqual([
+      false,
+      `Gate '${r.pending_gate!.gate_id}' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded. Guard step 'check' failed with a resolution error. Run is terminated.${offer(run.id, 'check')}`,
+    ]);
+  });
+
+  it('get_run_state: resumable, cleanup_pending and waiting_on_answer; advance_run at the question names the step it holds', async () => {
+    say(
+      RUN_STATE,
+      '| `waiting_on_answer` | A question is open and steps wait for its answer | Those steps: ready by what they depend on, held while the question is open; they go on after the answer. Added after version 0.46.0. |',
+    );
+    say(
+      RUN_STATE,
+      '| `resumable` | The run ended with a failed step `realm run resume` takes | `steps`, those steps (never a cleanup step), and `command`, `realm run resume <id> --from <step>`. Added after version 0.46.0. |',
+    );
+    say(
+      RUN_STATE,
+      '| `cleanup_pending` | The run ended with cleanup steps left `pending` | `steps`, those steps in the order the engine runs them, and `command`, `realm run drain <id> --force`, which runs them with code that has their handlers. Added after version 0.46.0. |',
+    );
+    say(
+      'mcp/tools.md',
+      "when steps wait for its answer, it names them before the full stop: `— answer it with submit_human_response; '<step>' waits for its answer.` (added after version 0.46.0).",
+    );
+    const { call, runStore, workflowStore } = await connectWith();
+    await workflowStore.register(steps('c211-r', [...auto('s', 'boom'), ...tidy]));
+    const { run: failed } = await runStore.create({
+      workflowId: 'c211-r',
+      workflowVersion: 1,
+      params: {},
+    });
+    await call('advance_run', { run_id: failed.id });
+    const failedState = await call('get_run_state', { run_id: failed.id });
+    await workflowStore.register(
+      steps('c211-w', [
+        '  g0:',
+        '    description: G0.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    gate:',
+        '      choices: [go, stop]',
+        '  q:',
+        '    description: Q.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    depends_on: [g0]',
+        '    gate:',
+        '      choices: [yes, no]',
+        ...auto('z', 'quick', ['g0']),
+      ]),
+    );
+    const { run: w } = await runStore.create({
+      workflowId: 'c211-w',
+      workflowVersion: 1,
+      params: {},
+    });
+    await call('advance_run', { run_id: w.id });
+    await call('submit_human_response', {
+      run_id: w.id,
+      gate_id: (await runStore.get(w.id)).pending_gate!.gate_id,
+      choice: 'go',
+    });
+    await call('advance_run', { run_id: w.id });
+    const atQuestion = await call('advance_run', { run_id: w.id });
+    const waitingState = await call('get_run_state', { run_id: w.id });
+    // (a) red when a field is missing or says more than the record; (b) prints them.
+    expect({
+      resumable: failedState['resumable'],
+      cleanup: failedState['cleanup_pending'],
+      waiting: waitingState['waiting_on_answer'],
+      hint: atQuestion['context_hint'],
+    }).toEqual({
+      resumable: { steps: ['s'], command: `realm run resume ${failed.id} --from s` },
+      cleanup: { steps: ['tidy'], command: `realm run drain ${failed.id} --force` },
+      waiting: ['z'],
+      hint: `Run '${w.id}': nothing ran. Waiting on the question on step 'q' (choices: yes, no) — answer it with submit_human_response; 'z' waits for its answer.`,
+    });
+  });
+});
