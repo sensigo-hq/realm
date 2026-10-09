@@ -445,17 +445,17 @@ describe(
     it('C170 gates.md: an answer after the abort is refused with the aborted run’s way out (realm run respond)', async () => {
       claimDoc625(
         'docs/reference/cli/realm-run-acting.md',
-        "| The run has ended | `Run '00b33778-…' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 00b33778-… --force' removes its record.` The words after the dash name the way out that kind of ending has, as `submit_human_response` names it: see [A run that has ended](../mcp/tools.md#a-run-that-has-ended). |",
+        "| The run has ended | `Run '00b33778-…' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 00b33778-…' previews what it would remove.` The words after the dash name the way out that kind of ending has, as `submit_human_response` names it: see [A run that has ended](../mcp/tools.md#a-run-that-has-ended). |",
       );
       claim(
         'workflow/gates.md',
-        "Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c --force' removes its record.",
+        "Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c' previews what it would remove.",
       );
       const { runId, gateId } = await atQuestion(gateThenAuto('dc-aborted', 'abort'));
       expect(realm('run', 'advance', runId).code).toBe(0);
       const r = realm('run', 'respond', runId, '--gate', gateId, '--choice', 'approve');
       expect(r.err.filter((l) => l !== '')).toContain(
-        `Run '${runId}' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge ${runId} --force' removes its record.`,
+        `Run '${runId}' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge ${runId}' previews what it would remove.`,
       );
     });
 
@@ -464,7 +464,7 @@ describe(
       async (kind) => {
         claim(
           'mcp/tools.md',
-          "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which none did.",
+          "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which none did.",
         );
         let runId: string;
         let step: string;
@@ -543,7 +543,7 @@ describe(
     it('C204 (round 27 finding 4): realm run respond on a run whose step and cleanup step failed offers `--from s` only, and `resume --from` takes it; once only the cleanup step is failed, it offers none', async () => {
       claim(
         'mcp/tools.md',
-        "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which only steps it does not take failed",
+        "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which only steps it does not take failed",
       );
       const def = loadWorkflowFromString(
         [
@@ -580,7 +580,7 @@ describe(
         'failed',
         ['s', 'clean'],
       ]);
-      const purge = `'realm run purge ${runId} --force' removes its record`;
+      const purge = `'realm run purge ${runId}' previews what it would remove`;
       const respond = () => realm('run', 'respond', runId, '--gate', 'any', '--choice', 'approve');
       const first = respond();
       const fromClean = realm('run', 'resume', runId, '--from', 'clean');

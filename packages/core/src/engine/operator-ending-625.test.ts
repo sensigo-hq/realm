@@ -118,7 +118,7 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
     // (a) red when the refusal offers `realm run resume`, drops the reason, or prints it raw;
     //     (b) prints the refusal.
     expect({ error: reply.errors[0], code: reply.error_code }).toEqual({
-      error: `Run '${run.id}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run; 'realm run purge ${run.id} --force' removes its record.`,
+      error: `Run '${run.id}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run; 'realm run purge ${run.id}' previews what it would remove.`,
       code: 'STATE_RUN_TERMINAL',
     });
     expect(terminalAnswerRefusalMessage(run, TWO)).not.toContain('realm run resume');

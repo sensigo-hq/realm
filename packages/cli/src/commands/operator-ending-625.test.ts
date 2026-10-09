@@ -98,7 +98,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
     );
     claim(
       'CHANGELOG.md',
-      'failed one in which a step failed; for an abandoned one, that an operator ended it, its reason, and that a new run runs the work again, or purge.',
+      'for a failed one in which a step failed; for an abandoned one, that an operator ended it, its reason, and that a new run runs the work again, or that preview.',
     );
     const run = await abandoned();
     const r = realm('run', 'respond', run.id, '--gate', 'g-old', '--choice', 'yes');
@@ -108,7 +108,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
     expect({ code: r.code, err }).toEqual({
       code: 1,
       err: [
-        `Run '${run.id}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run; 'realm run purge ${run.id} --force' removes its record.`,
+        `Run '${run.id}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run; 'realm run purge ${run.id}' previews what it would remove.`,
       ],
     });
   });

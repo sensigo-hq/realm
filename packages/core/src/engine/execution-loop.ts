@@ -1310,13 +1310,15 @@ function resumeOffer(command: string): string {
  * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a run an operator
  * ended is never offered the undo (F2): it says the operator's ending, its reason and that a new run
  * runs the work again ({@link operatorEndingClause}); a failed one is resumed only from a failed step
- * `realm run resume --from` takes — {@link offeredResumeWay} (never a cleanup step). `realm run
- * purge <id> --force` removes any ended run's record. The refusal of an answer to an ended run ends
- * with it, and so does the refusal of a late answer whose run another call ended (decision C204).
+ * `realm run resume --from` takes — {@link offeredResumeWay} (never a cleanup step). F3 (framework
+ * A.3 #10, R10: a destructive act shows its blast radius first): the purge it names is the preview,
+ * `realm run purge <id>` with no `--force`, which says what it would remove and removes nothing;
+ * never the `--force` form. The refusal of an answer to an ended run ends with it, and so does the
+ * refusal of a late answer whose run another call ended (decision C204).
  */
 function endedRunWayOut(run: RunRecord, workflow: Parameters<typeof resumeWay>[1]): string {
   const phase = deriveRunPhase(run);
-  const purge = `'realm run purge ${run.id} --force' removes its record`;
+  const purge = `'realm run purge ${run.id}' previews what it would remove`;
   const operator = operatorEndingClause(run);
   const resume = offeredResumeWay(run, workflow);
   return phase === 'completed'

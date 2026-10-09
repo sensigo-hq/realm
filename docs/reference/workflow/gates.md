@@ -286,7 +286,7 @@ Gate '638d412e-ee8a-492c-ae80-750d2a26cbc2' on 'approve' expired and the run abo
 An answer that arrives after something else carried out the abort is refused with `STATE_RUN_TERMINAL`, without that field — as is every answer to a question that recorded no choice on a run that has ended (see [A run that has ended](../mcp/tools.md#a-run-that-has-ended)):
 
 ```text
-Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c --force' removes its record.
+Run '063dee23-e68e-4d7f-bcc2-968dd764370c' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 063dee23-e68e-4d7f-bcc2-968dd764370c' previews what it would remove.
 ```
 
 A gate with `timeout_seconds` and no `on_expiry` accepts an answer after its time is up.

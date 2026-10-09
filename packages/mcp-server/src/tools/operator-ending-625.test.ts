@@ -106,7 +106,7 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
     );
     claim(
       'mcp/tools.md',
-      "`an operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run; 'realm run purge <id> --force' removes its record.` for an abandoned one (never `realm run resume`, which would erase the operator's ending and its reason);",
+      "`an operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run; 'realm run purge <id>' previews what it would remove.` for an abandoned one (never `realm run resume`, which would erase the operator's ending and its reason);",
     );
     claim(
       'mcp/tools.md',

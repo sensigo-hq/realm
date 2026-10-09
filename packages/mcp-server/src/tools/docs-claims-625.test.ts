@@ -2073,7 +2073,7 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
 
 describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () => {
   const PER_KIND =
-    "`it completed, and nothing is owed.` for a completed run; `an aborted run is never resumed; 'realm run purge <id> --force' removes its record.` for an aborted one; `an operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run; 'realm run purge <id> --force' removes its record.` for an abandoned one (never `realm run resume`, which would erase the operator's ending and its reason); `'realm run resume <id> --from <step>' makes the failed step runnable again, or 'realm run purge <id> --force' removes its record.` for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which none did.";
+    "`it completed, and nothing is owed.` for a completed run; `an aborted run is never resumed; 'realm run purge <id>' previews what it would remove.` for an aborted one; `an operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run; 'realm run purge <id>' previews what it would remove.` for an abandoned one (never `realm run resume`, which would erase the operator's ending and its reason); `'realm run resume <id> --from <step>' makes the failed step runnable again, or 'realm run purge <id>' previews what it would remove.` for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which none did.";
 
   it.each([
     'completed',
@@ -2134,7 +2134,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
         gate_id: 'other',
         choice: 'approve',
       });
-      const purge = `'realm run purge ${runId} --force' removes its record`;
+      const purge = `'realm run purge ${runId}' previews what it would remove`;
       // F2: a run an operator ended (both abandoned kinds) is told the ending and its reason, never
       // offered `realm run resume`.
       const reason = JSON.stringify((await runStore.get(runId)).terminal_reason);
@@ -2208,7 +2208,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     });
     // red when the refusal names one failed step as the only way back in, or none.
     expect(r['context_hint']).toBe(
-      `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from <one of: ${run.failed_steps.join(', ')}>' makes the failed step runnable again, or 'realm run purge ${runId} --force' removes its record.`,
+      `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from <one of: ${run.failed_steps.join(', ')}>' makes the failed step runnable again, or 'realm run purge ${runId}' previews what it would remove.`,
     );
   });
 
@@ -2249,7 +2249,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     expect([failed.run_phase, failed.failed_steps], 'fixture').toEqual(['failed', ['s', 'clean']]);
     const answer = () =>
       call('submit_human_response', { run_id: runId, gate_id: 'other', choice: 'approve' });
-    const purge = `'realm run purge ${runId} --force' removes its record`;
+    const purge = `'realm run purge ${runId}' previews what it would remove`;
     const first = await answer();
     // Then only the cleanup step is failed: `s` resumed (it leaves `clean` listed), the run abandoned.
     const { applyResume } = await import('@sensigo/realm');

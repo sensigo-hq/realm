@@ -388,7 +388,7 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
       // resume` on a run it refuses (this run was aborted by its gate's expiry). (a) red when the
       // old generic resume pointer comes back or another way out is named; (b) prints the errors.
       expect(envelope.errors.join(' ')).toContain(
-        `your choice was NOT recorded; an aborted run is never resumed; 'realm run purge ${run.id} --force' removes its record.`,
+        `your choice was NOT recorded; an aborted run is never resumed; 'realm run purge ${run.id}' previews what it would remove.`,
       );
       expect(envelope.errors.join(' ')).not.toContain("'realm run resume'");
       // The false attribution the mutant produces instead: reports THIS gate as the one that
