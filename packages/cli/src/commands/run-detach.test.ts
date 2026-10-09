@@ -246,6 +246,24 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
     });
   });
 
+  it('decision C211 (walk c14 W3-4): a run that ended with a cleanup step left pending — the command that runs it, above Inspect', () => {
+    const map = renderDetachMap(
+      record({
+        terminal_state: true,
+        run_phase: 'completed',
+        sealed_by: { arm: 'complete' },
+        finalizer_ledger: { clean: { status: 'pending', rank: 0 } },
+      } as Partial<RunRecord>),
+      'a',
+      ways({}, { a: { execution: 'auto' }, clean: { execution: 'finalizer' } }),
+    ).split('\n');
+    // (a) red when the map leaves the pending cleanup step without its command; (b) prints the map.
+    expect(map.slice(1)).toEqual([
+      "  Cleanup step left pending: 'clean' — to run it with code that has its handler: realm run drain run_abc --force",
+      '  Inspect:   realm run inspect run_abc',
+    ]);
+  });
+
   it('a question whose time is up and that declares `on_expiry`: the owed call in place of `Respond`', () => {
     const rec = record({
       pending_gate: {
