@@ -116,6 +116,8 @@ import {
   notCallableReason,
   refusedAnswerTail,
   resumeWay,
+  pendingCleanupSentence,
+  pendingCleanupLine,
   type PendingView,
   type PreClaimRefused,
 } from './pending.js';
@@ -1338,9 +1340,9 @@ export function terminalAnswerRefusalMessage(
  * decision C205: a reply on a run that has ended with a failed step `realm run resume` takes ends
  * with the way back in — ` '<the command>' makes the failed step runnable again.` ({@link
  * resumeOffer}, C170's words). Every other reply is returned unchanged. An answer's reply reads it
- * here (so `realm run respond`, the run prompt and the Slack notifier print it through
- * {@link describeAnswerEnding}); MCP `advance_run` applies it to its reply — the CLI commands that
- * call `advanceRun` print their own form of the same way back in.
+ * here — the recorded answer's and, decision C211, the late answer's whose expiry ended the run —
+ * so `realm run respond`, the run prompt and the Slack notifier print it through {@link
+ * describeAnswerEnding}; the MCP tools whose reply can end a run apply {@link withEndedRunWays}.
  */
 export function withResumeOffer(
   envelope: ResponseEnvelope,
@@ -1355,6 +1357,54 @@ export function withResumeOffer(
     ...envelope,
     context_hint: `${hint}${hint.length > 0 ? ' ' : ''}${resumeOffer(resume.command)}.`,
   };
+}
+
+/**
+ * Decision C211 (walk c14 W3-4's class): a reply on a run that has ended with cleanup steps left
+ * `pending` ends with the command that runs them — ` Cleanup step left pending: '<s>' — 'realm run
+ * drain <id> --force' runs it with code that has its handler.` ({@link pendingCleanupSentence}).
+ * Every other reply is returned unchanged. The MCP tools apply it (the CLI prints its own line).
+ */
+export function withPendingCleanup(envelope: ResponseEnvelope, run: RunRecord): ResponseEnvelope {
+  const sentence = pendingCleanupSentence(run);
+  if (sentence === '') return envelope;
+  const hint = envelope.context_hint;
+  return {
+    ...envelope,
+    context_hint: hint.length > 0 ? `${hint}${sentence}` : sentence.trimStart(),
+  };
+}
+
+/**
+ * The ways back into a run that has ended, on an MCP reply (decisions C205, C211): {@link
+ * withResumeOffer}, then {@link withPendingCleanup}. `advance_run`, `start_run`, `start_run_batch`
+ * and `execute_step` apply it to a reply on a run that has ended; `submit_human_response`, whose
+ * core reply already carries the resume offer, applies {@link withPendingCleanup} alone.
+ */
+export function withEndedRunWays(
+  envelope: ResponseEnvelope,
+  run: RunRecord,
+  workflow: Parameters<typeof resumeWay>[1],
+): ResponseEnvelope {
+  const tail = endedRunWaysSentence(run, workflow);
+  if (tail === '') return envelope;
+  const hint = envelope.context_hint;
+  return { ...envelope, context_hint: hint.length > 0 ? `${hint}${tail}` : tail.trimStart() };
+}
+
+/**
+ * The sentences {@link withEndedRunWays} appends (decisions C205, C211), for a composer that builds
+ * its own hint (`start_run`'s and `start_run_batch`'s hand-back of a run the key matched): ` '<the
+ * resume command>' makes the failed step runnable again.` and the cleanup sentence; empty for a
+ * run that has not ended, or has neither.
+ */
+export function endedRunWaysSentence(
+  run: RunRecord,
+  workflow: Parameters<typeof resumeWay>[1],
+): string {
+  if (!run.terminal_state) return '';
+  const resume = resumeWay(run, workflow);
+  return `${resume === undefined ? '' : ` ${resumeOffer(resume.command)}.`}${pendingCleanupSentence(run)}`;
 }
 
 /**
@@ -5101,17 +5151,36 @@ export function finalizerOutcomeLines(
 export function describeAnswerEnding(
   reply: ResponseEnvelope,
   run: RunRecord,
-  answer: { gateId: string; via: AnswerCaller },
+  answer: {
+    gateId: string;
+    via: AnswerCaller;
+    // decision C211: the run's workflow — the way back in after a late answer whose expiry ended
+    // the run reads resume's rule over it.
+    workflow?: Parameters<typeof resumeWay>[1];
+  },
 ): string[] {
-  const finalizerLines = (): string[] => finalizerOutcomeLines(run);
+  // decision C211 (walk c14 W3-4's class): after each cleanup step's outcome, the command that runs
+  // the ones the ending left pending.
+  const finalizerLines = (): string[] => [
+    ...finalizerOutcomeLines(run),
+    ...[pendingCleanupLine(run)].filter((line): line is string => line !== undefined),
+  ];
   const passedLines = (): string[] => (reply.guards ?? []).map((g) => guardPassedLine(g.step));
   if (reply.answer_recorded === false) {
     const expirySentence =
       reply.status === 'ok' ? LATE_SAME_CHOICE_SENTENCE : (reply.errors[0] ?? reply.context_hint);
+    // decision C211 (the architect's addendum, round 28 note 7): the guard's ending sentence ends
+    // with the way back in, as the on-time answer's does (its reply's sentence carries it).
+    const resume = answer.workflow === undefined ? undefined : resumeWay(run, answer.workflow);
+    const [ending, ...reason] = describeEndedBy(reply);
+    const endingLines =
+      ending === undefined
+        ? []
+        : [resume === undefined ? ending : `${ending} ${resumeOffer(resume.command)}.`, ...reason];
     return [
       ...lateExpiryLines(reply, run, answer),
       ...(reply.ended_by !== undefined
-        ? [expirySentence, ...describeEndedBy(reply), ...finalizerLines()]
+        ? [expirySentence, ...endingLines, ...finalizerLines()]
         : [expirySentence, ...passedLines()]),
     ];
   }
@@ -5261,13 +5330,23 @@ async function composeExpiredGateEnvelope(
     answerClaim.tokenPresented,
   );
   const ending = guardEndingOf(expireResult);
-  return {
-    ...reply,
-    answer_recorded: false,
-    ...(ending !== undefined
-      ? { context_hint: `${expiryReply.context_hint} ${ending.sentence}` }
-      : {}),
-  };
+  // decision C211 (the architect's addendum, round 28 note 7): a late answer whose expiry ended the
+  // run with a failed step `realm run resume` takes says the way back in, as an on-time answer's
+  // reply does — read off the record the expiry's write and its drain left.
+  const ended = expireResult.run.terminal_state
+    ? await store.get(expireResult.run.id).catch(() => expireResult.run)
+    : expireResult.run;
+  return withResumeOffer(
+    {
+      ...reply,
+      answer_recorded: false,
+      ...(ending !== undefined
+        ? { context_hint: `${expiryReply.context_hint} ${ending.sentence}` }
+        : {}),
+    },
+    ended,
+    definition,
+  );
 }
 
 /** The expiry reply before the guard rule — see {@link composeExpiredGateEnvelope}. */

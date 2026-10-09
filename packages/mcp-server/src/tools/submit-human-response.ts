@@ -5,6 +5,8 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   submitHumanResponse,
+  withPendingCleanup,
+  TERMINAL_PHASES,
   WorkflowError,
   boundStatedName,
   identityRefusalLine,
@@ -142,7 +144,7 @@ export async function handleSubmitHumanResponse(
     RealmExtensionRegistry,
   );
 
-  return submitHumanResponse(runStore, definition, {
+  const reply = await submitHumanResponse(runStore, definition, {
     runId: args.run_id,
     gateId: args.gate_id,
     choice: args.choice,
@@ -156,6 +158,11 @@ export async function handleSubmitHumanResponse(
     ...(args.claim_token !== undefined ? { claimToken: args.claim_token } : {}),
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
   });
+  // decision C211 (walk c14 W3-4's class): an answer that ended the run with cleanup steps left
+  // pending says the command that runs them (the reply carries the resume offer already).
+  if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) return reply;
+  const ended = await runStore.get(args.run_id).catch(() => undefined);
+  return ended === undefined ? reply : withPendingCleanup(reply, ended);
 }
 
 /** Registers the submit_human_response MCP tool on the server. */

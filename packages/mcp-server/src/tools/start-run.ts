@@ -6,6 +6,8 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   advanceRun,
+  withEndedRunWays,
+  endedRunWaysSentence,
   buildNextActions,
   describeNext,
   describePending,
@@ -63,7 +65,8 @@ export function handBackHint(args: {
     ? describeNext(describePending(definition, current, registry, now), current)
     : '';
   if (deduped) {
-    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}`;
+    // decisions C205, C211: a matched run that has ended says the ways back in.
+    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}${endedRunWaysSentence(current, definition)}`;
   }
   return run.rerun_of !== undefined
     ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
@@ -244,8 +247,10 @@ export async function handleStartRun(
     } else if (ranSomething) {
       // decision C10: the phase is derived from the record advanceRun leaves.
       const finalRun = await runStore.get(run.id).catch(() => run);
+      // decisions C205, C211 (the architect's addendum): a run this call ended — its own step
+      // failed, or cleanup steps were left pending — says the ways back in.
       return {
-        ...result,
+        ...withEndedRunWays(result, finalRun, definition),
         run_id: run.id,
         data: {},
         evidence: [],

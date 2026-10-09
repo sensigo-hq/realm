@@ -247,7 +247,8 @@ export const resumeCommand = new Command('resume')
         view = {
           owedLine:
             pending.act !== undefined
-              ? `To run ${steps} the engine owes (${owedList(pending)})${until === '' ? '' : `${until},`} without a model: realm run advance ${runId}.`
+              ? // decision C212: the line ends with its command — no full stop.
+                `To run ${steps} the engine owes (${owedList(pending)})${until === '' ? '' : `${until},`} without a model: realm run advance ${runId}`
               : undefined,
           stuck: cannotGoOnHere(resumed, pending),
           agentReady: pending.agent_steps.length > 0,

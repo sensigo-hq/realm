@@ -23,6 +23,7 @@ import {
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
+  pendingCleanupLine,
   type RunStore,
   type WorkflowDefinition,
   type StepDefinition,
@@ -498,10 +499,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   };
   // decision C205: a drive that stops on a run that ended with a failed step `realm run resume`
   // takes gives the way back in — the line `realm workflow run` gives (`  Resume:    …`).
+  // decision C211 (walk c14 W3-4's class): and cleanup steps the ending left pending — the command
+  // that runs them.
   const printResumeLine = async (): Promise<void> => {
     const ended = await deps.store.get(runId).catch(() => undefined);
     const line = ended === undefined ? undefined : resumeLine(ended, definition);
     if (line !== undefined) console.error(line);
+    const cleanup = ended === undefined ? undefined : pendingCleanupLine(ended);
+    if (cleanup !== undefined) console.error(cleanup);
   };
   let attemptStartedAt = Date.now();
   try {
@@ -1950,6 +1955,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
   if (currentRun.run_phase === 'completed') {
     console.log(`\nRun complete: ${runId}`);
+    // decision C211: cleanup steps the ending left pending — the command that runs them.
+    const cleanup = pendingCleanupLine(currentRun);
+    if (cleanup !== undefined) console.log(cleanup);
 
     // Print the last agent step's output so the result is visible without
     // a separate `realm run inspect` call.

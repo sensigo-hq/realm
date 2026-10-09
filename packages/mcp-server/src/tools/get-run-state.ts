@@ -24,6 +24,9 @@ import {
   dueExpiry,
   answerAction,
   openQuestionOf,
+  resumeWay,
+  pendingCleanupWay,
+  waitingOnAnswer as waitingOnAnswerOf,
   assertRegistryLine,
   ExtensionRegistry,
   type ADVANCE_OWED,
@@ -322,6 +325,24 @@ export interface RunStateSummary {
    * Such a step is never in `next_actions`. Absent when none.
    */
   agent_refused?: EngineRunnable[];
+  /**
+   * issue #625 PR-2a (decision C211): on a run that has ended, the failed steps `realm run resume
+   * --from` takes and the command that makes them runnable again (core's `resumeWay` — never a
+   * cleanup step). Absent when it takes none, or the run's workflow cannot be read.
+   */
+  resumable?: { steps: string[]; command: string };
+  /**
+   * issue #625 PR-2a (decision C211): on a run that has ended, the cleanup steps its ending left
+   * `pending`, in the order the engine runs them, and the command that runs them (`realm run drain
+   * <id> --force`, with code that has their handlers). Absent when none is pending.
+   */
+  cleanup_pending?: { steps: string[]; command: string };
+  /**
+   * issue #625 PR-2a (decision C211): at an open question, the steps it holds — eligible by their
+   * dependencies, they go on after the answer. Absent when none waits, or the run's workflow cannot
+   * be read.
+   */
+  waiting_on_answer?: string[];
 }
 
 /**
@@ -387,8 +408,22 @@ export async function handleGetRunState(
   let pending: ReturnType<typeof describePending> | undefined;
   // decision C46: the registry the view judged with, passed to the run-health classifier too.
   let registry: ExtensionRegistry | undefined;
+  // decision C211 (the architect's addendum; walk c14 W2-2): the read names what the record's lists
+  // do not show — on a run that has ended, the failed steps `realm run resume` takes (`resumable`,
+  // core's `resumeWay`) and the cleanup steps left pending (`cleanup_pending`); at an open question,
+  // the steps it holds (`waiting_on_answer`). Each read of the workflow is best-effort: a workflow
+  // that cannot be read leaves that field out.
+  const readWorkflow = async (): Promise<WorkflowDefinition | undefined> =>
+    stores?.workflowStore === undefined
+      ? undefined
+      : await stores.workflowStore.get(run.workflow_id).catch(() => undefined);
+  let resumable: { steps: string[]; command: string } | undefined;
+  let waitingOnAnswer: string[] = [];
+  const cleanupPending = pendingCleanupWay(run);
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
+    const ended = await readWorkflow();
+    resumable = ended === undefined ? undefined : resumeWay(run, ended);
   } else if (run.pending_gate !== undefined && dueExpiry(run.pending_gate, now) === undefined) {
     nextActionsStatus = 'awaiting_human';
     // decision C103: the question is named by its answer — core's one composer, never with the claim
@@ -396,6 +431,8 @@ export async function handleGetRunState(
     // definition is needed to answer a question.
     const question = openQuestionOf(run);
     if (question !== undefined) nextActions = [answerAction(run.id, question)];
+    const held = await readWorkflow();
+    waitingOnAnswer = held === undefined ? [] : waitingOnAnswerOf(held, run);
   } else {
     definition =
       stores?.workflowStore !== undefined
@@ -656,6 +693,9 @@ export async function handleGetRunState(
     ...(pending !== undefined && pending.agent_refused.length > 0
       ? { agent_refused: pending.agent_refused }
       : {}),
+    ...(resumable !== undefined ? { resumable } : {}),
+    ...(cleanupPending !== undefined ? { cleanup_pending: cleanupPending } : {}),
+    ...(waitingOnAnswer.length > 0 ? { waiting_on_answer: waitingOnAnswer } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }

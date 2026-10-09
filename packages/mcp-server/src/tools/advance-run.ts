@@ -8,7 +8,8 @@ import {
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
-  withResumeOffer,
+  withEndedRunWays,
+  TERMINAL_PHASES,
   type ResponseEnvelope,
   type Attributed,
   type ActorAbsent,
@@ -79,12 +80,14 @@ export async function handleAdvanceRun(
   });
   // decision C205: a reply on a run that ended with a failed step `realm run resume` takes — this
   // call's own step failed, or the run had ended before it — ends with the way back in.
+  // decision C211: a run that ended with cleanup steps left pending says the command that runs
+  // them too — any ending.
   const ended =
-    result.run_phase === 'failed' || result.run_phase === 'abandoned'
+    result.run_phase !== undefined && TERMINAL_PHASES.has(result.run_phase)
       ? await runStore.get(args.run_id).catch(() => undefined)
       : undefined;
   return {
-    ...(ended === undefined ? result : withResumeOffer(result, ended, definition)),
+    ...(ended === undefined ? result : withEndedRunWays(result, ended, definition)),
     continued_by:
       stores?.driver !== undefined
         ? stores.driver

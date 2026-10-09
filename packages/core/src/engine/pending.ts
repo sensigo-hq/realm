@@ -266,6 +266,13 @@ export interface PendingView {
    * ({@link answerableQuestion}).
    */
   open_question?: OpenQuestion;
+  /**
+   * Decision C211 (walk c14 W2-2): the steps that wait for the open question's answer — eligible by
+   * their dependencies, but held while a question is open (gate serialization: no step is eligible
+   * while a gate is open). Present only with an answerable question ({@link answerableQuestion})
+   * and at least one such step; in definition order. Read through {@link waitingWords}.
+   */
+  waiting_on_answer?: string[];
 }
 
 /** An open question (decision C103): the step that asks it, its gate, and the choices it takes. */
@@ -446,6 +453,45 @@ export function withFullStop(text: string): string {
 }
 
 /**
+ * Decision C212: whether the text ends with a command a reader pastes — its last clause, from the
+ * last `realm ` that starts a word, is `realm <group> <command>` followed only by a positional
+ * argument, `--flags`, a flag's value and `<placeholders>` (`<one of: a, b>` is one). A command
+ * followed by words (`realm run advance <id> runs them …`) does not end the text.
+ */
+export function endsWithCommand(text: string): boolean {
+  const start = text.lastIndexOf('realm ');
+  if (start < 0 || (start > 0 && text[start - 1] !== ' ')) return false;
+  const tokens = text.slice(start).match(/<[^>]*>|\S+/g) ?? [];
+  const [, group, name, ...rest] = tokens;
+  if (group === undefined) return false;
+  // `realm agent` takes flags only; `realm run|workflow <command>` one positional, then flags.
+  let i = 0;
+  if (group !== 'agent') {
+    if (name === undefined || !/^[a-z][a-z-]*$/.test(name)) return false;
+    if (rest[0] !== undefined && !rest[0].startsWith('--')) i = 1;
+  } else if (name !== undefined) {
+    rest.unshift(name);
+  }
+  while (i < rest.length) {
+    const token = rest[i]!;
+    if (!/^--[a-z][a-z-]*$/.test(token)) return false;
+    const value = rest[i + 1];
+    i += value !== undefined && !value.startsWith('--') ? 2 : 1;
+  }
+  return true;
+}
+
+/**
+ * Decision C212, the one rule: no printed command is followed by punctuation a paste would carry.
+ * A sentence that ends with a command ({@link endsWithCommand}) ends with it, with no full stop;
+ * any other sentence gets one ({@link withFullStop}). Every line composer whose sentence can end
+ * with a command ends it here.
+ */
+export function sentenceEnd(text: string): string {
+  return endsWithCommand(text) ? text : withFullStop(text);
+}
+
+/**
  * The words for an engine step that cannot run (decision C36): `cannot run here (capability)` — the
  * caller's own registry lacks the handler or adapter, and a runner with it could run the step — and
  * `cannot run (<check>)` for trust, precondition and input schema, which refuse it everywhere. A
@@ -480,7 +526,7 @@ export function cannotRunClause(entry: EngineRunnable): string {
 export function cannotRunWayOut(run: RunRecord): string {
   return (
     `Run ${run.id} stays open (phase '${deriveRunPhase(run)}'): correct the workflow, register it ` +
-    `again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`
+    `again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`
   );
 }
 
@@ -547,13 +593,14 @@ export function capabilityMarkerWayOut(runId: string): string {
  */
 export function cannotGoOnLines(run: RunRecord, pending: PendingView): string[] {
   if (!cannotGoOnHere(run, pending)) return [];
+  // decision C212: a line that ends with a command ends without a full stop.
   const lines = stepsThatCannotRun(pending).map((e) =>
-    withFullStop(cannotRunClause(e) + (e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '')),
+    sentenceEnd(cannotRunClause(e) + (e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '')),
   );
   lines.push(
     cannotRunWayOutApplies(run, pending)
       ? cannotRunWayOut(run)
-      : `To end the run instead: realm run abandon ${run.id}.`,
+      : `To end the run instead: realm run abandon ${run.id}`,
   );
   return lines;
 }
@@ -611,6 +658,83 @@ export function respondCommand(runId: string, gateId: string, choices: readonly 
   return `realm run respond ${runId} --gate ${gateId} --choice ${oneOf(choices)}`;
 }
 
+/**
+ * Decision C211 (walk c14 W2-2): the steps an open question holds — eligible by their dependencies
+ * once its gate is set aside, its own step excluded, in definition order. Empty for a run with no
+ * open question or one that has ended.
+ */
+export function waitingOnAnswer(definition: WorkflowDefinition, run: RunRecord): string[] {
+  const gate = run.pending_gate;
+  if (run.terminal_state || gate === undefined) return [];
+  const order = stepOrder(definition);
+  const { pending_gate: _held, ...withoutGate } = run;
+  return findEligibleSteps(definition, withoutGate)
+    .filter((step) => step !== gate.step_name)
+    .sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+}
+
+/**
+ * `'z' waits for its answer` / `'z', 'x' wait for its answer` (decision C211) — the view's
+ * {@link PendingView.waiting_on_answer}, as every line names it; `undefined` when none waits.
+ */
+export function waitingWords(pending: PendingView): string | undefined {
+  const waiting = pending.waiting_on_answer ?? [];
+  if (waiting.length === 0) return undefined;
+  return `${quoteList(waiting)} ${waiting.length === 1 ? 'waits' : 'wait'} for its answer`;
+}
+
+/**
+ * Decision C211 (walk c14 W3-4): the cleanup steps a run that has ended left `pending` (its
+ * ledger's pending entries, in rank order) and the command that runs them — `realm run drain <id>
+ * --force`, which runs each with the code it loads, when that code has the handler. `undefined`
+ * for a run that has not ended, or has none pending.
+ */
+export function pendingCleanupWay(
+  run: Pick<RunRecord, 'id' | 'terminal_state' | 'finalizer_ledger'>,
+): { steps: string[]; command: string } | undefined {
+  if (!run.terminal_state) return undefined;
+  const steps = Object.entries(run.finalizer_ledger ?? {})
+    .filter(([, entry]) => entry.status === 'pending')
+    .sort(([, a], [, b]) => a.rank - b.rank)
+    .map(([name]) => name);
+  if (steps.length === 0) return undefined;
+  return { steps, command: `realm run drain ${run.id} --force` };
+}
+
+/**
+ * The CLI's line for {@link pendingCleanupWay} (decisions C211, C212 — the command ends it):
+ * `Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain
+ * <id> --force`. `undefined` when none is pending.
+ */
+export function pendingCleanupLine(
+  run: Pick<RunRecord, 'id' | 'terminal_state' | 'finalizer_ledger'>,
+): string | undefined {
+  const way = pendingCleanupWay(run);
+  if (way === undefined) return undefined;
+  const one = way.steps.length === 1;
+  return (
+    `Cleanup ${one ? 'step' : 'steps'} left pending: ${quoteList(way.steps)} — to run ` +
+    `${one ? 'it with code that has its handler' : 'them with code that has their handlers'}: ${way.command}`
+  );
+}
+
+/**
+ * The tools' sentence for {@link pendingCleanupWay} (decision C211): ` Cleanup step left pending:
+ * 'tidy' — 'realm run drain <id> --force' runs it with code that has its handler.` Empty when none
+ * is pending.
+ */
+export function pendingCleanupSentence(
+  run: Pick<RunRecord, 'id' | 'terminal_state' | 'finalizer_ledger'>,
+): string {
+  const way = pendingCleanupWay(run);
+  if (way === undefined) return '';
+  const one = way.steps.length === 1;
+  return (
+    ` Cleanup ${one ? 'step' : 'steps'} left pending: ${quoteList(way.steps)} — '${way.command}' ` +
+    `runs ${one ? 'it with code that has its handler' : 'them with code that has their handlers'}.`
+  );
+}
+
 /** The names the act stands for: guards first, then every `auto` step not refused. */
 export function owedNames(pending: PendingView): string[] {
   return [
@@ -656,7 +780,32 @@ export function owedWords(pending: PendingView): { steps: string; them: string; 
  * ({@link owedWords}' `until`), empty for one. The one composer for `realm run advance`'s preview,
  * `realm workflow run`'s `Advance:` line and the tools' ` Owed to the engine: … — call advance_run`.
  */
+/**
+ * Decisions C207, C211, C212: what `realm run advance <id>` does with the owed work, as the words
+ * that follow the command on a line that names it — ` runs them until a step opens a question, fails
+ * or ends the run` for several, ` carries it out, then runs what that leaves owed until …` for an
+ * expired question's declared default, empty for one item or a declared abort. Set off from the
+ * command by a space, never by punctuation (C212).
+ */
+export function owedCallWords(pending: PendingView): string {
+  if (pending.expiry_due !== undefined) {
+    return pending.expiry_due.on_expiry === 'settle_default'
+      ? ` carries it out, then runs what that leaves owed${OWED_UNTIL}`
+      : '';
+  }
+  const { them, until } = owedWords(pending);
+  return until === '' ? '' : ` runs ${them}${until}`;
+}
+
 export function owedRunsClause(pending: PendingView): string {
+  // decision C211 (walk c14 W2-1): an expired question whose declared default is carried out first
+  // leaves its steps owed, and the same call runs them — said, as the act says it. A declared abort
+  // ends the run: nothing is left to run.
+  if (pending.expiry_due !== undefined) {
+    return pending.expiry_due.on_expiry === 'settle_default'
+      ? `; then it runs what that leaves owed${OWED_UNTIL}`
+      : '';
+  }
   const { them, until } = owedWords(pending);
   return until === '' ? '' : `; it runs ${them}${until}`;
 }
@@ -691,7 +840,11 @@ export function describePending(
       ...(question !== undefined ? { open_question: question } : {}),
     };
     const expiry = run.terminal_state ? undefined : dueExpiry(run.pending_gate, now);
-    if (expiry === undefined) return empty;
+    if (expiry === undefined) {
+      // decision C211: the steps the answer lets go on, named while the question holds them.
+      const waiting = question === undefined ? [] : waitingOnAnswer(definition, run);
+      return waiting.length > 0 ? { ...empty, waiting_on_answer: waiting } : empty;
+    }
     const words = dueExpiryWords(expiry);
     return {
       ...empty,
@@ -817,7 +970,9 @@ export function describeNext(pending: PendingView, run: RunRecord): string {
   // decision C103: a reply that meets an open question names it, its choices and the act.
   const question = answerableQuestion(pending);
   if (question !== undefined) {
-    sentence += ` Waiting on ${openQuestionWords(question)} — answer it with submit_human_response.`;
+    // decision C211: the steps the question holds, named — they go on after the answer.
+    const waiting = waitingWords(pending);
+    sentence += ` Waiting on ${openQuestionWords(question)} — answer it with submit_human_response${waiting === undefined ? '' : `; ${waiting}`}.`;
   }
   if (pending.agent_steps.length > 0) {
     sentence += ` Ready for the agent: ${quoteList(pending.agent_steps)}.`;

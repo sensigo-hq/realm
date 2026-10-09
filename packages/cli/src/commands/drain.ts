@@ -21,6 +21,7 @@ import {
   owedList,
   owedWords,
   respondCommand,
+  sentenceEnd,
   cannotGoOnLines,
   type PendingView,
   WorkflowError,
@@ -67,43 +68,58 @@ const nothingToDrain = (runId: string): string =>
  */
 const waysOnWithoutEngineWork = (runId: string, run: RunRecord, pending: PendingView): string[] => {
   const ready = agentReadyReason(runId, pending.agent_steps);
-  if (ready !== undefined) return [`${ready.charAt(0).toUpperCase()}${ready.slice(1)}.`];
-  return inFlightReasons(runId, run).map((reason) => `${reason}.`);
+  // decision C212: each line ends with its command — no full stop.
+  if (ready !== undefined)
+    return [sentenceEnd(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`)];
+  return inFlightReasons(runId, run).map((reason) => sentenceEnd(reason));
 };
 
-const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingView): string => {
+/**
+ * The way out of a run that has not ended, as lines: the first follows `… — nothing to drain. ` on
+ * the refusal's own line, each other is a line of its own. Decision C212: a command ends its line —
+ * no punctuation follows it.
+ */
+const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingView): string[] => {
   const gate = run.pending_gate;
   if (gate === undefined) {
     // decision C64: when nothing can run from here, each engine step that cannot run and the way
     // out — core's lines (`correct the workflow …` for a refusal before the claim).
     const cannotGoOn = pending === undefined ? [] : cannotGoOnLines(run, pending);
-    if (cannotGoOn.length > 0) return cannotGoOn.join(' ');
+    if (cannotGoOn.length > 0) return cannotGoOn;
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
     if (pending?.act !== undefined) {
       // decision C207: with several owed, where the call stops — never a promise that all run.
       const { steps, until } = owedWords(pending);
-      return `To run ${steps} the engine owes (${owedList(pending)})${until}: realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`;
+      return [
+        `To run ${steps} the engine owes (${owedList(pending)})${until}: realm run advance ${runId}`,
+        `To end the run instead: realm run abandon ${runId}`,
+      ];
     }
     // decision C205: an agent step ready — the drive; a step in flight in another program — wait
     // for it. Each with the way out beside it.
     const goOn = pending === undefined ? [] : waysOnWithoutEngineWork(runId, run, pending);
     return goOn.length > 0
-      ? `${goOn.join(' ')} To end the run instead: realm run abandon ${runId}.`
-      : `To end the run: realm run abandon ${runId}.`;
+      ? [...goOn, `To end the run instead: realm run abandon ${runId}`]
+      : [`To end the run: realm run abandon ${runId}`];
   }
   const expiry = classifyGateExpiry(run, now);
   if (expiry.kind === 'enactable') {
-    return (
+    return [
       `Its gate expired ${formatOverdueDuration(expiry.overdueMs)} ago. To see what the expiry ` +
-      `will do: realm run drain ${runId} --expired; add --force to carry it out.`
-    );
+        `will do: realm run drain ${runId} --expired`,
+      `To carry it out: realm run drain ${runId} --expired --force`,
+    ];
   }
-  // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice).
-  return (
-    `To end the run, answer its gate first: ${respondCommand(runId, gate.gate_id, gate.choices)}. ` +
-    `The answer can end the run by itself. If the run is still open after it: realm run abandon ${runId}.`
-  );
+  // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice). Decision
+  // C211 (walk c14 W1-2): after the answer, `respond` names what the run owes next — `advance`, the
+  // drive, or nothing when the answer ended the run — and `abandon` is the way to end it then (it
+  // refuses a run that waits on a question).
+  return [
+    `To go on, answer its question first: ${respondCommand(runId, gate.gate_id, gate.choices)}`,
+    `The answer can end the run by itself; if it does not, realm run respond names what the run ` +
+      `owes next, and realm run abandon ${runId} ends it.`,
+  ];
 };
 
 /**
@@ -366,10 +382,11 @@ function renderDryRun(
   const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag, predictedGuards);
   if (!run.terminal_state) {
     if (!gateReported) {
+      const [first, ...more] = wayOutOf(runId, run, now, pending);
       console.log(
-        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run, now, pending),
+        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ${first}`,
       );
+      for (const line of more) console.log(line);
     }
     return;
   }
@@ -775,10 +792,11 @@ export async function runDrainAction(
     }
 
     if (!run.terminal_state && !hasEnactableGate) {
+      const [first, ...more] = wayOutOf(runId, run, now, await ownedWork(run));
       console.error(
-        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run, now, await ownedWork(run)),
+        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ${first}`,
       );
+      for (const line of more) console.error(line);
       process.exit(1);
     }
 
@@ -826,8 +844,9 @@ export async function runDrainAction(
       if (owed?.act !== undefined) {
         // decision C207: with several owed, where the call stops.
         const { steps, until } = owedWords(owed);
+        // decision C212: the line ends with its command — no full stop.
         console.log(
-          `To run ${steps} the engine owes (${owedList(owed)})${until}: realm run advance ${runId}.`,
+          `To run ${steps} the engine owes (${owedList(owed)})${until}: realm run advance ${runId}`,
         );
       }
       // decision C64: the expiry left nothing that can run from here — the steps and the way out.

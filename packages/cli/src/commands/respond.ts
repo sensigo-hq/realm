@@ -17,6 +17,8 @@ import {
   owedList,
   owedWords,
   cannotGoOnLines,
+  sentenceEnd,
+  pendingCleanupLine,
 } from '@sensigo/realm';
 import {
   loadProjectExtensions,
@@ -70,7 +72,10 @@ function nextLines(
           `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${them}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
         ]
       : []),
-    ...(ready !== undefined ? [`${ready.charAt(0).toUpperCase()}${ready.slice(1)}.`] : []),
+    // decision C212: the ready line ends with its command — no full stop.
+    ...(ready !== undefined
+      ? [sentenceEnd(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`)]
+      : []),
   ];
   return [
     ...commands,
@@ -85,9 +90,19 @@ function nextLines(
     // program — wait for it. (A run the answer ended with a failed step `realm run resume` takes:
     // the way back in ends the reply's own sentence, printed above by `describeAnswerEnding`.)
     ...(commands.length === 0 && cannotGoOn.length === 0
-      ? inFlightReasons(runId, run).map((reason) => `${reason}.`)
+      ? inFlightReasons(runId, run).map((reason) => sentenceEnd(reason))
       : []),
   ];
+}
+
+/**
+ * decision C211 (walk c14 W3-4's class): the answer's ending lines, with the command that runs the
+ * cleanup steps the ending left pending — once: after a guard's ending the composer's lines carry
+ * it already (after each cleanup step's outcome); an answer that ended the run otherwise gets it here.
+ */
+function withCleanupLine(lines: string[], run: RunRecord): string[] {
+  const cleanup = pendingCleanupLine(run);
+  return cleanup === undefined || lines.includes(cleanup) ? lines : [...lines, cleanup];
 }
 
 /** What `respondToGate` hands the command to print (issue #625). */
@@ -198,7 +213,10 @@ export async function respondToGate(
       // decision C146: the composer starts with which call carried out the question's expiry
       // (this one, or another), then the refusal and what the expiry's guards did.
       lines = [
-        ...describeAnswerEnding(result, lateRun, { gateId: options.gate, via: 'respond' }),
+        ...withCleanupLine(
+          describeAnswerEnding(result, lateRun, { gateId: options.gate, via: 'respond', workflow }),
+          lateRun,
+        ),
         ...(late !== undefined
           ? [
               notRecordedLine(runId, late),
@@ -217,7 +235,10 @@ export async function respondToGate(
   }
 
   const updatedRun = await runStore.get(runId);
-  const lines = describeAnswerEnding(result, updatedRun, { gateId: options.gate, via: 'respond' });
+  const lines = withCleanupLine(
+    describeAnswerEnding(result, updatedRun, { gateId: options.gate, via: 'respond', workflow }),
+    updatedRun,
+  );
   // issue #625: an `ok` reply is not always a recorded answer — when the gate's expiry had
   // already settled it with the same choice, the call succeeds and the answer was NOT recorded.
   // The typed fact decides the last line; the reply's prose is never matched.

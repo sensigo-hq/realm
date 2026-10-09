@@ -10,7 +10,9 @@ import {
   describePending,
   stepsThatCannotRun,
   owedList,
-  owedRunsClause,
+  owedCallWords,
+  pendingCleanupLine,
+  waitingWords,
   resumeWay,
   dueExpiry,
   capabilityMarkerWayOut,
@@ -637,6 +639,10 @@ export async function inspectRun(
       `Resumable: ${resumable.steps.map((step) => `'${step}'`).join(', ')} — ${resumable.command}`,
     );
   }
+  // decision C211 (walk c14 W3-4's class): cleanup steps the ending left pending — the command that
+  // runs them.
+  const cleanup = pendingCleanupLine(run);
+  if (cleanup !== undefined) lines.push(cleanup);
   // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
   // step this record shows cannot run — an engine step, or an agent step refused before its claim
   // (decision C82). No registry here: a capability need is judged by the run's own marker (what the
@@ -652,8 +658,10 @@ export async function inspectRun(
     const pending = describePending(definition, run, undefined, inspectNow);
     if (pending.act !== undefined) {
       // decision C207: with several owed, where the call stops — the clause the preview ends with.
+      // decision C212: the words after the command are set off by a space — no punctuation follows
+      // it (`owedCallWords`).
       lines.push(
-        `Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}${owedRunsClause(pending)}`,
+        `Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}${owedCallWords(pending)}`,
       );
     }
     // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm
@@ -672,6 +680,19 @@ export async function inspectRun(
     // decision C62: when the run cannot go on until its workflow is corrected, the way out follows
     // the steps that cannot run — the line `realm run advance` and the drive's stop line print.
     if (cannotRunWayOutApplies(run, pending)) lines.push(cannotRunWayOut(run));
+  }
+  // decision C211 (walk c14 W2-2): at an open question, the steps it holds — they go on after the
+  // answer, and nothing is owed until then.
+  if (
+    definition !== undefined &&
+    !run.terminal_state &&
+    run.pending_gate !== undefined &&
+    dueExpiry(run.pending_gate, inspectNow) === undefined
+  ) {
+    const waiting = waitingWords(describePending(definition, run, undefined, inspectNow));
+    if (waiting !== undefined) {
+      lines.push(`Question open on '${run.pending_gate.step_name}': ${waiting}.`);
+    }
   }
   // issue #401: failed drive attempts. Before this, a run whose drive kept dying showed nothing
   // here at all — the console said so once, at the time, to whoever happened to be watching.

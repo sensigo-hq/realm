@@ -30,6 +30,9 @@ import {
   cannotRunWayOut,
   cannotRunWayOutApplies,
   withFullStop,
+  sentenceEnd,
+  waitingWords,
+  pendingCleanupLine,
   answerOf,
   type NextAction,
   type PendingView,
@@ -130,11 +133,15 @@ export function stoppedReasons(
   if (run.terminal_state) return [`the run has ended (${deriveRunPhase(run)})`];
   if (run.pending_gate !== undefined) {
     const answer = nextActions.map((a) => answerOf(a)).find((a) => a !== undefined);
+    // decision C211 (walk c14 W2-2): the steps the question holds are named — the engine owes them
+    // nothing until it is answered, and they go on after it.
+    const waiting = waitingWords(pending);
+    const open = waiting === undefined ? 'a question is open' : `a question is open (${waiting})`;
     return [
       answer !== undefined
         ? // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice).
-          `a question is open — ${respondCommand(runId, answer.gate_id, answer.choices)}`
-        : `a question is open — see realm run inspect ${runId}`,
+          `${open} — ${respondCommand(runId, answer.gate_id, answer.choices)}`
+        : `${open} — see realm run inspect ${runId}`,
     ];
   }
   const reasons = stepsThatCannotRun(pending).map((e) => cannotRunClause(e));
@@ -468,7 +475,17 @@ export async function advanceRunFromShell(
       run,
       workflow,
     );
-    print(`${opening}: ${withFullStop(reasons.join('; '))}`);
+    // decision C212: a reason that ends with a command ends without a full stop; several reasons
+    // are each a line of their own, so none is joined to a command.
+    if (reasons.length === 1) print(`${opening}: ${sentenceEnd(reasons[0]!)}`);
+    else {
+      print(`${opening}:`);
+      for (const reason of reasons) print(`  ${sentenceEnd(reason)}`);
+    }
+    // decision C211 (walk c14 W3-4): a run that ended with cleanup steps left pending — the command
+    // that runs them.
+    const cleanupPreview = pendingCleanupLine(run);
+    if (cleanupPreview !== undefined) print(cleanupPreview);
     // decision C181: the ready line for an agent step is followed by the line `realm run respond`
     // prints after its commands — a `realm workflow run` or `realm agent` waiting on the run goes on
     // by itself.
@@ -650,6 +667,10 @@ export async function advanceRunFromShell(
   // record this call read) — never one that completed or failed at an earlier ending.
   if (!run.terminal_state && after.terminal_state) {
     for (const line of finalizerOutcomeLines(after, run)) print(line);
+    // decision C211 (walk c14 W3-4): cleanup steps this ending left pending — the command that runs
+    // them, with code that has their handlers.
+    const cleanup = pendingCleanupLine(after);
+    if (cleanup !== undefined) print(cleanup);
   }
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
   // last line is the way out (it carries the phase); otherwise the phase line.

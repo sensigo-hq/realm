@@ -14,6 +14,8 @@ import {
   stepsThatCannotRun,
   cannotRunWayOutApplies,
   cannotRunWayOutTools,
+  withEndedRunWays,
+  TERMINAL_PHASES,
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
@@ -303,7 +305,13 @@ export async function handleExecuteStep(
   // envelope; awaited but best-effort — it never throws and never alters the response.
   await emitFailedAttemptTelemetry(args, run.workflow_id, result, stores?.failedAttemptStore);
 
-  return withWayOutOnOwnRefusal(result, args, definition, runStore, registry);
+  const reply = await withWayOutOnOwnRefusal(result, args, definition, runStore, registry);
+  // decisions C205, C211 (the architect's addendum): a reply on a run that has ended — this call's
+  // own step or a step it chained failed, or the run had ended before it — ends with the ways back
+  // in: the failed step `realm run resume` takes, the cleanup steps left pending.
+  if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) return reply;
+  const ended = await runStore.get(args.run_id).catch(() => undefined);
+  return ended === undefined ? reply : withEndedRunWays(reply, ended, definition);
 }
 
 /**

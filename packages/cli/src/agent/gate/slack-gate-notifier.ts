@@ -408,6 +408,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
             lateLines = describeAnswerEnding(result, await store.get(runId), {
               gateId: gate.gate_id,
               via: 'agent',
+              workflow: definition,
             });
           } catch {
             // The record could not be read (only the finalizer outcomes need it): the reply's own
@@ -439,6 +440,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
                 endingLines = describeAnswerEnding(result, await store.get(runId), {
                   gateId: gate.gate_id,
                   via: 'agent',
+                  workflow: definition,
                 });
               } catch {
                 // The answer IS recorded — a failed read here must not reach the catch below and

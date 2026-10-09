@@ -23,6 +23,7 @@ import {
   resumeWay,
   owedList,
   owedRunsClause,
+  pendingCleanupLine,
   respondCommand,
   composeStepViews,
   describeClaimHolder,
@@ -162,6 +163,9 @@ export function renderDetachMap(
     // decisions C202, C205: the way on from a failed step `realm run resume` takes.
     const resume = resumeLine(record, ways.workflow);
     if (resume !== undefined) lines.push(resume);
+    // decision C211: cleanup steps the ending left pending — the command that runs them.
+    const cleanup = pendingCleanupLine(record);
+    if (cleanup !== undefined) lines.push(`  ${cleanup}`);
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
   }
@@ -757,7 +761,9 @@ export const runCommand = new Command('run')
             }
             const choice = raw.trim();
             // decision C146: the answer the composer speaks for — this gate, named as this command.
-            const answered = { gateId: g.gate_id, via: 'run' as const };
+            // decision C211: the workflow — the way back in after a late answer whose expiry ended
+            // the run reads resume's rule over it.
+            const answered = { gateId: g.gate_id, via: 'run' as const, workflow: definition };
             const respondResult = await submitHumanResponse(store, definition, {
               runId,
               gateId: g.gate_id,
@@ -1172,8 +1178,12 @@ export const runCommand = new Command('run')
       // gets this far (the catch's ABORT_ERR arm exits directly and never falls through to here).
       // Only the while condition being false gets here — the stall exits from inside the try
       // above — so `run.terminal_state` is always true at this point.
+      // decision C211 (walk c14 W3-4's class): cleanup steps the ending left pending — the command
+      // that runs them, under the last line.
+      const cleanup = pendingCleanupLine(run);
       if (deriveRunPhase(run) === 'completed') {
         console.log(`Run complete. Phase: ${run.run_phase}`);
+        if (cleanup !== undefined) console.log(cleanup);
         // NATURAL RETURN — never process.exit(0): three declared controls (run-detach.test.ts's
         // R1/R2/R3) pin the completed path as an unwrapped, un-exited resolution.
         // completed-with-failed-steps (the #302 world) exits 0 too, here — outcome-keyed,
@@ -1186,6 +1196,7 @@ export const runCommand = new Command('run')
       // takes gets the way back in, as the detach map gives it.
       const resume = resumeLine(run, definition);
       if (resume !== undefined) console.log(resume);
+      if (cleanup !== undefined) console.log(cleanup);
       process.exit(1);
     },
   );
