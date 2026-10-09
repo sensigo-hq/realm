@@ -54,6 +54,8 @@ export async function resumeRun(
     DRAIN_LEASE_MAX,
     deriveRunPhase,
     getWorkflowForRun,
+    shellWord,
+    quotedCommand,
   } = await import('@sensigo/realm');
   const run = await runStore.get(runId);
 
@@ -118,7 +120,7 @@ export async function resumeRun(
   if (targetStep.execution === 'finalizer') {
     throw new WorkflowError(
       `Step '${stepName}' is a finalizer — finalizers cannot be resumed via --from. Use ` +
-        `'realm run drain ${runId}' or '--void ${stepName}' instead.`,
+        `'realm run drain ${runId}' or ${quotedCommand(`--void ${shellWord(stepName)}`)} instead.`,
       {
         code: 'STATE_TRANSITION_DENIED',
         category: 'STATE',

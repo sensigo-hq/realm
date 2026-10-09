@@ -134,7 +134,8 @@ export function stoppedReasons(
 ): string[] {
   if (run.terminal_state) return [`the run has ended (${deriveRunPhase(run)})`];
   if (run.pending_gate !== undefined) {
-    const answer = nextActions.map((a) => answerOf(a)).find((a) => a !== undefined);
+    // F6: the choices from the record's open question (structured), never split off the act's text.
+    const answer = nextActions.map((a) => answerOf(a, run)).find((a) => a !== undefined);
     // decision C211 (walk c14 W2-2): the steps the question holds are named — the engine owes them
     // nothing until it is answered, and they go on after it.
     const waiting = waitingWords(pending);

@@ -2073,7 +2073,7 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
 
 describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () => {
   const PER_KIND =
-    "`it completed, and nothing is owed.` for a completed run; `an aborted run is never resumed; 'realm run purge <id>' previews what it would remove.` for an aborted one; `an operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run; 'realm run purge <id>' previews what it would remove.` for an abandoned one (never `realm run resume`, which would erase the operator's ending and its reason); `'realm run resume <id> --from <step>' makes the failed step runnable again, or 'realm run purge <id>' previews what it would remove.` for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which none did.";
+    "`it completed, and nothing is owed.` for a completed run; `an aborted run is never resumed; 'realm run purge <id>' previews what it would remove.` for an aborted one; `an operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run; 'realm run purge <id>' previews what it would remove.` for an abandoned one (never `realm run resume`, which would erase the operator's ending and its reason); `'realm run purge <id>' previews what it would remove; to make the failed step runnable again: realm run resume <id> --from <step>` for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id>' previews what it would remove.` for a failed one in which none did.";
 
   it.each([
     'completed',
@@ -2142,7 +2142,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
         kind === 'aborted'
           ? `an aborted run is never resumed; ${purge}.`
           : kind === 'failed'
-            ? `'realm run resume ${runId} --from ask' makes the failed step runnable again, or ${purge}.`
+            ? `${purge}; to make the failed step runnable again: realm run resume ${runId} --from ask`
             : `an operator ended this run, with the reason ${reason}; to run the work again, start a new run; ${purge}.`;
       // (a) red when the refusal offers a way out that kind of ending does not have; (b) prints it.
       expect([r['error_code'], r['agent_action'], r['context_hint']]).toEqual([
@@ -2208,7 +2208,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     });
     // red when the refusal names one failed step as the only way back in, or none.
     expect(r['context_hint']).toBe(
-      `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from <one of: ${run.failed_steps.join(', ')}>' makes the failed step runnable again, or 'realm run purge ${runId}' previews what it would remove.`,
+      `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run purge ${runId}' previews what it would remove; to make the failed step runnable again: realm run resume ${runId} --from <one of: ${run.failed_steps.join(', ')}>`,
     );
   });
 
@@ -2266,7 +2266,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     // (a) red when the refusal offers the cleanup step (`resume --from clean` is refused), offers no
     //     step while `s` failed, or offers the undo for the operator's ending; (b) prints both.
     expect([first['context_hint'], second['context_hint']]).toEqual([
-      `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from s' makes the failed step runnable again, or ${purge}.`,
+      `Run '${runId}' is terminal (failed); cannot submit a gate response — ${purge}; to make the failed step runnable again: realm run resume ${runId} --from s`,
       `Run '${runId}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason ${reason}; to run the work again, start a new run; ${purge}.`,
     ]);
   });
@@ -2658,11 +2658,11 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
   it('advance_run on a run whose own step failed, and on the run once ended: the hint ends with the way back in', async () => {
     claim(
       'mcp/tools.md',
-      "When an engine failure ended the run with a failed step `realm run resume` takes — this call's own step failed, or the run had ended before it — the `context_hint` ends with `'realm run resume <id> --from <step>' makes the failed step runnable again.`",
+      "When an engine failure ended the run with a failed step `realm run resume` takes — this call's own step failed, or the run had ended before it — the `context_hint` ends with `To make the failed step runnable again: realm run resume <id> --from <step>`",
     );
     claim(
       'mcp/tools.md',
-      "`ok` without `agent_action`: `Run '<id>' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it",
+      "`ok` without `agent_action`: `Run '<id>' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it",
     );
     const { call, runStore, workflowStore } = await connectWith(boom());
     const def = loadWorkflowFromString(
@@ -2682,7 +2682,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
     const first = await call('advance_run', { run_id: run.id });
     const second = await call('advance_run', { run_id: run.id });
-    const offer = `'realm run resume ${run.id} --from s' makes the failed step runnable again.`;
+    const offer = `To make the failed step runnable again: realm run resume ${run.id} --from s`;
     // (a) red when either reply lacks the way back in, or names another step; (b) prints both.
     expect([first['run_phase'], first['context_hint'], second['context_hint']]).toEqual([
       'failed',
@@ -2694,7 +2694,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
   it("submit_human_response whose guard fails the run: the guard's sentence goes on with the way back in", async () => {
     claim(
       'mcp/tools.md',
-      "On an answer's reply and `advance_run`'s, the second goes on with the way back in, the guard being a failed step `realm run resume` takes: `'realm run resume <id> --from <step>' makes the failed step runnable again.` (added after version 0.46.0)",
+      "On an answer's reply and `advance_run`'s, the second goes on with the way back in, the guard being a failed step `realm run resume` takes: `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0)",
     );
     const { call, runStore, workflowStore } = await connectWith(new ExtensionRegistry());
     const def = loadWorkflowFromString(
@@ -2727,7 +2727,7 @@ describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not 
     // (a) red when the sentence loses the way back in or names another step; (b) prints it.
     expect([r['run_phase'], r['context_hint']]).toEqual([
       'failed',
-      `Guard step 'check' failed with a resolution error. Run is terminated. 'realm run resume ${run.id} --from check' makes the failed step runnable again.`,
+      `Guard step 'check' failed with a resolution error. Run is terminated. To make the failed step runnable again: realm run resume ${run.id} --from check`,
     ]);
   });
 
@@ -2858,7 +2858,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     ...(deps.length > 0 ? [`    depends_on: [${deps.join(', ')}]`] : []),
   ];
   const offer = (id: string, step: string) =>
-    ` 'realm run resume ${id} --from ${step}' makes the failed step runnable again.`;
+    ` To make the failed step runnable again: realm run resume ${id} --from ${step}`;
   const cleanupSentence = (id: string) =>
     ` Cleanup step left pending: 'tidy' — 'realm run drain ${id} --force' runs it with code that has its handler.`;
   const tidy = [
@@ -2872,15 +2872,15 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
   it('start_run, execute_step: a reply on a run that ended — own step failed, a chained step failed, the run had ended, a key that matched it — ends with the way back in', async () => {
     say(
       'mcp/tools.md',
-      "A reply of `execute_step`, `start_run` or `advance_run` on a run that ended — this call's own step failed, or the run had ended before it — ends with the ways back in: for a run an engine failure ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.`;",
+      "A reply of `execute_step`, `start_run` or `advance_run` on a run that ended — this call's own step failed, or the run had ended before it — ends with the ways back in: for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>`;",
     );
     say(
       'mcp/tools.md',
-      "; and for cleanup steps the ending left `pending`, ` Cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.`;",
+      "; and for cleanup steps the ending left `pending`, ` Cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.`, which comes before the resume command, so that the command ends the hint;",
     );
     say(
       'mcp/tools.md',
-      "`ok` with `agent_action: \"stop\"`: `Run '<id>' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it",
+      '`ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it',
     );
     const { call, runStore, workflowStore } = await connectWith();
     await workflowStore.register(

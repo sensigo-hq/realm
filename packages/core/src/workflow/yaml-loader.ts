@@ -62,6 +62,7 @@ import {
   type StepKeyCell,
 } from './step-key-registry.js';
 import type { ExecutionMode } from '../types/workflow-definition.js';
+import { quotedCommand, shellWord } from '../utils/shell-word.js';
 
 type ConditionSurface = 'when' | 'abort_unless' | 'preconditions';
 
@@ -1815,7 +1816,7 @@ function parseWorkflowString(
           message:
             `Step '${stepName}': 'idempotent: true' cannot enable auto-reclaim in a finalizer-bearing ` +
             `workflow (its claim carries no deadline, so 'realm run reclaim --all' can never select ` +
-            `it). Recover it with 'realm run reclaim <run-id> --step ${stepName} --force'.` +
+            `it). Recover it with ${quotedCommand(`realm run reclaim <run-id> --step ${shellWord(stepName)} --force`)}.` +
             (onTimeoutDeclared
               ? ` Its 'retry.on_timeout' gate role is unaffected — timeout retries remain active.`
               : ''),

@@ -241,7 +241,8 @@ Phase: failed` and `realm agent`'s stop on a run that ended with a failed step `
   program with the wait (they named neither); `realm run inspect` names an agent step that is ready
   and, on an ended run, `Resumable: '<step>' — realm run resume <run> --from <step>`. Over MCP,
   `advance_run`'s reply and an answer's reply on a run that ended with such a step end with
-  `'realm run resume <run> --from <step>' makes the failed step runnable again.`, and the sentence
+  `To make the failed step runnable again: realm run resume <run> --from <step>` (the command last,
+  nothing after it), and the sentence
   that says what comes next names a step in flight elsewhere: `No step is ready: '<step>' is in flight
 elsewhere — wait for it, then call get_run_state.` (it said `No step is ready.`).
 - **One form for a choice in a printed answer command (issue #625, PR-2a).** `realm workflow run`'s
@@ -252,6 +253,19 @@ command not found`. It now prints `--choice <one of: ship, hold>`, which bash an
   question, `realm run drain`'s refusal of a run waiting on one, and the repair clause of a run whose
   workflow cannot be read — comes from one composer, and names the choice itself when the question
   has only one (they printed `<one of: ack>`).
+- **A printed command is safe to paste (issue #625, PR-2a).** Every command Realm prints with a
+  value in it quotes that value for a POSIX shell: as it is when it holds only `[A-Za-z0-9._/:@%+=,-]`,
+  else in single quotes, each `'` written `'\''`, and the empty value as `''` — a choice (`--choice
+'only one'`, `--choice '$(id)'`, each member of `<one of: 'yes>', no>`), a step name (`--from`,
+  `--step`, `--void`), a workflow id and a directory. Such a line pasted into a shell records exactly
+  the value it names and runs nothing the value holds; a choice with a space was split, and `$(…)` was
+  run. Core exports the quoter, `shellWord` (and `quotedCommand`, for a command set in prose quotes);
+  `realm agent`'s re-attach flags and `realm run abandon`'s `--params` use it and print as before.
+  `answerOf(action, run)` reads the choices from the run's open question (it split the act's `<a|b>`
+  text, so a choice holding `|` became two). The offer of `realm run resume` ends with its command:
+  `To make the failed step runnable again: realm run resume <id> --from <step>` (it said `'…' makes
+the failed step runnable again.`, which a quoted step name would break); in the refusal of an answer
+  to a run that ended, the purge preview comes first.
 - **Where one `realm run advance` call stops, said wherever several owed steps are named (issue
   #625, PR-2a).** One call runs the owed steps one at a time, and the steps the run owes after them,
   and stops at the first step that opens a question, fails or ends the run. A line that named

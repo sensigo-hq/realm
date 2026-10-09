@@ -425,7 +425,7 @@ describe(
       );
       claim(
         PAGE,
-        "| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.`, after the `⚠` line when this answer carried out the expiry. Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `'realm run resume <id> --from <step>' makes the failed step runnable again.` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes. |",
+        "| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.`, after the `⚠` line when this answer carried out the expiry. Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes. |",
       );
       const steps = (e: 'settle_default' | 'abort') =>
         [CONFIRM(e), autoStep('after', ['confirm'])].join('\n');
@@ -2049,7 +2049,7 @@ describe(
       it("respond (C211, the architect's addendum): a late answer whose expiry's default made a guard fail the run gives the way back in, and resume takes it", async () => {
         claim(
           PAGE,
-          "Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `'realm run resume <id> --from <step>' makes the failed step runnable again.` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes.",
+          'Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes.',
         );
         const p = await project(
           'c211-late-guard',
@@ -2071,7 +2071,7 @@ describe(
           guard: r.err.find((l) => l.startsWith("Guard step 'check'")),
           resumed: resumed.code,
         }).toEqual({
-          guard: `Guard step 'check' failed with a resolution error. Run is terminated. 'realm run resume ${q.id} --from check' makes the failed step runnable again.`,
+          guard: `Guard step 'check' failed with a resolution error. Run is terminated. To make the failed step runnable again: realm run resume ${q.id} --from check`,
           resumed: 0,
         });
       });
@@ -2392,7 +2392,7 @@ describe(
       it('respond: a guard that failed goes on with the way back in, and following it, `realm run resume` takes the guard', async () => {
         claim(
           PAGE,
-          "A guard that failed is listed as a failed step `realm run resume` takes, so the second sentence goes on with the way back in: `'realm run resume <id> --from <step>' makes the failed step runnable again.` (added after version 0.46.0).",
+          'A guard that failed is listed as a failed step `realm run resume` takes, so the second sentence goes on with the way back in: `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0).',
         );
         const def = await fromString(
           'acting-c205-guard',
@@ -2411,7 +2411,7 @@ describe(
         // (a) red when the sentence loses the way back in, names another step, or resume refuses
         //     the step it names; (b) prints both.
         expect({ first: r.out[0], code: r.code, resumed: resumed.code }).toEqual({
-          first: `Guard step 'check' failed with a resolution error. Run is terminated. 'realm run resume ${q.id} --from check' makes the failed step runnable again.`,
+          first: `Guard step 'check' failed with a resolution error. Run is terminated. To make the failed step runnable again: realm run resume ${q.id} --from check`,
           code: 0,
           resumed: 0,
         });

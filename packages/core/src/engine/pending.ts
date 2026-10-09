@@ -20,6 +20,7 @@ import {
 } from './eligibility.js';
 import { RESUMABLE_PHASES } from './lifecycle.js';
 import { escapedBoundedValue } from '../utils/redaction.js';
+import { shellWord } from '../utils/shell-word.js';
 import { checkPreconditions } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
 import { requirementForStep } from './capability.js';
@@ -388,19 +389,20 @@ export function answerAction(
 }
 
 /**
- * The open question an answer act names (decision C103): its gate and choices, read back from the
- * act {@link answerAction} composed — so a surface that prints the answer command renders it from a
- * reply, never from its own read of the record. `undefined` for any other act.
+ * The open question an answer act names (decision C103): its gate, read from the act {@link
+ * answerAction} composed, and its choices, read from the record's open question with that gate id
+ * (F6: structured — never by splitting the act's `<a|b>` text on `|`, which a choice holding `|`
+ * breaks). `undefined` for any other act, or when the record's open question is another one.
  */
 export function answerOf(
   action: NextAction | undefined,
+  run: Pick<RunRecord, 'pending_gate'>,
 ): { gate_id: string; choices: string[] } | undefined {
   if (action?.instruction?.tool !== 'submit_human_response') return undefined;
   const gateId = action.instruction.params['gate_id'];
-  const choice = action.instruction.call_with['choice'];
-  if (typeof gateId !== 'string' || typeof choice !== 'string') return undefined;
-  if (!choice.startsWith('<') || !choice.endsWith('>')) return undefined;
-  return { gate_id: gateId, choices: choice.slice(1, -1).split('|') };
+  const gate = run.pending_gate;
+  if (typeof gateId !== 'string' || gate === undefined || gate.gate_id !== gateId) return undefined;
+  return { gate_id: gateId, choices: [...gate.choices] };
 }
 
 /** An open question whose time is up and whose `on_expiry` the engine can carry out (decision C95). */
@@ -468,7 +470,11 @@ export function withFullStop(text: string): string {
 export function endsWithCommand(text: string): boolean {
   const start = text.lastIndexOf('realm ');
   if (start < 0 || (start > 0 && text[start - 1] !== ' ')) return false;
-  const tokens = text.slice(start).match(/<[^>]*>|\S+/g) ?? [];
+  // F6: a token is a POSIX word — quoted with '…' (as `shellWord` writes it), with backslash escapes —
+  // or a `<one of: …>` placeholder whose members are quoted words, kept as ONE token (a quoted member
+  // may hold `>`, such as the choice `yes>`).
+  const tokens =
+    text.slice(start).match(/<(?:[^>'\\]|\\.|'[^']*')*>|(?:[^\s'\\]|\\.|'[^']*')+/g) ?? [];
   const [, group, name, ...rest] = tokens;
   if (group === undefined) return false;
   // `realm agent` takes flags only; `realm run|workflow <command>` one positional, then flags.
@@ -698,11 +704,15 @@ export function operatorEndingSentence(
 /**
  * The placeholder a printed command gives for a value that is one of several (decision C206): the
  * value itself when there is one, else `<one of: a, b>` — a placeholder bash and sh refuse to run
- * as typed (a syntax error, so nothing runs), never `a|b`, which a shell runs as a pipe. The one
- * form for `--from` ({@link resumeWay}) and `--choice` ({@link respondCommand}).
+ * as typed (a syntax error, so nothing runs), never `a|b`, which a shell runs as a pipe. F6: each
+ * value through {@link shellWord}, the one quoter — the one value as a shell word, and EACH member of
+ * the placeholder too, so no member can run even if the placeholder is mis-pasted. The one form for
+ * `--from` ({@link resumeWay}) and `--choice` ({@link respondCommand}).
  */
 export function oneOf(values: readonly string[]): string {
-  return values.length === 1 ? values[0]! : `<one of: ${values.join(', ')}>`;
+  return values.length === 1
+    ? shellWord(values[0]!)
+    : `<one of: ${values.map(shellWord).join(', ')}>`;
 }
 
 /**

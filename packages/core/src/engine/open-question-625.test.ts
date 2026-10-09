@@ -174,8 +174,9 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
       ).open_question,
     ).toBe(undefined);
     expect(openQuestionOf({ ...run, terminal_state: true } as RunRecord)).toBe(undefined);
-    // (a) red when the act's reader does not give back the gate and choices; (b) prints it.
-    expect(answerOf(answerAction(runId, question))).toEqual({
+    // (a) red when the act's reader does not give back the gate and choices (F6: from the record's
+    //     open question); (b) prints it.
+    expect(answerOf(answerAction(runId, question), run)).toEqual({
       gate_id: gateId,
       choices: ['approve', 'reject'],
     });

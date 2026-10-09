@@ -98,11 +98,11 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
     );
     claim(
       'mcp/tools.md',
-      "`Run '<id>' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it; for a run an operator ended, `An operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run.` in its place",
+      '`Run \'<id>\' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place',
     );
     claim(
       'mcp/tools.md',
-      "`Run '<id>' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it; for a run an operator ended, `An operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run.` in its place",
+      '`Run \'<id>\' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place',
     );
     claim(
       'mcp/tools.md',
@@ -180,7 +180,7 @@ describe('#625 PR-2a, F2 — over MCP, a run an operator ended is never offered 
     const s = await call('get_run_state', { run_id: runId });
     // (a) red when the failed run loses its offer; (b) prints the hint and resumable.
     expect({ hint: r['context_hint'], resumable: s['resumable'] }).toEqual({
-      hint: `Run '${runId}' is already terminal (failed); no steps executed. 'realm run resume ${runId} --from a' makes the failed step runnable again.`,
+      hint: `Run '${runId}' is already terminal (failed); no steps executed. To make the failed step runnable again: realm run resume ${runId} --from a`,
       resumable: { steps: ['a'], command: `realm run resume ${runId} --from a` },
     });
   });

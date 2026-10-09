@@ -1300,11 +1300,13 @@ export function pendingGateQuestion(
 
 /**
  * The offer of `realm run resume` on a run an engine failure ended with a failed step it takes
- * (decisions C170, C204): `'<the command>' makes the failed step runnable again` — the command from
+ * (decisions C170, C204): `to make the failed step runnable again: <the command>` — the command from
  * {@link offeredResumeWay} (F2: never for a run an operator ended).
  */
 function resumeOffer(command: string): string {
-  return `'${command}' makes the failed step runnable again`;
+  // F6 (C212's form): the bare command ends the sentence — never wrapped in '…', which a quoted
+  // value inside it would break — and nothing follows it.
+  return `to make the failed step runnable again: ${command}`;
 }
 
 /**
@@ -1330,7 +1332,8 @@ function endedRunWayOut(run: RunRecord, workflow: Parameters<typeof resumeWay>[1
       : operator !== undefined
         ? `${operator}; ${purge}.`
         : resume !== undefined
-          ? `${resumeOffer(resume.command)}, or ${purge}.`
+          ? // F6: the command ends the sentence, so the purge preview comes first.
+            `${purge}; ${resumeOffer(resume.command)}`
           : run.failed_steps.length > 0
             ? `'realm run resume' takes none of the steps that failed (${[...new Set(run.failed_steps)].join(', ')}), so it has nothing to run again; ${purge}.`
             : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
@@ -1339,8 +1342,7 @@ function endedRunWayOut(run: RunRecord, workflow: Parameters<typeof resumeWay>[1
 /**
  * F2: the sentence an ended run's reply ends with in place of a resume offer — for a run an operator
  * ended, {@link operatorEndingSentence}; for one an engine failure ended with a failed step `realm
- * run resume` takes ({@link offeredResumeWay}), `'<the command>' makes the failed step runnable
- * again.`; `undefined` otherwise. The one composer {@link withResumeOffer}, {@link
+ * run resume` takes ({@link offeredResumeWay}), `To make the failed step runnable again: <the command>`; `undefined` otherwise. The one composer {@link withResumeOffer}, {@link
  * endedRunWaysSentence} and {@link describeAnswerEnding} read.
  */
 function endedRunOfferSentence(
@@ -1350,7 +1352,10 @@ function endedRunOfferSentence(
   const operator = operatorEndingSentence(run);
   if (operator !== undefined) return operator;
   const resume = offeredResumeWay(run, workflow);
-  return resume === undefined ? undefined : `${resumeOffer(resume.command)}.`;
+  if (resume === undefined) return undefined;
+  // F6: the sentence ends with the bare command (C212) — no full stop a paste would carry.
+  const offer = resumeOffer(resume.command);
+  return `${offer.charAt(0).toUpperCase()}${offer.slice(1)}`;
 }
 
 /**
@@ -1367,7 +1372,7 @@ export function terminalAnswerRefusalMessage(
 
 /**
  * decision C205: a reply on a run that has ended with a failed step `realm run resume` takes ends
- * with the way back in — ` '<the command>' makes the failed step runnable again.` ({@link
+ * with the way back in — ` To make the failed step runnable again: <the command>` ({@link
  * resumeOffer}, C170's words). Every other reply is returned unchanged. An answer's reply reads it
  * here — the recorded answer's and, decision C211, the late answer's whose expiry ended the run —
  * so `realm run respond`, the run prompt and the Slack notifier print it through {@link
@@ -1392,10 +1397,23 @@ export function withResumeOffer(
  * drain <id> --force' runs it with code that has its handler.` ({@link pendingCleanupSentence}).
  * Every other reply is returned unchanged. The MCP tools apply it (the CLI prints its own line).
  */
-export function withPendingCleanup(envelope: ResponseEnvelope, run: RunRecord): ResponseEnvelope {
+export function withPendingCleanup(
+  envelope: ResponseEnvelope,
+  run: RunRecord,
+  // F6: the run's workflow, when the reply already ends with the resume offer — the cleanup sentence
+  // then goes before it, so the offer's command still ends the hint.
+  workflow?: Parameters<typeof resumeWay>[1],
+): ResponseEnvelope {
   const sentence = pendingCleanupSentence(run);
   if (sentence === '') return envelope;
   const hint = envelope.context_hint;
+  const offer = workflow === undefined ? undefined : endedRunOfferSentence(run, workflow);
+  if (offer !== undefined && hint.endsWith(` ${offer}`)) {
+    return {
+      ...envelope,
+      context_hint: `${hint.slice(0, -offer.length - 1)}${sentence} ${offer}`,
+    };
+  }
   return {
     ...envelope,
     context_hint: hint.length > 0 ? `${hint}${sentence}` : sentence.trimStart(),
@@ -1421,18 +1439,20 @@ export function withEndedRunWays(
 
 /**
  * The sentences {@link withEndedRunWays} appends (decisions C205, C211), for a composer that builds
- * its own hint (`start_run`'s and `start_run_batch`'s hand-back of a run the key matched): ` '<the
- * resume command>' makes the failed step runnable again.` and the cleanup sentence; empty for a
- * run that has not ended, or has neither.
+ * its own hint (`start_run`'s and `start_run_batch`'s hand-back of a run the key matched): the
+ * cleanup sentence, then the run's ending sentence ({@link endedRunOfferSentence}: the operator's
+ * ending, or ` To make the failed step runnable again: <the resume command>`, the command last);
+ * empty for a run that has not ended, or has neither.
  */
 export function endedRunWaysSentence(
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
 ): string {
   if (!run.terminal_state) return '';
-  // F2: a run an operator ended says that ending, never the undo.
+  // F2: a run an operator ended says that ending, never the undo. F6: the cleanup sentence first,
+  // so the resume offer's command ends the hint.
   const offer = endedRunOfferSentence(run, workflow);
-  return `${offer === undefined ? '' : ` ${offer}`}${pendingCleanupSentence(run)}`;
+  return `${pendingCleanupSentence(run)}${offer === undefined ? '' : ` ${offer}`}`;
 }
 
 /**

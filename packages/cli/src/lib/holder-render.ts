@@ -10,6 +10,7 @@ import {
   offeredResumeWay,
   operatorEndingSentence,
   resumeWay,
+  shellWord,
 } from '@sensigo/realm';
 import type {
   AnswerView,
@@ -106,7 +107,7 @@ export function inFlightLine(
   return (
     `• Step '${step}' has been in flight since ${since}, ${takenPhrase(described)}; the record has not changed for ${Math.round(watchMs / 1000)}s.` +
     (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
-    ` If the program that took it is gone: realm run reclaim ${runId} --step ${step} --force`
+    ` If the program that took it is gone: realm run reclaim ${runId} --step ${shellWord(step)} --force`
   );
 }
 

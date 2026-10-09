@@ -8,6 +8,7 @@ import {
   FailedAttemptStore,
   computeGateDueState,
   probeClassOf,
+  shellWord,
 } from '@sensigo/realm';
 import type { RunStore, RunPhase, RunHealthFinding, FailedAttemptReadResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
@@ -323,8 +324,8 @@ export async function listRuns(
         `⚠ workflow definition ${id} (${(u.bytes / (1024 * 1024)).toFixed(1)} MiB, ${u.runs} run${one ? '' : 's'}) ` +
           `was not inspected by --stuck (over the ${capMb} MiB listing cap): ` +
           `${one ? 'this run was' : 'these runs were'} not checked for a broken definition; ` +
-          `realm run list --workflow ${id} lists ${one ? 'it' : 'them'}, ` +
-          `realm workflow validate --registered ${id} reads the copy.`,
+          `realm run list --workflow ${shellWord(id)} lists ${one ? 'it' : 'them'}, ` +
+          `realm workflow validate --registered ${shellWord(id)} reads the copy.`,
       );
     }
   }

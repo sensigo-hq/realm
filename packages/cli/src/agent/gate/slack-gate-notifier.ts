@@ -11,6 +11,7 @@ import {
   type PendingGate,
   type ExtensionRegistry,
   type Attributed,
+  shellWord,
 } from '@sensigo/realm';
 import type { LlmProvider } from '../providers/llm-provider.js';
 import { startSlackGateServer } from './slack-gate-server.js';
@@ -54,7 +55,7 @@ export async function postGateNotificationToSlack(
   const previewText = gate.resolved_message ?? formatGatePreviewForSlack(gate.preview);
   const gateId = gate.gate_id;
   const cmdLines = gate.choices
-    .map((c) => `realm run respond ${runId} --gate ${gateId} --choice ${c}`)
+    .map((c) => `realm run respond ${runId} --gate ${gateId} --choice ${shellWord(c)}`)
     .join('\n');
   const blockText =
     `*Gate:* \`${gate.step_name}\`${ownerLine}\n\n${previewText}\n\n---\n` +
@@ -100,7 +101,7 @@ export async function postGateViaApi(
   const choiceList = gate.choices.map((c) => `\`${c}\``).join(' or ');
   const gateId = gate.gate_id;
   const cmdLines = gate.choices
-    .map((c) => `realm run respond ${runId} --gate ${gateId} --choice ${c}`)
+    .map((c) => `realm run respond ${runId} --gate ${gateId} --choice ${shellWord(c)}`)
     .join('\n');
   const blockText =
     `*Gate:* \`${gate.step_name}\`${ownerLine}\n\n${previewText}\n\n---\n` +

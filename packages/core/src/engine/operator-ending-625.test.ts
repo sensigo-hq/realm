@@ -147,7 +147,7 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
       failed: withEndedRunWays(reply('Ended.'), failed, TWO).context_hint,
     }).toEqual({
       abandoned: `Ended. ${SENTENCE}`,
-      failed: `Ended. 'realm run resume ${failed.id} --from a' makes the failed step runnable again.`,
+      failed: `Ended. To make the failed step runnable again: realm run resume ${failed.id} --from a`,
     });
   });
 

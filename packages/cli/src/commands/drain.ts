@@ -33,6 +33,7 @@ import {
   // issue #625 PR-2a (F1): how long ago a gate expired — core's one duration formatter (seconds
   // under a minute, never `0m`).
   formatDuration,
+  shellWord,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -397,9 +398,9 @@ function renderDryRun(
         ? declared === undefined
           ? // walk 2: after "could not read the copy", predicting "would lease and run" sent the
             // operator into a --force that REFUSED (Workflow not found). Say what --force will do.
-            `unknown — the workflow copy could not be read, so --force will refuse until it is repaired; to void it instead: realm run drain ${runId} --void ${e.name} --force`
+            `unknown — the workflow copy could not be read, so --force will refuse until it is repaired; to void it instead: realm run drain ${runId} --void ${shellWord(e.name)} --force`
           : !declared.has(e.name)
-            ? `NOT declared by the workflow definition — --force would leave it pending; to void it: realm run drain ${runId} --void ${e.name} --force`
+            ? `NOT declared by the workflow definition — --force would leave it pending; to void it: realm run drain ${runId} --void ${shellWord(e.name)} --force`
             : 'actionable — would lease and run on --force, if its handler resolves on this surface'
         : e.class === 'lease_held'
           ? `lease held (expires ${e.lease_deadline}) — a drainer is executing NOW`
@@ -889,7 +890,7 @@ export async function runDrainAction(
           : `Drained run '${runId}' (${outcome.attempted.length} ran) — ${outcome.leftPending.length} finalizer(s) left pending: ${names}. To void:`,
       );
       for (const name of outcome.leftPending)
-        console.log(`  realm run drain ${runId} --void ${name} --force`);
+        console.log(`  realm run drain ${runId} --void ${shellWord(name)} --force`);
       process.exit(1);
       return;
     }

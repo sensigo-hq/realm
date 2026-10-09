@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Command } from 'commander';
+import { shellWord } from '@sensigo/realm';
 
 /**
  * Scaffolds a new workflow project at targetDir with six template files
@@ -166,7 +167,7 @@ export const initCommand = new Command('init')
       console.log('  registry.sample.js');
       console.log('  realm.yaml');
       console.log('');
-      console.log(`Next: realm workflow validate ./${name}/`);
+      console.log(`Next: realm workflow validate ${shellWord(`./${name}/`)}`);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

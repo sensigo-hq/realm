@@ -89,23 +89,34 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         none,
       ),
     ).toEqual(['the run has ended (completed)']);
-    // decision C103: the open question's line is rendered from the reply's answer act — never from
-    // this command's own read of the record (the record here says g1; the reply says g2 and wins).
+    // decision C103: the open question's line is rendered from the reply's answer act (its gate);
+    // F6: its choices are read from the record's open question with that gate id (structured, never
+    // split off the act's `<a|b>` text) — a choice holding `|` stays one choice, each quoted.
     const atQuestion = {
       ...base,
       pending_gate: {
-        gate_id: 'g1',
+        gate_id: 'g2',
         step_name: 's',
-        choices: ['a', 'b'],
+        choices: ['x|y', 'z'],
         opened_at: '',
         preview: {},
       },
     } as RunRecord;
     expect(
       stoppedReasons('r', atQuestion, none, [
-        answerAction('r', { step: 's', gate_id: 'g2', choices: ['x', 'y'] }),
+        answerAction('r', { step: 's', gate_id: 'g2', choices: ['x|y', 'z'] }),
       ]),
-    ).toEqual(['a question is open — realm run respond r --gate g2 --choice <one of: x, y>']);
+    ).toEqual(["a question is open — realm run respond r --gate g2 --choice <one of: 'x|y', z>"]);
+    // F6: an act naming a question the record does not hold gives no command (its choices are the
+    // record's to give) — (a) red when the act's own text is split for them again; (b) prints it.
+    expect(
+      stoppedReasons(
+        'r',
+        { ...atQuestion, pending_gate: { ...atQuestion.pending_gate!, gate_id: 'g1' } },
+        none,
+        [answerAction('r', { step: 's', gate_id: 'g2', choices: ['x|y', 'z'] })],
+      ),
+    ).toEqual(['a question is open — see realm run inspect r']);
     // (a) red when a reply with no answer act still prints a respond command; (b) prints the reason.
     expect(stoppedReasons('r', atQuestion, none)).toEqual([
       'a question is open — see realm run inspect r',

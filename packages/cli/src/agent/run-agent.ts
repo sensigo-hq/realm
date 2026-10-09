@@ -33,6 +33,7 @@ import {
   type ToolCallRecord,
   type TraceBufferStore,
   type StructuredOutputMeta,
+  shellWord,
 } from '@sensigo/realm';
 import type {
   RunRecord,
@@ -600,7 +601,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             for (const choice of gate.choices) {
               const label = choice.charAt(0).toUpperCase() + choice.slice(1);
               console.log(
-                `   ${label}: realm run respond ${runId} --gate ${gate.gate_id} --choice ${choice}`,
+                `   ${label}: realm run respond ${runId} --gate ${gate.gate_id} --choice ${shellWord(choice)}`,
               );
             }
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer —

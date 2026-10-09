@@ -191,9 +191,9 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
   it('lines 116–123, the table "A run that has ended": each tool’s row, on a completed run', async () => {
     const ROWS = {
       execute_step:
-        '| `execute_step` | `ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `\'realm run resume <id> --from <step>\' makes the failed step runnable again.` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place |',
+        '| `execute_step` | `ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place |',
       advance_run:
-        "| `advance_run` | `ok` without `agent_action`: `Run '<id>' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it; for a run an operator ended, `An operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run.` in its place |",
+        '| `advance_run` | `ok` without `agent_action`: `Run \'<id>\' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `To make the failed step runnable again: realm run resume <id> --from <step>` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place |',
       submit_human_response:
         "| `submit_human_response` | `ok` without `agent_action` when it repeats the choice its gate recorded: `Gate '<gate>' was already resolved with choice '<c>' — no action was taken.`",
       append_trace:

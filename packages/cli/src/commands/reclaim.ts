@@ -104,7 +104,7 @@ export const reclaimCommand = new Command('reclaim')
         olderThan?: string;
       },
     ) => {
-      const { JsonFileStore, JsonWorkflowStore, reclaimStep, classifyInProgressClaims } =
+      const { JsonFileStore, JsonWorkflowStore, reclaimStep, classifyInProgressClaims, shellWord } =
         await import('@sensigo/realm');
       const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
       const store = new JsonFileStore();
@@ -294,7 +294,9 @@ export const reclaimCommand = new Command('reclaim')
           if (gated) {
             console.log(`      open gate — resolve via 'realm run respond ${runId}', not reclaim.`);
           } else if (c.state !== 'healthy') {
-            console.log(`      reclaim: realm run reclaim ${runId} --step ${c.step} --force`);
+            console.log(
+              `      reclaim: realm run reclaim ${runId} --step ${shellWord(c.step)} --force`,
+            );
           }
         }
         console.log(

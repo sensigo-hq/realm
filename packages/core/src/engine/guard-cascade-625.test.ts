@@ -295,7 +295,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // (a) red when the sentence is replaced or reworded, or the way back in (decision C205) is
       //     dropped or names another step; (b) prints the sentence.
       expect(reply.context_hint).toBe(
-        `Guard step 'check' failed with a resolution error. Run is terminated. 'realm run resume ${runId} --from check' makes the failed step runnable again.`,
+        `Guard step 'check' failed with a resolution error. Run is terminated. To make the failed step runnable again: realm run resume ${runId} --from check`,
       );
       // (a) red when `reason` is dropped, or is not the guard's own recorded evidence error;
       //     (b) prints the `ended_by` object.

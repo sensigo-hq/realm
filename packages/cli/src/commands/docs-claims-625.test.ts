@@ -602,7 +602,7 @@ describe(
         first: [
           1,
           [
-            `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from s' makes the failed step runnable again, or ${purge}.`,
+            `Run '${runId}' is terminal (failed); cannot submit a gate response — ${purge}; to make the failed step runnable again: realm run resume ${runId} --from s`,
           ],
         ],
         fromClean: 1,

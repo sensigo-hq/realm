@@ -6,8 +6,14 @@ export const abandonCommand = new Command('abandon')
   .argument('<run-id>', 'ID of the run to abandon')
   .option('--reason <text>', 'Human-readable reason recorded as terminal_reason')
   .action(async (runId: string, opts: { reason?: string }) => {
-    const { JsonFileStore, JsonWorkflowStore, abandonRun, WorkflowError, ABANDON_KILL_ADVISORY } =
-      await import('@sensigo/realm');
+    const {
+      JsonFileStore,
+      JsonWorkflowStore,
+      abandonRun,
+      WorkflowError,
+      ABANDON_KILL_ADVISORY,
+      shellWord,
+    } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
     try {
       // issue #367: read first, so the output can say whether THIS call changed anything —
@@ -32,13 +38,13 @@ export const abandonCommand = new Command('abandon')
       // params verbatim — print them, shell-quoted, so the command starts a run AS PRINTED.
       const paramsClause =
         Object.keys(run.params).length > 0
-          ? ` --params '${JSON.stringify(run.params).replace(/'/g, "'\\''")}'`
+          ? ` --params ${shellWord(JSON.stringify(run.params))}`
           : '';
       let runAgain = `realm workflow run <the workflow.yaml you registered '${run.workflow_id}' from>${paramsClause}`;
       try {
         const copy = await new JsonWorkflowStore().get(run.workflow_id);
         if (copy.source_dir !== undefined) {
-          runAgain = `realm workflow run ${copy.source_dir}${paramsClause} (the directory it was registered from)`;
+          runAgain = `realm workflow run ${shellWord(copy.source_dir)}${paramsClause} (the directory it was registered from)`;
         }
       } catch {
         // the blank form above is the honest sentence for a copy realm cannot read
@@ -70,7 +76,7 @@ export const abandonCommand = new Command('abandon')
           ? rawChoices.filter((c): c is string => typeof c === 'string')
           : [];
         console.error(
-          `${err.message} Answer it: realm run respond ${runId} --gate ${gateId} --choice <one of: ${choices.join(', ')}>.`,
+          `${err.message} Answer it: realm run respond ${runId} --gate ${gateId} --choice <one of: ${choices.map(shellWord).join(', ')}>.`,
         );
         process.exit(1);
         return;
