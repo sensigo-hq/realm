@@ -167,6 +167,10 @@ export {
   cannotGoOnHere,
   cannotGoOnLines,
   resumeWay,
+  // F2: what a surface may OFFER to `realm run resume` (an engine failure only), and what it says in
+  // the offer's place for a run an operator ended.
+  offeredResumeWay,
+  operatorEndingSentence,
   oneOf,
   respondCommand,
   waitingOnAnswer,

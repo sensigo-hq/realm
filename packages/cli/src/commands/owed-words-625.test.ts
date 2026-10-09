@@ -1551,7 +1551,8 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       lines: [
         '→ s',
         "• Step 's': the run ended (abandoned) before this program's outcome for it was recorded.",
-        'Stopped: the run has ended (abandoned)',
+        // F2: a run an operator ended says that ending and its reason, never the undo.
+        'Stopped: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
         "Run <run>: phase 'abandoned'",
       ],
       failed: [],
@@ -1616,7 +1617,12 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     [
       'another program ended the run',
       'ended',
-      ['→ s', 'Stopped: the run has ended (abandoned)', "Run <run>: phase 'abandoned'"],
+      [
+        '→ s',
+        // F2: a run an operator ended says that ending and its reason, never the undo.
+        'Stopped: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
+        "Run <run>: phase 'abandoned'",
+      ],
     ],
     [
       'another program opened a question on another step',
@@ -2134,7 +2140,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
     }
   });
 
-  it('a cleanup step that failed is not offered (resume refuses a finalizer); an abandoned run with a failed step is; an aborted run gets no way on', async () => {
+  it('a cleanup step that failed is not offered (resume refuses a finalizer); an abandoned run with a failed step is told the operator’s ending instead (F2); an aborted run gets no way on', async () => {
     const fin = await setup([
       ...head('c202-fin'),
       ...auto('s', 'boom'),
@@ -2176,7 +2182,8 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         reg,
       );
       // (a) red when a failed cleanup step is offered to resume, an abandoned run's failed step is
-      //     not, or an aborted run is offered one; (b) prints them.
+      //     offered (F2: the operator's ending is said instead), or an aborted run is offered one;
+      //     (b) prints them.
       expect({
         finLines,
         finFailed,
@@ -2189,8 +2196,9 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
           "Stopped: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s",
         ],
         finFailed: ['s', 'clean'],
+        // F2: an abandoned run's failed step is the operator's ending to say, never an undo to offer.
         abandonedLast:
-          "Nothing is owed to the engine: the run has ended (abandoned) — to make 'a' runnable again: realm run resume <run> --from a",
+          'Nothing is owed to the engine: the run has ended (abandoned). An operator ended this run, with the reason "another program"; to run the work again, start a new run.',
         resumedPhase: 'running',
         aborted: ['Stopped: the run has ended (aborted)'],
       });
@@ -2242,7 +2250,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
     );
     claim(
       ACTING,
-      "the run ended (`the run has ended (<phase>)`; when a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names)",
+      'the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make \'<step>\' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when an operator ended it, it goes on `. An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never with `realm run resume`, which would erase that ending and its reason)',
     );
     claim(
       ACTING,

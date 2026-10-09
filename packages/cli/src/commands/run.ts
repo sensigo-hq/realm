@@ -103,8 +103,9 @@ export function renderStepFailureLine(
  *    terminal run, by two DIFFERENT mechanisms: `realm run abandon` throws STATE_RUN_TERMINAL
  *    (abandon-run.ts), while `realm agent --run-id` refuses through a separate uncoded check in
  *    resolveRunAttach (run-attach.ts) — a plain Error, not that code.
- *    Decisions C202, C204: a run that ended with a failed step `realm run resume` takes (core's
- *    `resumeWay`) gets that command first (`Resume:`).
+ *    Decisions C202, C204: a run an engine failure ended with a failed step `realm run resume`
+ *    takes (core's `offeredResumeWay`, F2) gets that command first (`Resume:`); a run an operator
+ *    ended gets its ending and reason in that place (`Ended:`), never the undo.
  *  - PENDING GATE — respond and inspect, and deliberately NO Discard line: `realm run abandon`
  *    REFUSES a run with a pending gate (STATE_TRANSITION_DENIED, abandon-run.ts) and tells you to
  *    resolve the gate first. The gate_id and choices come from the FROZEN record, the same source

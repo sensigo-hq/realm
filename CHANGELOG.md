@@ -212,14 +212,15 @@ engine owes ('<step>'), with no model` when the engine owes work — leaving an 
   for a question whose time is up and that declares `on_expiry`; `Drive it` only when an agent step
   is ready; the steps that cannot run and the way out when the run cannot go on from here; `Go on:
 once '<step>' is no longer in flight, realm run advance <run>` (no `Discard`) for a step another
-  program holds; `Resume: realm run resume <run> --from <step>` above `Inspect` for a run that ended
-  with a failed step resume takes; and `Inspect` and `Discard` alone with nothing ready (the stall
+  program holds; `Resume: realm run resume <run> --from <step>` above `Inspect` for a run an engine
+  failure ended with a failed step resume takes (`Ended:` with the operator's ending and its reason
+  for a run an operator ended); and `Inspect` and `Discard` alone with nothing ready (the stall
   printed `Drive it`).
 - **One rule says which failed steps `realm run resume` takes (issue #625, PR-2a).** Core's
   `resumeWay(run, workflow)` — the run not aborted, `failed` or `abandoned`, the step listed as
-  failed, still in the workflow and not a cleanup step — is the one statement of it; the refusal of
-  an answer to an ended run, `realm run advance`, `realm workflow run` and `realm run inspect` read
-  it. The refusal offered `--from <one of: s, clean>` with `clean` a cleanup step `resume --from`
+  failed, still in the workflow and not a cleanup step — is the one statement of it; `realm run
+purge`'s preview and `realm run inspect` read it, and every offer of `realm run resume` reads it
+  through `offeredResumeWay`, which offers it only for a run an engine failure ended. The refusal offered `--from <one of: s, clean>` with `clean` a cleanup step `resume --from`
   refuses; it now offers `s` alone, and says `'realm run resume' takes none of the steps that failed
 (<steps>), so it has nothing to run again` when only such steps failed (it said `--from clean`). A
   late answer whose run another call ended ends with the same way out (it offered `realm run resume`
@@ -313,6 +314,19 @@ on by itself; the line above is for when none is.`
 is ready: …`) it prints `If a realm workflow run or realm agent is still waiting on this run, it
 goes on by itself; the line above is for when none is.` The run's record does not show whether one
   is waiting.
+- **A run an operator ended is never offered `realm run resume` (issue #625, PR-2a).** Resuming an
+  abandoned run erases the operator's ending and its reason and records no one and no reason for the
+  undo, so no surface offers it: the refusal of an answer to the run, an answer's reply, the
+  `execute_step`, `advance_run` and `start_run` replies on the run, `realm run respond`, `realm run
+advance` and the hand-back of `realm workflow run` and `realm agent` (`  Ended:     …` in place of
+  `  Resume:    …`) say instead `An operator ended this run, with the reason "<reason>"; to run the
+work again, start a new run.` — the reason on one line, its control characters escaped. They
+  offered `realm run resume <id> --from <step>` for an abandoned run with a failed step.
+  `get_run_state` gives `resumable` only for a run an engine failure ended; it still gives the
+  ending as `terminal_reason` and `sealed_by_arm`. `realm run inspect` still prints `Resumable:` for
+  such a run, followed by `— resuming erases the operator's ending and its reason, and records no
+one and no reason for the undo`; `realm run purge` still counts it as resumable. `realm run
+resume` itself is unchanged. Core exports `offeredResumeWay` and `operatorEndingSentence`.
 - **A different answer to a question whose expiry chose says so, whichever call carried the expiry
   out (issue #625, PR-2a).** `submit_human_response` (and `realm run respond`, the prompt of `realm
 workflow run`) refuses it with `Gate '<gate>' was settled by timeout with choice '<c>' — your
@@ -323,7 +337,8 @@ already resolved with choice '<c>'` and had no `resolved_by`, as for a person's 
   PR-2a).** `STATE_RUN_TERMINAL`'s message is `Run '<id>' is terminal (<phase>); cannot submit a gate
 response — …`: nothing for a completed run (`it completed, and nothing is owed.`); `realm run purge
 <id> --force` for an aborted one; `realm run resume <id> --from <the failed step>` or purge for a
-  failed or abandoned one in which a step failed. It offered `realm run resume` for every ended run,
+  failed one in which a step failed; for an abandoned one, that an operator ended it, its reason,
+  and that a new run runs the work again, or purge. It offered `realm run resume` for every ended run,
   which refuses completed and aborted ones and any with no failed step.
 - **Repeating the choice a question's expiry recorded says so over MCP (issue #625, PR-2a).**
   `submit_human_response` replies `the outcome matches your choice, but it was settled by timeout;

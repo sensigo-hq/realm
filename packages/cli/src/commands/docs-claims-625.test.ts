@@ -464,7 +464,7 @@ describe(
       async (kind) => {
         claim(
           'mcp/tools.md',
-          "for a failed or abandoned one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which none did.",
+          "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which none did.",
         );
         let runId: string;
         let step: string;
@@ -543,7 +543,7 @@ describe(
     it('C204 (round 27 finding 4): realm run respond on a run whose step and cleanup step failed offers `--from s` only, and `resume --from` takes it; once only the cleanup step is failed, it offers none', async () => {
       claim(
         'mcp/tools.md',
-        "for a failed or abandoned one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which only steps it does not take failed",
+        "for a failed one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for a failed one in which only steps it does not take failed",
       );
       const def = loadWorkflowFromString(
         [
@@ -588,8 +588,9 @@ describe(
       const abandoned = realm('run', 'abandon', runId);
       const cleanOnly = await runStore.get(runId);
       const second = respond();
-      // (a) red when the refusal offers the cleanup step, offers no step while `s` failed, or says
-      //     "no step failed" once only `clean` is; or when resume refuses the step offered; (b) prints them.
+      // F2: once an operator abandoned the run it is told that ending, never offered the undo.
+      // (a) red when the refusal offers the cleanup step, offers no step while `s` failed, or offers
+      //     the undo for the operator's ending; or when resume refuses the step offered; (b) prints them.
       expect({
         first: [first.code, first.err.filter((l) => l !== '')],
         fromClean: fromClean.code,
@@ -611,7 +612,7 @@ describe(
         second: [
           1,
           [
-            `Run '${runId}' is terminal (abandoned); cannot submit a gate response — 'realm run resume' takes none of the steps that failed (clean), so it has nothing to run again; ${purge}.`,
+            `Run '${runId}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason "Abandoned via realm run abandon"; to run the work again, start a new run; ${purge}.`,
           ],
         ],
       });

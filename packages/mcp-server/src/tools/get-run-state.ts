@@ -24,7 +24,7 @@ import {
   dueExpiry,
   answerAction,
   openQuestionOf,
-  resumeWay,
+  offeredResumeWay,
   pendingCleanupWay,
   waitingOnAnswer as waitingOnAnswerOf,
   assertRegistryLine,
@@ -326,9 +326,11 @@ export interface RunStateSummary {
    */
   agent_refused?: EngineRunnable[];
   /**
-   * issue #625 PR-2a (decision C211): on a run that has ended, the failed steps `realm run resume
-   * --from` takes and the command that makes them runnable again (core's `resumeWay` — never a
-   * cleanup step). Absent when it takes none, or the run's workflow cannot be read.
+   * issue #625 PR-2a (decision C211): on a run an engine failure ended (phase `failed`), the failed
+   * steps `realm run resume --from` takes and the command that makes them runnable again (core's
+   * `offeredResumeWay`, F2 — never a cleanup step, never a run an operator ended: its
+   * `terminal_reason` and `sealed_by_arm` say who ended it and why). Absent when it takes none, or
+   * the run's workflow cannot be read.
    */
   resumable?: { steps: string[]; command: string };
   /**
@@ -410,7 +412,8 @@ export async function handleGetRunState(
   let registry: ExtensionRegistry | undefined;
   // decision C211 (the architect's addendum; walk c14 W2-2): the read names what the record's lists
   // do not show — on a run that has ended, the failed steps `realm run resume` takes (`resumable`,
-  // core's `resumeWay`) and the cleanup steps left pending (`cleanup_pending`); at an open question,
+  // core's `offeredResumeWay`, F2: an engine failure only) and the cleanup steps left pending
+  // (`cleanup_pending`); at an open question,
   // the steps it holds (`waiting_on_answer`). Each read of the workflow is best-effort: a workflow
   // that cannot be read leaves that field out.
   const readWorkflow = async (): Promise<WorkflowDefinition | undefined> =>
@@ -423,7 +426,9 @@ export async function handleGetRunState(
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
     const ended = await readWorkflow();
-    resumable = ended === undefined ? undefined : resumeWay(run, ended);
+    // F2: offered only for an engine failure — a run an operator ended carries its ending as data
+    // (`terminal_reason`, `sealed_by_arm`), never the undo.
+    resumable = ended === undefined ? undefined : offeredResumeWay(run, ended);
   } else if (run.pending_gate !== undefined && dueExpiry(run.pending_gate, now) === undefined) {
     nextActionsStatus = 'awaiting_human';
     // decision C103: the question is named by its answer — core's one composer, never with the claim

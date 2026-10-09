@@ -319,6 +319,8 @@ describe(
         after: [
           "log: • Step 'write' was not run: the run ended (abandoned) before this drive's answer reached it; the answer was not recorded.",
           'error: \nRun ended in phase: abandoned',
+          // F2: the drive stops on a run an operator ended — the ending and its reason, never the undo.
+          'error:   Ended:     An operator ended this run, with the reason "ended elsewhere"; to run the work again, start a new run.',
         ],
       });
     });

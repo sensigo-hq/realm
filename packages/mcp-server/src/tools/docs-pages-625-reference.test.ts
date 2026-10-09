@@ -191,15 +191,15 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
   it('lines 116–123, the table "A run that has ended": each tool’s row, on a completed run', async () => {
     const ROWS = {
       execute_step:
-        "| `execute_step` | `ok` with `agent_action: \"stop\"`: `Run '<id>' is already terminal (<phase>); no steps executed.`, and for a run that ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it |",
+        '| `execute_step` | `ok` with `agent_action: "stop"`: `Run \'<id>\' is already terminal (<phase>); no steps executed.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `\'realm run resume <id> --from <step>\' makes the failed step runnable again.` after it; for a run an operator ended, `An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.` in its place |',
       advance_run:
-        "| `advance_run` | `ok` without `agent_action`: `Run '<id>' is already terminal (<phase>); nothing ran.`, and for a run that ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it |",
+        "| `advance_run` | `ok` without `agent_action`: `Run '<id>' is already terminal (<phase>); nothing ran.`, and for a run an engine failure ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it; for a run an operator ended, `An operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run.` in its place |",
       submit_human_response:
         "| `submit_human_response` | `ok` without `agent_action` when it repeats the choice its gate recorded: `Gate '<gate>' was already resolved with choice '<c>' — no action was taken.`",
       append_trace:
         "| `append_trace` | Refused with `STATE_STEP_NOT_ELIGIBLE` and `report_to_user`: `Run '<id>' is terminal (phase: '<phase>') — trace entries can no longer be adopted by any step.` |",
       get_run_state:
-        "| `get_run_state` | The run's state, as for a run that goes on, with `terminal_state: true` and empty `next_actions`. `resumable` names the failed steps `realm run resume` takes and its command, and `cleanup_pending` the cleanup steps left `pending` and the command that runs them (added after version 0.46.0). |",
+        "| `get_run_state` | The run's state, as for a run that goes on, with `terminal_state: true` and empty `next_actions`. `resumable` names, for a run an engine failure ended, the failed steps `realm run resume` takes and its command (never for a run an operator ended: its `terminal_reason` and `sealed_by_arm` say who ended it and why), and `cleanup_pending` the cleanup steps left `pending` and the command that runs them (added after version 0.46.0). |",
     };
     for (const row of Object.values(ROWS)) claim(TOOLS, row);
     const { call, workflowStore } = await connect();

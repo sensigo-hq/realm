@@ -117,6 +117,9 @@ import {
   notCallableReason,
   refusedAnswerTail,
   resumeWay,
+  offeredResumeWay,
+  operatorEndingClause,
+  operatorEndingSentence,
   pendingCleanupSentence,
   pendingCleanupLine,
   type PendingView,
@@ -1294,9 +1297,9 @@ export function pendingGateQuestion(
 }
 
 /**
- * The offer of `realm run resume` on a run that ended with a failed step it takes (decisions C170,
- * C204): `'<the command>' makes the failed step runnable again` — the command from {@link resumeWay},
- * the one rule.
+ * The offer of `realm run resume` on a run an engine failure ended with a failed step it takes
+ * (decisions C170, C204): `'<the command>' makes the failed step runnable again` — the command from
+ * {@link offeredResumeWay} (F2: never for a run an operator ended).
  */
 function resumeOffer(command: string): string {
   return `'${command}' makes the failed step runnable again`;
@@ -1304,25 +1307,46 @@ function resumeOffer(command: string): string {
 
 /**
  * The way out of a run that has ended, for its kind of ending (decisions C170, C204): a completed run
- * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a failed or
- * abandoned one is resumed only from a failed step `realm run resume --from` takes — {@link
- * resumeWay}, the one rule (never a cleanup step). `realm run purge <id> --force` removes any ended
- * run's record. The refusal of an answer to an ended run ends with it, and so does the refusal of a
- * late answer whose run another call ended (decision C204).
+ * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a run an operator
+ * ended is never offered the undo (F2): it says the operator's ending, its reason and that a new run
+ * runs the work again ({@link operatorEndingClause}); a failed one is resumed only from a failed step
+ * `realm run resume --from` takes — {@link offeredResumeWay} (never a cleanup step). `realm run
+ * purge <id> --force` removes any ended run's record. The refusal of an answer to an ended run ends
+ * with it, and so does the refusal of a late answer whose run another call ended (decision C204).
  */
 function endedRunWayOut(run: RunRecord, workflow: Parameters<typeof resumeWay>[1]): string {
   const phase = deriveRunPhase(run);
   const purge = `'realm run purge ${run.id} --force' removes its record`;
-  const resume = resumeWay(run, workflow);
+  const operator = operatorEndingClause(run);
+  const resume = offeredResumeWay(run, workflow);
   return phase === 'completed'
     ? 'it completed, and nothing is owed.'
     : phase === 'aborted'
       ? `an aborted run is never resumed; ${purge}.`
-      : resume !== undefined
-        ? `${resumeOffer(resume.command)}, or ${purge}.`
-        : run.failed_steps.length > 0
-          ? `'realm run resume' takes none of the steps that failed (${[...new Set(run.failed_steps)].join(', ')}), so it has nothing to run again; ${purge}.`
-          : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
+      : operator !== undefined
+        ? `${operator}; ${purge}.`
+        : resume !== undefined
+          ? `${resumeOffer(resume.command)}, or ${purge}.`
+          : run.failed_steps.length > 0
+            ? `'realm run resume' takes none of the steps that failed (${[...new Set(run.failed_steps)].join(', ')}), so it has nothing to run again; ${purge}.`
+            : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
+}
+
+/**
+ * F2: the sentence an ended run's reply ends with in place of a resume offer — for a run an operator
+ * ended, {@link operatorEndingSentence}; for one an engine failure ended with a failed step `realm
+ * run resume` takes ({@link offeredResumeWay}), `'<the command>' makes the failed step runnable
+ * again.`; `undefined` otherwise. The one composer {@link withResumeOffer}, {@link
+ * endedRunWaysSentence} and {@link describeAnswerEnding} read.
+ */
+function endedRunOfferSentence(
+  run: RunRecord,
+  workflow: Parameters<typeof resumeWay>[1],
+): string | undefined {
+  const operator = operatorEndingSentence(run);
+  if (operator !== undefined) return operator;
+  const resume = offeredResumeWay(run, workflow);
+  return resume === undefined ? undefined : `${resumeOffer(resume.command)}.`;
 }
 
 /**
@@ -1351,13 +1375,11 @@ export function withResumeOffer(
   workflow: Parameters<typeof resumeWay>[1],
 ): ResponseEnvelope {
   if (!run.terminal_state) return envelope;
-  const resume = resumeWay(run, workflow);
-  if (resume === undefined) return envelope;
+  // F2: a run an operator ended says that ending, never the undo.
+  const offer = endedRunOfferSentence(run, workflow);
+  if (offer === undefined) return envelope;
   const hint = envelope.context_hint;
-  return {
-    ...envelope,
-    context_hint: `${hint}${hint.length > 0 ? ' ' : ''}${resumeOffer(resume.command)}.`,
-  };
+  return { ...envelope, context_hint: `${hint}${hint.length > 0 ? ' ' : ''}${offer}` };
 }
 
 /**
@@ -1404,8 +1426,9 @@ export function endedRunWaysSentence(
   workflow: Parameters<typeof resumeWay>[1],
 ): string {
   if (!run.terminal_state) return '';
-  const resume = resumeWay(run, workflow);
-  return `${resume === undefined ? '' : ` ${resumeOffer(resume.command)}.`}${pendingCleanupSentence(run)}`;
+  // F2: a run an operator ended says that ending, never the undo.
+  const offer = endedRunOfferSentence(run, workflow);
+  return `${offer === undefined ? '' : ` ${offer}`}${pendingCleanupSentence(run)}`;
 }
 
 /**
@@ -5208,12 +5231,12 @@ export function describeAnswerEnding(
       reply.status === 'ok' ? LATE_SAME_CHOICE_SENTENCE : (reply.errors[0] ?? reply.context_hint);
     // decision C211 (the architect's addendum, round 28 note 7): the guard's ending sentence ends
     // with the way back in, as the on-time answer's does (its reply's sentence carries it).
-    const resume = answer.workflow === undefined ? undefined : resumeWay(run, answer.workflow);
+    // F2: a run an operator ended says that ending, never the undo.
+    const offer =
+      answer.workflow === undefined ? undefined : endedRunOfferSentence(run, answer.workflow);
     const [ending, ...reason] = describeEndedBy(reply);
     const endingLines =
-      ending === undefined
-        ? []
-        : [resume === undefined ? ending : `${ending} ${resumeOffer(resume.command)}.`, ...reason];
+      ending === undefined ? [] : [offer === undefined ? ending : `${ending} ${offer}`, ...reason];
     return [
       ...lateExpiryLines(reply, run, answer),
       ...(reply.ended_by !== undefined

@@ -182,6 +182,8 @@ An agent step is ready: 'write' — drive it with realm agent --run-id 3c9f1e27-
 Resumable: 'fetch' — realm run resume 6a1d5b03-c2e8-4f97-a41b-0d9e3c7f2a56 --from fetch
 ```
 
+For a run an operator ended (`abandoned`), the `Resumable:` line goes on `— resuming erases the operator's ending and its reason, and records no one and no reason for the undo`. No other surface offers `realm run resume` for such a run.
+
 What the engine owes, and steps that cannot run, from three runs (these lines were added after version 0.46.0). `inspect` loads no extensions, so a missing handler or adapter is judged by the run's record of the last attempt and said in the past tense (`Could not run`), with the way out — a program that has it runs the step:
 
 ```text

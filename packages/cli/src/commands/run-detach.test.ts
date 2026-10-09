@@ -646,7 +646,7 @@ steps:
         'utf8',
       ).replace(/\s+/g, ' ');
       expect(page).toContain(
-        'The last line is `Run complete. Phase: <phase>`. When the run ended with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again — `  Resume:    realm run resume <run-id> --from <step>`, the line the detach map gives (added after version 0.46.0).'.replace(
+        'The last line is `Run complete. Phase: <phase>`. When an engine failure ended the run with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again — `  Resume:    realm run resume <run-id> --from <step>`, the line the detach map gives (added after version 0.46.0).'.replace(
           /\s+/g,
           ' ',
         ),

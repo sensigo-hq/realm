@@ -604,12 +604,14 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         },
       });
       // (a) red when the refused attempt prints `✓` or its own `✗` reason instead of the run-ended
-      //     line; (b) prints the last two lines.
-      expect({ tail: d.lines.slice(-2), ticks: d.lines.filter((l) => l.includes('✓')) }).toEqual({
+      //     line; (b) prints the last three lines.
+      expect({ tail: d.lines.slice(-3), ticks: d.lines.filter((l) => l.includes('✓')) }).toEqual({
         // decision C179: the answer the ended run did not record is said, before the run-ended line.
         tail: [
           "log: • Step 'ask' was not run: the run ended (abandoned) before this drive's answer reached it; the answer was not recorded.",
           'error: \nRun ended in phase: abandoned',
+          // F2: the drive stops on a run an operator ended — the ending and its reason, never the undo.
+          'error:   Ended:     An operator ended this run, with the reason "ended elsewhere"; to run the work again, start a new run.',
         ],
         ticks: [],
       });
@@ -782,7 +784,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
       );
       claim(
         AGENT_PAGE,
-        'When the run ended with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again, `  Resume:    realm run resume <run-id> --from <step>` (added after version 0.46.0)',
+        'When an engine failure ended the run with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again, `  Resume:    realm run resume <run-id> --from <step>` (added after version 0.46.0)',
       );
       claim(
         AGENT_PAGE,

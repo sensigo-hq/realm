@@ -19,6 +19,7 @@ import {
   deriveRunPhase,
 } from './eligibility.js';
 import { RESUMABLE_PHASES } from './lifecycle.js';
+import { escapedBoundedValue } from '../utils/redaction.js';
 import { checkPreconditions } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
 import { requirementForStep } from './capability.js';
@@ -610,9 +611,9 @@ export function cannotGoOnLines(run: RunRecord, pending: PendingView): string[] 
  * C202, C204) — by the resume command's own checks (`resume.ts`): the run has not been aborted, its
  * phase is `failed` or `abandoned`, and the step is listed as failed, is still in the workflow and
  * is not a cleanup step (`resume --from` refuses a finalizer). One step → `--from <step>`; several →
- * `--from <one of: a, b>`. `undefined` when it takes none. The one rule every surface that offers
- * `realm run resume` reads: the refusal of an answer to an ended run, `realm run advance` and
- * `realm workflow run`.
+ * `--from <one of: a, b>`. `undefined` when it takes none. The FACT of what `realm run resume`
+ * takes (F2): `realm run purge`'s preview and `realm run inspect`'s `Resumable:` line read it. No
+ * surface OFFERS it from here — every offer reads {@link offeredResumeWay}.
  */
 export function resumeWay(
   run: Pick<
@@ -635,6 +636,57 @@ export function resumeWay(
   });
   if (steps.length === 0) return undefined;
   return { steps, command: `realm run resume ${run.id} --from ${oneOf(steps)}` };
+}
+
+/**
+ * The failed steps a surface may OFFER to `realm run resume` (F2; framework A1-B2, axis 8 — R8 over
+ * R7): {@link resumeWay}, the fact, only when the run's DERIVED phase is `failed` (an engine failure
+ * ended it); `undefined` for every other run. A run an operator ended (`abandoned`) is never offered
+ * the undo: resuming it erases the operator's ending and its reason and records no one and no
+ * reason for the undo, so until a signed reversal exists no surface offers it; the operator's own
+ * read surfaces name it, with that warning. Keyed on the derived phase, so a legacy abandoned
+ * record with no `sealed_by` is covered. Every offer reads it: the refusal of an answer to an ended
+ * run, an answer's reply, the ended-run replies of `execute_step`, `advance_run` and `start_run`,
+ * the CLI's and Slack's answer lines, `get_run_state`'s `resumable`, `realm run advance` and the
+ * `Resume:` hand-back of `realm workflow run` and `realm agent`.
+ */
+export function offeredResumeWay(
+  run: Parameters<typeof resumeWay>[0],
+  workflow: Parameters<typeof resumeWay>[1],
+): { steps: string[]; command: string } | undefined {
+  return deriveRunPhase(run) === 'failed' ? resumeWay(run, workflow) : undefined;
+}
+
+/**
+ * F2: what a surface says, in the resume offer's place, about a run an operator ended (derived phase
+ * `abandoned`): that an operator ended it, its reason (`terminal_reason`, free text, through the
+ * escaped, bounded value renderer — one line, no terminal escape), and that a new run is the way to
+ * run the work again — `an operator ended this run, with the reason "<reason>"; to run the work
+ * again, start a new run` (`with no reason recorded` when there is none). `undefined` for any other
+ * run. A clause: {@link operatorEndingSentence} is it as a sentence.
+ */
+export function operatorEndingClause(
+  run: Pick<RunRecord, 'terminal_reason'> & Parameters<typeof deriveRunPhase>[0],
+): string | undefined {
+  if (deriveRunPhase(run) !== 'abandoned') return undefined;
+  const reason =
+    run.terminal_reason === undefined
+      ? 'with no reason recorded'
+      : `with the reason ${escapedBoundedValue(run.terminal_reason)}`;
+  return `an operator ended this run, ${reason}; to run the work again, start a new run`;
+}
+
+/**
+ * F2: {@link operatorEndingClause} as a sentence — `An operator ended this run, with the reason
+ * "<reason>"; to run the work again, start a new run.` — the one sentence every offer site says in
+ * the resume offer's place for a run an operator ended (the CLI hand-backs print it as a line of
+ * their own). `undefined` for any other run.
+ */
+export function operatorEndingSentence(
+  run: Parameters<typeof operatorEndingClause>[0],
+): string | undefined {
+  const clause = operatorEndingClause(run);
+  return clause === undefined ? undefined : `${clause.charAt(0).toUpperCase()}${clause.slice(1)}.`;
 }
 
 /**
