@@ -16,6 +16,8 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  ExtensionRegistry,
+  advanceRun,
   executeStep,
   loadWorkflowFromString,
   type WorkflowDefinition,
@@ -2060,7 +2062,7 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
 
 describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () => {
   const PER_KIND =
-    "`it completed, and nothing is owed.` for a completed run; `an aborted run is never resumed; 'realm run purge <id> --force' removes its record.` for an aborted one; `'realm run resume <id> --from <step>' makes the failed step runnable again, or 'realm run purge <id> --force' removes its record.` for a failed or abandoned one in which a step failed (that step named), and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which none did.";
+    "`it completed, and nothing is owed.` for a completed run; `an aborted run is never resumed; 'realm run purge <id> --force' removes its record.` for an aborted one; `'realm run resume <id> --from <step>' makes the failed step runnable again, or 'realm run purge <id> --force' removes its record.` for a failed or abandoned one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which none did.";
 
   it.each([
     'completed',
@@ -2196,6 +2198,63 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     expect(r['context_hint']).toBe(
       `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from <one of: ${run.failed_steps.join(', ')}>' makes the failed step runnable again, or 'realm run purge ${runId} --force' removes its record.`,
     );
+  });
+
+  it('C204 (round 27 finding 4): a run whose step and cleanup step failed is offered `--from` with the step only; once only the cleanup step is failed, none', async () => {
+    claim('mcp/tools.md', PER_KIND);
+    const { call, workflowStore, runStore } = await connect();
+    const def = loadWorkflowFromString(
+      [
+        'id: r28-clean',
+        'name: r28-clean',
+        'version: 1',
+        'steps:',
+        '  s:',
+        '    description: S.',
+        '    execution: auto',
+        '    handler: boom',
+        '  clean:',
+        '    description: Clean up.',
+        '    execution: finalizer',
+        '    handler: boom',
+        '    on_outcome: fail',
+        '',
+      ].join('\n'),
+    );
+    await workflowStore.register(def);
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'boom', {
+      id: 'boom',
+      execute: async () => {
+        throw new Error('it broke');
+      },
+    });
+    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const runId = run.id;
+    // `s` fails, the run seals failed, and its cleanup step runs and fails too.
+    await advanceRun(runStore, def, { runId, registry });
+    const failed = await runStore.get(runId);
+    expect([failed.run_phase, failed.failed_steps], 'fixture').toEqual(['failed', ['s', 'clean']]);
+    const answer = () =>
+      call('submit_human_response', { run_id: runId, gate_id: 'other', choice: 'approve' });
+    const purge = `'realm run purge ${runId} --force' removes its record`;
+    const first = await answer();
+    // Then only the cleanup step is failed: `s` resumed (it leaves `clean` listed), the run abandoned.
+    const { applyResume } = await import('@sensigo/realm');
+    await runStore.update(applyResume(await runStore.get(runId), 's', def).run);
+    await call('abandon_run', { run_id: runId });
+    const cleanOnly = await runStore.get(runId);
+    expect([cleanOnly.run_phase, cleanOnly.failed_steps], 'fixture').toEqual([
+      'abandoned',
+      ['clean'],
+    ]);
+    const second = await answer();
+    // (a) red when the refusal offers the cleanup step (`resume --from clean` is refused), offers no
+    //     step while `s` failed, or says "no step failed" with `clean` failed; (b) prints both.
+    expect([first['context_hint'], second['context_hint']]).toEqual([
+      `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from s' makes the failed step runnable again, or ${purge}.`,
+      `Run '${runId}' is terminal (abandoned); cannot submit a gate response — 'realm run resume' takes none of the steps that failed (clean), so it has nothing to run again; ${purge}.`,
+    ]);
   });
 
   it('C171, W4-Y2: repeating the choice the question’s expiry recorded says it was settled by timeout, as the CLI does; a person’s recorded choice repeated still says already resolved', async () => {

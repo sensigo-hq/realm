@@ -20,6 +20,7 @@ import {
   stepsThatCannotRun,
   cannotGoOnLines,
   cannotGoOnHere,
+  resumeWay,
   owedList,
   composeStepViews,
   describeClaimHolder,
@@ -50,7 +51,7 @@ import type {
 import type { ResponseEnvelope, StepDispatcher, PendingView } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { buildReattachFlags } from './agent.js';
-import { attendingLine, resumeCommand } from './run-advance.js';
+import { attendingLine } from './run-advance.js';
 import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 
 /**
@@ -98,8 +99,8 @@ export function renderStepFailureLine(
  *    terminal run, by two DIFFERENT mechanisms: `realm run abandon` throws STATE_RUN_TERMINAL
  *    (abandon-run.ts), while `realm agent --run-id` refuses through a separate uncoded check in
  *    resolveRunAttach (run-attach.ts) — a plain Error, not that code.
- *    Decision C202: a run that ended with a failed step `realm run resume` takes (`resumeCommand`)
- *    gets that command first (`Resume:`).
+ *    Decisions C202, C204: a run that ended with a failed step `realm run resume` takes (core's
+ *    `resumeWay`) gets that command first (`Resume:`).
  *  - PENDING GATE — respond and inspect, and deliberately NO Discard line: `realm run abandon`
  *    REFUSES a run with a pending gate (STATE_TRANSITION_DENIED, abandon-run.ts) and tells you to
  *    resolve the gate first. The gate_id and choices come from the FROZEN record, the same source
@@ -129,7 +130,7 @@ export function renderDetachMap(
    * Decision C202: what the run owes and what is ready — `describePending` on `record` — and the
    * workflow (which failed steps `realm run resume` takes).
    */
-  ways: { pending: PendingView; workflow: Parameters<typeof resumeCommand>[1] },
+  ways: { pending: PendingView; workflow: Parameters<typeof resumeWay>[1] },
   opts?: {
     headline?: string;
     /**
@@ -156,7 +157,7 @@ export function renderDetachMap(
 
   if (record.terminal_state) {
     // decision C202: the way on from a failed step `realm run resume` takes.
-    const resume = resumeCommand(record, ways.workflow);
+    const resume = resumeWay(record, ways.workflow);
     if (resume !== undefined) lines.push(`  Resume:    ${resume.command}`);
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');

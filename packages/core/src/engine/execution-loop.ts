@@ -115,6 +115,7 @@ import {
   answerableQuestion,
   notCallableReason,
   refusedAnswerTail,
+  resumeWay,
   type PendingView,
   type PreClaimRefused,
 } from './pending.js';
@@ -1293,24 +1294,28 @@ export function pendingGateQuestion(
  * The refusal of an answer to a run that has ended (decision C170): `Run '<id>' is terminal
  * (<phase>); cannot submit a gate response — <the way out for that kind of ending>`. A completed run
  * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a failed or
- * abandoned one is resumed only from a step that failed (`resume --from` takes a failed step and
- * nothing else). `realm run purge <id> --force` removes any ended run's record.
+ * abandoned one is resumed only from a failed step `realm run resume --from` takes — {@link
+ * resumeWay}, the one rule (decision C204: never a cleanup step). `realm run purge <id> --force`
+ * removes any ended run's record.
  */
 export function terminalAnswerRefusalMessage(
-  runId: string,
-  phase: RunPhase,
-  failedSteps: readonly string[],
+  run: RunRecord,
+  workflow: Parameters<typeof resumeWay>[1],
 ): string {
+  const runId = run.id;
+  const phase = deriveRunPhase(run);
   const purge = `'realm run purge ${runId} --force' removes its record`;
-  const from = failedSteps.length === 1 ? failedSteps[0] : `<one of: ${failedSteps.join(', ')}>`;
+  const resume = resumeWay(run, workflow);
   const wayOut =
     phase === 'completed'
       ? 'it completed, and nothing is owed.'
       : phase === 'aborted'
         ? `an aborted run is never resumed; ${purge}.`
-        : failedSteps.length > 0
-          ? `'realm run resume ${runId} --from ${from}' makes the failed step runnable again, or ${purge}.`
-          : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
+        : resume !== undefined
+          ? `'${resume.command}' makes the failed step runnable again, or ${purge}.`
+          : run.failed_steps.length > 0
+            ? `'realm run resume' takes none of the steps that failed (${[...new Set(run.failed_steps)].join(', ')}), so it has nothing to run again; ${purge}.`
+            : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
   return `Run '${runId}' is terminal (${phase}); cannot submit a gate response — ${wayOut}`;
 }
 
@@ -5725,20 +5730,13 @@ export async function submitHumanResponse(
           // stale pending_gate (never cleared), which is the best-effort step label here.
           const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
           // decision C170: the way out the refusal names is true for the run's kind of ending.
-          const err = new WorkflowError(
-            terminalAnswerRefusalMessage(
-              options.runId,
-              deriveRunPhase(result.run),
-              result.run.failed_steps,
-            ),
-            {
-              code: 'STATE_RUN_TERMINAL',
-              category: 'STATE',
-              agentAction: 'report_to_user',
-              retryable: false,
-              details: { runId: options.runId, run_phase: result.run.run_phase },
-            },
-          );
+          const err = new WorkflowError(terminalAnswerRefusalMessage(result.run, definition), {
+            code: 'STATE_RUN_TERMINAL',
+            category: 'STATE',
+            agentAction: 'report_to_user',
+            retryable: false,
+            details: { runId: options.runId, run_phase: result.run.run_phase },
+          });
           return errorEnvelope(
             zombieStep,
             options.runId,
@@ -5842,16 +5840,13 @@ export async function submitHumanResponse(
       'submit_gate',
       options.runId,
       run.version,
-      new WorkflowError(
-        terminalAnswerRefusalMessage(options.runId, deriveRunPhase(run), run.failed_steps),
-        {
-          code: 'STATE_RUN_TERMINAL',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: false,
-          details: { runId: options.runId, run_phase: run.run_phase },
-        },
-      ),
+      new WorkflowError(terminalAnswerRefusalMessage(run, definition), {
+        code: 'STATE_RUN_TERMINAL',
+        category: 'STATE',
+        agentAction: 'report_to_user',
+        retryable: false,
+        details: { runId: options.runId, run_phase: run.run_phase },
+      }),
     );
   }
 

@@ -16,7 +16,7 @@ import {
   judgeProgramFit,
   owedList,
   owedWords,
-  RESUMABLE_PHASES,
+  resumeWay,
   getWorkflowForRun,
   deriveRunPhase,
   describeEndedBy,
@@ -179,36 +179,16 @@ export function attendingLine(commands: number): string {
 }
 
 /**
- * decision C202: the command that makes a failed step runnable again, by `realm run resume`'s own
- * rules (`resume.ts`): the run failed or was abandoned (an aborted run is never resumed), and the step
- * is listed as failed, is still in the workflow, and is not a cleanup step (`realm run drain` settles
- * those). `steps` are the steps it takes; `undefined` when there is none.
- */
-export function resumeCommand(
-  run: Parameters<typeof deriveRunPhase>[0] & Pick<RunRecord, 'id' | 'aborted_at'>,
-  workflow: { steps: Record<string, { execution?: string } | undefined> },
-): { steps: string[]; command: string } | undefined {
-  if (run.aborted_at !== undefined || !RESUMABLE_PHASES.has(deriveRunPhase(run))) return undefined;
-  const steps = [...new Set(run.failed_steps)].filter((step) => {
-    const kind = workflow.steps[step];
-    return kind !== undefined && kind.execution !== 'finalizer';
-  });
-  if (steps.length === 0) return undefined;
-  const from = steps.length === 1 ? steps[0] : `<one of: ${steps.join(', ')}>`;
-  return { steps, command: `realm run resume ${run.id} --from ${from}` };
-}
-
-/**
- * decision C202: the reasons with the way on from a run that ended with a failed step `realm run
- * resume` takes — `the run has ended (<phase>) — to make '<step>' runnable again: realm run resume
+ * decisions C202, C204: the reasons with the way on from a run that ended with a failed step `realm run
+ * resume` takes (core's `resumeWay`) — `the run has ended (<phase>) — to make '<step>' runnable again: realm run resume
  * <id> --from <step>` (`a failed step` and `<one of: …>` for several). Every other reason unchanged.
  */
 function withResumeWay(
   reasons: string[],
-  run: Parameters<typeof resumeCommand>[0],
-  workflow: Parameters<typeof resumeCommand>[1],
+  run: Parameters<typeof resumeWay>[0],
+  workflow: Parameters<typeof resumeWay>[1],
 ): string[] {
-  const resume = resumeCommand(run, workflow);
+  const resume = resumeWay(run, workflow);
   if (resume === undefined) return reasons;
   const ended = `the run has ended (${deriveRunPhase(run)})`;
   const which = resume.steps.length === 1 ? `'${resume.steps[0]}'` : 'a failed step';

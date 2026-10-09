@@ -18,6 +18,7 @@ import {
   buildEvidenceByStep,
   deriveRunPhase,
 } from './eligibility.js';
+import { RESUMABLE_PHASES } from './lifecycle.js';
 import { checkPreconditions } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
 import { requirementForStep } from './capability.js';
@@ -555,6 +556,39 @@ export function cannotGoOnLines(run: RunRecord, pending: PendingView): string[] 
       : `To end the run instead: realm run abandon ${run.id}.`,
   );
   return lines;
+}
+
+/**
+ * The failed steps `realm run resume --from` takes, and the command that names them (decisions
+ * C202, C204) — by the resume command's own checks (`resume.ts`): the run has not been aborted, its
+ * phase is `failed` or `abandoned`, and the step is listed as failed, is still in the workflow and
+ * is not a cleanup step (`resume --from` refuses a finalizer). One step → `--from <step>`; several →
+ * `--from <one of: a, b>`. `undefined` when it takes none. The one rule every surface that offers
+ * `realm run resume` reads: the refusal of an answer to an ended run, `realm run advance` and
+ * `realm workflow run`.
+ */
+export function resumeWay(
+  run: Pick<
+    RunRecord,
+    | 'id'
+    | 'pending_gate'
+    | 'terminal_state'
+    | 'failed_steps'
+    | 'terminal_reason'
+    | 'aborted_at'
+    | 'abandoned_at'
+    | 'sealed_by'
+  >,
+  workflow: { readonly steps: Readonly<Record<string, { execution?: string } | undefined>> },
+): { steps: string[]; command: string } | undefined {
+  if (run.aborted_at !== undefined || !RESUMABLE_PHASES.has(deriveRunPhase(run))) return undefined;
+  const steps = [...new Set(run.failed_steps)].filter((step) => {
+    const kind = workflow.steps[step];
+    return kind !== undefined && kind.execution !== 'finalizer';
+  });
+  if (steps.length === 0) return undefined;
+  const from = steps.length === 1 ? steps[0] : `<one of: ${steps.join(', ')}>`;
+  return { steps, command: `realm run resume ${run.id} --from ${from}` };
 }
 
 /** The names the act stands for: guards first, then every `auto` step not refused. */

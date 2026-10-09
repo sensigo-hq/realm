@@ -156,6 +156,7 @@ export {
   cannotRunWayOutApplies,
   cannotGoOnHere,
   cannotGoOnLines,
+  resumeWay,
   capabilityMarkerWayOut,
   withFullStop,
   ADVANCE_OWED,

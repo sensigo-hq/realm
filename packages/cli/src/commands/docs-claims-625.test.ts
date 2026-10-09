@@ -15,8 +15,10 @@ import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  ExtensionRegistry,
   advanceRun,
   executeStep,
+  loadWorkflowFromString,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
@@ -453,7 +455,7 @@ describe(
       async (kind) => {
         claim(
           'mcp/tools.md',
-          "for a failed or abandoned one in which a step failed (that step named), and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which none did.",
+          "for a failed or abandoned one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which only steps it does not take failed, and `no step failed, so 'realm run resume' has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which none did.",
         );
         let runId: string;
         let step: string;
@@ -528,6 +530,83 @@ describe(
         );
       },
     );
+
+    it('C204 (round 27 finding 4): realm run respond on a run whose step and cleanup step failed offers `--from s` only, and `resume --from` takes it; once only the cleanup step is failed, it offers none', async () => {
+      claim(
+        'mcp/tools.md',
+        "for a failed or abandoned one in which a step `realm run resume` takes failed (that step named, several as `<one of: a, b>`; never a cleanup step, which `resume --from` refuses), `'realm run resume' takes none of the steps that failed (<steps>), so it has nothing to run again; 'realm run purge <id> --force' removes its record.` for one in which only steps it does not take failed",
+      );
+      const def = loadWorkflowFromString(
+        [
+          'id: dc-r28-clean',
+          'name: dc-r28-clean',
+          'version: 1',
+          'steps:',
+          '  s:',
+          '    description: S.',
+          '    execution: auto',
+          '    handler: boom',
+          '  clean:',
+          '    description: Clean up.',
+          '    execution: finalizer',
+          '    handler: boom',
+          '    on_outcome: fail',
+          '',
+        ].join('\n'),
+      );
+      await workflowStore.register(def);
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'boom', {
+        id: 'boom',
+        execute: async () => {
+          throw new Error('it broke');
+        },
+      });
+      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      const runId = run.id;
+      // `s` fails, the run seals failed, and its cleanup step runs and fails too.
+      await advanceRun(runStore, def, { runId, registry });
+      const failed = await runStore.get(runId);
+      expect([failed.run_phase, failed.failed_steps], 'fixture').toEqual([
+        'failed',
+        ['s', 'clean'],
+      ]);
+      const purge = `'realm run purge ${runId} --force' removes its record`;
+      const respond = () => realm('run', 'respond', runId, '--gate', 'any', '--choice', 'approve');
+      const first = respond();
+      const fromClean = realm('run', 'resume', runId, '--from', 'clean');
+      const fromS = realm('run', 'resume', runId, '--from', 's');
+      const abandoned = realm('run', 'abandon', runId);
+      const cleanOnly = await runStore.get(runId);
+      const second = respond();
+      // (a) red when the refusal offers the cleanup step, offers no step while `s` failed, or says
+      //     "no step failed" once only `clean` is; or when resume refuses the step offered; (b) prints them.
+      expect({
+        first: [first.code, first.err.filter((l) => l !== '')],
+        fromClean: fromClean.code,
+        fromS: [fromS.code, fromS.err.filter((l) => l !== '')],
+        abandoned: abandoned.code,
+        cleanOnly: [cleanOnly.run_phase, cleanOnly.failed_steps],
+        second: [second.code, second.err.filter((l) => l !== '')],
+      }).toEqual({
+        first: [
+          1,
+          [
+            `Run '${runId}' is terminal (failed); cannot submit a gate response — 'realm run resume ${runId} --from s' makes the failed step runnable again, or ${purge}.`,
+          ],
+        ],
+        fromClean: 1,
+        fromS: [0, []],
+        abandoned: 0,
+        cleanOnly: ['abandoned', ['clean']],
+        second: [
+          1,
+          [
+            `Run '${runId}' is terminal (abandoned); cannot submit a gate response — 'realm run resume' takes none of the steps that failed (clean), so it has nothing to run again; ${purge}.`,
+          ],
+        ],
+      });
+    });
 
     it('C164 (the sweep’s member): an answer that leaves both a command and an agent step says "the lines above are"', async () => {
       claim(
