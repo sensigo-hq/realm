@@ -107,13 +107,25 @@ describe('the dev-run detach map prints the model flags to fill in (issue #676)'
       created_at: '2026-09-01T00:00:00.000Z',
       updated_at: '2026-09-01T00:00:00.000Z',
     } as unknown as RunRecord;
-    const line = renderDetachMap(record, 'summarise')
+    // decision C202: the map offers the drive where an agent step is ready — here, the step asked for.
+    const agentReady = {
+      pending: {
+        agent_actions: [],
+        agent_steps: ['summarise'],
+        agent_refused: [],
+        pending_guards: [],
+        engine_runnable: [],
+        cannot_run: [],
+      },
+      workflow: { steps: {} },
+    };
+    const line = renderDetachMap(record, 'summarise', agentReady)
       .split('\n')
       .find((l) => l.startsWith('  Drive it:'));
     expect(line).toBe(`  Drive it:  realm agent --run-id run_abc ${PLACEHOLDER}`);
     // The flags the dev run was given that `realm agent` takes too ride on the same line.
     // (a) red when `driveFlags` is not appended; (b) prints the line.
-    const withFlags = renderDetachMap(record, 'summarise', {
+    const withFlags = renderDetachMap(record, 'summarise', agentReady, {
       driveFlags: buildReattachFlags({ extensionsModule: './ext.mjs', mintWriterNonce: true }),
     })
       .split('\n')

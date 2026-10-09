@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RunRecord } from '@sensigo/realm';
+import type { RunRecord, PendingView } from '@sensigo/realm';
 import { runCommands, topLevelCommands } from '../commands-registry.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
@@ -37,6 +37,10 @@ function record(over: Partial<RunRecord> = {}): RunRecord {
     params: {},
     completed_steps: [],
     failed_steps: [],
+    // decision C202: the map reads the steps in flight (a run with none and nothing ready gets
+    // inspect and discard).
+    in_progress_steps: [],
+    skipped_steps: [],
     evidence: [],
     created_at: '2026-09-01T00:00:00.000Z',
     updated_at: '2026-09-01T00:00:00.000Z',
@@ -44,9 +48,32 @@ function record(over: Partial<RunRecord> = {}): RunRecord {
   } as RunRecord;
 }
 
+/**
+ * decision C202: the run's view the map is composed from (empty: nothing owed, nothing ready), and the
+ * workflow's steps — `over` sets what the run owes or has ready.
+ */
+function ways(
+  over: Partial<PendingView> = {},
+  steps: Record<string, { execution?: string }> = {},
+): { pending: PendingView; workflow: { steps: Record<string, { execution?: string }> } } {
+  return {
+    pending: {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [],
+      cannot_run: [],
+      ...over,
+    } as PendingView,
+    workflow: { steps },
+  };
+}
+
 describe('renderDetachMap — the fork is on the record (issue #447)', () => {
   it('a1 the ELSE fork offers all three remedies', () => {
-    const map = renderDetachMap(record(), 'summarise');
+    // decision C202: the drive is offered where an agent step is ready — here, the step asked for.
+    const map = renderDetachMap(record(), 'summarise', ways({ agent_steps: ['summarise'] }));
 
     expect(map).toContain("detached from run 'run_abc' at step 'summarise'");
     expect(map).toContain('(phase: running)');
@@ -71,6 +98,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         },
       } as Partial<RunRecord>),
       'approve_it',
+      ways(),
     );
 
     expect(map).toContain('realm run respond run_abc --gate g-1 --choice approve|reject');
@@ -94,6 +122,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         sealed_by: { arm: 'complete' },
       } as Partial<RunRecord>),
       'a',
+      ways(),
     );
 
     expect(map).toContain('(phase: completed)');
@@ -116,6 +145,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         sealed_by: { arm: 'step_failure' },
       } as Partial<RunRecord>),
       'a',
+      ways(),
     );
 
     expect(map).toContain('(phase: failed)');
@@ -134,10 +164,11 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         },
       } as Partial<RunRecord>),
       undefined,
+      ways(),
     );
     expect(withGate).toContain("at step 'from_the_gate'");
 
-    expect(renderDetachMap(record(), undefined)).toContain("at step '(step unknown)'");
+    expect(renderDetachMap(record(), undefined, ways())).toContain("at step '(step unknown)'");
   });
 });
 
@@ -496,7 +527,9 @@ steps:
       expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
 
-    it('B3b the stall map repeats the --mint-writer-nonce this command was given (issue #676)', async () => {
+    it('B3b (decision C202) the stall map, nothing ready: no command goes on with the run — Inspect and Discard alone, no Drive it (the --mint-writer-nonce this command was given rides a Drive it line only: the map units)', async () => {
+      // Before C202 this map printed `Drive it: realm agent … --mint-writer-nonce` here; `realm agent`
+      // on such a run finds nothing to do and ends `Run ended in phase: running`, exit 1.
       writeFileSync(
         join(dir, 'workflow.yaml'),
         `id: detach-wf
@@ -516,13 +549,15 @@ steps:
           from: 'user',
         }),
       ).rejects.toThrow('process.exit');
-      const driveLine = stderr()
-        .split('\n')
-        .find((l) => l.startsWith('  Drive it:'));
-      // (a) red when the stall path does not pass the command's flags to the map; (b) prints the line.
-      expect(driveLine).toMatch(
-        /^ {2}Drive it: {2}realm agent --run-id \S+ --provider <provider> --model <model> --mint-writer-nonce$/,
-      );
+      const map = stderr().split('\n');
+      const at = map.findIndex((l) => l.startsWith('Workflow stalled — detached from run '));
+      // (a) red when the map offers the drive (or any line but inspect and discard) on a run with
+      //     nothing ready; (b) prints the map.
+      expect(map.slice(at + 1).map((l) => l.replace(/run-[\w-]+|[0-9a-f-]{36}/g, '<id>'))).toEqual([
+        '  Inspect:   realm run inspect <id>',
+        '  Discard:   realm run abandon <id>',
+      ]);
+      expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
 
     it("B5 the CHOICE arm's fresh read: a run terminalized externally during a bad choice converges honestly", async () => {

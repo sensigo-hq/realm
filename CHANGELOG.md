@@ -197,6 +197,23 @@ recorded.` and exits with the code for what is left; it printed `Stopped: '<step
   exits 1; it said `'<the last step it ran>' failed: …` (`'advance' failed: …` when it ran none) for
   all of them. The step a refusal is about is no longer also said to be in flight in another program
   when the claim on it is this call's own.
+- **`realm run advance` gives the way on from a failed step and names the engine work it left owed
+  (issue #625, PR-2a).** On a run that ended with a failed step `realm run resume` takes, the
+  run-ended reason goes on `— to make '<step>' runnable again: realm run resume <run> --from
+<step>` (`a failed step` and `--from <one of: …>` for several; a cleanup step is not offered), in the
+  `Stopped:` line and in the preview's `Nothing is owed to the engine:` line; it printed `the run has
+ended (failed)` and nothing more. When a refusal stops the call with engine work still owed, it
+  prints `Stopped: the engine still owes '<step>' — to run it: realm run advance <run>`; that work was
+  named nowhere.
+- **`realm workflow run`'s detach map offers the ways on that fit the run's state (issue #625,
+  PR-2a).** Leaving a prompt (or stalling) prints `Advance:   realm run advance <run> — for the step
+the engine owes ('<step>'), with no model` when the engine owes work — leaving an `auto` step's
+  prompt printed `Drive it: realm agent …` alone, a drive that needs a model —, `Drive it` only
+  when an agent step is ready, the steps that cannot run and the way out when the run cannot go on
+  from here, `Go on: once '<step>' is no longer in flight, realm run advance <run>` (no `Discard`)
+  for a step another program holds, `Resume: realm run resume <run> --from <step>` above `Inspect`
+  for a run that ended with a failed step resume takes, and `Inspect` and `Discard` alone with
+  nothing ready (the stall printed `Drive it`).
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
   After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
 --run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back

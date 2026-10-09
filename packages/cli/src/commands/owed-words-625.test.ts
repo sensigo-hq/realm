@@ -28,6 +28,7 @@ import {
 } from '@sensigo/realm';
 import { FIT_WORDS, fitWords, stoppedReasons, advanceRunFromShell } from './run-advance.js';
 import { inspectRun } from './inspect.js';
+import { resumeRun } from './resume.js';
 import { sweepExpiredGates } from './listen.js';
 
 const wf = (id: string, steps: WorkflowDefinition['steps']): WorkflowDefinition => ({
@@ -1250,7 +1251,8 @@ describe('#625 PR-2a, round 25 — C194 (walk c10, W1-2): realm run advance when
       (id: string) => [
         '→ process',
         `• Step 'process' was taken by ${RACER_WORDS}, and failed; ${NOT_RECORDED}.`,
-        'Stopped: the run has ended (failed)',
+        // decision C202: the way on from the failed step (walk c12, W1-3).
+        `Stopped: the run has ended (failed) — to make 'process' runnable again: realm run resume ${id} --from process`,
         `Run ${id}: phase 'failed'`,
       ],
     ],
@@ -1676,7 +1678,8 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
     expect(r).toMatchObject({ code: 1, failed: ['s'], phase: 'failed' });
     expect(r.lines[1]).toMatch(/^Stopped: 's' failed: .*it broke here/);
     expect(r.lines.slice(2)).toEqual([
-      'Stopped: the run has ended (failed)',
+      // decision C202: the way on from the failed step (walk c12, W1-2).
+      "Stopped: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s",
       "Run <run>: phase 'failed'",
     ]);
   });
@@ -1817,10 +1820,18 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
         }),
       );
       // (a) red when the refusal is said as failed, the step this program holds is called in flight in
-      //     another program, or the exit code is 0; (b) prints them.
+      //     another program, or the exit code is 0; (b) prints them. Decision C202: a step the store
+      //     refused to claim is still owed, and said so with the call that runs it.
       expect(r).toEqual({
         code: 1,
-        lines: ['→ s', line, "Run <run>: phase 'running'"],
+        lines: [
+          '→ s',
+          line,
+          ...(held.length === 0
+            ? ["Stopped: the engine still owes 's' — to run it: realm run advance <run>"]
+            : []),
+          "Run <run>: phase 'running'",
+        ],
         failed: [],
         inProgress: held,
         phase: 'running',
@@ -1835,13 +1846,19 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       [
         '→ s',
         "Stopped: 's': Failed to load run from store: disk gone",
+        // decision C202: the step is still owed, said with the call that runs it.
+        "Stopped: the engine still owes 's' — to run it: realm run advance <run>",
         "Run <run>: phase 'running'",
       ],
     ],
     [
       "the advance call's first read (the reply names no step)",
       2,
-      ['Stopped: Failed to load run from store: disk gone', "Run <run>: phase 'running'"],
+      [
+        'Stopped: Failed to load run from store: disk gone',
+        "Stopped: the engine still owes 's' — to run it: realm run advance <run>",
+        "Run <run>: phase 'running'",
+      ],
     ],
   ] as const)(
     'the run cannot be read at %s: the engine\'s words, never "failed"; exit 1',
@@ -1951,7 +1968,8 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       lines: [
         '→ x',
         "Stopped: 'g' failed: Guard step 'g' was already settled (persisted: 'fail') by a different attempt — your abort was NOT recorded.",
-        'Stopped: the run has ended (failed)',
+        // decision C202: the way on from the failed guard.
+        "Stopped: the run has ended (failed) — to make 'g' runnable again: realm run resume <run> --from g",
         "Run <run>: phase 'failed'",
       ],
     });
@@ -1968,6 +1986,8 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       lines: [
         '→ x',
         "Stopped: Failed to persist guard step 'g': disk gone",
+        // decision C202: the guard is still owed, said with the call that decides it.
+        "Stopped: the engine still owes 'g' — to run it: realm run advance <run>",
         "Run <run>: phase 'running'",
       ],
     });
@@ -1976,7 +1996,7 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
   it('the page\'s sentences: "failed" from the record; the engine\'s words otherwise; a claim the record refused; the exit code', () => {
     claim(
       ACTING,
-      "a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended",
+      "a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended",
     );
     claim(
       ACTING,
@@ -1986,5 +2006,307 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       ACTING,
       'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0.',
     );
+  });
+});
+
+describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance gives the way on that fits the run's state", () => {
+  const HERE: Attributed = { by: 'here-a', by_source: 'ambient', channel: 'advance' };
+  const OTHER: Attributed = { by: 'other-b', by_source: 'ambient', channel: 'advance' };
+
+  /**
+   * A fresh registered run of `yaml`; `advance()` is one `realm run advance` (the command's body, this
+   * program named `here-a`) with handler `boom` throwing while `breaks.on` is true, `quick` returning.
+   * `lines` are every line it printed, the run id put as `<run>`.
+   */
+  async function setup(yaml: string[]) {
+    const { home, runs, workflows } = stores();
+    const d = loadWorkflowFromString(yaml.join('\n'));
+    await workflows.register(d);
+    const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    const breaks = { on: true };
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'boom', {
+      id: 'boom',
+      execute: async () => {
+        if (breaks.on) throw new Error('it broke');
+        return { data: {} };
+      },
+    });
+    registry.register('handler', 'quick', { id: 'quick', execute: async () => ({ data: {} }) });
+    const advance = async () => {
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        HERE,
+        (l) => lines.push(l),
+        registry,
+      );
+      return { code, lines: lines.map((l) => l.split(run.id).join('<run>')) };
+    };
+    return { home, runs, workflows, d, id: run.id, breaks, advance };
+  }
+  const head = (id: string) => [`id: ${id}`, `name: ${id}`, 'version: 1', 'steps:'];
+  const auto = (name: string, handler: string, extra: string[] = []) => [
+    `  ${name}:`,
+    `    description: ${name}.`,
+    '    execution: auto',
+    `    handler: ${handler}`,
+    ...extra,
+  ];
+
+  it('W1-2: a step that failed — the run-ended reason gives `realm run resume <id> --from <step>`, on the call that failed it and on the next call; following it runs the step again', async () => {
+    const t = await setup([
+      ...head('c202-failed'),
+      ...auto('s', 'boom'),
+      ...auto('done', 'quick', ['    depends_on: [s]']),
+    ]);
+    try {
+      const first = await t.advance();
+      const next = await t.advance();
+      // the way on, followed: resume takes `s`, and the next call runs it and the rest.
+      await resumeRun(t.id, 's', t.runs, t.workflows);
+      t.breaks.on = false;
+      const resumed = await t.advance();
+      // (a) red when the run-ended reason gives no way on, another command, or the wrong step; or the
+      //     way on does not lead to the run going on; (b) prints them.
+      expect({
+        first: first.lines.slice(-4),
+        firstCode: first.code,
+        next: next.lines.at(-1),
+        nextCode: next.code,
+        resumed: resumed.lines.filter((l) => l.startsWith('→ ') || l.startsWith('Run ')),
+      }).toEqual({
+        first: [
+          '→ s',
+          "Stopped: 's' failed: Handler 'boom' threw: it broke",
+          "Stopped: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s",
+          "Run <run>: phase 'failed'",
+        ],
+        firstCode: 1,
+        next: "Nothing is owed to the engine: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s.",
+        nextCode: 0,
+        resumed: ['→ s', '→ done', "Run <run>: phase 'completed'"],
+      });
+    } finally {
+      rmSync(t.home, { recursive: true, force: true });
+    }
+  });
+
+  it('several failed steps: `a failed step` and `--from <one of: a, b>`, the names `realm run resume` takes', async () => {
+    const t = await setup([...head('c202-two'), ...auto('a', 'boom'), ...auto('b', 'boom')]);
+    try {
+      // another program holds `b`, so `a`'s failure leaves the run open; then its claim is freed and
+      // this program's next call runs `b`, which fails too.
+      await t.runs.claimStep(t.id, 'b', t.d, OTHER);
+      const first = await t.advance();
+      await reclaimStep(t.runs, t.id, 'b');
+      const second = await t.advance();
+      const after = await t.runs.get(t.id);
+      // (a) red when several failed steps are not named as resume's choices; (b) prints them.
+      expect({
+        first: first.lines.filter((l) => l.startsWith('Stopped:')),
+        failed: after.failed_steps,
+        second: second.lines.filter((l) => l.startsWith('Stopped:')),
+      }).toEqual({
+        first: [
+          "Stopped: 'a' failed: Handler 'boom' threw: it broke",
+          "Stopped: 'b' is in flight in another program — wait for it, or see realm run inspect <run>",
+        ],
+        failed: ['a', 'b'],
+        second: [
+          "Stopped: 'b' failed: Handler 'boom' threw: it broke",
+          'Stopped: the run has ended (failed) — to make a failed step runnable again: realm run resume <run> --from <one of: a, b>',
+        ],
+      });
+    } finally {
+      rmSync(t.home, { recursive: true, force: true });
+    }
+  });
+
+  it('a cleanup step that failed is not offered (resume refuses a finalizer); an abandoned run with a failed step is; an aborted run gets no way on', async () => {
+    const fin = await setup([
+      ...head('c202-fin'),
+      ...auto('s', 'boom'),
+      '  clean:',
+      '    description: Clean up.',
+      '    execution: finalizer',
+      '    handler: boom',
+      '    on_outcome: fail',
+    ]);
+    const abandoned = await setup([
+      ...head('c202-ab'),
+      ...auto('a', 'boom'),
+      ...auto('b', 'quick'),
+    ]);
+    const aborted = await setup([...head('c202-abort'), ...auto('s', 'stop')]);
+    try {
+      const finLines = (await fin.advance()).lines.filter((l) => l.startsWith('Stopped:'));
+      const finFailed = (await fin.runs.get(fin.id)).failed_steps;
+      // `a` fails while another program holds `b`; then the run is abandoned.
+      await abandoned.runs.claimStep(abandoned.id, 'b', abandoned.d, OTHER);
+      await abandoned.advance();
+      await abandonRun(abandoned.runs, abandoned.id, 'another program');
+      const abandonedLast = (await abandoned.advance()).lines.at(-1);
+      await resumeRun(abandoned.id, 'a', abandoned.runs, abandoned.workflows);
+      const resumedPhase = (await abandoned.runs.get(abandoned.id)).run_phase;
+      const reg = new ExtensionRegistry();
+      reg.register('handler', 'stop', {
+        id: 'stop',
+        execute: async () => ({ abort: { message: 'stopped by the handler' } }),
+      });
+      const abortedLines: string[] = [];
+      await advanceRunFromShell(
+        aborted.id,
+        { project: aborted.home },
+        aborted.runs,
+        aborted.workflows,
+        HERE,
+        (l) => abortedLines.push(l),
+        reg,
+      );
+      // (a) red when a failed cleanup step is offered to resume, an abandoned run's failed step is
+      //     not, or an aborted run is offered one; (b) prints them.
+      expect({
+        finLines,
+        finFailed,
+        abandonedLast,
+        resumedPhase,
+        aborted: abortedLines.filter((l) => l.startsWith('Stopped:')),
+      }).toEqual({
+        finLines: [
+          "Stopped: 's' failed: Handler 'boom' threw: it broke",
+          "Stopped: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s",
+        ],
+        finFailed: ['s', 'clean'],
+        abandonedLast:
+          "Nothing is owed to the engine: the run has ended (abandoned) — to make 'a' runnable again: realm run resume <run> --from a.",
+        resumedPhase: 'running',
+        aborted: ['Stopped: the run has ended (aborted)'],
+      });
+    } finally {
+      for (const t of [fin, abandoned, aborted]) rmSync(t.home, { recursive: true, force: true });
+    }
+  });
+
+  it('engine work still owed when a refusal stopped the call: `the engine still owes … — to run it: realm run advance <id>`; following it runs it', async () => {
+    const t = await setup([
+      ...head('c202-owed'),
+      ...auto('a', 'quick', [
+        '    trust: human_confirmed',
+        '    gate:',
+        '      message: "{{ nope.x }}"',
+      ]),
+      ...auto('b', 'quick'),
+    ]);
+    try {
+      const first = await t.advance();
+      const next = await t.advance();
+      // (a) red when the owed step is not named with the owed call, or the call does not run it;
+      //     (b) prints them.
+      expect({
+        first: first.lines.slice(first.lines.indexOf('→ a')),
+        code: first.code,
+        next: next.lines.filter((l) => l.startsWith('→ ')),
+        done: (await t.runs.get(t.id)).completed_steps,
+      }).toEqual({
+        first: [
+          '→ a',
+          "Stopped: 'a': gate.message has unresolvable references: nope.x",
+          "Stopped: the engine still owes 'b' — to run it: realm run advance <run>",
+          "Run <run>: phase 'running'",
+        ],
+        code: 1,
+        next: ['→ b'],
+        done: ['b'],
+      });
+    } finally {
+      rmSync(t.home, { recursive: true, force: true });
+    }
+  });
+
+  it("C203 (walk c12, W1-3): another program's run of the step this one started failed — the step's own line, no failed line, the way on, exit 0; the page says the exception in place", async () => {
+    claim(
+      ACTING,
+      "a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed)",
+    );
+    claim(
+      ACTING,
+      "the run ended (`the run has ended (<phase>)`; when a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names)",
+    );
+    claim(
+      ACTING,
+      "work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`)",
+    );
+    const { home, runs, workflows } = stores();
+    try {
+      const d = loadWorkflowFromString(
+        [
+          ...head('c203-other-failed'),
+          ...auto('s', 'slow'),
+          ...auto('done', 'quick', ['    depends_on: [s]']),
+        ].join('\n'),
+      );
+      await workflows.register(d);
+      const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      // Another program: its run of `s` fails.
+      const otherRegistry = new ExtensionRegistry();
+      otherRegistry.register('handler', 'slow', {
+        id: 'slow',
+        execute: async () => {
+          throw new Error('the other program’s run failed');
+        },
+      });
+      otherRegistry.register('handler', 'quick', {
+        id: 'quick',
+        execute: async () => ({ data: {} }),
+      });
+      // This program: while its handler runs, `s` is freed and another program runs it, and fails.
+      const registry = new ExtensionRegistry();
+      registry.register('handler', 'slow', {
+        id: 'slow',
+        execute: async () => {
+          await reclaimStep(runs, run.id, 's');
+          await advanceRun(runs, d, {
+            runId: run.id,
+            caller: 'advance',
+            registry: otherRegistry,
+            driver: OTHER,
+          });
+          return { data: {} };
+        },
+      });
+      registry.register('handler', 'quick', { id: 'quick', execute: async () => ({ data: {} }) });
+      const lines: string[] = [];
+      const code = await advanceRunFromShell(
+        run.id,
+        { project: home },
+        runs,
+        workflows,
+        HERE,
+        (l) => lines.push(l),
+        registry,
+      );
+      // (a) red when a failed line is printed for the step this program started, the way on is
+      //     missing, or the exit code is 1; (b) prints them.
+      expect({
+        code,
+        lines: lines.slice(lines.indexOf('→ s')).map((l) => l.split(run.id).join('<run>')),
+        failed: (await runs.get(run.id)).failed_steps,
+      }).toEqual({
+        code: 0,
+        lines: [
+          '→ s',
+          "• Step 's' was taken by other-b (from REALM_OPERATOR, via advance), and failed; this program's outcome for it was not recorded.",
+          "Stopped: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s",
+          "Run <run>: phase 'failed'",
+        ],
+        failed: ['s'],
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

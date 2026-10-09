@@ -25,6 +25,8 @@ vi.mock('node:readline/promises', () => ({
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  ExtensionRegistry,
+  advanceRun,
   executeStep,
   loadWorkflowFromString,
 } from '@sensigo/realm';
@@ -939,13 +941,28 @@ describe(
         terminal_state: false,
         run_phase: 'running',
       } as never;
-      const stalled = renderDetachMap(record, 'x', { headline: 'Workflow stalled' }).split('\n');
+      // decision C202: the map offers `Drive it:` where the run's view has an agent step ready.
+      const view = (agentSteps: string[]) => ({
+        pending: {
+          agent_actions: [],
+          agent_steps: agentSteps,
+          agent_refused: [],
+          pending_guards: [],
+          engine_runnable: [],
+          cannot_run: [],
+        },
+        workflow: { steps: {} },
+      });
+      const stalled = renderDetachMap(record, 'x', view(['x']), {
+        headline: 'Workflow stalled',
+      }).split('\n');
       const gate = renderDetachMap(
         {
           ...(record as object),
           pending_gate: { gate_id: 'g', step_name: 'x', choices: ['a', 'b'] },
         } as never,
         'x',
+        view([]),
       );
       const ended = renderDetachMap(
         {
@@ -955,6 +972,7 @@ describe(
           run_phase: 'completed',
         } as never,
         'x',
+        view([]),
       );
       // (a) red when the stall route's map lacks the line under `Drive it:`, or a map with no
       //     `Drive it:` line gains it; (b) prints the maps.
@@ -1000,6 +1018,274 @@ describe(
       }).toEqual({
         options: ['--params', '--extensions-module', '--project', '--mint-writer-nonce'],
         runs: 2,
+      });
+    });
+
+    describe("round 27 — C202 (walk c12, W2-1): the map gives the ways on that fit the run's state", () => {
+      const leave = () =>
+        Object.assign(new Error('The operation was aborted'), {
+          name: 'AbortError',
+          code: 'ABORT_ERR',
+        });
+      /** The map's lines from its first line, the run id put as `<id>`. */
+      const mapLines = (id: string): string[] => {
+        const map = errored()
+          .join('\n')
+          .split('\n')
+          .filter((l) => l !== '');
+        const at = map.findIndex((l) => / — detached from run '/.test(l));
+        return map.slice(at).map((l) => l.split(id).join('<id>'));
+      };
+
+      it("an `auto` step's prompt (W2-1): `Advance:` with the owed call, no `Drive it`; the page's screen; the call, once the workflow is registered, runs the step", async () => {
+        claim(
+          WF_PAGE,
+          "The lines after the first are the ways on that fit the run as its record stands when you leave. `Drive it` is printed only when an agent step is ready. When the engine owes work, as when you leave an `auto` step's prompt, `Advance:` gives the call that runs it with no model, above `Drive it` when both hold (the line under them then ends `the lines above are for when none is.`):",
+        );
+        claim(
+          WF_PAGE,
+          '`realm run advance` reads the workflow from the registry, as `realm agent` does: register a workflow file never registered first.',
+        );
+        mocks.question.mockImplementation(async () => {
+          throw leave();
+        });
+        const lines = [
+          'id: leave-fetch',
+          'name: leave-fetch',
+          'version: 1',
+          'steps:',
+          '  fetch:',
+          '    description: Fetch.',
+          '    execution: auto',
+        ];
+        const code = await run(lines);
+        const id = runIds()[0]!;
+        const before = realm(home, ['run', 'advance', id]);
+        const registered = realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
+        const after = realm(home, ['run', 'advance', id]);
+        // (a) red when the map offers `Drive it` (a model) for a step only the engine runs, or no
+        //     owed call, or differs from the page's screen; or the call does not run the step once
+        //     the workflow is registered; (b) prints them.
+        expect({
+          code,
+          map: mapLines(id),
+          before: [before.code, before.err.join(' ').startsWith('Workflow not found: leave-fetch')],
+          registered: registered.code,
+          after: [after.code, after.out.filter((l) => l.startsWith('→ ') || l.startsWith('Run '))],
+        }).toEqual({
+          code: 1,
+          map: put(block(WF_PAGE, '  Advance:   realm run advance'), {
+            '5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80': '<id>',
+          }),
+          before: [1, true],
+          registered: 0,
+          after: [0, ['→ fetch', `Run ${id}: phase 'completed'`]],
+        });
+      });
+
+      it('an agent step’s prompt with an `auto` step beside it: `Advance:` above `Drive it:`, and the line under them says `the lines above are`', async () => {
+        mocks.question.mockImplementation(async () => {
+          throw leave();
+        });
+        const code = await run([
+          'id: leave-both',
+          'name: leave-both',
+          'version: 1',
+          'steps:',
+          '  ask:',
+          '    description: Ask.',
+          '    execution: agent',
+          '  b:',
+          '    description: B.',
+          '    execution: auto',
+        ]);
+        const id = runIds()[0]!;
+        // (a) red when the owed call or the drive is missing, their order changes, or the line under
+        //     them counts one command; (b) prints the map.
+        expect({ code, map: mapLines(id) }).toEqual({
+          code: 1,
+          map: [
+            "Prompt cancelled — detached from run '<id>' at step 'ask' (phase: running). The run is saved.",
+            "  Advance:   realm run advance <id> — for the step the engine owes ('b'), with no model",
+            '  Drive it:  realm agent --run-id <id> --provider <provider> --model <model>',
+            `             ${attendingLine(2)}`,
+            '  Inspect:   realm run inspect <id>',
+            '  Discard:   realm run abandon <id>',
+          ],
+        });
+        expect(attendingLine(2)).toMatch(/the lines above are for when none is\.$/);
+      });
+
+      it('an `auto` step whose input its schema refuses, left at its prompt: each step that cannot run and the way out, then `Inspect`', async () => {
+        claim(
+          WF_PAGE,
+          "When neither holds, a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets each step that cannot run and the way out, `'<step>' cannot run (<check>): <why>.` and `Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.`, then `Inspect`.",
+        );
+        mocks.question.mockImplementation(async () => {
+          throw leave();
+        });
+        const code = await run([
+          'id: leave-input',
+          'name: leave-input',
+          'version: 1',
+          'steps:',
+          '  c:',
+          '    description: Needs n.',
+          '    execution: auto',
+          '    input_schema:',
+          '      type: object',
+          '      required: [n]',
+          '      properties:',
+          '        n: { type: number }',
+        ]);
+        const id = runIds()[0]!;
+        // (a) red when the map offers a drive or an owed call for a step no command can run, or
+        //     lacks the way out; (b) prints the map.
+        expect({ code, map: mapLines(id) }).toEqual({
+          code: 1,
+          map: [
+            "Prompt cancelled — detached from run '<id>' at step 'c' (phase: running). The run is saved.",
+            "  'c' cannot run (input_schema): Invalid input for step 'c': the input must have required property 'n'.",
+            "  Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.",
+            '  Inspect:   realm run inspect <id>',
+          ],
+        });
+      });
+
+      it('another program took the step while its prompt waited (left before the prompt saw it): the `Go on:` line and `Inspect`, no `Drive it`, no `Discard`', async () => {
+        claim(
+          WF_PAGE,
+          'A step in flight in another program gets the `Go on:` line shown above and `Inspect`.',
+        );
+        const def = loadWorkflowFromString(
+          [
+            'id: leave-taken',
+            'name: leave-taken',
+            'version: 1',
+            'steps:',
+            '  g:',
+            '    description: G.',
+            '    execution: auto',
+            '',
+          ].join('\n'),
+        );
+        mocks.question.mockImplementation(async () => {
+          const store = new JsonFileStore(join(home, '.realm', 'runs'));
+          await store.claimStep(runIds()[0]!, 'g', def, {
+            by: 'other-b',
+            by_source: 'ambient',
+            channel: 'advance',
+          });
+          throw leave();
+        });
+        const code = await run([
+          'id: leave-taken',
+          'name: leave-taken',
+          'version: 1',
+          'steps:',
+          '  g:',
+          '    description: G.',
+          '    execution: auto',
+        ]);
+        const id = runIds()[0]!;
+        // (a) red when the map offers the drive or discard for a run in another program's hands, or
+        //     no `Go on:` line; (b) prints the map.
+        expect({ code, map: mapLines(id) }).toEqual({
+          code: 1,
+          map: [
+            "Prompt cancelled — detached from run '<id>' at step 'g' (phase: running). The run is saved.",
+            "  Go on:     once 'g' is no longer in flight, realm run advance <id>",
+            '  Inspect:   realm run inspect <id>',
+          ],
+        });
+      });
+
+      it('the run ended with a failed step while the prompt waited (left before the prompt saw it): `Resume:` above `Inspect`; following it, once registered, makes the step runnable again', async () => {
+        claim(
+          WF_PAGE,
+          'A run that has ended gets `Inspect`, after a `Resume:` line, `realm run resume <id> --from <step>`, when a step failed that `realm run resume` takes.',
+        );
+        const yaml = [
+          'id: leave-failed',
+          'name: leave-failed',
+          'version: 1',
+          'steps:',
+          '  g:',
+          '    description: G.',
+          '    execution: auto',
+          '  s:',
+          '    description: S.',
+          '    execution: auto',
+          '    handler: boom',
+        ];
+        const def = loadWorkflowFromString([...yaml, ''].join('\n'));
+        const other = new ExtensionRegistry();
+        other.register('handler', 'boom', {
+          id: 'boom',
+          execute: async () => {
+            throw new Error('it broke');
+          },
+        });
+        mocks.question.mockImplementation(async () => {
+          // Another program runs what the engine owes: `g`, then `s`, which fails and ends the run.
+          const store = new JsonFileStore(join(home, '.realm', 'runs'));
+          await advanceRun(store, def, {
+            runId: runIds()[0]!,
+            caller: 'advance',
+            registry: other,
+            driver: { by: 'other-b', by_source: 'ambient', channel: 'advance' },
+          });
+          throw leave();
+        });
+        const code = await run(yaml);
+        const id = runIds()[0]!;
+        const registered = realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
+        const resumed = realm(home, ['run', 'resume', id, '--from', 's']);
+        // (a) red when an ended run with a failed step resume takes gets no `Resume:` line, or the
+        //     line's command is refused; (b) prints the map and the resume.
+        expect({
+          code,
+          map: mapLines(id),
+          registered: registered.code,
+          resumed: [resumed.code, resumed.out[0]],
+        }).toEqual({
+          code: 1,
+          map: [
+            "Prompt cancelled — detached from run '<id>' at step 'g' (phase: failed). The run is saved.",
+            '  Resume:    realm run resume <id> --from s',
+            '  Inspect:   realm run inspect <id>',
+          ],
+          registered: 0,
+          resumed: [0, `Resumed run '${id}': step 's' re-enabled and run reset to 'running'.`],
+        });
+      });
+
+      it('the stall with nothing ready: `Inspect` and `Discard` alone, no `Drive it`', async () => {
+        claim(
+          WF_PAGE,
+          'A run with nothing ready gets `Inspect` and `Discard` alone, as when the command stalls with nothing ready (`Workflow stalled — detached from run …`; a first step whose `when` is never true, for one).',
+        );
+        const code = await run([
+          'id: stall-nothing',
+          'name: stall-nothing',
+          'version: 1',
+          'steps:',
+          '  a:',
+          '    description: Never.',
+          '    execution: agent',
+          '    when:',
+          "      - 'run.params.never_true == true'",
+        ]);
+        const id = runIds()[0]!;
+        // (a) red when the stall map offers a command with nothing ready; (b) prints the map.
+        expect({ code, map: mapLines(id) }).toEqual({
+          code: 1,
+          map: [
+            "Workflow stalled — detached from run '<id>' at step '(step unknown)' (phase: running). The run is saved.",
+            '  Inspect:   realm run inspect <id>',
+            '  Discard:   realm run abandon <id>',
+          ],
+        });
       });
     });
   },

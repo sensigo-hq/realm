@@ -19,6 +19,9 @@ import {
   describePending,
   stepsThatCannotRun,
   cannotGoOnLines,
+  cannotGoOnHere,
+  owedList,
+  owedWords,
   composeStepViews,
   describeClaimHolder,
   classifyInProgressClaims,
@@ -45,10 +48,10 @@ import type {
   RunStore,
   Attributed,
 } from '@sensigo/realm';
-import type { ResponseEnvelope, StepDispatcher } from '@sensigo/realm';
+import type { ResponseEnvelope, StepDispatcher, PendingView } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { buildReattachFlags } from './agent.js';
-import { attendingLine } from './run-advance.js';
+import { attendingLine, resumeCommand } from './run-advance.js';
 import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 
 /**
@@ -96,11 +99,19 @@ export function renderStepFailureLine(
  *    terminal run, by two DIFFERENT mechanisms: `realm run abandon` throws STATE_RUN_TERMINAL
  *    (abandon-run.ts), while `realm agent --run-id` refuses through a separate uncoded check in
  *    resolveRunAttach (run-attach.ts) — a plain Error, not that code.
+ *    Decision C202: a run that ended with a failed step `realm run resume` takes (`resumeCommand`)
+ *    gets that command first (`Resume:`).
  *  - PENDING GATE — respond and inspect, and deliberately NO Discard line: `realm run abandon`
  *    REFUSES a run with a pending gate (STATE_TRANSITION_DENIED, abandon-run.ts) and tells you to
  *    resolve the gate first. The gate_id and choices come from the FROZEN record, the same source
  *    `respond` validates against, so what is printed is what will be accepted.
- *  - OTHERWISE — drive, inspect, or discard, all three of which apply.
+ *  - OTHERWISE — decision C202: the ways on the run's view (`describePending`, read by the caller on
+ *    the same record) gives: the owed call (`Advance: realm run advance`) when the engine owes work,
+ *    the drive (`Drive it: realm agent`) only when an agent step is ready — then the line `realm run
+ *    respond` prints after its commands; when neither, the steps that cannot run and the way out
+ *    (`cannotGoOnLines`) when the run cannot go on from here, or C188's `Go on:` line for a step in
+ *    flight in another program (no Discard: the run is in that program's hands); then inspect, and
+ *    discard. A run with nothing ready gets inspect and discard alone: no command goes on with it.
  *
  * The choices are joined with `|` deliberately: this is a usage template showing alternation, not
  * a list. (inspect renders them `', '` and the prompt `'/'`; three renderings, three purposes.)
@@ -114,6 +125,11 @@ export function renderStepFailureLine(
 export function renderDetachMap(
   record: RunRecord,
   promptStep: string | undefined,
+  /**
+   * Decision C202: what the run owes and what is ready — `describePending` on `record` — and the
+   * workflow (which failed steps `realm run resume` takes).
+   */
+  ways: { pending: PendingView; workflow: Parameters<typeof resumeCommand>[1] },
   opts?: {
     headline?: string;
     /**
@@ -139,6 +155,9 @@ export function renderDetachMap(
   ];
 
   if (record.terminal_state) {
+    // decision C202: the way on from a failed step `realm run resume` takes.
+    const resume = resumeCommand(record, ways.workflow);
+    if (resume !== undefined) lines.push(`  Resume:    ${resume.command}`);
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
   }
@@ -152,14 +171,42 @@ export function renderDetachMap(
     return lines.join('\n');
   }
 
-  const driveFlags =
-    opts?.driveFlags !== undefined && opts.driveFlags !== '' ? ` ${opts.driveFlags}` : '';
-  lines.push(
-    `  Drive it:  realm agent --run-id ${record.id} --provider <provider> --model <model>${driveFlags}`,
-  );
-  // decision C196: a `realm agent` waiting on this run goes on by itself — the line `realm run
-  // respond` and `realm run advance` print after theirs, from the same composer, under `Drive it`.
-  lines.push(`             ${attendingLine(1)}`);
+  // decision C202: the ways on the run's view gives — the owed call where the engine owes work, the
+  // drive only where an agent step is ready.
+  const { pending } = ways;
+  const commands: string[] = [];
+  if (pending.act !== undefined) {
+    commands.push(
+      `  Advance:   realm run advance ${record.id} — for ${owedWords(pending).steps} the engine owes (${owedList(pending)}), with no model`,
+    );
+  }
+  if (pending.agent_steps.length > 0) {
+    const driveFlags =
+      opts?.driveFlags !== undefined && opts.driveFlags !== '' ? ` ${opts.driveFlags}` : '';
+    commands.push(
+      `  Drive it:  realm agent --run-id ${record.id} --provider <provider> --model <model>${driveFlags}`,
+    );
+  }
+  if (commands.length > 0) {
+    // decision C196: a `realm workflow run` or `realm agent` waiting on this run goes on by itself —
+    // the line `realm run respond` and `realm run advance` print after theirs, from the same
+    // composer, under the commands.
+    lines.push(...commands, `             ${attendingLine(commands.length)}`);
+  } else if (cannotGoOnHere(record, pending)) {
+    // decision C202: the run cannot go on from here — core's lines: each step that cannot run, then
+    // the way out (which ends with `realm run abandon`).
+    lines.push(...cannotGoOnLines(record, pending).map((line) => `  ${line}`));
+    lines.push(`  Inspect:   realm run inspect ${record.id}`);
+    return lines.join('\n');
+  } else {
+    // decision C202: a step another program holds — C188's way on, and no Discard line.
+    const inFlight = record.in_progress_steps.filter((s) => s !== record.pending_gate?.step_name);
+    if (inFlight.length > 0) {
+      lines.push(goOnLine(inFlight, `realm run advance ${record.id}`));
+      lines.push(`  Inspect:   realm run inspect ${record.id}`);
+      return lines.join('\n');
+    }
+  }
   lines.push(`  Inspect:   realm run inspect ${record.id}`);
   lines.push(`  Discard:   realm run abandon ${record.id}`);
   return lines.join('\n');
@@ -850,7 +897,15 @@ export const runCommand = new Command('run')
             // consistency, not because a staleness gap is constructible in this spot.
             const record = await store.get(runId);
             console.error(
-              renderDetachMap(record, promptStep, { headline: 'Workflow stalled', driveFlags }),
+              renderDetachMap(
+                record,
+                promptStep,
+                {
+                  pending: describePending(definition, record, registry, new Date()),
+                  workflow: definition,
+                },
+                { headline: 'Workflow stalled', driveFlags },
+              ),
             );
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
             rl.close();
@@ -1079,7 +1134,17 @@ export const runCommand = new Command('run')
             rl.close();
             process.exit(1);
           }
-          console.error(renderDetachMap(record, promptStep, { driveFlags }));
+          console.error(
+            renderDetachMap(
+              record,
+              promptStep,
+              {
+                pending: describePending(definition, record, registry, new Date()),
+                workflow: definition,
+              },
+              { driveFlags },
+            ),
+          );
           // process.exit SKIPS the finally, so close explicitly. (rl.close is idempotent, so
           // the double-close on any path that reaches both is harmless — probed.)
           rl.close();

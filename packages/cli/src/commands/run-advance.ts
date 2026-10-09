@@ -15,6 +15,8 @@ import {
   describeRunDriver,
   judgeProgramFit,
   owedList,
+  owedWords,
+  RESUMABLE_PHASES,
   getWorkflowForRun,
   deriveRunPhase,
   describeEndedBy,
@@ -107,10 +109,10 @@ export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[
 
 /**
  * Every reason that holds for the run to stop where it is, in D4.4's order (a failed step is the
- * caller's to add, first): the run ended · a question is open · each step that cannot run · agent
- * steps ready · each step in flight elsewhere, with what to do (decision C43; the holder and the
- * time are on the preview's `In flight:` line) · and, when none of these holds, `nothing is ready
- * to run now`. The open question's line is rendered from the reply's answer act (decision C103 —
+ * caller's to add, first): the run ended · a question is open · each step that cannot run · engine
+ * work still owed (decision C202) · agent steps ready · each step in flight elsewhere, with what to
+ * do (decision C43; the holder and the time are on the preview's `In flight:` line) · and, when none
+ * of these holds, `nothing is ready to run now`. The open question's line is rendered from the reply's answer act (decision C103 —
  * `nextActions`, core's one composer), never from this command's own read of the record.
  */
 export function stoppedReasons(
@@ -129,6 +131,14 @@ export function stoppedReasons(
     ];
   }
   const reasons = stepsThatCannotRun(pending).map((e) => cannotRunClause(e));
+  // decision C202: engine work owed when the call stops — a refusal ended the loop before it ran, or
+  // another program made it owed after the loop's last read — is named with the call that runs it.
+  // (The preview never gets here with work owed: it runs it.)
+  if (pending.act !== undefined) {
+    reasons.push(
+      `the engine still owes ${owedList(pending)} — to run ${owedWords(pending).them}: realm run advance ${runId}`,
+    );
+  }
   const ready = agentReadyReason(runId, pending.agent_steps);
   if (ready !== undefined) reasons.push(ready);
   reasons.push(
@@ -166,6 +176,45 @@ export function agentReadyReason(runId: string, agentSteps: readonly string[]): 
  */
 export function attendingLine(commands: number): string {
   return `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; ${commands === 1 ? 'the line above is' : 'the lines above are'} for when none is.`;
+}
+
+/**
+ * decision C202: the command that makes a failed step runnable again, by `realm run resume`'s own
+ * rules (`resume.ts`): the run failed or was abandoned (an aborted run is never resumed), and the step
+ * is listed as failed, is still in the workflow, and is not a cleanup step (`realm run drain` settles
+ * those). `steps` are the steps it takes; `undefined` when there is none.
+ */
+export function resumeCommand(
+  run: Parameters<typeof deriveRunPhase>[0] & Pick<RunRecord, 'id' | 'aborted_at'>,
+  workflow: { steps: Record<string, { execution?: string } | undefined> },
+): { steps: string[]; command: string } | undefined {
+  if (run.aborted_at !== undefined || !RESUMABLE_PHASES.has(deriveRunPhase(run))) return undefined;
+  const steps = [...new Set(run.failed_steps)].filter((step) => {
+    const kind = workflow.steps[step];
+    return kind !== undefined && kind.execution !== 'finalizer';
+  });
+  if (steps.length === 0) return undefined;
+  const from = steps.length === 1 ? steps[0] : `<one of: ${steps.join(', ')}>`;
+  return { steps, command: `realm run resume ${run.id} --from ${from}` };
+}
+
+/**
+ * decision C202: the reasons with the way on from a run that ended with a failed step `realm run
+ * resume` takes — `the run has ended (<phase>) — to make '<step>' runnable again: realm run resume
+ * <id> --from <step>` (`a failed step` and `<one of: …>` for several). Every other reason unchanged.
+ */
+function withResumeWay(
+  reasons: string[],
+  run: Parameters<typeof resumeCommand>[0],
+  workflow: Parameters<typeof resumeCommand>[1],
+): string[] {
+  const resume = resumeCommand(run, workflow);
+  if (resume === undefined) return reasons;
+  const ended = `the run has ended (${deriveRunPhase(run)})`;
+  const which = resume.steps.length === 1 ? `'${resume.steps[0]}'` : 'a failed step';
+  return reasons.map((reason) =>
+    reason === ended ? `${ended} — to make ${which} runnable again: ${resume.command}` : reason,
+  );
 }
 
 /**
@@ -359,7 +408,11 @@ export async function advanceRunFromShell(
             ...(driver !== undefined ? { driver } : {}),
           })
         : undefined;
-    const reasons = stoppedReasons(runId, run, pending, reply?.next_actions);
+    const reasons = withResumeWay(
+      stoppedReasons(runId, run, pending, reply?.next_actions),
+      run,
+      workflow,
+    );
     print(`${opening}: ${withFullStop(reasons.join('; '))}`);
     // decision C181: the ready line for an agent step is followed by the line `realm run respond`
     // prints after its commands — a `realm workflow run` or `realm agent` waiting on the run goes on
@@ -514,7 +567,13 @@ export async function advanceRunFromShell(
     refusal && about !== undefined
       ? { ...after, in_progress_steps: after.in_progress_steps.filter((s) => s !== about) }
       : after;
-  reasons.push(...stoppedReasons(runId, heldHere, afterView, result.next_actions));
+  reasons.push(
+    ...withResumeWay(
+      stoppedReasons(runId, heldHere, afterView, result.next_actions),
+      after,
+      workflow,
+    ),
+  );
   if (reasons.length > 1) {
     const none = reasons.indexOf('nothing is ready to run now');
     if (none >= 0) reasons.splice(none, 1);

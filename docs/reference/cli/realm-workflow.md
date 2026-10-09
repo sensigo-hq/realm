@@ -236,6 +236,20 @@ Prompt cancelled — detached from run '00ac2e9c-6728-4fb4-8ba0-234617eff305' at
   Discard:   realm run abandon 00ac2e9c-6728-4fb4-8ba0-234617eff305
 ```
 
+The lines after the first are the ways on that fit the run as its record stands when you leave. `Drive it` is printed only when an agent step is ready. When the engine owes work, as when you leave an `auto` step's prompt, `Advance:` gives the call that runs it with no model, above `Drive it` when both hold (the line under them then ends `the lines above are for when none is.`):
+
+```text
+Prompt cancelled — detached from run '5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80' at step 'fetch' (phase: running). The run is saved.
+  Advance:   realm run advance 5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80 — for the step the engine owes ('fetch'), with no model
+             If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
+  Inspect:   realm run inspect 5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80
+  Discard:   realm run abandon 5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80
+```
+
+`realm run advance` reads the workflow from the registry, as `realm agent` does: register a workflow file never registered first.
+
+When neither holds, a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets each step that cannot run and the way out, `'<step>' cannot run (<check>): <why>.` and `Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.`, then `Inspect`. A step in flight in another program gets the `Go on:` line shown above and `Inspect`. A run with nothing ready gets `Inspect` and `Discard` alone, as when the command stalls with nothing ready (`Workflow stalled — detached from run …`; a first step whose `when` is never true, for one). A run that has ended gets `Inspect`, after a `Resume:` line, `realm run resume <id> --from <step>`, when a step failed that `realm run resume` takes. Added after version 0.46.0, whose map printed `Drive it` whenever no question was open and the run had not ended, and `Inspect` alone for a run that had ended.
+
 Ctrl+C typed at a prompt is a key the prompt reads, so it leaves the prompt as above, with exit code 1. A signal sent to the command, SIGINT (`kill -INT <pid>`) or SIGTERM, is not read by the prompt: the command ends at once and prints nothing, none of the lines above. The run is kept; the `Run ID:` line the command printed when it started names it. A shell shows 128 plus the signal's number as the command's exit code (130 for SIGINT).
 
 To drive the run with `realm agent`, fill in `<provider>` and `<model>` with the provider and model you want: a run started by `realm workflow run` has not been driven by a model. The `Drive it` line also repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` you gave `realm workflow run` (none in this example), as you typed them: run it from the folder you started that command in. If the workflow file was never registered, register it first (`realm workflow register <file>`). Until then the command stops with `Error: Workflow not found: <id> — most often this run was created from a file without --register. …`, and after it the same command drives the run. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>` and without those flags.
