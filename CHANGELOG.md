@@ -114,7 +114,13 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
     finding for it.
   - `inspect` and `--stuck` read the record alone.
   - A bare `auto` step's evidence gains `output_source` (`driven_step` · `dependency` · `run_params`
-    · `none`).
+    · `none`), one exported vocabulary, `OUTPUT_SOURCES`. Core's `outputSourceOf(entry, definition)`
+    gives, for any evidence entry, the source or why there is none (`not_an_output_entry`,
+    `definition_unavailable`, `not_a_bare_step`, `predates_output_source`; also exported:
+    `OUTPUT_SOURCE_ABSENT_CAUSES`, `isBareAutoStep`). `realm run inspect` prints `Output source: …`
+    under a bare step's `Output:`; `get_run_state` and `realm run export` show nothing new, each page
+    saying why. The store TCK's `EVIDENCE_KEEPS_DRIVER_AND_PROOF` law now also requires a store to
+    round-trip `output_source`.
   - Two reply codes are added. `executeStep`'s reply when another process holds the step it was
     about to claim carries `error_code: 'STATE_STEP_ALREADY_CLAIMED'`; it had none.
   - `get_run_state`'s release-line refusal carries `error_code` and `error_details`.

@@ -1,6 +1,11 @@
 // Standalone evidence capture utility — builds an EvidenceSnapshot from step execution data.
 import { createHash } from 'node:crypto';
-import type { EvidenceSnapshot, StepDiagnostics, AgentTraceEntry } from '../types/run-record.js';
+import type {
+  EvidenceSnapshot,
+  StepDiagnostics,
+  AgentTraceEntry,
+  OutputSource,
+} from '../types/run-record.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import type { Attributed } from '../engine/holder.js';
 import { normalizeTrace } from '../engine/trace-normalizer.js';
@@ -59,7 +64,7 @@ export interface CaptureEvidenceParams {
    */
   drivenBy?: Attributed;
   /** Issue #625 PR-2a: a bare auto step's output source — written as `output_source`. */
-  outputSource?: 'driven_step' | 'dependency' | 'run_params' | 'none';
+  outputSource?: OutputSource;
 }
 
 /** Builds an EvidenceSnapshot from step execution parameters, including a SHA-256 content hash.

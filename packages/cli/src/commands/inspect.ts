@@ -31,6 +31,7 @@ import {
   composeDriveFailureCosts,
   describeClaimHolder,
   isAnswerEntry,
+  outputSourceOf,
 } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -218,6 +219,35 @@ function renderExtensionIdentity(
 }
 
 /** Truncates a JSON-serialised summary to a readable single line. */
+/**
+ * F4 (framework §5 E1): the one line `realm run inspect` renders for a bare `auto` step's entry — where
+ * its output came from, or why that is not recorded — from core's `outputSourceOf`. `undefined` for an
+ * entry that is not a bare step's (or whose workflow cannot be read and that carries no source).
+ */
+export function outputSourceLine(
+  snap: EvidenceSnapshot,
+  definition: WorkflowDefinition | undefined,
+): string | undefined {
+  const read = outputSourceOf(snap, definition);
+  if ('absent_cause' in read) {
+    return read.absent_cause === 'predates_output_source'
+      ? 'Output source: not recorded — this entry was written before Realm recorded it'
+      : undefined;
+  }
+  switch (read.source) {
+    case 'driven_step':
+      return 'Output source: driven_step — what the call that named the step returned';
+    case 'dependency': {
+      const dep = definition?.steps[snap.step_id]?.depends_on?.[0];
+      return `Output source: dependency — ${dep !== undefined ? `'${dep}'` : 'its dependency'}'s recorded output`;
+    }
+    case 'run_params':
+      return "Output source: run_params — the run's params";
+    case 'none':
+      return 'Output source: none — nothing to copy, so {} was recorded';
+  }
+}
+
 function formatSummary(value: unknown, maxLength = 120): string {
   const raw = JSON.stringify(value);
   if (raw.length <= maxLength) return raw;
@@ -996,6 +1026,8 @@ export async function inspectRun(
         lines.push(`     Resolved: ${formatSummary(lastSnap.resolved_params)}`);
       }
       lines.push(`     Output: ${formatSummary(lastSnap.output_summary)}`);
+      const lastSource = outputSourceLine(lastSnap, definition);
+      if (lastSource !== undefined) lines.push(`     ${lastSource}`);
       if (lastSnap.trace !== undefined) {
         lines.push(`     Trace:  ${lastSnap.trace.length} entries (not hashed).`);
         if (lastSnap.trace_summary?.truncated) {
@@ -1087,6 +1119,8 @@ export async function inspectRun(
           lines.push(`     Resolved: ${formatSummary(snap.resolved_params)}`);
         }
         lines.push(`     Output: ${formatSummary(snap.output_summary)}`);
+        const source = outputSourceLine(snap, definition);
+        if (source !== undefined) lines.push(`     ${source}`);
         if (snap.trace !== undefined) {
           lines.push(`     Trace:  ${snap.trace.length} entries (not hashed).`);
           if (snap.trace_summary?.truncated) {

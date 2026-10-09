@@ -165,7 +165,7 @@ When more than one applies, `awaiting_human` comes first, then `blocked_on_capab
 
 `include_steps`, and the `steps` and `drive_failure_costs` fields it adds, were added in 0.46.0. So was the record of what a failed drive was billed. So were `step_claims`, `driven_by` and `answers`.
 
-With `include_steps: true`, the reply has a `steps` object with one entry for each step that ran:
+With `include_steps: true`, the reply has a `steps` object with one entry for each step that ran. It holds each step's attempts and their cost, not its evidence entries, so it does not show where a bare `auto` step's output came from (`output_source`); `realm run inspect` shows that, and so does the run's record:
 
 ```json
 "steps": {

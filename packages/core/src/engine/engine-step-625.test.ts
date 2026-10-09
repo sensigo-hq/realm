@@ -179,7 +179,7 @@ describe('#625 PR-2a, C83 — executeEngineStep runs only auto steps', () => {
   it('CONTROL — an auto step runs as before: ok, completed, its bare output from the run params', async () => {
     claimDoc625(
       'docs/reference/run-record-and-export.md',
-      "| `output_source` | text | No | On a bare `auto` step's entry only, where its output came from: `driven_step` (the output the caller that named the step gave), `dependency` (its one `depends_on` step's output), `run_params` (the run's params; it has no `depends_on`) or `none` (`{}`). Added after version 0.46.0. |",
+      "| `output_source` | text | No | On a bare `auto` step's entry only, where its output came from: `driven_step` (the output the caller that named the step gave), `dependency` (its one `depends_on` step's output), `run_params` (the run's params; it has no `depends_on`) or `none` (nothing to copy, so `{}`: the engine ran a step that depends on several steps, or whose one dependency has no successful entry).",
     );
     await withStore(async (store) => {
       const { run } = await store.create({

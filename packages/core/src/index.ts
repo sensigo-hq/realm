@@ -139,10 +139,17 @@ export type {
   AnswerCaller,
   EnactedVia,
   ExecuteEngineStepOptions,
-  OutputSource,
   GuardEnding,
 } from './engine/execution-loop.js';
 export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/execution-loop.js';
+// F4: where an evidence entry's output came from — the source, or why it has none (`OUTPUT_SOURCES`, the
+// vocabulary, is exported with the run record's types).
+export {
+  OUTPUT_SOURCE_ABSENT_CAUSES,
+  isBareAutoStep,
+  outputSourceOf,
+} from './engine/output-source.js';
+export type { OutputSourceAbsentCause } from './engine/output-source.js';
 // Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
 export { ENTRY_CALLERS } from './engine/callers.js';
 // Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.

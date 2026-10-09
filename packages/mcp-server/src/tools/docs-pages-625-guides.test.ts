@@ -527,7 +527,7 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
   it('run-record-and-export.md: output_source — on a bare auto step’s entry only, from the four sources', async () => {
     claim(
       'docs/reference/run-record-and-export.md',
-      "| `output_source` | text | No | On a bare `auto` step's entry only, where its output came from: `driven_step` (the output the caller that named the step gave), `dependency` (its one `depends_on` step's output), `run_params` (the run's params; it has no `depends_on`) or `none` (`{}`).",
+      "| `output_source` | text | No | On a bare `auto` step's entry only, where its output came from: `driven_step` (the output the caller that named the step gave), `dependency` (its one `depends_on` step's output), `run_params` (the run's params; it has no `depends_on`) or `none` (nothing to copy, so `{}`: the engine ran a step that depends on several steps, or whose one dependency has no successful entry).",
     );
     const registry = createDefaultRegistry();
     registry.register('handler', 'count', {

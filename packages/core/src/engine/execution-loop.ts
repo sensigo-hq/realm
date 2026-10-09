@@ -15,7 +15,9 @@ import type {
   UsageRecord,
   StepCacheDetail,
   SealArm,
+  OutputSource,
 } from '../types/run-record.js';
+import { isBareAutoStep as isBareAutoStepDef } from './output-source.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
 import type { ResponseEnvelope, NextAction } from '../types/response-envelope.js';
@@ -2093,10 +2095,8 @@ async function executeStepBody(
   }
 
   const stepDef = definition.steps[options.command];
-  const isBareAutoStep =
-    stepDef?.execution === 'auto' &&
-    stepDef.handler === undefined &&
-    stepDef.uses_service === undefined;
+  // F4: the one predicate the output-source read uses too.
+  const isBareAutoStep = isBareAutoStepDef(stepDef);
 
   // issue #508 (L2) — fail CLOSED, not merely fail-loud, on a trust value L1 would have refused
   // at load. This is the layer that closes the population L1 cannot reach: a definition already
@@ -6933,8 +6933,9 @@ type ChainedStepEntry = {
   warnings?: string[];
 };
 
-/** How a bare `auto` step got the output it recorded (issue #625 PR-2a, decision C3). */
-export type OutputSource = 'driven_step' | 'dependency' | 'run_params' | 'none';
+/** How a bare `auto` step got the output it recorded (issue #625 PR-2a, decision C3; F4: the one
+ *  vocabulary is `OUTPUT_SOURCES`, in the run record's types). */
+export type { OutputSource };
 
 /**
  * The output of a bare `auto` step the ENGINE runs (decision C3): its single `depends_on` step's

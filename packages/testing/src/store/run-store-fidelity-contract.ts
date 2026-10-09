@@ -354,9 +354,10 @@ export function runStoreFidelityContract(
   }
 
   // issue #625 — EVIDENCE_KEEPS_DRIVER_AND_PROOF. Always active: every store round-trips evidence.
+  // F4 (framework §5 E1): and a bare step's entry written with output_source reads back with it.
   cases.push({
     law: 'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
-    name: 'an entry written with driven_by and a gate_response entry written with claim_proof read back with both',
+    name: 'an entry written with driven_by, a gate_response entry written with claim_proof and an entry written with output_source read back with all three',
     run: async () => {
       const { run } = await adapter.store.create({
         workflowId: `tck-evidence-${Math.random().toString(36).slice(2)}`,
@@ -379,6 +380,7 @@ export function runStoreFidelityContract(
         evidence: [
           { ...base, driven_by: TCK_CLAIMANT },
           { ...base, kind: 'gate_response', claim_proof: proof },
+          { ...base, output_source: 'dependency' },
         ],
       });
       const reread = await adapter.store.get(run.id);
@@ -396,6 +398,13 @@ export function runStoreFidelityContract(
         throw new Error(
           `a store must round-trip a gate_response entry's claim_proof (issue #625): wrote ` +
             `${wroteProof}, read back ${readProof}`,
+        );
+      }
+      const readSource = reread.evidence[2]?.output_source;
+      if (readSource !== 'dependency') {
+        throw new Error(
+          `a store must round-trip a bare step's entry's output_source (issue #625): wrote ` +
+            `"dependency", read back ${JSON.stringify(readSource)}`,
         );
       }
     },

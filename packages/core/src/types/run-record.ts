@@ -414,6 +414,20 @@ export interface StepCacheDetail {
   requests: UsageRecord[];
 }
 
+/**
+ * Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's
+ * recorded output came from — the one closed vocabulary of {@link EvidenceSnapshot.output_source}.
+ * A bare `auto` step has no handler and no service.
+ *  - `driven_step`: what the caller that named the step returned through its dispatcher;
+ *  - `dependency`: its single `depends_on` step's recorded output (the engine ran it);
+ *  - `run_params`: the run's params (the step has no `depends_on`);
+ *  - `none`: nothing to copy, so the step recorded `{}` — the engine ran a step that depends on more
+ *    than one step, or whose single dependency has no successful entry (a trigger rule let it run
+ *    after that step failed or was skipped).
+ */
+export const OUTPUT_SOURCES = ['driven_step', 'dependency', 'run_params', 'none'] as const;
+export type OutputSource = (typeof OUTPUT_SOURCES)[number];
+
 export interface EvidenceSnapshot {
   step_id: string;
   started_at: string;
@@ -455,12 +469,10 @@ export interface EvidenceSnapshot {
   driven_by?: Attributed;
   /**
    * Issue #625 PR-2a (decision C3): on a BARE `auto` step's entry only — where its output came
-   * from. `driven_step`: what the caller that named the step returned through its dispatcher;
-   * `dependency`: its single `depends_on` step's recorded output (the engine ran it); `run_params`:
-   * the run's params (no `depends_on`); `none`: nothing to copy (`{}`). Absent on older entries and
-   * on every step with a handler or a service.
+   * from, a member of {@link OUTPUT_SOURCES}. Absent on every other entry and on entries written
+   * before the field; core's `outputSourceOf` says, for any entry, the source or why it has none.
    */
-  output_source?: 'driven_step' | 'dependency' | 'run_params' | 'none';
+  output_source?: OutputSource;
   /**
    * Holder slice (PR-H): present only on a `gate_response` entry the ANSWER wrote, and only when the
    * answer was recorded (verdict rows 1–5; a settled question has no entry to carry `spent`).
