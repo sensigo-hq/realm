@@ -1950,6 +1950,57 @@ describe(
       });
     });
 
+    it("purge (C213, round 28 finding 3): the resume count is resume's own rule — a failed cleanup step is not counted; a run whose workflow cannot be read is counted with any failed step", async () => {
+      claim(
+        PAGE,
+        'The line about `realm run resume` counts the selected runs that had a failed step `resume` could have made runnable again: a failed cleanup step is not counted, since `resume --from` refuses it. A run whose workflow cannot be read is counted when it has any failed step: `resume` refuses it until the workflow is registered again, and only the workflow tells a cleanup step from another.',
+      );
+      const steps = [
+        autoStep('s', [], ['handler: boom']),
+        '  clean:',
+        '    description: Clean up.',
+        '    execution: finalizer',
+        '    handler: boom',
+        '    on_outcome: fail',
+      ].join('\n');
+      const p = await project('c213-purge', steps, true);
+      const id = await started(p.def);
+      realm(['run', 'advance', id]);
+      const resumed = realm(['run', 'resume', id, '--from', 's']);
+      const abandoned = realm(['run', 'abandon', id]);
+      const after = await runStore.get(id);
+      const refused = realm(['run', 'resume', id, '--from', 'clean']);
+      const cleanOnly = realm(['run', 'purge', id]);
+      const failed = await started(p.def);
+      realm(['run', 'advance', failed]);
+      const withStep = realm(['run', 'purge', failed]);
+      // The workflow no longer readable: its registry entry removed.
+      rmSync(join(home, '.realm', 'workflows', 'c213-purge.json'));
+      const unread = realm(['run', 'purge', id]);
+      const line = (r: { out: string[] }) => r.out.find((l) => l.includes("'realm run resume'"));
+      // (a) red when a failed cleanup step counts as a resume path, a step resume takes does not,
+      //     or an unreadable workflow's run is not counted; (b) prints the lines and the record.
+      expect({
+        resumed: resumed.code,
+        abandoned: abandoned.code,
+        state: [after.run_phase, after.failed_steps],
+        refused: refused.code,
+        cleanOnly: line(cleanOnly),
+        withStep: line(withStep),
+        unread: line(unread),
+      }).toEqual({
+        resumed: 0,
+        abandoned: 0,
+        state: ['abandoned', ['clean']],
+        refused: 1,
+        cleanOnly: "None of the 1 selected run(s) are resumable via 'realm run resume'.",
+        withStep:
+          "1 of 1 selected run(s) are resumable via 'realm run resume' — purging would destroy that path permanently.",
+        unread:
+          "1 of 1 selected run(s) are resumable via 'realm run resume' — purging would destroy that path permanently.",
+      });
+    });
+
     describe('round 28 — C205: the ways on of respond and drain on the states C202 did not list', () => {
       const OTHER = {
         by: 'other@host',

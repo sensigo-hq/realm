@@ -1323,6 +1323,53 @@ describe('purge — disposal coherence (issue #558 PR-C)', () => {
     }
   });
 
+  it("C213 (#625 PR-2a, round 28 finding 3): a run whose only failed step is a cleanup step is NOT resumable — resume's own rule (core's resumeWay) over the run's workflow; a workflow that cannot be read counts each failed step", async () => {
+    const { dir, runStore, artifactStores } = await makeStores();
+    try {
+      const abandoned = {
+        run_phase: 'abandoned' as const,
+        terminal_state: true,
+        abandoned_at: new Date().toISOString(),
+        sealed_by: { arm: 'abandon_requested' as const },
+        terminal_reason: 'Abandoned via realm run abandon',
+      };
+      const cleanupOnly = makeRun({ id: 'r-c213-clean', ...abandoned, failed_steps: ['clean'] });
+      const stepFailed = makeRun({ id: 'r-c213-step', ...abandoned, failed_steps: ['s', 'clean'] });
+      await injectRun(dir, cleanupOnly);
+      await injectRun(dir, stepFailed);
+      const workflows = {
+        get: async () =>
+          ({
+            id: cleanupOnly.workflow_id,
+            steps: { s: { execution: 'auto' }, clean: { execution: 'finalizer' } },
+          }) as never,
+      };
+      const unreadable = {
+        get: async () => {
+          throw new Error('workflow not found');
+        },
+      };
+      const flag = async (id: string, w: typeof workflows | typeof unreadable) =>
+        (await purgeRuns({ runId: id, workflows: w }, runStore, artifactStores)).selected[0]
+          ?.resumable;
+      // (a) red when a cleanup step resume refuses counts as a resume path, or a step it takes does
+      //     not; (b) prints the four flags.
+      expect({
+        cleanupOnly: await flag(cleanupOnly.id, workflows),
+        stepFailed: await flag(stepFailed.id, workflows),
+        cleanupOnlyUnread: await flag(cleanupOnly.id, unreadable),
+        stepFailedUnread: await flag(stepFailed.id, unreadable),
+      }).toEqual({
+        cleanupOnly: false,
+        stepFailed: true,
+        cleanupOnlyUnread: true,
+        stepFailedUnread: true,
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('C-3: the not-terminal refusal renders the DERIVED phase, not the persisted label', () => {
     // The G2 fixture: PERSISTED `completed`, `terminal_state: false` ⇒ derives `running`. The
     // decision at `isPurgeEligible` already derived; only the rendered reason did not.

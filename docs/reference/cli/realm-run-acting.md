@@ -608,7 +608,7 @@ Purged 2/3 run(s) (4.9 KB freed, store-reported). 0 already gone, 1 blocked, 0 f
 | `blocked`      | Runs that were left in place. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |
 | `failed`       | Runs that could not be deleted because of an error.                                                           |
 
-The line about `realm run resume` counts the selected runs that had a failed step, which `resume` could have made runnable again.
+The line about `realm run resume` counts the selected runs that had a failed step `resume` could have made runnable again: a failed cleanup step is not counted, since `resume --from` refuses it. A run whose workflow cannot be read is counted when it has any failed step: `resume` refuses it until the workflow is registered again, and only the workflow tells a cleanup step from another.
 
 Given a run ID in place of `--older-than`, `purge` works on that one run:
 
