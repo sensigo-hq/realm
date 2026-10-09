@@ -174,7 +174,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
   it('connect-an-mcp-client.md: after an answer the reply names the auto steps owed and offers advance_run', async () => {
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      "The reply names them, `Owed to the engine: '<step>' — call advance_run.`, and its `next_actions` holds `advance_run`, which runs them.",
+      "The reply names them, `Owed to the engine: '<step>' — call advance_run.`, and its `next_actions` holds `advance_run`, which runs them until a step opens a question, fails or ends the run (with more than one owed, the sentence says so: `… — call advance_run; it runs them until a step opens a question, fails or ends the run.`).",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(
@@ -212,6 +212,68 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     ]);
     const ran = await call('advance_run', { run_id: runId });
     expect(ran['run_phase']).toBe('completed');
+  });
+
+  it('connect-an-mcp-client.md, how-a-run-moves.md (decision C207, walk c13 YELLOW-3): with two owed, the first of which opens a question, the reply says where advance_run stops; advance_run runs the first and stops at its question', async () => {
+    claim(
+      'docs/guides/connect-an-mcp-client.md',
+      'and its `next_actions` holds `advance_run`, which runs them until a step opens a question, fails or ends the run (with more than one owed, the sentence says so: `… — call advance_run; it runs them until a step opens a question, fails or ends the run.`).',
+    );
+    claim(
+      'docs/start/how-a-run-moves.md',
+      'The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them, until a step opens a question, fails or ends the run.',
+    );
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register(
+      wf(
+        [
+          'id: ann2',
+          'name: ann2',
+          'version: 1',
+          'steps:',
+          '  review:',
+          '    description: Review.',
+          '    execution: auto',
+          '    trust: human_confirmed',
+          '    gate:',
+          '      choices: [send, discard]',
+          '  approve:',
+          '    description: Approve.',
+          '    execution: auto',
+          '    depends_on: [review]',
+          '    trust: human_confirmed',
+          '    gate:',
+          '      choices: [ship, hold]',
+          '  notify:',
+          '    description: Notify.',
+          '    execution: auto',
+          '    depends_on: [review]',
+          '',
+        ].join('\n'),
+      ),
+    );
+    const runId = (await call('start_run', { workflow_id: 'ann2' }))['run_id'] as string;
+    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const r = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: gateId,
+      choice: 'send',
+    });
+    const ran = await call('advance_run', { run_id: runId });
+    const after = await runStore.get(runId);
+    // (a) red when the reply's sentence reads as a promise that both run, or advance_run runs
+    //     `notify` past the question; (b) prints them.
+    expect({
+      hint: String(r['context_hint']),
+      status: ran['status'],
+      question: after.pending_gate?.step_name,
+      notifyRan: after.completed_steps.includes('notify'),
+    }).toEqual({
+      hint: "Gate 'review' resolved with choice 'send'. Owed to the engine: 'approve', 'notify' — call advance_run; it runs them until a step opens a question, fails or ends the run.",
+      status: 'confirm_required',
+      question: 'approve',
+      notifyRan: false,
+    });
   });
 
   it('call-a-service.md: a missing adapter — start_run replies ok and warns; execute_step names the service', async () => {

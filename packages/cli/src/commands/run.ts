@@ -22,6 +22,8 @@ import {
   cannotGoOnHere,
   resumeWay,
   owedList,
+  owedRunsClause,
+  respondCommand,
   composeStepViews,
   describeClaimHolder,
   classifyInProgressClaims,
@@ -167,15 +169,17 @@ export function renderDetachMap(
   const gate = record.pending_gate;
   const { pending } = ways;
   // decision C202: the owed call — for what the engine owes, an expired question's declared
-  // `on_expiry` included (the view's act).
-  const advanceLine = `  Advance:   realm run advance ${record.id} — for what the engine owes (${owedList(pending)}), with no model`;
+  // `on_expiry` included (the view's act); decision C207: with several owed, where the call stops.
+  const advanceLine = `  Advance:   realm run advance ${record.id} — for what the engine owes (${owedList(pending)}), with no model${owedRunsClause(pending)}`;
   if (gate !== undefined) {
     // decision C202: a question whose time is up and that declares `on_expiry` can no longer be
     // answered — the owed call carries its expiry out.
     lines.push(
       pending.act !== undefined
         ? advanceLine
-        : `  Respond:   realm run respond ${record.id} --gate ${gate.gate_id} --choice ${gate.choices.join('|')}`,
+        : // decision C206: the one answer command (`--choice <one of: a, b>`), never `a|b` — a
+          // shell runs that as a pipe, and records the first choice.
+          `  Respond:   ${respondCommand(record.id, gate.gate_id, gate.choices)}`,
     );
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');

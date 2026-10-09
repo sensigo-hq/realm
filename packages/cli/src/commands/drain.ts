@@ -20,6 +20,7 @@ import {
   describePending,
   owedList,
   owedWords,
+  respondCommand,
   cannotGoOnLines,
   type PendingView,
   WorkflowError,
@@ -80,7 +81,9 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingVie
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
     if (pending?.act !== undefined) {
-      return `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}): realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`;
+      // decision C207: with several owed, where the call stops — never a promise that all run.
+      const { steps, until } = owedWords(pending);
+      return `To run ${steps} the engine owes (${owedList(pending)})${until}: realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`;
     }
     // decision C205: an agent step ready — the drive; a step in flight in another program — wait
     // for it. Each with the way out beside it.
@@ -96,10 +99,10 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingVie
       `will do: realm run drain ${runId} --expired; add --force to carry it out.`
     );
   }
+  // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice).
   return (
-    `To end the run, answer its gate first: realm run respond ${runId} --gate ${gate.gate_id} ` +
-    `--choice <one of: ${gate.choices.join(', ')}>. The answer can end the run by itself. ` +
-    `If the run is still open after it: realm run abandon ${runId}.`
+    `To end the run, answer its gate first: ${respondCommand(runId, gate.gate_id, gate.choices)}. ` +
+    `The answer can end the run by itself. If the run is still open after it: realm run abandon ${runId}.`
   );
 };
 
@@ -821,8 +824,10 @@ export async function runDrainAction(
       // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
       const owed = await ownedWork(workingRun);
       if (owed?.act !== undefined) {
+        // decision C207: with several owed, where the call stops.
+        const { steps, until } = owedWords(owed);
         console.log(
-          `To run ${owedWords(owed).steps} the engine owes (${owedList(owed)}): realm run advance ${runId}.`,
+          `To run ${steps} the engine owes (${owedList(owed)})${until}: realm run advance ${runId}.`,
         );
       }
       // decision C64: the expiry left nothing that can run from here — the steps and the way out.

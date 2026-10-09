@@ -1072,7 +1072,7 @@ describe(
     it('realm-listen.md: the sweeper’s line adds `owed` (and `realm run advance` runs them) or `cannot_go_on` (each step, then the way out) — the page’s screen, from the built realm listen', async () => {
       claim(
         LISTEN_PAGE,
-        'When the gate it carried out leaves steps owed to the engine, the line adds `owed`: their names (`realm run advance <run-id>` runs them).',
+        'When the gate it carried out leaves steps owed to the engine, the line adds `owed`: their names (`realm run advance <run-id>` runs them until a step opens a question, fails or ends the run).',
       );
       claim(
         LISTEN_PAGE,

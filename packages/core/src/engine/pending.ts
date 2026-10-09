@@ -587,8 +587,28 @@ export function resumeWay(
     return kind !== undefined && kind.execution !== 'finalizer';
   });
   if (steps.length === 0) return undefined;
-  const from = steps.length === 1 ? steps[0] : `<one of: ${steps.join(', ')}>`;
-  return { steps, command: `realm run resume ${run.id} --from ${from}` };
+  return { steps, command: `realm run resume ${run.id} --from ${oneOf(steps)}` };
+}
+
+/**
+ * The placeholder a printed command gives for a value that is one of several (decision C206): the
+ * value itself when there is one, else `<one of: a, b>` — a placeholder a shell refuses to run as
+ * typed (`<` reads a file), never `a|b`, which a shell runs as a pipe. The one form for `--from`
+ * ({@link resumeWay}) and `--choice` ({@link respondCommand}).
+ */
+export function oneOf(values: readonly string[]): string {
+  return values.length === 1 ? values[0]! : `<one of: ${values.join(', ')}>`;
+}
+
+/**
+ * The command that answers an open question (decision C206): `realm run respond <run> --gate
+ * <gate-id> --choice <one of: a, b>` (the one choice when there is one) — the one composer every
+ * printed answer command reads: `realm workflow run`'s hand-back, `realm run advance`'s stop line,
+ * `realm run drain`'s refusal of a run waiting on a question, and the repair clause of a run whose
+ * workflow cannot be read.
+ */
+export function respondCommand(runId: string, gateId: string, choices: readonly string[]): string {
+  return `realm run respond ${runId} --gate ${gateId} --choice ${oneOf(choices)}`;
 }
 
 /** The names the act stands for: guards first, then every `auto` step not refused. */
@@ -612,14 +632,33 @@ export function owedList(pending: PendingView): string {
   return owedItems(pending).join(', ');
 }
 
+/** decision C207: where one advance call stops, said after several owed items ({@link owedWords}). */
+const OWED_UNTIL = ' until a step opens a question, fails or ends the run';
+
 /**
  * The words that agree with how many steps are owed (decision C37): `the step` / `the steps`, and
- * `it` / `them` — so no surface says "runs them" of one step.
+ * `it` / `them` — so no surface says "runs them" of one step. `until` (decision C207) is what one
+ * advance call does with several, measured on the engine's loop (`advanceLoop`): it runs the owed
+ * steps one at a time, and any the run owes after them, and stops at the first step that opens a
+ * question, fails or ends the run — so a line that names several owed items never reads as a
+ * promise that all of them run: ` until a step opens a question, fails or ends the run`. Empty for
+ * one item (the call runs it, or stops at it).
  */
-export function owedWords(pending: PendingView): { steps: string; them: string } {
+export function owedWords(pending: PendingView): { steps: string; them: string; until: string } {
   return owedItems(pending).length === 1
-    ? { steps: 'the step', them: 'it' }
-    : { steps: 'the steps', them: 'them' };
+    ? { steps: 'the step', them: 'it', until: '' }
+    : { steps: 'the steps', them: 'them', until: OWED_UNTIL };
+}
+
+/**
+ * decision C207: the clause a line that names the owed work and the call that runs it ends with —
+ * `; it runs them until a step opens a question, fails or ends the run` when several items are owed
+ * ({@link owedWords}' `until`), empty for one. The one composer for `realm run advance`'s preview,
+ * `realm workflow run`'s `Advance:` line and the tools' ` Owed to the engine: … — call advance_run`.
+ */
+export function owedRunsClause(pending: PendingView): string {
+  const { them, until } = owedWords(pending);
+  return until === '' ? '' : `; it runs ${them}${until}`;
 }
 
 /**
@@ -733,14 +772,14 @@ export function describePending(
   const names = owedNames(view);
   if (names.length > 0) {
     const list = quoteList(names);
-    const { steps, them } = owedWords(view);
+    const { steps, them, until } = owedWords(view);
     view.act = {
       instruction: {
         tool: 'advance_run',
         params: { run_id: run.id },
         call_with: { run_id: run.id },
       },
-      human_readable: `Call advance_run to run ${steps} the engine owes: ${list}. It runs ${them} with this server's extensions and environment.`,
+      human_readable: `Call advance_run to run ${steps} the engine owes: ${list}. It runs ${them} with this server's extensions and environment${until}.`,
       orientation: `Run is active. Engine work is owed: ${list}.`,
     };
   }
@@ -783,7 +822,8 @@ export function describeNext(pending: PendingView, run: RunRecord): string {
     sentence += ` Ready for the agent: ${quoteList(pending.agent_steps)}.`;
   }
   if (pending.act !== undefined) {
-    sentence += ` Owed to the engine: ${owedList(pending)} — call advance_run.`;
+    // decision C207: with several owed, where the call stops — never a promise that all run.
+    sentence += ` Owed to the engine: ${owedList(pending)} — call advance_run${owedRunsClause(pending)}.`;
   }
   for (const entry of stepsThatCannotRun(pending)) {
     sentence += ` ${withFullStop(cannotRunClause(entry))}`;

@@ -5054,6 +5054,19 @@ function lateExpiryLines(
 }
 
 /**
+ * Each cleanup step's outcome, read off the run's record — one line per finalizer in the ledger's
+ * rank order: `finalizer '<name>': <status>`. The one composer for the surfaces that end a run and
+ * then say what its cleanup steps did (decision C208): `realm run respond` (through
+ * {@link describeAnswerEnding}), the Slack gate notifier, the terminal run prompt and `realm run
+ * advance`. Empty for a run with no cleanup step in its ledger.
+ */
+export function finalizerOutcomeLines(run: Pick<RunRecord, 'finalizer_ledger'>): string[] {
+  return Object.entries(run.finalizer_ledger ?? {})
+    .sort(([, a], [, b]) => a.rank - b.rank)
+    .map(([name, entry]) => `finalizer '${name}': ${entry.status}`);
+}
+
+/**
  * issue #625: what a surface that speaks after an ANSWER prints about what the answer's write
  * settled — the ONE composer for `realm run respond`, the Slack gate notifier and the terminal run
  * prompt. `run` is the record the surface reads after the call (finalizers already drained);
@@ -5070,17 +5083,15 @@ function lateExpiryLines(
  *  - a recorded answer whose guards passed and the run goes on: one passed line per guard;
  *  - no guards: nothing.
  *
- * Each finalizer line reads `finalizer '<name>': <status>`, in the ledger's rank order.
+ * Each finalizer line reads `finalizer '<name>': <status>`, in the ledger's rank order
+ * ({@link finalizerOutcomeLines}).
  */
 export function describeAnswerEnding(
   reply: ResponseEnvelope,
   run: RunRecord,
   answer: { gateId: string; via: AnswerCaller },
 ): string[] {
-  const finalizerLines = (): string[] =>
-    Object.entries(run.finalizer_ledger ?? {})
-      .sort(([, a], [, b]) => a.rank - b.rank)
-      .map(([name, entry]) => `finalizer '${name}': ${entry.status}`);
+  const finalizerLines = (): string[] => finalizerOutcomeLines(run);
   const passedLines = (): string[] => (reply.guards ?? []).map((g) => guardPassedLine(g.step));
   if (reply.answer_recorded === false) {
     const expirySentence =

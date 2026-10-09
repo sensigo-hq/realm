@@ -16,6 +16,9 @@ import {
   judgeProgramFit,
   owedList,
   owedWords,
+  owedRunsClause,
+  respondCommand,
+  finalizerOutcomeLines,
   resumeWay,
   getWorkflowForRun,
   deriveRunPhase,
@@ -126,7 +129,8 @@ export function stoppedReasons(
     const answer = nextActions.map((a) => answerOf(a)).find((a) => a !== undefined);
     return [
       answer !== undefined
-        ? `a question is open — realm run respond ${runId} --gate ${answer.gate_id} --choice <one of: ${answer.choices.join(', ')}>`
+        ? // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice).
+          `a question is open — ${respondCommand(runId, answer.gate_id, answer.choices)}`
         : `a question is open — see realm run inspect ${runId}`,
     ];
   }
@@ -135,8 +139,10 @@ export function stoppedReasons(
   // another program made it owed after the loop's last read — is named with the call that runs it.
   // (The preview never gets here with work owed: it runs it.)
   if (pending.act !== undefined) {
+    // decision C207: with several owed, where the call stops.
+    const { them, until } = owedWords(pending);
     reasons.push(
-      `the engine still owes ${owedList(pending)} — to run ${owedWords(pending).them}: realm run advance ${runId}`,
+      `the engine still owes ${owedList(pending)} — to run ${them}${until}: realm run advance ${runId}`,
     );
   }
   const ready = agentReadyReason(runId, pending.agent_steps);
@@ -425,7 +431,8 @@ export async function advanceRunFromShell(
     // call that ran other steps.
     return !run.terminal_state && stepsThatCannotRun(pending).length > 0 ? 1 : 0;
   }
-  print(`Owed to the engine: ${owedList(pending)}.`);
+  // decision C207: with several owed, where this call stops — never a promise that all of them run.
+  print(`Owed to the engine: ${owedList(pending)}${owedRunsClause(pending)}.`);
 
   let lastStep: string | undefined;
   // decision C123: the line that says this call carried out an expired question is printed when it
@@ -587,6 +594,11 @@ export async function advanceRunFromShell(
   for (const reason of reasons.filter((r) => r !== completedEnding)) {
     print(`Stopped: ${reason}`);
     if (reason === ready) print(attendingLine(1));
+  }
+  // decision C208: a run that ended while this call ran gets each cleanup step's outcome, read off
+  // the record, before the last line — the composer `realm run respond` prints them with.
+  if (!run.terminal_state && after.terminal_state) {
+    for (const line of finalizerOutcomeLines(after)) print(line);
   }
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
   // last line is the way out (it carries the phase); otherwise the phase line.

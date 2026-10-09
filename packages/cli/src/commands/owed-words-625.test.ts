@@ -651,7 +651,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
     }
   });
 
-  it("respond's owed line: `runs it` for one step, `runs them` for two", async () => {
+  it("respond's owed line: `runs it` for one step, `runs them` for two — and (decision C207) for two, where that call stops", async () => {
     const { respondToGate } = await import('./respond.js');
     for (const [owed, them] of [
       [['after'], 'it'],
@@ -689,7 +689,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
           new ExtensionRegistry(),
         );
         expect(out.lastLine.split('\n')[1]).toBe(
-          `Owed to the engine: ${owed.map((n) => `'${n}'`).join(', ')} — realm run advance ${run.id} runs ${them}, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.`,
+          `Owed to the engine: ${owed.map((n) => `'${n}'`).join(', ')} — realm run advance ${run.id} runs ${them}${them === 'them' ? ' until a step opens a question, fails or ends the run' : ''}, with the project code under the folder it runs in (or its --project), in the environment of the shell it runs in.`,
         );
       } finally {
         rmSync(home, { recursive: true, force: true });
@@ -2238,7 +2238,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
     );
     claim(
       ACTING,
-      "work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`)",
+      "work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`)",
     );
     const { home, runs, workflows } = stores();
     try {

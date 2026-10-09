@@ -41,7 +41,7 @@ start_run     →  Step 'fetch_pr' completed. Ready for the agent: 'write_review
 
 The reply then names the one step the agent may run, `write_review`, with its task and its schema.
 
-One case needs care. When a gate is answered, the answer is recorded, and a `guard` step that the answer makes ready is decided in the same call. The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them. In the same example, after the reviewer approved:
+One case needs care. When a gate is answered, the answer is recorded, and a `guard` step that the answer makes ready is decided in the same call. The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them, until a step opens a question, fails or ends the run. In the same example, after the reviewer approved:
 
 ```text
 submit_human_response  →  Gate 'confirm_review' resolved with choice 'approve'. Owed to the engine: 'post_approval' — call advance_run.

@@ -10,6 +10,7 @@ import {
   describePending,
   stepsThatCannotRun,
   owedList,
+  owedRunsClause,
   resumeWay,
   dueExpiry,
   capabilityMarkerWayOut,
@@ -650,7 +651,10 @@ export async function inspectRun(
   ) {
     const pending = describePending(definition, run, undefined, inspectNow);
     if (pending.act !== undefined) {
-      lines.push(`Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}`);
+      // decision C207: with several owed, where the call stops — the clause the preview ends with.
+      lines.push(
+        `Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}${owedRunsClause(pending)}`,
+      );
     }
     // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm
     // run respond` print.

@@ -93,7 +93,7 @@ The assistant answers by copying the call in `next_actions[0].instruction.call_w
 
 Realm records the choice it is given. It does not check that you made it. If the assistant must not be able to approve its own work, see [Human gates and trust levels](../concepts/gates-and-trust.md#who-can-answer).
 
-After a gate is answered, a guard step that the answer makes ready is decided in the same call, and the reply names it in `guards`. The `auto` steps that follow do not start by themselves. The reply names them, `Owed to the engine: '<step>' — call advance_run.`, and its `next_actions` holds `advance_run`, which runs them. If the run does not finish, tell the assistant to call `execute_step` for the next step by name.
+After a gate is answered, a guard step that the answer makes ready is decided in the same call, and the reply names it in `guards`. The `auto` steps that follow do not start by themselves. The reply names them, `Owed to the engine: '<step>' — call advance_run.`, and its `next_actions` holds `advance_run`, which runs them until a step opens a question, fails or ends the run (with more than one owed, the sentence says so: `… — call advance_run; it runs them until a step opens a question, fails or ends the run.`). If the run does not finish, tell the assistant to call `execute_step` for the next step by name.
 
 ## Connecting over HTTP
 

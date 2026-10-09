@@ -242,10 +242,12 @@ export const resumeCommand = new Command('resume')
           verb: 'resume',
         });
         const pending = describePending(wf, resumed, undefined, new Date());
+        // decision C207: with several owed, where the call stops — never a promise that all run.
+        const { steps, until } = owedWords(pending);
         view = {
           owedLine:
             pending.act !== undefined
-              ? `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}) without a model: realm run advance ${runId}.`
+              ? `To run ${steps} the engine owes (${owedList(pending)})${until === '' ? '' : `${until},`} without a model: realm run advance ${runId}.`
               : undefined,
           stuck: cannotGoOnHere(resumed, pending),
           agentReady: pending.agent_steps.length > 0,

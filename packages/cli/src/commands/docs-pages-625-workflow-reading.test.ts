@@ -149,7 +149,7 @@ describe(
     it('lines 152, 174, 177–179: what the engine owes, and steps that cannot run, from three runs — inspect judges a missing handler by the record, and a program that has it runs the step', async () => {
       claim(
         RD_PAGE,
-        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them. Added after version 0.46.0. |",
+        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them, with, for more than one, where that call stops: `; it runs them until a step opens a question, fails or ends the run`. Added after version 0.46.0. |",
       );
       claim(
         RD_PAGE,
@@ -1018,6 +1018,159 @@ describe(
       }).toEqual({
         options: ['--params', '--extensions-module', '--project', '--mint-writer-nonce'],
         runs: 2,
+      });
+    });
+
+    describe('round 29 — C206, C207 (walk c13 RED-1, YELLOW-3): the map’s `Respond:` and `Advance:` lines', () => {
+      const leave = () =>
+        Object.assign(new Error('The operation was aborted'), {
+          name: 'AbortError',
+          code: 'ABORT_ERR',
+        });
+      /** The map's lines after its first, the run id put as `<id>`. */
+      const mapLines = (id: string): string[] => {
+        const map = errored()
+          .join('\n')
+          .split('\n')
+          .filter((l) => l !== '');
+        const at = map.findIndex((l) => / — detached from run '/.test(l));
+        return map.slice(at + 1).map((l) => l.split(id).join('<id>'));
+      };
+      const APPROVE = (choices: string): string[] => [
+        '  approve:',
+        '    description: A person decides.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    gate:',
+        `      choices: [${choices}]`,
+      ];
+
+      it('C206: a question left at its prompt — `Respond:` gives `--choice <one of: ship, hold>`, which bash refuses to run as printed (nothing is recorded); one choice gives that choice, which bash runs as printed', async () => {
+        claim(
+          WF_PAGE,
+          'A question that can be answered gets `Respond:`, the answer command with the choices as a placeholder to replace, `realm run respond <id> --gate <gate-id> --choice <one of: ship, hold>` (bash and sh refuse to run it as printed), or with the choice itself when the question has only one.',
+        );
+        claim(
+          WF_PAGE,
+          'Added after version 0.46.0, whose `Respond` line gave the choices as `ship|hold`, which a shell runs as a pipe: pasted, it records the first choice.',
+        );
+        // A `realm` on PATH that runs the built CLI: the line is pasted into bash as printed.
+        const bin = mkdtempSync(join(tmpdir(), 'realm-625-c206-bin-'));
+        writeFileSync(join(bin, 'realm'), `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`, {
+          mode: 0o755,
+        });
+        const paste = (line: string) =>
+          spawnSync('bash', ['-c', line], {
+            cwd: home,
+            env: {
+              PATH: `${bin}:${process.env['PATH'] ?? ''}`,
+              HOME: home,
+              NO_COLOR: '1',
+              REALM_OPERATOR: 'tester',
+            },
+            encoding: 'utf8',
+            timeout: 60_000,
+          });
+        try {
+          const seen: Record<string, unknown> = {};
+          for (const [name, choices] of [
+            ['c206-two', 'ship, hold'],
+            ['c206-one', 'ack'],
+          ] as const) {
+            mocks.question.mockReset();
+            // Enter at the step's mock output, then leave at the question's prompt.
+            mocks.question.mockImplementation(async (prompt: string) => {
+              if (prompt.startsWith('  Choice ')) throw leave();
+              return '';
+            });
+            const before = new Set(runIds());
+            const code = await run([
+              `id: ${name}`,
+              `name: ${name}`,
+              'version: 1',
+              'steps:',
+              ...APPROVE(choices),
+            ]);
+            const id = runIds().find((r) => !before.has(r))!;
+            const gate = (await readRecord(id)).pending_gate!.gate_id;
+            realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
+            const map = mapLines(id);
+            const line = map[0]!
+              .replace(/^ {2}Respond: {3}/, '')
+              .split('<id>')
+              .join(id);
+            const pasted = paste(line);
+            const after = await readRecord(id);
+            seen[name] = {
+              code,
+              respond: map[0]!.split(gate).join('<gate>'),
+              bash: pasted.status,
+              recorded: after.settled?.['approve']?.choice ?? null,
+              open: after.pending_gate !== undefined,
+            };
+          }
+          // (a) red when the line gives several choices in a form bash runs (a pipe records the
+          //     first), or one choice in a form it refuses; (b) prints them.
+          expect(seen).toEqual({
+            'c206-two': {
+              code: 1,
+              respond:
+                '  Respond:   realm run respond <id> --gate <gate> --choice <one of: ship, hold>',
+              bash: 2,
+              recorded: null,
+              open: true,
+            },
+            'c206-one': {
+              code: 1,
+              respond: '  Respond:   realm run respond <id> --gate <gate> --choice ack',
+              bash: 0,
+              recorded: 'ack',
+              open: false,
+            },
+          });
+        } finally {
+          rmSync(bin, { recursive: true, force: true });
+        }
+      });
+
+      it('C207: with two steps owed, the first of which opens a question, `Advance:` says where that call stops; the call runs the first and stops at its question', async () => {
+        claim(
+          WF_PAGE,
+          "With more than one step owed, the `Advance:` line says where that call stops, as the preview of `realm run advance` does: `— for what the engine owes ('approve', 'fetch'), with no model; it runs them until a step opens a question, fails or ends the run`.",
+        );
+        mocks.question.mockImplementation(async () => {
+          throw leave();
+        });
+        const code = await run([
+          'id: c207-map',
+          'name: c207-map',
+          'version: 1',
+          'steps:',
+          ...APPROVE('ship, hold'),
+          '  fetch:',
+          '    description: Fetch.',
+          '    execution: auto',
+        ]);
+        const id = runIds()[0]!;
+        realm(home, ['workflow', 'register', join(dir, 'workflow.yaml')]);
+        const advanced = realm(home, ['run', 'advance', id]);
+        const after = await readRecord(id);
+        // (a) red when the line reads as a promise that both run, or the call runs `fetch` past the
+        //     question; (b) prints them.
+        expect({
+          code,
+          advance: mapLines(id)[0],
+          ran: advanced.out.filter((l) => l.startsWith('→ ')),
+          fetchRan: after.completed_steps.includes('fetch'),
+          phase: after.run_phase,
+        }).toEqual({
+          code: 1,
+          advance:
+            "  Advance:   realm run advance <id> — for what the engine owes ('approve', 'fetch'), with no model; it runs them until a step opens a question, fails or ends the run",
+          ran: ['→ approve'],
+          fetchRan: false,
+          phase: 'gate_waiting',
+        });
       });
     });
 

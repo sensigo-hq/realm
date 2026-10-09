@@ -470,6 +470,20 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     expect(err.message).not.toContain('This run cannot continue until the copy is repaired.');
   });
 
+  it('C-e4 (decision C206): a question with one choice — the repair ends in the answer command naming that choice; `<one of: …>` is for several', async () => {
+    await shape.chmod000();
+    const oneChoice = makeRun({
+      pending_gate: { ...GATE_WAITING.pending_gate!, choices: ['ack'] },
+    } as Partial<RunRecord>);
+    const err = (await getWorkflowForRun(store, oneChoice, RESPOND).catch(
+      (e: unknown) => e,
+    )) as WorkflowError;
+    // (a) red when one choice is given as `<one of: ack>`; (b) prints the message.
+    expect(err.message).toContain(
+      `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate (realm run respond run-1 --gate g1 --choice ack).`,
+    );
+  });
+
   it('C-e3 the gate fork on a LEGACY copy: the store\'s own re-register remedy once, then "Once re-registered, answer the gate (…)"', async () => {
     await shape.legacy();
     const err = (await getWorkflowForRun(store, GATE_WAITING, RESPOND).catch(

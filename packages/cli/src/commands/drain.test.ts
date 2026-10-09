@@ -1072,6 +1072,17 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     expect(errs()).toContain(expected);
   });
 
+  it('decision C206: a question with one choice — the answer command names that choice (`<one of: …>` is for several), as every printed answer command does', async () => {
+    const run = await seedGateWaiting({ choices: ['ack'] });
+    await runDrainAction(run.id, {}, store, workflowStore, DEPS);
+    // (a) red when one choice is given as `<one of: ack>`; (b) prints the lines.
+    expect(logs()).toContain(
+      `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
+        `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1 --choice ack. ` +
+        `The answer can end the run by itself. If the run is still open after it: realm run abandon ${run.id}.`,
+    );
+  });
+
   it('a gate whose time limit has passed, drained without --expired: the way out names drain --expired, never the answer command — on the dry run and on --force', async () => {
     // Issue #625 (review walk J4): the answer sentence was printed for an expired gate too, and
     // never named `--expired`, the flag that acts on it.

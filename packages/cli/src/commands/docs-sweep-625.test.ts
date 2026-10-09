@@ -157,7 +157,7 @@ describe(
     it('realm-run-reading.md: inspect names an expired question as what the run owes, and the door `advance` on a step it took', async () => {
       claim(
         'docs/reference/cli/realm-run-reading.md',
-        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them. Added after version 0.46.0. |",
+        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them, with, for more than one, where that call stops: `; it runs them until a step opens a question, fails or ends the run`. Added after version 0.46.0. |",
       );
       claim(
         'docs/reference/cli/realm-run-reading.md',

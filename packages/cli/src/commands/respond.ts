@@ -57,10 +57,12 @@ function nextLines(
   // that cannot run and the way out — core's lines, never a copy.
   const cannotGoOn = cannotGoOnLines(run, pending);
   const ready = agentReadyReason(runId, pending.agent_steps);
+  // decision C207: with several owed, where the call stops — never a promise that all of them run.
+  const { them, until } = owedWords(pending);
   const commands = [
     ...(pending.act !== undefined
       ? [
-          `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${owedWords(pending).them}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
+          `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${them}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
         ]
       : []),
     ...(ready !== undefined ? [`${ready.charAt(0).toUpperCase()}${ready.slice(1)}.`] : []),

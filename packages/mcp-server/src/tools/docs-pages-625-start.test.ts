@@ -848,7 +848,7 @@ describe(
       );
       claim(
         MOVES,
-        'The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them.',
+        'The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them, until a step opens a question, fails or ends the run.',
       );
       claim(MOVES, '`next_actions` then holds `advance_run`.');
       const arrow = (marker: string) => {

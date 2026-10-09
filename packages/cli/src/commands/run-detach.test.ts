@@ -110,12 +110,38 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
       ways(),
     );
 
-    expect(map).toContain('realm run respond run_abc --gate g-1 --choice approve|reject');
+    // decision C206 (walk c13 RED-1): `<one of: …>`, never `approve|reject` — pasted into a shell
+    // that ran `--choice approve` as a pipe and recorded it.
+    expect(map).toContain(
+      '  Respond:   realm run respond run_abc --gate g-1 --choice <one of: approve, reject>',
+    );
+    expect(map).not.toContain('|');
     expect(map).toContain('realm run inspect run_abc');
     // The COMMANDS, not the bare words — see a3 for why the loose form is a trap.
     expect(map).not.toContain('realm run abandon');
     expect(map).not.toContain('realm agent --run-id');
     expect(map).toContain("at step 'approve_it'");
+  });
+
+  it('a2b (decision C206) a question with one choice: the `Respond:` line names that choice, a command a shell runs as printed', () => {
+    const map = renderDetachMap(
+      record({
+        pending_gate: {
+          gate_id: 'g-1',
+          step_name: 'approve_it',
+          choices: ['ack'],
+          preview: {},
+          opened_at: '2026-09-01T00:00:00.000Z',
+        },
+      } as Partial<RunRecord>),
+      'approve_it',
+      ways(),
+    ).split('\n');
+    // (a) red when one choice is given as `<one of: ack>` or the old `|` form; (b) prints the map.
+    expect(map.slice(1)).toEqual([
+      '  Respond:   realm run respond run_abc --gate g-1 --choice ack',
+      '  Inspect:   realm run inspect run_abc',
+    ]);
   });
 
   it('a3 the TERMINAL fork offers inspect ALONE', () => {
@@ -247,6 +273,30 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
       '  Inspect:   realm run inspect run_abc',
     ]);
     expect(owedList(pending)).toContain("'confirm'");
+  });
+
+  it('decision C207 (walk c13 YELLOW-3): with several owed, the `Advance:` line says where the call stops — the clause the preview ends with; one owed, none', () => {
+    const wfOf = (steps: Record<string, unknown>) =>
+      ({ id: 'wf', name: 'wf', version: 1, steps }) as unknown as WorkflowDefinition;
+    const auto = { description: 'd', execution: 'auto', depends_on: [] };
+    const two = describePending(
+      wfOf({
+        approve: { ...auto, trust: 'human_confirmed', gate: { choices: ['ship', 'hold'] } },
+        fetch: auto,
+      }),
+      record(),
+      undefined,
+      new Date(),
+    );
+    const one = describePending(wfOf({ fetch: auto }), record(), undefined, new Date());
+    const advanceOf = (pending: PendingView) =>
+      renderDetachMap(record(), 'approve', { pending, workflow: { steps: {} } }).split('\n')[1];
+    // (a) red when several owed read as a promise that all run, or one owed gets the clause; (b)
+    //     prints the lines.
+    expect({ two: advanceOf(two), one: advanceOf(one) }).toEqual({
+      two: "  Advance:   realm run advance run_abc — for what the engine owes ('approve', 'fetch'), with no model; it runs them until a step opens a question, fails or ends the run",
+      one: "  Advance:   realm run advance run_abc — for what the engine owes ('fetch'), with no model",
+    });
   });
 });
 

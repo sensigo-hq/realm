@@ -18,6 +18,7 @@ import {
   executeStep,
   submitHumanResponse,
   bareStepOutput,
+  finalizerOutcomeLines,
 } from './execution-loop.js';
 import {
   ADVANCE_OWED,
@@ -36,6 +37,9 @@ import {
   engineStepInput,
   judgeProgramFit,
   owedWords,
+  owedRunsClause,
+  oneOf,
+  respondCommand,
 } from './pending.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepDispatcher } from './execution-loop.js';
@@ -174,7 +178,9 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         },
         OPEN_RUN,
       ),
-    ).toBe(" Owed to the engine: 'g', 'x' — call advance_run.");
+    ).toBe(
+      " Owed to the engine: 'g', 'x' — call advance_run; it runs them until a step opens a question, fails or ends the run.",
+    );
     expect(
       describeNext(
         {
@@ -342,9 +348,17 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       terminal_state: false,
     } as unknown as RunRecord;
     const two = describePending(d, fresh, undefined, new Date());
-    expect(owedWords(two)).toEqual({ steps: 'the steps', them: 'them' });
+    // decision C207: with several owed, where one advance call stops — never a promise that all run.
+    expect(owedWords(two)).toEqual({
+      steps: 'the steps',
+      them: 'them',
+      until: ' until a step opens a question, fails or ends the run',
+    });
+    expect(owedRunsClause(two)).toBe(
+      '; it runs them until a step opens a question, fails or ends the run',
+    );
     expect(two.act!.human_readable).toBe(
-      "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment.",
+      "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
     );
     const one = describePending(
       def({ a: { description: 'A', execution: 'auto', depends_on: [] } }),
@@ -352,7 +366,8 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       undefined,
       new Date(),
     );
-    expect(owedWords(one)).toEqual({ steps: 'the step', them: 'it' });
+    expect(owedWords(one)).toEqual({ steps: 'the step', them: 'it', until: '' });
+    expect(owedRunsClause(one)).toBe('');
     expect(one.act!.human_readable).toBe(
       "Call advance_run to run the step the engine owes: 'a'. It runs it with this server's extensions and environment.",
     );
@@ -1862,5 +1877,99 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
     expect(cannotRunWayOutTools()).toBe(
       'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.',
     );
+  });
+});
+
+describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where one advance call stops, the cleanup steps’ outcomes', () => {
+  it('C206 (walk c13 RED-1): oneOf and respondCommand — the value itself for one, `<one of: a, b>` for several, never `a|b`', () => {
+    // (a) red when one value is wrapped, several are joined with `|`, or the command differs; (b)
+    //     prints them.
+    expect({
+      one: oneOf(['ack']),
+      two: oneOf(['ship', 'hold']),
+      cmdTwo: respondCommand('r', 'g', ['ship', 'hold']),
+      cmdOne: respondCommand('r', 'g', ['ack']),
+    }).toEqual({
+      one: 'ack',
+      two: '<one of: ship, hold>',
+      cmdTwo: 'realm run respond r --gate g --choice <one of: ship, hold>',
+      cmdOne: 'realm run respond r --gate g --choice ack',
+    });
+  });
+
+  it('C207 (walk c13 YELLOW-3): one advanceRun runs the owed steps one at a time, and the steps the run owes after them, and stops at the first step that opens a question or fails — the rule the `until` words state', async () => {
+    const auto = (extra: Partial<StepDefinition> = {}): StepDefinition =>
+      ({ description: 'd', execution: 'auto', depends_on: [], ...extra }) as StepDefinition;
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'boom', {
+      id: 'boom',
+      execute: async () => {
+        throw new Error('it broke');
+      },
+    });
+    const cases = {
+      question: def({
+        approve: auto({ trust: 'human_confirmed', gate: { choices: ['ship', 'hold'] } }),
+        fetch: auto(),
+      }),
+      fails: def({ a: auto({ handler: 'boom' }), b: auto() }),
+      plain: def({ a: auto(), b: auto(), c: auto({ depends_on: ['a'] }) }),
+    };
+    const seen: Record<string, unknown> = {};
+    for (const [name, d] of Object.entries(cases)) {
+      await withStore(async (store) => {
+        const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+        const view = describePending(d, run, registry, new Date());
+        const steps: string[] = [];
+        const reply = await advanceRun(store, d, {
+          runId: run.id,
+          registry,
+          onStep: (s) => steps.push(s),
+        });
+        const after = await store.get(run.id);
+        seen[name] = {
+          owed: view.act?.human_readable,
+          ran: steps,
+          status: reply.status,
+          completed: after.completed_steps,
+        };
+      });
+    }
+    // (a) red when the call runs a step named after one that opened a question or failed, stops
+    //     before the steps the run owes after the named ones, or the owed words promise that all
+    //     run; (b) prints them.
+    expect(seen).toEqual({
+      question: {
+        owed: "Call advance_run to run the steps the engine owes: 'approve', 'fetch'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
+        ran: ['approve'],
+        status: 'confirm_required',
+        completed: [],
+      },
+      fails: {
+        owed: "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
+        ran: ['a'],
+        status: 'error',
+        completed: [],
+      },
+      plain: {
+        owed: "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
+        ran: ['a', 'b', 'c'],
+        status: 'ok',
+        completed: ['a', 'b', 'c'],
+      },
+    });
+  });
+
+  it('C208 (walk c13 YELLOW-4): finalizerOutcomeLines — one line per cleanup step, in rank order, with the status the record holds; none for a run with no cleanup step', () => {
+    const ledger = {
+      tidy: { status: 'completed', rank: 1 },
+      note: { status: 'failed', rank: 0 },
+    };
+    // (a) red when a line is left out, the order is not the rank order, or the words change; (b)
+    //     prints them.
+    expect({
+      two: finalizerOutcomeLines({ finalizer_ledger: ledger } as unknown as RunRecord),
+      none: finalizerOutcomeLines({} as RunRecord),
+    }).toEqual({ two: ["finalizer 'note': failed", "finalizer 'tidy': completed"], none: [] });
   });
 });

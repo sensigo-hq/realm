@@ -237,6 +237,30 @@ Phase: failed` and `realm agent`'s stop on a run that ended with a failed step `
   `'realm run resume <run> --from <step>' makes the failed step runnable again.`, and the sentence
   that says what comes next names a step in flight elsewhere: `No step is ready: '<step>' is in flight
 elsewhere — wait for it, then call get_run_state.` (it said `No step is ready.`).
+- **One form for a choice in a printed answer command (issue #625, PR-2a).** `realm workflow run`'s
+  hand-back printed `Respond:   realm run respond <run> --gate <gate> --choice ship|hold`; pasted
+  into a shell, the `|` is a pipe, so `ship` was recorded unseen and the shell printed only `hold:
+command not found`. It now prints `--choice <one of: ship, hold>`, which bash and sh refuse to run
+  as printed. Every answer command a command prints — that line, `realm run advance`'s line at a
+  question, `realm run drain`'s refusal of a run waiting on one, and the repair clause of a run whose
+  workflow cannot be read — comes from one composer, and names the choice itself when the question
+  has only one (they printed `<one of: ack>`).
+- **Where one `realm run advance` call stops, said wherever several owed steps are named (issue
+  #625, PR-2a).** One call runs the owed steps one at a time, and the steps the run owes after them,
+  and stops at the first step that opens a question, fails or ends the run. A line that named
+  several owed steps read as a promise that all of them run: `realm workflow run`'s `Advance:` line
+  and `realm run advance`'s preview now end `; it runs them until a step opens a question, fails or
+ends the run`, `realm run inspect`'s `Owed to the engine` line the same; `realm run respond` says
+  `runs them until a step opens a question, fails or ends the run` (it said `runs them`), and
+  `realm run resume`, `realm run drain` and advance's `the engine still owes` line give the same
+  words. Over MCP the sentence after `Owed to the engine: …` says `— call advance_run; it runs them
+until …`, and the `advance_run` action's `human_readable` ends `… until a step opens a question,
+fails or ends the run.` One owed step: unchanged.
+- **`realm run advance` prints the cleanup steps' outcomes (issue #625, PR-2a).** When the run ends
+  during the call and has cleanup steps, one line per cleanup step, `finalizer '<name>': <status>`,
+  comes just before the phase line — from the composer `realm run respond` prints them with
+  (`finalizerOutcomeLines`, exported). A cleanup step that failed was named only by `realm run
+inspect`'s `Cause:`.
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
   After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
 --run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back

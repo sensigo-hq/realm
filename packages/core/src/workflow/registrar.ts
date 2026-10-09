@@ -7,6 +7,7 @@ import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
+import { respondCommand } from '../engine/pending.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 import { admitEntry } from '../admission.js';
@@ -564,10 +565,10 @@ export async function getWorkflowForRun(
     // A terminal run's leftover pending_gate (the #282 zombie class) is not answerable — only a
     // LIVE run's gate shapes the text below.
     const gate = run.terminal_state === true ? undefined : run.pending_gate;
+    // decision C206: the answer command from the one composer (`--choice <one of: a, b>`, or the
+    // one choice) — this line is printed by `realm run advance` and `realm run respond` too.
     const answer =
-      gate === undefined
-        ? undefined
-        : `realm run respond ${run.id} --gate ${gate.gate_id} --choice <one of: ${gate.choices.join(', ')}>`;
+      gate === undefined ? undefined : respondCommand(run.id, gate.gate_id, gate.choices);
     // The repair's closing act: the retry verb for a gate-less run; for a gate-waiting run the
     // gate itself, since that is what the operator was trying to do (review fold C12).
     const then = answer === undefined ? opts.retryVerb : `answer the gate (${answer})`;
