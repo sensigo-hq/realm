@@ -2112,7 +2112,11 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
 
   it('C211 (walk c14 W2-1): an expired question — owedRunsClause and owedCallWords say the call then runs what a declared default leaves owed; nothing for an abort', () => {
     const view = (on_expiry: 'settle_default' | 'abort') =>
-      ({ expiry_due: { step: 'g', gate_id: 'x', on_expiry } }) as unknown as PendingView;
+      ({
+        pending_guards: [],
+        engine_runnable: [],
+        expiry_due: { step: 'g', gate_id: 'x', on_expiry },
+      }) as unknown as PendingView;
     const several = {
       pending_guards: [],
       engine_runnable: [
