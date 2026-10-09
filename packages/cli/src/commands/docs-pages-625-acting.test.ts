@@ -1770,7 +1770,7 @@ describe(
       it('advance (C208): a run that ends during the call gets one line per cleanup step, before the phase line — completed, failed, or pending when this program could not run it; a run that had ended gets none', async () => {
         claim(
           PAGE,
-          "When the run ends during the call and has cleanup steps, one line per cleanup step follows, just before the phase line, in the order the engine runs them, with the status the run's record holds for it: `finalizer '<name>': <status>` — `completed`, `failed` when its handler threw, or `pending` when this program could not run it (a `⚠` line above says why).",
+          "When the run ends during the call and has cleanup steps, one line per cleanup step that ending ran or left pending follows, just before the phase line, in the order the engine runs them, with the status the run's record holds for it: `finalizer '<name>': <status>` — `completed`, `failed` when its handler threw, or `pending` when this program could not run it (a `⚠` line above says why).",
         );
         const failed = await project(
           'c208-failed',
@@ -1861,6 +1861,91 @@ describe(
             "finalizer 'tidy': completed",
             `Run ${eq.id}: phase 'aborted'`,
           ],
+        });
+      });
+    });
+
+    describe('round 30 — C210 (walk c14 W3-3): advance says only the cleanup steps its ending ran', () => {
+      const cleanup = (name: string, handler: string): string =>
+        [
+          `  ${name}:`,
+          `    description: ${name}.`,
+          '    execution: finalizer',
+          `    handler: ${handler}`,
+          '    on_outcome: always',
+        ].join('\n');
+      const from = (lines: string[], start: string): string[] =>
+        lines.slice(lines.findIndex((l) => l.startsWith(start)));
+
+      it('advance (C210): the first ending prints the cleanup step it ran; after a resume, a second ending does not run a cleanup step that completed or failed before, and prints no line for it', async () => {
+        claim(
+          PAGE,
+          'A cleanup step that completed or failed when the run ended before, and `realm run resume` reopened the run, does not run again and gets no line.',
+        );
+        const runs: Record<string, unknown> = {};
+        for (const [name, handler] of [
+          ['completed', 'mark'],
+          ['failed', 'boom'],
+        ] as const) {
+          const p = await project(
+            `c210-${name}`,
+            [
+              autoStep('a', [], ['handler: mark']),
+              autoStep('b', ['a'], ['handler: boom']),
+              cleanup('tidy', handler),
+            ].join('\n'),
+            true,
+          );
+          const id = await started(p.def);
+          const first = realm(['run', 'advance', id]);
+          const resumed = realm(['run', 'resume', id, '--from', 'b']);
+          const second = realm(['run', 'advance', id]);
+          const record = await runStore.get(id);
+          runs[name] = {
+            first: { code: first.code, tail: from(first.out, 'finalizer ') },
+            resumed: resumed.code,
+            second: { code: second.code, tail: from(second.out, '→ b') },
+            tidyRuns: record.evidence.filter((e) => e.step_id === 'tidy').length,
+            ledger: record.finalizer_ledger?.['tidy']?.status,
+          };
+        }
+        const resumeLine = (id: string) =>
+          `Stopped: the run has ended (failed) — to make 'b' runnable again: realm run resume ${id} --from b`;
+        // (a) red when the second ending prints a cleanup step it did not run, or the first ending
+        //     leaves its line out; (b) prints both calls' lines, the cleanup step's runs and status.
+        expect(
+          JSON.parse(JSON.stringify(runs).replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, '<id>')) as unknown,
+        ).toEqual({
+          completed: {
+            first: { code: 1, tail: ["finalizer 'tidy': completed", "Run <id>: phase 'failed'"] },
+            resumed: 0,
+            second: {
+              code: 1,
+              tail: [
+                '→ b',
+                "Stopped: 'b' failed: Handler 'boom' threw: boom",
+                resumeLine('<id>'),
+                "Run <id>: phase 'failed'",
+              ],
+            },
+            tidyRuns: 1,
+            ledger: 'completed',
+          },
+          failed: {
+            first: { code: 1, tail: ["finalizer 'tidy': failed", "Run <id>: phase 'failed'"] },
+            resumed: 0,
+            second: {
+              code: 1,
+              tail: [
+                '→ b',
+                "Stopped: 'b' failed: Handler 'boom' threw: boom",
+                resumeLine('<id>'),
+                "Run <id>: phase 'failed'",
+              ],
+            },
+            tidyRuns: 1,
+            ledger: 'failed',
+          },
         });
       });
     });

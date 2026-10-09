@@ -645,9 +645,11 @@ export async function advanceRunFromShell(
     if (reason === ready) print(attendingLine(1));
   }
   // decision C208: a run that ended while this call ran gets each cleanup step's outcome, read off
-  // the record, before the last line — the composer `realm run respond` prints them with.
+  // the record, before the last line — the composer `realm run respond` prints them with. Decision
+  // C210: only the cleanup steps this ending ran or left pending (their status changed since the
+  // record this call read) — never one that completed or failed at an earlier ending.
   if (!run.terminal_state && after.terminal_state) {
-    for (const line of finalizerOutcomeLines(after)) print(line);
+    for (const line of finalizerOutcomeLines(after, run)) print(line);
   }
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
   // last line is the way out (it carries the phase); otherwise the phase line.

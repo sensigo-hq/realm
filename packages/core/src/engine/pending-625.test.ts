@@ -1972,4 +1972,37 @@ describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where 
       none: finalizerOutcomeLines({} as RunRecord),
     }).toEqual({ two: ["finalizer 'note': failed", "finalizer 'tidy': completed"], none: [] });
   });
+
+  it('C210 (walk c14 W3-3): finalizerOutcomeLines with the record before the call — only the cleanup steps whose status the call changed', () => {
+    const run = (ledger: Record<string, { status: string; rank: number }>) =>
+      ({ finalizer_ledger: ledger }) as unknown as RunRecord;
+    const before = run({
+      done: { status: 'completed', rank: 0 },
+      broke: { status: 'failed', rank: 1 },
+      rearmed: { status: 'voided', rank: 2 },
+      unselected: { status: 'voided', rank: 3 },
+    });
+    const after = run({
+      done: { status: 'completed', rank: 0 },
+      broke: { status: 'failed', rank: 1 },
+      rearmed: { status: 'completed', rank: 0 },
+      unselected: { status: 'voided', rank: 3 },
+      minted: { status: 'pending', rank: 1 },
+    });
+    // (a) red when a cleanup step that did not change is said, or one this call ran or minted is left
+    //     out; (b) prints the lines.
+    expect({
+      changed: finalizerOutcomeLines(after, before),
+      noBefore: finalizerOutcomeLines(after, {} as RunRecord),
+    }).toEqual({
+      changed: ["finalizer 'rearmed': completed", "finalizer 'minted': pending"],
+      noBefore: [
+        "finalizer 'done': completed",
+        "finalizer 'rearmed': completed",
+        "finalizer 'broke': failed",
+        "finalizer 'minted': pending",
+        "finalizer 'unselected': voided",
+      ],
+    });
+  });
 });

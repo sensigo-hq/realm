@@ -5059,9 +5059,21 @@ function lateExpiryLines(
  * then say what its cleanup steps did (decision C208): `realm run respond` (through
  * {@link describeAnswerEnding}), the Slack gate notifier, the terminal run prompt and `realm run
  * advance`. Empty for a run with no cleanup step in its ledger.
+ *
+ * Decision C210: given `before` (the record the call read before its writes), only the cleanup steps
+ * whose status changed since — the ones the ending in this call ran or left pending. A cleanup step
+ * that completed or failed at an earlier ending (before a resume) is never run again (`mintFresh`'s
+ * never-downgrade), and one this ending did not select keeps its `voided`: neither gets a line.
  */
-export function finalizerOutcomeLines(run: Pick<RunRecord, 'finalizer_ledger'>): string[] {
+export function finalizerOutcomeLines(
+  run: Pick<RunRecord, 'finalizer_ledger'>,
+  before?: Pick<RunRecord, 'finalizer_ledger'>,
+): string[] {
   return Object.entries(run.finalizer_ledger ?? {})
+    .filter(
+      ([name, entry]) =>
+        before === undefined || before.finalizer_ledger?.[name]?.status !== entry.status,
+    )
     .sort(([, a], [, b]) => a.rank - b.rank)
     .map(([name, entry]) => `finalizer '${name}': ${entry.status}`);
 }
