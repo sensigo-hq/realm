@@ -395,13 +395,50 @@ describe(
         sealed_by: { arm: 'step_failure' },
         terminal_reason: "Step 'fetch' failed: it broke",
       });
+      // Two steps `realm run resume` takes failed (and the cleanup step): both named, `<one of: …>`.
+      const twoDef = wf(
+        [
+          'id: inspended2',
+          'name: inspended2',
+          'version: 1',
+          'steps:',
+          '  fetch:',
+          '    description: Fetch.',
+          '    execution: auto',
+          '  send:',
+          '    description: Send.',
+          '    execution: auto',
+          '  clean:',
+          '    description: Clean up.',
+          '    execution: finalizer',
+          '    handler: tidy',
+          '    on_outcome: fail',
+          '',
+        ].join('\n'),
+      );
+      const two = await started(twoDef);
+      const rec2 = await runStore.get(two);
+      await runStore.update({
+        ...rec2,
+        run_phase: 'failed',
+        failed_steps: ['fetch', 'send', 'clean'],
+        terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
+        terminal_reason: "Step 'fetch' failed: it broke",
+      });
       const lineOf = (runId: string, start: string) =>
         realm(['run', 'inspect', runId]).out.find((l) => l.startsWith(start));
       // (a) red when the ready line or the Resumable line is missing or differs from the page's
-      //     (its run ID put in place), or the cleanup step is offered; (b) prints them.
-      expect([lineOf(ready, 'An agent step is ready'), lineOf(ended, 'Resumable:')]).toEqual([
+      //     (its run ID put in place), the cleanup step is offered, or several steps are not each
+      //     named; (b) prints them.
+      expect([
+        lineOf(ready, 'An agent step is ready'),
+        lineOf(ended, 'Resumable:'),
+        lineOf(two, 'Resumable:'),
+      ]).toEqual([
         shown[0]!.replaceAll('3c9f1e27-8b4d-4a60-9d15-e2f7a0c4b839', ready),
         shown[1]!.replaceAll('6a1d5b03-c2e8-4f97-a41b-0d9e3c7f2a56', ended),
+        `Resumable: 'fetch', 'send' — realm run resume ${two} --from <one of: fetch, send>`,
       ]);
     });
 
