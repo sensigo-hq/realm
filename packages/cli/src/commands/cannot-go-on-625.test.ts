@@ -176,7 +176,7 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
 });
 
 describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the stuck step and the way out', () => {
-  it('drain on a live run that cannot go on: the step and the way out on its one line; the control keeps `To end the run: …`', async () => {
+  it('drain on a live run that cannot go on: the step and the way out on its one line; the control (an agent step ready) gets the drive and the way out', async () => {
     const { home, runs, workflows } = await stores();
     try {
       const stuck = wf('c64-drain', { compute: needsN([]) });
@@ -198,8 +198,9 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         params: {},
       });
       const ctl = realm(home, ['run', 'drain', c.id]);
+      // decision C205: the control's agent step `ask` is ready — the drive, then the way out.
       expect(ctl.stdout.trim()).toBe(
-        `Run '${c.id}' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon ${c.id}.`,
+        `Run '${c.id}' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'ask' — drive it with realm agent --run-id ${c.id} --provider <provider> --model <model>. To end the run instead: realm run abandon ${c.id}.`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

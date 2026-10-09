@@ -873,9 +873,10 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       const reply = await advanceRun(store, d, { runId: run.id });
       expect(reply.chained_auto_steps).toBeUndefined();
       expect(reply.next_actions).toEqual([]);
-      // decision C25: the reply ends with one clause per step another process held.
+      // decision C25: the reply ends with one clause per step another process held; decision
+      // C205: nothing is ready because 'x' is in flight elsewhere — the sentence says to wait.
       expect(reply.context_hint).toBe(
-        `Run '${run.id}': nothing ran. No step is ready. 'x' was claimed by another process, so it did not run here.`,
+        `Run '${run.id}': nothing ran. No step is ready: 'x' is in flight elsewhere — wait for it, then call get_run_state. 'x' was claimed by another process, so it did not run here.`,
       );
     });
   });

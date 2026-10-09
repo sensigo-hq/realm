@@ -139,19 +139,21 @@ Evidence (3 steps):
 
 ### The lines at the top
 
-| Line                                            | Printed                                                                    | Holds                                                                                                                                                         |
-| ----------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Run`, `Workflow`, `Phase`                      | Always                                                                     | The run's ID, the workflow's `id` and `version`, and the phase.                                                                                               |
-| `Rerun of`                                      | When the run replaced an earlier one                                       | The ID of the run it replaced. See [Idempotency and batches](../../guides/idempotency-and-batches.md).                                                        |
-| `Sealed by`                                     | When the run has ended                                                     | What ended it, such as `complete`, `step_failure` or `handler_abort (total)`.                                                                                 |
-| `Cause`                                         | When the run has ended                                                     | The same, as a sentence.                                                                                                                                      |
-| `Completed`, `In Progress`, `Failed`, `Skipped` | Always                                                                     | The names of the steps in each state. Under `Skipped`, one line for each skipped step gives the reason.                                                       |
-| `Defaulted (settled by default)`                | When a step was given its default output                                   | The names of those steps.                                                                                                                                     |
-| `Created`, `Updated`                            | Always                                                                     | When the run was started and when it last changed, in UTC.                                                                                                    |
-| `Gate`, `Choices`                               | When the run is in `gate_waiting`                                          | The step, the gate's ID, how long it has been open, and the choices it accepts.                                                                               |
-| `Owed to the engine`                            | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them. Added after version 0.46.0. |
-| `Cannot run`, `Could not run`                   | When an owed `auto` step, or an agent step, is refused before its claim    | The step, the check that refused it, and why. Added after version 0.46.0.                                                                                     |
-| `Run <id> stays open`                           | When the run cannot go on until its workflow is corrected                  | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.46.0.                           |
+| Line                                              | Printed                                                                    | Holds                                                                                                                                                                      |
+| ------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Run`, `Workflow`, `Phase`                        | Always                                                                     | The run's ID, the workflow's `id` and `version`, and the phase.                                                                                                            |
+| `Rerun of`                                        | When the run replaced an earlier one                                       | The ID of the run it replaced. See [Idempotency and batches](../../guides/idempotency-and-batches.md).                                                                     |
+| `Sealed by`                                       | When the run has ended                                                     | What ended it, such as `complete`, `step_failure` or `handler_abort (total)`.                                                                                              |
+| `Cause`                                           | When the run has ended                                                     | The same, as a sentence.                                                                                                                                                   |
+| `Resumable`                                       | When the run ended with a failed step `realm run resume` takes             | Those steps (never a cleanup step, which `realm run resume --from` refuses), and the `realm run resume` command that makes one runnable again. Added after version 0.46.0. |
+| `Completed`, `In Progress`, `Failed`, `Skipped`   | Always                                                                     | The names of the steps in each state. Under `Skipped`, one line for each skipped step gives the reason.                                                                    |
+| `Defaulted (settled by default)`                  | When a step was given its default output                                   | The names of those steps.                                                                                                                                                  |
+| `Created`, `Updated`                              | Always                                                                     | When the run was started and when it last changed, in UTC.                                                                                                                 |
+| `Gate`, `Choices`                                 | When the run is in `gate_waiting`                                          | The step, the gate's ID, how long it has been open, and the choices it accepts.                                                                                            |
+| `Owed to the engine`                              | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them. Added after version 0.46.0.              |
+| `An agent step is ready`, `Agent steps are ready` | When an agent step is ready on a run with no open question                 | The steps, and the `realm agent` command that drives them, in the words `realm run advance` uses. Added after version 0.46.0.                                              |
+| `Cannot run`, `Could not run`                     | When an owed `auto` step, or an agent step, is refused before its claim    | The step, the check that refused it, and why. Added after version 0.46.0.                                                                                                  |
+| `Run <id> stays open`                             | When the run cannot go on until its workflow is corrected                  | The way out: correct the workflow, register it again, then `realm run advance`; or `realm run abandon`. Added after version 0.46.0.                                        |
 
 Under `In Progress`, one line for each step in progress says who took it, how long ago, and how Realm knows the name. Added in 0.46.0:
 
@@ -169,6 +171,13 @@ A skipped step's reason looks like this:
 Skipped: total, confirm
   total: handler_abort
   confirm: trigger_rule_unsatisfiable: all_success, dep total skipped
+```
+
+An agent step that is ready, and a run that ended with a step `realm run resume` takes, from two runs (added after version 0.46.0):
+
+```text
+An agent step is ready: 'write' — drive it with realm agent --run-id 3c9f1e27-8b4d-4a60-9d15-e2f7a0c4b839 --provider <provider> --model <model>
+Resumable: 'fetch' — realm run resume 6a1d5b03-c2e8-4f97-a41b-0d9e3c7f2a56 --from fetch
 ```
 
 What the engine owes, and steps that cannot run, from three runs (these lines were added after version 0.46.0). `inspect` loads no extensions, so a missing handler or adapter is judged by the run's record of the last attempt and said in the past tense (`Could not run`), with the way out — a program that has it runs the step:

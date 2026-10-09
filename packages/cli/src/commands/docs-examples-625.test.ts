@@ -633,6 +633,17 @@ describe(
         fence(page, 'realm run inspect <run-id>').trim().replace('<run-id>', runId),
       );
       const refused = await interactive(fence(page, '"path":"note.txt"').trim(), ['']);
+      const refusedId = /Run ID: (\S+)/.exec(refused.out)?.[1] ?? '';
+      // decision C205 (round 27 finding 3): the page's last two lines, its run ID put in place.
+      const pageLines = readFileSync(join(ROOT, page), 'utf8').split('\n');
+      const at = pageLines.indexOf('Run complete. Phase: failed');
+      const lastTwo = pageLines
+        .slice(at, at + 2)
+        .map((l) => l.replaceAll('4c8e2a17-93bd-4f05-b6e1-7a0d9c3f5e28', refusedId));
+      // (a) red when the page's screen loses its Resume line (fixture); (b) prints the two lines.
+      expect(lastTwo[1], lastTwo.join('\n')).toMatch(
+        /^ {2}Resume: {4}realm run resume \S+ --from read_note$/,
+      );
       // (a) red when the file does not register, the run does not complete with the file read, inspect
       //     does not show the resolved path, or the relative path is not refused as the page says;
       //     (b) prints each exit and output.
@@ -644,7 +655,7 @@ describe(
           refused: [
             refused.code,
             refused.err.includes('✗ error: path must be absolute'),
-            refused.out.includes('Run complete. Phase: failed'),
+            refused.out.includes(lastTwo.join('\n')),
           ],
         },
         ran.out + ran.err + inspect.out + refused.out + refused.err,

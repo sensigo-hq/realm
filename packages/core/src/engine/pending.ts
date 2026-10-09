@@ -767,7 +767,8 @@ export function composeNextActionsStatusWord(
  * steps ready, the engine's owed work, then each step that cannot run (decisions C34, C82 — an agent
  * step refused before its claim is named here, never as ready) — first, when the run waits on a
  * question a caller can answer, that question, its choices and the act (decision C103);
- * ` No step is ready.` only when nothing else is said. When the run cannot go on until its workflow
+ * ` No step is ready.` only when nothing else is said — naming the steps in flight elsewhere, with the
+ * way on (wait, then `get_run_state`), when there are any (decision C205). When the run cannot go on until its workflow
  * is corrected ({@link cannotRunWayOutApplies}), it ends with the way out in the tools' words
  * (decision C57): every reply that says what comes next says it, from one place.
  */
@@ -788,7 +789,14 @@ export function describeNext(pending: PendingView, run: RunRecord): string {
     sentence += ` ${withFullStop(cannotRunClause(entry))}`;
   }
   if (cannotRunWayOutApplies(run, pending)) sentence += ` ${cannotRunWayOutTools()}`;
-  return sentence.length > 0 ? sentence : ' No step is ready.';
+  if (sentence.length > 0) return sentence;
+  // decision C205: nothing is ready because a step is in flight elsewhere — the way on is to wait.
+  const held = run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name);
+  if (held.length > 0) {
+    const one = held.length === 1;
+    return ` No step is ready: ${quoteList(held)} ${one ? 'is' : 'are'} in flight elsewhere — wait for ${one ? 'it' : 'them'}, then call get_run_state.`;
+  }
+  return ' No step is ready.';
 }
 
 /**

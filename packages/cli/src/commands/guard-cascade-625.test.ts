@@ -592,11 +592,13 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         DRAIN_DEPS,
       );
 
-      // (a) red when a passing guard is not named, or the choice is not named; (b) prints stdout.
+      // (a) red when a passing guard is not named, or the choice is not named; or (decision C205)
+      //     the agent step the guard left ready is not named with its drive; (b) prints stdout.
       expect(stdout()).toEqual([
         "✓ gate enacted (settle_default 'approve').",
         "Guard step 'check' passed.",
         `Run '${runId}' is not terminal (phase: 'running') — nothing further to drain.`,
+        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>.`,
       ]);
     });
 

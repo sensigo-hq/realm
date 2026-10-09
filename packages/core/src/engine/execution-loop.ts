@@ -1291,32 +1291,70 @@ export function pendingGateQuestion(
 }
 
 /**
- * The refusal of an answer to a run that has ended (decision C170): `Run '<id>' is terminal
- * (<phase>); cannot submit a gate response — <the way out for that kind of ending>`. A completed run
+ * The offer of `realm run resume` on a run that ended with a failed step it takes (decisions C170,
+ * C204): `'<the command>' makes the failed step runnable again` — the command from {@link resumeWay},
+ * the one rule.
+ */
+function resumeOffer(command: string): string {
+  return `'${command}' makes the failed step runnable again`;
+}
+
+/**
+ * The way out of a run that has ended, for its kind of ending (decisions C170, C204): a completed run
  * owes nothing; an aborted one is never resumed (`realm run resume` refuses it); a failed or
  * abandoned one is resumed only from a failed step `realm run resume --from` takes — {@link
- * resumeWay}, the one rule (decision C204: never a cleanup step). `realm run purge <id> --force`
- * removes any ended run's record.
+ * resumeWay}, the one rule (never a cleanup step). `realm run purge <id> --force` removes any ended
+ * run's record. The refusal of an answer to an ended run ends with it, and so does the refusal of a
+ * late answer whose run another call ended (decision C204).
+ */
+function endedRunWayOut(run: RunRecord, workflow: Parameters<typeof resumeWay>[1]): string {
+  const phase = deriveRunPhase(run);
+  const purge = `'realm run purge ${run.id} --force' removes its record`;
+  const resume = resumeWay(run, workflow);
+  return phase === 'completed'
+    ? 'it completed, and nothing is owed.'
+    : phase === 'aborted'
+      ? `an aborted run is never resumed; ${purge}.`
+      : resume !== undefined
+        ? `${resumeOffer(resume.command)}, or ${purge}.`
+        : run.failed_steps.length > 0
+          ? `'realm run resume' takes none of the steps that failed (${[...new Set(run.failed_steps)].join(', ')}), so it has nothing to run again; ${purge}.`
+          : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
+}
+
+/**
+ * The refusal of an answer to a run that has ended (decision C170): `Run '<id>' is terminal
+ * (<phase>); cannot submit a gate response — <the way out for that kind of ending>`
+ * ({@link endedRunWayOut}).
  */
 export function terminalAnswerRefusalMessage(
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
 ): string {
-  const runId = run.id;
-  const phase = deriveRunPhase(run);
-  const purge = `'realm run purge ${runId} --force' removes its record`;
+  return `Run '${run.id}' is terminal (${deriveRunPhase(run)}); cannot submit a gate response — ${endedRunWayOut(run, workflow)}`;
+}
+
+/**
+ * decision C205: a reply on a run that has ended with a failed step `realm run resume` takes ends
+ * with the way back in — ` '<the command>' makes the failed step runnable again.` ({@link
+ * resumeOffer}, C170's words). Every other reply is returned unchanged. An answer's reply reads it
+ * here (so `realm run respond`, the run prompt and the Slack notifier print it through
+ * {@link describeAnswerEnding}); MCP `advance_run` applies it to its reply — the CLI commands that
+ * call `advanceRun` print their own form of the same way back in.
+ */
+export function withResumeOffer(
+  envelope: ResponseEnvelope,
+  run: RunRecord,
+  workflow: Parameters<typeof resumeWay>[1],
+): ResponseEnvelope {
+  if (!run.terminal_state) return envelope;
   const resume = resumeWay(run, workflow);
-  const wayOut =
-    phase === 'completed'
-      ? 'it completed, and nothing is owed.'
-      : phase === 'aborted'
-        ? `an aborted run is never resumed; ${purge}.`
-        : resume !== undefined
-          ? `'${resume.command}' makes the failed step runnable again, or ${purge}.`
-          : run.failed_steps.length > 0
-            ? `'realm run resume' takes none of the steps that failed (${[...new Set(run.failed_steps)].join(', ')}), so it has nothing to run again; ${purge}.`
-            : `no step failed, so 'realm run resume' has nothing to run again; ${purge}.`;
-  return `Run '${runId}' is terminal (${phase}); cannot submit a gate response — ${wayOut}`;
+  if (resume === undefined) return envelope;
+  const hint = envelope.context_hint;
+  return {
+    ...envelope,
+    context_hint: `${hint}${hint.length > 0 ? ' ' : ''}${resumeOffer(resume.command)}.`,
+  };
 }
 
 /**
@@ -1940,7 +1978,9 @@ async function executeStepBody(
         : nextActions.length > 0
           ? ('resolve_precondition' as const)
           : ('report_to_user' as const),
-      context_hint: `Step '${options.command}' cannot be called now: ${why}.${tail === ' No step is ready.' ? '' : tail}`,
+      // The refusal's reason says why this step cannot be called (in flight, its dependencies not
+      // settled); `describeNext`'s `No step is ready …` sentence is not repeated after it.
+      context_hint: `Step '${options.command}' cannot be called now: ${why}.${tail.startsWith(' No step is ready') ? '' : tail}`,
       run_phase: run.run_phase,
       next_actions: nextActions,
       blocked_reason: {
@@ -5357,9 +5397,9 @@ async function composeExpiryReply(
   // — never attribute the outcome to THIS gate's expiry (no matched entry exists to attribute it
   // to), and never claim "expired" at all, since nothing here witnessed this gate expiring.
   const err = new WorkflowError(
+    // decision C204: the way out from the one rule — resume only from a step it takes.
     `Gate '${originalGateId}': the run reached a terminal outcome concurrently — your choice ` +
-      `was NOT recorded. 'realm run resume' clears a stale pending gate on a resumable run, or ` +
-      `'realm run purge' removes the record entirely.`,
+      `was NOT recorded; ${endedRunWayOut(finalRun, definition)}`,
     {
       code: 'STATE_RUN_TERMINAL',
       category: 'STATE',
@@ -5803,25 +5843,31 @@ export async function submitHumanResponse(
     // when one ended the run it names that guard (`ended_by`) and says the guard's sentence.
     // (#279's "guard now eligible — converges at the next drive" advisory is removed with the
     // state it described.)
+    // decision C205: an answer whose guards ended the run with a failed step `realm run resume`
+    // takes says the way back in.
     return withGateClaim(
-      withCascadedGuards(
-        {
-          command: resolvedGateStepName,
-          run_id: options.runId,
-          run_version: finalRun.version,
-          status: 'ok',
-          data: { ...run.pending_gate!.preview, choice: options.choice },
-          evidence: [],
-          warnings: mergeWarnings([], ...drainWarnings, defaultedStepsDurabilityWarning),
-          errors: [],
-          context_hint: migratedOrientation,
-          run_phase: finalRun.run_phase,
-          next_actions: migratedNextActions,
-          ...(finalRun.defaulted_steps?.length
-            ? { defaulted_steps: finalRun.defaulted_steps }
-            : {}),
-        },
-        result,
+      withResumeOffer(
+        withCascadedGuards(
+          {
+            command: resolvedGateStepName,
+            run_id: options.runId,
+            run_version: finalRun.version,
+            status: 'ok',
+            data: { ...run.pending_gate!.preview, choice: options.choice },
+            evidence: [],
+            warnings: mergeWarnings([], ...drainWarnings, defaultedStepsDurabilityWarning),
+            errors: [],
+            context_hint: migratedOrientation,
+            run_phase: finalRun.run_phase,
+            next_actions: migratedNextActions,
+            ...(finalRun.defaulted_steps?.length
+              ? { defaulted_steps: finalRun.defaulted_steps }
+              : {}),
+          },
+          result,
+        ),
+        finalRun,
+        definition,
       ),
       result.gateClaim,
       finalRun,

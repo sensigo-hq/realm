@@ -41,7 +41,8 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
         name: 'Resume 676',
         version: 1,
         schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
-        steps: { 'step-one': { description: 'First step', execution: 'auto' } },
+        // decision C205: an agent step — `Drive it with:` is printed only when one is ready.
+        steps: { 'step-one': { description: 'First step', execution: 'agent' } },
       };
       // Built AFTER HOME is set: both stores resolve their folder at construction.
       const runStore = new JsonFileStore();

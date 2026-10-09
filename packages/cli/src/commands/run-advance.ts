@@ -141,13 +141,21 @@ export function stoppedReasons(
   }
   const ready = agentReadyReason(runId, pending.agent_steps);
   if (ready !== undefined) reasons.push(ready);
-  reasons.push(
-    ...inFlightSteps(run).map(
-      (step) =>
-        `'${step}' is in flight in another program — wait for it, or see realm run inspect ${runId}`,
-    ),
-  );
+  reasons.push(...inFlightReasons(runId, run));
   return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
+}
+
+/**
+ * The reason for each step in flight in another program (decisions C37, C205): `'<s>' is in flight
+ * in another program — wait for it, or see realm run inspect <id>`. `realm run advance` prints it as
+ * a `Stopped:` reason; `realm run respond` and `realm run drain` as their own line — the same words
+ * from here. A step whose question is open is not in flight (it waits on the answer).
+ */
+export function inFlightReasons(runId: string, run: RunForReasons): string[] {
+  return inFlightSteps(run).map(
+    (step) =>
+      `'${step}' is in flight in another program — wait for it, or see realm run inspect ${runId}`,
+  );
 }
 
 /**
@@ -179,22 +187,34 @@ export function attendingLine(commands: number): string {
 }
 
 /**
- * decisions C202, C204: the reasons with the way on from a run that ended with a failed step `realm run
- * resume` takes (core's `resumeWay`) — `the run has ended (<phase>) — to make '<step>' runnable again: realm run resume
- * <id> --from <step>` (`a failed step` and `<one of: …>` for several). Every other reason unchanged.
+ * decisions C202, C204: the reasons, the ended reason of a run that ended with a failed step `realm
+ * run resume` takes (core's `resumeWay`) given with the way back in ({@link endedResumeReason}).
+ * Every other reason unchanged.
  */
 function withResumeWay(
   reasons: string[],
   run: Parameters<typeof resumeWay>[0],
   workflow: Parameters<typeof resumeWay>[1],
 ): string[] {
-  const resume = resumeWay(run, workflow);
-  if (resume === undefined) return reasons;
+  const resumable = endedResumeReason(run, workflow);
+  if (resumable === undefined) return reasons;
   const ended = `the run has ended (${deriveRunPhase(run)})`;
+  return reasons.map((reason) => (reason === ended ? resumable : reason));
+}
+
+/**
+ * decisions C202, C205: a run that ended with a failed step `realm run resume` takes, said with the
+ * way back in — `the run has ended (<phase>) — to make '<step>' runnable again: realm run resume <id>
+ * --from <step>` (`a failed step` and `<one of: …>` for several); `undefined` for any other run.
+ */
+function endedResumeReason(
+  run: Parameters<typeof resumeWay>[0],
+  workflow: Parameters<typeof resumeWay>[1],
+): string | undefined {
+  const resume = resumeWay(run, workflow);
+  if (resume === undefined) return undefined;
   const which = resume.steps.length === 1 ? `'${resume.steps[0]}'` : 'a failed step';
-  return reasons.map((reason) =>
-    reason === ended ? `${ended} — to make ${which} runnable again: ${resume.command}` : reason,
-  );
+  return `the run has ended (${deriveRunPhase(run)}) — to make ${which} runnable again: ${resume.command}`;
 }
 
 /**

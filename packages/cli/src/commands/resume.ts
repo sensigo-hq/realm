@@ -219,7 +219,14 @@ export const resumeCommand = new Command('resume')
       });
       // issue #625 PR-2a (D7.5): the resumed run's engine work, and the call that runs it without a
       // model. A JSON read of the registered copy; nothing is added when it cannot be read.
-      let view: { owedLine: string | undefined; stuck: boolean; cannotGoOn: string[] } | undefined;
+      let view:
+        | {
+            owedLine: string | undefined;
+            stuck: boolean;
+            agentReady: boolean;
+            cannotGoOn: string[];
+          }
+        | undefined;
       try {
         const {
           describePending,
@@ -241,6 +248,7 @@ export const resumeCommand = new Command('resume')
               ? `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}) without a model: realm run advance ${runId}.`
               : undefined,
           stuck: cannotGoOnHere(resumed, pending),
+          agentReady: pending.agent_steps.length > 0,
           // decision C64: the resumed run cannot go on from here — the steps and the way out.
           cannotGoOn: cannotGoOnLines(resumed, pending),
         };
@@ -248,11 +256,13 @@ export const resumeCommand = new Command('resume')
         // The resume itself succeeded; the owed line is advisory.
       }
       // decision C68: when the resumed run cannot go on from here, driving it would only print the
-      // cannot-run exit — the steps and the way out (below) take the drive line's place.
-      const stuck = view !== undefined && view.stuck;
+      // cannot-run exit — the steps and the way out (below) take the drive line's place. Decision
+      // C205 (round 27 finding 5): the drive only when an agent step is ready — engine work alone is
+      // the owed call's (below), which needs no model. With no view, the drive as before.
+      const noDrive = view !== undefined && (view.stuck || !view.agentReady);
       console.log(
         `Resumed run '${runId}': step '${opts.from}' re-enabled and run reset to 'running'.` +
-          (stuck
+          (noDrive
             ? ''
             : `\nDrive it with: realm agent --run-id ${runId} --provider <provider> --model <model>\n` +
               `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${runId} shows the extension module the run loaded).`),

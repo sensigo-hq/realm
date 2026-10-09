@@ -11,7 +11,15 @@
 //
 // The pty journey itself is the reviewer's crown, never a suite cell (the #426 precedent).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, unlinkSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RunRecord, PendingView, WorkflowDefinition } from '@sensigo/realm';
@@ -552,11 +560,27 @@ steps:
       expect(lines.some((l) => l.includes('exhausted its validation-rejection budget (6/6)'))).toBe(
         true,
       );
-      expect(logged()).toContain('Run complete. Phase: failed');
       expect(exitSpy).toHaveBeenCalledWith(1);
       const rec = await readRecord();
       expect(rec.terminal_state).toBe(true);
       expect(rec.run_phase).toBe('failed');
+      // decision C205 (round 27 finding 3): the last line is followed by the way back in — the
+      // detach map's `Resume:` line, the failed step `realm run resume` takes. (a) red when the
+      // line is missing, names another step, or comes before the last line; (b) prints the log.
+      expect(logged()).toContain(
+        `Run complete. Phase: failed\n  Resume:    realm run resume ${rec.id} --from s1`,
+      );
+      // The page says it (C163's rule): (a) red when realm-workflow.md no longer does.
+      const page = readFileSync(
+        new URL('../../../../docs/reference/cli/realm-workflow.md', import.meta.url),
+        'utf8',
+      ).replace(/\s+/g, ' ');
+      expect(page).toContain(
+        'The last line is `Run complete. Phase: <phase>`. When the run ended with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again — `  Resume:    realm run resume <run-id> --from <step>`, the line the detach map gives (added after version 0.46.0).'.replace(
+          /\s+/g,
+          ' ',
+        ),
+      );
     }, 20_000);
 
     it("B3 a stall hands the run back with a TRUTHFUL map — never 'Prompt cancelled'", async () => {

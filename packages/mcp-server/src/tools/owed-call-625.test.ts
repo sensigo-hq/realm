@@ -344,7 +344,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     const reply = await handleAdvanceRun({ run_id: run.id }, { runStore, workflowStore });
     expect(reply.chained_auto_steps).toBeUndefined();
     expect(reply.context_hint).toBe(
-      `Run '${run.id}': nothing ran. No step is ready. 'head' was claimed by another process, so it did not run here.`,
+      // decision C205: nothing is ready because 'head' is in flight elsewhere — wait for it.
+      `Run '${run.id}': nothing ran. No step is ready: 'head' is in flight elsewhere — wait for it, then call get_run_state. 'head' was claimed by another process, so it did not run here.`,
     );
   });
 

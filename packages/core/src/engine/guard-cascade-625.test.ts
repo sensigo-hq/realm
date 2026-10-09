@@ -280,7 +280,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
     });
   });
 
-  it('a guard that cannot RESOLVE a path: the reply says "…failed with a resolution error. Run is terminated." and the reason is the guard\'s recorded error', async () => {
+  it('a guard that cannot RESOLVE a path: the reply says "…failed with a resolution error. Run is terminated." and, the run having failed with the guard `realm run resume` takes (decision C205), the way back in; the reason is the guard\'s recorded error', async () => {
     await withStore(async (store) => {
       const def = gateThenGuard({ guard: { abort_unless: ['nope.field == true'] } });
       const { runId, gateId } = await openGate(store, def);
@@ -292,9 +292,10 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       expect(reply.status).toBe('ok');
       // (a) red when the cascade does not settle the guard; (b) prints `guards`.
       expect(reply.guards).toEqual([{ step: 'check', outcome: 'resolution_error' }]);
-      // (a) red when the sentence is replaced or reworded; (b) prints the sentence.
+      // (a) red when the sentence is replaced or reworded, or the way back in (decision C205) is
+      //     dropped or names another step; (b) prints the sentence.
       expect(reply.context_hint).toBe(
-        "Guard step 'check' failed with a resolution error. Run is terminated.",
+        `Guard step 'check' failed with a resolution error. Run is terminated. 'realm run resume ${runId} --from check' makes the failed step runnable again.`,
       );
       // (a) red when `reason` is dropped, or is not the guard's own recorded evidence error;
       //     (b) prints the `ended_by` object.

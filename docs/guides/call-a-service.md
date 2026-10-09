@@ -174,9 +174,10 @@ It prints:
   ✗ error: path must be absolute
 
 Run complete. Phase: failed
+  Resume:    realm run resume 4c8e2a17-93bd-4f05-b6e1-7a0d9c3f5e28 --from read_note
 ```
 
-The file adapter accepts only full paths. The step failed, the run ended as `failed`, and the step that depended on it was skipped. The record says so:
+The file adapter accepts only full paths. The step failed, the run ended as `failed`, and the step that depended on it was skipped. The last line is the command that makes the failed step runnable again, once its cause is fixed (added after version 0.46.0). The record says so:
 
 ```text
 Phase: failed

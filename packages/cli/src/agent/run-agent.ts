@@ -65,6 +65,7 @@ import {
   inFlightLine,
   takenLine,
   waitingLine,
+  resumeLine,
 } from '../lib/holder-render.js';
 
 export type AgentRunResult = 'completed' | 'failed';
@@ -495,6 +496,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
       () => false,
     );
   };
+  // decision C205: a drive that stops on a run that ended with a failed step `realm run resume`
+  // takes gives the way back in — the line `realm workflow run` gives (`  Resume:    …`).
+  const printResumeLine = async (): Promise<void> => {
+    const ended = await deps.store.get(runId).catch(() => undefined);
+    const line = ended === undefined ? undefined : resumeLine(ended, definition);
+    if (line !== undefined) console.error(line);
+  };
   let attemptStartedAt = Date.now();
   try {
     if (currentRun === undefined) {
@@ -661,6 +669,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           if (engineStep === undefined) {
             // A refusal before any step ran (a guard refusal, a store failure): today's failed exit.
             console.error(`\n✗ ${advanced.errors.join(', ') || advanced.context_hint}`);
+            await printResumeLine();
             return 'failed';
           }
           if (
@@ -1813,6 +1822,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               });
             }
           }
+          await printResumeLine();
           return 'failed';
         }
 
@@ -1889,6 +1899,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // purpose (C85): going back to the loop top on a reply the run's view does not explain
           // could bring back the unbounded, billed loop C82 removed.
           console.error(`\n✗ ${result.context_hint}`);
+          await printResumeLine();
           return 'failed';
         }
         console.log(`  ✓ → ${currentRun.run_phase}`);
@@ -1969,5 +1980,6 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
   if (stoppedOnInFlight) return 'failed';
   console.error(`\nRun ended in phase: ${currentRun.run_phase}`);
+  await printResumeLine();
   return 'failed';
 }

@@ -1266,10 +1266,10 @@ describe(
       });
     });
 
-    it('resume, L210 + L219 + blocks: a step only the engine runs gets the advance line; a step that cannot run gets the step and the way out in place of the Drive it with: lines', async () => {
+    it('resume, L210 + L219 + blocks: a step only the engine runs gets the advance line and (decision C205) no Drive it with: lines; a step that cannot run gets the step and the way out in place of the Drive it with: lines', async () => {
       claim(
         PAGE,
-        'When the step that is ready again is one only the engine runs, one more line names it (`the step` / `the steps`).',
+        'When the step that is ready again is one only the engine runs, one line names it (`the step` / `the steps`) and the call that runs it without a model, and the `Drive it with:` lines are printed only when an agent step is ready too. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:',
       );
       claim(
         PAGE,
@@ -1369,12 +1369,26 @@ describe(
       const id = await started(owes.def);
       const stuck = await project('acting-drain-nothing-stuck', needsN('compute', []), false);
       const ids = await started(stuck.def);
+      // decision C205: an agent step ready; a step in flight in another program.
+      const ready = await project('acting-drain-nothing-ready', agentStep('write', []), false);
+      const ida = await started(ready.def);
+      const held = await project('acting-drain-nothing-held', autoStep('fetch', []), false);
+      const idf = await started(held.def);
+      await runStore.claimStep(idf, 'fetch', held.def, {
+        by: 'other@host',
+        by_source: 'derived',
+        channel: 'advance',
+      });
       const line = (runId: string) => {
         const r = realm(['run', 'drain', runId]);
         return { code: r.code, lines: [...r.out, ...r.err] };
       };
-      // (a) red when either line differs from the page's (its run ID put in place); (b) prints both.
-      expect([line(id), line(ids)]).toEqual([
+      claim(
+        PAGE,
+        "The third to sixth lines — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out beside it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>.` for every run in `running`. The second line is now for a run with none of these.",
+      );
+      // (a) red when a line differs from the page's (its run ID put in place); (b) prints them.
+      expect([line(id), line(ids), line(ida), line(idf)]).toEqual([
         {
           code: 0,
           lines: [shown[2]!.replaceAll('daeede5e-c0dd-4b88-9caf-6efa089902dd', id)],
@@ -1383,7 +1397,176 @@ describe(
           code: 0,
           lines: [shown[3]!.replaceAll('573ff99d-44fc-42c9-98e8-c394fed45e6e', ids)],
         },
+        {
+          code: 0,
+          lines: [shown[4]!.replaceAll('e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68', ida)],
+        },
+        {
+          code: 0,
+          lines: [shown[5]!.replaceAll('5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25', idf)],
+        },
       ]);
+    });
+
+    describe('round 28 — C205: the ways on of respond and drain on the states C202 did not list', () => {
+      const OTHER = {
+        by: 'other@host',
+        by_source: 'derived' as const,
+        channel: 'advance' as const,
+      };
+      /** The shipping workflow of the page's guard screens: `approve` (ship/hold, default ship),
+       *  the guard `only_if_shipping`, then the agent step `ship`. */
+      const SHIPPING = [
+        '  approve:',
+        '    description: Approve.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    gate:',
+        '      choices: [ship, hold]',
+        '      timeout_seconds: 3600',
+        '      on_expiry: settle_default',
+        '      default_choice: ship',
+        '  only_if_shipping:',
+        '    description: Ship only when approved.',
+        '    execution: guard',
+        '    depends_on: [approve]',
+        `    abort_unless: ["approve.choice == 'ship'"]`,
+        '    abort_message: The order was held.',
+        agentStep('ship', ['only_if_shipping']),
+      ].join('\n');
+      async function openApprove(def: WorkflowDefinition, expired: boolean) {
+        const id = await started(def);
+        const opened = await executeStep(runStore, def, {
+          runId: id,
+          command: 'approve',
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
+        if (expired) {
+          const record = await runStore.get(id);
+          await runStore.update({
+            ...record,
+            pending_gate: {
+              ...record.pending_gate!,
+              opened_at: '2020-01-01T00:00:00.000Z',
+              expires_at: '2020-01-01T01:00:00.000Z',
+            },
+          });
+        }
+        return { id, gateId: opened.gate!.gate_id };
+      }
+
+      it("respond: an answer that leaves nothing to name but a step in flight in another program says to wait for it — the page's screen", async () => {
+        claim(
+          PAGE,
+          'When the answer leaves nothing to name but a step in flight in another program, the line says to wait for it, in the words `realm run advance` uses. Added after version 0.46.0:',
+        );
+        const def = await fromString(
+          'acting-c205-held',
+          [CONFIRM(), autoStep('pack', []), autoStep('done', ['confirm', 'pack'])].join('\n'),
+        );
+        const id = await started(def);
+        await runStore.claimStep(id, 'pack', def, OTHER);
+        const opened = await executeStep(runStore, def, {
+          runId: id,
+          command: 'confirm',
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        const r = respond({ id, gateId: opened.gate!.gate_id }, 'approve');
+        // (a) red when the step in flight is not named, or another way on is offered; (b) prints both.
+        expect({ code: r.code, out: r.out }).toEqual({
+          code: 0,
+          out: put(block(PAGE, 'Responded: 5c1e8a42'), {
+            '5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13': id,
+          }),
+        });
+      });
+
+      it('respond: a guard that failed goes on with the way back in, and following it, `realm run resume` takes the guard', async () => {
+        claim(
+          PAGE,
+          "A guard that failed is listed as a failed step `realm run resume` takes, so the second sentence goes on with the way back in: `'realm run resume <id> --from <step>' makes the failed step runnable again.` (added after version 0.46.0).",
+        );
+        const def = await fromString(
+          'acting-c205-guard',
+          [
+            CONFIRM(),
+            '  check:',
+            '    description: Check.',
+            '    execution: guard',
+            '    depends_on: [confirm]',
+            '    abort_unless: ["nope.field == true"]',
+          ].join('\n'),
+        );
+        const q = await atQuestion(def);
+        const r = respond(q, 'approve');
+        const resumed = realm(['run', 'resume', q.id, '--from', 'check']);
+        // (a) red when the sentence loses the way back in, names another step, or resume refuses
+        //     the step it names; (b) prints both.
+        expect({ first: r.out[0], code: r.code, resumed: resumed.code }).toEqual({
+          first: `Guard step 'check' failed with a resolution error. Run is terminated. 'realm run resume ${q.id} --from check' makes the failed step runnable again.`,
+          code: 0,
+          resumed: 0,
+        });
+      });
+
+      it("respond and drain --expired --force, the guard that passed (the page's screens): the agent step `ship` it leaves ready is named with its drive", async () => {
+        const def = await fromString('acting-c205-ship', SHIPPING);
+        const q = await openApprove(def, false);
+        const r = respond(q, 'ship');
+        const e = await openApprove(def, true);
+        const d = realm(['run', 'drain', e.id, '--expired', '--force']);
+        // (a) red when a line differs from the page's screens (their run IDs put in place); (b)
+        //     prints both.
+        expect([r.out, d.out]).toEqual([
+          put(block(PAGE, 'Responded: 989c0619'), {
+            '989c0619-1bda-4b2e-b5e3-4d33d6519a67': q.id,
+          }),
+          put(block(PAGE, "Run '230b0939-9c61-40e4-8b6f-910594a81e92' is not terminal"), {
+            '230b0939-9c61-40e4-8b6f-910594a81e92': e.id,
+          }),
+        ]);
+      });
+
+      it("drain --expired --force: an enactment that leaves only a step in flight in another program names it — the page's screen", async () => {
+        claim(
+          PAGE,
+          'When it leaves no work for the engine and nothing that cannot run, but an agent step ready or a step in flight in another program, the line `realm run advance` prints for it follows (the guard that passed above leaves the agent step `ship` ready). Added after version 0.46.0, which prints nothing after `nothing further to drain.` there:',
+        );
+        const def = await fromString(
+          'acting-c205-drain-held',
+          [
+            CONFIRM('settle_default'),
+            autoStep('pack', []),
+            autoStep('done', ['confirm', 'pack']),
+          ].join('\n'),
+        );
+        const id = await started(def);
+        await runStore.claimStep(id, 'pack', def, OTHER);
+        const opened = await executeStep(runStore, def, {
+          runId: id,
+          command: 'confirm',
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        const record = await runStore.get(id);
+        await runStore.update({
+          ...record,
+          pending_gate: {
+            ...record.pending_gate!,
+            opened_at: '2020-01-01T00:00:00.000Z',
+            expires_at: '2020-01-01T01:00:00.000Z',
+          },
+        });
+        expect(opened.status, 'fixture').toBe('confirm_required');
+        const d = realm(['run', 'drain', id, '--expired', '--force']);
+        // (a) red when the step in flight is not named, or another way on is offered; (b) prints both.
+        expect(d.out).toEqual(
+          put(block(PAGE, "Run '7d2e9b14"), { '7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857': id }),
+        );
+      });
     });
   },
 );

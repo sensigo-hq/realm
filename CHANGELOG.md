@@ -215,6 +215,28 @@ once '<step>' is no longer in flight, realm run advance <run>` (no `Discard`) fo
   program holds; `Resume: realm run resume <run> --from <step>` above `Inspect` for a run that ended
   with a failed step resume takes; and `Inspect` and `Discard` alone with nothing ready (the stall
   printed `Drive it`).
+- **One rule says which failed steps `realm run resume` takes (issue #625, PR-2a).** Core's
+  `resumeWay(run, workflow)` — the run not aborted, `failed` or `abandoned`, the step listed as
+  failed, still in the workflow and not a cleanup step — is the one statement of it; the refusal of
+  an answer to an ended run, `realm run advance`, `realm workflow run` and `realm run inspect` read
+  it. The refusal offered `--from <one of: s, clean>` with `clean` a cleanup step `resume --from`
+  refuses; it now offers `s` alone, and says `'realm run resume' takes none of the steps that failed
+(<steps>), so it has nothing to run again` when only such steps failed (it said `--from clean`). A
+  late answer whose run another call ended ends with the same way out (it offered `realm run resume`
+  on any run). `terminalAnswerRefusalMessage` takes `(run, workflow)`.
+- **Every stop and hand-back gives the way on that fits the run's state (issue #625, PR-2a).**
+  `realm run resume` prints `Drive it with:` only when an agent step is ready (it printed it, with a
+  model to fill in, for a step only the engine runs). `realm workflow run`'s last line `Run complete.
+Phase: failed` and `realm agent`'s stop on a run that ended with a failed step `realm run resume`
+  takes are followed by `  Resume:    realm run resume <run> --from <step>`. `realm run respond` and
+  `realm run drain` (its refusal of a run that has not ended, and its lines after an enactment that
+  left the run open) name an agent step that is ready with its drive and a step in flight in another
+  program with the wait (they named neither); `realm run inspect` names an agent step that is ready
+  and, on an ended run, `Resumable: '<step>' — realm run resume <run> --from <step>`. Over MCP,
+  `advance_run`'s reply and an answer's reply on a run that ended with such a step end with
+  `'realm run resume <run> --from <step>' makes the failed step runnable again.`, and the sentence
+  that says what comes next names a step in flight elsewhere: `No step is ready: '<step>' is in flight
+elsewhere — wait for it, then call get_run_state.` (it said `No step is ready.`).
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
   After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
 --run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back

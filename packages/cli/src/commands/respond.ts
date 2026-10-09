@@ -23,6 +23,7 @@ import { resolveProgramIdentity } from '../lib/program-identity.js';
 import {
   agentReadyReason,
   attendingLine,
+  inFlightReasons,
   laterAdvanceCodeWhere,
   projectNotUsedLine,
   PROJECT_OPTION_HELP,
@@ -40,7 +41,8 @@ function notRecordedLine(runId: string, late: { choice: string; phase: string })
  * What the run owes after an answer, in the CLI's words (decisions C11, C96, C62, C64, C135): the
  * one command that runs the engine's owed work — with where its project code comes from and that its
  * environment is its shell's (decision C98) —, the ready line for an agent step, and each engine step
- * that cannot run with the way out. The same lines after `Responded:` and after `Not recorded:`: an
+ * that cannot run with the way out; with none of these, each step in flight in another program, to
+ * wait for (decision C205). The same lines after `Responded:` and after `Not recorded:`: an
  * answer the expiry beat leaves the run owing what an on-time answer would have.
  */
 function nextLines(
@@ -72,6 +74,12 @@ function nextLines(
     // cases, and the commands above are not run beside it.
     ...(commands.length > 0 ? [attendingLine(commands.length)] : []),
     ...cannotGoOn,
+    // decision C205: with no command and nothing that cannot run, a step in flight in another
+    // program — wait for it. (A run the answer ended with a failed step `realm run resume` takes:
+    // the way back in ends the reply's own sentence, printed above by `describeAnswerEnding`.)
+    ...(commands.length === 0 && cannotGoOn.length === 0
+      ? inFlightReasons(runId, run).map((reason) => `${reason}.`)
+      : []),
   ];
 }
 

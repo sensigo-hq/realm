@@ -739,9 +739,11 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
 
     expect(exitSpy).not.toHaveBeenCalled();
+    // decision C205: the workflow's agent step `work` is ready — the drive, then the way out.
     expect(logs()).toContain(
       `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-        `To end the run: realm run abandon ${run.id}.`,
+        `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>. ` +
+        `To end the run instead: realm run abandon ${run.id}.`,
     );
   });
 
@@ -758,9 +760,11 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     // `process.exit(0)` here left every cell in the file green). Only the first call discriminates.
     expect(exitSpy.mock.calls[0]?.[0]).toBe(1);
 
+    // decision C205: the agent step `work` is ready — the drive, then the way out.
     expect(errs()).toContain(
       `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-        `To end the run: realm run abandon ${run.id}.`,
+        `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>. ` +
+        `To end the run instead: realm run abandon ${run.id}.`,
     );
   });
 
@@ -1131,9 +1135,11 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     expect(logs()).toContain(
       // The derived phase is 'running' (nothing supports the persisted label) and the record
       // carries no gate — `abandon` keys on the gate too, so the way out it names is the one that
-      // works (walk 3: an "answer its gate" fork on the LABEL stranded the operator).
+      // works (walk 3: an "answer its gate" fork on the LABEL stranded the operator). Decision
+      // C205: the agent step `work` is ready — the drive comes first, the way out beside it.
       `Run '${fresh.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-        `To end the run: realm run abandon ${fresh.id}.`,
+        `An agent step is ready: 'work' — drive it with realm agent --run-id ${fresh.id} --provider <provider> --model <model>. ` +
+        `To end the run instead: realm run abandon ${fresh.id}.`,
     );
   });
 

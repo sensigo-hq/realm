@@ -118,10 +118,10 @@ describe(
       }
     });
 
-    it('realm-run-acting.md: drain names five `is not terminal … nothing to drain` lines, and --force exits 1 on one (a run that owes an engine step)', async () => {
+    it('realm-run-acting.md: drain names seven `is not terminal … nothing to drain` lines (decision C205: an agent step ready, a step in flight), and --force exits 1 on one (a run that owes an engine step)', async () => {
       claim(
         'docs/reference/cli/realm-run-acting.md',
-        'if `--force` prints one of the five `is not terminal … nothing to drain` lines above,',
+        'if `--force` prints one of the seven `is not terminal … nothing to drain` lines above,',
       );
       const shown = block(
         'docs/reference/cli/realm-run-acting.md',
@@ -129,7 +129,7 @@ describe(
       );
       expect(
         shown.filter((l) => l.includes('is not terminal') && l.includes('nothing to drain')),
-      ).toHaveLength(5);
+      ).toHaveLength(7);
       const id = await started(
         wf(
           [
@@ -272,10 +272,10 @@ describe(
       expect(r.stdout.split('\n').filter((l) => l !== '')).toEqual(shown);
     });
 
-    it('operate-runs.md: realm run resume on a failed auto step prints the guide’s four lines', async () => {
+    it('operate-runs.md: realm run resume on a failed auto step prints the guide’s two lines (decision C205: no Drive it lines for a step only the engine runs); on an agent step, the Drive it lines', async () => {
       claim(
         'docs/guides/operate-runs.md',
-        'The fourth line, printed when the step is one the engine runs, was added after version 0.46.0.',
+        '`fetch` is a step only the engine runs, so the second line names the call that runs it, with no model. When the step that is ready again is an agent step, the second line is `Drive it with: realm agent --run-id <run-id> --provider <provider> --model <model>` instead, with `<provider>` and `<model>` to fill in as above, and a third line names the other flags to add. The `realm run advance` line was added after version 0.46.0, which prints the `Drive it with:` lines for every step.',
       );
       const def = wf(
         [
@@ -306,6 +306,103 @@ describe(
       );
       // (a) red when resume prints other lines than the guide's; (b) prints both.
       expect(r.out).toEqual(shown.filter((l) => l !== ''));
+      // An agent step made runnable again: the `Drive it with:` line and the flags line.
+      const agentDef = wf(
+        [
+          'id: askwf',
+          'name: askwf',
+          'version: 1',
+          'steps:',
+          '  ask:',
+          '    description: Ask.',
+          '    execution: agent',
+          '',
+        ].join('\n'),
+      );
+      const askId = await started(agentDef);
+      const failedAsk = await runStore.get(askId);
+      await runStore.update({
+        ...failedAsk,
+        run_phase: 'failed',
+        failed_steps: ['ask'],
+        terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
+        terminal_reason: "Step 'ask' failed.",
+      });
+      const ra = realm(['run', 'resume', askId, '--from', 'ask']);
+      // (a) red when an agent step loses its drive, or gets the owed call; (b) prints the lines.
+      expect(ra.out.filter((l) => l !== '')).toEqual([
+        `Resumed run '${askId}': step 'ask' re-enabled and run reset to 'running'.`,
+        `Drive it with: realm agent --run-id ${askId} --provider <provider> --model <model>`,
+        `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${askId} shows the extension module the run loaded).`,
+      ]);
+    });
+
+    it('realm-run-reading.md (decision C205): inspect names an agent step that is ready, and, on an ended run, the failed steps `realm run resume` takes — never a cleanup step', async () => {
+      const PAGE = 'docs/reference/cli/realm-run-reading.md';
+      claim(
+        PAGE,
+        '| `Resumable` | When the run ended with a failed step `realm run resume` takes | Those steps (never a cleanup step, which `realm run resume --from` refuses), and the `realm run resume` command that makes one runnable again. Added after version 0.46.0. |',
+      );
+      claim(
+        PAGE,
+        '| `An agent step is ready`, `Agent steps are ready` | When an agent step is ready on a run with no open question | The steps, and the `realm agent` command that drives them, in the words `realm run advance` uses. Added after version 0.46.0. |',
+      );
+      claim(
+        PAGE,
+        'An agent step that is ready, and a run that ended with a step `realm run resume` takes, from two runs (added after version 0.46.0):',
+      );
+      const shown = block(PAGE, 'Resumable: ');
+      const ready = await started(
+        wf(
+          [
+            'id: inspready',
+            'name: inspready',
+            'version: 1',
+            'steps:',
+            '  write:',
+            '    description: Write.',
+            '    execution: agent',
+            '',
+          ].join('\n'),
+        ),
+      );
+      const endedDef = wf(
+        [
+          'id: inspended',
+          'name: inspended',
+          'version: 1',
+          'steps:',
+          '  fetch:',
+          '    description: Fetch.',
+          '    execution: auto',
+          '  clean:',
+          '    description: Clean up.',
+          '    execution: finalizer',
+          '    handler: tidy',
+          '    on_outcome: fail',
+          '',
+        ].join('\n'),
+      );
+      const ended = await started(endedDef);
+      const rec = await runStore.get(ended);
+      // `fetch` failed and the run's cleanup step failed too: both are listed as failed.
+      await runStore.update({
+        ...rec,
+        run_phase: 'failed',
+        failed_steps: ['fetch', 'clean'],
+        terminal_state: true,
+        sealed_by: { arm: 'step_failure' },
+        terminal_reason: "Step 'fetch' failed: it broke",
+      });
+      const lineOf = (runId: string, start: string) =>
+        realm(['run', 'inspect', runId]).out.find((l) => l.startsWith(start));
+      // (a) red when the ready line or the Resumable line is missing or differs from the page's
+      //     (its run ID put in place), or the cleanup step is offered; (b) prints them.
+      expect([lineOf(ready, 'An agent step is ready'), lineOf(ended, 'Resumable:')]).toEqual([
+        shown[0]!.replaceAll('3c9f1e27-8b4d-4a60-9d15-e2f7a0c4b839', ready),
+        shown[1]!.replaceAll('6a1d5b03-c2e8-4f97-a41b-0d9e3c7f2a56', ended),
+      ]);
     });
 
     it('gates.md: the four late-answer screens of realm run respond, line by line', async () => {

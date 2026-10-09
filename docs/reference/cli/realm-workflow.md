@@ -262,6 +262,8 @@ Workflow stalled: nothing else can run.
 Run 2a319588-0843-41c4-b28b-44f88ecb0752 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 2a319588-0843-41c4-b28b-44f88ecb0752; or end it: realm run abandon 2a319588-0843-41c4-b28b-44f88ecb0752.
 ```
 
+The last line is `Run complete. Phase: <phase>`. When the run ended with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again — `  Resume:    realm run resume <run-id> --from <step>`, the line the detach map gives (added after version 0.46.0). [Call a service](../../guides/call-a-service.md) shows one.
+
 [Install Realm and run a workflow](../../start/install-and-first-run.md) shows a whole session.
 
 **Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if it stopped waiting for a step another program holds, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal. A signal sent to the command gives 128 plus the signal's number, as above.

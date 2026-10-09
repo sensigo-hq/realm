@@ -10,6 +10,7 @@ import {
   describePending,
   stepsThatCannotRun,
   owedList,
+  resumeWay,
   dueExpiry,
   capabilityMarkerWayOut,
   cannotRunWayOut,
@@ -34,6 +35,7 @@ import {
 // rendering matches `realm run list --stuck`'s own `idle: <age>` humanization exactly, rather
 // than re-implementing a second formatter.
 import { formatGateAge } from './list.js';
+import { agentReadyReason } from './run-advance.js';
 import type {
   RunStore,
   RunRecord,
@@ -626,6 +628,14 @@ export async function inspectRun(
   if (run.terminal_reason !== undefined) {
     lines.push(`Cause: ${run.terminal_reason}`);
   }
+  // decision C205: a run that ended with failed steps `realm run resume` takes (core's one rule,
+  // C204 — never a cleanup step) names them and the command that makes them runnable again.
+  const resumable = definition === undefined ? undefined : resumeWay(run, definition);
+  if (resumable !== undefined) {
+    lines.push(
+      `Resumable: ${resumable.steps.map((step) => `'${step}'`).join(', ')} — ${resumable.command}`,
+    );
+  }
   // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
   // step this record shows cannot run — an engine step, or an agent step refused before its claim
   // (decision C82). No registry here: a capability need is judged by the run's own marker (what the
@@ -642,6 +652,10 @@ export async function inspectRun(
     if (pending.act !== undefined) {
       lines.push(`Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}`);
     }
+    // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm
+    // run respond` print.
+    const ready = agentReadyReason(run.id, pending.agent_steps);
+    if (ready !== undefined) lines.push(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`);
     for (const e of stepsThatCannotRun(pending)) {
       // decision C41: a capability refusal judged from the run's marker (inspect passes no
       // registry) is past tense — no runner was consulted here.

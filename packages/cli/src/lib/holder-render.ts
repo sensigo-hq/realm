@@ -4,7 +4,7 @@
 // Every phrase here is a RENDER of a typed field the core composes — the field's WORDS stay data on
 // the MCP carriers. The wording rule on every surface: a PROGRAM, past tense ("taken by", "question
 // opened through"), with how its name is known. Never "is running", "is driving", "attended by".
-import { deriveRunPhase, describeClaimHolder } from '@sensigo/realm';
+import { deriveRunPhase, describeClaimHolder, resumeWay } from '@sensigo/realm';
 import type {
   AnswerView,
   Attributed,
@@ -102,6 +102,19 @@ export function inFlightLine(
     (stale ? ' Its claim is past its deadline (its runner likely died).' : '') +
     ` If the program that took it is gone: realm run reclaim ${runId} --step ${step} --force`
   );
+}
+
+/**
+ * decisions C202, C205: the hand-back line for a run that ended with a failed step `realm run
+ * resume` takes — `  Resume:    realm run resume <id> --from <step>`; `undefined` for any other run.
+ * `realm workflow run`'s map and its last line, and `realm agent`'s stop, print it.
+ */
+export function resumeLine(
+  run: Parameters<typeof resumeWay>[0],
+  workflow: Parameters<typeof resumeWay>[1],
+): string | undefined {
+  const resume = resumeWay(run, workflow);
+  return resume === undefined ? undefined : `  Resume:    ${resume.command}`;
 }
 
 /**

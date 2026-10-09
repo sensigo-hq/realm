@@ -31,6 +31,7 @@ import {
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
+import { agentReadyReason, inFlightReasons } from './run-advance.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -57,6 +58,18 @@ const nothingToDrain = (runId: string): string =>
  *   behind the gate, any of which can end the run; `abandon` then refuses ("already terminal").
  *   The sentence therefore names `abandon` only for a run that is still open after the answer.
  */
+/**
+ * decision C205: the way on of a run that has not ended, owes the engine nothing and has no step
+ * that cannot run — the ready line for an agent step (the drive), else one line per step in flight
+ * in another program (wait for it); empty when neither. The same words `realm run advance` and
+ * `realm run respond` print.
+ */
+const waysOnWithoutEngineWork = (runId: string, run: RunRecord, pending: PendingView): string[] => {
+  const ready = agentReadyReason(runId, pending.agent_steps);
+  if (ready !== undefined) return [`${ready.charAt(0).toUpperCase()}${ready.slice(1)}.`];
+  return inFlightReasons(runId, run).map((reason) => `${reason}.`);
+};
+
 const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingView): string => {
   const gate = run.pending_gate;
   if (gate === undefined) {
@@ -66,8 +79,14 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingVie
     if (cannotGoOn.length > 0) return cannotGoOn.join(' ');
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
-    return pending?.act !== undefined
-      ? `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}): realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`
+    if (pending?.act !== undefined) {
+      return `To run ${owedWords(pending).steps} the engine owes (${owedList(pending)}): realm run advance ${runId}. To end the run instead: realm run abandon ${runId}.`;
+    }
+    // decision C205: an agent step ready — the drive; a step in flight in another program — wait
+    // for it. Each with the way out beside it.
+    const goOn = pending === undefined ? [] : waysOnWithoutEngineWork(runId, run, pending);
+    return goOn.length > 0
+      ? `${goOn.join(' ')} To end the run instead: realm run abandon ${runId}.`
       : `To end the run: realm run abandon ${runId}.`;
   }
   const expiry = classifyGateExpiry(run, now);
@@ -807,8 +826,12 @@ export async function runDrainAction(
         );
       }
       // decision C64: the expiry left nothing that can run from here — the steps and the way out.
-      for (const line of owed === undefined ? [] : cannotGoOnLines(workingRun, owed)) {
-        console.log(line);
+      const cannotGoOn = owed === undefined ? [] : cannotGoOnLines(workingRun, owed);
+      for (const line of cannotGoOn) console.log(line);
+      // decision C205: with no engine work and nothing that cannot run, an agent step ready (the
+      // drive) or a step in flight in another program (wait for it).
+      if (owed !== undefined && owed.act === undefined && cannotGoOn.length === 0) {
+        for (const line of waysOnWithoutEngineWork(runId, workingRun, owed)) console.log(line);
       }
       return;
     }

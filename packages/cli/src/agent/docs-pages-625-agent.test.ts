@@ -683,10 +683,17 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
     );
     // (a) red when a stop's reason line changes its opening (`✗ Step`, `✗ The drive stops`, `⚠ Step
     //     … is blocked`) or the drive does not stop; (b) prints each result and last line.
-    expect(
-      [failed, refused, handler, adapter].map((d) => [d.result, bare(d.lines.at(-1))]),
-    ).toEqual([
-      ['failed', "error: ✗ Step 'x' failed: Handler 'boom' threw: down"],
+    //     Decision C205: the failed step's line is followed by the `Resume:` line (the run ended
+    //     with a failed step `realm run resume` takes) — the reason is the line before it.
+    expect([
+      [failed.result, bare(failed.lines.at(-2)), bare(failed.lines.at(-1))],
+      ...[refused, handler, adapter].map((d) => [d.result, bare(d.lines.at(-1))]),
+    ]).toEqual([
+      [
+        'failed',
+        "error: ✗ Step 'x' failed: Handler 'boom' threw: down",
+        'error:   Resume:    realm run resume <run> --from x',
+      ],
       ['failed', bare(stopLine('precondition', 'x'))],
       [
         'failed',
@@ -722,12 +729,25 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         wf({ classify: agent(), file: auto({ handler: 'file_ticket' }, ['classify']) }),
         { registry },
       );
+      claim(
+        AGENT_PAGE,
+        'When the run ended with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again, `  Resume:    realm run resume <run-id> --from <step>` (added after version 0.46.0)',
+      );
+      claim(
+        AGENT_PAGE,
+        'The lines that say why the drive stopped (`✗ Step …` and `⚠ Step … is blocked`) go to stderr, and so do the `Resume:` line after them',
+      );
       const run = await d.store.get(d.runId);
       // (a) red when the line names the step the drive called, drops the suffix, or the run does
-      //     not end in failed; (b) prints the result, the last line and the phase.
-      expect({ result: d.result, last: bare(d.lines.at(-1)), phase: run.run_phase }).toEqual({
+      //     not end in failed; or (decision C205) the `Resume:` line is missing, names another
+      //     step or goes to stdout; (b) prints the result, the last two lines and the phase.
+      expect({
+        result: d.result,
+        last: d.lines.slice(-2).map((l) => bare(l)),
+        phase: run.run_phase,
+      }).toEqual({
         result: 'failed',
-        last: `error: ${LINE}`,
+        last: [`error: ${LINE}`, 'error:   Resume:    realm run resume <run> --from file'],
         phase: 'failed',
       });
     });

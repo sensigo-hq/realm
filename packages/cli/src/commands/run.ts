@@ -36,6 +36,7 @@ import {
   waitingLine,
   ranElsewherePhrase,
   goOnLine,
+  resumeLine,
 } from '../lib/holder-render.js';
 import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
@@ -156,9 +157,9 @@ export function renderDetachMap(
   ];
 
   if (record.terminal_state) {
-    // decision C202: the way on from a failed step `realm run resume` takes.
-    const resume = resumeWay(record, ways.workflow);
-    if (resume !== undefined) lines.push(`  Resume:    ${resume.command}`);
+    // decisions C202, C205: the way on from a failed step `realm run resume` takes.
+    const resume = resumeLine(record, ways.workflow);
+    if (resume !== undefined) lines.push(resume);
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
   }
@@ -1177,6 +1178,10 @@ export const runCommand = new Command('run')
         return;
       }
       console.log(`Run complete. Phase: ${run.run_phase}`);
+      // decision C205 (round 27 finding 3): a run that ended with a failed step `realm run resume`
+      // takes gets the way back in, as the detach map gives it.
+      const resume = resumeLine(run, definition);
+      if (resume !== undefined) console.log(resume);
       process.exit(1);
     },
   );

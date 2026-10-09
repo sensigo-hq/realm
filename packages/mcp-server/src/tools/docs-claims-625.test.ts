@@ -953,7 +953,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163 ok: next_actions empty when a step cannot run — the hint names it and why, and ends with the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
@@ -964,10 +964,10 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     expect(String(r['context_hint']).endsWith(WAY_OUT)).toBe(true);
   });
 
-  it('C163 ok: next_actions empty while a step is in flight in another process — No step is ready., step_claims names it', async () => {
+  it('C163 ok: next_actions empty while a step is in flight in another process — No step is ready, with the step and the wait (decision C205), step_claims names it', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(STUCK);
@@ -978,7 +978,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     expect([r['status'], next(r), r['context_hint']]).toEqual([
       'ok',
       [],
-      `Run '${runId}': nothing ran. No step is ready.`,
+      `Run '${runId}': nothing ran. No step is ready: 'b' is in flight elsewhere — wait for it, then call get_run_state.`,
     ]);
     expect(JSON.stringify(state['step_claims'])).toContain('"b"');
   });
@@ -2575,6 +2575,195 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     expect([(person['errors'] as string[])[0], person['error_details']]).toEqual([
       `Gate '${g2}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
       { runId: done, gateId: g2, winning_choice: 'approve' },
+    ]);
+  });
+});
+
+describe('#625 PR-2a, round 28 — C205: the replies on the states C202 did not list, over a real MCP client', () => {
+  const OTHER = { by: 'other@host', by_source: 'derived' as const, channel: 'advance' as const };
+  const boom = () => {
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'boom', {
+      id: 'boom',
+      execute: async () => {
+        throw new Error('it broke');
+      },
+    });
+    return registry;
+  };
+  async function connectWith(registry: ExtensionRegistry) {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-c205-'));
+    const runStore = new JsonFileStore(join(dir, 'runs'));
+    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    const server = createRealmMcpServer({ runStore, workflowStore, registry });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'docs-claims-625-c205', version: '0' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const call = async (name: string, args: Record<string, unknown>): Promise<Reply> => {
+      const raw = (await client.callTool({ name, arguments: args })) as {
+        content: Array<{ text: string }>;
+      };
+      return JSON.parse(raw.content[0]!.text) as Reply;
+    };
+    return { call, runStore, workflowStore };
+  }
+
+  it('advance_run on a run whose own step failed, and on the run once ended: the hint ends with the way back in', async () => {
+    claim(
+      'mcp/tools.md',
+      "When the run has ended with a failed step `realm run resume` takes — this call's own step failed, or the run had ended before it — the `context_hint` ends with `'realm run resume <id> --from <step>' makes the failed step runnable again.`",
+    );
+    claim(
+      'mcp/tools.md',
+      "`ok` without `agent_action`: `Run '<id>' is already terminal (<phase>); nothing ran.`, and for a run that ended with a failed step `realm run resume` takes, `'realm run resume <id> --from <step>' makes the failed step runnable again.` after it",
+    );
+    const { call, runStore, workflowStore } = await connectWith(boom());
+    const def = loadWorkflowFromString(
+      [
+        'id: c205-adv',
+        'name: c205-adv',
+        'version: 1',
+        'steps:',
+        '  s:',
+        '    description: S.',
+        '    execution: auto',
+        '    handler: boom',
+        '',
+      ].join('\n'),
+    );
+    await workflowStore.register(def);
+    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const first = await call('advance_run', { run_id: run.id });
+    const second = await call('advance_run', { run_id: run.id });
+    const offer = `'realm run resume ${run.id} --from s' makes the failed step runnable again.`;
+    // (a) red when either reply lacks the way back in, or names another step; (b) prints both.
+    expect([first['run_phase'], first['context_hint'], second['context_hint']]).toEqual([
+      'failed',
+      `Step 's' failed. Run is terminated. ${offer}`,
+      `Run '${run.id}' is already terminal (failed); nothing ran. ${offer}`,
+    ]);
+  });
+
+  it("submit_human_response whose guard fails the run: the guard's sentence goes on with the way back in", async () => {
+    claim(
+      'mcp/tools.md',
+      "On an answer's reply and `advance_run`'s, the second goes on with the way back in, the guard being a failed step `realm run resume` takes: `'realm run resume <id> --from <step>' makes the failed step runnable again.` (added after version 0.46.0)",
+    );
+    const { call, runStore, workflowStore } = await connectWith(new ExtensionRegistry());
+    const def = loadWorkflowFromString(
+      [
+        'id: c205-guard',
+        'name: c205-guard',
+        'version: 1',
+        'steps:',
+        '  g:',
+        '    description: G.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '  check:',
+        '    description: Check.',
+        '    execution: guard',
+        '    depends_on: [g]',
+        '    abort_unless: ["nope.field == true"]',
+        '',
+      ].join('\n'),
+    );
+    await workflowStore.register(def);
+    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await call('advance_run', { run_id: run.id });
+    const gateId = (await runStore.get(run.id)).pending_gate!.gate_id;
+    const r = await call('submit_human_response', {
+      run_id: run.id,
+      gate_id: gateId,
+      choice: 'approve',
+    });
+    // (a) red when the sentence loses the way back in or names another step; (b) prints it.
+    expect([r['run_phase'], r['context_hint']]).toEqual([
+      'failed',
+      `Guard step 'check' failed with a resolution error. Run is terminated. 'realm run resume ${run.id} --from check' makes the failed step runnable again.`,
+    ]);
+  });
+
+  it('start_run that matches a run whose only step is in flight in another call: No step is ready, with the step and the wait', async () => {
+    claim(
+      'mcp/tools.md',
+      "`No step is ready.` only when none of these holds — `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.` when a step is in flight in another call.",
+    );
+    const { call, runStore, workflowStore } = await connectWith(new ExtensionRegistry());
+    const def = loadWorkflowFromString(
+      [
+        'id: c205-match',
+        'name: c205-match',
+        'version: 1',
+        'steps:',
+        '  p:',
+        '    description: P.',
+        '    execution: auto',
+        '  done:',
+        '    description: Done.',
+        '    execution: auto',
+        '    depends_on: [p]',
+        '',
+      ].join('\n'),
+    );
+    await workflowStore.register(def);
+    const { run } = await runStore.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'c205-key',
+    });
+    await runStore.claimStep(run.id, 'p', def, OTHER);
+    const r = await call('start_run', { workflow_id: def.id, idempotency_key: 'c205-key' });
+    // (a) red when the step in flight is not named with the wait; (b) prints the reply.
+    expect([r['run_id'], r['context_hint']]).toEqual([
+      run.id,
+      `Matched existing run '${run.id}' (idempotent) in phase 'running'; no new run created. No step is ready: 'p' is in flight elsewhere — wait for it, then call get_run_state.`,
+    ]);
+  });
+
+  it('submit_human_response that leaves only a step in flight in another call: No step is ready, with the step and the wait', async () => {
+    claim(
+      'mcp/tools.md',
+      "`No step is ready.` only when none of these holds — `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.` when a step is in flight in another call.",
+    );
+    const { call, runStore, workflowStore } = await connectWith(new ExtensionRegistry());
+    const def = loadWorkflowFromString(
+      [
+        'id: c205-held',
+        'name: c205-held',
+        'version: 1',
+        'steps:',
+        '  g:',
+        '    description: G.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '  p:',
+        '    description: P.',
+        '    execution: auto',
+        '  done:',
+        '    description: Done.',
+        '    execution: auto',
+        '    depends_on: [g, p]',
+        '',
+      ].join('\n'),
+    );
+    await workflowStore.register(def);
+    const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await runStore.claimStep(run.id, 'p', def, OTHER);
+    await call('advance_run', { run_id: run.id });
+    const gateId = (await runStore.get(run.id)).pending_gate!.gate_id;
+    const r = await call('submit_human_response', {
+      run_id: run.id,
+      gate_id: gateId,
+      choice: 'approve',
+    });
+    // (a) red when the step in flight is not named with the wait, or `next_actions` offers a call;
+    //     (b) prints the reply.
+    expect([r['status'], next(r), r['context_hint']]).toEqual([
+      'ok',
+      [],
+      "Gate 'g' resolved with choice 'approve'. No step is ready: 'p' is in flight elsewhere — wait for it, then call get_run_state.",
     ]);
   });
 });
