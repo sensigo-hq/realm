@@ -702,7 +702,8 @@ export function describePending(
           params: { run_id: run.id },
           call_with: { run_id: run.id },
         },
-        human_readable: `Call advance_run to carry out ${words}, then run what it leaves owed. It runs with this server's extensions and environment.`,
+        // decision C207: what it leaves owed runs until a step opens a question, fails or ends the run.
+        human_readable: `Call advance_run to carry out ${words}, then run what it leaves owed${OWED_UNTIL}. It runs with this server's extensions and environment.`,
         orientation: `Run is active. Engine work is owed: ${words}.`,
       },
     };

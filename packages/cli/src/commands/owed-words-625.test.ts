@@ -651,7 +651,8 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
     }
   });
 
-  it("respond's owed line: `runs it` for one step, `runs them` for two — and (decision C207) for two, where that call stops", async () => {
+  it("respond's owed line: `runs it` for one step, `runs them` for two", async () => {
+    // decision C207: for two, the words go on with where that call stops.
     const { respondToGate } = await import('./respond.js');
     for (const [owed, them] of [
       [['after'], 'it'],

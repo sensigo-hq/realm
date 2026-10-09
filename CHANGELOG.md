@@ -254,8 +254,10 @@ ends the run`, `realm run inspect`'s `Owed to the engine` line the same; `realm 
   `runs them until a step opens a question, fails or ends the run` (it said `runs them`), and
   `realm run resume`, `realm run drain` and advance's `the engine still owes` line give the same
   words. Over MCP the sentence after `Owed to the engine: …` says `— call advance_run; it runs them
-until …`, and the `advance_run` action's `human_readable` ends `… until a step opens a question,
-fails or ends the run.` One owed step: unchanged.
+until …`, the `advance_run` action's `human_readable` ends `… until a step opens a question, fails
+or ends the run.`, and for an expired question it says `then run what it leaves owed until a step
+opens a question, fails or ends the run` (it said `then run what it leaves owed`). One owed step:
+  unchanged.
 - **`realm run advance` prints the cleanup steps' outcomes (issue #625, PR-2a).** When the run ends
   during the call and has cleanup steps, one line per cleanup step, `finalizer '<name>': <status>`,
   comes just before the phase line — from the composer `realm run respond` prints them with

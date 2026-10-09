@@ -180,7 +180,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       call_with: { run_id: runId },
     });
     expect(view.act?.human_readable).toBe(
-      "Call advance_run to carry out the expired question on 'confirm' (its declared settle_default), then run what it leaves owed. It runs with this server's extensions and environment.",
+      "Call advance_run to carry out the expired question on 'confirm' (its declared settle_default), then run what it leaves owed until a step opens a question, fails or ends the run. It runs with this server's extensions and environment.",
     );
     expect(view.act?.orientation).toBe(
       "Run is active. Engine work is owed: the expired question on 'confirm' (its declared settle_default).",

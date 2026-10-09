@@ -1708,7 +1708,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     claim('mcp/tools.md', "Engine work is owed: 'post_approval'.\"");
     claim(
       'mcp/tools.md',
-      "For an expired question the act reads `Call advance_run to carry out the expired question on '<step>' (its declared <on_expiry>), then run what it leaves owed. It runs with this server's extensions and environment.`",
+      "For an expired question the act reads `Call advance_run to carry out the expired question on '<step>' (its declared <on_expiry>), then run what it leaves owed until a step opens a question, fails or ends the run. It runs with this server's extensions and environment.`",
     );
     claim(
       'mcp/tools.md',
@@ -1750,7 +1750,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const expState = await call('get_run_state', { run_id: exp });
     const expAct = (expState['next_actions'] as Array<{ human_readable: string }>).at(-1)!;
     expect(expAct.human_readable).toBe(
-      "Call advance_run to carry out the expired question on 'confirm' (its declared settle_default), then run what it leaves owed. It runs with this server's extensions and environment.",
+      "Call advance_run to carry out the expired question on 'confirm' (its declared settle_default), then run what it leaves owed until a step opens a question, fails or ends the run. It runs with this server's extensions and environment.",
     );
     await workflowStore.register({
       ...gated('docs-act-batch'),
