@@ -592,9 +592,9 @@ export function resumeWay(
 
 /**
  * The placeholder a printed command gives for a value that is one of several (decision C206): the
- * value itself when there is one, else `<one of: a, b>` — a placeholder a shell refuses to run as
- * typed (`<` reads a file), never `a|b`, which a shell runs as a pipe. The one form for `--from`
- * ({@link resumeWay}) and `--choice` ({@link respondCommand}).
+ * value itself when there is one, else `<one of: a, b>` — a placeholder bash and sh refuse to run
+ * as typed (a syntax error, so nothing runs), never `a|b`, which a shell runs as a pipe. The one
+ * form for `--from` ({@link resumeWay}) and `--choice` ({@link respondCommand}).
  */
 export function oneOf(values: readonly string[]): string {
   return values.length === 1 ? values[0]! : `<one of: ${values.join(', ')}>`;
