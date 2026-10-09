@@ -21,7 +21,6 @@ import {
   cannotGoOnLines,
   cannotGoOnHere,
   owedList,
-  owedWords,
   composeStepViews,
   describeClaimHolder,
   classifyInProgressClaims,
@@ -104,7 +103,8 @@ export function renderStepFailureLine(
  *  - PENDING GATE — respond and inspect, and deliberately NO Discard line: `realm run abandon`
  *    REFUSES a run with a pending gate (STATE_TRANSITION_DENIED, abandon-run.ts) and tells you to
  *    resolve the gate first. The gate_id and choices come from the FROZEN record, the same source
- *    `respond` validates against, so what is printed is what will be accepted.
+ *    `respond` validates against, so what is printed is what will be accepted. Decision C202: a
+ *    question whose time is up and that declares `on_expiry` gets the owed call in place of respond.
  *  - OTHERWISE — decision C202: the ways on the run's view (`describePending`, read by the caller on
  *    the same record) gives: the owed call (`Advance: realm run advance`) when the engine owes work,
  *    the drive (`Drive it: realm agent`) only when an agent step is ready — then the line `realm run
@@ -163,9 +163,17 @@ export function renderDetachMap(
   }
 
   const gate = record.pending_gate;
+  const { pending } = ways;
+  // decision C202: the owed call — for what the engine owes, an expired question's declared
+  // `on_expiry` included (the view's act).
+  const advanceLine = `  Advance:   realm run advance ${record.id} — for what the engine owes (${owedList(pending)}), with no model`;
   if (gate !== undefined) {
+    // decision C202: a question whose time is up and that declares `on_expiry` can no longer be
+    // answered — the owed call carries its expiry out.
     lines.push(
-      `  Respond:   realm run respond ${record.id} --gate ${gate.gate_id} --choice ${gate.choices.join('|')}`,
+      pending.act !== undefined
+        ? advanceLine
+        : `  Respond:   realm run respond ${record.id} --gate ${gate.gate_id} --choice ${gate.choices.join('|')}`,
     );
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
@@ -173,13 +181,8 @@ export function renderDetachMap(
 
   // decision C202: the ways on the run's view gives — the owed call where the engine owes work, the
   // drive only where an agent step is ready.
-  const { pending } = ways;
   const commands: string[] = [];
-  if (pending.act !== undefined) {
-    commands.push(
-      `  Advance:   realm run advance ${record.id} — for ${owedWords(pending).steps} the engine owes (${owedList(pending)}), with no model`,
-    );
-  }
+  if (pending.act !== undefined) commands.push(advanceLine);
   if (pending.agent_steps.length > 0) {
     const driveFlags =
       opts?.driveFlags !== undefined && opts.driveFlags !== '' ? ` ${opts.driveFlags}` : '';

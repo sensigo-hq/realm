@@ -1040,7 +1040,7 @@ describe(
       it("an `auto` step's prompt (W2-1): `Advance:` with the owed call, no `Drive it`; the page's screen; the call, once the workflow is registered, runs the step", async () => {
         claim(
           WF_PAGE,
-          "The lines after the first are the ways on that fit the run as its record stands when you leave. `Drive it` is printed only when an agent step is ready. When the engine owes work, as when you leave an `auto` step's prompt, `Advance:` gives the call that runs it with no model, above `Drive it` when both hold (the line under them then ends `the lines above are for when none is.`):",
+          "The lines after the first are the ways on that fit the run as its record stands when you leave. `Drive it` is printed only when an agent step is ready. When the engine owes work, as when you leave an `auto` step's prompt, `Advance:` gives the call that runs it with no model, above `Drive it` when both hold (the line under them then ends `the lines above are for when none is.`), and in place of `Respond` for a question whose time is up and that declares `on_expiry`:",
         );
         claim(
           WF_PAGE,
@@ -1106,7 +1106,7 @@ describe(
           code: 1,
           map: [
             "Prompt cancelled — detached from run '<id>' at step 'ask' (phase: running). The run is saved.",
-            "  Advance:   realm run advance <id> — for the step the engine owes ('b'), with no model",
+            "  Advance:   realm run advance <id> — for what the engine owes ('b'), with no model",
             '  Drive it:  realm agent --run-id <id> --provider <provider> --model <model>',
             `             ${attendingLine(2)}`,
             '  Inspect:   realm run inspect <id>',
@@ -1119,7 +1119,7 @@ describe(
       it('an `auto` step whose input its schema refuses, left at its prompt: each step that cannot run and the way out, then `Inspect`', async () => {
         claim(
           WF_PAGE,
-          "When neither holds, a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets each step that cannot run and the way out, `'<step>' cannot run (<check>): <why>.` and `Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.`, then `Inspect`.",
+          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.`), then `Inspect`;",
         );
         mocks.question.mockImplementation(async () => {
           throw leave();
@@ -1155,7 +1155,7 @@ describe(
       it('another program took the step while its prompt waited (left before the prompt saw it): the `Go on:` line and `Inspect`, no `Drive it`, no `Discard`', async () => {
         claim(
           WF_PAGE,
-          'A step in flight in another program gets the `Go on:` line shown above and `Inspect`.',
+          'a step in flight in another program gets the `Go on:` line shown above and `Inspect`;',
         );
         const def = loadWorkflowFromString(
           [
@@ -1203,7 +1203,7 @@ describe(
       it('the run ended with a failed step while the prompt waited (left before the prompt saw it): `Resume:` above `Inspect`; following it, once registered, makes the step runnable again', async () => {
         claim(
           WF_PAGE,
-          'A run that has ended gets `Inspect`, after a `Resume:` line, `realm run resume <id> --from <step>`, when a step failed that `realm run resume` takes.',
+          'A run that has ended gets `Inspect`, after a `Resume:` line, `realm run resume <id> --from <step>` (`--from <one of: …>` for several), when a step failed that `realm run resume` takes.',
         );
         const yaml = [
           'id: leave-failed',
@@ -1263,7 +1263,7 @@ describe(
       it('the stall with nothing ready: `Inspect` and `Discard` alone, no `Drive it`', async () => {
         claim(
           WF_PAGE,
-          'A run with nothing ready gets `Inspect` and `Discard` alone, as when the command stalls with nothing ready (`Workflow stalled — detached from run …`; a first step whose `when` is never true, for one).',
+          'and a run with nothing ready gets `Inspect` and `Discard` alone, as when the command stalls with nothing ready (`Workflow stalled — detached from run …`; a first step whose `when` is never true, for one).',
         );
         const code = await run([
           'id: stall-nothing',

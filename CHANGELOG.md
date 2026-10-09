@@ -206,14 +206,15 @@ ended (failed)` and nothing more. When a refusal stops the call with engine work
   prints `Stopped: the engine still owes '<step>' — to run it: realm run advance <run>`; that work was
   named nowhere.
 - **`realm workflow run`'s detach map offers the ways on that fit the run's state (issue #625,
-  PR-2a).** Leaving a prompt (or stalling) prints `Advance:   realm run advance <run> — for the step
-the engine owes ('<step>'), with no model` when the engine owes work — leaving an `auto` step's
-  prompt printed `Drive it: realm agent …` alone, a drive that needs a model —, `Drive it` only
-  when an agent step is ready, the steps that cannot run and the way out when the run cannot go on
-  from here, `Go on: once '<step>' is no longer in flight, realm run advance <run>` (no `Discard`)
-  for a step another program holds, `Resume: realm run resume <run> --from <step>` above `Inspect`
-  for a run that ended with a failed step resume takes, and `Inspect` and `Discard` alone with
-  nothing ready (the stall printed `Drive it`).
+  PR-2a).** Leaving a prompt (or stalling) prints `Advance:   realm run advance <run> — for what the
+engine owes ('<step>'), with no model` when the engine owes work — leaving an `auto` step's prompt
+  printed `Drive it: realm agent …` alone, a drive that needs a model —, and in place of `Respond`
+  for a question whose time is up and that declares `on_expiry`; `Drive it` only when an agent step
+  is ready; the steps that cannot run and the way out when the run cannot go on from here; `Go on:
+once '<step>' is no longer in flight, realm run advance <run>` (no `Discard`) for a step another
+  program holds; `Resume: realm run resume <run> --from <step>` above `Inspect` for a run that ended
+  with a failed step resume takes; and `Inspect` and `Discard` alone with nothing ready (the stall
+  printed `Drive it`).
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
   After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
 --run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back

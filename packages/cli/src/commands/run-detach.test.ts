@@ -14,7 +14,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RunRecord, PendingView } from '@sensigo/realm';
+import type { RunRecord, PendingView, WorkflowDefinition } from '@sensigo/realm';
+import { describePending, owedList } from '@sensigo/realm';
 import { runCommands, topLevelCommands } from '../commands-registry.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
@@ -169,6 +170,75 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
     expect(withGate).toContain("at step 'from_the_gate'");
 
     expect(renderDetachMap(record(), undefined, ways())).toContain("at step '(step unknown)'");
+  });
+});
+
+describe('renderDetachMap, round 27 — C202: the ways on that fit the run (units of the composer)', () => {
+  it('an ended run: `Resume:` names the failed steps `realm run resume` takes — several as `<one of: …>`, never a cleanup step, never on an aborted run', () => {
+    const steps = {
+      a: { execution: 'auto' },
+      b: { execution: 'auto' },
+      clean: { execution: 'finalizer' },
+    };
+    const failed = (failedSteps: string[], over: Partial<RunRecord> = {}) =>
+      renderDetachMap(
+        record({
+          terminal_state: true,
+          run_phase: 'failed',
+          sealed_by: { arm: 'step_failure' },
+          failed_steps: failedSteps,
+          ...over,
+        } as Partial<RunRecord>),
+        'a',
+        ways({}, steps),
+      ).split('\n');
+    // (a) red when the line names a step resume refuses, misses one it takes, or is printed for an
+    //     aborted run; (b) prints the maps.
+    expect({
+      several: failed(['a', 'clean', 'b']).slice(1),
+      cleanupOnly: failed(['clean']).slice(1),
+      aborted: failed(['a'], {
+        run_phase: 'aborted',
+        aborted_at: { step_id: 'a', message: 'stopped' },
+        sealed_by: { arm: 'handler_abort' },
+      } as Partial<RunRecord>).slice(1),
+    }).toEqual({
+      several: [
+        '  Resume:    realm run resume run_abc --from <one of: a, b>',
+        '  Inspect:   realm run inspect run_abc',
+      ],
+      cleanupOnly: ['  Inspect:   realm run inspect run_abc'],
+      aborted: ['  Inspect:   realm run inspect run_abc'],
+    });
+  });
+
+  it('a question whose time is up and that declares `on_expiry`: the owed call in place of `Respond`', () => {
+    const rec = record({
+      pending_gate: {
+        gate_id: 'g-1',
+        step_name: 'confirm',
+        choices: ['approve', 'reject'],
+        preview: {},
+        opened_at: '2026-09-01T00:00:00.000Z',
+        expires_at: '2026-09-01T00:01:00.000Z',
+        on_expiry: 'settle_default',
+        default_choice: 'approve',
+      },
+    } as Partial<RunRecord>);
+    const pending = describePending(
+      { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
+      rec,
+      undefined,
+      new Date(),
+    );
+    const map = renderDetachMap(rec, 'confirm', { pending, workflow: { steps: {} } }).split('\n');
+    // (a) red when an expired question that declares `on_expiry` is offered an answer, or no owed
+    //     call; (b) prints the map.
+    expect(map.slice(1)).toEqual([
+      `  Advance:   realm run advance run_abc — for what the engine owes (${owedList(pending)}), with no model`,
+      '  Inspect:   realm run inspect run_abc',
+    ]);
+    expect(owedList(pending)).toContain("'confirm'");
   });
 });
 
