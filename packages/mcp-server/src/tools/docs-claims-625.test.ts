@@ -2967,6 +2967,10 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
 
   it('get_run_state: resumable, cleanup_pending and waiting_on_answer; advance_run at the question names the step it holds', async () => {
     say(
+      'mcp/tools.md',
+      "The run's state, as for a run that goes on, with `terminal_state: true` and empty `next_actions`; `resumable` names the failed steps `realm run resume` takes and its command, and `cleanup_pending` the cleanup steps left `pending` and the command that runs them.",
+    );
+    say(
       RUN_STATE,
       '| `waiting_on_answer` | A question is open and steps wait for its answer | Those steps: ready by what they depend on, held while the question is open; they go on after the answer. Added after version 0.46.0. |',
     );
