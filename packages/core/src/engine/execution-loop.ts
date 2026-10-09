@@ -18,6 +18,7 @@ import type {
   OutputSource,
 } from '../types/run-record.js';
 import { isBareAutoStep as isBareAutoStepDef } from './output-source.js';
+import { classifyStop, isRaceStop, type NotRecordedKind, type RaceStop } from './stop-kind.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
 import type { ResponseEnvelope, NextAction } from '../types/response-envelope.js';
@@ -7130,6 +7131,8 @@ interface AdvanceLoopContext {
   now?: Date;
   onStep?: (step: string) => void;
   onTaken?: (step: string, run: RunRecord) => void;
+  /** F7: a step this loop ran whose outcome another program's act kept from being recorded. */
+  onNotRecorded?: (step: string, kind: NotRecordedKind, run: RunRecord) => void;
   onGuard?: (guard: string) => void;
   /** The step `executeChain` ran before the loop (its warnings are rescued); absent for advanceRun. */
   namedStep?: string;
@@ -7145,10 +7148,17 @@ interface AdvanceLoopContext {
  * eligible guard, then run the step {@link pickNextEngineStep} picks — through `executeStep`, with
  * the engine's own input and the bare-step dispatcher — until a question opens, only agent steps
  * remain, the run ends, a step's reply is not `ok` (returned as is), or nothing is left to pick. A
- * step another process holds is not run here: the record is re-read and the loop continues.
+ * step another program got to first is not a stop (F7): the record is re-read, core's classifier
+ * ({@link classifyStop}) names the race, and the loop goes on with what is left — and the reply it
+ * returns after any race is composed from the re-read record (its version, phase, next actions and
+ * hint), never from the record the call first read.
  *
  * Defensive bound: at most one execution per step of the definition per call. Nothing reaches it —
- * every step the loop runs (or finds taken) leaves eligibility, so each pick is a different step.
+ * every step the loop runs (or finds taken) leaves eligibility, so each pick is a different step —
+ * except a step a race left owed again (`claim_removed`: another process removed its claim;
+ * `not_eligible`: its claim's re-check refused it, and the record shows why no more): it may be
+ * picked once more, so the first such race on each step adds one to the bound. A second one on the
+ * same step does not, so a store that refuses every claim, or every settle, cannot loop the call.
  */
 async function advanceLoop(
   store: RunStore,
@@ -7159,25 +7169,41 @@ async function advanceLoop(
     result: ResponseEnvelope;
     chainedSteps: ChainedStepEntry[];
     depth0Warnings: string[];
-    /** Steps another process held when this call tried to claim them (decision C25). */
-    takenSteps: string[];
+    /**
+     * F7: the races this call met, in order — a step another process held when this call tried to
+     * claim it (decision C25), and every other race kind core's classifier names.
+     */
+    races: LoopRace[];
   },
 ): Promise<ResponseEnvelope> {
-  const { chainedSteps, depth0Warnings, takenSteps } = state;
+  const { chainedSteps, depth0Warnings, races } = state;
   let { run, result } = state;
+  // F7: the step whose own `ok` reply `result` is — the named step for `executeChain`, none for
+  // `advanceRun` until a step runs.
+  let lastRan = options.namedStep;
+  // F7 (b), (d): after any race, the reply the loop returns is composed from the record it re-read.
+  const afterRaces = (reply: ResponseEnvelope): ResponseEnvelope =>
+    races.length === 0
+      ? reply
+      : composeAfterRaces(definition, run, options.registry, options.now ?? new Date(), reply, {
+          lastRan,
+          races,
+        });
   // decision C187: a guard the loop records is told to the host as it is recorded, so a host that
   // prints as the steps run prints it in its place.
   const pushGuard = (entry: ChainedStepEntry): void => {
     chainedSteps.push(entry);
     options.onGuard?.(entry.step);
   };
-  const budget = Object.keys(definition.steps).length;
+  let budget = Object.keys(definition.steps).length;
   let executions = 0;
+  // F7: the steps a race left owed again, each of which added one execution to the bound.
+  const owedAgain = new Set<string>();
   let resultIsNamedStep = options.namedStep !== undefined;
 
   for (;;) {
     if (run.terminal_state || run.pending_gate !== undefined) {
-      return result;
+      return afterRaces(result);
     }
 
     // Execute any eligible guard steps inline before looking for the next auto step.
@@ -7607,7 +7633,7 @@ async function advanceLoop(
     }
 
     if (run.terminal_state || run.pending_gate !== undefined) {
-      return result;
+      return afterRaces(result);
     }
 
     const nextAutoStep = pickNextEngineStep(
@@ -7618,7 +7644,7 @@ async function advanceLoop(
     );
     if (nextAutoStep === undefined || executions >= budget) {
       // Only agent steps, a refused step, or nothing — the reply is composed from this record.
-      return {
+      return afterRaces({
         ...result,
         run_version: run.version,
         run_phase: deriveRunPhase(run),
@@ -7628,7 +7654,7 @@ async function advanceLoop(
           options.registry,
           options.now ?? new Date(),
         ),
-      };
+      });
     }
 
     // issue #197 PR-2 (chain-replacement disposition): the named step's own reply is about to be
@@ -7664,58 +7690,50 @@ async function advanceLoop(
       ),
       nextAutoStep,
     );
-    if (stepResult.status === 'blocked' && stepResult.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
-      // Another process holds the step (decision C14's code): it is not run here and not counted
-      // as run (it does count toward the defensive bound — decision C30.14). Re-read the record and
-      // continue — the step is in flight, so it is not picked again. The reply says so at return
-      // (decision C25).
-      try {
-        run = await store.get(options.runId);
-      } catch {
-        return stepResult;
-      }
-      takenSteps.push(nextAutoStep);
-      options.onTaken?.(nextAutoStep, run);
-      continue;
-    }
-    if (stepResult.status === 'blocked' && stepResult.error_code === undefined) {
-      // The other path of the same race: another process claimed (or already ran) the picked step
-      // between this loop's pick and `executeStep`'s own read, so `executeStep` found it not
-      // eligible instead of losing the claim. Said exactly as the claim path says it (D3.2,
-      // decision C25) — never "not eligible in the current run state". A step that is not in
-      // flight, done or failed on the re-read record was not taken: the reply is returned below.
-      let after: RunRecord;
-      try {
-        after = await store.get(options.runId);
-      } catch {
-        return stepResult;
-      }
-      if (
-        after.in_progress_steps.includes(nextAutoStep) ||
-        after.completed_steps.includes(nextAutoStep) ||
-        after.failed_steps.includes(nextAutoStep)
-      ) {
-        run = after;
-        takenSteps.push(nextAutoStep);
-        options.onTaken?.(nextAutoStep, run);
-        continue;
-      }
-    }
     if (stepResult.status === 'confirm_required') {
       // A question opened: the gate reply's own next actions (the answer instruction and its
       // claim token, the holder slice's one door) are returned as they are.
       return stepResult;
     }
     if (stepResult.status !== 'ok') {
-      // decision C24: the step's own reply built its next actions with no registry (the capability
-      // check reports 'unknown', so the act stayed offered for the step that just failed to
-      // dispatch). Rebuild them from the record as it is now, with this call's registry.
+      // F7: every reply that is not `ok` is read against the record as it is now — core's one rule
+      // for "another program got there first" ({@link classifyStop}), which the hosts read too.
       let after: RunRecord;
       try {
         after = await store.get(options.runId);
       } catch {
         return stepResult;
       }
+      const stop = classifyStop(stepResult, nextAutoStep, after);
+      if (isRaceStop(stop)) {
+        // A race: not a stop. The record is the re-read one, and the loop goes on with what is
+        // left. A step another process held when this call tried to claim it (decisions C14, C25)
+        // is told to the host as taken; a step this call ran whose outcome was not recorded
+        // (decisions C194, C199: the step's own settle was refused) as not recorded; a claim
+        // refused because the run ended or a question opened ran nothing here and needs no line of
+        // its own — the reply says what the record shows. A refused settle's own warnings are said
+        // with the reply the call ends on.
+        run = after;
+        races.push({ step: nextAutoStep, stop });
+        if (stepResult.status === 'error') depth0Warnings.push(...stepResult.warnings);
+        if (stop.kind === 'taken' && !stop.ran_here) {
+          options.onTaken?.(nextAutoStep, run);
+        } else if (stop.ran_here) {
+          options.onNotRecorded?.(nextAutoStep, stop.kind as NotRecordedKind, run);
+        }
+        // A step a race left owed again may run once more in this call (the bound above).
+        if (
+          (stop.kind === 'claim_removed' || stop.kind === 'not_eligible') &&
+          !owedAgain.has(nextAutoStep)
+        ) {
+          owedAgain.add(nextAutoStep);
+          budget += 1;
+        }
+        continue;
+      }
+      // decision C24: the step's own reply built its next actions with no registry (the capability
+      // check reports 'unknown', so the act stayed offered for the step that just failed to
+      // dispatch). Rebuild them from the record as it is now, with this call's registry.
       return {
         ...stepResult,
         next_actions: after.terminal_state
@@ -7743,21 +7761,80 @@ async function advanceLoop(
       });
     });
     result = stepResult;
+    lastRan = nextAutoStep;
   }
+}
+
+/** F7: a race the advance loop met — the step, and what core's classifier named it. */
+interface LoopRace {
+  step: string;
+  stop: RaceStop;
 }
 
 /**
  * issue #625 PR-2a (decision C25): a reply from the advance loop ends with one clause per step
  * another process held when this call tried to claim it — whatever else ran — so a caller that
  * reads only the reply (an MCP client) learns why a step it was told was owed did not run here.
+ * F7: and one per step this call ran whose outcome another program's act kept from being recorded,
+ * so the reply never says nothing ran when a step's work did. A claim refused because the run ended
+ * or a question opened ran nothing here: the reply's own words say what the record shows.
  */
-function withTakenClauses(hint: string, takenSteps: readonly string[]): string {
-  return (
-    hint +
-    takenSteps
-      .map((s) => ` '${s}' was claimed by another process, so it did not run here.`)
-      .join('')
-  );
+function withRaceClauses(hint: string, races: readonly LoopRace[]): string {
+  return hint + races.map(({ step, stop }) => raceClause(step, stop)).join('');
+}
+
+/** The clause {@link withRaceClauses} gives one race (empty for a claim that ran nothing here). */
+function raceClause(step: string, stop: RaceStop): string {
+  if (!stop.ran_here) {
+    return stop.kind === 'taken'
+      ? ` '${step}' was claimed by another process, so it did not run here.`
+      : '';
+  }
+  switch (stop.kind) {
+    case 'taken':
+      return ` '${step}' ran here, but another process took it over, so its outcome was not recorded.`;
+    case 'ran_elsewhere':
+      return ` '${step}' ran here, but another process settled it first, so its outcome was not recorded.`;
+    case 'run_ended':
+      return ` '${step}' ran here, but the run ended before its outcome was recorded.`;
+    default:
+      return ` '${step}' ran here, but another process removed its claim, so its outcome was not recorded.`;
+  }
+}
+
+/**
+ * F7 (b), (d): the reply the advance loop returns after any race, composed from the record it
+ * re-read — its version, phase, next actions and hint — never the record the call first read. The
+ * hint is the words a step's own `ok` reply uses for that record (`Step '<s>' completed.` and what
+ * comes next, or ` The run ended (<phase>).`); with no step run, `Run '<id>':` (` nothing ran.` when
+ * no step's work ran here either). A race in which the run ended carries `agent_action: 'stop'`, as
+ * a guard that finds the run ended by another process does.
+ */
+function composeAfterRaces(
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  registry: ExtensionRegistry,
+  now: Date,
+  reply: ResponseEnvelope,
+  context: { lastRan: string | undefined; races: readonly LoopRace[] },
+): ResponseEnvelope {
+  const ranHere = context.races.some((r) => r.stop.ran_here);
+  const head =
+    context.lastRan !== undefined
+      ? `Step '${context.lastRan}' completed.`
+      : `Run '${run.id}':${ranHere ? '' : ' nothing ran.'}`;
+  const tail = run.terminal_state
+    ? ` The run ended (${deriveRunPhase(run)}).`
+    : describeNext(describePending(definition, run, registry, now), run);
+  const ended = run.terminal_state && context.races.some((r) => r.stop.kind === 'run_ended');
+  return {
+    ...reply,
+    run_version: run.version,
+    run_phase: deriveRunPhase(run),
+    next_actions: run.terminal_state ? [] : buildNextActions(definition, run, registry, now),
+    context_hint: head + tail,
+    ...(ended ? { agent_action: 'stop' as const } : {}),
+  };
 }
 
 /** Whether the view names a step that cannot run, agent or engine (decisions C34, C82). */
@@ -7816,6 +7893,14 @@ export interface AdvanceRunOptions {
    * from the re-read record's claim.
    */
   onTaken?: (step: string, run: RunRecord) => void;
+  /**
+   * F7: called with the name of a step this call ran whose own settle was refused because another
+   * program acted after this call's claim — the kind core's classifier names (`taken`: another
+   * program holds it now; `ran_elsewhere`: another program settled it; `run_ended`; `claim_removed`:
+   * its claim was removed, and the step is owed again) — with the record re-read after the refusal.
+   * The step's outcome was not recorded; the loop then goes on with what is left.
+   */
+  onNotRecorded?: (step: string, kind: NotRecordedKind, run: RunRecord) => void;
   /**
    * Called with the name of each guard the reply lists in `chained_auto_steps`, in that order, as
    * the call reaches it and before the next step's `onStep` (decision C187): a guard decided by the
@@ -7900,7 +7985,7 @@ export async function advanceRun(
   }
   const chained: ChainedStepEntry[] = [];
   const depth0Warnings: string[] = [];
-  const takenSteps: string[] = [];
+  const races: LoopRace[] = [];
   const advanced = await advanceLoop(
     store,
     definition,
@@ -7915,6 +8000,7 @@ export async function advanceRun(
       ...(options.now !== undefined ? { now: options.now } : {}),
       ...(options.onStep !== undefined ? { onStep: options.onStep } : {}),
       ...(options.onTaken !== undefined ? { onTaken: options.onTaken } : {}),
+      ...(options.onNotRecorded !== undefined ? { onNotRecorded: options.onNotRecorded } : {}),
       ...(options.onGuard !== undefined ? { onGuard: options.onGuard } : {}),
       via: caller,
     },
@@ -7944,14 +8030,15 @@ export async function advanceRun(
       },
       chainedSteps: chained,
       depth0Warnings,
-      takenSteps,
+      races,
     },
   );
   // When nothing ran (no step, no guard), the hint is composed from the record the loop ends on:
   // a step another process took in the meantime (D3.2) is no longer owed here, and the reply's
-  // `next_actions` already say so — the hint must not still name it.
+  // `next_actions` already say so — the hint must not still name it. F7: never when a step's work
+  // ran here and its outcome was not recorded — the loop's own words say that.
   let endHint: string | undefined;
-  if (chained.length === 0 && advanced.status === 'ok') {
+  if (chained.length === 0 && advanced.status === 'ok' && !races.some((r) => r.stop.ran_here)) {
     const end = await store.get(options.runId).catch(() => stored);
     endHint = nothingRanHint(definition, end, registry, now, expiryCarriedOut, expiryGuards);
   }
@@ -7964,7 +8051,7 @@ export async function advanceRun(
   );
   const envelope = {
     ...advanced,
-    context_hint: withTakenClauses(endHint ?? advanced.context_hint, takenSteps),
+    context_hint: withRaceClauses(endHint ?? advanced.context_hint, races),
     command,
     ...(chainWarnings.length > 0
       ? { warnings: [...(advanced.warnings ?? []), ...chainWarnings] }
@@ -8052,7 +8139,7 @@ export async function executeChain(
   // `chained_auto_steps` list) — whose own reply is replaced by a later step's would otherwise
   // silently lose its OWN warnings; this accumulator carries them forward.
   const depth0Warnings: string[] = [];
-  const takenSteps: string[] = [];
+  const races: LoopRace[] = [];
 
   // The named step, through the caller's dispatcher (a bare named step records `driven_step`).
   const named = stampStoppedStep(
@@ -8102,7 +8189,7 @@ export async function executeChain(
           namedStep: options.command,
           via,
         },
-        { run, result: named, chainedSteps: chained, depth0Warnings, takenSteps },
+        { run, result: named, chainedSteps: chained, depth0Warnings, races },
       );
     }
   }
@@ -8111,7 +8198,7 @@ export async function executeChain(
   const chainWarnings = foldChainWarnings(result.warnings ?? [], depth0Warnings, chained);
   const envelope = {
     ...result,
-    context_hint: withTakenClauses(result.context_hint, takenSteps),
+    context_hint: withRaceClauses(result.context_hint, races),
     command: options.command,
     ...(chainWarnings.length > 0
       ? { warnings: [...(result.warnings ?? []), ...chainWarnings] }

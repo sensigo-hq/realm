@@ -29,6 +29,9 @@ import {
   describeClaimHolder,
   classifyInProgressClaims,
   pendingGateQuestion,
+  classifyStop,
+  isRaceStop,
+  type NotRecordedKind,
 } from '@sensigo/realm';
 import {
   renderAnswerLine,
@@ -40,6 +43,7 @@ import {
   ranElsewherePhrase,
   goOnLine,
   resumeLine,
+  outcomeNotRecordedLine,
 } from '../lib/holder-render.js';
 import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
@@ -394,7 +398,8 @@ function elsewherePhrase(
  * agent` prints for a step another process took (`takenPhrase`). For an agent step, whose claim the
  * prompt holds (decision C179), `ownClaimToken` is that claim's token: the prompt also closes when
  * another process removed the claim (`realm run reclaim --force`, for one), and the step is asked for
- * again if it is still ready.
+ * again if it is still ready. F7 (f): when another process opened a question, the step waits behind
+ * it — said, and the step is asked for again after the answer.
  */
 export function stepClosedLine(
   run: RunRecord,
@@ -408,6 +413,9 @@ export function stepClosedLine(
   }
   if (ownClaimToken !== undefined && !run.terminal_state && run.claims?.[step] === undefined) {
     return `This prompt is closed: the claim it held on step '${step}' was removed by another process, and the step has not run.`;
+  }
+  if (!run.terminal_state && run.pending_gate !== undefined) {
+    return `This prompt is closed: a question is open on '${run.pending_gate.step_name}', and '${step}' waits for its answer.`;
   }
   return `This prompt is closed: step '${step}' no longer waits for an answer — the run is '${deriveRunPhase(run)}'.`;
 }
@@ -1034,11 +1042,22 @@ export const runCommand = new Command('run')
             ...(mintWriterNonce ? { writerNonce: crypto.randomUUID() } : {}),
           });
 
-          // decision C179: a `blocked` reply for this step, read against the record — another process
-          // took or ran it before the engine's own claim for this answer.
+          // F7: a reply that is neither `ok` nor a question, read by core's classifier against the
+          // record as it is now — the one rule for "another program got there first".
+          const keeps = store.persistsClaims === true;
+          const replyRecord =
+            result.status === 'blocked' || result.status === 'error'
+              ? await store.get(runId)
+              : undefined;
+          const stop =
+            replyRecord === undefined ? undefined : classifyStop(result, stepName, replyRecord);
+          // decision C179: another process took or ran the step before the engine's own claim for this
+          // answer (rows 1–2: `taken`) — the answer typed here was not recorded; `takenLine` when the
+          // record names no one to say it of.
           const notRun =
-            result.status === 'blocked' && (result.stopped_step ?? stepName) === stepName
-              ? answerNotRunLine(await store.get(runId), stepName, store.persistsClaims === true)
+            isRaceStop(stop) && stop.kind === 'taken' && !stop.ran_here
+              ? (answerNotRunLine(replyRecord!, stepName, keeps) ??
+                takenLine(stepName, describeClaimHolder(replyRecord!.claims?.[stepName], keeps)))
               : undefined;
           if (
             result.status === 'ok' &&
@@ -1053,8 +1072,20 @@ export const runCommand = new Command('run')
             // decision C179: another process took or ran the step before the engine's own claim for
             // the answer (for an agent step, after this prompt let its claim go) — said; never `✗`
             // with no reason, never `✓`.
-            run = await store.get(runId);
+            run = replyRecord!;
             console.log(`  ${notRun}\n`);
+          } else if (isRaceStop(stop)) {
+            // F7: the step's own settle of the answer was refused (`ran_here`: another process settled
+            // it, took it over, removed its claim, or ended the run) — the line `realm run advance`
+            // prints, never `✗`. A claim refused because the run ended, a question opened or the step
+            // stopped being eligible ran nothing here: no line of its own — the next pass says what
+            // the record shows.
+            run = replyRecord!;
+            if (stop.ran_here) {
+              console.log(
+                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps)}\n`,
+              );
+            }
           } else if (result.status === 'ok') {
             run = await store.get(runId);
             const ev = result.evidence[0];
@@ -1066,8 +1097,7 @@ export const runCommand = new Command('run')
             run = await store.get(runId);
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
           } else if (
-            (result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
-              result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED') &&
+            stop?.kind === 'capability' &&
             result.stopped_step !== undefined &&
             result.stopped_step !== stepName
           ) {

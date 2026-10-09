@@ -1232,7 +1232,9 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     ]) {
       expect(read('cli/src/agent/run-agent.ts').split(sentence).length - 1, sentence).toBe(1);
     }
-    expect(ra.split("result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||").length - 1).toBe(1);
+    // F7: no host keeps its own list of codes — the capability stop is core's classifier's kind.
+    expect(ra.split("'ENGINE_HANDLER_NOT_REGISTERED' ||").length - 1).toBe(0);
+    expect(ra.split("resultStop?.kind === 'capability'").length - 1).toBe(1);
   });
   it('the literal advance_owed appears in core only (code, comments stripped)', async () => {
     const { readdirSync } = await import('node:fs');

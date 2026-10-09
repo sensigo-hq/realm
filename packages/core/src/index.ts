@@ -152,6 +152,20 @@ export {
   outputSourceOf,
 } from './engine/output-source.js';
 export type { OutputSourceAbsentCause } from './engine/output-source.js';
+// F7: the one rule for "another program got there first" — the stop kinds and the classifier every
+// loop reads.
+export { STOP_KINDS, classifyStop, isRaceStop, stopAbout } from './engine/stop-kind.js';
+export type {
+  HaltStop,
+  HaltStopKind,
+  NotRecordedKind,
+  RaceStop,
+  RaceStopKind,
+  StopClassification,
+  StopKind,
+  StopRecord,
+  StopReply,
+} from './engine/stop-kind.js';
 // Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
 export { ENTRY_CALLERS } from './engine/callers.js';
 // Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.

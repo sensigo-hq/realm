@@ -19,6 +19,7 @@ import type {
   ClaimHolderAbsentCause,
   ClaimProofAbsentCause,
   GateClaimVerdict,
+  NotRecordedKind,
   RunRecord,
 } from '@sensigo/realm';
 
@@ -185,23 +186,40 @@ export function ranElsewherePhrase(run: RunRecord, step: string): string | undef
  * while that process holds the step, the program that ran it once it settled, or the run's ending
  * when the run ended without it. `undefined` when none of these holds (the reply is then the
  * drive's to explain).
+ *
+ * F7: when the drive's own settle of the answer was refused (core's classifier: `ran_here`), the
+ * arm is the classifier's `kind`, never read again here — on a run that ended it says the run
+ * ended, and a claim another process removed is said too (the step is then asked for again).
  */
 export function answerNotRecordedLine(
   run: RunRecord,
   step: string,
   keepsClaims: boolean,
+  kind?: NotRecordedKind,
 ): string | undefined {
   const notRecorded = "this drive's answer was not recorded";
-  if (run.in_progress_steps.includes(step)) {
+  const takenArm = (): string => {
     const described = describeClaimHolder(run.claims?.[step], keepsClaims);
     const at = described.since !== undefined ? ` at ${described.since}` : '';
     return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
+  };
+  const endedArm = `• Step '${step}' was not run: the run ended (${deriveRunPhase(run)}) before this drive's answer reached it; the answer was not recorded.`;
+  if (kind !== undefined) {
+    switch (kind) {
+      case 'taken':
+        return takenArm();
+      case 'ran_elsewhere':
+        return `• Step '${step}' was ${ranElsewherePhrase(run, step) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
+      case 'run_ended':
+        return endedArm;
+      case 'claim_removed':
+        return `• Step '${step}': another process removed the claim this drive held on it; ${notRecorded}.`;
+    }
   }
+  if (run.in_progress_steps.includes(step)) return takenArm();
   const ran = ranElsewherePhrase(run, step);
   if (ran !== undefined) return `• Step '${step}' was ${ran}; ${notRecorded}.`;
-  if (run.terminal_state === true) {
-    return `• Step '${step}' was not run: the run ended (${deriveRunPhase(run)}) before this drive's answer reached it; the answer was not recorded.`;
-  }
+  if (run.terminal_state === true) return endedArm;
   return undefined;
 }
 
@@ -210,28 +228,38 @@ export function answerNotRecordedLine(
  * running was settled or taken over by another process, or the run was ended, before its own outcome
  * was recorded (that step's own `STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` or
  * `STATE_RUN_TERMINAL`: another program ran it after a `realm run reclaim --force` freed this one's
- * claim, or `realm run abandon` ended the run, for one). Read off the record after the refusal: the
- * claim's holder while another process holds the step on a run that has not ended, the program that
- * ran it once it settled, the run's ending, or else the claim this program held was removed. Its own
- * work on the step may have run here: the line says only that its outcome was not recorded, never
- * "not run here".
+ * claim, or `realm run abandon` ended the run, for one). F7: one arm per kind core's classifier
+ * names (`classifyStop`, `ran_here`), read off the record after the refusal: the claim's holder
+ * while another process holds the step on a run that has not ended (`taken`), the program that ran
+ * it once it settled (`ran_elsewhere`), the run's ending (`run_ended`), or else the claim this
+ * program held was removed (`claim_removed`). Its own work on the step may have run here: the line
+ * says only that its outcome was not recorded, never "not run here". `realm agent` prints it for an
+ * engine step its call ran, and `realm workflow run` for the step it drives.
  */
-export function outcomeNotRecordedLine(run: RunRecord, step: string, keepsClaims: boolean): string {
+export function outcomeNotRecordedLine(
+  kind: NotRecordedKind,
+  run: RunRecord,
+  step: string,
+  keepsClaims: boolean,
+): string {
   const notRecorded = "this program's outcome for it was not recorded";
-  // decision C199: on a run that has ended, the ending is said — a claim the ending left on the
-  // record may be this program's own (an ending that is not an abandon leaves the claims of the
-  // steps still running in place), so it is never said as another program's take.
-  if (run.terminal_state !== true && run.in_progress_steps.includes(step)) {
-    const described = describeClaimHolder(run.claims?.[step], keepsClaims);
-    const at = described.since !== undefined ? ` at ${described.since}` : '';
-    return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
+  // F7: the arm is core's classifier's kind, never read again here. Decision C199: on a run that has
+  // ended, the ending is said — a claim the ending left on the record may be this program's own (an
+  // ending that is not an abandon leaves the claims of the steps still running in place), so the
+  // classifier never names it another program's take.
+  switch (kind) {
+    case 'taken': {
+      const described = describeClaimHolder(run.claims?.[step], keepsClaims);
+      const at = described.since !== undefined ? ` at ${described.since}` : '';
+      return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
+    }
+    case 'ran_elsewhere':
+      return `• Step '${step}' was ${ranElsewherePhrase(run, step) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
+    case 'run_ended':
+      return `• Step '${step}': the run ended (${deriveRunPhase(run)}) before this program's outcome for it was recorded.`;
+    case 'claim_removed':
+      return `• Step '${step}': another process removed the claim this program held on it; ${notRecorded}.`;
   }
-  const ran = ranElsewherePhrase(run, step);
-  if (ran !== undefined) return `• Step '${step}' was ${ran}; ${notRecorded}.`;
-  if (run.terminal_state === true) {
-    return `• Step '${step}': the run ended (${deriveRunPhase(run)}) before this program's outcome for it was recorded.`;
-  }
-  return `• Step '${step}': another process removed the claim this program held on it; ${notRecorded}.`;
 }
 
 /** The proof part of an answer line, in words — never a code. */

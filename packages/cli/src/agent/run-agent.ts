@@ -24,6 +24,9 @@ import {
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
   pendingCleanupLine,
+  classifyStop,
+  isRaceStop,
+  type NotRecordedKind,
   type RunStore,
   type WorkflowDefinition,
   type StepDefinition,
@@ -65,6 +68,7 @@ import {
   describeProgram,
   goOnLine,
   inFlightLine,
+  outcomeNotRecordedLine,
   takenLine,
   waitingLine,
   resumeLine,
@@ -663,6 +667,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             startedNotDone = undefined;
             console.log(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
           },
+          // F7: an engine step this call ran whose outcome another program's act kept from being
+          // recorded — the race is core's to name, and its loop goes on; the line is the one
+          // `realm run advance` prints, never `✓` and never `✗ … failed`.
+          onNotRecorded: (step, kind, record) => {
+            startedNotDone = undefined;
+            console.log(outcomeNotRecordedLine(kind, record, step, keepsClaims));
+          },
         });
         if (advanced.status === 'confirm_required') {
           currentRun = await deps.store.get(runId);
@@ -678,10 +689,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             await printResumeLine();
             return 'failed';
           }
-          if (
-            advanced.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
-            advanced.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED'
-          ) {
+          // F7: core's classifier names the stop (a race never reaches here — core's loop goes on).
+          const advancedStop = classifyStop(advanced, engineStep, await deps.store.get(runId));
+          if (advancedStop?.kind === 'capability') {
             // decision C23: a capability block is an engine step that cannot run HERE, the same class
             // as a refusal before the claim. Held, not sent to the dispositions at once: the attempt
             // wrote its marker, so the view below names the step, and the loop goes on with the
@@ -733,7 +743,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // decision C82: an agent step refused before its claim (trust, precondition) — the
               // view's verdict on this record, and nothing is called: the step's input would be a
               // model's answer, the call its refusal rules out. Nothing is recorded, as for an engine
-              // step refused for trust or precondition.
+              // step refused for trust or precondition. (`cannotGoOnHere` holds only on a run that is
+              // still open, so the way out is said of an open run — F7 (e).)
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
                   cannotRunWayOut(currentRun),
@@ -763,12 +774,34 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
               });
             }
+            // F7: the reply read by core's classifier against the record as it is now — a race
+            // (another program took the step, ran it, ended the run, or opened a question, in the
+            // moment between the view and this call) is not this drive's stop: it goes on, and its
+            // own end and question checks speak.
+            currentRun = await deps.store.get(runId);
+            const exitStop = classifyStop(exitReply, first, currentRun);
+            if (isRaceStop(exitStop)) {
+              if (exitStop.kind === 'taken' && !exitStop.ran_here) {
+                console.log(
+                  takenLine(first, describeClaimHolder(currentRun.claims?.[first], keepsClaims)),
+                );
+              } else if (exitStop.ran_here) {
+                console.log(
+                  outcomeNotRecordedLine(
+                    exitStop.kind as NotRecordedKind,
+                    currentRun,
+                    first,
+                    keepsClaims,
+                  ),
+                );
+              }
+              continue;
+            }
             const refusedBeforeClaim =
               preClaim &&
               (exitReply.error_code === 'VALIDATION_TRUST_VALUE' ||
                 exitReply.error_code === 'VALIDATION_INPUT_SCHEMA' ||
-                (exitReply.status === 'blocked' &&
-                  exitReply.error_code !== 'STATE_STEP_ALREADY_CLAIMED'));
+                exitReply.status === 'blocked');
             if (refusedBeforeClaim) {
               // decision C31: the drive failure, recorded exactly as chokepoint 4 records it — an input
               // schema refusal wedges the run with nothing on its record, so it is `validation_rejected`
@@ -787,6 +820,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                 );
               }
               currentRun = await deps.store.get(runId);
+              // F7 (e): the way out is said only of a run that is still open — a run another program
+              // ended meanwhile goes to the drive's own end check.
+              if (currentRun.terminal_state) continue;
               // decision C44: the way out is to correct the workflow and register it again (the run
               // picks up the corrected definition), then advance — or to end the run.
               console.error(
@@ -798,15 +834,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             if (exitReply.status === 'error') {
               engineReply = exitReply;
               engineStep = first;
-            } else if (exitReply.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
-              currentRun = await deps.store.get(runId);
-              console.log(
-                takenLine(first, describeClaimHolder(currentRun.claims?.[first], keepsClaims)),
-              );
-              continue;
             } else {
               // The step became runnable between the view and the attempt, and ran: go on.
-              currentRun = await deps.store.get(runId);
               continue;
             }
           }
@@ -1697,11 +1726,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           answeredHere.add(stepName);
         }
 
-        // #134: a NOT-REGISTERED handler or adapter, detected structurally via error_code (never the
-        // message text) — the dispositions below, or the hold just after.
-        const isCapabilityBlock =
-          result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
-          result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
+        // F7: an error reply read by core's classifier against the record as it is now.
+        const errorRecord = result.status === 'error' ? await deps.store.get(runId) : undefined;
+        const resultStop =
+          errorRecord === undefined ? undefined : classifyStop(result, stepName, errorRecord);
+        // #134: a NOT-REGISTERED handler or adapter, detected structurally (core's classifier, never
+        // the message text) — the dispositions below, or the hold just after.
+        const isCapabilityBlock = resultStop?.kind === 'capability';
 
         // decision C64 (the census): the chain after an agent step can reach an engine step that
         // cannot run here (capability). The agent step completed and the reply is the chained step's
@@ -1723,27 +1754,30 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           continue;
         }
 
-        // Round 24's finding (C179's sentence made true): the drive's own settle of its answer was
-        // refused because another process settled the step, or took it over, after the drive's claim
-        // (`STATE_STEP_ALREADY_SETTLED`, `STATE_CLAIM_LOST` — its claim was removed, as
-        // `realm run reclaim --force` removes it). The answer was not recorded: said as C179's line
-        // from the record, never `✗ … failed`, and the loop goes on (a step still held is waited for).
-        // `stopped_step` names this step only on its own call's refusal: the same code from a guard
-        // of the chain (a concurrent settle that diverged from its abort) names no step, and keeps
-        // the stop below — this drive's answer was recorded there.
-        if (
-          engineReply === undefined &&
-          result.status === 'error' &&
-          result.stopped_step === stepName &&
-          (result.error_code === 'STATE_STEP_ALREADY_SETTLED' ||
-            result.error_code === 'STATE_CLAIM_LOST')
-        ) {
-          currentRun = await deps.store.get(runId);
-          const line = answerNotRecordedLine(currentRun, stepName, keepsClaims);
-          if (line !== undefined) {
-            console.log(line);
-            continue;
+        // Round 24's finding (C179's sentence made true), F7: the drive's own call for its agent step
+        // was refused because another program got there first — read by core's classifier against
+        // the record as it is now. Its settle of the answer was refused (`ran_here`: another process
+        // settled the step, took it over, removed its claim — as `realm run reclaim --force` removes
+        // it — or ended the run): the answer was not recorded, said as C179's line in the
+        // classifier's kind, never `✗ … failed`. A claim refused because the run ended, a question
+        // opened, or the step stopped being eligible (the claim's own re-check) ran nothing: as a
+        // `blocked` reply does (decision C85), the drive goes on and its own end and question checks
+        // speak. `stopped_step` names this step only on its own call's refusal: the same code from a
+        // guard of the chain (a concurrent settle that diverged from its abort) names no step, and
+        // keeps the stop below — this drive's answer was recorded there.
+        if (engineReply === undefined && errorRecord !== undefined && isRaceStop(resultStop)) {
+          currentRun = errorRecord;
+          if (resultStop.ran_here || resultStop.kind === 'run_ended') {
+            console.log(
+              answerNotRecordedLine(
+                currentRun,
+                stepName,
+                keepsClaims,
+                resultStop.kind as NotRecordedKind,
+              ),
+            );
           }
+          continue;
         }
 
         if (result.status === 'error') {
@@ -1856,13 +1890,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // A `blocked` reply is never `✓` (decision C82 (5)). Which step it belongs to is the reply's
           // own `stopped_step` (decision C74): this step's, or a step the engine ran after it.
           const blockedStep = result.stopped_step ?? stepName;
-          if (
-            result.error_code === 'STATE_STEP_ALREADY_CLAIMED' ||
-            (result.error_code === undefined &&
-              (currentRun.in_progress_steps.includes(blockedStep) ||
-                currentRun.completed_steps.includes(blockedStep) ||
-                currentRun.failed_steps.includes(blockedStep)))
-          ) {
+          // F7: core's classifier reads the reply against the record re-read above.
+          const blockedStop = classifyStop(result, blockedStep, currentRun);
+          if (blockedStop?.kind === 'taken') {
             // issue #625 PR-2a (D6.1, D3.2): another process took the step — on the claim, or between
             // this drive's read and the engine's (the step is then "not eligible", but in flight,
             // done or failed on the record) — say who and when, as past-tense facts read off its
@@ -1886,7 +1916,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // decision C85: the step stopped being eligible because, in the same moment, another
           // process opened a gate or ended the run. The loop top handles both — it waits at the gate,
           // or prints the run-ended line — as it did before C82 (5).
-          if (currentRun.terminal_state === true || currentRun.pending_gate !== undefined) {
+          if (blockedStop?.kind === 'run_ended' || blockedStop?.kind === 'question_opened') {
             // decision C179: a run that ended in that moment did not record this drive's answer —
             // said, as when `executeChain` finds the run ended.
             if (

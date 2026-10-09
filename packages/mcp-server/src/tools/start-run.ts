@@ -7,6 +7,7 @@ import {
   JsonFileStore,
   advanceRun,
   withEndedRunWays,
+  classifyStop,
   endedRunWaysSentence,
   buildNextActions,
   describeNext,
@@ -237,13 +238,15 @@ export async function handleStartRun(
     // ok), its hint names the step through describeNext, and the block's message (its own
     // `context_hint`: "Step '<s>' is blocked: …") rides in `warnings`, in place of that step's
     // pre-flight warning (decision C58). A failed step is returned as is.
+    // F7: the reply read by core's classifier (one rule for every host — no code list here).
+    const afterAdvance =
+      result.status === 'error' ? await runStore.get(run.id).catch(() => run) : undefined;
     if (
-      result.status === 'error' &&
-      (result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
-        result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED')
+      afterAdvance !== undefined &&
+      classifyStop(result, undefined, afterAdvance)?.kind === 'capability'
     ) {
       capabilityBlock = result;
-      createdRun = await runStore.get(run.id).catch(() => run);
+      createdRun = afterAdvance;
     } else if (ranSomething) {
       // decision C10: the phase is derived from the record advanceRun leaves.
       const finalRun = await runStore.get(run.id).catch(() => run);

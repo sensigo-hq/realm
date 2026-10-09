@@ -36,6 +36,10 @@ import {
   waitingWords,
   pendingCleanupLine,
   answerOf,
+  answerAction,
+  answerableQuestion,
+  classifyStop,
+  stopAbout,
   type NextAction,
   type PendingView,
   type ProgramFit,
@@ -123,8 +127,10 @@ export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[
  * caller's to add, first): the run ended · a question is open · each step that cannot run · engine
  * work still owed (decision C202) · agent steps ready · each step in flight elsewhere, with what to
  * do (decision C43; the holder and the time are on the preview's `In flight:` line) · and, when none
- * of these holds, `nothing is ready to run now`. The open question's line is rendered from the reply's answer act (decision C103 —
- * `nextActions`, core's one composer), never from this command's own read of the record.
+ * of these holds, `nothing is ready to run now`. The open question's line is rendered from an answer
+ * act core composes (`answerAction`, decision C103): after a call, the reply's (`nextActions`); at
+ * the preview, the act composed from the record the command read (F7 (a): the preview never calls
+ * the writer `advanceRun` to get it).
  */
 export function stoppedReasons(
   runId: string,
@@ -467,20 +473,17 @@ export async function advanceRunFromShell(
     const opening = engineWorkOwed(run, pending, workflow)
       ? 'The engine can run nothing now'
       : 'Nothing is owed to the engine';
-    // decision C103: at an open question the line is the reply's — `advanceRun` runs nothing there
-    // and answers with the question's act (core's one composer), which the line renders.
-    const reply =
-      !run.terminal_state && run.pending_gate !== undefined
-        ? await advanceRun(runStore, workflow, {
-            runId,
-            caller: 'advance',
-            registry,
-            now,
-            ...(driver !== undefined ? { driver } : {}),
-          })
-        : undefined;
+    // decision C103, F7 (a): at an open question the line renders the question's act, composed by
+    // core's read-only `answerAction` from the record this command read — never by a call of the
+    // writer `advanceRun`, which would run any step that became ready since that read.
+    const question = answerableQuestion(pending);
     const reasons = withResumeWay(
-      stoppedReasons(runId, run, pending, reply?.next_actions),
+      stoppedReasons(
+        runId,
+        run,
+        pending,
+        question !== undefined ? [answerAction(runId, question)] : undefined,
+      ),
       run,
       workflow,
     );
@@ -552,34 +555,20 @@ export async function advanceRunFromShell(
         sayDecidedGuards();
         print(takenLine(step, describeClaimHolder(record.claims?.[step], keepsClaims)));
       },
+      // decisions C194, C199, F7: the step this call ran was settled, or taken over, by another
+      // process — or the run was ended — before its own outcome was recorded. Core's classifier names
+      // the race and its loop goes on with what is left; said from the record, never "failed". A
+      // claim refused because the record changed after this call read it (the run ended, a question
+      // opened) ran nothing here: no line of its own — the stop reasons below say what the record
+      // shows. The refusals' own warnings are said with the last reply's (the reply carries them).
+      onNotRecorded: (step, kind, record) => {
+        sayDecidedGuards();
+        print(outcomeNotRecordedLine(kind, record, step, keepsClaims));
+      },
     });
     return reply;
   }
-  let result = await advanceOnce();
-  // decisions C194, C199: the step this call ran was settled, or taken over, by another process — or
-  // the run was ended — before its own outcome was recorded: that step's own refusal (`stopped_step`).
-  // Said from the record, never "failed", and the command goes on with what is left, as for a step
-  // another process took before this one ran it. A claim refused because the record changed after
-  // this call read it (the run ended, a question opened) ran nothing here: no line of its own — the
-  // stop reasons below say what the record shows. The same code from a guard of the chain (a
-  // concurrent settle that diverged from its abort) names no step: said below, from the record. The
-  // refusals' own warnings are said with the last reply's.
-  const raceWarnings: string[] = [];
-  while (
-    result.status === 'error' &&
-    result.stopped_step !== undefined &&
-    result.stopped_step === lastStep &&
-    (result.error_code === 'STATE_STEP_ALREADY_SETTLED' ||
-      result.error_code === 'STATE_CLAIM_LOST' ||
-      result.error_code === 'STATE_RUN_TERMINAL' ||
-      result.error_code === 'STATE_STEP_NOT_ELIGIBLE')
-  ) {
-    if (result.error_code !== 'STATE_STEP_NOT_ELIGIBLE') {
-      print(outcomeNotRecordedLine(await runStore.get(runId), lastStep, keepsClaims));
-    }
-    raceWarnings.push(...result.warnings);
-    result = await advanceOnce();
-  }
+  const result = await advanceOnce();
 
   // decision C28: PR-1's lines for the guards this call settled. A reply carrying `ended_by` (a
   // guard a step's own write settled) gives the ending and its reason. Otherwise one passed line
@@ -611,7 +600,7 @@ export async function advanceRunFromShell(
   // decision C109: the reply's warnings — the expiry line among them (core prints nothing) — are
   // this command's to show; the expiry line was shown before the steps (C123).
   let expirySaid = false;
-  for (const warning of [...raceWarnings, ...result.warnings]) {
+  for (const warning of result.warnings) {
     if (!expirySaid && warning === expiryLine) {
       expirySaid = true;
       continue;
@@ -620,9 +609,10 @@ export async function advanceRunFromShell(
   }
 
   const afterView = describePending(workflow, after, registry, new Date());
-  const isCapabilityBlock =
-    result.error_code === 'ENGINE_HANDLER_NOT_REGISTERED' ||
-    result.error_code === 'ENGINE_ADAPTER_NOT_REGISTERED';
+  // F7: the reply the call ended on, read by core's classifier against the record after the call —
+  // `capability`, `failed` and `refused` stop the command; a race is never left here (core's loop
+  // goes on past it).
+  const stop = classifyStop(result, lastStep, after);
   const reasons: string[] = [];
   // A failed step is first. A capability block is not a failure (the run is NOT failed): the step
   // is named below as a step that cannot run here, from the view after the call. Decision C199:
@@ -631,16 +621,14 @@ export async function advanceRunFromShell(
   // refusal names that step with the engine's words (or gives the words alone when it names none),
   // and names it once: never also as in flight in another program, which a claim this call took and
   // its refusal left on the record would make it read as.
-  const about =
-    result.stopped_step ??
-    (typeof result.error_details?.['step'] === 'string' ? result.error_details['step'] : undefined);
-  const refusal = result.status === 'error' && !isCapabilityBlock;
+  const about = stopAbout(result);
+  const refusal = stop?.kind === 'failed' || stop?.kind === 'refused';
   if (refusal) {
     const words = result.errors.join(', ');
     reasons.push(
       about === undefined
         ? words
-        : after.failed_steps.includes(about)
+        : stop.kind === 'failed'
           ? `'${about}' failed: ${words}`
           : `'${about}': ${words}`,
     );
@@ -689,7 +677,7 @@ export async function advanceRunFromShell(
       : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
   );
   const refused = !after.terminal_state && stepsThatCannotRun(afterView).length > 0;
-  return (result.status === 'error' && !isCapabilityBlock) || refused ? 1 : 0;
+  return refusal || refused ? 1 : 0;
 }
 
 export const runAdvanceCommand = new Command('advance')

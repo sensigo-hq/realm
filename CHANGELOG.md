@@ -266,6 +266,23 @@ command not found`. It now prints `--choice <one of: ship, hold>`, which bash an
   `To make the failed step runnable again: realm run resume <id> --from <step>` (it said `'…' makes
 the failed step runnable again.`, which a quoted step name would break); in the refusal of an answer
   to a run that ended, the purge preview comes first.
+- **One rule for "another program got there first" (issue #625, PR-2a).** Core exports the stop
+  kinds a loop meets on a step it picked or ran, `STOP_KINDS` (`taken`, `ran_elsewhere`,
+  `run_ended`, `claim_removed`, `question_opened`, `not_eligible`, `capability`, `failed`,
+  `refused`), and the one classifier every loop reads, `classifyStop(reply, step, record)`, with the
+  record re-read after the reply; `advanceRun`, `realm run advance`, `realm agent` and `realm workflow
+run` read it, and none keeps its own list of codes. On the first six kinds the loop goes on with
+  what is left, and the reply it ends on is composed from the record it re-read: `advance_run` (and
+  `execute_step`'s chain) no longer returns the version, phase and next actions it first read after
+  another program ran a step to its end, never `STATE_STEP_NOT_ELIGIBLE` for a run another program
+  ended or a question it opened before this call's claim, and `agent_action: "stop"` when the run
+  ended so. `advanceRun` gains `onNotRecorded(step, kind, run)`. `realm agent` and `realm workflow
+run` say a step another process settled, took over, freed or ended the run on with `realm run
+advance`'s line, never `✗ … failed`; `realm agent` says the drive's answer was not recorded also
+  when another process removed its claim, and never that a run another process ended stays open;
+  `realm workflow run`'s prompt says a step waits behind a question another process opened. `realm
+run advance` at an open question no longer calls the engine to compose its answer line, so it
+  runs nothing it does not print.
 - **Where one `realm run advance` call stops, said wherever several owed steps are named (issue
   #625, PR-2a).** One call runs the owed steps one at a time, and the steps the run owes after them,
   and stops at the first step that opens a question, fails or ends the run. A line that named

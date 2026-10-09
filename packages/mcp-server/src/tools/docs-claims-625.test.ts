@@ -412,9 +412,9 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
 
 describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that has ended, as measured', () => {
   const ENDED_ROW =
-    "Never on `confirm_required`, and never on another `ok` reply: on a run that has ended, `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the choice its gate recorded (`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).";
+    "Never on `confirm_required`, and never on another `ok` reply: on a run that had ended before the call, `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the choice its gate recorded (`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).";
   const OK_STOP =
-    'On an `ok` reply only as `stop`: from `execute_step` on a run that has already ended, and from a call whose guard step finds the run ended by another process meanwhile';
+    'On an `ok` reply only as `stop`: from `execute_step` on a run that has already ended, and from a call that finds the run ended by another process meanwhile, at a guard step or at a step it picked (added after version 0.46.0 for a step it picked)';
 
   it('C154 execute_step: ok with stop, no steps executed', async () => {
     claim('mcp/tools.md', OK_STOP);

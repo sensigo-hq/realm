@@ -89,7 +89,8 @@ describe('#625 PR-2a — realm run advance: the words', () => {
         none,
       ),
     ).toEqual(['the run has ended (completed)']);
-    // decision C103: the open question's line is rendered from the reply's answer act (its gate);
+    // decision C103: the open question's line is rendered from an answer act core composes (its
+    // gate) — after a call the reply's; at the preview, `answerAction` from the record read (F7 (a));
     // F6: its choices are read from the record's open question with that gate id (structured, never
     // split off the act's `<a|b>` text) — a choice holding `|` stays one choice, each quoted.
     const atQuestion = {

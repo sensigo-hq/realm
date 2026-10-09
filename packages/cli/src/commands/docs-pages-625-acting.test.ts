@@ -1157,10 +1157,12 @@ describe(
       });
     });
 
-    it('advance, L148 (open question): at an open question advance runs nothing, and its line is the reply’s respond command', async () => {
+    it('advance, L148 (open question): at an open question advance runs nothing, and its line is the respond command composed from the record it read', async () => {
+      // F7 (a): the line is composed from the record the command read (core's `answerAction`),
+      // never from a call of the writer `advanceRun`.
       claim(
         PAGE,
-        "At an open question the command runs nothing, and its `Nothing is owed to the engine: a question is open — realm run respond …` line is rendered from the reply's answer.",
+        "At an open question the command runs nothing, and its `Nothing is owed to the engine: a question is open — realm run respond …` line is composed from the run's record as the command read it: when another program answers the question meanwhile, the steps that answer made ready are left for the next `realm run advance`.",
       );
       const { def } = await project('acting-open-q', A_THEN_QUESTION, true);
       const id = await started(def);

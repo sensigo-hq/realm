@@ -249,7 +249,8 @@ describe('#625 PR-2a, C151 — every CLI call that can carry out an expiry names
       'agent/gate/slack-gate-notifier.ts': ['submitHumanResponse:agent'],
       'commands/run.ts': ['submitHumanResponse:run', 'executeChain:run'],
       'commands/respond.ts': ['submitHumanResponse:respond'],
-      'commands/run-advance.ts': ['advanceRun:advance', 'advanceRun:advance'],
+      // F7 (a): one call — the preview at an open question calls no writer.
+      'commands/run-advance.ts': ['advanceRun:advance'],
     });
   });
 });

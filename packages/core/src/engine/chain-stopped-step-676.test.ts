@@ -6,6 +6,9 @@
 // it holds whatever shape the chain takes inside. One cell per member of the rule — `error`,
 // `blocked`, `confirm_required` from a step the engine ran after the called one, and the called
 // step's own non-ok reply — and one per absence: an `ok` reply and an error of the chain itself.
+// F7: a `blocked` reply the advance loop returns is now only a precondition block on the step's own
+// read (core's classifier, row 2d): its stamp is pinned in `stop-kind-625.test.ts`; the race this
+// file built for it (another process opens a question first) is no longer a stop.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -156,7 +159,7 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
     });
   });
 
-  it('blocked: a step the advance loop picked is refused in the window before its claim (another process opened a gate) — stopped_step names it', async () => {
+  it('F7: a step the advance loop picked is refused in the window before its claim because another process opened a gate — a race (question_opened), not a stop: the reply is the record’s, with no stopped_step', async () => {
     // `a` → `b`, and a sibling gate step `x` another process runs. Between the loop's pick of `b`
     // and `b`'s own read, that process opens `x`'s gate (a real write, through the same store), so
     // `b`'s call finds it not eligible — neither in flight nor settled, so not "taken".
@@ -194,15 +197,25 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
         if (step === 'b') armed = true;
       },
     });
-    // (a) red when the loop's stamp skips `blocked` replies, or when the race is reported as
-    //     "taken"; (b) prints status, command and stopped_step, and the gate's step on the record.
+    // (a) red when the race's `blocked` refusal is returned as the reply (before F7 it was, stamped
+    //     `stopped_step: 'b'`), or when the race is reported as "taken"; (b) prints status, command,
+    //     stopped_step, the reply's phase and act, and the gate's step on the record.
     const record = await store.get(runId);
     expect({
       status: reply.status,
       command: reply.command,
       stopped_step: reply.stopped_step,
+      run_phase: reply.run_phase,
+      act: reply.next_actions.map((a) => a.instruction?.tool),
       gate_step: record.pending_gate?.step_name,
-    }).toEqual({ status: 'blocked', command: 'advance_run', stopped_step: 'b', gate_step: 'x' });
+    }).toEqual({
+      status: 'ok',
+      command: 'advance_run',
+      stopped_step: undefined,
+      run_phase: 'gate_waiting',
+      act: ['submit_human_response'],
+      gate_step: 'x',
+    });
   });
 
   it('error, advance_run: a step it ran fails — stopped_step names it; command stays advance_run', async () => {
