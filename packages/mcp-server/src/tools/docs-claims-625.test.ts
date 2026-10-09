@@ -2968,7 +2968,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
   it('get_run_state: resumable, cleanup_pending and waiting_on_answer; advance_run at the question names the step it holds', async () => {
     say(
       'mcp/tools.md',
-      "The run's state, as for a run that goes on, with `terminal_state: true` and empty `next_actions`; `resumable` names the failed steps `realm run resume` takes and its command, and `cleanup_pending` the cleanup steps left `pending` and the command that runs them.",
+      "The run's state, as for a run that goes on, with `terminal_state: true` and empty `next_actions`. `resumable` names the failed steps `realm run resume` takes and its command, and `cleanup_pending` the cleanup steps left `pending` and the command that runs them (added after version 0.46.0).",
     );
     say(
       RUN_STATE,
@@ -2984,7 +2984,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     );
     say(
       'mcp/tools.md',
-      "when steps wait for its answer, it names them before the full stop: `— answer it with submit_human_response; '<step>' waits for its answer.` (added after version 0.46.0).",
+      "When steps wait for its answer, it names them before the full stop: `— answer it with submit_human_response; '<step>' waits for its answer.` (added after version 0.46.0).",
     );
     const { call, runStore, workflowStore } = await connectWith();
     await workflowStore.register(steps('c211-r', [...auto('s', 'boom'), ...tidy]));
