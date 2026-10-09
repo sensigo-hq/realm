@@ -30,6 +30,9 @@ export { hashParams, canonicalJson } from './store/params-hash.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
+// Issue #625 PR-2a (F1): the one duration formatter — `<n>s` under a minute, then `<m>m`, `<h>h <m>m`,
+// `<d>d <h>h`.
+export { formatDuration } from './utils/duration.js';
 /**
  * Issue #625 holder slice (PR-H): the vocabulary and the pure functions for who took a step and how a
  * caller proves it was handed the reply that opened a question. Core reads no environment and no OS

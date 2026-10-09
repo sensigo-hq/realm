@@ -177,7 +177,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     }
   });
 
-  it("C122: the late answer's line is C105's — this call carried the expiry out, naming itself (settle_default, both choices; abort), no 'ago', on both store kinds", async () => {
+  it("C122 + F1: the late answer's line is C105's — this call carried the expiry out, naming itself (settle_default, both choices; abort), and how long before this call the question expired (5s), on both store kinds", async () => {
     for (const legacy of [false, true]) {
       for (const [onExpiry, choice] of [
         ['settle_default', 'approve'],
@@ -194,10 +194,10 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         });
         const line =
           onExpiry === 'settle_default'
-            ? `gate '${gateId}' on 'q' had expired — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`
-            : `gate '${gateId}' on 'q' had expired — this submitHumanResponse call first carried out its declared abort: the run ended (enacted_via: submitHumanResponse).`;
-        // (a) red when the line says "before this response arrived", "expired 0m ago", or is not the
-        // composer's; (b) prints the warnings.
+            ? `gate '${gateId}' on 'q' had expired 5s before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`
+            : `gate '${gateId}' on 'q' had expired 5s before this call — this submitHumanResponse call first carried out its declared abort: the run ended (enacted_via: submitHumanResponse).`;
+        // (a) red when the line drops the lag (F1), says "expired 0m ago", or is not the composer's;
+        // (b) prints the warnings.
         expect({ legacy, onExpiry, choice, warnings: reply.warnings.slice(0, 1) }).toEqual({
           legacy,
           onExpiry,
@@ -205,7 +205,10 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
           warnings: [line],
         });
         expect(reply.answer_recorded).toBe(false);
-        expect(reply.warnings.join(' ')).not.toMatch(/ ago\b|before this response arrived/);
+        // F1 (reverses C122's "no lag" pin): the lag is said, in seconds under a minute — never `0m`.
+        // (a) red when the line drops the lag or rounds it to minutes; (b) prints the warnings.
+        expect(reply.warnings.join(' ')).toMatch(/had expired 5s before this call/);
+        expect(reply.warnings.join(' ')).not.toMatch(/\b0m\b/);
       }
     }
   });
@@ -232,7 +235,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     });
     // (a) red when the line claims this call carried it out, or names a via; (b) prints the warnings.
     expect(reply.warnings[0]).toBe(
-      `gate '${gateId}' on 'q' had expired — another call had already carried out its declared settle_default: the default choice 'approve' was recorded.`,
+      `gate '${gateId}' on 'q' had expired 5s before this call — another call had already carried out its declared settle_default: the default choice 'approve' was recorded.`,
     );
     expect(reply.answer_recorded).toBe(false);
   });
@@ -252,7 +255,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
       expect({ caller, command: reply.command, line: reply.warnings[0] }).toEqual({
         caller,
         command: named,
-        line: `gate '${gateId}' on 'q' had expired — this ${named} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${named}).`,
+        line: `gate '${gateId}' on 'q' had expired 5s before this call — this ${named} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${named}).`,
       });
     }
   });
@@ -282,8 +285,8 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     );
     for (const [via, call] of members) {
       // (a) red when a member names the wrong call or drops enacted_via; (b) prints the line.
-      expect(expiryCarriedOutLine('g1', 's', { on_expiry: 'abort' }, via)).toBe(
-        `gate 'g1' on 's' had expired — this ${call} call first carried out its declared abort: the run ended (enacted_via: ${via}).`,
+      expect(expiryCarriedOutLine('g1', 's', { on_expiry: 'abort' }, via, 15_000)).toBe(
+        `gate 'g1' on 's' had expired 15s before this call — this ${call} call first carried out its declared abort: the run ended (enacted_via: ${via}).`,
       );
     }
     // (a) red when the race form claims the call or names a via; (b) prints it.
@@ -293,10 +296,11 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         's',
         { on_expiry: 'settle_default', choice: 'c' },
         'submitHumanResponse',
+        15_000,
         false,
       ),
     ).toBe(
-      "gate 'g1' on 's' had expired — another call had already carried out its declared settle_default: the default choice 'c' was recorded.",
+      "gate 'g1' on 's' had expired 15s before this call — another call had already carried out its declared settle_default: the default choice 'c' was recorded.",
     );
   });
 

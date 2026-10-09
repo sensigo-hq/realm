@@ -122,7 +122,7 @@ The first line is one of three sentences: `Guard step '<step>' aborted the run.`
 
 Giving the same answer again prints the `Responded:` line again and changes nothing.
 
-An answer that arrives after the gate's time is up is not recorded, and for a gate that was settled with its default choice `Not recorded:` takes the place of `Responded:`. The lines after it are the ones above: what the run owes (added after version 0.46.0). When this answer is the call that carried out the expiry, its first line says so, as `realm run advance`'s does (where the expiry's choice made a guard ready, `respond` prints the guard's line on its own, after the first line; `realm run advance` adds the guard's sentence to the end of its first line): `⚠ gate '<gate>' on '<step>' had expired — this respond call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: respond).`, or `… its declared abort: the run ended (enacted_via: respond).` (added after version 0.46.0). See [An answer after the time is up](../workflow/gates.md#an-answer-after-the-time-is-up).
+An answer that arrives after the gate's time is up is not recorded, and for a gate that was settled with its default choice `Not recorded:` takes the place of `Responded:`. The lines after it are the ones above: what the run owes (added after version 0.46.0). When this answer is the call that carried out the expiry, its first line says so, as `realm run advance`'s does (where the expiry's choice made a guard ready, `respond` prints the guard's line on its own, after the first line; `realm run advance` adds the guard's sentence to the end of its first line): `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this respond call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: respond).`, or `… its declared abort: the run ended (enacted_via: respond).` (added after version 0.46.0). See [An answer after the time is up](../workflow/gates.md#an-answer-after-the-time-is-up).
 
 **Exit code:** 0 if the call succeeded, otherwise 1. An answer that was recorded exits 0, also when the guard it made ready aborted the run. A late answer that names the choice the gate was settled with exits 0, although it was not recorded. A refused answer exits 1. This differs from `realm workflow run`, which exits 1 for a run that ended as aborted.
 
@@ -142,7 +142,7 @@ The refusals:
 realm run advance <run-id> [--project <dir>] [--extensions-module <path>]
 ```
 
-Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready. It runs them one at a time, and the steps the run owes after them, and stops at the first step that opens a question, fails or ends the run: a step named after that one does not run in that call. When the preview names more than one, its line says so: `Owed to the engine: 'approve', 'fetch'; it runs them until a step opens a question, fails or ends the run.` It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
+Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready. It runs them one at a time, and the steps the run owes after them, and stops at the first step that opens a question, fails or ends the run: a step named after that one does not run in that call. When the preview names more than one, its line says so: `Owed to the engine: 'approve', 'fetch'; it runs them until a step opens a question, fails or ends the run.` It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
 
 ```text
 Advancing run <id> (workflow 'cli-owed-wf') with no project code (nothing to load under /home/me/project), in this shell's environment.
@@ -473,8 +473,8 @@ Drained 1/1 run(s).
 With `--expired`, a gate whose time has passed is reported first, with the choice it would be settled with. If the settled choice would make a guard step ready, the report says what the guard would then do: `would pass`, `would pass and complete the run`, `would then abort the run (<reason>)` or `would then fail the run (<reason>)`. Nothing is written:
 
 ```text
-Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 0m ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
-Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired 0m ago — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.
+Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 18s ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
+Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired 17s ago — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.
 ```
 
 The report leaves the guard out when the run's registered workflow cannot be read.
@@ -524,8 +524,8 @@ With `--all --expired`, the list names what each gate declared, without the choi
 
 ```text
 2 run(s) WOULD be drained:
-  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate expired 0m ago — would enact settle_default
-  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate expired 0m ago — would enact settle_default
+  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate expired 41s ago — would enact settle_default
+  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate expired 40s ago — would enact settle_default
 
 Re-run with --force to actually drain them.
 ```
@@ -553,7 +553,7 @@ Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') �
 To end the run instead: realm run abandon 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25
 Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To go on, answer its question first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>
 The answer can end the run by itself; if it does not, realm run respond names what the run owes next, and realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28 ends it.
-Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired
+Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 25s ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired
 To carry it out: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired --force
 No runs with an actionable pending finalizer.
 ```

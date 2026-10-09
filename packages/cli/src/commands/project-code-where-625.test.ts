@@ -33,6 +33,7 @@ import {
 } from './run-advance.js';
 import { respondCommand } from './respond.js';
 import { printChildrenWhenATestFails } from '../test-support/child-output.js';
+import { lagless } from '../test-support/lag.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 if (!existsSync(CLI_ENTRY)) {
@@ -169,15 +170,16 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     const { runs, runId, gateId } = await atGate('settle_default', true);
     const advanced = realm(proj, ['run', 'advance', runId]);
     expect(advanced.status).toBe(0);
-    const lines = advanced.stdout.trim().split('\n');
+    // F1: the expiry line says how long before the call the question's time was up — `<lag>` here.
+    const lines = lagless(advanced.stdout.trim().split('\n'));
     // decision C123: the expiry line is printed when the call carries the expiry out — before the
     // step it led to — and once.
     // (a) red when the view does not name the due expiry as owed (advance would print "Nothing is
-    // owed" and stop), when the line comes after the step, says "before this call" or drops the
-    // default choice; (b) prints the lines.
+    // owed" and stop), when the line comes after the step, drops the lag (F1) or drops the default
+    // choice; (b) prints the lines.
     expect(lines.slice(3, 6)).toEqual([
       "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-      `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+      `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
       '→ after',
     ]);
     expect(lines.filter((l) => l.includes('had expired'))).toHaveLength(1);
@@ -196,11 +198,11 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     const { runs, runId, gateId } = await atGate('abort', true);
     const advanced = realm(proj, ['run', 'advance', runId]);
     expect(advanced.status).toBe(0);
-    const lines = advanced.stdout.trim().split('\n');
+    const lines = lagless(advanced.stdout.trim().split('\n'));
     // (a) red when the abort is not carried out, or its line (C105) is not rendered; (b) prints the lines.
     expect(lines.slice(3)).toEqual([
       "Owed to the engine: the expired question on 'confirm' (its declared abort).",
-      `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
+      `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
       'Stopped: the run has ended (aborted)',
       `Run ${runId}: phase 'aborted'`,
     ]);

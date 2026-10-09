@@ -136,6 +136,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
           'q',
           { on_expiry: 'settle_default', choice: 'approve' },
           caller,
+          5_000,
         ),
         phase: 'completed',
       });
@@ -296,6 +297,7 @@ describe('#625 PR-2a, C133/C134/C135/C136 — the caller, the opener, what a ref
           'q',
           { on_expiry: 'settle_default', choice: 'approve' },
           'executeStep',
+          5_000,
         ),
       ],
     });

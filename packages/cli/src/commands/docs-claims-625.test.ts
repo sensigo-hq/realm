@@ -26,6 +26,7 @@ import { sweepExpiredGates } from './listen.js';
 import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
+import { lagless } from '../test-support/lag.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -212,13 +213,13 @@ describe(
       );
       const { runId, gateId } = await atQuestion(gateThenAuto('dc-adv-line', 'settle_default'));
       const r = realm('run', 'advance', runId);
-      const all = [...r.out, ...r.err];
-      const line = `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
+      // F1: the line says how long before the call the question's time was up — `<lag>` in its place.
+      const out = lagless(r.out);
+      const all = [...out, ...lagless(r.err)];
+      const line = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
       // (a) red when the line is not printed, or prints after a step; (b) prints the output.
       expect(all.filter((l) => l === line)).toHaveLength(1);
-      expect(r.out.indexOf(line) === -1 || r.out.indexOf(line) < r.out.indexOf('→ after')).toBe(
-        true,
-      );
+      expect(out.indexOf(line) === -1 || out.indexOf(line) < out.indexOf('→ after')).toBe(true);
       expect(r.out).toContain('→ after');
     });
 
@@ -231,13 +232,21 @@ describe(
         'workflow/gates.md',
         "It prints `Not recorded:`, with the choice the gate was settled with and the run's phase, and after it the lines an answer in time prints after `Responded:`: what the run owes (`Owed to the engine: … — realm run advance <id> …`, an agent step that is ready, or the steps that cannot run).",
       );
+      // F1: the late answer is told how late it was.
+      claim(
+        'workflow/gates.md',
+        'An answer that finds the expired question still open is also told how late it was: its line says how long before the answer the time was up (`had expired 15s before this call`)',
+      );
       const { runId, gateId } = await atQuestion(gateThenAuto('dc-respond-late', 'settle_default'));
       const r = realm('run', 'respond', runId, '--gate', gateId, '--choice', 'reject');
       const err = r.err.filter((l) => l !== '');
       // (a) red when the order changes or a line goes; (b) prints stderr.
       expect(r.code).toBe(1);
-      expect(err[0]).toBe(
-        `⚠ gate '${gateId}' on 'confirm' had expired — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+      // F1: the question's time ended in 2020 (the fixture), so the lag is days and hours.
+      // (a) red when the line says no lag, or a lag not in days; (b) prints the line.
+      expect(err[0]).toMatch(/had expired \d+d \d+h before this call — /);
+      expect(lagless(err[0] ?? '')).toBe(
+        `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
       );
       expect(err[1]).toBe(
         `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,

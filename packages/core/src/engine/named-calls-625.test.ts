@@ -324,6 +324,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
             ? { on_expiry: 'settle_default', choice: 'approve' }
             : { on_expiry: 'abort' },
           via,
+          5_000,
         );
         // (a) red when the function names another call (the MCP tool's, as before C151) or its
         // default is lost; (b) prints the reply's warnings.

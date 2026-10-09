@@ -26,6 +26,7 @@ vi.mock('node:readline/promises', () => ({
 import { runCommand, setQuestionWatchIntervalForTests, setInFlightWatchForTests } from './run.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 import { quotedForTerminal } from '../lib/holder-render.js';
+import { lagless } from '../test-support/lag.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
 const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
@@ -323,9 +324,10 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
     }, 30_000);
   });
   describe('C146 follow-up — the answer carries out the expiry before the attending timer fires', () => {
-    /** The line this prompt's answer prints first: `run` names `realm workflow run`. */
+    /** The line this prompt's answer prints first: `run` names `realm workflow run`. F1: its lag
+     *  follows the clock — `<lag>` in its place, here and in what was printed. */
     const runCarriedOut = (did: string): string =>
-      `  ⚠ gate '${gateId()}' on 'confirm' had expired — this run call first carried out its declared ${did} (enacted_via: run).`;
+      `  ⚠ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this run call first carried out its declared ${did} (enacted_via: run).`;
 
     it('DIFFERENT choice: `⚠ … this run call first carried out …` once, then the refusal and `✗ not recorded`, on stderr', async () => {
       claimGates215();
@@ -337,7 +339,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
       // (a) red when the composer drops the line, prints it twice, or names another call (the
       //     timer's `⏰` line would mean the race was not reached); (b) prints stderr.
-      expect(errored().slice(0, 4)).toEqual([
+      expect(lagless(errored().slice(0, 4))).toEqual([
         runCarriedOut("settle_default: the default choice 'approve' was recorded"),
         `  Gate '${gateId()}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "  Guard step 'check' passed.",
@@ -357,7 +359,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       );
 
       // (a) red when the same-choice arm drops the line or prints it twice; (b) prints stdout.
-      expect(afterTheGate().slice(0, 4)).toEqual([
+      expect(lagless(afterTheGate().slice(0, 4))).toEqual([
         runCarriedOut("settle_default: the default choice 'approve' was recorded"),
         `  ${LATE_SAME_CHOICE}`,
         "  Guard step 'check' passed.",
@@ -376,7 +378,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
 
       // (a) red when the abort arm prints only the bare refusal (no line, no state); (b) prints
       //     stderr.
-      expect(errored().slice(0, 3)).toEqual([
+      expect(lagless(errored().slice(0, 3))).toEqual([
         runCarriedOut('abort: the run ended'),
         `  Gate '${gateId()}' on 'confirm' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.`,
         '  ✗ not recorded → aborted\n',

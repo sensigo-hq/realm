@@ -24,6 +24,7 @@ import { startSlackGateServer } from './slack-gate-server.js';
 import type { SlackGateEvent } from './slack-gate-server.js';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 import { LlmProvider } from '../providers/llm-provider.js';
+import { lagless } from '../../test-support/lag.js';
 
 /** C163: (a) red when gates.md no longer holds the sentence these cells pin, word for word; (b) prints it. */
 const GATES_MD_215 = `an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through \`realm run respond\` (\`this respond call …\`), the prompt of \`realm workflow run\` (\`this run call …\`) or a reply in the gate's Slack thread to \`realm agent\` (\`this agent call …\`, posted in the thread).`;
@@ -163,11 +164,17 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
       ts: '1234567890.001',
     });
     await waiting;
+    // F1: the expiry line's lag follows the clock — `<lag>` in its place in what was posted and
+    // printed, as in the line each cell expects.
     return {
-      posts: fetchSpy.mock.calls
-        .filter(([url]) => String(url).includes('postMessage'))
-        .map(([, init]) => (JSON.parse((init as { body: string }).body) as { text: string }).text),
-      printed: logSpy.mock.calls.map((c: unknown[]) => String(c[0])),
+      posts: lagless(
+        fetchSpy.mock.calls
+          .filter(([url]) => String(url).includes('postMessage'))
+          .map(
+            ([, init]) => (JSON.parse((init as { body: string }).body) as { text: string }).text,
+          ),
+      ),
+      printed: lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0]))),
     };
   }
 
@@ -177,7 +184,7 @@ describe('#625 PR-2a, C146 — a late Slack answer that carried out the expiry s
   const line = (
     gateId: string,
     did: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
-  ): string => `⚠ ${expiryCarriedOutLine(gateId, 'confirm', did, 'agent')}`;
+  ): string => `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', did, 'agent', 0))}`;
 
   it('C146: another choice — `⚠ … this agent call first carried out …`, the refusal, the guard; posted once and printed once, no "try again"', async () => {
     claimGates215();

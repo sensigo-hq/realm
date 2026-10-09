@@ -207,7 +207,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       });
       // (a) red when the disclosure leaves the reply; (b) prints the warnings.
       expect(reply.warnings).toContain(
-        `gate '${gateId}' on 'confirm' had expired — this advance_run call first carried out its declared ${
+        `gate '${gateId}' on 'confirm' had expired 1m before this call — this advance_run call first carried out its declared ${
           onExpiry === 'settle_default'
             ? "settle_default: the default choice 'approve' was recorded"
             : 'abort: the run ended'
@@ -469,7 +469,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       hint: "Step 'after' cannot be called now: the run has ended (aborted).",
       phase: 'aborted',
       line: [
-        `gate '${gateId}' on 'confirm' had expired — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
+        `gate '${gateId}' on 'confirm' had expired 1m before this call — this execute_step call first carried out its declared abort: the run ended (enacted_via: execute_step).`,
       ],
     });
   });
@@ -548,7 +548,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       suggestion: 'Call advance_run, as next_actions says.',
       hint: "Step 'confirm' cannot be called now: it has already completed. Owed to the engine: 'after' — call advance_run.",
       line: [
-        `gate '${gateId}' on 'confirm' had expired — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`,
+        `gate '${gateId}' on 'confirm' had expired 1m before this call — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`,
       ],
     });
   });
@@ -577,7 +577,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
         // (a) red when the tool stops passing its own name (the library default, executeChain or
         // submitHumanResponse, shows instead); (b) prints the lines.
         expect(lines[tool]).toEqual([
-          `gate '${gateId}' on 'confirm' had expired — this ${tool} call first carried out its declared ${did} (enacted_via: ${tool}).`,
+          `gate '${gateId}' on 'confirm' had expired 1m before this call — this ${tool} call first carried out its declared ${did} (enacted_via: ${tool}).`,
         ]);
       }
     },

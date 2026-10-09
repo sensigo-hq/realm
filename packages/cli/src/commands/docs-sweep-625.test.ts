@@ -22,6 +22,7 @@ import {
   loadWorkflowFromString,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { lagless } from '../test-support/lag.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -513,27 +514,32 @@ describe(
       const d = await expiredAt(def('ship'));
       await advanceRun(runStore, def('ship'), { runId: d.id });
       const r4 = realm(['run', 'respond', d.id, '--gate', d.gateId, '--choice', 'hold']);
-      // (a) red when any screen differs from the page's (ids aside), or goes to the other stream;
+      // (a) red when any screen differs from the page's (ids and the expiry line's lag aside — F1:
+      //     the page shows one lag, the run another, both `<lag>` here), or goes to the other stream;
       //     (b) prints both.
-      expect({ code: r1.code, out: r1.out }).toEqual({
+      expect({ code: r1.code, out: lagless(r1.out) }).toEqual({
         code: 0,
-        out: put(
-          block(
-            G,
-            "this respond call first carried out its declared settle_default: the default choice 'ship'",
+        out: lagless(
+          put(
+            block(
+              G,
+              "this respond call first carried out its declared settle_default: the default choice 'ship'",
+            ),
+            {
+              '1a42b4b0-1fa1-42c9-b9ca-099c040b43f2': a.gateId,
+              'e428e60c-a362-410f-8819-008e40456639': a.id,
+            },
           ),
-          {
-            '1a42b4b0-1fa1-42c9-b9ca-099c040b43f2': a.gateId,
-            'e428e60c-a362-410f-8819-008e40456639': a.id,
-          },
         ),
       });
-      expect({ code: r2.code, err: r2.err }).toEqual({
+      expect({ code: r2.code, err: lagless(r2.err) }).toEqual({
         code: 1,
-        err: put(block(G, "the default choice 'hold' was recorded (enacted_via: respond)"), {
-          '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb': b.gateId,
-          '71f47780-06a7-421c-87d0-c74d2c8998de': b.id,
-        }),
+        err: lagless(
+          put(block(G, "the default choice 'hold' was recorded (enacted_via: respond)"), {
+            '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb': b.gateId,
+            '71f47780-06a7-421c-87d0-c74d2c8998de': b.id,
+          }),
+        ),
       });
       expect({ code: r3.code, out: r3.out }).toEqual({
         code: 0,
@@ -795,8 +801,9 @@ describe(
       });
       const gateId = record.pending_gate!.gate_id;
       const r = realm(['run', 'advance', id]);
-      const lines = [...r.out, ...r.err];
-      const expiry = `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
+      // F1: the expiry line's lag follows the clock — `<lag>` in its place.
+      const lines = lagless([...r.out, ...r.err]);
+      const expiry = `⚠ gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`;
       // (a) red when the guard's line is lost, printed twice, replaced by the reply's MCP words, or
       //     the run does not complete; (b) prints the output and the exit.
       expect({

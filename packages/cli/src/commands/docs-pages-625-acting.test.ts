@@ -19,6 +19,7 @@ import {
   loadWorkflowFromString,
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
+import { lagless } from '../test-support/lag.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '../../../..');
@@ -420,7 +421,7 @@ describe(
       );
       claim(
         PAGE,
-        "When this answer is the call that carried out the expiry, its first line says so, as `realm run advance`'s does (where the expiry's choice made a guard ready, `respond` prints the guard's line on its own, after the first line; `realm run advance` adds the guard's sentence to the end of its first line): `⚠ gate '<gate>' on '<step>' had expired — this respond call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: respond).`, or `… its declared abort: the run ended (enacted_via: respond).` (added after version 0.46.0).",
+        "When this answer is the call that carried out the expiry, its first line says so, as `realm run advance`'s does (where the expiry's choice made a guard ready, `respond` prints the guard's line on its own, after the first line; `realm run advance` adds the guard's sentence to the end of its first line): `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this respond call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: respond).`, or `… its declared abort: the run ended (enacted_via: respond).` (added after version 0.46.0).",
       );
       claim(
         PAGE,
@@ -435,10 +436,10 @@ describe(
         `Owed to the engine: 'after' — realm run advance ${id} runs it, with no project code (nothing to load under ${settle.root}), in the environment of the shell it runs in.`;
       // (a) red when the late answer is recorded, the ⚠ line is not first, or the owed line is
       //     dropped; (b) prints stdout and the exit.
-      expect({ code: r1.code, out: r1.out }).toEqual({
+      expect({ code: r1.code, out: lagless(r1.out) }).toEqual({
         code: 0,
         out: [
-          `⚠ gate '${same.gateId}' on 'confirm' had expired — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `⚠ gate '${same.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
           'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
           `Not recorded: ${same.id} | gate settled by timeout with choice 'approve' | state 'running'`,
           owed(same.id),
@@ -450,11 +451,11 @@ describe(
       // (a) red when another choice is not told it was settled by timeout after the ⚠ line, or the
       //     Not recorded: line and what the run owes do not follow, in that order on stderr;
       //     (b) prints stdout, stderr and the exit.
-      expect({ code: r2.code, out: r2.out, err: r2.err }).toEqual({
+      expect({ code: r2.code, out: r2.out, err: lagless(r2.err) }).toEqual({
         code: 1,
         out: [],
         err: [
-          `⚠ gate '${other.gateId}' on 'confirm' had expired — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `⚠ gate '${other.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
           `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
           `Not recorded: ${other.id} | gate settled by timeout with choice 'approve' | state 'running'`,
           owed(other.id),
@@ -480,11 +481,11 @@ describe(
       const r4 = respond(g, 'reject');
       // (a) red when what the guard did is not said between the refusal and `Not recorded:`;
       //     (b) prints stdout, stderr and the exit.
-      expect({ code: r4.code, out: r4.out, err: r4.err }).toEqual({
+      expect({ code: r4.code, out: r4.out, err: lagless(r4.err) }).toEqual({
         code: 1,
         out: [],
         err: [
-          `⚠ gate '${g.gateId}' on 'confirm' had expired — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `⚠ gate '${g.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
           `Gate '${g.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
           "Guard step 'only_if_rejected' aborted the run.",
           'Reason: The default was taken.',
@@ -495,8 +496,8 @@ describe(
       const ab = await atQuestion(abort.def, true);
       const r3 = respond(ab, 'approve');
       // (a) red when the abort's line changes or is not first; (b) prints stdout and stderr.
-      expect([...r3.out, ...r3.err][0]).toBe(
-        `⚠ gate '${ab.gateId}' on 'confirm' had expired — this respond call first carried out its declared abort: the run ended (enacted_via: respond).`,
+      expect(lagless([...r3.out, ...r3.err])[0]).toBe(
+        `⚠ gate '${ab.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared abort: the run ended (enacted_via: respond).`,
       );
     });
 
@@ -559,7 +560,7 @@ describe(
     it('advance, L136: an expired question’s declared on_expiry first — named in the preview, its ⚠ line printed before the steps it runs; then the guards and auto steps; abort ends the run', async () => {
       claim(
         PAGE,
-        "Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready.",
+        "Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready.",
       );
       // The guard follows an auto step, so the expiry's own write makes no guard ready (see the
       // report: when it does, the ⚠ line carries the guard's sentence).
@@ -579,11 +580,11 @@ describe(
       const r = realm(['run', 'advance', q.id]);
       // (a) red when the expiry is not named first, its line is not before the steps, or the guard
       //     and the auto step do not follow; (b) prints stdout.
-      expect({ code: r.code, tail: r.out.slice(3) }).toEqual({
+      expect({ code: r.code, tail: lagless(r.out.slice(3)) }).toEqual({
         code: 0,
         tail: [
           "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-          `⚠ gate '${q.gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
           '→ after',
           "Guard step 'only_if_approved' passed.",
           `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>`,
@@ -595,9 +596,9 @@ describe(
       const qa = await atQuestion(abort.def, true);
       const ra = realm(['run', 'advance', qa.id]);
       // (a) red when abort is not carried out or its line changes; (b) prints stdout.
-      expect(ra.out.slice(3)).toEqual([
+      expect(lagless(ra.out.slice(3))).toEqual([
         "Owed to the engine: the expired question on 'confirm' (its declared abort).",
-        `⚠ gate '${qa.gateId}' on 'confirm' had expired — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
+        `⚠ gate '${qa.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
         'Stopped: the run has ended (aborted)',
         `Run ${qa.id}: phase 'aborted'`,
       ]);
@@ -806,10 +807,10 @@ describe(
       const r = realm(['run', 'advance', q.id]);
       // (a) red when the expiry line moves after the step, a reply warning is not printed after
       //     the steps, or anything goes to stderr; (b) prints stdout and stderr.
-      expect({ tail: r.out.slice(3), err: r.err }).toEqual({
+      expect({ tail: lagless(r.out.slice(3)), err: r.err }).toEqual({
         tail: [
           "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-          `⚠ gate '${q.gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
           '→ a',
           "⚠ finalizer 'tidy' left pending — handler not available on this surface",
           // decision C208: the run ended during the call — its cleanup step's outcome.
@@ -1950,10 +1951,10 @@ describe(
         const ra = realm(['run', 'advance', qa.id]);
         // (a) red when the preview stops at the expiry, or an abort is said to run what follows;
         //     (b) prints the lines.
-        expect({ settle: r.out.slice(3), abort: ra.out[3] }).toEqual({
+        expect({ settle: lagless(r.out.slice(3)), abort: ra.out[3] }).toEqual({
           settle: [
             "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-            `⚠ gate '${q.gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+            `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
             '→ p',
             '→ n',
             `Run ${q.id}: phase 'completed'`,

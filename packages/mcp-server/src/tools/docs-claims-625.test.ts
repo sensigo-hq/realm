@@ -19,6 +19,7 @@ import {
   ExtensionRegistry,
   advanceRun,
   executeStep,
+  formatDuration,
   loadWorkflowFromString,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -28,6 +29,16 @@ import { createRealmMcpServer } from '../server.js';
 
 const DOCS = join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
+
+/** F1: the expiry line's lag follows the clock (these cells wait a real second), so `<lag>` stands in
+ *  for it — a line with no lag (`had expired —`, as before F1) keeps its words and still differs. */
+const LAG = /had expired (?:\d+s|\d+m|\d+h \d+m|\d+d \d+h) before this call/g;
+const lagless = (v: unknown): unknown =>
+  typeof v === 'string'
+    ? v.replace(LAG, 'had expired <lag> before this call')
+    : Array.isArray(v)
+      ? v.map(lagless)
+      : v;
 
 /** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
 function claim(
@@ -1386,12 +1397,12 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const r = await call('execute_step', { run_id: runId, command: 'after', params: {} });
-    const line = `gate '${gateId}' on 'confirm' had expired — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`;
+    const line = `gate '${gateId}' on 'confirm' had expired <lag> before this call — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`;
     const entry = (r['chained_auto_steps'] as Array<{ step: string; warnings?: string[] }>).find(
       (e) => e.step === 'after',
     );
-    expect(entry?.warnings).toContain(line);
-    expect(r['warnings']).toContain(line);
+    expect(lagless(entry?.warnings)).toContain(line);
+    expect(lagless(r['warnings'])).toContain(line);
   });
 
   it('C163 submit_human_response: a gate ID that is not the open one — STATE_BLOCKED, the open question named and its answer offered, resolve_precondition', async () => {
@@ -1494,8 +1505,8 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       ['advance_run:'],
       `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded. Owed to the engine: 'after' — call advance_run.`,
     ]);
-    expect(r['warnings']).toContain(
-      `gate '${gateId}' on 'confirm' had expired — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`,
+    expect(lagless(r['warnings'])).toContain(
+      `gate '${gateId}' on 'confirm' had expired <lag> before this call — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`,
     );
   });
 
@@ -1539,7 +1550,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      "first, when the open question's time is up and it declares `on_expiry`, it carries out that default or abort (a line in its `warnings` says so: `gate '<gate>' on '<step>' had expired — this advance_run call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance_run).`, or `… its declared abort: the run ended …`); then the guards and `auto` steps that are ready.",
+      "first, when the open question's time is up and it declares `on_expiry`, it carries out that default or abort (a line in its `warnings` says so: `gate '<gate>' on '<step>' had expired <how long> before this call — this advance_run call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance_run).`, or `… its declared abort: the run ended …`); then the guards and `auto` steps that are ready.",
     );
     claim(
       'mcp/tools.md',
@@ -1559,8 +1570,8 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const r = await call('advance_run', { run_id: runId });
-    expect(r['warnings']).toContain(
-      `gate '${gateId}' on 'confirm' had expired — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
+    expect(lagless(r['warnings'])).toContain(
+      `gate '${gateId}' on 'confirm' had expired <lag> before this call — this advance_run call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance_run).`,
     );
     expect([
       (r['chained_auto_steps'] as Array<{ step: string }>).map((e) => e.step),
@@ -1876,7 +1887,7 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
   it('C163 gates.md: the call that carries out an expiry says so in its warnings, naming itself — over MCP the tool (a late answer, a step of the run, advance_run)', async () => {
     claim(
       'workflow/gates.md',
-      'The call that carries out an expiry says so in its `warnings`, naming itself: over MCP the tool — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit_human_response`)',
+      "The call that carries out an expiry says so in its `warnings`, naming itself and how long before it the question's time was up (`had expired 15s before this call`; seconds under a minute, then minutes, hours and days): over MCP the tool — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit_human_response`)",
     );
     claim(
       'workflow/gates.md',
@@ -1903,8 +1914,8 @@ describe('#625 PR-2a, C163 — gates.md: what happens at expiry over MCP, senten
             ? await call(tool, { run_id: runId, command: 'after', params: {} })
             : await call(tool, { run_id: runId });
       // (a) red when a tool's line names another call; (b) prints its warnings.
-      expect(r['warnings'], tool).toContain(
-        `gate '${gateId}' on 'confirm' had expired — this ${tool} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${tool}).`,
+      expect(lagless(r['warnings']), tool).toContain(
+        `gate '${gateId}' on 'confirm' had expired <lag> before this call — this ${tool} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${tool}).`,
       );
     }
   });
@@ -2396,7 +2407,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     async (_case, earlier) => {
       claim(
         'mcp/tools.md',
-        "For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry's write decided, a `context_hint` that is the expiry's sentence, and `error_details` with the choice the expiry recorded (`winning_choice`) and `resolved_by: \"timeout\"`. When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
+        "For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry's write decided, a `context_hint` that is the expiry's sentence, and `error_details` with the choice the expiry recorded (`winning_choice`), `resolved_by: \"timeout\"`, when the question's time was up (`expired_at`) and how long before this call (`overdue_ms`, in milliseconds); the line in `warnings` says that lag too. When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
       );
       claim(
         'mcp/tools.md',
@@ -2426,7 +2437,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         },
       } as WorkflowDefinition);
       const runId = (await call('start_run', { workflow_id: id }))['run_id'] as string;
-      const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+      const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).pending_gate!;
       await new Promise((resolve) => setTimeout(resolve, 1_100));
       if (earlier) await call('advance_run', { run_id: runId });
       const r = await call('submit_human_response', {
@@ -2434,7 +2445,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         gate_id: gateId,
         choice: 'approve',
       });
-      const expiryLine = `gate '${gateId}' on 'confirm' had expired — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`;
+      const expiryLine = `gate '${gateId}' on 'confirm' had expired <lag> before this call — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`;
       // (a) red when the same-choice reply has no `resolved_by`, its hint stops before what the run
       //     owes, or the expiry line is in the wrong reply; (b) prints the reply's fields.
       expect({
@@ -2443,11 +2454,20 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         details: r['error_details'],
         hint: r['context_hint'],
         next: next(r),
-        expiryLine: ((r['warnings'] as string[]) ?? []).includes(expiryLine),
+        expiryLine: ((lagless(r['warnings']) as string[]) ?? []).includes(expiryLine),
       }).toEqual({
         status: 'ok',
         recorded: false,
-        details: { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
+        // F1: the answer that found the expired question open is told when its time was up and how
+        // late it is; the answer after an earlier call carried the expiry out finds no such question
+        // (the settled record no longer holds `expires_at`) and carries neither.
+        details: {
+          runId,
+          gateId,
+          winning_choice: 'approve',
+          resolved_by: 'timeout',
+          ...(earlier ? {} : { expired_at: expiresAt, overdue_ms: expect.any(Number) }),
+        },
         hint: "the outcome matches your choice, but it was settled by timeout; your response was not recorded. Ready for the agent: 'write'.",
         next: ['execute_step:write'],
         expiryLine: !earlier,
@@ -2458,7 +2478,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
   it('C185: tools.md’s `error_details` row and its late same-choice example (the guard ends the run) are the reply, field by field', async () => {
     claim(
       'mcp/tools.md',
-      "| `error_details` | On some errors, and on a late answer that names the choice the question's expiry recorded | Details that depend on the code, such as the schema rules that were broken; on that late answer, the choice the expiry recorded and `resolved_by`. |",
+      "| `error_details` | On some errors, and on a late answer that names the choice the question's expiry recorded | Details that depend on the code, such as the schema rules that were broken; on a late answer that found the expired question still open, when its time was up (`expired_at`) and how long before the call (`overdue_ms`); on that late answer, the choice the expiry recorded and `resolved_by`. |",
     );
     const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
     const blocks = page.split(/^```[a-z]*\n/m).filter((_, i) => i % 2 === 1);
@@ -2497,12 +2517,26 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       },
     } as WorkflowDefinition);
     const runId = (await call('start_run', { workflow_id: 'r23-example' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const { gate_id: gateId, expires_at: expiresAt } = (await runStore.get(runId)).pending_gate!;
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const r = await call('submit_human_response', {
       run_id: runId,
       gate_id: gateId,
       choice: 'hold',
+    });
+    // F1: the reply's time facts are this run's — the question's own `expires_at`, a lag in
+    // milliseconds, and the warning's lag written from it; then the page's values stand in for them.
+    const got = r['error_details'] as Reply;
+    const shown = example['error_details'] as Reply;
+    const lagOf = (w: unknown) => /had expired (.+?) before this call/.exec(String(w))?.[1];
+    // (a) red when the reply's `expired_at` is not the question's, `overdue_ms` is missing, or the
+    //     warning's lag is not `overdue_ms` written by the one formatter; (b) prints the three.
+    expect({
+      expired_at: got['expired_at'],
+      lag: lagOf((r['warnings'] as string[])[0]),
+    }).toEqual({
+      expired_at: expiresAt,
+      lag: typeof got['overdue_ms'] === 'number' ? formatDuration(got['overdue_ms']) : '<none>',
     });
     const ids = (v: unknown) =>
       JSON.parse(
@@ -2510,7 +2544,17 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
           .split(runId)
           .join(String(example['run_id']))
           .split(gateId)
-          .join(String((example['error_details'] as Reply)['gateId'])),
+          .join(String(shown['gateId']))
+          .split(String(got['expired_at']))
+          .join(String(shown['expired_at']))
+          .replace(
+            `"overdue_ms":${String(got['overdue_ms'])}`,
+            `"overdue_ms":${String(shown['overdue_ms'])}`,
+          )
+          .replace(
+            `had expired ${String(lagOf((r['warnings'] as string[])[0]))} before this call`,
+            `had expired ${String(lagOf((example['warnings'] as string[])[0]))} before this call`,
+          ),
       ) as unknown;
     const fields = [
       'command',

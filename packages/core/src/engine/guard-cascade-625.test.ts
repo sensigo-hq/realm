@@ -837,7 +837,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       // (a) red when the composer drops the expiry sentence or joins it to the guard's on one
       //     line; (b) prints the lines.
       expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
-        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse')}`,
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -876,7 +876,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       // (a) red when the refused form's lines lose the refusal, the ending or the reason;
       //     (b) prints the lines.
       expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
-        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse')}`,
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
         refusal,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -913,7 +913,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           via: 'submitHumanResponse',
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse')}`,
+        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
       ]);
@@ -942,7 +942,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           via: 'submitHumanResponse',
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse')}`,
+        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
         `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
       ]);

@@ -35,6 +35,7 @@ import type {
 import { respondCommand, respondToGate } from './respond.js';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { lagless } from '../test-support/lag.js';
 
 /** #625 PR-2a, decision C164: the attending line after the command an answer leaves. */
 const ATTENDING =
@@ -47,15 +48,19 @@ const DRAIN_DEPS: DrainRuntimeDeps = {
 
 /**
  * decision C146: the first line a late `realm run respond` prints — this command carried out the
- * question's expiry, in core's words, with `realm run advance`'s `⚠ `.
+ * question's expiry, in core's words, with `realm run advance`'s `⚠ `. F1: its lag follows the clock
+ * (the fixture's question expired in 2020), so `<lag>` stands in for it here and in what was printed.
  */
 const respondCarriedOut = (gateId: string, choice?: string): string =>
-  `⚠ ${expiryCarriedOutLine(
-    gateId,
-    'confirm',
-    choice !== undefined ? { on_expiry: 'settle_default', choice } : { on_expiry: 'abort' },
-    'respond',
-  )}`;
+  lagless(
+    `⚠ ${expiryCarriedOutLine(
+      gateId,
+      'confirm',
+      choice !== undefined ? { on_expiry: 'settle_default', choice } : { on_expiry: 'abort' },
+      'respond',
+      0,
+    )}`,
+  );
 
 const LATE_SAME_CHOICE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
@@ -145,10 +150,10 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
   });
 
   /** Everything printed on stdout, one entry per `console.log` call. */
-  const stdout = (): string[] => logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+  const stdout = (): string[] => lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])));
   /** Everything printed on stderr, split into lines. */
   const stderr = (): string[] =>
-    errSpy.mock.calls.flatMap((c: unknown[]) => String(c[0]).split('\n'));
+    lagless(errSpy.mock.calls.flatMap((c: unknown[]) => String(c[0]).split('\n')));
 
   /** Registers the workflow, creates a run and opens the gate on `confirm`. */
   async function openGate(def: WorkflowDefinition): Promise<{ runId: string; gateId: string }> {

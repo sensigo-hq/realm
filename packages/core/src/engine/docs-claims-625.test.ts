@@ -145,7 +145,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       }
       // (a) red when the line names another call, is missing, or is printed; (b) prints the reply.
       expect(reply.warnings).toContain(
-        `gate '${gateId}' on 'q' had expired — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`,
+        `gate '${gateId}' on 'q' had expired 1m before this call — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`,
       );
       expect(printed).toEqual([]);
     },
@@ -165,7 +165,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       now: LATER(),
     });
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'q' had expired — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
+      `gate '${gateId}' on 'q' had expired 1m before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
     );
   });
 

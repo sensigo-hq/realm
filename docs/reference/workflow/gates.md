@@ -212,7 +212,7 @@ Cause: Gate 'approve' expired and the run aborted per the workflow's declared on
 
 Nothing was answered: `inspect` prints no `Answer:` line for the step, it lists the step under `Skipped:` as `gate_expired`, and `get_run_state` gives the step no `answers` entry.
 
-The call that carries out an expiry says so in its `warnings`, naming itself: over MCP the tool — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit_human_response`) — and from a program the library function (`enacted_via: submitHumanResponse`, `executeChain`, …). `realm run advance` prints that line first, after `⚠ ` (`this advance call …`), before the steps it runs; an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through `realm run respond` (`this respond call …`), the prompt of `realm workflow run` (`this run call …`) or a reply in the gate's Slack thread to `realm agent` (`this agent call …`, posted in the thread). `realm run drain` and the process waiting at the gate print a line of their own. Afterwards, `realm run inspect` and `get_run_state` do not show which call carried it out.
+The call that carries out an expiry says so in its `warnings`, naming itself and how long before it the question's time was up (`had expired 15s before this call`; seconds under a minute, then minutes, hours and days): over MCP the tool — for a late answer, `this submit_human_response call first carried out its declared …` (`enacted_via: submit_human_response`) — and from a program the library function (`enacted_via: submitHumanResponse`, `executeChain`, …). `realm run advance` prints that line first, after `⚠ ` (`this advance call …`), before the steps it runs; an answer that came after the time was up and carried the expiry out prints it first too, before its refusal or the sentence that says it was not recorded — through `realm run respond` (`this respond call …`), the prompt of `realm workflow run` (`this run call …`) or a reply in the gate's Slack thread to `realm agent` (`this agent call …`, posted in the thread). `realm run drain` and the process waiting at the gate print a line of their own. Afterwards, `realm run inspect` and `get_run_state` do not show which call carried it out.
 
 ### A guard after the gate
 
@@ -221,7 +221,7 @@ A guard step that the settled choice makes ready is decided in the same write as
 For one run, `realm run drain <run-id> --expired` names the choice it would settle and says what the guard would then do. With `--force` it carries the expiry out and says what the guard did:
 
 ```text
-Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 0m ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
+Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 18s ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
 ```
 
 ```text
@@ -234,14 +234,14 @@ See [`drain`](../cli/realm-run-acting.md#drain) for the other forms.
 
 ### An answer after the time is up
 
-**An answer that arrives after the time is up is not recorded.** The expiry is carried out first. What the person is told depends on what the gate declared.
+**An answer that arrives after the time is up is not recorded.** The expiry is carried out first. What the person is told depends on what the gate declared. An answer that finds the expired question still open is also told how late it was: its line says how long before the answer the time was up (`had expired 15s before this call`), and over MCP the reply's `error_details` carry `expired_at` and `overdue_ms`.
 
 **`on_expiry: settle_default`.** The gate was settled with its default choice. For such an answer `realm run respond` does not print `Responded:`. It prints `Not recorded:`, with the choice the gate was settled with and the run's phase, and after it the lines an answer in time prints after `Responded:`: what the run owes (`Owed to the engine: … — realm run advance <id> …`, an agent step that is ready, or the steps that cannot run). Those lines were added after version 0.46.0.
 
 If the answer is the choice the gate was settled with, the command exits 0:
 
 ```text
-⚠ gate '1a42b4b0-1fa1-42c9-b9ca-099c040b43f2' on 'approve' had expired — this respond call first carried out its declared settle_default: the default choice 'ship' was recorded (enacted_via: respond).
+⚠ gate '1a42b4b0-1fa1-42c9-b9ca-099c040b43f2' on 'approve' had expired 2m before this call — this respond call first carried out its declared settle_default: the default choice 'ship' was recorded (enacted_via: respond).
 the outcome matches your choice, but it was settled by timeout; your response was not recorded.
 Guard step 'only_if_shipping' passed.
 Not recorded: e428e60c-a362-410f-8819-008e40456639 | gate settled by timeout with choice 'ship' | state 'running'
@@ -252,7 +252,7 @@ If a realm workflow run or realm agent is still waiting on this run, it goes on 
 If the answer is a different choice, it is refused. Every line goes to the error stream, and the command exits 1:
 
 ```text
-⚠ gate '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb' on 'approve' had expired — this respond call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: respond).
+⚠ gate '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb' on 'approve' had expired 41s before this call — this respond call first carried out its declared settle_default: the default choice 'hold' was recorded (enacted_via: respond).
 Gate '80e024ee-2fd7-415e-8d38-a2fb8faf0cbb' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.
 Guard step 'only_if_shipping' aborted the run.
 Reason: The order was held.

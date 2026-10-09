@@ -91,6 +91,7 @@ import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
 import { renderTemplate, resolvePath, UnknownFilterError } from './render-template.js';
 import { generateSchemaSkeleton } from '../utils/schema-skeleton.js';
+import { formatDuration } from '../utils/duration.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
 import {
   findEligibleSteps,
@@ -1633,25 +1634,50 @@ export type EnactedVia =
 
 /**
  * The ONE line that says an expired question's declared `on_expiry` was carried out (decisions
- * C105, C122): by this call — `this <call> call first carried out its declared settle_default: the
- * default choice '<c>' was recorded (enacted_via: <via>).` or `… abort: the run ended …` — or, when
- * another call had already done it (`byThisCall: false`, a late answer that lost the race), that
- * another call had. Every caller that carries an expiry out says it through this function.
+ * C105, C122): how long before this call the question's time was up (F1: `had expired 15s before
+ * this call`, from {@link formatDuration} — the lag, A.3 #5), then by whom — this call: `this
+ * <call> call first carried out its declared settle_default: the default choice '<c>' was recorded
+ * (enacted_via: <via>).` or `… abort: the run ended …` — or, when another call had already done it
+ * (`byThisCall: false`, a late answer that lost the race), that another call had. Every caller that
+ * carries an expiry out says it through this function. `overdueMs` is this call's `now` minus the
+ * question's `expires_at`; `undefined` only when the question's time is not known, and the line then
+ * says `had expired before this call`.
  */
 export function expiryCarriedOutLine(
   gateId: string,
   step: string,
   outcome: { on_expiry: 'settle_default'; choice: string } | { on_expiry: 'abort' },
   via: EnactedVia,
+  overdueMs: number | undefined,
   byThisCall = true,
 ): string {
   const did =
     outcome.on_expiry === 'settle_default'
       ? `settle_default: the default choice '${outcome.choice}' was recorded`
       : 'abort: the run ended';
+  const when = `had expired ${overdueMs === undefined ? '' : `${formatDuration(overdueMs)} `}before this call`;
   return byThisCall
-    ? `gate '${gateId}' on '${step}' had expired — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`
-    : `gate '${gateId}' on '${step}' had expired — another call had already carried out its declared ${did}.`;
+    ? `gate '${gateId}' on '${step}' ${when} — this ${via} call first carried out its declared ${did} (enacted_via: ${via}).`
+    : `gate '${gateId}' on '${step}' ${when} — another call had already carried out its declared ${did}.`;
+}
+
+/**
+ * F1: the typed facts of a late answer — when the question's time was up and how long before this
+ * call (`error_details.expired_at`, `error_details.overdue_ms`). Every late answer's reply carries
+ * them; `realm run respond`'s `⚠` line is recomposed from `overdue_ms`. Empty when the question's
+ * time is not known.
+ */
+function lateTimeDetails(
+  expiresAt: string | undefined,
+  now: Date,
+): { expired_at?: string; overdue_ms?: number } {
+  if (expiresAt === undefined) return {};
+  return { expired_at: expiresAt, overdue_ms: overdueMsOf(expiresAt, now) };
+}
+
+/** F1: how long before `now` a question whose time ends at `expiresAt` expired (never negative). */
+function overdueMsOf(expiresAt: string, now: Date): number {
+  return Math.max(0, now.getTime() - new Date(expiresAt).getTime());
 }
 
 /**
@@ -1732,6 +1758,7 @@ async function enactExpiredGateIfDue(
           }
         : { on_expiry: 'abort' },
       via,
+      gate.expires_at === undefined ? undefined : overdueMsOf(gate.expires_at, now),
     ),
   );
   // issue #625: the expiry's own write settled the guards its default made eligible. This leg
@@ -5080,7 +5107,8 @@ function lateSameChoiceDetails(
  * surface prints it — `⚠ ` and the line: `this <via> call first carried out its declared …` when
  * the answering call carried the expiry out, or `another call had already carried out …`. Picked
  * from the reply's `warnings` by composing both forms with {@link expiryCarriedOutLine} (the line's
- * one composer) for this gate, the outcome read off the run record — never by matching prose.
+ * one composer) for this gate, the outcome read off the run record and the lag off the reply's
+ * typed `error_details.overdue_ms` (F1) — never by matching prose.
  * Empty when the reply carries neither form (the expiry had already been carried out before this
  * answer came: its reply is the `settled by timeout` refusal, decision C178).
  */
@@ -5097,8 +5125,17 @@ function lateExpiryLines(
         ? { on_expiry: 'abort' as const }
         : undefined;
   if (outcome === undefined) return [];
+  // F1: the lag is the reply's typed fact (`error_details.overdue_ms`), never read off its prose.
+  const overdue = reply.error_details?.['overdue_ms'];
   const forms = [true, false].map((byThisCall) =>
-    expiryCarriedOutLine(answer.gateId, reply.command, outcome, answer.via, byThisCall),
+    expiryCarriedOutLine(
+      answer.gateId,
+      reply.command,
+      outcome,
+      answer.via,
+      typeof overdue === 'number' ? overdue : undefined,
+      byThisCall,
+    ),
   );
   return reply.warnings.filter((w) => forms.includes(w)).map((w) => `⚠ ${w}`);
 }
@@ -5292,6 +5329,9 @@ async function composeExpiredGateEnvelope(
   answerClaim: { verdict: AnswerClaim | undefined; tokenPresented: boolean },
   // decision C151: the call this late answer is — named on the expiry line when it carried it out.
   via: AnswerCaller,
+  // F1: the question's `expires_at` as read BEFORE the expiry's write (the settled record no longer
+  // holds it) — the line's lag and the reply's `expired_at`/`overdue_ms`.
+  expiresAt: string | undefined,
 ): Promise<ResponseEnvelope> {
   const expiryReply = await composeExpiryReply(
     store,
@@ -5303,6 +5343,7 @@ async function composeExpiredGateEnvelope(
     now,
     expireResult,
     via,
+    expiresAt,
   );
   // issue #625 — two facts, both kept, on every form of this reply:
   //  1. this answer was NOT recorded — the gate's expiry beat it. `answer_recorded: false` is the
@@ -5360,7 +5401,12 @@ async function composeExpiryReply(
   now: Date,
   expireResult: SettlementResult,
   via: AnswerCaller,
+  // F1: the question's pre-settle `expires_at` (see composeExpiredGateEnvelope).
+  expiresAt: string | undefined,
 ): Promise<ResponseEnvelope> {
+  // F1: every late reply's `error_details` carries when the question's time was up and how long
+  // before this call; the expiry line says the same lag.
+  const lateTime = lateTimeDetails(expiresAt, now);
   let finalRun = expireResult.run;
   let drainWarnings: string[] = [];
   if (expireResult.applied && expireResult.transitioned) {
@@ -5390,6 +5436,7 @@ async function composeExpiryReply(
       stepName,
       { on_expiry: 'settle_default', choice: entry.choice ?? '' },
       via,
+      lateTime.overdue_ms,
       byThisCall,
     );
     if (entry.choice === originalChoice) {
@@ -5408,7 +5455,10 @@ async function composeExpiryReply(
         evidence: [],
         warnings: mergeWarnings([], enactedDisclosure, ...drainWarnings),
         errors: [],
-        error_details: lateSameChoiceDetails(finalRun.id, originalGateId, entry.choice),
+        error_details: {
+          ...lateSameChoiceDetails(finalRun.id, originalGateId, entry.choice),
+          ...lateTime,
+        },
         context_hint: `${LATE_SAME_CHOICE_SENTENCE}${view !== undefined ? describeNext(view, finalRun) : ''}`,
         run_phase: finalRun.run_phase,
         next_actions: finalRun.terminal_state
@@ -5428,6 +5478,7 @@ async function composeExpiryReply(
           gateId: originalGateId,
           winning_choice: entry.choice,
           resolved_by: 'timeout',
+          ...lateTime,
         },
       },
     );
@@ -5465,6 +5516,7 @@ async function composeExpiryReply(
       stepName,
       { on_expiry: 'abort' },
       via,
+      lateTime.overdue_ms,
       byThisCall,
     );
     const err = new WorkflowError(
@@ -5475,7 +5527,7 @@ async function composeExpiryReply(
         category: 'STATE',
         agentAction: 'report_to_user',
         retryable: false,
-        details: { runId: finalRun.id, gateId: originalGateId, step_name: stepName },
+        details: { runId: finalRun.id, gateId: originalGateId, step_name: stepName, ...lateTime },
       },
     );
     const envelope = errorEnvelope(
@@ -5507,7 +5559,7 @@ async function composeExpiryReply(
       category: 'STATE',
       agentAction: 'report_to_user',
       retryable: false,
-      details: { runId: finalRun.id, gateId: originalGateId },
+      details: { runId: finalRun.id, gateId: originalGateId, ...lateTime },
     },
   );
   return errorEnvelope(
@@ -5650,6 +5702,9 @@ export async function submitHumanResponse(
             expireResult,
             { verdict: result.gateClaim, tokenPresented: options.claimToken !== undefined },
             via,
+            // F1: the question as the refusal read it (fresh), else as this call read it.
+            [result.run.pending_gate, run.pending_gate].find((g) => g?.gate_id === options.gateId)
+              ?.expires_at,
           );
         }
         case 'already_settled': {
@@ -6083,6 +6138,7 @@ export async function submitHumanResponse(
         expireOutcome,
         { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
         via,
+        run.pending_gate.expires_at,
       );
     }
     let persistedExpiry: RunRecord;
@@ -6118,6 +6174,7 @@ export async function submitHumanResponse(
       { ...expireOutcome, run: persistedExpiry },
       { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
       via,
+      run.pending_gate.expires_at,
     );
   }
 

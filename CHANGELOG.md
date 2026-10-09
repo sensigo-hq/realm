@@ -338,7 +338,7 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
   PR-2a).** On a run whose question's time is up and whose `on_expiry` the engine carries out,
   `realm agent` no longer prints the gate, `Waiting for approval...` and `realm run respond …
 --choice` commands an answer could not be recorded through: it carries the expiry out first and
-  prints `⚠ gate '<g>' on '<s>' had expired — this agent call first carried out its declared … (enacted_via: agent).`,
+  prints `⚠ gate '<g>' on '<s>' had expired <how long> before this call — this agent call first carried out its declared … (enacted_via: agent).`,
   then runs what the expiry made owed. A question whose time is not up is announced as before.
 - **BREAKING — the owed call replaces three silent states (issue #625, PR-2a).** `get_run_state`'s
   `next_actions_status` value `auto_pending` (documented as "not awaiting the agent") is removed and
@@ -563,8 +563,9 @@ run, registry, now)` and `describePending(definition, run, registry, now)` take 
   - **Upgrading:** pass `registry` (or `undefined`) and `new Date()`.
 - **BREAKING — the expiry line says what this call did, and core prints nothing (issue #625,
   PR-2a).** The line a call adds to its `warnings` when it carries out an expired question's
-  `on_expiry` now reads `gate '<g>' on '<s>' had expired — this <call> call first carried out its
-declared settle_default: the default choice '<c>' was recorded (enacted_via: <via>).`, or `…
+  `on_expiry` now reads `gate '<g>' on '<s>' had expired <how long> before this call — this <call>
+call first carried out its declared settle_default: the default choice '<c>' was recorded
+(enacted_via: <via>).`, or `…
 its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_expiry> before this
 <call> call (enacted_via: <call>).`). `<call>` names the call, and `enacted_via` is the same word:
   the MCP tool (`execute_step`, `advance_run`, `start_run`, `submit_human_response` for a late
@@ -587,8 +588,8 @@ its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_ex
 '<value>'. Nothing was read or written.`
   - A late answer's line is this one too (0.46.0: `gate '<g>' expired <n>m ago and was enacted
 (settle_default: '<c>') before this response arrived — enacted_via: submit.`). When another call
-    had already carried the expiry out, it says so: `… had expired — another call had already
-carried out its declared …`.
+    had already carried the expiry out, it says so: `… had expired <how long> before this call —
+another call had already carried out its declared …`.
   - The engine no longer writes that line, or the could-not line, to stderr. A store that cannot
     carry the expiry out now gives a line in `warnings` too: `gate '<g>' on '<s>' had expired, but
 this <call> call could not carry out its declared <on_expiry> (<error>); it went on with the run
@@ -602,6 +603,15 @@ respond).` — before the refusal (stderr) or the same-choice sentence (stdout).
   - `realm workflow run`'s prompt (`this run call …`) and a Slack reply to `realm agent` (`this agent call …`, posted in the gate's thread and printed) say it the same way, through the one composer: **BREAKING**, `describeAnswerEnding(reply, run, { gateId, via })` takes the gate and the caller's word; a late Slack reply now posts these lines and stops waiting, in place of `Couldn't record your response … Try again`.
   - **Upgrading:** a program that matched the old text, or read the line from stderr, reads the
     reply's `warnings`.
+- **A late answer is told how late it was (issue #625, PR-2a).** The expiry line says how long
+  before the call the question's time was up — `had expired 15s before this call`, in seconds under
+  a minute, then minutes, hours and days — on every call that carries an expiry out (the lag 0.46.0
+  printed as `expired <n>m ago`, which read `0m` under a minute). A late answer that finds the
+  expired question still open gets `error_details.expired_at` (the question's `expires_at`) and
+  `error_details.overdue_ms`; `realm run respond`, the Slack gate notifier and `realm workflow
+run`'s prompt print the line from them. Core exports the one formatter, `formatDuration`.
+  - `realm run drain` says how long ago a gate expired in seconds under a minute (`gate expired 12s
+ago`; it printed `0m`).
 - **`realm run list --stuck` names the command for an expired question the engine carries out
   (issue #625, PR-2a).** `gate_expired(settle_default)` and `gate_expired(abort)` now end with
   `(realm run advance)`; the finding-only label keeps `(realm run respond)`.

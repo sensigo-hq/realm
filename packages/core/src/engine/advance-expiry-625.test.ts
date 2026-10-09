@@ -94,7 +94,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
     });
     // (a) red when the disclosure is dropped or names the wrong call; (b) prints the warnings.
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'confirm' had expired 5s before this call — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
     );
     // (a) red when the owed step the expiry made is not run in the same call; (b) prints the steps.
     expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['after']);
@@ -120,7 +120,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       `Run '${runId}': its expired question was carried out as declared (see warnings); no step ran. The run ended (aborted).`,
     );
     expect(reply.warnings).toContain(
-      `gate '${gateId}' on 'confirm' had expired — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'confirm' had expired 5s before this call — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
     );
   });
 

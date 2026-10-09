@@ -30,6 +30,9 @@ import {
   getWorkflowForRun,
   describeGuardLines,
   guardEndingOf,
+  // issue #625 PR-2a (F1): how long ago a gate expired — core's one duration formatter (seconds
+  // under a minute, never `0m`).
+  formatDuration,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -106,7 +109,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingVie
   const expiry = classifyGateExpiry(run, now);
   if (expiry.kind === 'enactable') {
     return [
-      `Its gate expired ${formatOverdueDuration(expiry.overdueMs)} ago. To see what the expiry ` +
+      `Its gate expired ${formatDuration(expiry.overdueMs)} ago. To see what the expiry ` +
         `will do: realm run drain ${runId} --expired`,
       `To carry it out: realm run drain ${runId} --expired --force`,
     ];
@@ -141,17 +144,6 @@ export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
   if (overdueMs < 0) return { kind: 'not_expired' };
   if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs };
   return { kind: 'enactable', disposition: gate.on_expiry, overdueMs };
-}
-
-/** Local duration formatter (issue #291) — CLI-side, mirrors core's own `formatOverdueDuration`
- *  shape independently (no cross-package import for a two-branch formatter). */
-function formatOverdueDuration(ms: number): string {
-  const totalMinutes = Math.floor(Math.max(0, ms) / 60_000);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalDays = Math.floor(totalHours / 24);
-  if (totalMinutes < 60) return `${totalMinutes}m`;
-  if (totalHours < 24) return `${totalHours}h ${totalMinutes % 60}m`;
-  return `${totalDays}d ${totalHours % 24}h`;
 }
 
 /**
@@ -349,7 +341,7 @@ function renderGateExpiryDryRun(
   if (!expiredFlag) return false;
   const cls = classifyGateExpiry(run, now);
   if (cls.kind === 'enactable') {
-    const overdue = formatOverdueDuration(cls.overdueMs);
+    const overdue = formatDuration(cls.overdueMs);
     // issue #625: the line names the choice a `settle_default` would settle, then what the
     // guards that choice unlocks would do — one clause per guard.
     console.log(
@@ -361,7 +353,7 @@ function renderGateExpiryDryRun(
     return true;
   }
   if (cls.kind === 'finding_only') {
-    const overdue = formatOverdueDuration(cls.overdueMs);
+    const overdue = formatDuration(cls.overdueMs);
     console.log(
       `Run '${runId}': gate expired ${overdue} ago — finding-only (no on_expiry declared, nothing to enact).`,
     );
@@ -617,7 +609,7 @@ export async function runDrainAction(
           const cls = classifyGateExpiry(r, now);
           if (cls.kind === 'enactable') {
             console.log(
-              `  • ${r.id}: gate expired ${formatOverdueDuration(cls.overdueMs)} ago — would enact ${cls.disposition}`,
+              `  • ${r.id}: gate expired ${formatDuration(cls.overdueMs)} ago — would enact ${cls.disposition}`,
             );
           }
         }

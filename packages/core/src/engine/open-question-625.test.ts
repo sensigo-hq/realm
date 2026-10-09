@@ -402,7 +402,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     // (a) red when the line says "before this call", drops the default choice, or is missing; (b)
     // prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'q' had expired 5s before this call — this advanceRun call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advanceRun).`,
     ]);
   });
 
@@ -415,7 +415,7 @@ describe('#625 PR-2a, C103/C104/C105/C109/C110 — the open question, named ever
     const reply = await advanceRun(store, d, { runId, now: past });
     // (a) red when the abort's line does not say the run ended; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${gateId}' on 'q' had expired — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
+      `gate '${gateId}' on 'q' had expired 5s before this call — this advanceRun call first carried out its declared abort: the run ended (enacted_via: advanceRun).`,
     ]);
   });
 

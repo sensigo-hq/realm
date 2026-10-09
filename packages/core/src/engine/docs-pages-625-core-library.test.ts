@@ -88,7 +88,7 @@ const dispatcher = async () => ({});
 const LATER = () => new Date(Date.now() + 120_000);
 const EARLIER = () => new Date(Date.now() - 120_000);
 const line = (gateId: string, fn: string) =>
-  `gate '${gateId}' on 'q' had expired — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`;
+  `gate '${gateId}' on 'q' had expired 1m before this call — this ${fn} call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: ${fn}).`;
 
 /** The store, with a count of every method called on it (reads and writes alike). */
 function counted(store: RunStore): { store: RunStore; calls: string[] } {
