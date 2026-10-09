@@ -111,6 +111,12 @@ export interface LoadedProjectExtensions {
    * redaction pass — must never ride any persisted or serialized structure.
    */
   secretValues?: readonly string[];
+  /**
+   * issue #625 PR-2a (decision C209): the deployment manifest (`realm.yaml`) this load read — absent
+   * when the deployment root holds none, or there is no deployment root. The project words of
+   * `realm run advance` and `realm run respond` name a `realm.yaml` only when one was read.
+   */
+  manifestPath?: string;
 }
 
 /** Registration surfaces of a declarative extension module, keyed by export map name. */
@@ -191,6 +197,17 @@ function isContainedIn(child: string, root: string): boolean {
 function normalizeDeclared(extensions: string | string[] | undefined): string[] | undefined {
   if (extensions === undefined) return undefined;
   return typeof extensions === 'string' ? [extensions] : extensions;
+}
+
+/**
+ * issue #625 PR-2a (decision C209): whether the definition declares extension CODE modules — what a
+ * load without `--extensions-module` imports. With the override, the declared modules are not
+ * loaded, so whether the project holds code is read here, not from the registry.
+ */
+export function declaresExtensionModules(
+  definition: Pick<WorkflowDefinition, 'extensions'>,
+): boolean {
+  return (normalizeDeclared(definition.extensions) ?? []).length > 0;
 }
 
 interface ManifestContext {
@@ -502,6 +519,7 @@ export async function loadProjectExtensions(
     ...(sentinelWarnings.length > 0 ? { sentinelWarnings } : {}),
     ...(releaseLineWarnings.length > 0 ? { releaseLineWarnings } : {}),
     ...(secretValues !== undefined && secretValues.length > 0 ? { secretValues } : {}),
+    ...(manifestCtx !== undefined ? { manifestPath: manifestCtx.path } : {}),
   };
   cache.set(cacheKey, { result, ...(freshness !== undefined ? { freshness } : {}) });
   emitReleaseLineWarnings(result, opts);

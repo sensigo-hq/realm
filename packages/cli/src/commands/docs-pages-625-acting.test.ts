@@ -680,6 +680,96 @@ describe(
       ]);
     });
 
+    it("advance and respond (C209, walk c14 W3-5): with --extensions-module a realm.yaml is named only when the folder has one, which is read; the --project line and respond's owed line say what is loaded from the workflow's own project", async () => {
+      claim(
+        PAGE,
+        "With `--extensions-module`, the first line names that module, `with the module <path> (--extensions-module)`, followed by `and the realm.yaml of <folder>` only when that folder has a `realm.yaml`, which the command then reads; the folder's extension modules are not loaded, so the `--project` line ends `…, and its realm.yaml is loaded from there.`, or `… <folder> (no realm.yaml there).` when it has none.",
+      );
+      claim(
+        PAGE,
+        "With `--extensions-module`, that folder's extension modules are not loaded, and the line ends `…, and its realm.yaml is loaded from there.`, or `… <folder> (no realm.yaml there).` when it has none.",
+      );
+      const other = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-c209-')));
+      folders.push(other);
+      const mod = join(other, 'override.mjs');
+      writeFileSync(
+        mod,
+        "export default { handlers: { mark: { id: 'mark', execute: async () => ({ data: { from: 'the override' } }) } } };\n",
+        'utf8',
+      );
+      const flags = ['--extensions-module', mod, '--project', other];
+      // The workflow's own project holds code and no realm.yaml (the walk's case).
+      const own = await project('acting-c209-own', autoStep('a', [], ['handler: mark']), true);
+      const id1 = await started(own.def);
+      const r1 = realm(['run', 'advance', id1, ...flags]);
+      // (a) red when a realm.yaml is named that the folder does not have, or the --project line says
+      //     its code is loaded; (b) prints stdout.
+      expect(r1.out.slice(0, 2)).toEqual([
+        `Advancing run ${id1} (workflow 'acting-c209-own') with the module ${mod} (--extensions-module), in this shell's environment.`,
+        `--project ${other} was not used: workflow 'acting-c209-own' has its own project, ${own.root} (no realm.yaml there).`,
+      ]);
+      // The same project with a realm.yaml: named on both lines.
+      writeFileSync(join(own.root, 'realm.yaml'), 'version: 1\n', 'utf8');
+      const id2 = await started(own.def);
+      const r2 = realm(['run', 'advance', id2, ...flags]);
+      // (a) red when the realm.yaml read is not named; (b) prints stdout.
+      expect(r2.out.slice(0, 2)).toEqual([
+        `Advancing run ${id2} (workflow 'acting-c209-own') with the module ${mod} (--extensions-module) and the realm.yaml of ${own.root}, in this shell's environment.`,
+        `--project ${other} was not used: workflow 'acting-c209-own' has its own project, ${own.root}, and its realm.yaml is loaded from there.`,
+      ]);
+      // ... and it is read: an invalid one refuses the load.
+      writeFileSync(join(own.root, 'realm.yaml'), 'extensions:\n  - ./ext.mjs\n', 'utf8');
+      const r3 = realm(['run', 'advance', await started(own.def), '--extensions-module', mod]);
+      // (a) red when the command does not read the realm.yaml it names; (b) prints the refusal.
+      expect([r3.code, r3.err.find((l) => l.startsWith('Deployment manifest'))]).toEqual([
+        1,
+        `Deployment manifest '${own.root}/realm.yaml' is invalid:`,
+      ]);
+      // A workflow made from a string: the folder it runs in, or --project — named only with a realm.yaml.
+      const made = await fromString('acting-c209-string', autoStep('a', [], ['handler: mark']));
+      const id4 = await started(made);
+      const r4 = realm(['run', 'advance', id4, '--extensions-module', mod]);
+      writeFileSync(join(other, 'realm.yaml'), 'version: 1\n', 'utf8');
+      const id5 = await started(made);
+      const r5 = realm(['run', 'advance', id5, ...flags]);
+      // (a) red when the folder's realm.yaml is named without one, or not named with one; (b) prints
+      //     both first lines.
+      expect([r4.out[0], r5.out[0]]).toEqual([
+        `Advancing run ${id4} (workflow 'acting-c209-string') with the module ${mod} (--extensions-module), in this shell's environment.`,
+        `Advancing run ${id5} (workflow 'acting-c209-string') with the module ${mod} (--extensions-module) and the realm.yaml of ${other}, in this shell's environment.`,
+      ]);
+      // respond with --extensions-module on a workflow whose own project holds no code: its owed line
+      // says what the advance it names loads — as that advance then says.
+      const empty = await project(
+        'acting-c209-empty',
+        [CONFIRM(), autoStep('process', ['confirm'])].join('\n'),
+        false,
+      );
+      const q = await atQuestion(empty.def);
+      const rr = realm([
+        'run',
+        'respond',
+        q.id,
+        '--gate',
+        q.gateId,
+        '--choice',
+        'approve',
+        ...flags,
+      ]);
+      const ra = realm(['run', 'advance', q.id]);
+      // (a) red when respond says the project holds code because the override was given, or its
+      //     --project line says code is loaded; (b) prints both commands' lines.
+      expect({ respond: rr.out, advance: ra.out[0] }).toEqual({
+        respond: [
+          `--project ${other} was not used: workflow 'acting-c209-empty' has its own project, ${empty.root} (no realm.yaml there).`,
+          `Responded: ${q.id} | choice 'approve' | new state 'running'`,
+          `Owed to the engine: 'process' — realm run advance ${q.id} runs it, with no project code (nothing to load under ${empty.root}), in the environment of the shell it runs in.`,
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+        ],
+        advance: `Advancing run ${q.id} (workflow 'acting-c209-empty') with no project code (nothing to load under ${empty.root}), in this shell's environment.`,
+      });
+    });
+
     /** `a` (auto, handler `mark`) → `confirm` (a question) → `b` (auto, no handler). */
     const A_THEN_QUESTION = [
       autoStep('a', [], ['handler: mark']),

@@ -39,6 +39,8 @@ if (!existsSync(CLI_ENTRY)) {
   throw new Error(`cli dist not built — run \`npm run build\` first (looked for: ${CLI_ENTRY})`);
 }
 const children = printChildrenWhenATestFails();
+/** A load that found no project code and read no realm.yaml (decisions C107, C209). */
+const NO_CODE = { hasCode: false, readsManifest: false };
 
 const YAML = (onExpiry: string) => `id: pcw-${onExpiry}
 name: project code where
@@ -217,12 +219,19 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     expect(
       projectCodeWhere({ trust_root: '/p/proj' }, { extensionsModule: 'fix/mod.mjs' }, '/sh'),
     ).toBe('the module /sh/fix/mod.mjs (--extensions-module) and the realm.yaml of /p/proj');
+    // decision C209: the realm.yaml is named only when the load read one.
+    expect(
+      projectCodeWhere({ trust_root: '/p/proj' }, { extensionsModule: 'fix/mod.mjs' }, '/sh', {
+        hasCode: true,
+        readsManifest: false,
+      }),
+    ).toBe('the module /sh/fix/mod.mjs (--extensions-module)');
     expect(laterAdvanceCodeWhere({ trust_root: '/p/proj' })).toBe('the project code under /p/proj');
     expect(laterAdvanceCodeWhere({})).toBe(
       'the project code under the folder it runs in (or its --project)',
     );
     // decision C107: no project code — said, with the folder nothing was found under.
-    expect(projectCodeWhere({ trust_root: '/p/proj' }, {}, '/sh', false)).toBe(
+    expect(projectCodeWhere({ trust_root: '/p/proj' }, {}, '/sh', NO_CODE)).toBe(
       'no project code (nothing to load under /p/proj)',
     );
     expect(laterAdvanceCodeWhere({ trust_root: '/p/proj' }, false)).toBe(
@@ -330,32 +339,35 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
   it('C121: one composer for the project words — every member; the not-used line says (no project code there) when the project holds none', () => {
     // (a) red when a member's two halves disagree about code, or a clause is dropped; (b) prints it.
     expect(
-      projectWords({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, '/sh', true),
+      projectWords({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, '/sh', {
+        hasCode: true,
+        readsManifest: true,
+      }),
     ).toEqual({
       where: 'the project code under /p/proj',
       notUsed:
         "--project other was not used: workflow 'w' has its own project, /p/proj, and its code is loaded from there.",
     });
     expect(
-      projectWords({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, '/sh', false),
+      projectWords({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, '/sh', NO_CODE),
     ).toEqual({
       where: 'no project code (nothing to load under /p/proj)',
       notUsed:
         "--project other was not used: workflow 'w' has its own project, /p/proj (no project code there).",
     });
-    expect(projectWords({ id: 'w', trust_root: '/p/proj' }, {}, '/sh', false)).toEqual({
+    expect(projectWords({ id: 'w', trust_root: '/p/proj' }, {}, '/sh', NO_CODE)).toEqual({
       where: 'no project code (nothing to load under /p/proj)',
     });
-    expect(projectWords({ id: 'w' }, { project: 'deploy' }, '/sh', false)).toEqual({
+    expect(projectWords({ id: 'w' }, { project: 'deploy' }, '/sh', NO_CODE)).toEqual({
       where: 'no project code (nothing to load under /sh/deploy)',
     });
     // (a) red when the two exported readers do not read the one composer; (b) prints them.
     expect(
-      projectNotUsedLine({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, false),
+      projectNotUsedLine({ id: 'w', trust_root: '/p/proj' }, { project: 'other' }, NO_CODE),
     ).toBe(
       "--project other was not used: workflow 'w' has its own project, /p/proj (no project code there).",
     );
-    expect(projectCodeWhere({ trust_root: '/p/proj' }, {}, '/sh', false)).toBe(
+    expect(projectCodeWhere({ trust_root: '/p/proj' }, {}, '/sh', NO_CODE)).toBe(
       'no project code (nothing to load under /p/proj)',
     );
   });

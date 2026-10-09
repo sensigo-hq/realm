@@ -18,15 +18,20 @@ import {
   owedWords,
   cannotGoOnLines,
 } from '@sensigo/realm';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  loadProjectExtensions,
+  type LoadedProjectExtensions,
+} from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import {
   agentReadyReason,
   attendingLine,
   inFlightReasons,
   laterAdvanceCodeWhere,
+  projectLoadOf,
   projectNotUsedLine,
   PROJECT_OPTION_HELP,
+  type ProjectLoad,
 } from './run-advance.js';
 
 /**
@@ -133,6 +138,8 @@ export async function respondToGate(
   workflowStore: WorkflowRegistrar,
   registry?: ExtensionRegistry,
   driver?: Attributed,
+  // decision C209: what the command's load of the project read — the later advance's words.
+  load?: ProjectLoad,
 ): Promise<RespondOutcome> {
   const run = await runStore.get(runId);
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
@@ -147,21 +154,21 @@ export async function respondToGate(
   // orphan-manifest topology guard is honoured (no hand-rolled registry).
   // Production always passes `registry` now (issue #466's action hoist) — this fallback is the
   // test/direct-caller seam, kept for callers that resolve their own (none in production today).
-  const effectiveRegistry =
-    registry ??
-    (
-      await loadProjectExtensions(workflow, {
-        ...(options.extensionsModule !== undefined
-          ? { overrideModule: options.extensionsModule }
-          : {}),
-        projectDir: options.project ?? process.cwd(),
-      })
-    ).registry;
+  const override = options.extensionsModule !== undefined;
+  const loaded =
+    registry === undefined
+      ? await loadProjectExtensions(workflow, {
+          ...(override ? { overrideModule: options.extensionsModule } : {}),
+          projectDir: options.project ?? process.cwd(),
+        })
+      : undefined;
+  const effectiveRegistry = registry ?? loaded!.registry;
 
-  // decision C107: whether the project the later advance loads holds any code — the registry this
-  // answer loaded from it carries a code identity only when a realm.yaml or a module was found.
-  const hasCode =
-    options.extensionsModule !== undefined || effectiveRegistry.identity !== undefined;
+  // decisions C107, C209: whether the project the later advance loads holds any code — a declared
+  // module or a realm.yaml; with --extensions-module this answer did not load the project's
+  // modules, so it is read from the workflow and the realm.yaml (`projectLoadOf`).
+  const { hasCode } =
+    load ?? projectLoadOf(workflow, loaded ?? { registry: effectiveRegistry }, override);
 
   const result = await submitHumanResponse(runStore, workflow, {
     runId,
@@ -309,14 +316,14 @@ export const respondCommand = new Command('respond')
           retryVerb: 'respond again',
           verb: 'respond',
         });
-        let registry: ExtensionRegistry;
+        let loaded: LoadedProjectExtensions;
         try {
-          ({ registry } = await loadProjectExtensions(workflow, {
+          loaded = await loadProjectExtensions(workflow, {
             ...(opts.extensionsModule !== undefined
               ? { overrideModule: opts.extensionsModule }
               : {}),
             projectDir: opts.project ?? process.cwd(),
-          }));
+          });
         } catch (err) {
           console.error(
             `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
@@ -324,14 +331,12 @@ export const respondCommand = new Command('respond')
           process.exit(1);
           return;
         }
-        // decisions C108, C121: a `--project` the workflow's own project overrides is said, first —
-        // with whether that project holds code (the registry loaded from it carries a code identity
-        // only when a realm.yaml or a module was found).
-        const notUsed = projectNotUsedLine(
-          workflow,
-          opts,
-          opts.extensionsModule !== undefined || registry.identity !== undefined,
-        );
+        // decisions C108, C121, C209: a `--project` the workflow's own project overrides is said,
+        // first — with what is loaded from that project (its code, or with --extensions-module its
+        // realm.yaml), from what this load read.
+        const { registry } = loaded;
+        const load = projectLoadOf(workflow, loaded, opts.extensionsModule !== undefined);
+        const notUsed = projectNotUsedLine(workflow, opts, load);
         if (notUsed !== undefined) console.log(notUsed);
         const { by: _rawBy, ...rest } = opts;
         const outcome = await respondToGate(
@@ -341,6 +346,7 @@ export const respondCommand = new Command('respond')
           workflowStore,
           registry,
           driver,
+          load,
         );
         // issue #625: what the answer's write settled is said FIRST — the guard that ended the
         // run (with its reason and each finalizer's outcome), or each guard that passed — then

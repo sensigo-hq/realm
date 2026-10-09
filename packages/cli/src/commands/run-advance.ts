@@ -36,7 +36,10 @@ import {
   type ProgramFit,
   type WorkflowDefinition,
 } from '@sensigo/realm';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  declaresExtensionModules,
+  loadProjectExtensions,
+} from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import {
   BY_SOURCE_WORDS,
@@ -224,6 +227,39 @@ function endedResumeReason(
 }
 
 /**
+ * What this program's load of the project read (decision C209), from the loader's own result:
+ * `hasCode` — the project holds code a load WITHOUT `--extensions-module` reads, a declared module
+ * or a realm.yaml (decision C107); `readsManifest` — this load read a realm.yaml.
+ */
+export interface ProjectLoad {
+  hasCode: boolean;
+  readsManifest: boolean;
+}
+
+/**
+ * The {@link ProjectLoad} of a load (decision C209). Without `--extensions-module` the registry
+ * carries a code identity only when a realm.yaml or a declared module was found (decision C107);
+ * with it, the declared modules are not loaded, so whether the project holds code is the workflow's
+ * own `extensions` or the realm.yaml this load read.
+ */
+export function projectLoadOf(
+  workflow: Pick<WorkflowDefinition, 'extensions'>,
+  loaded: { registry: ExtensionRegistry; manifestPath?: string },
+  overrideActive: boolean,
+): ProjectLoad {
+  const readsManifest = loaded.manifestPath !== undefined;
+  return {
+    hasCode: overrideActive
+      ? declaresExtensionModules(workflow) || readsManifest
+      : loaded.registry.identity !== undefined,
+    readsManifest,
+  };
+}
+
+/** A project with code and a realm.yaml — the words' default for a caller that read none itself. */
+const PROJECT_WITH_CODE: ProjectLoad = { hasCode: true, readsManifest: true };
+
+/**
  * Where the project code of a run's steps is loaded from (decision C98) — the folder
  * `loadProjectExtensions` anchors on: the workflow's own `trust_root` (its declared modules are
  * resolved under it, and its realm.yaml is read there) whatever folder the shell is in; for a
@@ -234,53 +270,61 @@ export function projectCodeWhere(
   workflow: Pick<WorkflowDefinition, 'trust_root'>,
   opts: { project?: string; extensionsModule?: string },
   cwd: string,
-  // decision C107: whether any project code was found there (a realm.yaml or a declared module).
-  hasCode = true,
+  // decisions C107, C209: what the load found there.
+  load: ProjectLoad = PROJECT_WITH_CODE,
 ): string {
-  return projectWords({ id: '', ...workflow }, opts, cwd, hasCode).where;
+  return projectWords({ id: '', ...workflow }, opts, cwd, load).where;
 }
 
 /**
  * The line for a `--project` the command did not use (decision C108): the workflow has its own
  * project (its `trust_root`), and its code and realm.yaml are loaded from there — or, when that
- * project holds no code, `(no project code there)` (decision C121). `undefined` when `--project`
- * was not given or was used.
+ * project holds no code, `(no project code there)` (decision C121); with `--extensions-module`,
+ * only its realm.yaml can be, `(no realm.yaml there)` when it has none (decision C209).
+ * `undefined` when `--project` was not given or was used.
  */
 export function projectNotUsedLine(
   workflow: Pick<WorkflowDefinition, 'id' | 'trust_root'>,
-  opts: { project?: string },
-  // decision C121: whether the workflow's own project holds any code — the same fact the header says.
-  hasCode = true,
+  opts: { project?: string; extensionsModule?: string },
+  // decisions C121, C209: what the load found in the workflow's own project — the header's facts.
+  load: ProjectLoad = PROJECT_WITH_CODE,
 ): string | undefined {
-  return projectWords(workflow, opts, process.cwd(), hasCode).notUsed;
+  return projectWords(workflow, opts, process.cwd(), load).notUsed;
 }
 
 /**
- * The project words, from ONE composer (decisions C98, C107, C108, C121): where a run's project code
- * is loaded from — `the project code under <folder>`, `no project code (nothing to load under
- * <folder>)`, or the `--extensions-module` module — and, for a `--project` the workflow's own
- * project overrides, the line that says it was not used, with the same fact about its code. The
- * folder is the workflow's own `trust_root` whatever folder the shell is in; for a definition with
- * none, the folder given with `--project`, else the shell's.
+ * The project words, from ONE composer (decisions C98, C107, C108, C121, C209): where a run's
+ * project code is loaded from — `the project code under <folder>`, `no project code (nothing to load
+ * under <folder>)`, or the `--extensions-module` module, with `and the realm.yaml of <folder>` only
+ * when the load read one — and, for a `--project` the workflow's own project overrides, the line
+ * that says it was not used, with the same fact about what is loaded from that project. The folder
+ * is the workflow's own `trust_root` whatever folder the shell is in; for a definition with none,
+ * the folder given with `--project`, else the shell's.
  */
 export function projectWords(
   workflow: Pick<WorkflowDefinition, 'id' | 'trust_root'>,
   opts: { project?: string; extensionsModule?: string },
   cwd: string,
-  hasCode: boolean,
+  load: ProjectLoad,
 ): { where: string; notUsed?: string } {
   const root =
     workflow.trust_root ?? (opts.project !== undefined ? resolve(cwd, opts.project) : cwd);
-  const where =
-    opts.extensionsModule !== undefined
-      ? `the module ${resolve(cwd, opts.extensionsModule)} (--extensions-module) and the realm.yaml of ${root}`
-      : hasCode
-        ? `the project code under ${root}`
-        : noProjectCode(root);
+  const override = opts.extensionsModule !== undefined;
+  const where = override
+    ? `the module ${resolve(cwd, opts.extensionsModule!)} (--extensions-module)${load.readsManifest ? ` and the realm.yaml of ${root}` : ''}`
+    : load.hasCode
+      ? `the project code under ${root}`
+      : noProjectCode(root);
   if (opts.project === undefined || workflow.trust_root === undefined) return { where };
-  const code = hasCode
-    ? `${workflow.trust_root}, and its code is loaded from there`
-    : `${workflow.trust_root} (no project code there)`;
+  // decision C209: with --extensions-module the project's own modules are not loaded — only its
+  // realm.yaml is, when it has one.
+  const code = override
+    ? load.readsManifest
+      ? `${workflow.trust_root}, and its realm.yaml is loaded from there`
+      : `${workflow.trust_root} (no realm.yaml there)`
+    : load.hasCode
+      ? `${workflow.trust_root}, and its code is loaded from there`
+      : `${workflow.trust_root} (no project code there)`;
   return {
     where,
     notUsed: `--project ${opts.project} was not used: workflow '${workflow.id}' has its own project, ${code}.`,
@@ -367,14 +411,14 @@ export async function advanceRunFromShell(
   // decision C95: the clock the view reads, so an open question whose time is up and that declares
   // `on_expiry` is named as owed — and `advanceRun` carries it out first.
   const now = new Date();
-  const registry =
-    registryOverride ??
-    (
-      await loadProjectExtensions(workflow, {
-        ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
-        projectDir,
-      })
-    ).registry;
+  const loaded =
+    registryOverride === undefined
+      ? await loadProjectExtensions(workflow, {
+          ...(opts.extensionsModule !== undefined ? { overrideModule: opts.extensionsModule } : {}),
+          projectDir,
+        })
+      : undefined;
+  const registry = registryOverride ?? loaded!.registry;
 
   const pending = describePending(workflow, run, registry, now);
   const keepsClaims = runStore.persistsClaims === true;
@@ -382,8 +426,13 @@ export async function advanceRunFromShell(
   // the shell's, unless it is), and the environment, which is the shell's. Decision C107: a
   // workflow with no project code is said to have none (the registry loaded no realm.yaml and no
   // module, so it carries no code identity); decision C108: a `--project` not used is said.
-  const hasCode = registryOverride !== undefined || registry.identity !== undefined;
-  const words = projectWords(workflow, opts, process.cwd(), hasCode);
+  // Decision C209: a realm.yaml is named only when this load read one (an injected registry read
+  // none here).
+  const load =
+    loaded !== undefined
+      ? projectLoadOf(workflow, loaded, opts.extensionsModule !== undefined)
+      : { hasCode: true, readsManifest: false };
+  const words = projectWords(workflow, opts, process.cwd(), load);
   print(
     `Advancing run ${runId} (workflow '${workflow.id}') with ${words.where}, in this shell's environment.`,
   );
