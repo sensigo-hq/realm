@@ -853,6 +853,30 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
     });
   });
 
+  it("C205: describeNext with nothing ready but steps in flight elsewhere names them and the wait — one, and several (`are`, `them`); a question's own step is not in flight", async () => {
+    const d = def({
+      a: { description: 'A', execution: 'auto', depends_on: [] },
+      b: { description: 'B', execution: 'auto', depends_on: [] },
+    });
+    await withStore(async (store) => {
+      const other = {
+        by: 'other@host',
+        by_source: 'derived' as const,
+        channel: 'advance' as const,
+      };
+      const { run: one } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+      await store.claimStep(one.id, 'a', d, other);
+      await store.claimStep(one.id, 'b', d, other);
+      const both = await store.get(one.id);
+      const sentence = describeNext(describePending(d, both, undefined, new Date()), both);
+      // (a) red when the steps in flight are not named, the plural words are wrong, or the wait is
+      //     dropped; (b) prints the sentence.
+      expect(sentence).toBe(
+        " No step is ready: 'a', 'b' are in flight elsewhere — wait for them, then call get_run_state.",
+      );
+    });
+  });
+
   it('D3.2: when the only owed step is taken, nothing ran — and the hint says what the record says now', async () => {
     const d = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
     await withStore(async (store) => {
