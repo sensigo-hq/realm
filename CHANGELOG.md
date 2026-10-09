@@ -266,6 +266,10 @@ command not found`. It now prints `--choice <one of: ship, hold>`, which bash an
   `To make the failed step runnable again: realm run resume <id> --from <step>` (it said `'…' makes
 the failed step runnable again.`, which a quoted step name would break); in the refusal of an answer
   to a run that ended, the purge preview comes first.
+- **`realm run advance` says a guard that failed the run, and exits 1 (issue #625, PR-2a).** A
+  guard the call decided whose path found nothing ends the run `failed`; the command now prints
+  `Stopped: '<guard>' failed: <reason>` and exits 1, as for an `auto` step that failed (it printed
+  the guard's sentence and exited 0).
 - **One rule for "another program got there first" (issue #625, PR-2a).** Core exports the stop
   kinds a loop meets on a step it picked or ran, `STOP_KINDS` (`taken`, `ran_elsewhere`,
   `run_ended`, `claim_removed`, `question_opened`, `not_eligible`, `capability`, `failed`,

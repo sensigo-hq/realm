@@ -623,6 +623,19 @@ export async function advanceRunFromShell(
   // its refusal left on the record would make it read as.
   const about = stopAbout(result);
   const refusal = stop?.kind === 'failed' || stop?.kind === 'refused';
+  // F8 (review G2-R2): a guard that ended the run `failed` while this call ran (its path found
+  // nothing) is a step that failed: round 26's rule ("failed" from the record) covers it as it covers
+  // an `auto` step — said first, with the guard's own reason, and the exit code is 1. A guard that
+  // aborted the run did not fail; one that failed before this call read the run is not this call's;
+  // one this call's own refusal already names (its settle was refused) is said once, by that line.
+  const ending = guardEndingOfRun(after);
+  const guardFailed =
+    !run.terminal_state &&
+    ending !== undefined &&
+    after.failed_steps.includes(ending.step) &&
+    !run.failed_steps.includes(ending.step) &&
+    !(refusal && about === ending.step);
+  if (guardFailed) reasons.push(`'${ending.step}' failed: ${ending.reason ?? ending.sentence}`);
   if (refusal) {
     const words = result.errors.join(', ');
     reasons.push(
@@ -677,7 +690,7 @@ export async function advanceRunFromShell(
       : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
   );
   const refused = !after.terminal_state && stepsThatCannotRun(afterView).length > 0;
-  return refusal || refused ? 1 : 0;
+  return refusal || refused || guardFailed ? 1 : 0;
 }
 
 export const runAdvanceCommand = new Command('advance')
