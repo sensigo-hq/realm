@@ -1704,6 +1704,29 @@ describe(
         );
         const pid = await started(pending.def);
         const pa = realm(['run', 'advance', pid]);
+        // The run ended by a guard the call decided, and by an expired question's declared abort.
+        const guarded = await project(
+          'c208-guard',
+          [
+            autoStep('a', [], ['handler: mark']),
+            '  check:',
+            '    description: Check.',
+            '    execution: guard',
+            '    depends_on: [a]',
+            `    abort_unless: ["a.from == 'nowhere'"]`,
+            cleanup('tidy', 'mark'),
+          ].join('\n'),
+          true,
+        );
+        const gid = await started(guarded.def);
+        const ga = realm(['run', 'advance', gid]);
+        const expiring = await project(
+          'c208-expiry',
+          [CONFIRM('abort'), autoStep('after', ['confirm']), cleanup('tidy', 'mark')].join('\n'),
+          true,
+        );
+        const eq = await atQuestion(expiring.def, true);
+        const ea = realm(['run', 'advance', eq.id]);
         // (a) red when a cleanup step's outcome is left out, its line moves, or a run that had
         //     already ended gets one; (b) prints them.
         expect({
@@ -1711,6 +1734,8 @@ describe(
           again: fAgain.out.filter((l) => l.startsWith('finalizer ')),
           completed: { code: ca.code, out: from(ca.out, '→ fetch') },
           pending: { code: pa.code, out: from(pa.out, '→ fetch') },
+          guard: ga.out.slice(-3),
+          expiry: ea.out.slice(-3),
         }).toEqual({
           failed: {
             code: 1,
@@ -1736,6 +1761,16 @@ describe(
               `Run ${pid}: phase 'completed'`,
             ],
           },
+          guard: [
+            'Stopped: the run has ended (aborted)',
+            "finalizer 'tidy': completed",
+            `Run ${gid}: phase 'aborted'`,
+          ],
+          expiry: [
+            'Stopped: the run has ended (aborted)',
+            "finalizer 'tidy': completed",
+            `Run ${eq.id}: phase 'aborted'`,
+          ],
         });
       });
     });
