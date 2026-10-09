@@ -77,7 +77,7 @@ describe('#625 PR-2a — respond prints the derived phase', () => {
       );
       expect(outcome.lastLine).toBe(
         `Responded: ${run.id} | choice 'approve' | new state 'running'\n` +
-          `An agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.\n` +
+          `An agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>\n` +
           // decision C164: the attending line after the command an answer leaves.
           'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );

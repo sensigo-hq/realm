@@ -103,7 +103,7 @@ const needsN = (name: string, deps: string[]): string =>
   ]);
 
 const wayOut = (id: string): string =>
-  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
+  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
 
 // Each cell runs the built `realm` several times as a child process: 60 s, not vitest's default 5 s.
 describe(
@@ -371,7 +371,7 @@ describe(
         'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );
       expect(a.out.at(-2)).toBe(
-        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>.`,
+        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>`,
       );
     });
 
@@ -382,7 +382,7 @@ describe(
       );
       claim(
         PAGE,
-        'A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>.`',
+        'A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>`',
       );
       const { def } = await project(
         'acting-stuck',
@@ -409,7 +409,7 @@ describe(
       expect(rc.out).toEqual([
         `Responded: ${qc.id} | choice 'approve' | new state 'running'`,
         "'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-        `To end the run instead: realm run abandon ${qc.id}.`,
+        `To end the run instead: realm run abandon ${qc.id}`,
       ]);
     });
 
@@ -582,7 +582,7 @@ describe(
       expect({ code: r.code, tail: r.out.slice(3) }).toEqual({
         code: 0,
         tail: [
-          "Owed to the engine: the expired question on 'confirm' (its declared settle_default).",
+          "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
           `⚠ gate '${q.gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
           '→ after',
           "Guard step 'only_if_approved' passed.",
@@ -808,12 +808,14 @@ describe(
       //     the steps, or anything goes to stderr; (b) prints stdout and stderr.
       expect({ tail: r.out.slice(3), err: r.err }).toEqual({
         tail: [
-          "Owed to the engine: the expired question on 'confirm' (its declared settle_default).",
+          "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
           `⚠ gate '${q.gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
           '→ a',
           "⚠ finalizer 'tidy' left pending — handler not available on this surface",
           // decision C208: the run ended during the call — its cleanup step's outcome.
           "finalizer 'tidy': pending",
+          // decision C211 (walk c14 W3-4): the cleanup step left pending — the command that runs it.
+          `Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain ${q.id} --force`,
           `Run ${q.id}: phase 'completed'`,
         ],
         err: [],
@@ -974,8 +976,8 @@ describe(
       // (a) red when a reason or its opening words change; (b) prints the three lines.
       expect([last(ended), last(ida), last(q.id)]).toEqual([
         'Nothing is owed to the engine: the run has ended (abandoned).',
-        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${ida} --provider <provider> --model <model>.`,
-        `Nothing is owed to the engine: a question is open — realm run respond ${q.id} --gate ${q.gateId} --choice <one of: approve, reject>.`,
+        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${ida} --provider <provider> --model <model>`,
+        `Nothing is owed to the engine: a question is open — realm run respond ${q.id} --gate ${q.gateId} --choice <one of: approve, reject>`,
       ]);
       // (a) red when advance at an open question changes the run; (b) prints both records' steps.
       const afterQ = await runStore.get(q.id);
@@ -1165,7 +1167,7 @@ describe(
       const again = realm(['run', 'advance', id]);
       // (a) red when the line names another gate or choices, or a step runs; (b) prints stdout.
       expect({ last: again.out.at(-1), done: (await runStore.get(id)).completed_steps }).toEqual({
-        last: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${gateId} --choice <one of: approve, reject>.`,
+        last: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${gateId} --choice <one of: approve, reject>`,
         done: ['a'],
       });
     });
@@ -1477,27 +1479,23 @@ describe(
       };
       claim(
         PAGE,
-        "The third to sixth lines — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out beside it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>.` for every run in `running`. The second line is now for a run with none of these.",
+        "The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop).",
       );
+      // The page's lines for one run (decision C212: the way out on the line after its command).
+      const of = (pageId: string, runId: string): string[] =>
+        shown.filter((l) => l.includes(pageId)).map((l) => l.replaceAll(pageId, runId));
       // (a) red when a line differs from the page's (its run ID put in place); (b) prints them.
       expect([line(id), line(ids), line(ida), line(idf)]).toEqual([
-        {
-          code: 0,
-          lines: [shown[2]!.replaceAll('daeede5e-c0dd-4b88-9caf-6efa089902dd', id)],
-        },
-        {
-          code: 0,
-          lines: [shown[3]!.replaceAll('573ff99d-44fc-42c9-98e8-c394fed45e6e', ids)],
-        },
-        {
-          code: 0,
-          lines: [shown[4]!.replaceAll('e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68', ida)],
-        },
-        {
-          code: 0,
-          lines: [shown[5]!.replaceAll('5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25', idf)],
-        },
+        { code: 0, lines: of('daeede5e-c0dd-4b88-9caf-6efa089902dd', id) },
+        { code: 0, lines: of('573ff99d-44fc-42c9-98e8-c394fed45e6e', ids) },
+        { code: 0, lines: of('e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68', ida) },
+        { code: 0, lines: of('5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25', idf) },
       ]);
+      // (a) red when a run's way out is joined to its command on one line; (b) prints the counts.
+      expect([
+        of('daeede5e-c0dd-4b88-9caf-6efa089902dd', id).length,
+        of('573ff99d-44fc-42c9-98e8-c394fed45e6e', ids).length,
+      ]).toEqual([2, 1]);
     });
 
     describe('round 29 — C206, C207, C208 (walk c13): the one choice form, where one advance call stops, the cleanup steps’ outcomes', () => {
@@ -1575,7 +1573,8 @@ describe(
             out: [
               `Owed to the engine: 'approve', 'fetch'; it runs them ${UNTIL}.`,
               '→ approve',
-              `Stopped: a question is open — realm run respond ${qid} --gate ${qRecord.pending_gate?.gate_id} --choice <one of: ship, hold>`,
+              // decision C211 (walk c14 W2-2): `fetch`, owed and not run, waits for the answer — named.
+              `Stopped: a question is open ('fetch' waits for its answer) — realm run respond ${qid} --gate ${qRecord.pending_gate?.gate_id} --choice <one of: ship, hold>`,
               `Run ${qid}: phase 'gate_waiting'`,
             ],
           },
@@ -1661,7 +1660,7 @@ describe(
         );
         claim(
           READING,
-          `and the \`realm run advance\` command that runs them, with, for more than one, where that call stops: \`; it runs them ${UNTIL}\`.`,
+          `and the \`realm run advance\` command that runs them, followed, for more than one, by where that call stops: \` runs them ${UNTIL}\`, or, for an expired question's declared default, \` carries it out, then runs what that leaves owed ${UNTIL}\`.`,
         );
         // respond: the answer leaves a question and another step owed.
         const r = await project(
@@ -1720,19 +1719,20 @@ describe(
           advanced: [
             `Owed to the engine: 'approve', 'notify'; it runs them ${UNTIL}.`,
             '→ approve',
-            `Stopped: a question is open — realm run respond ${q.id} --gate ${afterAnswer.pending_gate?.gate_id} --choice <one of: ship, hold>`,
+            `Stopped: a question is open ('notify' waits for its answer) — realm run respond ${q.id} --gate ${afterAnswer.pending_gate?.gate_id} --choice <one of: ship, hold>`,
             `Run ${q.id}: phase 'gate_waiting'`,
           ],
           notifyRan: false,
-          resumed: `To run the steps the engine owes ('a', 'b') ${UNTIL}, without a model: realm run advance ${rid}.`,
+          resumed: `To run the steps the engine owes ('a', 'b') ${UNTIL}, without a model: realm run advance ${rid}`,
           drained: [
-            `Run '${did}' is not terminal (phase: 'running') — nothing to drain. To run the steps the engine owes ('approve', 'fetch') ${UNTIL}: realm run advance ${did}. To end the run instead: realm run abandon ${did}.`,
+            `Run '${did}' is not terminal (phase: 'running') — nothing to drain. To run the steps the engine owes ('approve', 'fetch') ${UNTIL}: realm run advance ${did}`,
+            `To end the run instead: realm run abandon ${did}`,
           ],
           inspected: [
-            `Owed to the engine: 'approve', 'fetch' — realm run advance ${did}; it runs them ${UNTIL}`,
+            `Owed to the engine: 'approve', 'fetch' — realm run advance ${did} runs them ${UNTIL}`,
           ],
           enacted: [
-            `To run the steps the engine owes ('x', 'y') ${UNTIL}: realm run advance ${eq.id}.`,
+            `To run the steps the engine owes ('x', 'y') ${UNTIL}: realm run advance ${eq.id}`,
           ],
         });
       });
@@ -1762,7 +1762,7 @@ describe(
           ran: [ran.code, ran.out[0]],
         }).toEqual({
           stop: `Stopped: a question is open — realm run respond ${id} --gate ${gate} --choice ack`,
-          again: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${gate} --choice ack.`,
+          again: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${gate} --choice ack`,
           ran: [0, `Responded: ${id} | choice 'ack' | new state 'running'`],
         });
       });
@@ -1848,6 +1848,8 @@ describe(
               '→ fetch',
               "⚠ finalizer 'tidy' left pending — handler not available on this surface",
               "finalizer 'tidy': pending",
+              // decision C211 (walk c14 W3-4): the command that runs it.
+              `Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain ${pid} --force`,
               `Run ${pid}: phase 'completed'`,
             ],
           },

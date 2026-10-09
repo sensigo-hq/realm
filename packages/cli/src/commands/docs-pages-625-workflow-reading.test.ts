@@ -149,7 +149,7 @@ describe(
     it('lines 152, 174, 177–179: what the engine owes, and steps that cannot run, from three runs — inspect judges a missing handler by the record, and a program that has it runs the step', async () => {
       claim(
         RD_PAGE,
-        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them, with, for more than one, where that call stops: `; it runs them until a step opens a question, fails or ends the run`. Added after version 0.46.0. |",
+        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them, followed, for more than one, by where that call stops: ` runs them until a step opens a question, fails or ends the run`, or, for an expired question's declared default, ` carries it out, then runs what that leaves owed until a step opens a question, fails or ends the run`. Added after version 0.46.0. |",
       );
       claim(
         RD_PAGE,
@@ -342,7 +342,7 @@ describe(
       (trustDef.steps['compute'] as { trust?: unknown }).trust = 'bogus_value';
       const bad = await started(trustDef);
       const wayOut = (id: string) =>
-        `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
+        `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
       const tail = (id: string) => head(inspect(id));
       const preLines = tail(pre);
       const trustLines = tail(bad);
@@ -737,7 +737,7 @@ describe(
         err: [
           'Workflow stalled: nothing else can run.',
           "'compute' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-          `To end the run instead: realm run abandon ${cap}.`,
+          `To end the run instead: realm run abandon ${cap}`,
         ],
         code: 1,
       });
@@ -1272,7 +1272,7 @@ describe(
       it('an `auto` step whose input its schema refuses, left at its prompt: each step that cannot run and the way out, then `Inspect`', async () => {
         claim(
           WF_PAGE,
-          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.`), then `Inspect`;",
+          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id> — or end it: realm run abandon <id>`), then `Inspect`;",
         );
         mocks.question.mockImplementation(async () => {
           throw leave();
@@ -1299,7 +1299,7 @@ describe(
           map: [
             "Prompt cancelled — detached from run '<id>' at step 'c' (phase: running). The run is saved.",
             "  'c' cannot run (input_schema): Invalid input for step 'c': the input must have required property 'n'.",
-            "  Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.",
+            "  Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id> — or end it: realm run abandon <id>",
             '  Inspect:   realm run inspect <id>',
           ],
         });

@@ -233,7 +233,11 @@ describe('#625 PR-2a — realm run advance: the words', () => {
       // exit 1, as after a call that ran.
       expect(code).toBe(1);
       expect(lines.slice(3)).toEqual([
-        `The engine can run nothing now: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it; an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.`,
+        // decision C212: several reasons are each a line of their own; a line that ends with a
+        // command has no full stop.
+        'The engine can run nothing now:',
+        "  'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
+        `  an agent step is ready: 'y' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
         // decision C181: the waiting-process line follows a preview line that names an agent step.
         'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       ]);
@@ -610,7 +614,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       expect(lines.slice(3)).toEqual([
         `In flight: 'x' is in flight, taken by other@host (from the OS user, via advance) since ${since}.`,
         // decision C43: `x` is still owed; the holder and the time are on the line above, once.
-        `The engine can run nothing now: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}.`,
+        `The engine can run nothing now: 'x' is in flight in another program — wait for it, or see realm run inspect ${run.id}`,
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -643,7 +647,7 @@ describe('#625 PR-2a, C37 — realm run advance and respond: the words after the
       expect(code).toBe(1);
       expect(lines.slice(-2)).toEqual([
         "The engine can run nothing now: 'a' cannot run (precondition): Precondition failed for step 'a'. Precondition failed: 'nothing.ok == true'. Resolved value: undefined.",
-        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`,
+        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
       ]);
       expect(lines.join('\n')).not.toContain('..');
     } finally {
@@ -780,7 +784,7 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
         ).toBe(true);
         expect(lines[3]).toContain(refusal);
         expect(lines[4]).toBe(
-          `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`,
+          `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
         );
       } finally {
         rmSync(home, { recursive: true, force: true });
@@ -802,7 +806,7 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
       expect(lines.slice(3, 5)).toEqual(["Owed to the engine: 'b'.", '→ b']);
       expect(lines[5]!.startsWith("Stopped: 'a' cannot run (trust): ")).toBe(true);
       expect(lines.slice(6)).toEqual([
-        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`,
+        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
       ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -820,9 +824,11 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
       const { run } = await runs.create({ workflowId: d.id, workflowVersion: 1, params: {} });
       const { lines } = await advance(runs, workflows, home, run.id);
       expect(lines.join('\n')).not.toContain('correct the workflow');
-      expect(lines[3]!.startsWith("The engine can run nothing now: 'a' cannot run (trust): ")).toBe(
+      // decision C212: several reasons — each on a line of its own, under the opening.
+      expect([lines[3], lines[4]!.startsWith("  'a' cannot run (trust): ")]).toEqual([
+        'The engine can run nothing now:',
         true,
-      );
+      ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -958,10 +964,10 @@ describe('#625 PR-2a, round 6 — the count words (C55), the fit words (C56), an
       const r2 = (await runs.create({ workflowId: two.id, workflowVersion: 1, params: {} })).run;
       // decision C181: the waiting-process line follows the preview's ready line.
       expect((await preview(runs, workflows, home, r1.id, new ExtensionRegistry())).at(-2)).toBe(
-        `Nothing is owed to the engine: an agent step is ready: 'a' — drive it with realm agent --run-id ${r1.id} --provider <provider> --model <model>.`,
+        `Nothing is owed to the engine: an agent step is ready: 'a' — drive it with realm agent --run-id ${r1.id} --provider <provider> --model <model>`,
       );
       expect((await preview(runs, workflows, home, r2.id, new ExtensionRegistry())).at(-2)).toBe(
-        `Nothing is owed to the engine: agent steps are ready: 'a', 'b' — drive them with realm agent --run-id ${r2.id} --provider <provider> --model <model>.`,
+        `Nothing is owed to the engine: agent steps are ready: 'a', 'b' — drive them with realm agent --run-id ${r2.id} --provider <provider> --model <model>`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -1617,7 +1623,8 @@ describe('#625 PR-2a, round 26 — C199 (walk c11 RED 1): realm run advance says
       'question',
       [
         '→ s',
-        /^Stopped: a question is open — realm run respond <run> --gate \S+ --choice <one of: ship, hold>$/,
+        // decision C211: `s`, not run here, waits for the question's answer — named.
+        /^Stopped: a question is open \('s' waits for its answer\) — realm run respond <run> --gate \S+ --choice <one of: ship, hold>$/,
         "Run <run>: phase 'gate_waiting'",
       ],
     ],
@@ -2087,7 +2094,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
           "Run <run>: phase 'failed'",
         ],
         firstCode: 1,
-        next: "Nothing is owed to the engine: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s.",
+        next: "Nothing is owed to the engine: the run has ended (failed) — to make 's' runnable again: realm run resume <run> --from s",
         nextCode: 0,
         resumed: ['→ s', '→ done', "Run <run>: phase 'completed'"],
       });
@@ -2183,7 +2190,7 @@ describe("#625 PR-2a, round 27 — C202 (walk c12, W1-2): realm run advance give
         ],
         finFailed: ['s', 'clean'],
         abandonedLast:
-          "Nothing is owed to the engine: the run has ended (abandoned) — to make 'a' runnable again: realm run resume <run> --from a.",
+          "Nothing is owed to the engine: the run has ended (abandoned) — to make 'a' runnable again: realm run resume <run> --from a",
         resumedPhase: 'running',
         aborted: ['Stopped: the run has ended (aborted)'],
       });

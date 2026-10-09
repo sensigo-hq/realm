@@ -56,7 +56,7 @@ const PRE: Partial<StepDefinition> = { preconditions: ['run.params.ok == true'] 
 const PRE_REFUSAL =
   "Precondition failed for step 'ask'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.";
 const wayOut = (id: string): string =>
-  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
+  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
 
 const ADVANCE_CHAINED = (id: string): string[] => [
   "Owed to the engine: 'prep'.",
@@ -130,7 +130,7 @@ describe('#625 PR-2a, C82 — realm run inspect and realm run advance name a ref
           (id: string) => ({
             code: 0,
             lines: [
-              `Nothing is owed to the engine: an agent step is ready: 'ask' — drive it with realm agent --run-id ${id} --provider <provider> --model <model>.`,
+              `Nothing is owed to the engine: an agent step is ready: 'ask' — drive it with realm agent --run-id ${id} --provider <provider> --model <model>`,
               'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
             ],
           }),

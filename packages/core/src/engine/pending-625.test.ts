@@ -1868,7 +1868,7 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
         params: {},
       });
       expect(cannotRunWayOut(run)).toBe(
-        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id}; or end it: realm run abandon ${run.id}.`,
+        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
       );
     });
   });

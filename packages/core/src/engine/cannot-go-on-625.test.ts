@@ -53,7 +53,7 @@ const missing: StepDefinition = {
 const INPUT =
   "'x' cannot run (input_schema): Invalid input for step 'x': the input must have required property 'n'.";
 const wayOut = (id: string): string =>
-  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
+  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
 
 describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
   it('a refusal before the claim: each step that cannot run, then the way out (correct the workflow)', async () => {
@@ -70,7 +70,7 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
       expect(cannotRunWayOutApplies(run, view)).toBe(false);
       expect(cannotGoOnLines(run, view)).toEqual([
         "'y' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-        `To end the run instead: realm run abandon ${run.id}.`,
+        `To end the run instead: realm run abandon ${run.id}`,
       ]);
     });
   });
@@ -89,8 +89,8 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
       };
       const view = describePending(def({ y: missing }), marked, undefined, new Date());
       expect(cannotGoOnLines(marked, view)).toEqual([
-        `'y' could not run (capability): handler 'missing_h' was not registered in the runner that last attempted it — from a program that has it: realm run advance ${run.id}.`,
-        `To end the run instead: realm run abandon ${run.id}.`,
+        `'y' could not run (capability): handler 'missing_h' was not registered in the runner that last attempted it — from a program that has it: realm run advance ${run.id}`,
+        `To end the run instead: realm run abandon ${run.id}`,
       ]);
       expect(capabilityMarkerWayOut(run.id)).toBe(
         ` — from a program that has it: realm run advance ${run.id}`,

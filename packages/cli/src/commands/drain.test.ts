@@ -740,10 +740,13 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
 
     expect(exitSpy).not.toHaveBeenCalled();
     // decision C205: the workflow's agent step `work` is ready — the drive, then the way out.
-    expect(logs()).toContain(
-      `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-        `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>. ` +
-        `To end the run instead: realm run abandon ${run.id}.`,
+    // decision C212: each command ends its line — the way out on a line of its own.
+    expect(logs()).toEqual(
+      expect.arrayContaining([
+        `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
+          `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
+        `To end the run instead: realm run abandon ${run.id}`,
+      ]),
     );
   });
 
@@ -761,10 +764,13 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     expect(exitSpy.mock.calls[0]?.[0]).toBe(1);
 
     // decision C205: the agent step `work` is ready — the drive, then the way out.
-    expect(errs()).toContain(
-      `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-        `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>. ` +
-        `To end the run instead: realm run abandon ${run.id}.`,
+    // decision C212: each command ends its line — the way out on a line of its own.
+    expect(errs()).toEqual(
+      expect.arrayContaining([
+        `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
+          `An agent step is ready: 'work' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
+        `To end the run instead: realm run abandon ${run.id}`,
+      ]),
     );
   });
 
@@ -1060,26 +1066,31 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     // the gate, settled by the answer's write, ends it — and read as "answer, then abandon" on
     // the path where the run goes on.
     const run = await seedGateWaiting();
-    const expected =
+    // decision C211 (walk c14 W1-2): after the answer, respond names what the run owes next — the
+    // way on — and abandon ends a run still open; decision C212: the command ends its line.
+    const expected = [
       `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
-      `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>. ` +
-      `The answer can end the run by itself. If the run is still open after it: realm run abandon ${run.id}.`;
+        `To go on, answer its question first: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>`,
+      `The answer can end the run by itself; if it does not, realm run respond names what the run owes next, and realm run abandon ${run.id} ends it.`,
+    ];
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
-    expect(logs()).toContain(expected);
+    expect(logs()).toEqual(expect.arrayContaining(expected));
     await expect(
       runDrainAction(run.id, { force: true }, store, workflowStore, DEPS),
     ).rejects.toThrow('process.exit:1');
-    expect(errs()).toContain(expected);
+    expect(errs()).toEqual(expect.arrayContaining(expected));
   });
 
   it('decision C206: a question with one choice — the answer command names that choice (`<one of: …>` is for several), as every printed answer command does', async () => {
     const run = await seedGateWaiting({ choices: ['ack'] });
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
     // (a) red when one choice is given as `<one of: ack>`; (b) prints the lines.
-    expect(logs()).toContain(
-      `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
-        `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1 --choice ack. ` +
-        `The answer can end the run by itself. If the run is still open after it: realm run abandon ${run.id}.`,
+    expect(logs()).toEqual(
+      expect.arrayContaining([
+        `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
+          `To go on, answer its question first: realm run respond ${run.id} --gate g-approve-1 --choice ack`,
+        `The answer can end the run by itself; if it does not, realm run respond names what the run owes next, and realm run abandon ${run.id} ends it.`,
+      ]),
     );
   });
 
@@ -1091,16 +1102,19 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
       on_expiry: 'settle_default',
       default_choice: 'reject',
     });
-    const expected =
+    // decision C212: each command ends its line — the dry run, then the command that carries it out.
+    const expected = [
       `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
-      `Its gate expired 1h 30m ago. To see what the expiry will do: realm run drain ${run.id} --expired; add --force to carry it out.`;
+        `Its gate expired 1h 30m ago. To see what the expiry will do: realm run drain ${run.id} --expired`,
+      `To carry it out: realm run drain ${run.id} --expired --force`,
+    ];
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
-    expect(logs()).toContain(expected);
+    expect(logs()).toEqual(expect.arrayContaining(expected));
     expect(logs().join('\n')).not.toContain('realm run respond');
     await expect(
       runDrainAction(run.id, { force: true }, store, workflowStore, DEPS),
     ).rejects.toThrow('process.exit:1');
-    expect(errs()).toContain(expected);
+    expect(errs()).toEqual(expect.arrayContaining(expected));
     expect(errs().join('\n')).not.toContain('realm run respond');
   });
 
@@ -1110,10 +1124,12 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     // answer (core's settle_gate refuses a late answer only when `on_expiry` is declared).
     const run = await seedGateWaiting({ expires_at: expiredNinetyMinutesAgo() });
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
-    expect(logs()).toContain(
-      `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
-        `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>. ` +
-        `The answer can end the run by itself. If the run is still open after it: realm run abandon ${run.id}.`,
+    expect(logs()).toEqual(
+      expect.arrayContaining([
+        `Run '${run.id}' is not terminal (phase: 'gate_waiting') — nothing to drain. ` +
+          `To go on, answer its question first: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>`,
+        `The answer can end the run by itself; if it does not, realm run respond names what the run owes next, and realm run abandon ${run.id} ends it.`,
+      ]),
     );
   });
 
@@ -1125,7 +1141,7 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
     });
     await runDrainAction(run.id, {}, store, workflowStore, DEPS);
     expect(logs().join('\n')).toContain(
-      `To end the run, answer its gate first: realm run respond ${run.id} --gate g-approve-1`,
+      `To go on, answer its question first: realm run respond ${run.id} --gate g-approve-1`,
     );
     expect(logs().join('\n')).not.toContain('--expired');
   });
@@ -1143,14 +1159,17 @@ describe('realm run drain — disposal coherence (issue #558 PR-C)', () => {
       'utf8',
     );
     await runDrainAction(fresh.id, {}, store, workflowStore, DEPS);
-    expect(logs()).toContain(
+    expect(logs()).toEqual(
       // The derived phase is 'running' (nothing supports the persisted label) and the record
       // carries no gate — `abandon` keys on the gate too, so the way out it names is the one that
       // works (walk 3: an "answer its gate" fork on the LABEL stranded the operator). Decision
-      // C205: the agent step `work` is ready — the drive comes first, the way out beside it.
-      `Run '${fresh.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-        `An agent step is ready: 'work' — drive it with realm agent --run-id ${fresh.id} --provider <provider> --model <model>. ` +
-        `To end the run instead: realm run abandon ${fresh.id}.`,
+      // C205: the agent step `work` is ready — the drive comes first, the way out beside it;
+      // decision C212: each command ends its line.
+      expect.arrayContaining([
+        `Run '${fresh.id}' is not terminal (phase: 'running') — nothing to drain. ` +
+          `An agent step is ready: 'work' — drive it with realm agent --run-id ${fresh.id} --provider <provider> --model <model>`,
+        `To end the run instead: realm run abandon ${fresh.id}`,
+      ]),
     );
   });
 

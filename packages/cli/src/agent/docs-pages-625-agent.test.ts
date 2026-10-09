@@ -82,7 +82,7 @@ function wf(
 
 const HEADER = ['log: \nRealm Agent — c174 c v1', 'log: Run ID: <run>\n'];
 const stopLine = (check: string, step: string): string =>
-  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run>; or end it: realm run abandon <run>.`;
+  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run> — or end it: realm run abandon <run>`;
 
 interface Drive {
   result: string;
@@ -754,7 +754,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
 
     it('the ninth row (an auto step refused before its claim, nothing else) and the ninth case: the schema refused the input the engine built; open, in running', async () => {
       const LINE =
-        "✗ The drive stops: nothing else can run, and 'file' cannot run (input_schema). Run 50e31961-… stays open (phase 'running'): correct the workflow, register it again, then realm run advance 50e31961-…; or end it: realm run abandon 50e31961-….";
+        "✗ The drive stops: nothing else can run, and 'file' cannot run (input_schema). Run 50e31961-… stays open (phase 'running'): correct the workflow, register it again, then realm run advance 50e31961-… — or end it: realm run abandon 50e31961-…";
       claim(
         AGENT_PAGE,
         `| Nothing else can run, and an \`auto\` step is refused before it is claimed | \`${LINE}\` | Open, in \`running\`. |`,
@@ -795,7 +795,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
 
     it('the tenth row (an agent step refused before its claim, nothing else): the page’s line; open, in running', async () => {
       const LINE =
-        "✗ The drive stops: nothing else can run, and 'ask' cannot run (precondition). Run f0fef02d-… stays open (phase 'running'): correct the workflow, register it again, then realm run advance f0fef02d-…; or end it: realm run abandon f0fef02d-….";
+        "✗ The drive stops: nothing else can run, and 'ask' cannot run (precondition). Run f0fef02d-… stays open (phase 'running'): correct the workflow, register it again, then realm run advance f0fef02d-… — or end it: realm run abandon f0fef02d-…";
       claim(
         AGENT_PAGE,
         `| Nothing else can run, and an agent step is refused before it is claimed | \`${LINE}\` | Open, in \`running\`. |`,

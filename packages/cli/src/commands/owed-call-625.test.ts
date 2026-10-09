@@ -109,7 +109,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       const drained = realm(home, ['run', 'drain', run.id]);
       expect(drained.stdout.trim()).toBe(
         `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ` +
-          `To run the step the engine owes ('after'): realm run advance ${run.id}. To end the run instead: realm run abandon ${run.id}.`,
+          `To run the step the engine owes ('after'): realm run advance ${run.id}\nTo end the run instead: realm run abandon ${run.id}`,
       );
 
       const advanced = realm(home, ['run', 'advance', run.id]);
@@ -141,7 +141,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
         "Last recorded driver: tester (from REALM_OPERATOR, via advance) at step 'after', " +
           (again.stdout.match(/at step 'after', (\S+)\./)?.[1] ?? '') +
           '.',
-        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>.`,
+        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${run.id} --provider <provider> --model <model>`,
         'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       ]);
     } finally {
@@ -238,7 +238,7 @@ describe('#625 PR-2a — the CLI names the owed call, and runs it', () => {
       expect(drained.status).toBe(0);
       expect(drained.stdout).toContain(
         `Run '${run.id}' is not terminal (phase: 'running') — nothing further to drain.\n` +
-          `To run the step the engine owes ('after'): realm run advance ${run.id}.`,
+          `To run the step the engine owes ('after'): realm run advance ${run.id}`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

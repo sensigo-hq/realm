@@ -149,7 +149,7 @@ describe(
       expect([r.code, [...r.out, ...r.err].join('\n')]).toEqual([
         1,
         expect.stringContaining(
-          `Run '${id}' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance ${id}.`,
+          `Run '${id}' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance ${id}\nTo end the run instead: realm run abandon ${id}`,
         ),
       ]);
     });
@@ -157,7 +157,7 @@ describe(
     it('realm-run-reading.md: inspect names an expired question as what the run owes, and the door `advance` on a step it took', async () => {
       claim(
         'docs/reference/cli/realm-run-reading.md',
-        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them, with, for more than one, where that call stops: `; it runs them until a step opens a question, fails or ends the run`. Added after version 0.46.0. |",
+        "| `Owed to the engine` | When guards or `auto` steps are owed, or an expired question's `on_expiry` | The steps (or `the expired question on '<step>' (its declared <on_expiry>)`), and the `realm run advance` command that runs them, followed, for more than one, by where that call stops: ` runs them until a step opens a question, fails or ends the run`, or, for an expired question's declared default, ` carries it out, then runs what that leaves owed until a step opens a question, fails or ends the run`. Added after version 0.46.0. |",
       );
       claim(
         'docs/reference/cli/realm-run-reading.md',
@@ -210,7 +210,7 @@ describe(
       );
       // (a) red when inspect does not name the expired question as owed; (b) prints the line.
       expect(owed).toBe(
-        `Owed to the engine: the expired question on 'confirm' (its declared settle_default) — realm run advance ${id}`,
+        `Owed to the engine: the expired question on 'confirm' (its declared settle_default) — realm run advance ${id} carries it out, then runs what that leaves owed until a step opens a question, fails or ends the run`,
       );
       const adv = realm(['run', 'advance', id], { REALM_OPERATOR: 'racer-a' });
       expect(adv.code, adv.err.join('\n')).toBe(0);
@@ -715,7 +715,7 @@ describe(
           code: 0,
           tail: ranStep
             ? [`Stopped: ${ready}`, attending, `Run ${id}: phase 'running'`]
-            : [`Nothing is owed to the engine: ${ready}.`, attending],
+            : [`Nothing is owed to the engine: ${ready}`, attending],
         });
       },
     );

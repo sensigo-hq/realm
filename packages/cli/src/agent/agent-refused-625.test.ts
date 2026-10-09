@@ -48,7 +48,7 @@ const TRUST_LINE =
 const TAKEN_IN_FLIGHT =
   "log: • Step 'ask' was taken by a program whose name was not recorded at <since>; this drive's answer was not recorded.";
 const stopLine = (check: string, step = 'ask'): string =>
-  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run>; or end it: realm run abandon <run>.`;
+  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run> — or end it: realm run abandon <run>`;
 
 interface Drive {
   result: string;

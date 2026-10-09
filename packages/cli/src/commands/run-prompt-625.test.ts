@@ -1603,7 +1603,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       const after = await advance(yaml);
       expect({ whileHeld: whileHeld.at(-1), after: after.slice(-2) }).toEqual({
         whileHeld:
-          "The engine can run nothing now: 'sleep' is in flight in another program — wait for it, or see realm run inspect <run>.",
+          "The engine can run nothing now: 'sleep' is in flight in another program — wait for it, or see realm run inspect <run>",
         after: ['→ done', "Run <run>: phase 'completed'"],
       });
     }, 30_000);
@@ -1613,7 +1613,7 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
         'an agent step',
         ['  later:', '    description: Later.', '    execution: agent', '    depends_on: [sleep]'],
         [
-          "Nothing is owed to the engine: an agent step is ready: 'later' — drive it with realm agent --run-id <run> --provider <provider> --model <model>.",
+          "Nothing is owed to the engine: an agent step is ready: 'later' — drive it with realm agent --run-id <run> --provider <provider> --model <model>",
           'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
         ],
       ],

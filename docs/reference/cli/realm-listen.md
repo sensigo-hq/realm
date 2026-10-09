@@ -70,7 +70,7 @@ listen: the enactment terminalized the run — it may carry pending finalizers; 
 When the gate it carried out leaves steps owed to the engine, the line adds `owed`: their names (`realm run advance <run-id>` runs them until a step opens a question, fails or ends the run). When it leaves the run with nothing that can run from here, the line adds `cannot_go_on`: each step that cannot run, then the way out. Both added after version 0.46.0:
 
 ```text
-listen: sweeper enacted an expired gate {"run_id":"f17eb4b7-7295-4dac-a6a9-1ab52e301a60","gate_id":"2ba6c94a-0ba7-4ba9-9b0c-da687a5bc744","disposition":"settle_default","cannot_go_on":["'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.","Run f17eb4b7-7295-4dac-a6a9-1ab52e301a60 stays open (phase 'running'): correct the workflow, register it again, then realm run advance f17eb4b7-7295-4dac-a6a9-1ab52e301a60; or end it: realm run abandon f17eb4b7-7295-4dac-a6a9-1ab52e301a60."]}
+listen: sweeper enacted an expired gate {"run_id":"f17eb4b7-7295-4dac-a6a9-1ab52e301a60","gate_id":"2ba6c94a-0ba7-4ba9-9b0c-da687a5bc744","disposition":"settle_default","cannot_go_on":["'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.","Run f17eb4b7-7295-4dac-a6a9-1ab52e301a60 stays open (phase 'running'): correct the workflow, register it again, then realm run advance f17eb4b7-7295-4dac-a6a9-1ab52e301a60 — or end it: realm run abandon f17eb4b7-7295-4dac-a6a9-1ab52e301a60"]}
 ```
 
 It does not run cleanup steps. See [Gates](../workflow/gates.md#what-happens-at-expiry).

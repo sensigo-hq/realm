@@ -85,7 +85,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingVie
     // decision C64: when nothing can run from here, each engine step that cannot run and the way
     // out — core's lines (`correct the workflow …` for a refusal before the claim).
     const cannotGoOn = pending === undefined ? [] : cannotGoOnLines(run, pending);
-    if (cannotGoOn.length > 0) return cannotGoOn;
+    if (cannotGoOn.length > 0) return [cannotGoOn.join(' ')];
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
     if (pending?.act !== undefined) {

@@ -62,7 +62,7 @@ When the answer leaves an agent step ready, the line says so in the words `realm
 
 ```text
 Responded: 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 | choice 'approve' | new state 'running'
-An agent step is ready: 'finish' — drive it with realm agent --run-id 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 --provider <provider> --model <model>.
+An agent step is ready: 'finish' — drive it with realm agent --run-id 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 --provider <provider> --model <model>
 If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
 
@@ -73,16 +73,16 @@ When the answer leaves nothing that can run from here — no agent step ready, n
 ```text
 Responded: 77772f0c-a80d-49d3-b665-4ac186186fd1 | choice 'approve' | new state 'running'
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
-Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1; or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1.
+Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1 — or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1
 ```
 
-A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>.`
+A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>`
 
 When the answer leaves nothing to name but a step in flight in another program, the line says to wait for it, in the words `realm run advance` uses. Added after version 0.46.0:
 
 ```text
 Responded: 5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13 | choice 'approve' | new state 'running'
-'pack' is in flight in another program — wait for it, or see realm run inspect 5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13.
+'pack' is in flight in another program — wait for it, or see realm run inspect 5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13
 ```
 
 `respond` records the answer. Without `--by` the answer names nobody, and `realm run inspect` shows `(not stated)`. A name is never taken from the operating system or from `REALM_OPERATOR`: those name a program, and `respond` uses `REALM_OPERATOR` only for the cleanup steps its answer runs. An empty, long or control-character name is refused before the run is read:
@@ -106,7 +106,7 @@ A guard that passed, with steps still to run:
 ```text
 Guard step 'only_if_shipping' passed.
 Responded: 989c0619-1bda-4b2e-b5e3-4d33d6519a67 | choice 'ship' | new state 'running'
-An agent step is ready: 'ship' — drive it with realm agent --run-id 989c0619-1bda-4b2e-b5e3-4d33d6519a67 --provider <provider> --model <model>.
+An agent step is ready: 'ship' — drive it with realm agent --run-id 989c0619-1bda-4b2e-b5e3-4d33d6519a67 --provider <provider> --model <model>
 If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
 
@@ -195,14 +195,14 @@ When the engine can run nothing, the last preview line says why and nothing runs
 
 ```text
 The engine can run nothing now: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
-Run 507090b5-3b5b-4a6c-a814-3faa03404f95 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 507090b5-3b5b-4a6c-a814-3faa03404f95; or end it: realm run abandon 507090b5-3b5b-4a6c-a814-3faa03404f95.
+Run 507090b5-3b5b-4a6c-a814-3faa03404f95 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 507090b5-3b5b-4a6c-a814-3faa03404f95 — or end it: realm run abandon 507090b5-3b5b-4a6c-a814-3faa03404f95
 ```
 
 After a call that ran other steps, the same way out takes the place of the `Run <id>: phase '<phase>'` line. A step another program holds:
 
 ```text
 In flight: 'process' is in flight, taken by crown (from REALM_OPERATOR, via advance) since 2026-10-04T22:26:13.994Z.
-The engine can run nothing now: 'process' is in flight in another program — wait for it, or see realm run inspect 65d2afc8-2cb3-4401-808c-1d83a40bf989.
+The engine can run nothing now: 'process' is in flight in another program — wait for it, or see realm run inspect 65d2afc8-2cb3-4401-808c-1d83a40bf989
 ```
 
 Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
@@ -236,7 +236,7 @@ When the step that is ready again is one only the engine runs, one line names it
 
 ```text
 Resumed run '8bc06d55-77fb-43f4-937f-8d166fad20cf': step 'a' re-enabled and run reset to 'running'.
-To run the step the engine owes ('a') without a model: realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf.
+To run the step the engine owes ('a') without a model: realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
 ```
 
 When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, driving the run would only stop on that step: the step and the way out take the place of the `Drive it with:` lines. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
@@ -244,7 +244,7 @@ When the step that is ready again cannot run — the workflow was registered aga
 ```text
 Resumed run '729eaab3-6203-46cb-9c5c-3714070723a8': step 'a' re-enabled and run reset to 'running'.
 'a' cannot run (input_schema): Invalid input for step 'a': the input must have required property 'n'.
-Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8; or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8.
+Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8 — or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8
 ```
 
 `resume` runs no step. Cleanup steps that had not yet run for the ended run are cancelled, and each is named on a line that starts with `⚠`.
@@ -492,7 +492,7 @@ Run '0e0ace7e-e57c-400c-a63a-eaf685688d19' has no pending finalizers. Nothing to
 ✓ gate enacted (settle_default 'ship').
 Guard step 'only_if_shipping' passed.
 Run '230b0939-9c61-40e4-8b6f-910594a81e92' is not terminal (phase: 'running') — nothing further to drain.
-An agent step is ready: 'ship' — drive it with realm agent --run-id 230b0939-9c61-40e4-8b6f-910594a81e92 --provider <provider> --model <model>.
+An agent step is ready: 'ship' — drive it with realm agent --run-id 230b0939-9c61-40e4-8b6f-910594a81e92 --provider <provider> --model <model>
 ```
 
 When the enacted gate leaves `auto` steps only the engine runs, one more line names them. Added after version 0.46.0:
@@ -500,7 +500,7 @@ When the enacted gate leaves `auto` steps only the engine runs, one more line na
 ```text
 ✓ gate enacted (settle_default 'approve').
 Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing further to drain.
-To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd.
+To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
 ```
 
 When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.46.0:
@@ -509,7 +509,7 @@ When it leaves nothing that can run from here, the steps that cannot run and the
 ✓ gate enacted (settle_default 'approve').
 Run '1d703406-777f-4bc6-a6bc-6058b4d8f490' is not terminal (phase: 'running') — nothing further to drain.
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
-Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490; or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490.
+Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490 — or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490
 ```
 
 When it leaves no work for the engine and nothing that cannot run, but an agent step ready or a step in flight in another program, the line `realm run advance` prints for it follows (the guard that passed above leaves the agent step `ship` ready). Added after version 0.46.0, which prints nothing after `nothing further to drain.` there:
@@ -517,7 +517,7 @@ When it leaves no work for the engine and nothing that cannot run, but an agent 
 ```text
 ✓ gate enacted (settle_default 'approve').
 Run '7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857' is not terminal (phase: 'running') — nothing further to drain.
-'pack' is in flight in another program — wait for it, or see realm run inspect 7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857.
+'pack' is in flight in another program — wait for it, or see realm run inspect 7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857
 ```
 
 With `--all --expired`, the list names what each gate declared, without the choice or the guard. With `--force`, what each guard did is printed under its run:
@@ -543,17 +543,22 @@ When there is nothing to do, it prints one of:
 
 ```text
 Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to drain.
-Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f.
-Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd. To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd.
-Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): correct the workflow, register it again, then realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e; or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e.
-Run 'e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'write' — drive it with realm agent --run-id e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68 --provider <provider> --model <model>. To end the run instead: realm run abandon e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68.
-Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') — nothing to drain. 'fetch' is in flight in another program — wait for it, or see realm run inspect 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25. To end the run instead: realm run abandon 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25.
-Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To end the run, answer its gate first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>. The answer can end the run by itself. If the run is still open after it: realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28.
-Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired; add --force to carry it out.
+Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f
+Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
+To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd
+Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): correct the workflow, register it again, then realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
+Run 'e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'write' — drive it with realm agent --run-id e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68 --provider <provider> --model <model>
+To end the run instead: realm run abandon e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68
+Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') — nothing to drain. 'fetch' is in flight in another program — wait for it, or see realm run inspect 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25
+To end the run instead: realm run abandon 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25
+Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To go on, answer its question first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>
+The answer can end the run by itself; if it does not, realm run respond names what the run owes next, and realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28 ends it.
+Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired
+To carry it out: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired --force
 No runs with an actionable pending finalizer.
 ```
 
-The third to sixth lines — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out beside it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>.` for every run in `running`. The second line is now for a run with none of these.
+The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop). At a question, the second line says that after the answer `realm run respond` names what the run owes next (added after version 0.46.0, which named only `realm run abandon` for a run still open after the answer).
 
 **Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
 

@@ -20,7 +20,7 @@ const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url))
 const children = printChildrenWhenATestFails();
 
 describe('#625 PR-2a — resume names the owed call', () => {
-  it('`To run the step(s) the engine owes (…) without a model: realm run advance <id>.` — the noun by count', async () => {
+  it('`To run the step(s) the engine owes (…) without a model: realm run advance <id>` — the noun by count', async () => {
     const home = mkdtempSync(join(tmpdir(), 'realm-resume-owed-625-'));
     try {
       const d: WorkflowDefinition = {
@@ -56,7 +56,7 @@ describe('#625 PR-2a — resume names the owed call', () => {
       children.record({ args: [CLI_ENTRY, 'run', 'resume', run.id, '--from', 'a'], ...r });
       expect(r.status).toBe(0);
       expect(r.stdout).toContain(
-        `To run the step the engine owes ('a') without a model: realm run advance ${run.id}.`,
+        `To run the step the engine owes ('a') without a model: realm run advance ${run.id}`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

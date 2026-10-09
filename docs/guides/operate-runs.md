@@ -109,7 +109,7 @@ It prints:
 
 ```text
 Resumed run '4a0eafe2-afff-40ca-8b89-ad0e92db1a9c': step 'fetch' re-enabled and run reset to 'running'.
-To run the step the engine owes ('fetch') without a model: realm run advance 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c.
+To run the step the engine owes ('fetch') without a model: realm run advance 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c
 ```
 
 The run is open again. Steps that had completed stay completed; the named step will run again. `fetch` is a step only the engine runs, so the second line names the call that runs it, with no model. When the step that is ready again is an agent step, the second line is `Drive it with: realm agent --run-id <run-id> --provider <provider> --model <model>` instead, with `<provider>` and `<model>` to fill in as above, and a third line names the other flags to add. The `realm run advance` line was added after version 0.46.0, which prints the `Drive it with:` lines for every step. Version 0.45.0 prints the `Drive it with:` line without `--provider <provider> --model <model>`, and nothing after it.

@@ -74,7 +74,7 @@ const needsN = (deps: string[]): StepDefinition => ({
 const REFUSAL = "Invalid input for step 'compute': the input must have required property 'n'";
 const clause = `'compute' cannot run (input_schema): ${REFUSAL}.`;
 const wayOut = (id: string): string =>
-  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
+  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
 
 async function stores(): Promise<{
   home: string;
@@ -137,7 +137,7 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
       );
       expect(ctl.lastLine).toBe(
         `Responded: ${cid} | choice 'approve' | new state 'running'\n` +
-          `An agent step is ready: 'ask' — drive it with realm agent --run-id ${cid} --provider <provider> --model <model>.\n` +
+          `An agent step is ready: 'ask' — drive it with realm agent --run-id ${cid} --provider <provider> --model <model>\n` +
           // decision C164: the attending line after the command an answer leaves.
           'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
       );
@@ -200,7 +200,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       const ctl = realm(home, ['run', 'drain', c.id]);
       // decision C205: the control's agent step `ask` is ready — the drive, then the way out.
       expect(ctl.stdout.trim()).toBe(
-        `Run '${c.id}' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'ask' — drive it with realm agent --run-id ${c.id} --provider <provider> --model <model>. To end the run instead: realm run abandon ${c.id}.`,
+        `Run '${c.id}' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'ask' — drive it with realm agent --run-id ${c.id} --provider <provider> --model <model>\nTo end the run instead: realm run abandon ${c.id}`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

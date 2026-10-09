@@ -83,7 +83,7 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
       .filter((f) => f.endsWith('.json'))[0]!
       .replace('.json', '');
   const wayOut = (id: string): string =>
-    `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id}; or end it: realm run abandon ${id}.`;
+    `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
 
   async function run(text: string, extra: string[] = []): Promise<number> {
     writeFileSync(join(dir, 'workflow.yaml'), text, 'utf8');
@@ -123,7 +123,7 @@ describe('#625 PR-2a, C64 — realm workflow run: a step no typed output can unb
     expect(errored()).toEqual([
       '\nWorkflow stalled: nothing else can run.',
       "'compute' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-      `To end the run instead: realm run abandon ${runId()}.`,
+      `To end the run instead: realm run abandon ${runId()}`,
     ]);
   });
 

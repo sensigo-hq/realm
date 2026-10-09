@@ -176,7 +176,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     // owed" and stop), when the line comes after the step, says "before this call" or drops the
     // default choice; (b) prints the lines.
     expect(lines.slice(3, 6)).toEqual([
-      "Owed to the engine: the expired question on 'confirm' (its declared settle_default).",
+      "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
       `⚠ gate '${gateId}' on 'confirm' had expired — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
       '→ after',
     ]);
@@ -251,7 +251,7 @@ describe('#625 PR-2a, C98 and C95 — where the code comes from; advance carries
     expect(advanced.status).toBe(0);
     // (a) red when the line is not printed, or names another gate or choices; (b) prints stdout.
     expect(advanced.stdout.trim().split('\n').at(-1)).toBe(
-      `Nothing is owed to the engine: a question is open — realm run respond ${runId} --gate ${gateId} --choice <one of: approve, reject>.`,
+      `Nothing is owed to the engine: a question is open — realm run respond ${runId} --gate ${gateId} --choice <one of: approve, reject>`,
     );
   }, 60_000);
 

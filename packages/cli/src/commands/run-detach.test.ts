@@ -269,7 +269,9 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
     // (a) red when an expired question that declares `on_expiry` is offered an answer, or no owed
     //     call; (b) prints the map.
     expect(map.slice(1)).toEqual([
-      `  Advance:   realm run advance run_abc — for what the engine owes (${owedList(pending)}), with no model`,
+      // decision C211 (walk c14 W2-1): the declared default carried out, the call runs what it
+      // leaves owed — said, as the preview says it.
+      `  Advance:   realm run advance run_abc — for what the engine owes (${owedList(pending)}), with no model; then it runs what that leaves owed until a step opens a question, fails or ends the run`,
       '  Inspect:   realm run inspect run_abc',
     ]);
     expect(owedList(pending)).toContain("'confirm'");
