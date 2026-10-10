@@ -320,8 +320,8 @@
         },
         "n8n": {
           "value": "Yes",
-          "note": "Send and Wait (approval, text or form), with an optional wait limit.",
-          "source": "sendAndWait/utils.ts; docs",
+          "note": "Send and Wait (approval, text or form), with an optional wait limit; when the limit passes, the run continues.",
+          "source": "sendAndWait/utils.ts; configureWaitTillDate.util.ts; cli wait-tracker.ts (n8n@2.42.3); docs",
           "label": "CODE + DOCS"
         },
         "dify": {
@@ -338,7 +338,7 @@
       "ask": "Is the person who answered recorded, and is their identity checked?",
       "verdict": {
         "kind": "behind",
-        "text": "Behind Dify, which records the account that answered and gives each recipient its own token, and CrewAI's paid platform, which checks the reviewer's email (per its docs). Realm records a name the caller states and checks nothing; in a test the agent approved its own gate, and the proof token, which shows only the conversation, recorded it as matched."
+        "text": "Behind n8n's Slack and Telegram approvals, which can restrict who may approve and record who clicked; Dify, which records the account that answered and gives each recipient its own token; and CrewAI's paid platform, which checks the reviewer's email (per its docs). Realm records a name the caller states and checks nothing; in a test the agent approved its own gate, and the proof token, which shows only the conversation, recorded it as matched."
       },
       "cells": {
         "realm": {
@@ -384,9 +384,9 @@
           "label": "DOCS"
         },
         "n8n": {
-          "value": "No",
-          "note": "A link approval resumes with {approved, respondedAt} only. The link is signed, but anyone holding it can answer.",
-          "source": "sendAndWait/utils.ts:488-493",
+          "value": "Partial",
+          "note": "When turned on, Slack and Telegram approvals restrict who may approve: a click from anyone not listed is refused and the run keeps waiting, and the answer records who clicked (id, name, source), on a callback n8n checks came from Slack or Telegram. Its other channels send a signed link that anyone holding it can answer, recorded as {approved, respondedAt} only.",
+          "source": "Slack/V2/SlackHitlWebhook.ts:23-53, 177-193; Telegram/hitl/webhook.ts:36-38, 131-136; sendAndWait/utils.ts:488-493 (n8n@2.42.3)",
           "label": "CODE"
         },
         "dify": {
