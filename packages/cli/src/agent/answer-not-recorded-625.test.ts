@@ -332,7 +332,8 @@ describe(
       );
       claim(
         AGENT_PAGE,
-        'which the drive prints instead when it ends with neither line and the run not completed (for example, a guard aborted it) — except when it stops on a step another process holds, whose `Go on:` line (above) is the last.',
+        // F16: the line is for a run that ended without completing
+        'which the drive prints instead when it ends with neither line and the run ended without completing (for example, a guard aborted it) — except when it stops on a step another process holds, whose `Go on:` line (above) is the last.',
       );
       const def = wf({ write: agent() });
       const d = await drive(def, {

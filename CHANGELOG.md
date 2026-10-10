@@ -309,6 +309,13 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **Two stop lines say what is true (issue #625, PR-2a).** `realm workflow run` said `No eligible
+steps in phase 'running'. Workflow stalled.` when the engine owed work the command does not run (a
+  guard, for one); it now says `The engine owes '<step>', which this command does not run.`, and
+  its map starts `Engine work owed`. `realm agent` said `Run ended in phase: running` of a run that
+  had not ended; it now says `✗ The drive stops: <why>. Run <id> stays open (phase '<phase>'): see
+realm run inspect <id> — or end it: realm run abandon <id>`, its reason in `realm run advance`'s
+  words. A run that ended still gets `Run ended in phase: <phase>`.
 - **The way out of a run that cannot go on is true for an input its schema refuses (issue #625,
   PR-2a).** The engine gives an `auto` step the run's params when it has no `depends_on`, and no input
   when it has; the way out said "correct the workflow" for every refusal before the claim. It now

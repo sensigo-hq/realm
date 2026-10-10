@@ -160,8 +160,9 @@ export function renderDetachMap(
   const phase = deriveRunPhase(record);
   const step = promptStep ?? record.pending_gate?.step_name ?? '(step unknown)';
   // issue #468 — the default is the #447 cancel route's own claim, byte-identical. The stall
-  // route (below, in the loop) passes 'Workflow stalled': no prompt was ever cancelled there, and
-  // the hardcoded word would be a false statement about what just happened.
+  // route (below, in the loop) passes 'Workflow stalled', or 'Engine work owed' when the engine owes
+  // work this command does not run (F16): no prompt was ever cancelled there, and the hardcoded
+  // word would be a false statement about what just happened.
   const headline = opts?.headline ?? 'Prompt cancelled';
   const lines = [
     `${headline} — detached from run '${record.id}' at step '${step}' (phase: ${phase}). The run is saved.`,
@@ -924,22 +925,28 @@ export const runCommand = new Command('run')
           if (eligibleSteps.length === 0) {
             // decision C188: reached with nothing in flight elsewhere (a step another process holds is
             // waited for above, and handed back there).
-            console.error(`\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`);
             // issue #468 — hands the run back with a truthful map instead of silently exiting 0.
             // A fresh read: the loop's own snapshot is already current here (nothing awaited
             // since the last read reached this branch in the same iteration), but the fresh read
             // is the doctrine this file already keeps for every detach point (#447) — kept for
             // consistency, not because a staleness gap is constructible in this spot.
             const record = await store.get(runId);
+            const pending = describePending(definition, record, registry, new Date());
+            // F16 (review G1-R1): with engine work owed — a guard, for one: this command runs only the
+            // steps it prompts — the run is not stalled. The headline says what the engine owes, which
+            // this command does not run; the map below names the call that runs it.
+            const owed = pending.act !== undefined;
+            console.error(
+              owed
+                ? `\nThe engine owes ${owedList(pending)}, which this command does not run.`
+                : `\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`,
+            );
             console.error(
               renderDetachMap(
                 record,
                 promptStep,
-                {
-                  pending: describePending(definition, record, registry, new Date()),
-                  workflow: definition,
-                },
-                { headline: 'Workflow stalled', driveFlags },
+                { pending, workflow: definition },
+                { headline: owed ? 'Engine work owed' : 'Workflow stalled', driveFlags },
               ),
             );
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.

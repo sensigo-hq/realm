@@ -62,6 +62,7 @@ import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
+import { stoppedReasons } from '../commands/run-advance.js';
 import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js';
 import {
   answerNotRecordedLine,
@@ -2022,6 +2023,20 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   }
 
   if (stoppedOnInFlight) return 'failed';
+  // F16 (review G1-R3): a run that has not ended is never said to have ended. The drive stops with
+  // nothing ready — said in the view's words (`realm run advance`'s stop reasons), with the ways on
+  // that hold: inspect, or end it.
+  if (!currentRun.terminal_state) {
+    const reasons = stoppedReasons(
+      runId,
+      currentRun,
+      describePending(definition, currentRun, deps.registry, new Date()),
+    );
+    console.error(
+      `\n✗ The drive stops: ${reasons.join('; ')}. Run ${runId} stays open (phase '${currentRun.run_phase}'): see realm run inspect ${runId} — or end it: realm run abandon ${runId}`,
+    );
+    return 'failed';
+  }
   console.error(`\nRun ended in phase: ${currentRun.run_phase}`);
   await printResumeLine();
   return 'failed';
