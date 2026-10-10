@@ -30,6 +30,8 @@ import {
   describePending,
   owedNames,
   cannotGoOnLines,
+  deriveRunPhase,
+  hashParams,
 } from '@sensigo/realm';
 import type {
   WorkflowDefinition,
@@ -337,10 +339,11 @@ export function makeListenHandler(
       }
 
       // 8. Dedup (default on unless dedup === false).
-      // TOCTOU note: the window between check() here and record() after a successful spawn is
-      // intentional at-least-once semantics — two near-simultaneous duplicate deliveries can both
-      // pass check() and create runs. The run store's idempotencyKey (passed at create, = dedupId)
-      // is the cross-restart backstop; the in-flight dedup store is the primary, best-effort guard.
+      // This check answers a delivery whose id was recorded inside the window. It does not see two
+      // copies of one delivery arriving together (both pass check() before either is recorded), nor
+      // a copy redelivered after the window. The run store does: dedupId is passed to create() as
+      // the idempotency key, so the second copy matches the first copy's run — ONE run — and listen
+      // reads create()'s `created` (step 10): only the copy that created the run starts an agent.
       const dedup = entry.trigger.dedup;
       let dedupId: string | undefined;
       let ttlMs = 0;
@@ -397,11 +400,13 @@ export function makeListenHandler(
       // Workflows are registered ONCE at startup (prepareListenWorkflows) — the old per-webhook
       // register silently reverted fresher registrations. Restart listen after re-registering.
       let run;
+      let created: boolean | undefined;
       try {
-        // `created` is intentionally unused here: the DedupStore.check() above already
-        // short-circuits duplicates, so the run-store idempotency match is only a backstop.
-        // Do NOT wire the re-encounter signal here — it would risk a double-spawn.
-        ({ run } = await deps.runStore.create({
+        // After the window, and when two copies of one delivery arrive together, check() above
+        // does not recognise the delivery; the run store's match on the idempotency key (= dedupId)
+        // does. So listen reads `created`: a delivery that matched an existing run starts nothing
+        // and writes nothing to it (below).
+        ({ run, created } = await deps.runStore.create({
           workflowId: entry.definition.id,
           workflowVersion: entry.definition.version,
           params,
@@ -410,6 +415,34 @@ export function makeListenHandler(
       } catch (err) {
         deps.logger.error('webhook: run creation failed', { path, error: String(err) });
         respond(res, 500, { error: 'store_error', status: 'failed' });
+        return;
+      }
+
+      // 10b. The store matched an existing run by the delivery id, live or ended (issue #735).
+      // Compared with `false` by name: a store whose create() gives no `created` is not a match.
+      if (created === false) {
+        if (dedupId !== undefined && dedupStore !== undefined) {
+          try {
+            dedupStore.record(dedupId, ttlMs);
+          } catch (err) {
+            deps.logger.error('webhook: failed to record dedup id', {
+              run_id: run.id,
+              error: String(err),
+            });
+          }
+        }
+        const runPhase = deriveRunPhase(run);
+        // A later delivery under the same id with other params (a `ticket-updated` keyed on the
+        // ticket's id, for one) is not dropped without a word.
+        const paramsDiffer = hashParams(params) !== hashParams(run.params);
+        deps.logger.info('webhook: deduplicated', {
+          path,
+          run_id: run.id,
+          run_phase: runPhase,
+          reason: 'matched_existing_run',
+          ...(paramsDiffer ? { params_differ: true } : {}),
+        });
+        respond(res, 200, { status: 'deduplicated', run_id: run.id, run_phase: runPhase });
         return;
       }
 
