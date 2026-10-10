@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { createInterface } from 'node:readline/promises';
 import { join } from 'node:path';
+import { constants as osConstants } from 'node:os';
 import {
   validateRunParams,
   loadWorkflowFromFile,
@@ -15,7 +16,36 @@ import {
   capabilityWarning,
   WorkflowError,
   deriveRunPhase,
+  describePending,
+  stepsThatCannotRun,
+  cannotGoOnLines,
+  cannotGoOnHere,
+  resumeWay,
+  owedList,
+  owedRunsClause,
+  pendingCleanupLine,
+  respondCommand,
+  composeStepViews,
+  describeClaimHolder,
+  classifyInProgressClaims,
+  pendingGateQuestion,
+  classifyStop,
+  isRaceStop,
+  type NotRecordedKind,
 } from '@sensigo/realm';
+import {
+  renderAnswerLine,
+  questionLines,
+  takenPhrase,
+  takenLine,
+  inFlightLine,
+  waitingLine,
+  ranElsewherePhrase,
+  goOnLine,
+  resumeLine,
+  outcomeNotRecordedLine,
+} from '../lib/holder-render.js';
+import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import type {
@@ -23,10 +53,13 @@ import type {
   StepDefinition,
   ExtensionRegistry,
   RunRecord,
+  RunStore,
+  Attributed,
 } from '@sensigo/realm';
-import type { ResponseEnvelope, StepDispatcher } from '@sensigo/realm';
+import type { ResponseEnvelope, StepDispatcher, PendingView } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { buildReattachFlags } from './agent.js';
+import { attendingLine } from './run-advance.js';
 import { scheduleGateExpiryTimer } from '../agent/gate/gate-expiry-timer.js';
 
 /**
@@ -74,11 +107,21 @@ export function renderStepFailureLine(
  *    terminal run, by two DIFFERENT mechanisms: `realm run abandon` throws STATE_RUN_TERMINAL
  *    (abandon-run.ts), while `realm agent --run-id` refuses through a separate uncoded check in
  *    resolveRunAttach (run-attach.ts) — a plain Error, not that code.
+ *    Decisions C202, C204: a run an engine failure ended with a failed step `realm run resume`
+ *    takes (core's `offeredResumeWay`, F2) gets that command first (`Resume:`); a run an operator
+ *    ended gets its ending and reason in that place (`Ended:`), never the undo.
  *  - PENDING GATE — respond and inspect, and deliberately NO Discard line: `realm run abandon`
  *    REFUSES a run with a pending gate (STATE_TRANSITION_DENIED, abandon-run.ts) and tells you to
  *    resolve the gate first. The gate_id and choices come from the FROZEN record, the same source
- *    `respond` validates against, so what is printed is what will be accepted.
- *  - OTHERWISE — drive, inspect, or discard, all three of which apply.
+ *    `respond` validates against, so what is printed is what will be accepted. Decision C202: a
+ *    question whose time is up and that declares `on_expiry` gets the owed call in place of respond.
+ *  - OTHERWISE — decision C202: the ways on the run's view (`describePending`, read by the caller on
+ *    the same record) gives: the owed call (`Advance: realm run advance`) when the engine owes work,
+ *    the drive (`Drive it: realm agent`) only when an agent step is ready — then the line `realm run
+ *    respond` prints after its commands; when neither, the steps that cannot run and the way out
+ *    (`cannotGoOnLines`) when the run cannot go on from here, or C188's `Go on:` line for a step in
+ *    flight in another program (no Discard: the run is in that program's hands); then inspect, and
+ *    discard. A run with nothing ready gets inspect and discard alone: no command goes on with it.
  *
  * The choices are joined with `|` deliberately: this is a usage template showing alternation, not
  * a list. (inspect renders them `', '` and the prompt `'/'`; three renderings, three purposes.)
@@ -92,6 +135,14 @@ export function renderStepFailureLine(
 export function renderDetachMap(
   record: RunRecord,
   promptStep: string | undefined,
+  /**
+   * Decision C202: what the run owes and what is ready — `describePending` on `record` — and the
+   * workflow (which failed steps `realm run resume` takes).
+   */
+  ways: {
+    pending: PendingView;
+    workflow: Parameters<typeof resumeWay>[1] & Parameters<typeof cannotGoOnLines>[2];
+  },
   opts?: {
     headline?: string;
     /**
@@ -109,35 +160,337 @@ export function renderDetachMap(
   const phase = deriveRunPhase(record);
   const step = promptStep ?? record.pending_gate?.step_name ?? '(step unknown)';
   // issue #468 — the default is the #447 cancel route's own claim, byte-identical. The stall
-  // route (below, in the loop) passes 'Workflow stalled': no prompt was ever cancelled there, and
-  // the hardcoded word would be a false statement about what just happened.
+  // route (below, in the loop) passes 'Workflow stalled', or 'Engine work owed' when the engine owes
+  // work this command does not run (F16): no prompt was ever cancelled there, and the hardcoded
+  // word would be a false statement about what just happened.
   const headline = opts?.headline ?? 'Prompt cancelled';
   const lines = [
     `${headline} — detached from run '${record.id}' at step '${step}' (phase: ${phase}). The run is saved.`,
   ];
 
   if (record.terminal_state) {
+    // decisions C202, C205: the way on from a failed step `realm run resume` takes.
+    const resume = resumeLine(record, ways.workflow);
+    if (resume !== undefined) lines.push(resume);
+    // decision C211: cleanup steps the ending left pending — the command that runs them.
+    const cleanup = pendingCleanupLine(record, new Date());
+    if (cleanup !== undefined) lines.push(`  ${cleanup}`);
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
   }
 
   const gate = record.pending_gate;
+  const { pending } = ways;
+  // decision C202: the owed call — for what the engine owes, an expired question's declared
+  // `on_expiry` included (the view's act); decision C207: with several owed, where the call stops.
+  const advanceLine = `  Advance:   realm run advance ${record.id} — for what the engine owes (${owedList(pending)}), with no model${owedRunsClause(pending)}`;
   if (gate !== undefined) {
+    // decision C202: a question whose time is up and that declares `on_expiry` can no longer be
+    // answered — the owed call carries its expiry out.
     lines.push(
-      `  Respond:   realm run respond ${record.id} --gate ${gate.gate_id} --choice ${gate.choices.join('|')}`,
+      pending.act !== undefined
+        ? advanceLine
+        : // decision C206: the one answer command (`--choice <one of: a, b>`), never `a|b` — a
+          // shell runs that as a pipe, and records the first choice.
+          `  Respond:   ${respondCommand(record.id, gate.gate_id, gate.choices)}`,
     );
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
   }
 
-  const driveFlags =
-    opts?.driveFlags !== undefined && opts.driveFlags !== '' ? ` ${opts.driveFlags}` : '';
-  lines.push(
-    `  Drive it:  realm agent --run-id ${record.id} --provider <provider> --model <model>${driveFlags}`,
-  );
+  // decision C202: the ways on the run's view gives — the owed call where the engine owes work, the
+  // drive only where an agent step is ready.
+  const commands: string[] = [];
+  if (pending.act !== undefined) commands.push(advanceLine);
+  if (pending.agent_steps.length > 0) {
+    const driveFlags =
+      opts?.driveFlags !== undefined && opts.driveFlags !== '' ? ` ${opts.driveFlags}` : '';
+    commands.push(
+      `  Drive it:  realm agent --run-id ${record.id} --provider <provider> --model <model>${driveFlags}`,
+    );
+  }
+  if (commands.length > 0) {
+    // decision C196: a `realm workflow run` or `realm agent` waiting on this run goes on by itself —
+    // the line `realm run respond` and `realm run advance` print after theirs, from the same
+    // composer, under the commands.
+    lines.push(...commands, `             ${attendingLine(commands.length)}`);
+  } else if (cannotGoOnHere(record, pending)) {
+    // decision C202: the run cannot go on from here — core's lines: each step that cannot run, then
+    // the way out (which ends with `realm run abandon`).
+    lines.push(...cannotGoOnLines(record, pending, ways.workflow).map((line) => `  ${line}`));
+    lines.push(`  Inspect:   realm run inspect ${record.id}`);
+    return lines.join('\n');
+  } else {
+    // decision C202: a step another program holds — C188's way on, and no Discard line.
+    const inFlight = record.in_progress_steps.filter((s) => s !== record.pending_gate?.step_name);
+    if (inFlight.length > 0) {
+      lines.push(goOnLine(inFlight, `realm run advance ${record.id}`));
+      lines.push(`  Inspect:   realm run inspect ${record.id}`);
+      return lines.join('\n');
+    }
+  }
   lines.push(`  Inspect:   realm run inspect ${record.id}`);
   lines.push(`  Discard:   realm run abandon ${record.id}`);
   return lines.join('\n');
+}
+
+/**
+ * decision C188: how `realm workflow run` hands the run back when its watch on a step another process
+ * holds (decision C173) ends with the record unchanged. It stops waiting — the run is not stalled: the
+ * other program may still be running the step — so it names the held step, not the last step it
+ * prompted, and offers the ways on that fit a run in that state: `realm run advance`, once the held
+ * step is no longer in flight (it runs what the engine then owes, and names an agent step or a question
+ * that is ready), and `realm run inspect`. No `Drive it` line: an agent step that is ready is asked for
+ * at this command's own prompt, so the loop never reaches this hand-back with one. No `Discard` line:
+ * the run is in another program's hands. The record is the one the watch found unchanged (no gate,
+ * not ended).
+ *
+ * @internal Exported for testing only.
+ */
+export function renderInFlightHandBack(record: RunRecord, held: readonly string[]): string {
+  const names = held.map((s) => `'${s}'`).join(', ');
+  const steps = held.length === 1 ? `step ${names}` : `steps ${names}`;
+  return [
+    `Stopped waiting — detached from run '${record.id}' at ${steps} (phase: ${deriveRunPhase(record)}). The run is saved.`,
+    goOnLine(held, `realm run advance ${record.id}`),
+    `  Inspect:   realm run inspect ${record.id}`,
+  ].join('\n');
+}
+
+/** How often the open prompt reads the run to see its question settled elsewhere (decision C158). */
+export const QUESTION_WATCH_MS = 500;
+let questionWatchMs = QUESTION_WATCH_MS;
+
+/**
+ * A test seam, not a user option (the architect's review of round 20, finding 10): sets the interval
+ * the prompt's watch reads the run at, and returns the restore. A cell sets it past its own length to
+ * neutralise the watch, so that only the attending timer's `onApplied` can close the prompt.
+ */
+export function setQuestionWatchIntervalForTests(ms: number): () => void {
+  const before = questionWatchMs;
+  questionWatchMs = ms;
+  return (): void => {
+    questionWatchMs = before;
+  };
+}
+
+/**
+ * decision C173: how long the loop watches an unchanged record while a step is in flight in another
+ * process before it names the step — `realm agent`'s {@link IN_FLIGHT_WATCH_MS}. A test seam, not an
+ * option: a cell sets it short and restores it with the returned function.
+ */
+let inFlightWatchMs = IN_FLIGHT_WATCH_MS;
+export function setInFlightWatchForTests(ms: number): () => void {
+  const before = inFlightWatchMs;
+  inFlightWatchMs = ms;
+  return (): void => {
+    inFlightWatchMs = before;
+  };
+}
+
+/**
+ * decision C173: reads the run every {@link QUESTION_WATCH_MS} until its record changes (another
+ * `version`) or `withinMs` passes; the changed record, or `undefined`. A read that fails is tried
+ * again at the next tick.
+ */
+async function recordChange(
+  store: Pick<RunStore, 'get'>,
+  runId: string,
+  version: number,
+  withinMs: number,
+): Promise<RunRecord | undefined> {
+  const end = Date.now() + withinMs;
+  while (Date.now() < end) {
+    await new Promise((resolve) => setTimeout(resolve, questionWatchMs));
+    const fresh = await store.get(runId).catch(() => undefined);
+    if (fresh !== undefined && fresh.version !== version) return fresh;
+  }
+  return undefined;
+}
+
+/**
+ * Reads the run every {@link QUESTION_WATCH_MS} (a cell can change it: {@link setQuestionWatchIntervalForTests}) while a prompt waits on the question `gateId`, and
+ * calls `onClosed` once when that question is no longer open: the run ended, or its open question
+ * is another one or none (decision C158). A read that fails is tried again at the next tick.
+ * Returns the stop.
+ */
+function watchQuestion(
+  store: Pick<RunStore, 'get'>,
+  runId: string,
+  gateId: string,
+  onClosed: () => void,
+): () => void {
+  return watchRun(
+    store,
+    runId,
+    (r) => r.terminal_state === true || r.pending_gate?.gate_id !== gateId,
+    onClosed,
+  );
+}
+
+/**
+ * The one watch behind every prompt (decisions C158, C165): reads the run every
+ * {@link QUESTION_WATCH_MS} and calls `onClosed` once `closed(record)` holds. A read that fails is
+ * tried again at the next tick. Returns the stop.
+ */
+function watchRun(
+  store: Pick<RunStore, 'get'>,
+  runId: string,
+  closed: (r: RunRecord) => boolean,
+  onClosed: () => void,
+): () => void {
+  let stopped = false;
+  const timer = setInterval(() => {
+    void store.get(runId).then(
+      (r) => {
+        if (stopped) return;
+        if (closed(r)) {
+          stopped = true;
+          clearInterval(timer);
+          onClosed();
+        }
+      },
+      () => undefined,
+    );
+  }, questionWatchMs);
+  return (): void => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
+/**
+ * The line the prompt prints when its question was settled while it waited (decision C158): the
+ * answer the record holds for the step, as `realm run inspect` prints it (`Answer: <choice> · …`),
+ * or — when no answer was recorded (an `on_expiry: abort`, an abandoned run) — the run's phase.
+ */
+export function questionClosedLine(run: RunRecord, step: string): string {
+  const answers = composeStepViews(run)[step]?.answers ?? [];
+  const last = answers[answers.length - 1];
+  const what =
+    last !== undefined
+      ? renderAnswerLine(last)
+      : `no answer was recorded; the run is '${deriveRunPhase(run)}'`;
+  return `This prompt is closed: the question on '${step}' is no longer open — ${what}.`;
+}
+
+/**
+ * What the record shows of a step another process took or ran (decisions C165, C179): `was taken by
+ * <program>` while its claim is on the record, `was taken by <program>, and completed` (or `failed`)
+ * once it settled, the program read off its evidence (`driven_by`). A claim with `ownClaimToken` is
+ * this prompt's own (an agent step's prompt holds the step's claim while it waits) and is no other
+ * process's. `undefined` when neither holds.
+ */
+function elsewherePhrase(
+  run: RunRecord,
+  step: string,
+  storeKeepsClaims: boolean,
+  ownClaimToken?: string,
+): string | undefined {
+  const claim = run.claims?.[step];
+  if (claim !== undefined && (ownClaimToken === undefined || claim.token !== ownClaimToken)) {
+    return `was ${takenPhrase(describeClaimHolder(claim, storeKeepsClaims))}`;
+  }
+  const ran = ranElsewherePhrase(run, step);
+  return ran !== undefined ? `was ${ran}` : undefined;
+}
+
+/**
+ * The line a step's prompt prints when the step stopped waiting for its answer while the prompt was
+ * open (decision C165): another process took it (its claim names the program), or ran it (its
+ * evidence names the program, `driven_by`), or the run ended. The same past-tense phrase `realm
+ * agent` prints for a step another process took (`takenPhrase`). For an agent step, whose claim the
+ * prompt holds (decision C179), `ownClaimToken` is that claim's token: the prompt also closes when
+ * another process removed the claim (`realm run reclaim --force`, for one), and the step is asked for
+ * again if it is still ready. F7 (f): when another process opened a question, the step waits behind
+ * it — said, and the step is asked for again after the answer.
+ */
+export function stepClosedLine(
+  run: RunRecord,
+  step: string,
+  storeKeepsClaims: boolean,
+  ownClaimToken?: string,
+): string {
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims, ownClaimToken);
+  if (elsewhere !== undefined) {
+    return `This prompt is closed: step '${step}' ${elsewhere}; not run here.`;
+  }
+  if (ownClaimToken !== undefined && !run.terminal_state && run.claims?.[step] === undefined) {
+    return `This prompt is closed: the claim it held on step '${step}' was removed by another process, and the step has not run.`;
+  }
+  if (!run.terminal_state && run.pending_gate !== undefined) {
+    return `This prompt is closed: a question is open on '${run.pending_gate.step_name}', and '${step}' waits for its answer.`;
+  }
+  return `This prompt is closed: step '${step}' no longer waits for an answer — the run is '${deriveRunPhase(run)}'.`;
+}
+
+/**
+ * decision C179: the line after a step's typed answer when another process took or ran the step
+ * before the engine's own claim for the answer — for an agent step, after the prompt let its claim
+ * go. `undefined` when the record shows neither (the reply is then the engine's to explain).
+ */
+export function answerNotRunLine(
+  run: RunRecord,
+  step: string,
+  storeKeepsClaims: boolean,
+): string | undefined {
+  const elsewhere = elsewherePhrase(run, step, storeKeepsClaims);
+  return elsewhere === undefined
+    ? undefined
+    : `Not run here: step '${step}' ${elsewhere}; the answer typed here was not recorded.`;
+}
+
+/**
+ * decision C179: while `realm workflow run` waits for an agent step's typed output it holds the
+ * step's claim (holder: this program, via `run`), so another driver — `realm agent`, an
+ * `execute_step` call — sees the step taken and does no work for it. The claim is released before
+ * the answer goes to the engine (which claims the step again for the answer), when the prompt is
+ * cancelled or closed, and when the process is ended by SIGHUP, SIGINT or SIGTERM (it then exits
+ * 128 + the signal's number). `undefined` when another process took the step first.
+ */
+async function holdStepClaim(
+  store: RunStore,
+  runId: string,
+  step: string,
+  definition: WorkflowDefinition,
+  driver: Attributed | undefined,
+): Promise<
+  { run: RunRecord; token: string | undefined; release: () => Promise<void> } | undefined
+> {
+  let claimed: RunRecord;
+  try {
+    claimed = await store.claimStep(runId, step, definition, driver);
+  } catch (err) {
+    if (
+      err instanceof WorkflowError &&
+      (err.code === 'STATE_STEP_ALREADY_CLAIMED' || err.code === 'STATE_STEP_NOT_ELIGIBLE')
+    ) {
+      return undefined;
+    }
+    throw err;
+  }
+  const token = claimed.claims?.[step]?.token;
+  let released = false;
+  const onSignal = (signal: NodeJS.Signals): void => {
+    void release().finally(() => process.exit(128 + (osConstants.signals[signal] ?? 0)));
+  };
+  const signals: NodeJS.Signals[] = ['SIGHUP', 'SIGINT', 'SIGTERM'];
+  for (const signal of signals) process.once(signal, onSignal);
+  async function release(): Promise<void> {
+    if (released) return;
+    released = true;
+    for (const signal of signals) process.removeListener(signal, onSignal);
+    // A release the record no longer allows (another process settled or took the step, the run
+    // ended, the claim is gone) changes nothing: the next read shows what happened.
+    await store
+      .settleStep?.(
+        runId,
+        { kind: 'release_step', step, ...(token !== undefined ? { claimToken: token } : {}) },
+        definition,
+      )
+      .catch(() => undefined);
+  }
+  return { run: claimed, token, release };
 }
 
 /**
@@ -148,11 +501,12 @@ export function renderDetachMap(
  * ABORT_ERR rejection propagates straight to the #447 catch and its detach map.
  */
 async function askJsonObject(
-  rl: { question: (q: string) => Promise<string> },
+  rl: { question: (q: string, opts?: { signal?: AbortSignal }) => Promise<string> },
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   for (;;) {
-    const raw = await rl.question(prompt);
+    const raw = await rl.question(prompt, signal !== undefined ? { signal } : undefined);
     const trimmed = raw.trim();
     if (trimmed === '') return {};
     let parsed: unknown;
@@ -355,6 +709,15 @@ export const runCommand = new Command('run')
       // question. The block-scoped names below are not visible from the catch, and the catch is
       // where this is needed.
       let promptStep: string | undefined;
+      // decision C179: the claim this process holds while an agent step's prompt waits, if any.
+      let heldClaim: Awaited<ReturnType<typeof holdStepClaim>> = undefined;
+      // decision C182: the claims the loop has said it waits on (step and claim), each said once.
+      const waitingSaid = new Set<string>();
+      const releaseHeldClaim = async (): Promise<void> => {
+        const held = heldClaim;
+        heldClaim = undefined;
+        if (held !== undefined) await held.release();
+      };
 
       try {
         while (!run.terminal_state) {
@@ -362,30 +725,71 @@ export const runCommand = new Command('run')
           if (run.pending_gate !== undefined) {
             const g = run.pending_gate;
             console.log(`  ⏸  Gate: ${g.step_name} | gate_id: ${g.gate_id}`);
+            // decisions C167, C175, C176: the question the person answers — from every source the
+            // gate's text comes from — each line as written.
+            const question = pendingGateQuestion(definition, run);
+            if (question !== undefined) {
+              for (const line of questionLines(question)) console.log(line);
+            }
             console.log(`  Preview: ${JSON.stringify(g.preview, null, 2)}`);
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer.
-            // CAVEAT (lane-1-verified, stated here per the design's own instruction): this
-            // process is blocked on `rl.question` below and cannot observe an EXTERNAL
-            // resolution (e.g. a different terminal's `realm run respond`) while waiting — but
-            // that is SAFE: if this timer fires having lost that race, the [F1] `already_settled`
-            // lookup-first arm NOOPs harmlessly, and if the human answers after an unattended
-            // enactment already won, `submitHumanResponse` below composes the honest late-response
-            // envelope exactly as any other late submit does.
+            // Races with another process are SAFE: if this timer fires having lost a race with
+            // another settlement (a different terminal's `realm run respond`, `drain --expired`,
+            // `listen`), the [F1] `already_settled` lookup-first arm NOOPs harmlessly; and an answer
+            // read here after another enactment already won reaches `submitHumanResponse` below,
+            // which composes the honest late-response envelope exactly as any other late submit does.
+            //
+            // decision C158: the prompt closes when its question is settled by anything else — this
+            // timer's write, or another process (`realm run respond` in another terminal, `realm run
+            // advance`, `drain --expired`, `listen`), seen by a read of the record every
+            // QUESTION_WATCH_MS — and says what settled it; it never waits on a question that can no
+            // longer be answered. An answer read before the close is submitted as before.
+            const settledElsewhere = new AbortController();
             const clearExpiryTimer = scheduleGateExpiryTimer(runId, g, {
               store,
               definition,
               registry,
               ...(driver !== undefined ? { driver } : {}),
+              onApplied: () => settledElsewhere.abort(),
             });
+            const stopWatching = watchQuestion(store, runId, g.gate_id, () =>
+              settledElsewhere.abort(),
+            );
             promptStep = g.step_name;
-            const raw = await rl.question(`  Choice [${g.choices.join('/')}]: `).finally(() => {
+            let raw: string;
+            try {
+              raw = await rl.question(`  Choice [${g.choices.join('/')}]: `, {
+                signal: settledElsewhere.signal,
+              });
+            } catch (err) {
+              // Not this close: the operator's cancel (#447), handled below as before.
+              if (!settledElsewhere.signal.aborted) throw err;
+              run = await store.get(runId);
+              // readline ends the prompt's line when the question is closed.
+              console.log(`  ${questionClosedLine(run, g.step_name)}`);
+              continue;
+            } finally {
               clearExpiryTimer();
-            });
+              stopWatching();
+            }
             const choice = raw.trim();
+            // decision C146: the answer the composer speaks for — this gate, named as this command.
+            // decision C211: the workflow — the way back in after a late answer whose expiry ended
+            // the run reads resume's rule over it.
+            // F9: `before`, the record this prompt read before the answer.
+            const answered = {
+              gateId: g.gate_id,
+              via: 'run' as const,
+              workflow: definition,
+              before: run,
+              now: new Date(),
+            };
             const respondResult = await submitHumanResponse(store, definition, {
               runId,
               gateId: g.gate_id,
               choice,
+              // decision C151: an expiry this late answer carries out names `realm workflow run`.
+              caller: 'run',
               // Thread the resolved project registry so a gate-completed run fires its
               // finalizers with project handlers (same registry passed to executeChain below).
               registry,
@@ -399,7 +803,9 @@ export const runCommand = new Command('run')
               // guard that ended the run (its sentence, `Reason:`, each finalizer's outcome) or
               // one passed line per guard; for an answer the gate's expiry beat, the expiry
               // sentence comes first. One composer with `realm run respond` and the Slack notifier.
-              for (const line of describeAnswerEnding(respondResult, run)) console.log(`  ${line}`);
+              for (const line of describeAnswerEnding(respondResult, run, answered)) {
+                console.log(`  ${line}`);
+              }
               const late = lateAnswerOutcome(respondResult, run);
               if (late !== undefined) {
                 // The call succeeded and the answer was NOT recorded (this process's own timer
@@ -417,15 +823,18 @@ export const runCommand = new Command('run')
               // exactly what this read converges: the next iteration sees the real state and
               // either re-prompts honestly or reaches the stall/tail. Mirrors the ok arm above.
               run = await store.get(runId);
-              // issue #625: a refused LATE answer (the expiry settled the other choice) says what
-              // the run is doing now — the refusal, what the expiry's guards did, then the state.
+              // issue #625: a refused LATE answer (the expiry settled the other choice, or ended the
+              // run) says what the run is doing now — which call carried out the expiry (decision
+              // C146), the refusal, what the expiry's guards did, then the state.
               const late = lateAnswerOutcome(respondResult, run);
-              if (late !== undefined) {
-                for (const line of describeAnswerEnding(respondResult, run)) {
+              if (respondResult.answer_recorded === false) {
+                for (const line of describeAnswerEnding(respondResult, run, answered)) {
                   console.error(`  ${line}`);
                 }
                 console.error(
-                  `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`,
+                  late !== undefined
+                    ? `  ✗ not recorded — gate settled by timeout with choice '${late.choice}' → ${late.phase}\n`
+                    : `  ✗ not recorded → ${deriveRunPhase(run)}\n`,
                 );
               } else {
                 console.error(`  ✗ ${respondResult.errors.join(', ')}\n`);
@@ -434,18 +843,111 @@ export const runCommand = new Command('run')
             continue;
           }
 
-          const eligibleSteps = findEligibleSteps(definition, run);
+          // decision C64 (the census): dev mode answers an `auto` step with the typed output, so an
+          // input refusal is the operator's to fix at the prompt. A precondition, trust or capability
+          // refusal is not — no typed output changes it, and prompting would loop forever. Such a
+          // step is not offered — an agent step refused for trust or precondition included
+          // (decision C82); when nothing else is eligible, the run cannot go on from here.
+          const cannotPrompt = new Set(
+            stepsThatCannotRun(describePending(definition, run, registry, new Date()))
+              .filter((e) => e.refused_by !== 'input_schema')
+              .map((e) => e.step),
+          );
+          const eligibleSteps = findEligibleSteps(definition, run).filter(
+            (step) => !cannotPrompt.has(step),
+          );
 
+          // decision C173: a step another process holds (`realm run advance`, an `execute_step`
+          // call) is in flight, not stalled — the loop watches the record and goes on when it
+          // changes, as `realm agent` does (D6.2); after the same watch with no change it names the
+          // step and the way out, then hands the run back.
+          const inFlight =
+            eligibleSteps.length === 0
+              ? run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name)
+              : [];
+          if (inFlight.length > 0) {
+            // decision C182: what it waits for and who holds it, said once for each claim it waits on.
+            for (const step of inFlight) {
+              const claim = run.claims?.[step];
+              const key = `${step}\u0000${claim?.token ?? claim?.since ?? ''}`;
+              if (waitingSaid.has(key)) continue;
+              waitingSaid.add(key);
+              console.log(
+                `  ${waitingLine(step, describeClaimHolder(claim, store.persistsClaims === true), inFlightWatchMs)}`,
+              );
+            }
+            const fresh = await recordChange(store, runId, run.version, inFlightWatchMs);
+            if (fresh !== undefined) {
+              run = fresh;
+              continue;
+            }
+            // decision C188: the watch ended with the record unchanged — C173's own hand-back, never
+            // the stall branch below (the run is in flight, not stalled). A last read: a record that
+            // changed after the watch's last read goes on, as a change inside the watch does.
+            const record = await store.get(runId);
+            if (record.version !== run.version) {
+              run = record;
+              continue;
+            }
+            const states = new Map(classifyInProgressClaims(record).map((c) => [c.step, c.state]));
+            for (const step of inFlight) {
+              console.error(
+                inFlightLine(
+                  runId,
+                  step,
+                  describeClaimHolder(record.claims?.[step], store.persistsClaims === true),
+                  states.get(step) === 'claim_stale',
+                  inFlightWatchMs,
+                ),
+              );
+            }
+            console.error(renderInFlightHandBack(record, inFlight));
+            // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
+            rl.close();
+            process.exit(1);
+          }
+
+          if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
+            // The steps that cannot run, and the way out — core's lines (decision C64).
+            const record = await store.get(runId);
+            const cannotGoOn = cannotGoOnLines(
+              record,
+              describePending(definition, record, registry, new Date()),
+              definition,
+            );
+            if (cannotGoOn.length > 0) {
+              console.error('\nWorkflow stalled: nothing else can run.');
+              for (const line of cannotGoOn) console.error(line);
+              rl.close();
+              process.exit(1);
+            }
+          }
           if (eligibleSteps.length === 0) {
-            console.error(`\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`);
+            // decision C188: reached with nothing in flight elsewhere (a step another process holds is
+            // waited for above, and handed back there).
             // issue #468 — hands the run back with a truthful map instead of silently exiting 0.
             // A fresh read: the loop's own snapshot is already current here (nothing awaited
             // since the last read reached this branch in the same iteration), but the fresh read
             // is the doctrine this file already keeps for every detach point (#447) — kept for
             // consistency, not because a staleness gap is constructible in this spot.
             const record = await store.get(runId);
+            const pending = describePending(definition, record, registry, new Date());
+            // F16 (review G1-R1): with engine work owed — a guard, for one: this command runs only the
+            // steps it prompts — the run is not stalled. The headline says what the engine owes, which
+            // this command does not run; the map below names the call that runs it.
+            const owed = pending.act !== undefined;
             console.error(
-              renderDetachMap(record, promptStep, { headline: 'Workflow stalled', driveFlags }),
+              owed
+                ? `\nThe engine owes ${owedList(pending)}, which this command does not run.`
+                : `\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`,
+            );
+            console.error(
+              renderDetachMap(
+                record,
+                promptStep,
+                { pending, workflow: definition },
+                { headline: owed ? 'Engine work owed' : 'Workflow stalled', driveFlags },
+              ),
             );
             // process.exit SKIPS the finally (the catch's own rule, below), so close explicitly.
             rl.close();
@@ -456,31 +958,96 @@ export const runCommand = new Command('run')
           const stepName = eligibleSteps[0]!;
           const stepDef: StepDefinition = definition.steps[stepName]!;
 
+          // decision C179: an agent step's claim is held while its prompt waits, so another driver
+          // sees it taken and asks no model. Another process that took it first is said as taken.
+          if (stepDef.execution === 'agent') {
+            const hold = await holdStepClaim(store, runId, stepName, definition, driver);
+            if (hold === undefined) {
+              // Another process took or ran the step first: said as the house says it. Anything else
+              // that made the step not ready (the run ended, a question opened) the next pass shows.
+              run = await store.get(runId);
+              const keeps = store.persistsClaims === true;
+              const ran = ranElsewherePhrase(run, stepName);
+              if (run.in_progress_steps.includes(stepName)) {
+                console.log(
+                  `${takenLine(stepName, describeClaimHolder(run.claims?.[stepName], keeps))}\n`,
+                );
+              } else if (ran !== undefined) {
+                console.log(`• Step '${stepName}' was ${ran}; not run here.\n`);
+              }
+              continue;
+            }
+            heldClaim = hold;
+            run = hold.run;
+          }
+
           console.log(`→ [${stepDef.execution}] ${stepName}: ${stepDef.description}`);
 
           // Build dispatcher output based on execution type
           let userOutput: Record<string, unknown>;
-
-          if (stepDef.execution === 'agent') {
-            promptStep = stepName;
-            userOutput = await askJsonObject(rl, '  Agent output JSON (Enter for {}): ');
-          } else {
-            // auto step
-            const hint =
-              stepDef.handler !== undefined
-                ? `handler: ${stepDef.handler}`
-                : stepDef.uses_service !== undefined
-                  ? `service: ${stepDef.uses_service}`
-                  : 'auto';
-            promptStep = stepName;
-            userOutput = await askJsonObject(rl, `  Mock output (${hint}) — JSON (Enter for {}): `);
+          // decision C165: the step's prompt closes, as a question's does (C158), when the step stops
+          // waiting for this answer — another process took it or ran it (`realm run advance`, an
+          // `execute_step` call), or the run ended — and says what the record shows; never `✓` for
+          // work done elsewhere. Any other rejection is the operator's cancel (#447), rethrown.
+          // decision C179: for an agent step, whose claim this prompt holds, the step stops waiting
+          // when that claim is no longer this prompt's (taken over, or removed), or the run ended.
+          const holding = heldClaim !== undefined;
+          const ownToken = heldClaim?.token;
+          const stepGone = new AbortController();
+          const stopStepWatch = watchRun(
+            store,
+            runId,
+            (r) =>
+              r.terminal_state === true ||
+              (holding
+                ? !r.in_progress_steps.includes(stepName) ||
+                  (ownToken !== undefined && r.claims?.[stepName]?.token !== ownToken)
+                : !findEligibleSteps(definition, r).includes(stepName)),
+            () => stepGone.abort(),
+          );
+          promptStep = stepName;
+          try {
+            if (stepDef.execution === 'agent') {
+              userOutput = await askJsonObject(
+                rl,
+                '  Agent output JSON (Enter for {}): ',
+                stepGone.signal,
+              );
+            } else {
+              // auto step
+              const hint =
+                stepDef.handler !== undefined
+                  ? `handler: ${stepDef.handler}`
+                  : stepDef.uses_service !== undefined
+                    ? `service: ${stepDef.uses_service}`
+                    : 'auto';
+              userOutput = await askJsonObject(
+                rl,
+                `  Mock output (${hint}) — JSON (Enter for {}): `,
+                stepGone.signal,
+              );
+            }
+          } catch (err) {
+            if (!stepGone.signal.aborted) throw err;
+            await releaseHeldClaim();
+            run = await store.get(runId);
+            console.log(
+              `  ${stepClosedLine(run, stepName, store.persistsClaims === true, ownToken)}\n`,
+            );
+            continue;
+          } finally {
+            stopStepWatch();
           }
+          // decision C179: the answer goes to the engine, which claims the step for it.
+          await releaseHeldClaim();
 
           const dispatcher: StepDispatcher = async () => userOutput;
 
           const result = await executeChain(store, definition, {
             runId,
             command: stepName,
+            // decision C151: an expiry this call carries out names `realm workflow run`.
+            caller: 'run',
             input: userOutput,
             dispatcher,
             registry,
@@ -493,7 +1060,51 @@ export const runCommand = new Command('run')
             ...(mintWriterNonce ? { writerNonce: crypto.randomUUID() } : {}),
           });
 
-          if (result.status === 'ok') {
+          // F7: a reply that is neither `ok` nor a question, read by core's classifier against the
+          // record as it is now — the one rule for "another program got there first".
+          const keeps = store.persistsClaims === true;
+          const replyRecord =
+            result.status === 'blocked' || result.status === 'error'
+              ? await store.get(runId)
+              : undefined;
+          const stop =
+            replyRecord === undefined ? undefined : classifyStop(result, stepName, replyRecord);
+          // decision C179: another process took or ran the step before the engine's own claim for this
+          // answer (rows 1–2: `taken`) — the answer typed here was not recorded; `takenLine` when the
+          // record names no one to say it of.
+          const notRun =
+            isRaceStop(stop) && stop.kind === 'taken' && !stop.ran_here
+              ? (answerNotRunLine(replyRecord!, stepName, keeps) ??
+                takenLine(stepName, describeClaimHolder(replyRecord!.claims?.[stepName], keeps)))
+              : undefined;
+          if (
+            result.status === 'ok' &&
+            result.agent_action === 'stop' &&
+            result.evidence.length === 0
+          ) {
+            // decision C165: the run ended before this answer reached the engine (another process
+            // finished it) — the call ran nothing, so no `✓`: the engine's own words say why.
+            run = await store.get(runId);
+            console.log(`  Not run here: ${result.context_hint}\n`);
+          } else if (notRun !== undefined) {
+            // decision C179: another process took or ran the step before the engine's own claim for
+            // the answer (for an agent step, after this prompt let its claim go) — said; never `✗`
+            // with no reason, never `✓`.
+            run = replyRecord!;
+            console.log(`  ${notRun}\n`);
+          } else if (isRaceStop(stop)) {
+            // F7: the step's own settle of the answer was refused (`ran_here`: another process settled
+            // it, took it over, removed its claim, or ended the run) — the line `realm run advance`
+            // prints, never `✗`. A claim refused because the run ended, a question opened or the step
+            // stopped being eligible ran nothing here: no line of its own — the next pass says what
+            // the record shows.
+            run = replyRecord!;
+            if (stop.ran_here) {
+              console.log(
+                `  ${outcomeNotRecordedLine(stop.kind as NotRecordedKind, run, stepName, keeps)}\n`,
+              );
+            }
+          } else if (result.status === 'ok') {
             run = await store.get(runId);
             const ev = result.evidence[0];
             const hash = ev !== undefined ? ev.evidence_hash.slice(0, 8) : 'n/a';
@@ -503,6 +1114,21 @@ export const runCommand = new Command('run')
             // Gate opened as part of this step — it will be handled at loop top.
             run = await store.get(runId);
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
+          } else if (
+            stop?.kind === 'capability' &&
+            result.stopped_step !== undefined &&
+            result.stopped_step !== stepName
+          ) {
+            // decision C64 (the census): this step completed; the chain after it reached a step
+            // this runner lacks the code for, and the reply is that step's block. The step is said
+            // as completed; the next pass names the blocked step (it is never offered at the prompt).
+            // Keyed on `stopped_step` (decision C73): a value other than this step means the engine
+            // ran that step after this one, so this one settled — no record is read to guess it.
+            run = await store.get(runId);
+            const ev = [...run.evidence].reverse().find((e) => e.step_id === stepName);
+            const hash = ev !== undefined ? ev.evidence_hash.slice(0, 8) : 'n/a';
+            const dur = ev !== undefined ? `${ev.duration_ms}ms` : 'n/a';
+            console.log(`  ✓ → ${run.run_phase} | hash: ${hash}... | ${dur}\n`);
           } else {
             console.error(`${renderStepFailureLine(result, stepName)}\n`);
             // issue #468 — a FRESH read, not a break: below the validation-exhaustion threshold
@@ -550,6 +1176,9 @@ export const runCommand = new Command('run')
         // its own errors. So ABORT_ERR reaching here means the prompt, and only the prompt.
         // ADDING ANY AbortSignal-CONSUMING AWAIT TO THIS LOOP REQUIRES RE-ESTABLISHING THAT.
         if ((err as { code?: string })?.code === 'ABORT_ERR') {
+          // decision C179: the claim an agent step's prompt held is let go first, so the map's
+          // `Drive it` line finds the step ready.
+          await releaseHeldClaim();
           // A FRESH read, not the loop's `run`: while this process sat blocked on the prompt,
           // another terminal's `realm run respond` or an expiry enactment may have moved it —
           // the #291 race. The map is only as good as the state it forks on.
@@ -569,7 +1198,17 @@ export const runCommand = new Command('run')
             rl.close();
             process.exit(1);
           }
-          console.error(renderDetachMap(record, promptStep, { driveFlags }));
+          console.error(
+            renderDetachMap(
+              record,
+              promptStep,
+              {
+                pending: describePending(definition, record, registry, new Date()),
+                workflow: definition,
+              },
+              { driveFlags },
+            ),
+          );
           // process.exit SKIPS the finally, so close explicitly. (rl.close is idempotent, so
           // the double-close on any path that reaches both is harmless — probed.)
           rl.close();
@@ -577,6 +1216,7 @@ export const runCommand = new Command('run')
           // so 130 would claim a death that did not happen.
           process.exit(1);
         }
+        await releaseHeldClaim();
         throw err;
       } finally {
         rl.close();
@@ -587,8 +1227,12 @@ export const runCommand = new Command('run')
       // gets this far (the catch's ABORT_ERR arm exits directly and never falls through to here).
       // Only the while condition being false gets here — the stall exits from inside the try
       // above — so `run.terminal_state` is always true at this point.
+      // decision C211 (walk c14 W3-4's class): cleanup steps the ending left pending — the command
+      // that runs them, under the last line.
+      const cleanup = pendingCleanupLine(run, new Date());
       if (deriveRunPhase(run) === 'completed') {
         console.log(`Run complete. Phase: ${run.run_phase}`);
+        if (cleanup !== undefined) console.log(cleanup);
         // NATURAL RETURN — never process.exit(0): three declared controls (run-detach.test.ts's
         // R1/R2/R3) pin the completed path as an unwrapped, un-exited resolution.
         // completed-with-failed-steps (the #302 world) exits 0 too, here — outcome-keyed,
@@ -597,6 +1241,11 @@ export const runCommand = new Command('run')
         return;
       }
       console.log(`Run complete. Phase: ${run.run_phase}`);
+      // decision C205 (round 27 finding 3): a run that ended with a failed step `realm run resume`
+      // takes gets the way back in, as the detach map gives it.
+      const resume = resumeLine(run, definition);
+      if (resume !== undefined) console.log(resume);
+      if (cleanup !== undefined) console.log(cleanup);
       process.exit(1);
     },
   );

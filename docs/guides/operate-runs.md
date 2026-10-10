@@ -81,7 +81,13 @@ See [Add a human gate](human-gates.md#6-answer-it).
 
 ## Open, with no driver
 
-A run in `running` moves only when a driver calls it. If the driver has stopped, start one on the same run:
+A run in `running` moves only when a driver calls it. If the driver has stopped, start one on the same run. When the run owes the engine work — an `auto` step or a guard, as the `Owed to the engine:` line of `realm run inspect` says — run it from your shell, with no model and no key:
+
+```bash
+realm run advance <run-id>
+```
+
+It stops where the run next needs something else, such as an agent step or a question, and says which. An agent step needs a driver with a model:
 
 ```bash
 realm agent --run-id <run-id> --model <model>
@@ -103,11 +109,10 @@ It prints:
 
 ```text
 Resumed run '4a0eafe2-afff-40ca-8b89-ad0e92db1a9c': step 'fetch' re-enabled and run reset to 'running'.
-Drive it with: realm agent --run-id 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c --provider <provider> --model <model>
-Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c shows the extension module the run loaded).
+To run the step the engine owes ('fetch') without a model: realm run advance 4a0eafe2-afff-40ca-8b89-ad0e92db1a9c
 ```
 
-The run is open again. Steps that had completed stay completed; the named step will run again. Then start a driver on it, as the second line says, with `<provider>` and `<model>` filled in as above. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
+The run is open again. Steps that had completed stay completed; the named step will run again. `fetch` is a step only the engine runs, so the second line names the call that runs it, with no model. When the step that is ready again is an agent step, the second line is `Drive it with: realm agent --run-id <run-id> --provider <provider> --model <model>` instead, with `<provider>` and `<model>` to fill in as above, and a third line names the other flags to add. The `realm run advance` line was added after version 0.46.0, which prints the `Drive it with:` lines for every step. Version 0.45.0 prints the `Drive it with:` line without `--provider <provider> --model <model>`, and nothing after it.
 
 `--from` must name a step the run lists under `Failed`. For any other step, the command refuses:
 

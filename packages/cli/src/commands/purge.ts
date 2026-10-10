@@ -31,14 +31,15 @@ import type {
   RunStore,
   PerRunArtifactStore,
   RunScopedFencePredicate,
+  WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
   type ArtifactDeletionReport,
   WorkflowError,
   TERMINAL_PHASES,
-  RESUMABLE_PHASES,
   classifyInProgressClaims,
   deriveRunPhase,
+  resumeWay,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 
@@ -160,6 +161,38 @@ export interface PurgeRunsOptions {
   workflow?: string | undefined;
   /** Default true (safe). Only when explicitly false does this function delete anything. */
   dryRun?: boolean | undefined;
+  /**
+   * issue #625 PR-2a (decision C213): where each run's workflow is read, so `resumable` is the
+   * resume command's own rule (core's `resumeWay` — a cleanup step `realm run resume --from`
+   * refuses is no path). Absent, or a workflow that cannot be read: see {@link resumableOf}.
+   */
+  workflows?: Pick<WorkflowRegistrar, 'get'> | undefined;
+}
+
+/**
+ * A workflow that answers every step name as a step that is not a cleanup step — for a run whose
+ * workflow cannot be read here (decision C213).
+ */
+const UNREAD_WORKFLOW = {
+  steps: new Proxy({} as Record<string, { execution?: string }>, { get: () => ({}) }),
+};
+
+/**
+ * Whether `realm run resume` takes a failed step of the run (decision C213): core's `resumeWay` —
+ * the one rule `realm run resume`'s own checks are, read by every surface that offers resume — over
+ * the run's workflow. When that workflow cannot be read, resume refuses until it is registered
+ * again, and only the workflow tells a cleanup step from another: every failed step is then counted
+ * as one it may take (the old count — a path a purge could destroy).
+ */
+async function resumableOf(
+  run: RunRecord,
+  workflows: Pick<WorkflowRegistrar, 'get'> | undefined,
+): Promise<boolean> {
+  const workflow =
+    workflows === undefined
+      ? undefined
+      : await workflows.get(run.workflow_id).catch(() => undefined);
+  return resumeWay(run, workflow ?? UNREAD_WORKFLOW) !== undefined;
 }
 
 /**
@@ -252,8 +285,9 @@ export async function purgeRuns(
       // Derives (issue #279, increment 2, PR-C — D-3 leg iii). issue #558 PR-C: a resumable PHASE
       // is not enough — `resume --from <step>` requires the step to be in `failed_steps`
       // (`resume.ts:131`), so an abandoned run with none has no resume path to destroy and the
-      // line must not claim one.
-      resumable: RESUMABLE_PHASES.has(deriveRunPhase(run)) && run.failed_steps.length > 0,
+      // line must not claim one. Decision C213: nor is a failed cleanup step (resume refuses it) —
+      // the rule is core's `resumeWay`.
+      resumable: await resumableOf(run, options.workflows),
       overriddenClaimStep,
     });
   }
@@ -506,7 +540,8 @@ export const purgeCommand = new Command('purge')
         process.exit(1);
       }
 
-      const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
+      const { JsonFileStore, FailedAttemptStore, JsonWorkflowStore } =
+        await import('@sensigo/realm');
       const { JsonTraceBufferStore } = await import('@sensigo/realm-mcp');
       const runStore = new JsonFileStore();
       const runsDir = runStore.runsDirPath;
@@ -527,7 +562,13 @@ export const purgeCommand = new Command('purge')
       const dryRun = opts.force !== true;
       try {
         const result = await purgeRuns(
-          { runId, olderThan: opts.olderThan, workflow: opts.workflow, dryRun },
+          {
+            runId,
+            olderThan: opts.olderThan,
+            workflow: opts.workflow,
+            dryRun,
+            workflows: new JsonWorkflowStore(),
+          },
           runStore,
           artifactStores,
         );

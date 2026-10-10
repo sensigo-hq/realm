@@ -472,7 +472,7 @@ describe('review correction C1 — each answer is printed ONCE, whatever the lay
   });
 });
 
-describe('review correction C2 — an answer the gate’s expiry wrote reads as no one answering', () => {
+describe('review correction C2 — an answer the gate’s expiry wrote reads as no answer in time (C147)', () => {
   const answerLine = (out: string): string =>
     out.split('\n').find((l) => l.trim().startsWith('Answer: ')) ?? `<no Answer line:\n${out}>`;
   const expiryRun = (extra: Record<string, unknown>): RunRecord =>
@@ -481,7 +481,7 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
       evidence: [exec('confirm'), answer('confirm', extra)],
     });
 
-  it("expired_default: `Answer: hold · settled by the gate's expiry (no one answered)` — no answerer, no proof", async () => {
+  it("expired_default: `Answer: hold · settled by the gate's expiry (no answer in time)` — no answerer, no proof", async () => {
     const out = await render(
       expiryRun({
         responded_by: 'timeout',
@@ -493,7 +493,7 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     // (a) red when the expiry's literal `timeout` is read as a stated name again, or the line gains
     //     an answerer or proof part; (b) prints the line.
     expect(answerLine(out)).toBe(
-      "     Answer: hold · settled by the gate's expiry (no one answered)",
+      "     Answer: hold · settled by the gate's expiry (no answer in time)",
     );
     expect(out).not.toContain('answered by timeout');
   });

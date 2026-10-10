@@ -131,17 +131,31 @@ await runFixtureTests({ workflowPath: 'flow', fixturesPath: 'flow/fixtures' });
 ]
 ```
 
-Each fixture gets a run in a new `InMemoryStore`. Nothing is written to disk. A fixture's `error` for each kind of failure:
+Each fixture gets a run in a new `InMemoryStore`. Nothing is written to disk. An agent step's input is the fixture's answer for it. An `auto` step gets what the engine gives it in a real run: the run's params when the step has no `depends_on`, and nothing otherwise. Added after version 0.46.0, which gives every `auto` step nothing, so a fixture whose first `auto` step needs the params fails there with `Invalid input for step '<step>'`. The engine's work — guards, `auto` steps, and an expired question's declared `on_expiry` — runs through `advanceRun` with the fixture's registry, as in a real run: an `auto` step with no handler and no service records what the engine records (the output of the one step it depends on, or the run's params when it depends on none), and the steps run in the engine's order: every step that can run, then one attempt of a step whose handler or adapter has no stand-in. Added after version 0.46.0, which recorded `{}` for such a step when the runner named it, so a fixture whose later step read its output failed where the run completes.
 
-| The fixture                                                | `error`                                                                                                                                      |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Expects another ending                                     | `assertFinalState: expected phase 'failed' but run is in phase 'completed'`                                                                  |
-| Expects a status the step did not have                     | `Expected evidence for step 'fetch' with status 'error' not found`                                                                           |
-| Expects a step that has no entry                           | `Expected evidence for step 'nope' not found`                                                                                                |
-| Expects another set of skipped steps                       | `Expected skipped_steps ["fetch"] but got []`                                                                                                |
-| Has no answer for an agent step, or one the schema refuses | `Invalid input for step 'decide'`                                                                                                            |
-| Has no stand-in for a service the run calls                | `Adapter 'orders_api' for service 'orders' is not registered. Declare this adapter under 'adapters:' in realm.yaml at your deployment root.` |
-| Gives a gate a choice it does not have                     | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                              |
+A fixture's `error` for each kind of failure:
+
+| The fixture                                                                                                                                                | `error`                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Expects another ending                                                                                                                                     | `assertFinalState: expected phase 'failed' but run is in phase 'completed'`                                                                  |
+| Expects a status the step did not have                                                                                                                     | `Expected evidence for step 'fetch' with status 'error' not found`                                                                           |
+| Expects a step that has no entry                                                                                                                           | `Expected evidence for step 'nope' not found`                                                                                                |
+| Expects another set of skipped steps                                                                                                                       | `Expected skipped_steps ["fetch"] but got []`                                                                                                |
+| Has no answer for an agent step, or one the schema refuses                                                                                                 | `Invalid input for step 'decide'`                                                                                                            |
+| Has no stand-in for a service the run calls                                                                                                                | `Adapter 'orders_api' for service 'orders' is not registered. Declare this adapter under 'adapters:' in realm.yaml at your deployment root.` |
+| Reaches a point where nothing else can run, with a step refused before its claim: a failed precondition, an invalid `trust` or an input its schema refuses | `Workflow stalled: nothing else can run.`, then one line per step that cannot run (see below). Added after version 0.46.0                    |
+| Gives a gate a choice it does not have                                                                                                                     | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                              |
+
+A fixture stalled this way fails with `Workflow stalled: nothing else can run.` and one line per step that cannot run, joined by newlines: the step lines `realm workflow run` prints in the same state. It names no command that ends the run, because the run is in the runner's memory and no `realm run` command can reach it. A step whose handler or adapter has no stand-in is not refused before its claim, so on its own it fails the fixture with the engine's message (the table above). When the fixture stops before running it, beside a step that is refused before its claim, the stall lists it too, as `'<step>' cannot run here (capability): …`. For a step whose precondition fails (`error`, from `runFixtureTests`):
+
+```text
+Workflow stalled: nothing else can run.
+'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+```
+
+[`realm workflow test`](cli/realm-workflow.md#test) prints the second and later lines indented under the fixture's `FAIL` line.
+
+Added after version 0.46.0, which fails such a fixture with `Workflow stalled: exceeded maximum loop iterations` when a precondition fails, and with the step's own error otherwise.
 
 `runFixtureTests` itself throws when the workflow file or the fixtures folder is not there.
 

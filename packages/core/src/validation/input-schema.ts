@@ -4,6 +4,7 @@ import type { ValidateFunction } from 'ajv';
 import type { JsonSchema } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { TraceEntry } from '../types/run-record.js';
+import { quotedCommand, shellWord } from '../utils/shell-word.js';
 
 /**
  * The ONE Ajv construction for AUTHORED JSON-Schema blocks (`params_schema`, and a step's
@@ -428,7 +429,7 @@ export function validateRunParams(
     throw new WorkflowError(
       `Workflow '${workflowId}' declares a params_schema that ${opener} — ` +
         `${detail}. No run was created. Re-register a fixed file — 'realm workflow validate ` +
-        `<file>' shows the line; 'realm workflow validate --registered ${workflowId}' names the block.`,
+        `<file>' shows the line; ${quotedCommand(`realm workflow validate --registered ${shellWord(workflowId)}`)} names the block.`,
       {
         code: 'VALIDATION_WORKFLOW_SCHEMA',
         category: 'VALIDATION',

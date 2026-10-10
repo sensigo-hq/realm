@@ -10,7 +10,6 @@ import {
   getWorkflowForRun,
   resolvePreExecutionAgentAction,
   buildNextActions,
-  findEligibleSteps,
   classifyInProgressClaims,
   findCapabilityBlockedSteps,
   classifyRunHealth,
@@ -20,6 +19,18 @@ import {
   describeClaimHolder,
   composeStepViews,
   composeDriveFailureCosts,
+  describePending,
+  composeNextActionsStatusWord,
+  dueExpiry,
+  answerAction,
+  openQuestionOf,
+  offeredResumeWay,
+  pendingCleanupWay,
+  waitingOnAnswer as waitingOnAnswerOf,
+  assertRegistryLine,
+  ExtensionRegistry,
+  type ADVANCE_OWED,
+  type EngineRunnable,
   type RunPhase,
   type NextAction,
   type ClaimState,
@@ -31,9 +42,15 @@ import {
   type DriveFailureCost,
   type Attributed,
   type ActorAbsent,
+  runReadError,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
-import { assertToolStores, isReleaseLineRefusal } from './assert-tool-stores.js';
+import {
+  assertToolStores,
+  isReleaseLineRefusal,
+  markServedByTool,
+  registryRole,
+} from './assert-tool-stores.js';
 
 /** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
 function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
@@ -64,29 +81,44 @@ export interface HandleRunStateStores {
    * fresh JsonWorkflowStore so the function stays hermetic for tests/programmatic callers.
    */
   workflowStore?: JsonWorkflowStore;
+  /**
+   * issue #625 PR-2a (decision C8): the server's registry, so the run's view can judge the
+   * capability check (`describePending`). Absent ⇒ the capability check is `'unknown'` and the act
+   * stays offered.
+   */
+  registry?: ExtensionRegistry;
+  /** Per-definition registry resolution; wins over `registry`. A failure falls back to none. */
+  registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
 }
 
 /**
  * Diagnostic classification of `next_actions`:
- * - `ok` — next_actions reflects what to do next (may be empty for a healthy run with only
- *   downstream auto work that hasn't been triggered).
- * - `auto_pending` — eligible steps exist but are all `auto` (buildNextActions drops them); the run
- *   is making engine-side progress, not awaiting the agent.
- * - `awaiting_human` — a human gate is open.
+ * - `ok` — next_actions reflects what to do next (agent steps, then the `advance_run` act when
+ *   engine work is also owed); empty when nothing can run here (`engine_runnable` and
+ *   `agent_refused` name each refused step and why).
+ * - `advance_owed` — the only next work is the engine's: a guard is pending or an `auto` step can
+ *   run, and no agent step is ready — or the open question's time is up and it declares
+ *   `on_expiry`, which `advance_run` carries out first (decision C95). `next_actions` holds the one
+ *   act, `advance_run` — call it. (issue #625 PR-2a; replaces `auto_pending`, which told the caller
+ *   the opposite.)
+ * - `awaiting_human` — a human gate is open, and has not expired with a declared `on_expiry`.
  * - `workflow_unresolved` — no workflow store provided, or the workflow is not registered.
  * - `skipped_terminal` — the run is terminal; nothing to do.
  * - `claim_stale` — a non-terminal run has an in-progress claim past its deadline (a likely-dead
  *   runner / the after-claim wedge, issue #101). Surfaced even when a healthy sibling is in flight.
  * - `claim_unknown_age` — a non-terminal run's only in-progress claims have no deadline (agent /
  *   finalizer-bearing / legacy) and there is nothing else to do — detect-only, human-judged.
- * - `blocked_on_capability` — a non-terminal run has a step parked by a not-registered handler/adapter
- *   (issue #134): the step settled recoverably and is eligible again, awaiting a runner that provides
- *   the missing capability. Computed definition-free, so it also refines the `workflow_unresolved` path.
+ * - `blocked_on_capability` — an owed step needs a handler or an adapter that this server does not
+ *   have (issue #134), and nothing else is owed to the engine: the view, judged with this server's
+ *   registry — or, when it has none, with the run's own `capability_blocks` marker — refuses the
+ *   step for capability and offers no act (issue #625 PR-2a, decision C33). A server that HAS the
+ *   handler reports `advance_owed` instead; the old marker stays visible in `capability_blocks`.
+ *   Without the definition the marker alone decides, so it also refines `workflow_unresolved`.
  *   Outranks `claim_stale` (a more specific, actionable diagnosis); ranks below `awaiting_human`.
  */
 export type NextActionsStatus =
   | 'ok'
-  | 'auto_pending'
+  | typeof ADVANCE_OWED
   | 'awaiting_human'
   | 'workflow_unresolved'
   | 'skipped_terminal'
@@ -276,6 +308,45 @@ export interface RunStateSummary {
    * `drive_failures.entries` — see `composeDriveFailureCosts`'s own doc.
    */
   drive_failure_costs?: DriveFailureCost[];
+  /** issue #625 PR-2a: guards the engine owes (a call to `advance_run` settles them); absent when none. */
+  pending_guards?: string[];
+  /**
+   * issue #625 PR-2a: each eligible `auto` step the engine could run, judged for this server's
+   * registry — `runnable_here` false names the check that refuses it (`refused_by`, `refusal`);
+   * a capability refusal also says what it was judged from (`basis`: `registry` — this server's
+   * registry lacks it; `marker` — no registry, the run's own record; decision C41);
+   * `'unknown'` when the server has no registry to judge the capability check. Absent when none.
+   */
+  engine_runnable?: EngineRunnable[];
+  /**
+   * issue #625 PR-2a (decision C82): each eligible agent step the run refuses before its claim — a
+   * failed precondition, or a `trust` value it refuses — in definition order, shaped as
+   * `engine_runnable`'s refused entries (`step`, `runnable_here: false`, `refused_by`, `refusal`).
+   * Such a step is never in `next_actions`. Absent when none.
+   */
+  agent_refused?: EngineRunnable[];
+  /**
+   * issue #625 PR-2a (decision C211): on a run an engine failure ended (phase `failed`), the failed
+   * steps `realm run resume --from` takes and the command that makes them runnable again (core's
+   * `offeredResumeWay`, F2 — never a cleanup step, never a run an operator ended: its
+   * `terminal_reason` and `sealed_by_arm` say who ended it and why). Absent when it takes none, or
+   * the run's workflow cannot be read.
+   */
+  resumable?: { steps: string[]; command: string };
+  /**
+   * issue #625 PR-2a (decision C211): on a run that has ended, the cleanup steps its ending left
+   * `pending`, in the order the engine runs them, and the command that runs them (`realm run drain
+   * <id> --force`, with code that has their handlers). Absent when none is pending. F12: `held_until`,
+   * when another drainer's lease on one of them has not passed — the command runs nothing until that
+   * time; realm cannot tell whether that drainer is still running.
+   */
+  cleanup_pending?: { steps: string[]; command: string; held_until?: string };
+  /**
+   * issue #625 PR-2a (decision C211): at an open question, the steps it holds — eligible by their
+   * dependencies, they go on after the answer. Absent when none waits, or the run's workflow cannot
+   * be read.
+   */
+  waiting_on_answer?: string[];
 }
 
 /**
@@ -288,7 +359,11 @@ export async function handleGetRunState(
 ): Promise<RunStateSummary> {
   assertToolStores(stores, 'handleGetRunState');
   const runStore = stores?.runStore ?? new JsonFileStore();
-  const run = await runStore.get(args.run_id);
+  // decision C172: a run that cannot be read is answered as the library answers it — the store's own
+  // WorkflowError, or ENGINE_STORE_FAILED naming its cause.
+  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+    throw runReadError(err);
+  });
 
   // #134 capability-block detection — definition-free (reads capability_blocks + the four step sets),
   // computed once and used both to refine the status (below) and as the advisory array (in the return).
@@ -322,8 +397,11 @@ export async function handleGetRunState(
   }
 
   // Compute next_actions + diagnostic status (read-only). Precedence:
-  // terminal → skipped_terminal; gate open → awaiting_human; no/unresolved workflow →
-  // workflow_unresolved; else buildNextActions/findEligibleSteps → ok | auto_pending.
+  // terminal → skipped_terminal; gate open → awaiting_human — unless its time is up and it declares
+  // `on_expiry` (decision C95: carrying that out is owed engine work, read through the view below);
+  // no/unresolved workflow → workflow_unresolved; else describePending → ok | advance_owed (issue
+  // #625 PR-2a).
+  const now = new Date();
   // `definition` is hoisted (issue #221) so classifyRunHealth below can reuse it when resolved —
   // scoping/resolution logic here is otherwise UNCHANGED.
   let nextActions: NextAction[] = [];
@@ -331,10 +409,38 @@ export async function handleGetRunState(
   let definition: WorkflowDefinition | undefined;
   // issue #558 PR-T — the failure the definition read produced, when it produced one.
   let definitionError: { code: string; message: string; class?: string } | undefined;
+  let pending: ReturnType<typeof describePending> | undefined;
+  // decision C46: the registry the view judged with, passed to the run-health classifier too.
+  let registry: ExtensionRegistry | undefined;
+  // decision C211 (the architect's addendum; walk c14 W2-2): the read names what the record's lists
+  // do not show — on a run that has ended, the failed steps `realm run resume` takes (`resumable`,
+  // core's `offeredResumeWay`, F2: an engine failure only) and the cleanup steps left pending
+  // (`cleanup_pending`); at an open question,
+  // the steps it holds (`waiting_on_answer`). Each read of the workflow is best-effort: a workflow
+  // that cannot be read leaves that field out.
+  const readWorkflow = async (): Promise<WorkflowDefinition | undefined> =>
+    stores?.workflowStore === undefined
+      ? undefined
+      : await stores.workflowStore.get(run.workflow_id).catch(() => undefined);
+  let resumable: { steps: string[]; command: string } | undefined;
+  let waitingOnAnswer: string[] = [];
+  // F12: judged at this call's clock (a lease that has not passed holds the cleanup step).
+  const cleanupPending = pendingCleanupWay(run, now);
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
-  } else if (run.pending_gate !== undefined) {
+    const ended = await readWorkflow();
+    // F2: offered only for an engine failure — a run an operator ended carries its ending as data
+    // (`terminal_reason`, `sealed_by_arm`), never the undo.
+    resumable = ended === undefined ? undefined : offeredResumeWay(run, ended);
+  } else if (run.pending_gate !== undefined && dueExpiry(run.pending_gate, now) === undefined) {
     nextActionsStatus = 'awaiting_human';
+    // decision C103: the question is named by its answer — core's one composer, never with the claim
+    // token (only the reply that opened the question carries it). Read from the record alone: no
+    // definition is needed to answer a question.
+    const question = openQuestionOf(run);
+    if (question !== undefined) nextActions = [answerAction(run.id, question)];
+    const held = await readWorkflow();
+    waitingOnAnswer = held === undefined ? [] : waitingOnAnswerOf(held, run);
   } else {
     definition =
       stores?.workflowStore !== undefined
@@ -356,30 +462,50 @@ export async function handleGetRunState(
     if (definition === undefined) {
       nextActionsStatus = 'workflow_unresolved';
     } else {
-      const na = buildNextActions(definition, run);
-      const eligible = findEligibleSteps(definition, run);
-      if (na.length > 0) {
-        nextActions = na;
-        nextActionsStatus = 'ok';
-      } else if (eligible.length > 0) {
-        // Eligible steps exist but are all auto (buildNextActions drops them).
-        nextActionsStatus = 'auto_pending';
-      } else {
-        nextActionsStatus = 'ok';
+      // issue #625 PR-2a (decision C8): the registry the server resolves for every other tool, so
+      // the capability check is judged; a failure falls back to none (`'unknown'`), except a
+      // release-line refusal, which every registry-resolving tool raises.
+      try {
+        registry =
+          stores?.registryProvider !== undefined
+            ? await stores.registryProvider(definition)
+            : stores?.registry;
+        assertRegistryLine(
+          registry,
+          registryRole(stores, 'get_run_state', 'handleGetRunState'),
+          ExtensionRegistry,
+        );
+      } catch (err) {
+        if (isReleaseLineRefusal(err)) throw err;
+        registry = undefined;
       }
+      pending = describePending(definition, run, registry, now);
+      nextActions = buildNextActions(definition, run, registry, now);
+      nextActionsStatus = composeNextActionsStatusWord(pending) ?? 'ok';
     }
 
     // Wedge detection (issue #101) — definition-free (reads the stored per-claim deadline), so it
     // also refines the `workflow_unresolved` path. Carves the wedge states OUT of the
-    // 'ok'/'auto_pending'/'workflow_unresolved' fall-through:
+    // ok / advance_owed / workflow_unresolved fall-through:
     //  - a `claim_stale` claim (past deadline → likely-dead runner) is surfaced even mid-fan-out;
     //  - when only unknown-age claims remain and there is nothing else to do, surface
     //    `claim_unknown_age` (detect-only). A `healthy` in-flight claim (a live runner) stays 'ok'.
     if (run.in_progress_steps.length > 0) {
-      const claimStates = classifyInProgressClaims(run).map((c) => c.state);
+      // The open question's own step holds a claim while it waits (decision C95 reaches this block
+      // with a question open, when its time is up): it is not work in flight, as `stuck_claims`
+      // below says too.
+      const claimStates = classifyInProgressClaims(run)
+        .filter((c) => c.step !== run.pending_gate?.step_name)
+        .map((c) => c.state);
       if (claimStates.includes('claim_stale')) {
         nextActionsStatus = 'claim_stale';
-      } else if (nextActions.length === 0 && !claimStates.includes('healthy')) {
+      } else if (
+        // F14 (review F-R5): only when a claim is left once the question's own is set aside — an
+        // empty list is no claim in flight, never `claim_unknown_age`.
+        claimStates.length > 0 &&
+        nextActions.length === 0 &&
+        !claimStates.includes('healthy')
+      ) {
         nextActionsStatus = 'claim_unknown_age';
       }
     }
@@ -387,7 +513,18 @@ export async function handleGetRunState(
     // #134 capability block outranks the claim-wedge states (a missing capability is a more specific,
     // actionable diagnosis than a stale/unknown-age claim) but ranks below `awaiting_human` — the gate
     // path returns above without entering this else block, so it wins naturally.
-    if (capabilityBlocks.length > 0) {
+    //
+    // issue #625 PR-2a (decision C33): with the definition, the status reads the VIEW — this
+    // server's registry, or the run's marker when it has none — so a server that can run the step
+    // says `advance_owed`, and one that cannot says `blocked_on_capability` before any attempt.
+    // It is reported exactly when the view refuses an owed step for capability and offers no act.
+    // Without the definition there is no view; the marker is then the only fact (the #134 rule).
+    const blockedOnCapability =
+      pending !== undefined
+        ? pending.act === undefined &&
+          pending.engine_runnable.some((e) => e.refused_by === 'capability')
+        : capabilityBlocks.length > 0;
+    if (blockedOnCapability) {
       nextActionsStatus = 'blocked_on_capability';
     }
   }
@@ -456,6 +593,9 @@ export async function handleGetRunState(
     : classifyRunHealth(run, {
         ...(definition !== undefined ? { definition } : {}),
         ...(definitionError !== undefined ? { definitionError } : {}),
+        // issue #625 PR-2a (decision C46): a server that can run a step is not told the step is
+        // blocked by another runner's old capability marker.
+        ...(registry !== undefined ? { registry } : {}),
       });
   if (runHealth.length > 0) {
     warnings.push(
@@ -558,12 +698,25 @@ export async function handleGetRunState(
     ...(args.include_steps === true && run.drive_failures !== undefined
       ? { drive_failure_costs: composeDriveFailureCosts(run) }
       : {}),
+    ...(pending !== undefined && pending.pending_guards.length > 0
+      ? { pending_guards: pending.pending_guards }
+      : {}),
+    ...(pending !== undefined && pending.engine_runnable.length > 0
+      ? { engine_runnable: pending.engine_runnable }
+      : {}),
+    ...(pending !== undefined && pending.agent_refused.length > 0
+      ? { agent_refused: pending.agent_refused }
+      : {}),
+    ...(resumable !== undefined ? { resumable } : {}),
+    ...(cleanupPending !== undefined ? { cleanup_pending: cleanupPending } : {}),
+    ...(waitingOnAnswer.length > 0 ? { waiting_on_answer: waitingOnAnswer } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
 /** Registers the get_run_state MCP tool on the server. */
 export function registerGetRunState(server: McpServer, opts?: HandleRunStateStores): void {
+  markServedByTool(opts);
   server.tool(
     'get_run_state',
     'Get the current state summary of a workflow run. Pass include_steps: true for each ' +
@@ -593,6 +746,12 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
                 evidence: [],
                 warnings: [],
                 errors: [message],
+                // issue #625 PR-2a: the code and details, as every other tool's error reply — a
+                // release-line refusal from the registry this tool now resolves names its role there.
+                ...(err instanceof WorkflowError ? { error_code: err.code } : {}),
+                ...(err instanceof WorkflowError && Object.keys(err.details).length > 0
+                  ? { error_details: err.details }
+                  : {}),
                 agent_action: agentAction,
                 context_hint: contextHint,
                 next_actions: [],

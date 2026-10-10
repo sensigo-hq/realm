@@ -225,15 +225,15 @@ describe('get_run_state — next_actions_status', () => {
     expect(state.next_actions.length).toBeGreaterThan(0);
   });
 
-  it('auto_pending: running with only an auto step eligible → empty next_actions', async () => {
+  it('advance_owed: running with only an auto step eligible → the one act names it (issue #625 PR-2a)', async () => {
     const { run } = await runStore.create({
       workflowId: 'autoflow',
       workflowVersion: 1,
       params: {},
     });
     const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
-    expect(state.next_actions_status).toBe('auto_pending');
-    expect(state.next_actions).toEqual([]);
+    expect(state.next_actions_status).toBe('advance_owed');
+    expect(state.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
   });
 
   it('awaiting_human: a gate is open', async () => {
@@ -252,7 +252,9 @@ describe('get_run_state — next_actions_status', () => {
     await runStore.update({ ...run, pending_gate: gate });
     const state = await handleGetRunState({ run_id: run.id }, { runStore, workflowStore });
     expect(state.next_actions_status).toBe('awaiting_human');
-    expect(state.next_actions).toEqual([]);
+    // issue #625 PR-2a (decision C103): the open question is named by its answer act — no token.
+    expect(state.next_actions.map((a) => a.instruction?.tool)).toEqual(['submit_human_response']);
+    expect(state.next_actions[0]?.instruction?.params).toEqual({ run_id: run.id, gate_id: 'g1' });
   });
 
   it('skipped_terminal: terminal run', async () => {

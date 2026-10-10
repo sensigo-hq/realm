@@ -77,7 +77,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
 
       expect(envelope.status).toBe('ok');
       expect(envelope.command).toBe('after');
-      expect(envelope.warnings?.some((w) => w.includes('enacted_via: execute_step'))).toBe(true);
+      expect(envelope.warnings?.some((w) => w.includes('(enacted_via: executeStep).'))).toBe(true);
 
       const finalRun = await store.get(run.id);
       expect(finalRun.pending_gate).toBeUndefined();
@@ -116,7 +116,7 @@ describe('executeStep — pre-refusal enact-then-proceed (issue #291)', () => {
       expect(envelope.status).toBe('blocked');
       expect(
         envelope.warnings?.some(
-          (w) => w.includes('enacted (abort)') || w.includes('enacted declared abort'),
+          (w) => w.includes('enacted (abort)') || w.includes('carried out its declared abort'),
         ),
       ).toBe(true);
 

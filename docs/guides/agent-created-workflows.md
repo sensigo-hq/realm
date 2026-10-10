@@ -82,10 +82,12 @@ Realm registers the workflow, starts a run of it, and returns the first step to 
 ```text
 status: ok
 workflow_id: release-notes-86de43b5661ea6e9
-run_id: a6f70959-6ffb-470b-87fc-f95cfa193ac1
-Run 'a6f70959-6ffb-470b-87fc-f95cfa193ac1' created for workflow 'release-notes-86de43b5661ea6e9'.
+run_id: 4fe4f2e3-14b4-4f9c-9e8c-b96052cb8ed9
+Run '4fe4f2e3-14b4-4f9c-9e8c-b96052cb8ed9' created for workflow 'release-notes-86de43b5661ea6e9'. Ready for the agent: 'collect'.
 next: execute_step collect
 ```
+
+The `Ready for the agent: …` sentence was added after version 0.46.0, which ends the line at `created for workflow '…'.`.
 
 The assistant does not choose the workflow's ID. Realm makes it from the name and a code computed from the plan's content. The same plan sent again gets the same ID and a new run. A plan with no name gets an ID that starts with `dynamic-`.
 
@@ -95,9 +97,11 @@ From here the run behaves like any other. The assistant tried `group` before `co
 
 ```text
 status: blocked
-Step 'group' is not eligible in the current run state.
+Step 'group' cannot be called now: its dependencies are not settled ('collect'). Ready for the agent: 'collect'.
 eligible_steps: collect
 ```
+
+The reason after `cannot be called now:` was added after version 0.46.0, which says `Step 'group' is not eligible in the current run state.`
 
 It then answered `collect` with an empty list, which its own schema does not allow:
 

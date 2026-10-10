@@ -11,10 +11,19 @@
 //
 // The pty journey itself is the reviewer's crown, never a suite cell (the #426 precedent).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, unlinkSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RunRecord } from '@sensigo/realm';
+import type { RunRecord, PendingView, WorkflowDefinition } from '@sensigo/realm';
+import { describePending, owedList } from '@sensigo/realm';
 import { runCommands, topLevelCommands } from '../commands-registry.js';
 
 const mocks = vi.hoisted(() => ({ question: vi.fn(), close: vi.fn() }));
@@ -37,6 +46,10 @@ function record(over: Partial<RunRecord> = {}): RunRecord {
     params: {},
     completed_steps: [],
     failed_steps: [],
+    // decision C202: the map reads the steps in flight (a run with none and nothing ready gets
+    // inspect and discard).
+    in_progress_steps: [],
+    skipped_steps: [],
     evidence: [],
     created_at: '2026-09-01T00:00:00.000Z',
     updated_at: '2026-09-01T00:00:00.000Z',
@@ -44,9 +57,32 @@ function record(over: Partial<RunRecord> = {}): RunRecord {
   } as RunRecord;
 }
 
+/**
+ * decision C202: the run's view the map is composed from (empty: nothing owed, nothing ready), and the
+ * workflow's steps — `over` sets what the run owes or has ready.
+ */
+function ways(
+  over: Partial<PendingView> = {},
+  steps: Record<string, { execution?: string }> = {},
+): { pending: PendingView; workflow: { steps: Record<string, { execution?: string }> } } {
+  return {
+    pending: {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [],
+      cannot_run: [],
+      ...over,
+    } as PendingView,
+    workflow: { steps },
+  };
+}
+
 describe('renderDetachMap — the fork is on the record (issue #447)', () => {
   it('a1 the ELSE fork offers all three remedies', () => {
-    const map = renderDetachMap(record(), 'summarise');
+    // decision C202: the drive is offered where an agent step is ready — here, the step asked for.
+    const map = renderDetachMap(record(), 'summarise', ways({ agent_steps: ['summarise'] }));
 
     expect(map).toContain("detached from run 'run_abc' at step 'summarise'");
     expect(map).toContain('(phase: running)');
@@ -71,14 +107,41 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         },
       } as Partial<RunRecord>),
       'approve_it',
+      ways(),
     );
 
-    expect(map).toContain('realm run respond run_abc --gate g-1 --choice approve|reject');
+    // decision C206 (walk c13 RED-1): `<one of: …>`, never `approve|reject` — pasted into a shell
+    // that ran `--choice approve` as a pipe and recorded it.
+    expect(map).toContain(
+      '  Respond:   realm run respond run_abc --gate g-1 --choice <one of: approve, reject>',
+    );
+    expect(map).not.toContain('|');
     expect(map).toContain('realm run inspect run_abc');
     // The COMMANDS, not the bare words — see a3 for why the loose form is a trap.
     expect(map).not.toContain('realm run abandon');
     expect(map).not.toContain('realm agent --run-id');
     expect(map).toContain("at step 'approve_it'");
+  });
+
+  it('a2b (decision C206) a question with one choice: the `Respond:` line names that choice, a command a shell runs as printed', () => {
+    const map = renderDetachMap(
+      record({
+        pending_gate: {
+          gate_id: 'g-1',
+          step_name: 'approve_it',
+          choices: ['ack'],
+          preview: {},
+          opened_at: '2026-09-01T00:00:00.000Z',
+        },
+      } as Partial<RunRecord>),
+      'approve_it',
+      ways(),
+    ).split('\n');
+    // (a) red when one choice is given as `<one of: ack>` or the old `|` form; (b) prints the map.
+    expect(map.slice(1)).toEqual([
+      '  Respond:   realm run respond run_abc --gate g-1 --choice ack',
+      '  Inspect:   realm run inspect run_abc',
+    ]);
   });
 
   it('a3 the TERMINAL fork offers inspect ALONE', () => {
@@ -94,6 +157,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         sealed_by: { arm: 'complete' },
       } as Partial<RunRecord>),
       'a',
+      ways(),
     );
 
     expect(map).toContain('(phase: completed)');
@@ -116,6 +180,7 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         sealed_by: { arm: 'step_failure' },
       } as Partial<RunRecord>),
       'a',
+      ways(),
     );
 
     expect(map).toContain('(phase: failed)');
@@ -134,10 +199,124 @@ describe('renderDetachMap — the fork is on the record (issue #447)', () => {
         },
       } as Partial<RunRecord>),
       undefined,
+      ways(),
     );
     expect(withGate).toContain("at step 'from_the_gate'");
 
-    expect(renderDetachMap(record(), undefined)).toContain("at step '(step unknown)'");
+    expect(renderDetachMap(record(), undefined, ways())).toContain("at step '(step unknown)'");
+  });
+});
+
+describe('renderDetachMap, round 27 — C202: the ways on that fit the run (units of the composer)', () => {
+  it('an ended run: `Resume:` names the failed steps `realm run resume` takes — several as `<one of: …>`, never a cleanup step, never on an aborted run', () => {
+    const steps = {
+      a: { execution: 'auto' },
+      b: { execution: 'auto' },
+      clean: { execution: 'finalizer' },
+    };
+    const failed = (failedSteps: string[], over: Partial<RunRecord> = {}) =>
+      renderDetachMap(
+        record({
+          terminal_state: true,
+          run_phase: 'failed',
+          sealed_by: { arm: 'step_failure' },
+          failed_steps: failedSteps,
+          ...over,
+        } as Partial<RunRecord>),
+        'a',
+        ways({}, steps),
+      ).split('\n');
+    // (a) red when the line names a step resume refuses, misses one it takes, or is printed for an
+    //     aborted run; (b) prints the maps.
+    expect({
+      several: failed(['a', 'clean', 'b']).slice(1),
+      cleanupOnly: failed(['clean']).slice(1),
+      aborted: failed(['a'], {
+        run_phase: 'aborted',
+        aborted_at: { step_id: 'a', message: 'stopped' },
+        sealed_by: { arm: 'handler_abort' },
+      } as Partial<RunRecord>).slice(1),
+    }).toEqual({
+      several: [
+        '  Resume:    realm run resume run_abc --from <one of: a, b>',
+        '  Inspect:   realm run inspect run_abc',
+      ],
+      cleanupOnly: ['  Inspect:   realm run inspect run_abc'],
+      aborted: ['  Inspect:   realm run inspect run_abc'],
+    });
+  });
+
+  it('decision C211 (walk c14 W3-4): a run that ended with a cleanup step left pending — the command that runs it, above Inspect', () => {
+    const map = renderDetachMap(
+      record({
+        terminal_state: true,
+        run_phase: 'completed',
+        sealed_by: { arm: 'complete' },
+        finalizer_ledger: { clean: { status: 'pending', rank: 0 } },
+      } as Partial<RunRecord>),
+      'a',
+      ways({}, { a: { execution: 'auto' }, clean: { execution: 'finalizer' } }),
+    ).split('\n');
+    // (a) red when the map leaves the pending cleanup step without its command; (b) prints the map.
+    expect(map.slice(1)).toEqual([
+      "  Cleanup step left pending: 'clean' — to run it with code that has its handler: realm run drain run_abc --force",
+      '  Inspect:   realm run inspect run_abc',
+    ]);
+  });
+
+  it('a question whose time is up and that declares `on_expiry`: the owed call in place of `Respond`', () => {
+    const rec = record({
+      pending_gate: {
+        gate_id: 'g-1',
+        step_name: 'confirm',
+        choices: ['approve', 'reject'],
+        preview: {},
+        opened_at: '2026-09-01T00:00:00.000Z',
+        expires_at: '2026-09-01T00:01:00.000Z',
+        on_expiry: 'settle_default',
+        default_choice: 'approve',
+      },
+    } as Partial<RunRecord>);
+    const pending = describePending(
+      { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
+      rec,
+      undefined,
+      new Date(),
+    );
+    const map = renderDetachMap(rec, 'confirm', { pending, workflow: { steps: {} } }).split('\n');
+    // (a) red when an expired question that declares `on_expiry` is offered an answer, or no owed
+    //     call; (b) prints the map.
+    expect(map.slice(1)).toEqual([
+      // decision C211 (walk c14 W2-1): the declared default carried out, the call runs what it
+      // leaves owed — said, as the preview says it.
+      `  Advance:   realm run advance run_abc — for what the engine owes (${owedList(pending)}), with no model; then it runs what that leaves owed until a step opens a question, fails or ends the run`,
+      '  Inspect:   realm run inspect run_abc',
+    ]);
+    expect(owedList(pending)).toContain("'confirm'");
+  });
+
+  it('decision C207 (walk c13 YELLOW-3): with several owed, the `Advance:` line says where the call stops — the clause the preview ends with; one owed, none', () => {
+    const wfOf = (steps: Record<string, unknown>) =>
+      ({ id: 'wf', name: 'wf', version: 1, steps }) as unknown as WorkflowDefinition;
+    const auto = { description: 'd', execution: 'auto', depends_on: [] };
+    const two = describePending(
+      wfOf({
+        approve: { ...auto, trust: 'human_confirmed', gate: { choices: ['ship', 'hold'] } },
+        fetch: auto,
+      }),
+      record(),
+      undefined,
+      new Date(),
+    );
+    const one = describePending(wfOf({ fetch: auto }), record(), undefined, new Date());
+    const advanceOf = (pending: PendingView) =>
+      renderDetachMap(record(), 'approve', { pending, workflow: { steps: {} } }).split('\n')[1];
+    // (a) red when several owed read as a promise that all run, or one owed gets the clause; (b)
+    //     prints the lines.
+    expect({ two: advanceOf(two), one: advanceOf(one) }).toEqual({
+      two: "  Advance:   realm run advance run_abc — for what the engine owes ('approve', 'fetch'), with no model; it runs them until a step opens a question, fails or ends the run",
+      one: "  Advance:   realm run advance run_abc — for what the engine owes ('fetch'), with no model",
+    });
   });
 });
 
@@ -365,7 +544,11 @@ steps:
       await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
       expect(mocks.question).toHaveBeenCalledTimes(3);
-      expect(mocks.question).toHaveBeenLastCalledWith('  Choice [approve/reject]: ');
+      // #625 PR-2a, C158: the gate's prompt is handed the signal that closes it when its question is
+      // settled elsewhere — the one additive argument.
+      expect(mocks.question).toHaveBeenLastCalledWith('  Choice [approve/reject]: ', {
+        signal: expect.any(AbortSignal),
+      });
       const lines = errLines();
       expect(lines.filter((l) => l.includes("Choice 'aprove' is not valid"))).toHaveLength(1);
       expect(logged()).toContain('Run complete. Phase: completed');
@@ -447,11 +630,64 @@ steps:
       expect(lines.some((l) => l.includes('exhausted its validation-rejection budget (6/6)'))).toBe(
         true,
       );
-      expect(logged()).toContain('Run complete. Phase: failed');
       expect(exitSpy).toHaveBeenCalledWith(1);
       const rec = await readRecord();
       expect(rec.terminal_state).toBe(true);
       expect(rec.run_phase).toBe('failed');
+      // decision C205 (round 27 finding 3): the last line is followed by the way back in — the
+      // detach map's `Resume:` line, the failed step `realm run resume` takes. (a) red when the
+      // line is missing, names another step, or comes before the last line; (b) prints the log.
+      expect(logged()).toContain(
+        `Run complete. Phase: failed\n  Resume:    realm run resume ${rec.id} --from s1`,
+      );
+      // The page says it (C163's rule): (a) red when realm-workflow.md no longer does.
+      const page = readFileSync(
+        new URL('../../../../docs/reference/cli/realm-workflow.md', import.meta.url),
+        'utf8',
+      ).replace(/\s+/g, ' ');
+      expect(page).toContain(
+        'The last line is `Run complete. Phase: <phase>`. When an engine failure ended the run with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again — `  Resume:    realm run resume <run-id> --from <step>`, the line the detach map gives (added after version 0.46.0).'.replace(
+          /\s+/g,
+          ' ',
+        ),
+      );
+    }, 20_000);
+
+    it('decision C211 (walk c14 W3-4): a run that completes with a cleanup step this program cannot run — the last line, then the command that runs it', async () => {
+      writeFileSync(
+        join(dir, 'workflow.yaml'),
+        `id: detach-wf
+name: Detach WF
+version: 1
+steps:
+  s1:
+    description: s1
+    execution: agent
+  tidy:
+    description: tidy
+    execution: finalizer
+    handler: missing_fin
+    on_outcome: always
+`,
+        'utf8',
+      );
+      mocks.question.mockImplementationOnce(async () => '{}');
+      await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
+      const rec = await readRecord();
+      // (a) red when the last line is not followed by the command that runs the pending cleanup
+      //     step; (b) prints the log.
+      expect(logged()).toContain(
+        `Run complete. Phase: completed\nCleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain ${rec.id} --force`,
+      );
+      expect(exitSpy).not.toHaveBeenCalled();
+      // The page says it (C163's rule): (a) red when realm-workflow.md no longer does.
+      const page = readFileSync(
+        new URL('../../../../docs/reference/cli/realm-workflow.md', import.meta.url),
+        'utf8',
+      ).replace(/\s+/g, ' ');
+      expect(page).toContain(
+        "When the ending left cleanup steps `pending`, the next line names the command that runs them: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <run-id> --force` (added after version 0.46.0).",
+      );
     }, 20_000);
 
     it("B3 a stall hands the run back with a TRUTHFUL map — never 'Prompt cancelled'", async () => {
@@ -492,7 +728,9 @@ steps:
       expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
 
-    it('B3b the stall map repeats the --mint-writer-nonce this command was given (issue #676)', async () => {
+    it('B3b (decision C202) the stall map, nothing ready: no command goes on with the run — Inspect and Discard alone, no Drive it (the --mint-writer-nonce this command was given rides a Drive it line only: the map units)', async () => {
+      // Before C202 this map printed `Drive it: realm agent … --mint-writer-nonce` here; `realm agent`
+      // on such a run finds nothing to do and ends `Run ended in phase: running`, exit 1.
       writeFileSync(
         join(dir, 'workflow.yaml'),
         `id: detach-wf
@@ -512,13 +750,15 @@ steps:
           from: 'user',
         }),
       ).rejects.toThrow('process.exit');
-      const driveLine = stderr()
-        .split('\n')
-        .find((l) => l.startsWith('  Drive it:'));
-      // (a) red when the stall path does not pass the command's flags to the map; (b) prints the line.
-      expect(driveLine).toMatch(
-        /^ {2}Drive it: {2}realm agent --run-id \S+ --provider <provider> --model <model> --mint-writer-nonce$/,
-      );
+      const map = stderr().split('\n');
+      const at = map.findIndex((l) => l.startsWith('Workflow stalled — detached from run '));
+      // (a) red when the map offers the drive (or any line but inspect and discard) on a run with
+      //     nothing ready; (b) prints the map.
+      expect(map.slice(at + 1).map((l) => l.replace(/run-[\w-]+|[0-9a-f-]{36}/g, '<id>'))).toEqual([
+        '  Inspect:   realm run inspect <id>',
+        '  Discard:   realm run abandon <id>',
+      ]);
+      expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
 
     it("B5 the CHOICE arm's fresh read: a run terminalized externally during a bad choice converges honestly", async () => {
@@ -569,7 +809,8 @@ steps:
       expect(mocks.question).toHaveBeenCalledTimes(2);
       expect(stderr()).toContain("Run '");
       expect(stderr()).toContain(
-        "is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.",
+        // #625 PR-2a, decision C170: the way out is true for the kind of ending (here completed).
+        'is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.',
       );
       expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain(
         'Run complete. Phase: completed',
@@ -611,7 +852,11 @@ steps:
       await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
       expect(mocks.question).toHaveBeenCalledTimes(5);
-      expect(mocks.question).toHaveBeenLastCalledWith('  Agent output JSON (Enter for {}): ');
+      // #625 PR-2a, decision C165: a step's prompt is handed the signal that closes it when the
+      // step stops waiting for its answer — the one additive argument.
+      expect(mocks.question).toHaveBeenLastCalledWith('  Agent output JSON (Enter for {}): ', {
+        signal: expect.any(AbortSignal),
+      });
       const lines = errLines();
       expect(lines.filter((l) => l.includes('Not valid JSON:'))).toHaveLength(1);
       // Three, one per arm — number, null, array: the predicate's three disjuncts, each pinned.
@@ -649,8 +894,12 @@ steps:
       await runCommand.parseAsync([join(dir, 'workflow.yaml')], { from: 'user' });
 
       expect(mocks.question).toHaveBeenCalledTimes(2);
+      // #625 PR-2a, decision C165: the signal that closes a step's prompt (additive).
       expect(mocks.question).toHaveBeenLastCalledWith(
         '  Mock output (auto) — JSON (Enter for {}): ',
+        {
+          signal: expect.any(AbortSignal),
+        },
       );
       expect(errLines().filter((l) => l.includes('Not valid JSON:'))).toHaveLength(1);
       expect(logged()).toContain('Run complete. Phase: completed');

@@ -1086,10 +1086,13 @@ describe('--stuck labels: the #406 adjudication', () => {
       const result = await listRuns(undefined, makeStore([run]), undefined, true);
       expect(result).toContain('run-gate');
       expect(result).toContain(`approval=gate_expired(${rendered})`);
-      // Per member: the pointer belongs to finding_only ONLY. These two enact themselves at the
-      // next enactment point (and `realm run drain --expired` can force them), so telling an
+      // Per member: the respond pointer belongs to finding_only ONLY. These two enact themselves at
+      // the next enactment point (and `realm run drain --expired` can force them), so telling an
       // operator to respond would send them to do work the engine is already going to do.
       expect(result).not.toContain('realm run respond');
+      // issue #625 PR-2a (decision C106): per member, the command that carries the expiry out now —
+      // (a) red when the label names no command, or another; (b) prints the list.
+      expect(result).toContain(`approval=gate_expired(${rendered}) (realm run advance)`);
     });
   }
 
@@ -1100,6 +1103,8 @@ describe('--stuck labels: the #406 adjudication', () => {
     // the same "the pointer is the fix" convention the stale_gate and drain labels follow.
     const result = await listRuns(undefined, makeStore([gatedRun()]), undefined, true);
     expect(result).toContain('approval=gate_expired(finding_only) (realm run respond)');
+    // decision C106: the finding-only label never names advance (advance does not touch it).
+    expect(result).not.toContain('realm run advance');
   });
 
   it('ARMOR — a corrupt on_expiry renders (unknown) and carries NO pointer', async () => {
@@ -1115,6 +1120,8 @@ describe('--stuck labels: the #406 adjudication', () => {
     const result = await listRuns(undefined, makeStore([corrupt]), undefined, true);
     expect(result).toContain('approval=gate_expired(unknown)');
     expect(result).not.toContain('realm run respond');
+    // decision C106: the armor branch names no command at all.
+    expect(result).not.toContain('realm run advance');
   });
 
   it('a settled-gate/pending-gate both-match record labels gate_corruption', async () => {

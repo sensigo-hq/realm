@@ -111,13 +111,15 @@ realm workflow register ./
 
 ## 4. Run it
 
-Start a run with a quantity of 4, with whichever driver you use. The engine runs `total` in the first call, and the next step's prompt shows the result:
+Start a run with a quantity of 4 from an assistant connected over MCP. The engine runs `total` in the first call, `start_run`, whose reply says so, and the next step's prompt shows the result:
 
 ```text
-Step 'total' completed. 1 step(s) now available.
+Step 'total' completed. Ready for the agent: 'confirm'.
 
 The total is 50. Does that look right?
 ```
+
+Version 0.46.0 and earlier say `1 step(s) now available.` instead of naming the step.
 
 The record keeps the handler's input and output:
 
@@ -154,7 +156,7 @@ The run ends as `aborted`, not `failed`, and every later step is skipped.
 
 ## If you see something else
 
-- **`Step 'total' is blocked: its handler 'order_totl' is not registered in this runner.`** The `handler` name on the step does not match a key in your `handlers` map. `realm workflow validate` does not catch this; it shows up when the step runs. The run is not ended: correct the name, register again, and the step can run.
+- **`Step 'total' is blocked: its handler 'order_totl' is not registered in this runner.`** (on the MCP reply of the call that attempted the step: its `context_hint` for `advance_run` and `execute_step`, its `warnings` for `start_run`; `realm agent` prints `⚠ Step 'total' is blocked: handler 'order_totl' is not registered in this runner. The run is NOT failed — add handler 'order_totl' and re-attach (…)`). Version 0.46.0 has no `advance_run` and returns this block from `start_run` as a `status: error` reply, not in `warnings`. The `handler` name on the step does not match a key in your `handlers` map. `realm workflow validate` does not catch this; it shows up when the step runs. The run is not ended: correct the name, register again, and the step can run.
 - **`Handler step 'total' aborted the run: undefined`** Your handler returned `abort` without a `message`. Use `{ abort: { message: '…' } }`.
 
 ## See also

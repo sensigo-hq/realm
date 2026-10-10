@@ -6,13 +6,13 @@ Four fields of `workflow.yaml` hold a JSON Schema: `params_schema`, `input_schem
 
 ## The four blocks
 
-| Field           | Where         | What must fit it                                 | Checked when                    | If it does not fit                                                                        |
-| --------------- | ------------- | ------------------------------------------------ | ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `params_schema` | Top level     | The parameters a run is started with.            | A run is started, by any means. | No run is created: `VALIDATION_INPUT_SCHEMA`.                                             |
-| `input_schema`  | An agent step | The answer given to the step.                    | The step is called.             | The answer is refused: `VALIDATION_INPUT_SCHEMA`.                                         |
-| `input_schema`  | An auto step  | The input built for the step by `input_map`.     | The step is run.                | The step is not run: `VALIDATION_INPUT_SCHEMA`.                                           |
-| `output_schema` | An agent step | The answer given to the step.                    | The step is called.             | The answer is refused: `VALIDATION_OUTPUT_SCHEMA`.                                        |
-| `trace_schema`  | An agent step | The list of trace entries recorded for the step. | The step is called.             | A warning, or with `trace_validation_mode: enforce` a refusal: `VALIDATION_TRACE_SCHEMA`. |
+| Field           | Where         | What must fit it                                                                                                                      | Checked when                    | If it does not fit                                                                        |
+| --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `params_schema` | Top level     | The parameters a run is started with.                                                                                                 | A run is started, by any means. | No run is created: `VALIDATION_INPUT_SCHEMA`.                                             |
+| `input_schema`  | An agent step | The answer given to the step.                                                                                                         | The step is called.             | The answer is refused: `VALIDATION_INPUT_SCHEMA`.                                         |
+| `input_schema`  | An auto step  | The input the engine gives the step: the run's params when the step has no `depends_on`, `{}` otherwise. Not what `input_map` builds. | Before the step is claimed.     | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out.           |
+| `output_schema` | An agent step | The answer given to the step.                                                                                                         | The step is called.             | The answer is refused: `VALIDATION_OUTPUT_SCHEMA`.                                        |
+| `trace_schema`  | An agent step | The list of trace entries recorded for the step.                                                                                      | The step is called.             | A warning, or with `trace_validation_mode: enforce` a refusal: `VALIDATION_TRACE_SCHEMA`. |
 
 A refused answer leaves the step open, so that it can be answered again. Refusals are counted. See [Agent-step controls](agent-step-controls.md#validation_exhaustion).
 

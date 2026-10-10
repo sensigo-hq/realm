@@ -115,7 +115,9 @@ describe.each([
       expect(envelope.context_hint).toBe(
         'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
       );
-      expect(envelope.warnings?.some((w) => w.includes('enacted_via: submit'))).toBe(true);
+      expect(
+        envelope.warnings?.some((w) => w.includes('(enacted_via: submitHumanResponse).')),
+      ).toBe(true);
 
       const finalRun = await store.get(run.id);
       expect(finalRun.settled?.['approve']).toMatchObject({
@@ -381,13 +383,14 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
         'the run reached a terminal outcome concurrently',
       );
       expect(envelope.errors.join(' ')).toContain('your choice was NOT recorded');
-      // The house resume/purge pointer (verbatim from the zombie/#282-class cell) — the same
-      // guidance an operator gets on the OTHER terminal-submit refusal path, so the honest answer
-      // here isn't a dead end.
+      // decision C204: the way out from the one rule — the refusal of an answer to an ended run's
+      // own words (C170) — so the honest answer here isn't a dead end, and never offers `realm run
+      // resume` on a run it refuses (this run was aborted by its gate's expiry). (a) red when the
+      // old generic resume pointer comes back or another way out is named; (b) prints the errors.
       expect(envelope.errors.join(' ')).toContain(
-        "'realm run resume' clears a stale pending gate on a resumable run",
+        `your choice was NOT recorded; an aborted run is never resumed; 'realm run purge ${run.id}' previews what it would remove.`,
       );
-      expect(envelope.errors.join(' ')).toContain("'realm run purge' removes the record entirely");
+      expect(envelope.errors.join(' ')).not.toContain("'realm run resume'");
       // The false attribution the mutant produces instead: reports THIS gate as the one that
       // expired and aborted, quoting the UNRELATED step's name — never true.
       expect(envelope.errors.join(' ')).not.toContain('expired and the run aborted');

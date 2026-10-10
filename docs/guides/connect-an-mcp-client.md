@@ -35,7 +35,7 @@ Restart the assistant, or reload its MCP servers.
 
 ## 2. Check what the assistant sees
 
-The assistant now has ten tools:
+The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):
 
 | Tool                    | What it does                                                         |
 | ----------------------- | -------------------------------------------------------------------- |
@@ -44,6 +44,7 @@ The assistant now has ten tools:
 | `start_run`             | Starts a run.                                                        |
 | `start_run_batch`       | Starts several runs of one workflow at once.                         |
 | `execute_step`          | Submits the answer to an agent step, or runs an automatic step.      |
+| `advance_run`           | Runs the guards and automatic steps a run owes (when named).         |
 | `submit_human_response` | Records a person's answer to a gate.                                 |
 | `get_run_state`         | Returns where a run stands and what to do next.                      |
 | `abandon_run`           | Ends a run that should not continue.                                 |
@@ -92,7 +93,7 @@ The assistant answers by copying the call in `next_actions[0].instruction.call_w
 
 Realm records the choice it is given. It does not check that you made it. If the assistant must not be able to approve its own work, see [Human gates and trust levels](../concepts/gates-and-trust.md#who-can-answer).
 
-After a gate is answered, a guard step that the answer makes ready is decided in the same call, and the reply names it in `guards`. The `auto` steps that follow do not start by themselves, and the reply does not name them. If the run does not finish, tell the assistant to call `execute_step` for the next step by name.
+After a gate is answered, a guard step that the answer makes ready is decided in the same call, and the reply names it in `guards`. The `auto` steps that follow do not start by themselves. The reply names them, `Owed to the engine: '<step>' — call advance_run.`, and its `next_actions` holds `advance_run`, which runs them until a step opens a question, fails or ends the run (with more than one owed, the sentence says so: `… — call advance_run; it runs them until a step opens a question, fails or ends the run.`). If the run does not finish, tell the assistant to call `execute_step` for the next step by name.
 
 ## Connecting over HTTP
 

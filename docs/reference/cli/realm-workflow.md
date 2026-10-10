@@ -205,20 +205,70 @@ A step that does not return `ok` prints a line that starts with `✗`, then the 
 
 This was added in 0.46.0; version 0.45.0 prints `✗ error: …` without naming the step.
 
+A gate's prompt closes when its question is settled while it waits: by its time running out, when the gate declares an `on_expiry` (this process carries the expiry out and prints its own `⏰` line), or by another process — `realm run respond` from another terminal, `realm run advance`, `realm run drain --expired` or `realm listen`. Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow not found: <id> — …`, and `realm listen` skips the run. It then prints what the run's record holds, in the words of `realm run inspect`, and the run goes on:
+
+```text
+  Choice [ship/hold]: ⏰ gate '02ebe774-…' on run '81771ac5-…' expired — enacted via the attending-process timer (enacted_via: timer).
+
+  This prompt is closed: the question on 'review' is no longer open — Answer: hold · settled by the gate's expiry (no answer in time).
+```
+
+When no answer was recorded (an `on_expiry: abort`), the line ends `— no answer was recorded; the run is 'aborted'.` The prompt reads the run's record twice a second while it waits. Added after version 0.46.0, whose prompt stayed open and refused what was typed after the question was settled.
+
+An `auto` step's prompt closes the same way when another process takes or runs that step while the prompt waits (`realm run advance`, `realm agent`, an `execute_step` call): it prints `This prompt is closed: step '<step>' was taken by <program>, and completed; not run here.`, or `… was taken by <program>; not run here.` while the other process still holds it, and goes on. While an agent step's prompt waits, the command holds the step's claim, so no other driver does the step's work: `realm run inspect` shows the step taken by this program (`via run`), `realm agent` waits for it and asks no model, and an `execute_step` call is refused with `Step '<step>' cannot be called now: it is in flight (claimed by another call).` `realm agent` holds nothing while its model works on a step, so on a run this command started (it cannot join a run it did not start), a prompt opened during that call takes the step with no word of the call: if the prompt still holds the step when the model answers, the model's answer is not recorded, and if you then leave the prompt while that drive still waits for the step, its model is asked again. Like any claim on an agent step, it has no time limit: `realm run list --stuck` lists the run (`<step>=claim_unknown_age`) while the prompt waits. The command lets the claim go when you answer (the engine then takes it for the answer), when you leave the prompt, and when it is ended by SIGHUP, SIGINT or SIGTERM (it then exits with 128 plus the signal's number); a command killed outright (SIGKILL) leaves it, and `realm run reclaim <run> --step <step> --force` releases it. When another process takes or runs the step between your answer and the engine's claim for it, the answer is not recorded: `Not run here: step '<step>' was taken by <program>, and completed; the answer typed here was not recorded.` (or `… was taken by <program>; …` while that process holds it) The agent step's prompt closes when another process removed its claim (`This prompt is closed: the claim it held on step '<step>' was removed by another process, and the step has not run.`; the step is asked for again if it is still ready) or the run ended. A step's prompt also closes when another process opens a question: `This prompt is closed: a question is open on '<question step>', and '<step>' waits for its answer.`, and the step is asked for again after the answer. When another process settles the step, takes it over, removes its claim or ends the run while the engine runs it after your answer, the line is the one `realm run advance` prints — `• Step '<step>' was taken by <program>, and completed; this program's outcome for it was not recorded.`, for one — and the command goes on with what is left; never `✗ error:`. While another process holds a step and nothing else is ready, it waits for that process, as `realm agent` does, and says so: `• Step '<step>' is in flight, taken by <program> since <time>: waiting up to 60s for the run's record to change.` When the record changes it runs what is ready; when the record has not changed for 60 seconds it prints `• Step '<step>' has been in flight since <time>, taken by <program>; the record has not changed for 60s. If the program that took it is gone: realm run reclaim <run> --step <step> --force` and hands the run back at that step, with the ways on that fit a step another program is still running: `realm run advance`, once the step is no longer in flight, runs what the engine then owes and names an agent step or a question that is ready. Added after version 0.46.0:
+
+```text
+• Step 'sleep' has been in flight since 2026-10-08T12:34:50.336Z, taken by mihai@host (from the OS user, via advance); the record has not changed for 60s. If the program that took it is gone: realm run reclaim 7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17 --step sleep --force
+Stopped waiting — detached from run '7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17' at step 'sleep' (phase: running). The run is saved.
+  Go on:     once 'sleep' is no longer in flight, realm run advance 7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17
+  Inspect:   realm run inspect 7d1f0c2e-5a8b-4c36-9e21-3b6f8d0a4c17
+```
+
+The gate's prompt shows the question before its choices: the gate's `message`, or the step's `prompt` when the gate has no `message`, rendered as the reply that opened the gate renders it. Each of its lines is printed as written, with any other control character written as the escape `realm run inspect` writes in its `Message:` line (a tab as `\t`, an escape character as `\u001b`): `Question: Ship it?` for one line, and for more, `Question:` with each line indented below it. Added after version 0.46.0.
+
 Leaving a prompt with Ctrl+D or Ctrl+C keeps the run and says how to carry on:
 
 ```text
 Prompt cancelled — detached from run '00ac2e9c-6728-4fb4-8ba0-234617eff305' at step 'note' (phase: running). The run is saved.
   Drive it:  realm agent --run-id 00ac2e9c-6728-4fb4-8ba0-234617eff305 --provider <provider> --model <model>
+             If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
   Inspect:   realm run inspect 00ac2e9c-6728-4fb4-8ba0-234617eff305
   Discard:   realm run abandon 00ac2e9c-6728-4fb4-8ba0-234617eff305
 ```
 
+The lines after the first are the ways on that fit the run as its record stands when you leave. `Drive it` is printed only when an agent step is ready. When the engine owes work, as when you leave an `auto` step's prompt, `Advance:` gives the call that runs it with no model, above `Drive it` when both hold (the line under them then ends `the lines above are for when none is.`), and in place of `Respond` for a question whose time is up and that declares `on_expiry`:
+
+```text
+Prompt cancelled — detached from run '5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80' at step 'fetch' (phase: running). The run is saved.
+  Advance:   realm run advance 5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80 — for what the engine owes ('fetch'), with no model
+             If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
+  Inspect:   realm run inspect 5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80
+  Discard:   realm run abandon 5b0c2f4e-8d1a-4e7b-9c63-2a7f1e9d4b80
+```
+
+With more than one step owed, the `Advance:` line says where that call stops, as the preview of `realm run advance` does: `— for what the engine owes ('approve', 'fetch'), with no model; it runs them until a step opens a question, fails or ends the run`. A question that can be answered gets `Respond:`, the answer command with the choices as a placeholder to replace, `realm run respond <id> --gate <gate-id> --choice <one of: ship, hold>` (bash and sh refuse to run it as printed), or with the choice itself when the question has only one. Added after version 0.46.0, whose `Respond` line gave the choices as `ship|hold`, which a shell runs as a pipe: pasted, it records the first choice.
+
+`realm run advance` reads the workflow from the registry, as `realm agent` does: register a workflow file never registered first.
+
+When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>`), then `Inspect`; a step in flight in another program gets the `Go on:` line shown above and `Inspect`; and a run with nothing ready gets `Inspect` and `Discard` alone, as when the command stalls with nothing ready (`Workflow stalled — detached from run …`; a first step whose `when` is never true, for one). When the engine owes work this command does not run — a guard, for one: the command runs only the steps it prompts — it is not stalled: it says `The engine owes '<step>', which this command does not run.`, and the map starts `Engine work owed — detached from run …` and gives the `Advance:` line (added after version 0.46.0). A run that has ended gets `Inspect`, after a `Resume:` line, `realm run resume <id> --from <step>` (`--from <one of: …>` for several), when a step failed that `realm run resume` takes. Added after version 0.46.0, whose map printed `Drive it` whenever no question was open and the run had not ended, and `Inspect` alone for a run that had ended.
+
+Ctrl+C typed at a prompt is a key the prompt reads, so it leaves the prompt as above, with exit code 1. A signal sent to the command, SIGINT (`kill -INT <pid>`) or SIGTERM, is not read by the prompt: the command ends at once and prints nothing, none of the lines above. The run is kept; the `Run ID:` line the command printed when it started names it. A shell shows 128 plus the signal's number as the command's exit code (130 for SIGINT).
+
 To drive the run with `realm agent`, fill in `<provider>` and `<model>` with the provider and model you want: a run started by `realm workflow run` has not been driven by a model. The `Drive it` line also repeats the `--extensions-module`, `--project` and `--mint-writer-nonce` you gave `realm workflow run` (none in this example), as you typed them: run it from the folder you started that command in. If the workflow file was never registered, register it first (`realm workflow register <file>`). Until then the command stops with `Error: Workflow not found: <id> — most often this run was created from a file without --register. …`, and after it the same command drives the run. Version 0.45.0 prints the `Drive it` line without `--provider <provider> --model <model>` and without those flags.
+
+An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again. A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks — is not asked for. When nothing else can run, the run stops there, names each such step and gives the way out. Added after version 0.46.0:
+
+```text
+Workflow stalled: nothing else can run.
+'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+Run 2a319588-0843-41c4-b28b-44f88ecb0752 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 2a319588-0843-41c4-b28b-44f88ecb0752 — or end it: realm run abandon 2a319588-0843-41c4-b28b-44f88ecb0752
+```
+
+The last line is `Run complete. Phase: <phase>`. When an engine failure ended the run with a failed step `realm run resume` takes, one more line gives the command that makes it runnable again — `  Resume:    realm run resume <run-id> --from <step>`, the line the detach map gives (added after version 0.46.0). When an operator ended the run, that line is `  Ended:     An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never `realm run resume`, which would erase that ending and its reason. When the ending left cleanup steps `pending`, the next line names the command that runs them: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <run-id> --force` (added after version 0.46.0). [Call a service](../../guides/call-a-service.md) shows one.
 
 [Install Realm and run a workflow](../../start/install-and-first-run.md) shows a whole session.
 
-**Exit code:** 0 if the run completed; 1 if it ended in any other way, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal.
+**Exit code:** 0 if the run completed; 1 if it ended in any other way, if nothing else could run, if it stopped waiting for a step another program holds, if you left a prompt with Ctrl+C or Ctrl+D, or if there was no terminal. A signal sent to the command gives 128 plus the signal's number, as above.
 
 ## `test`
 
@@ -240,6 +290,18 @@ Realm Test — ./
 
 2/2 passed
 ```
+
+When a fixture's error takes several lines, the second and later lines are indented under its `FAIL` line. A fixture whose step's precondition fails, with nothing else left to run ([what each failure prints](../testing-package.md)):
+
+```text
+Realm Test — flow
+  FAIL one: Workflow stalled: nothing else can run.
+    'compute' cannot run (precondition): Precondition failed for step 'compute'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.
+
+0/1 passed
+```
+
+Added after version 0.46.0, which prints the second and later lines at the start of the line, and fails this fixture with `Workflow stalled: exceeded maximum loop iterations`.
 
 See [Test a workflow](../../guides/test-a-workflow.md).
 

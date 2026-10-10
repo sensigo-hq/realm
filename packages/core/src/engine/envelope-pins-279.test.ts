@@ -149,8 +149,11 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
       // variant above for the same addition and its rationale).
       expect(result.agent_action).toBe('report_to_user');
       expect(result.errors[0]).not.toContain('NOT recorded'); // never the cancelled text
-      expect(result.errors[0]).toContain('realm run resume');
-      expect(result.errors[0]).toContain('realm run purge');
+      // #625 PR-2a, decision C170: the way out is true for the kind of ending — this record is
+      // completed, so nothing is owed and `realm run resume` (which refuses it) is not offered.
+      expect(result.errors[0]).toBe(
+        `Run '${zombie.id}' is terminal (completed); cannot submit a gate response — it completed, and nothing is owed.`,
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -640,8 +643,6 @@ describe("evaluatedAtVersion — the chain's own evaluation snapshot (issue #279
       await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
-        input: {},
-        dispatcher: async () => ({ status: 'open' }),
       });
 
       // (a) red when `advanceRun`'s guard loop stops issuing a settle_guard for an eligible guard

@@ -18,6 +18,7 @@ import {
   JsonWorkflowStore,
   ExtensionRegistry,
   executeStep,
+  expiryCarriedOutLine,
   drainFinalizers,
   captureEvidence,
   DRAIN_LEASE_MAX,
@@ -34,12 +35,32 @@ import type {
 import { respondCommand, respondToGate } from './respond.js';
 import { runDrainAction, type DrainRuntimeDeps } from './drain.js';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
+import { lagless } from '../test-support/lag.js';
 
+/** #625 PR-2a, decision C164: the attending line after the command an answer leaves. */
+const ATTENDING =
+  'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.';
 const DRAIN_DEPS: DrainRuntimeDeps = {
   drainFinalizers,
   captureEvidence,
   drainLeaseMax: DRAIN_LEASE_MAX,
 };
+
+/**
+ * decision C146: the first line a late `realm run respond` prints — this command carried out the
+ * question's expiry, in core's words, with `realm run advance`'s `⚠ `. F1: its lag follows the clock
+ * (the fixture's question expired in 2020), so `<lag>` stands in for it here and in what was printed.
+ */
+const respondCarriedOut = (gateId: string, choice?: string): string =>
+  lagless(
+    `⚠ ${expiryCarriedOutLine(
+      gateId,
+      'confirm',
+      choice !== undefined ? { on_expiry: 'settle_default', choice } : { on_expiry: 'abort' },
+      'respond',
+      0,
+    )}`,
+  );
 
 const LATE_SAME_CHOICE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
@@ -129,10 +150,10 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
   });
 
   /** Everything printed on stdout, one entry per `console.log` call. */
-  const stdout = (): string[] => logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+  const stdout = (): string[] => lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])));
   /** Everything printed on stderr, split into lines. */
   const stderr = (): string[] =>
-    errSpy.mock.calls.flatMap((c: unknown[]) => String(c[0]).split('\n'));
+    lagless(errSpy.mock.calls.flatMap((c: unknown[]) => String(c[0]).split('\n')));
 
   /** Registers the workflow, creates a run and opens the gate on `confirm`. */
   async function openGate(def: WorkflowDefinition): Promise<{ runId: string; gateId: string }> {
@@ -215,7 +236,10 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
     //     (b) prints the whole stdout.
     expect(stdout()).toEqual([
       "Guard step 'check' passed.",
-      `Responded: ${runId} | choice 'approve' | new state 'running'`,
+      `Responded: ${runId} | choice 'approve' | new state 'running'\n` +
+        // #625 PR-2a, decision C96: the agent step the answer left ready, in `realm run advance`'s words.
+        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>\n` +
+        ATTENDING,
     ]);
     expect(code).toBe(0);
     expect(stderr()).toEqual([]);
@@ -290,6 +314,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when respond prints `Responded:` for an answer the expiry beat, joins the expiry
       //     sentence and the guard's on one line, or drops any of the four; (b) prints stdout.
       expect(stdout()).toEqual([
+        respondCarriedOut(gateId, 'reject'),
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
         `Reason: ${NOT_APPROVED}`,
@@ -310,10 +335,13 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
 
       // (a) red when the expiry sentence is printed only when a guard ended the run, or
       //     `Responded:` is printed; (b) prints stdout.
+      // decision C135: after `Not recorded:`, what the run owes — here the agent step `finish` is
+      // ready, the on-time answer's ready line.
       expect(stdout()).toEqual([
+        respondCarriedOut(gateId, 'approve'),
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
-        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>\n${ATTENDING}`,
       ]);
       expect(code).toBe(0);
       expect(stderr()).toEqual([]);
@@ -332,6 +360,7 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when the refused late answer does not say the run ended, drops `guards` from the
       //     refused reply, or omits the state line; (b) prints stderr.
       expect(stderr()).toEqual([
+        respondCarriedOut(gateId, 'reject'),
         `Gate '${gateId}' was settled by timeout with choice 'reject' — your choice 'approve' was not recorded.`,
         "Guard step 'check' aborted the run.",
         `Reason: ${NOT_APPROVED}`,
@@ -351,10 +380,14 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
 
       // (a) red when the refused expiry reply drops `guards` — a person who wanted the other
       //     choice would not learn the guard passed and the run goes on; (b) prints stderr.
+      // decision C135: after `Not recorded:`, what the run owes — the agent step `finish` is ready.
       expect(stderr()).toEqual([
+        respondCarriedOut(gateId, 'approve'),
         `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
         `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>`,
+        ATTENDING,
       ]);
       expect(code).toBe(1);
       expect(stdout()).toEqual([]);
@@ -381,9 +414,10 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // The drain's own write reported the guard; this answer's reply carries none.
       // (a) red when the already-resolved reply for a gate its expiry settled is not marked —
       //     respond would print `Responded:`; (b) prints stdout.
+      // decision C135: after `Not recorded:`, what the run owes — the agent step `finish` is ready.
       expect(stdout()).toEqual([
         LATE_SAME_CHOICE,
-        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'\nAn agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>\n${ATTENDING}`,
       ]);
       expect(code).toBe(0);
       expect(stderr()).toEqual([]);
@@ -401,10 +435,87 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
       // (a) red when a `Not recorded:` line with an invented choice is printed for a gate whose
       //     expiry settled none; (b) prints stderr.
       expect(stderr()).toEqual([
+        respondCarriedOut(gateId),
         `Gate '${gateId}' on 'confirm' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.`,
       ]);
       expect(code).toBe(1);
       expect(stdout()).toEqual([]);
+    });
+  });
+
+  describe('C135, W2-Y2: a late answer says what the run owes, as the on-time answer does', () => {
+    /** `confirm` (a question that settles `approve` at expiry), then `after`, a bare `auto` step. */
+    const gateThenAuto = (id: string): WorkflowDefinition => ({
+      id,
+      name: id,
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        confirm: {
+          description: 'Confirm',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          depends_on: [],
+          gate: { choices: ['approve', 'reject'], ...expiring('approve') },
+        },
+        after: { description: 'After', execution: 'auto', depends_on: ['confirm'] },
+      },
+    });
+
+    /** The on-time answer's owed line on a twin run, with that run's id put back as `<id>`. */
+    async function onTimeOwedLine(id: string): Promise<string> {
+      const { runId, gateId } = await openGate(gateThenAuto(id));
+      logSpy.mockClear();
+      expect(await respond(runId, gateId, 'approve')).toBe(0);
+      const printed = stdout().flatMap((s) => s.split('\n'));
+      logSpy.mockClear();
+      errSpy.mockClear();
+      const owed = printed.filter((l) => l.startsWith('Owed to the engine:'));
+      expect(owed).toHaveLength(1);
+      return owed[0]!.split(runId).join('<id>');
+    }
+
+    it('DIFFERENT choice: refusal, `Not recorded:`, then the owed line the on-time answer prints — stderr, exit 1', async () => {
+      const owed = await onTimeOwedLine('r625-c135-ontime-diff');
+      const { runId, gateId } = await openGate(gateThenAuto('r625-c135-late-diff'));
+      await expireGate(runId);
+      logSpy.mockClear();
+
+      const code = await respond(runId, gateId, 'reject');
+
+      // (a) red when the late arm prints no owed line, or another than the on-time arm's;
+      //     (b) prints stderr.
+      expect(stderr()).toEqual([
+        respondCarriedOut(gateId, 'approve'),
+        `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        owed.split('<id>').join(runId),
+        ATTENDING,
+      ]);
+      expect(owed).toMatch(/^Owed to the engine: 'after' — realm run advance <id> runs it, with /);
+      expect(code).toBe(1);
+      expect(stdout()).toEqual([]);
+    });
+
+    it('SAME choice: `Not recorded:`, then the owed line the on-time answer prints — stdout, exit 0', async () => {
+      const owed = await onTimeOwedLine('r625-c135-ontime-same');
+      const { runId, gateId } = await openGate(gateThenAuto('r625-c135-late-same'));
+      await expireGate(runId);
+      logSpy.mockClear();
+
+      const code = await respond(runId, gateId, 'approve');
+
+      // (a) red when the late arm prints no owed line, or another than the on-time arm's;
+      //     (b) prints stdout.
+      expect(stdout().flatMap((s) => s.split('\n'))).toEqual([
+        respondCarriedOut(gateId, 'approve'),
+        LATE_SAME_CHOICE,
+        `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
+        owed.split('<id>').join(runId),
+        ATTENDING,
+      ]);
+      expect(code).toBe(0);
+      expect(stderr()).toEqual([]);
     });
   });
 
@@ -486,11 +597,13 @@ describe('issue #625 — what the answer ended, on `realm run respond` and `real
         DRAIN_DEPS,
       );
 
-      // (a) red when a passing guard is not named, or the choice is not named; (b) prints stdout.
+      // (a) red when a passing guard is not named, or the choice is not named; or (decision C205)
+      //     the agent step the guard left ready is not named with its drive; (b) prints stdout.
       expect(stdout()).toEqual([
         "✓ gate enacted (settle_default 'approve').",
         "Guard step 'check' passed.",
         `Run '${runId}' is not terminal (phase: 'running') — nothing further to drain.`,
+        `An agent step is ready: 'finish' — drive it with realm agent --run-id ${runId} --provider <provider> --model <model>`,
       ]);
     });
 

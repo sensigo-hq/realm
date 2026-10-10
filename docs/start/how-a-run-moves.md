@@ -31,21 +31,23 @@ A run moves only when something calls the engine. On each call the engine does t
 2. It runs every `auto` and `guard` step that is now allowed, one after another.
 3. It stops at the next `agent` step, at a gate, or at the end of the run, and replies with what to do next.
 
+Not every call does step 2. An answer to a gate (`submit_human_response`, or `realm run respond`) decides only the `guard` steps the answer makes ready. `start_run_batch`, and a `start_run` that matches an existing run by its idempotency key, run no step. After a step that fails, or a step you called that is refused, nothing more runs in that call; a step the engine refuses before its claim is skipped, and the rest run. What such a call leaves owed, `advance_run` runs (see below).
+
 Here is the start of a real run of the pull-request review example. The first step is `auto`, so the engine ran it inside the very first call:
 
 ```text
-start_run     →  Step 'fetch_pr' completed. 1 step(s) now available.
+start_run     →  Step 'fetch_pr' completed. Ready for the agent: 'write_review'.
 ```
 
 The reply then names the one step the agent may run, `write_review`, with its task and its schema.
 
-One case needs care. When a gate is answered, the answer is recorded, and a `guard` step that the answer makes ready is decided in the same call. The `auto` steps after the gate do not start by themselves. They run on the next call. In the same example, after the reviewer approved:
+One case needs care. When a gate is answered, the answer is recorded, and a `guard` step that the answer makes ready is decided in the same call. The `auto` steps after the gate are owed to the engine, and the reply names the one call that runs them, until a step opens a question, fails or ends the run. In the same example, after the reviewer approved:
 
 ```text
-submit_human_response  →  Gate 'confirm_review' resolved with choice 'approve'. 0 step(s) now available.
+submit_human_response  →  Gate 'confirm_review' resolved with choice 'approve'. Owed to the engine: 'post_approval' — call advance_run.
 ```
 
-The run was then waiting for a call to run its last `auto` step. `realm agent` makes that call for you. A client that drives the run itself must call `execute_step` for that step.
+`next_actions` then holds `advance_run`. `realm agent` makes that call for you; a client that drives the run itself calls `advance_run`; from a shell, `realm run advance <run-id>` runs the owed steps without a model. This was added after version 0.46.0: there, the reply says `0 step(s) now available.`, and a client that drives the run itself must call `execute_step` for that step.
 
 ## Three ways to drive a run
 

@@ -17,6 +17,7 @@ import {
   describeUnrecognised,
   describeForeignProvider,
   unbrandedClause,
+  shellWord,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -116,10 +117,7 @@ export function parseProvider(value: string): ProviderName {
   throw new InvalidArgumentError('--provider must be openai or anthropic.');
 }
 
-/** A value as a shell word: kept as is when it holds only safe characters, else single-quoted. */
-function shellWord(value: string): string {
-  return /^[A-Za-z0-9._/:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
-}
+// A value as a shell word: core's one quoter, `shellWord` (issue #625 PR-2a, F6), imported above.
 
 /** `--schema-retries`' default; the re-attach command repeats the flag only when it differs. */
 const SCHEMA_RETRIES_DEFAULT = 2;

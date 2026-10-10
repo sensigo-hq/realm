@@ -24,15 +24,16 @@ npm install -g @sensigo/realm-cli
 
 ### realm run \<command\>
 
-| Command   | Description                        |
-| --------- | ---------------------------------- |
-| `list`    | List all runs                      |
-| `inspect` | Inspect a run's steps and evidence |
-| `replay`  | Replay a completed run             |
-| `diff`    | Diff two run records               |
-| `resume`  | Resume a paused run                |
-| `respond` | Submit a response to a human gate  |
-| `cleanup` | Delete old or terminal runs        |
+| Command   | Description                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list`    | List all runs                                                                                                                                                       |
+| `inspect` | Inspect a run's steps and evidence                                                                                                                                  |
+| `replay`  | Replay a completed run                                                                                                                                              |
+| `diff`    | Diff two run records                                                                                                                                                |
+| `resume`  | Resume a paused run                                                                                                                                                 |
+| `respond` | Submit a response to a human gate                                                                                                                                   |
+| `advance` | Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — from this shell, with no model provider and no key |
+| `cleanup` | Delete old or terminal runs                                                                                                                                         |
 
 ### Top-level commands
 
@@ -72,15 +73,19 @@ export.
 
 **Minimal example:**
 
-```typescript
-// my-ollama-provider.ts
+```javascript
+// my-ollama-provider.mjs
 import { LlmProvider } from '@sensigo/realm-cli/agent';
 
 class OllamaProvider extends LlmProvider {
-  async callStep(prompt: string): Promise<Record<string, unknown>> {
-    // call your local Ollama endpoint here
-    const response = await fetch('http://localhost:11434/api/generate', { ... });
-    return await response.json() as Record<string, unknown>;
+  async callStep(prompt) {
+    // ask your local Ollama for a JSON answer to the step's prompt
+    const response = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'llama3.2', prompt, format: 'json', stream: false }),
+    });
+    const reply = await response.json();
+    return JSON.parse(reply.response);
   }
 }
 
@@ -88,7 +93,7 @@ export default new OllamaProvider();
 ```
 
 ```bash
-realm agent --workflow ./my-workflow --provider-module ./my-ollama-provider.js
+realm agent --workflow ./my-workflow --provider-module ./my-ollama-provider.mjs
 ```
 
 The module must export an **instance** (not a class) as its default export. The instance must

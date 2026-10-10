@@ -546,10 +546,13 @@ describe("#600 — a chained step never inherits the driven step's usage or tool
     expect(wrap.tool_calls).toBeUndefined();
   });
 
-  it("CONTROL: the handler step records its own output, and the bare step still copies the agent's output, as documented", async () => {
+  it("CONTROL: the handler step records its own output, and the bare step records its dependency's output (issue #625 PR-2a, C3)", async () => {
     const { draft, finish, wrap } = await driveChain();
     expect(finish.output_summary).toEqual({ finished: true });
-    expect(wrap.output_summary).toEqual(draft.output_summary);
+    // issue #625 PR-2a (decision C3): a bare step the ENGINE runs records its single dependency's
+    // recorded output — here `finish`'s — never a copy of the driven step's dispatcher output.
+    expect(wrap.output_summary).toEqual({ finished: true });
+    expect(wrap.output_source).toBe('dependency');
     expect(draft.output_summary).toEqual({ answer: 42 });
   });
 });

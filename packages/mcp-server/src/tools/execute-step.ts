@@ -10,14 +10,28 @@ import {
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
   getWorkflowForRun,
+  describePending,
+  stepsThatCannotRun,
+  cannotRunWayOutApplies,
+  cannotRunWayOutTools,
+  withEndedRunWays,
+  TERMINAL_PHASES,
   type StepDispatcher,
   type ResponseEnvelope,
   type AgentTraceEntry,
+  type ExtensionRegistry,
+  type RunRecord,
+  type RunStore,
+  type WorkflowDefinition,
 } from '@sensigo/realm';
 import type { HandleRunStores, FailedAttemptStoreLike } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
-import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
+import {
+  assertRegistryLine,
+  ExtensionRegistry as RealmExtensionRegistry,
+  runReadError,
+} from '@sensigo/realm';
 
 /** Maximum `writer_nonce` length (issue #197 PR-2, design §6). */
 const WRITER_NONCE_MAX_LENGTH = 128;
@@ -204,7 +218,11 @@ export async function handleExecuteStep(
   assertToolStores(stores, 'handleExecuteStep');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
-  const run = await runStore.get(args.run_id);
+  // decision C172: a run that cannot be read is answered as the library answers it — the store's own
+  // WorkflowError, or ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
+  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+    throw runReadError(err);
+  });
   // issue #456: code-keyed one-time-register remedy. Verb "retry" — deliberately neutral: the
   // register command in the sentence is for the human this agent's report_to_user relays to.
   const definition = await getWorkflowForRun(workflowStore, run, {
@@ -266,6 +284,8 @@ export async function handleExecuteStep(
   const result = await executeChain(runStore, definition, {
     runId: args.run_id,
     command: args.command,
+    // decision C151: an expiry this call carries out names the tool.
+    caller: 'execute_step',
     input: params,
     dispatcher: makeParamsDispatcher(params),
     ...(registry !== undefined ? { registry } : {}),
@@ -285,7 +305,47 @@ export async function handleExecuteStep(
   // envelope; awaited but best-effort — it never throws and never alters the response.
   await emitFailedAttemptTelemetry(args, run.workflow_id, result, stores?.failedAttemptStore);
 
-  return result;
+  const reply = await withWayOutOnOwnRefusal(result, args, definition, runStore, registry);
+  // decisions C205, C211 (the architect's addendum): a reply on a run that has ended — this call's
+  // own step or a step it chained failed, or the run had ended before it — ends with the ways back
+  // in: the failed step `realm run resume` takes, the cleanup steps left pending.
+  if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) return reply;
+  const ended = await runStore.get(args.run_id).catch(() => undefined);
+  return ended === undefined ? reply : withEndedRunWays(reply, ended, definition, new Date());
+}
+
+/**
+ * issue #625 PR-2a (decisions C66, C82): a by-name `execute_step` on a step the engine refuses
+ * before its claim for a failed precondition or an invalid `trust` — an `auto` step or an agent
+ * step — returns the step's own refusal.
+ * Its cause is the record or the workflow, which the caller cannot change, so when the run cannot
+ * go on until its workflow is corrected (`cannotRunWayOutApplies`) the reply's `context_hint` ends
+ * with the way out in the tools' words (`cannotRunWayOutTools`, core's one composer). In every
+ * other state — and for an input-schema refusal, which is the caller's own input (decision C3) —
+ * the reply is returned unchanged.
+ */
+async function withWayOutOnOwnRefusal(
+  result: ResponseEnvelope,
+  args: { run_id: string; command: string },
+  definition: WorkflowDefinition,
+  runStore: RunStore,
+  registry: ExtensionRegistry | undefined,
+): Promise<ResponseEnvelope> {
+  if (result.status === 'ok' || result.stopped_step !== args.command) return result;
+  let fresh: RunRecord;
+  try {
+    fresh = await runStore.get(args.run_id);
+  } catch {
+    return result;
+  }
+  const pending = describePending(definition, fresh, registry, new Date());
+  const own = stepsThatCannotRun(pending).find((e) => e.step === args.command);
+  if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust') return result;
+  if (!cannotRunWayOutApplies(fresh, pending)) return result;
+  return {
+    ...result,
+    context_hint: `${result.context_hint} ${cannotRunWayOutTools(fresh, definition, pending)}`,
+  };
 }
 
 /**

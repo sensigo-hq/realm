@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
-import type { ExtensionRegistry, Attributed } from '@sensigo/realm';
+import type { ExtensionRegistry, Attributed, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import {
   WorkflowError,
   boundStatedName,
@@ -12,9 +12,30 @@ import {
   describeAnswerEnding,
   describeEndedBy,
   lateAnswerOutcome,
+  deriveRunPhase,
+  describePending,
+  owedList,
+  owedWords,
+  cannotGoOnLines,
+  sentenceEnd,
+  pendingCleanupLine,
+  pendingCleanupWay,
 } from '@sensigo/realm';
-import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+import {
+  loadProjectExtensions,
+  type LoadedProjectExtensions,
+} from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
+import {
+  agentReadyReason,
+  attendingLine,
+  inFlightReasons,
+  laterAdvanceCodeWhere,
+  projectLoadOf,
+  projectNotUsedLine,
+  PROJECT_OPTION_HELP,
+  type ProjectLoad,
+} from './run-advance.js';
 
 /**
  * issue #625: the last line for an answer the gate's expiry beat — never `Responded:`. The choice
@@ -22,6 +43,75 @@ import { resolveProgramIdentity } from '../lib/program-identity.js';
  */
 function notRecordedLine(runId: string, late: { choice: string; phase: string }): string {
   return `Not recorded: ${runId} | gate settled by timeout with choice '${late.choice}' | state '${late.phase}'`;
+}
+
+/**
+ * What the run owes after an answer, in the CLI's words (decisions C11, C96, C62, C64, C135): the
+ * one command that runs the engine's owed work — with where its project code comes from and that its
+ * environment is its shell's (decision C98) —, the ready line for an agent step, and each engine step
+ * that cannot run with the way out; with none of these, each step in flight in another program, to
+ * wait for (decision C205). The same lines after `Responded:` and after `Not recorded:`: an
+ * answer the expiry beat leaves the run owing what an on-time answer would have.
+ */
+function nextLines(
+  runId: string,
+  workflow: WorkflowDefinition,
+  run: RunRecord,
+  registry: ExtensionRegistry,
+  hasCode: boolean,
+): string[] {
+  const pending = describePending(workflow, run, registry, new Date());
+  // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
+  // that cannot run and the way out — core's lines, never a copy.
+  const cannotGoOn = cannotGoOnLines(run, pending, workflow);
+  const ready = agentReadyReason(runId, pending.agent_steps);
+  // decision C207: with several owed, where the call stops — never a promise that all of them run.
+  const { them, until } = owedWords(pending);
+  const commands = [
+    ...(pending.act !== undefined
+      ? [
+          `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${them}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
+        ]
+      : []),
+    // decision C212: the ready line ends with its command — no full stop.
+    ...(ready !== undefined
+      ? [sentenceEnd(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`)]
+      : []),
+  ];
+  return [
+    ...commands,
+    // decision C164: a `realm workflow run` or `realm agent` waiting on this run goes on by itself,
+    // and the record cannot tell whether one is (`realm agent` writes nothing while it waits, nor
+    // does `realm workflow run` at a question or an `auto` step's prompt; decision C179's claim is
+    // held at an agent step's prompt, and that step is then not ready here) — so the line says both
+    // cases, and the commands above are not run beside it.
+    ...(commands.length > 0 ? [attendingLine(commands.length)] : []),
+    ...cannotGoOn,
+    // decision C205: with no command and nothing that cannot run, a step in flight in another
+    // program — wait for it. (A run the answer ended with a failed step `realm run resume` takes:
+    // the way back in ends the reply's own sentence, printed above by `describeAnswerEnding`.)
+    ...(commands.length === 0 && cannotGoOn.length === 0
+      ? inFlightReasons(runId, run).map((reason) => sentenceEnd(reason))
+      : []),
+  ];
+}
+
+/**
+ * decision C211 (walk c14 W3-4's class): the answer's ending lines, with the command that runs the
+ * cleanup steps the ending left pending — once: after a guard's ending the composer's lines carry
+ * it already (after each cleanup step's outcome); an answer that ended the run otherwise gets it here.
+ */
+function withCleanupLine(lines: string[], run: RunRecord): string[] {
+  const now = new Date();
+  const cleanup = pendingCleanupLine(run, now);
+  // F11: said once — a line that already names the command that runs them (the refusal of a late
+  // answer whose run completed with a cleanup step pending says it) gets no second line.
+  const command = pendingCleanupWay(run, now)?.command;
+  return cleanup === undefined ||
+    lines.includes(cleanup) ||
+    (command !== undefined && lines.some((l) => l.includes(`'${command}'`)))
+    ? lines
+    : [...lines, cleanup];
 }
 
 /** What `respondToGate` hands the command to print (issue #625). */
@@ -72,6 +162,8 @@ export async function respondToGate(
   workflowStore: WorkflowRegistrar,
   registry?: ExtensionRegistry,
   driver?: Attributed,
+  // decision C209: what the command's load of the project read — the later advance's words.
+  load?: ProjectLoad,
 ): Promise<RespondOutcome> {
   const run = await runStore.get(runId);
   // issue #456: code-keyed one-time-register remedy, shared with every other run-context site.
@@ -86,16 +178,21 @@ export async function respondToGate(
   // orphan-manifest topology guard is honoured (no hand-rolled registry).
   // Production always passes `registry` now (issue #466's action hoist) — this fallback is the
   // test/direct-caller seam, kept for callers that resolve their own (none in production today).
-  const effectiveRegistry =
-    registry ??
-    (
-      await loadProjectExtensions(workflow, {
-        ...(options.extensionsModule !== undefined
-          ? { overrideModule: options.extensionsModule }
-          : {}),
-        projectDir: options.project ?? process.cwd(),
-      })
-    ).registry;
+  const override = options.extensionsModule !== undefined;
+  const loaded =
+    registry === undefined
+      ? await loadProjectExtensions(workflow, {
+          ...(override ? { overrideModule: options.extensionsModule } : {}),
+          projectDir: options.project ?? process.cwd(),
+        })
+      : undefined;
+  const effectiveRegistry = registry ?? loaded!.registry;
+
+  // decisions C107, C209: whether the project the later advance loads holds any code — a declared
+  // module or a realm.yaml; with --extensions-module this answer did not load the project's
+  // modules, so it is read from the workflow and the realm.yaml (`projectLoadOf`).
+  const { hasCode } =
+    load ?? projectLoadOf(workflow, loaded ?? { registry: effectiveRegistry }, override);
 
   const result = await submitHumanResponse(runStore, workflow, {
     runId,
@@ -107,6 +204,8 @@ export async function respondToGate(
     // CLI never passes one, by design.
     ...(options.by !== undefined ? { respondedBy: options.by } : {}),
     ...(driver !== undefined ? { driver } : {}),
+    // decision C151: an expiry this late answer carries out names this command.
+    caller: 'respond',
   });
 
   if (result.status !== 'ok') {
@@ -120,9 +219,28 @@ export async function respondToGate(
     if (result.answer_recorded === false) {
       const lateRun = await runStore.get(runId);
       const late = lateAnswerOutcome(result, lateRun);
-      if (late !== undefined) {
-        lines = [...describeAnswerEnding(result, lateRun), notRecordedLine(runId, late)];
-      }
+      // decision C146: the composer starts with which call carried out the question's expiry
+      // (this one, or another), then the refusal and what the expiry's guards did.
+      lines = [
+        ...withCleanupLine(
+          describeAnswerEnding(result, lateRun, {
+            gateId: options.gate,
+            via: 'respond',
+            workflow,
+            // F9: the record this command read before its answer.
+            before: run,
+            now: new Date(),
+          }),
+          lateRun,
+        ),
+        ...(late !== undefined
+          ? [
+              notRecordedLine(runId, late),
+              // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
+              ...nextLines(runId, workflow, lateRun, effectiveRegistry, hasCode),
+            ]
+          : []),
+      ];
     }
     throw new WorkflowError(lines.join('\n'), {
       code: 'STATE_BLOCKED',
@@ -133,7 +251,17 @@ export async function respondToGate(
   }
 
   const updatedRun = await runStore.get(runId);
-  const lines = describeAnswerEnding(result, updatedRun);
+  const lines = withCleanupLine(
+    describeAnswerEnding(result, updatedRun, {
+      gateId: options.gate,
+      via: 'respond',
+      workflow,
+      // F9: the record this command read before its answer.
+      before: run,
+      now: new Date(),
+    }),
+    updatedRun,
+  );
   // issue #625: an `ok` reply is not always a recorded answer — when the gate's expiry had
   // already settled it with the same choice, the call succeeds and the answer was NOT recorded.
   // The typed fact decides the last line; the reply's prose is never matched.
@@ -143,16 +271,30 @@ export async function respondToGate(
       choice: options.choice,
       newState: late.phase,
       recorded: false,
+      // decision C146: the composer's lines start with which call carried out the expiry.
       lines,
-      lastLine: notRecordedLine(runId, late),
+      // decision C135: after `Not recorded:`, what the run owes — the on-time answer's lines.
+      lastLine: [
+        notRecordedLine(runId, late),
+        ...nextLines(runId, workflow, updatedRun, effectiveRegistry, hasCode),
+      ].join('\n'),
     };
   }
+  // issue #625 PR-2a (decision C11): the recorded answerer when `--by` was given, the DERIVED
+  // phase, and — when the answer left engine work owed — the one command that runs it, with where
+  // its project code comes from and that its environment is its shell's (decision C98); when it
+  // left an agent step ready, the same ready line `realm run advance` prints (decision C96).
+  const phase = deriveRunPhase(updatedRun);
+  const answeredBy = options.by !== undefined ? ` | answered by ${options.by} (as stated)` : '';
   return {
     choice: options.choice,
-    newState: updatedRun.run_phase,
+    newState: phase,
     recorded: true,
     lines,
-    lastLine: `Responded: ${runId} | choice '${options.choice}' | new state '${updatedRun.run_phase}'`,
+    lastLine: [
+      `Responded: ${runId} | choice '${options.choice}'${answeredBy} | new state '${phase}'`,
+      ...nextLines(runId, workflow, updatedRun, effectiveRegistry, hasCode),
+    ].join('\n'),
   };
 }
 
@@ -161,10 +303,7 @@ export const respondCommand = new Command('respond')
   .argument('<run-id>', 'ID of the run waiting at a gate')
   .requiredOption('--gate <gate-id>', 'Gate ID from the confirm_required response')
   .requiredOption('--choice <choice>', 'The choice to submit (e.g. approve, reject)')
-  .option(
-    '--project <dir>',
-    'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory)',
-  )
+  .option('--project <dir>', PROJECT_OPTION_HELP)
   .option(
     '--extensions-module <path>',
     "CODE override: module that REPLACES the workflow's declared 'extensions' modules (repair tool)",
@@ -221,14 +360,14 @@ export const respondCommand = new Command('respond')
           retryVerb: 'respond again',
           verb: 'respond',
         });
-        let registry: ExtensionRegistry;
+        let loaded: LoadedProjectExtensions;
         try {
-          ({ registry } = await loadProjectExtensions(workflow, {
+          loaded = await loadProjectExtensions(workflow, {
             ...(opts.extensionsModule !== undefined
               ? { overrideModule: opts.extensionsModule }
               : {}),
             projectDir: opts.project ?? process.cwd(),
-          }));
+          });
         } catch (err) {
           console.error(
             `Error loading extensions: ${err instanceof Error ? err.message : String(err)}`,
@@ -236,6 +375,13 @@ export const respondCommand = new Command('respond')
           process.exit(1);
           return;
         }
+        // decisions C108, C121, C209: a `--project` the workflow's own project overrides is said,
+        // first — with what is loaded from that project (its code, or with --extensions-module its
+        // realm.yaml), from what this load read.
+        const { registry } = loaded;
+        const load = projectLoadOf(workflow, loaded, opts.extensionsModule !== undefined);
+        const notUsed = projectNotUsedLine(workflow, opts, load);
+        if (notUsed !== undefined) console.log(notUsed);
         const { by: _rawBy, ...rest } = opts;
         const outcome = await respondToGate(
           runId,
@@ -244,6 +390,7 @@ export const respondCommand = new Command('respond')
           workflowStore,
           registry,
           driver,
+          load,
         );
         // issue #625: what the answer's write settled is said FIRST — the guard that ended the
         // run (with its reason and each finalizer's outcome), or each guard that passed — then

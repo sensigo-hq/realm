@@ -337,7 +337,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
     const def = gateWorkflow();
     const opened = await open(store, def);
     const run = await store.get(opened.runId);
-    expect(occurrences(buildNextActions(def, run), opened.token)).toBe(0);
+    expect(occurrences(buildNextActions(def, run, undefined, new Date()), opened.token)).toBe(0);
     expect(occurrences(classifyRunHealth(run), opened.token)).toBe(0);
     // The settlement result of the answer itself: its `gateClaim` copies holder and since — never
     // the token (the transform's own output, observed through the store).
@@ -686,7 +686,7 @@ describe("a late answer — the verdict stands when the call's own expiry write 
     // (a) red when the gate-claim sentence repeats "not recorded" or keeps "Only the conversation
     //     that opened the question has one to pass."; (b) prints the warnings.
     expect(reply.warnings).toEqual([
-      `gate '${o.gateId}' expired 1m ago and was enacted (settle_default: 'approve') before this response arrived — enacted_via: submit.`,
+      `gate '${o.gateId}' on 'confirm' had expired 1m before this call — this submitHumanResponse call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submitHumanResponse).`,
       'No claim_token was passed.',
     ]);
     expect(reply.warnings.some((w) => w.includes('Only the conversation'))).toBe(false);

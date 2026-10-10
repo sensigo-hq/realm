@@ -29,8 +29,14 @@ export function formatTestResults(results: TestResult[]): { lines: string[]; exi
       lines.push(`  ${chalk.green('PASS')} ${result.name}`);
     } else {
       allPassed = false;
-      const errorPart = result.error !== undefined ? `: ${result.error}` : '';
+      // issue #625 PR-2a (decision C75): a fixture's error can take several lines (the runner's
+      // stall names one step per line). Every line after the first is indented four spaces under
+      // its FAIL line, so it reads as part of that fixture's failure. A one-line error prints as
+      // before.
+      const [first, ...rest] = result.error !== undefined ? result.error.split('\n') : [];
+      const errorPart = first !== undefined ? `: ${first}` : '';
       lines.push(`  ${chalk.red('FAIL')} ${result.name}${errorPart}`);
+      for (const line of rest) lines.push(`    ${line}`);
     }
   }
 

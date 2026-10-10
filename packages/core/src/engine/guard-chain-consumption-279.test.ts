@@ -230,8 +230,6 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       const result = await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
-        input: {},
-        dispatcher: async () => ({}),
       });
 
       // (a) red when the guard loop never issues its own settle_guard (the arm is not entered);
@@ -280,8 +278,6 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       const result = await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
-        input: {},
-        dispatcher: async () => ({}),
       });
 
       // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
@@ -326,8 +322,6 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       const result = await advanceRun(store, def, {
         runId: run.id,
         command: 'step_a',
-        input: {},
-        dispatcher: async () => ({}),
       });
 
       // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
@@ -387,8 +381,6 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       const result = await advanceRun(store, defWithRecheck, {
         runId: run.id,
         command: 'step_a',
-        input: {},
-        dispatcher: async () => ({}),
       });
 
       // (a) red when the guard loop never issues its own settle_guard; (b) prints true/false.
@@ -485,8 +477,6 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       const result = await advanceRun(store, defWithFinalizer, {
         runId: run.id,
         command: 'step_a',
-        input: {},
-        dispatcher: async () => ({}),
         registry,
       });
 

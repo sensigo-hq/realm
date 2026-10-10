@@ -30,10 +30,10 @@ A second call with the same key, for the same workflow, starts nothing. It retur
 status: ok
 deduped: true
 run_id: 6c48086c-cb0f-47ea-9c33-6279fe42ffdc
-Matched existing run '6c48086c-cb0f-47ea-9c33-6279fe42ffdc' (idempotent) in phase 'running'; no new run created.
+Matched existing run '6c48086c-cb0f-47ea-9c33-6279fe42ffdc' (idempotent) in phase 'running'; no new run created. Ready for the agent: 'fetch'.
 ```
 
-Notice `deduped: true` and the same `run_id`. The caller can carry on with that run as if it had started it.
+Notice `deduped: true` and the same `run_id`. The caller can carry on with that run as if it had started it: the reply also says what comes next for it, as the first one did (here, `sync`'s first step, `fetch`, is ready for the assistant). Saying what comes next on a repeat was added after version 0.46.0, which ends the line at `no new run created.`.
 
 A key belongs to one workflow. The same key under another workflow is a different key.
 
@@ -73,7 +73,7 @@ status: ok
 deduped: false
 run_id: 3fa445f0-6a22-424b-9a64-8a866925039a
 rerun_of: 6c48086c-cb0f-47ea-9c33-6279fe42ffdc
-This run supersedes run '6c48086c-…' under the same idempotency key (on_terminal_match).
+Run '3fa445f0-…' created for workflow 'sync'; it supersedes run '6c48086c-…' under the same idempotency key (on_terminal_match). Ready for the agent: 'fetch'.
 ```
 
 The key now points at the new run. The old run stays in the store, and the new run's record links back to it:

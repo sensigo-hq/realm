@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import chalk from 'chalk';
 import { formatTestResults, testCommand } from './test.js';
 import type { TestResult } from '@sensigo/realm-testing';
 
@@ -39,6 +40,40 @@ describe('formatTestResults', () => {
     const { lines } = formatTestResults(results);
     expect(lines[0]).toContain('good-fixture');
     expect(lines[0]).toContain('PASS');
+  });
+
+  // issue #625 PR-2a, decision C75: the testing runner's stall is several lines — every line after
+  // the first of a fixture's error is indented four spaces under its FAIL line.
+  it('a two-line error: the second line is indented four spaces under the FAIL line', () => {
+    const { lines } = formatTestResults([
+      {
+        name: 'one',
+        passed: false,
+        error:
+          "Workflow stalled: nothing else can run.\n'compute' cannot run (precondition): Precondition failed for step 'compute'.",
+      },
+      { name: 'two', passed: true },
+    ]);
+    // (a) red when the later lines print at column 0 (the indent dropped) and read as separate
+    //     output; (b) prints the lines.
+    expect(lines).toEqual([
+      `  ${chalk.red('FAIL')} one: Workflow stalled: nothing else can run.`,
+      "    'compute' cannot run (precondition): Precondition failed for step 'compute'.",
+      `  ${chalk.green('PASS')} two`,
+    ]);
+  });
+
+  it('CONTROL — a one-line error prints as one line, and a failure with no error as its name alone, as before', () => {
+    const { lines } = formatTestResults([
+      { name: 'one', passed: false, error: "Handler 'my_h' is not registered" },
+      { name: 'two', passed: false },
+    ]);
+    // (a) red when a one-line error changes shape, or a failure with no error gains a colon;
+    //     (b) prints the lines.
+    expect(lines).toEqual([
+      `  ${chalk.red('FAIL')} one: Handler 'my_h' is not registered`,
+      `  ${chalk.red('FAIL')} two`,
+    ]);
   });
 });
 

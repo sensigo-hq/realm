@@ -22,7 +22,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const definition = loadWorkflowFromFile(path.join(__dirname, 'my-workflow/workflow.yaml'));
 
 const store = new JsonFileStore(); // defaults to ~/.realm/runs/
-const run = await store.create({
+const { run } = await store.create({
   workflowId: definition.id,
   workflowVersion: definition.version,
   params: { input: 'hello' },
@@ -36,7 +36,9 @@ const response = await executeStep(store, definition, {
 });
 
 console.log(response.status);
-// response.next_actions[0] carries the next step to execute — repeat until next_actions is empty
+// response.next_actions[0] carries the next step to execute; when it names advance_run, call
+// advanceRun(store, definition, { runId: run.id }) (import it beside executeStep) —
+// repeat until next_actions is empty
 ```
 
 ## Usage — Custom Service Adapter
@@ -51,6 +53,7 @@ import {
   type ServiceResponse,
 } from '@sensigo/realm';
 
+// callMyApi: your own client for the API, not defined here
 const myAdapter: ServiceAdapter = {
   id: 'my-api',
   async fetch(operation, params, _config): Promise<ServiceResponse> {
@@ -76,14 +79,15 @@ registry.register('adapter', 'my-adapter', myAdapter);
 
 ### Engine
 
-| Symbol                | Notes                                                           |
-| --------------------- | --------------------------------------------------------------- |
-| `executeStep`         | Advance a run by one step. Returns `ResponseEnvelope`.          |
-| `executeChain`        | Auto-chain through auto steps until an agent step is reached.   |
-| `submitHumanResponse` | Resolve an open human gate.                                     |
-| `buildNextActions`    | Build `NextAction[]` for all currently eligible agent steps.    |
-| `findEligibleSteps`   | Return names of steps ready to execute given current run state. |
-| `propagateSkips`      | Propagate skip flags through dependent steps.                   |
+| Symbol                | Notes                                                                                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `executeStep`         | Advance a run by one step. Returns `ResponseEnvelope`.                                                                                                                       |
+| `executeChain`        | Auto-chain through auto steps until an agent step is reached.                                                                                                                |
+| `submitHumanResponse` | Resolve an open human gate.                                                                                                                                                  |
+| `advanceRun`          | Run what a run owes the engine — an expired question's declared `on_expiry`, then its guards and `auto` steps. Returns `ResponseEnvelope`.                                   |
+| `buildNextActions`    | Build `NextAction[]` for what the run waits on: the agent steps that can be called, `advance_run` when the engine owes work, or the open question's `submit_human_response`. |
+| `findEligibleSteps`   | Return names of steps ready to execute given current run state.                                                                                                              |
+| `propagateSkips`      | Propagate skip flags through dependent steps.                                                                                                                                |
 
 ### Store
 

@@ -1,6 +1,6 @@
 # @sensigo/realm-mcp
 
-`@sensigo/realm-mcp` — the Realm MCP server. Exposes 10 workflow tools over stdio or HTTP for AI agent connections (VS Code Copilot, Cursor, Claude, and any MCP-compatible agent).
+`@sensigo/realm-mcp` — the Realm MCP server. Exposes 11 workflow tools over stdio or HTTP for AI agent connections (VS Code Copilot, Cursor, Claude, and any MCP-compatible agent).
 
 ## Installation
 
@@ -46,7 +46,7 @@ await server.connect(transport);
 
 | Symbol                             | Description                                                                     |
 | ---------------------------------- | ------------------------------------------------------------------------------- |
-| `createRealmMcpServer(options?)`   | Creates the MCP server with all 10 tools pre-registered. Returns `McpServer`.   |
+| `createRealmMcpServer(options?)`   | Creates the MCP server with all 11 tools pre-registered. Returns `McpServer`.   |
 | `createDefaultRegistry()`          | Returns an `ExtensionRegistry` pre-populated with built-in adapters.            |
 | `generateProtocol(workflow)`       | Generates a structured protocol description for a workflow.                     |
 | `RealmMcpServerOptions`            | Type — optional config: `registry?`, `secrets?`, `workflowStore?`, `runStore?`. |
@@ -61,6 +61,7 @@ await server.connect(transport);
 - `execute_step` — submit agent output for a step and advance the run
 - `submit_human_response` — resolve a human gate
 - `get_run_state` — check current run state
+- `advance_run` — run what a run owes the engine: an expired question's declared `on_expiry`, then its guards and `auto` steps
 - `abandon_run` — end a non-terminal run without completing it
 - `create_workflow` — dynamically register and start a workflow in one call
 - `append_trace` — add trace entries during a step, before submitting it

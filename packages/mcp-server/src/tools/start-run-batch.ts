@@ -12,10 +12,12 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
+  buildNextActions,
   type ResponseEnvelope,
   type RunPhase,
+  type NextAction,
 } from '@sensigo/realm';
-import type { HandleRunStores } from './start-run.js';
+import { handBackHint, type HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
@@ -38,6 +40,17 @@ export interface StartRunBatchResult {
     terminal_reason?: string;
     /** Observational warnings (active-match / param-mismatch) — identical field name to the single-run path. */
     warnings: string[];
+    /**
+     * issue #625 PR-2a: what this run owes first — its agent steps, then the `advance_run` act when
+     * engine work is owed (`buildNextActions`). No step runs in this tool; empty for a terminal run.
+     */
+    next_actions: NextAction[];
+    /**
+     * issue #625 PR-2a (decision C65): the sentence `start_run`'s reply would carry for this run on
+     * which nothing ran — `Run '<id>' created …` or `Matched existing run …`, then what comes next,
+     * the way out included when the run cannot go on (`handBackHint`, one composer).
+     */
+    context_hint: string;
   }>;
   /**
    * Items rejected by the idempotency policy (`on_terminal_match: 'reject'` / `on_live_match: 'fail'`).
@@ -193,6 +206,8 @@ export async function handleStartRunBatch(
       }
     }
 
+    // decision C117: one clock for the entry's next_actions and its hint.
+    const now = new Date();
     started.push({
       run_id: run.id,
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
@@ -201,6 +216,15 @@ export async function handleStartRunBatch(
       run_phase: derivedPhase,
       ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
       warnings,
+      next_actions: run.terminal_state ? [] : buildNextActions(definition, run, registry, now),
+      context_hint: handBackHint({
+        run,
+        current: run,
+        definition,
+        ...(registry !== undefined ? { registry } : {}),
+        deduped,
+        now,
+      }),
     });
   }
   if (dedupHits > 0) {
@@ -218,7 +242,7 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
   markServedByTool(opts);
   server.tool(
     'start_run_batch',
-    'Atomically enqueue multiple runs of the same workflow. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.',
+    "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",
     {
       workflow_id: z.string(),
       items: z.array(

@@ -2,11 +2,12 @@
 
 <!-- description: Reference for the realm run subcommands that change a run or the store: their arguments, flags, output and exit codes. -->
 
-`realm run` has sixteen subcommands. This page covers the ten that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
+`realm run` has seventeen subcommands. This page covers the eleven that change a run or the store. The six that only read are in [`realm run`: commands that read](realm-run-reading.md). Every output shown came from a run of the command.
 
 | Subcommand                | What it does                                                  | Acts when                   |
 | ------------------------- | ------------------------------------------------------------- | --------------------------- |
 | [`respond`](#respond)     | Answers a gate.                                               | Always                      |
+| [`advance`](#advance)     | Runs what a run owes the engine, with no model.               | Always                      |
 | [`resume`](#resume)       | Makes a failed step runnable again.                           | Always                      |
 | [`abandon`](#abandon)     | Ends an open run.                                             | Always                      |
 | [`cleanup`](#cleanup)     | Abandons every open run that has been idle for a given time.  | Unless `--dry-run` is given |
@@ -29,13 +30,13 @@ realm run respond <run-id> --gate <gate-id> --choice <choice> [--by <name>] [--p
 
 Answers the gate a run is waiting at. `realm run inspect <run-id>` prints the gate's ID and its choices.
 
-| Flag                         | Required | What it does                                                                                                                             |
-| ---------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `--gate <gate-id>`           | Yes      | The ID of the open gate.                                                                                                                 |
-| `--choice <choice>`          | Yes      | One of the gate's choices.                                                                                                               |
-| `--by <name>`                | No       | Who made the choice. Recorded with the answer as given, and not checked. At most 200 characters, no control characters. Added in 0.46.0. |
-| `--project <dir>`            | No       | The project whose `realm.yaml` applies if the workflow has no project of its own. Default: the current folder.                           |
-| `--extensions-module <path>` | No       | Loads this code file in place of the files named by the workflow's `extensions`.                                                         |
+| Flag                         | Required | What it does                                                                                                                                                                                                                                                                                      |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gate <gate-id>`           | Yes      | The ID of the open gate.                                                                                                                                                                                                                                                                          |
+| `--choice <choice>`          | Yes      | One of the gate's choices.                                                                                                                                                                                                                                                                        |
+| `--by <name>`                | No       | Who made the choice. Recorded with the answer as given, and not checked. At most 200 characters, no control characters. Added in 0.46.0.                                                                                                                                                          |
+| `--project <dir>`            | No       | Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose `realm.yaml` and code it loads. Default: the current folder. A workflow registered from a folder loads its code from there, and `--project` is not used (the command says so). |
+| `--extensions-module <path>` | No       | Loads this code file in place of the files named by the workflow's `extensions`.                                                                                                                                                                                                                  |
 
 ```bash
 realm run respond 3ebc1158-1d29-41b5-9ca5-df054a681b58 --gate 0d499c26-a6b4-406f-ae29-6d6ef5c75fcb --choice approve
@@ -46,6 +47,43 @@ Responded: 3ebc1158-1d29-41b5-9ca5-df054a681b58 | choice 'approve' | new state '
 ```
 
 `new state` is the run's phase after the answer: `running` if steps remain, `completed` if the gate's step was the last.
+
+When the answer leaves `auto` steps that only the engine can run, one more line names them and the command that runs them (`runs it` for one step, `runs them until a step opens a question, fails or ends the run` for more: see [`advance`](#advance)), where that command loads the steps' project code from (the workflow's own project folder, whatever folder the shell is in; for a workflow made without one, the folder it runs in or its `--project`), and that the environment is that shell's. Added after version 0.46.0:
+
+```text
+Responded: b178179a-998d-457e-85e6-6d38439d0585 | choice 'approve' | new state 'running'
+Owed to the engine: 'process', 'notify' — realm run advance b178179a-998d-457e-85e6-6d38439d0585 runs them until a step opens a question, fails or ends the run, with the project code under /home/me/project, in the environment of the shell it runs in.
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
+```
+
+When the workflow's own project folder holds no project code (no `realm.yaml`, no extension module), the line says `with no project code (nothing to load under <folder>)` instead. When `--project` is given for a workflow that has its own project folder, the first line says it was not used: `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is loaded from there.`, or, when that folder holds no project code, `… has its own project, <folder> (no project code there).` Both added after version 0.46.0. With `--extensions-module`, that folder's extension modules are not loaded, and the line ends `…, and its realm.yaml is loaded from there.`, or `… <folder> (no realm.yaml there).` when it has none.
+
+When the answer leaves an agent step ready, the line says so in the words `realm run advance` uses, with the command that drives it. Added after version 0.46.0:
+
+```text
+Responded: 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 | choice 'approve' | new state 'running'
+An agent step is ready: 'finish' — drive it with realm agent --run-id 4168cf62-7ae2-4ed9-a688-e149ccbe06a6 --provider <provider> --model <model>
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
+```
+
+After the lines that name a command — `Owed to the engine: …`, `An agent step is ready: …` — one more line says that a `realm workflow run` or `realm agent` still waiting on the run goes on by itself (`the lines above are` when there are two): the run's record does not show whether one is waiting, so the line holds either way. Added after version 0.46.0.
+
+When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0:
+
+```text
+Responded: 77772f0c-a80d-49d3-b665-4ac186186fd1 | choice 'approve' | new state 'running'
+'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1 — or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1
+```
+
+A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>`
+
+When the answer leaves nothing to name but a step in flight in another program, the line says to wait for it, in the words `realm run advance` uses. Added after version 0.46.0:
+
+```text
+Responded: 5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13 | choice 'approve' | new state 'running'
+'pack' is in flight in another program — wait for it, or see realm run inspect 5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13
+```
 
 `respond` records the answer. Without `--by` the answer names nobody, and `realm run inspect` shows `(not stated)`. A name is never taken from the operating system or from `REALM_OPERATOR`: those name a program, and `respond` uses `REALM_OPERATOR` only for the cleanup steps its answer runs. An empty, long or control-character name is refused before the run is read:
 
@@ -68,6 +106,8 @@ A guard that passed, with steps still to run:
 ```text
 Guard step 'only_if_shipping' passed.
 Responded: 989c0619-1bda-4b2e-b5e3-4d33d6519a67 | choice 'ship' | new state 'running'
+An agent step is ready: 'ship' — drive it with realm agent --run-id 989c0619-1bda-4b2e-b5e3-4d33d6519a67 --provider <provider> --model <model>
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
 ```
 
 A guard that ended the run. `Reason:` is the guard's `abort_message`, and is left out when the guard has none:
@@ -78,23 +118,94 @@ Reason: The order was held.
 Responded: c267f37e-bddb-46aa-aea2-b14f62ba358e | choice 'hold' | new state 'aborted'
 ```
 
-The first line is one of three sentences: `Guard step '<step>' aborted the run.`, `Guard step '<step>' failed with a resolution error. Run is terminated.`, or `Guard step '<step>' passed and completed the run.` When the run ended and it has cleanup steps, they run in this process, and one line per cleanup step follows: `finalizer '<name>': <status>`.
+The first line is one of three sentences: `Guard step '<step>' aborted the run.`, `Guard step '<step>' failed with a resolution error. Run is terminated.`, or `Guard step '<step>' passed and completed the run.` A guard that failed is listed as a failed step `realm run resume` takes, so the second sentence goes on with the way back in: `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0). When the run ended and it has cleanup steps, they run in this process, and one line follows for each cleanup step this ending ran or left pending: `finalizer '<name>': <status>`. A cleanup step that completed or failed at an earlier ending, before `realm run resume`, does not run again and gets no line. When one is left `pending` (this program has no handler for it), the next line names the command that runs it: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <id> --force` (added after version 0.46.0).
 
 Giving the same answer again prints the `Responded:` line again and changes nothing.
 
-An answer that arrives after the gate's time is up is not recorded, and for a gate that was settled with its default choice the last line is `Not recorded:` in place of `Responded:`. See [An answer after the time is up](../workflow/gates.md#an-answer-after-the-time-is-up).
+An answer that arrives after the gate's time is up is not recorded, and for a gate that was settled with its default choice `Not recorded:` takes the place of `Responded:`. The lines after it are the ones above: what the run owes (added after version 0.46.0). When this answer is the call that carried out the expiry, its first line says so, as `realm run advance`'s does (where the expiry's choice made a guard ready, `respond` prints the guard's line on its own, after the first line; `realm run advance` adds the guard's sentence to the end of its first line): `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this respond call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: respond).`, or `… its declared abort: the run ended (enacted_via: respond).` (added after version 0.46.0). See [An answer after the time is up](../workflow/gates.md#an-answer-after-the-time-is-up).
 
 **Exit code:** 0 if the call succeeded, otherwise 1. An answer that was recorded exits 0, also when the guard it made ready aborted the run. A late answer that names the choice the gate was settled with exits 0, although it was not recorded. A refused answer exits 1. This differs from `realm workflow run`, which exits 1 for a run that ended as aborted.
 
 The refusals:
 
-| Case                                                           | Message                                                                                                                                                                                            |
-| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--gate` is not the open gate                                  | `Gate 'wrong' is not the open gate and matches no committed resolution.`                                                                                                                           |
-| `--choice` is not one of the choices                           | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                                                                                    |
-| The gate was answered differently                              | `Gate '70d76b3b-…' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`                                                                                            |
-| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.` Then what the guard did, if this answer carried out the expiry, and the `Not recorded:` line. |
-| The run has ended                                              | `Run '00b33778-…' is terminal; cannot submit a gate response — 'realm run resume' clears a stale pending gate on a resumable run, or 'realm run purge' removes the record entirely.`               |
+| Case                                                           | Message                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gate` is not the open gate                                  | `Gate 'wrong' is not the open gate and matches no committed resolution.`                                                                                                                                                                                                                                                                                                                                                                           |
+| `--choice` is not one of the choices                           | `Choice 'maybe' is not valid. Expected one of: approve, reject`                                                                                                                                                                                                                                                                                                                                                                                    |
+| The gate was answered differently                              | `Gate '70d76b3b-…' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`                                                                                                                                                                                                                                                                                                                                            |
+| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.`, after the `⚠` line when this answer carried out the expiry. Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes. |
+| The run has ended                                              | `Run '00b33778-…' is terminal (aborted); cannot submit a gate response — an aborted run is never resumed; 'realm run purge 00b33778-…' previews what it would remove.` The words after the dash name the way out that kind of ending has, as `submit_human_response` names it: see [A run that has ended](../mcp/tools.md#a-run-that-has-ended).                                                                                                   |
+
+## `advance`
+
+```text
+realm run advance <run-id> [--project <dir>] [--extensions-module <path>]
+```
+
+Added after version 0.46.0. Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready. It runs them one at a time, and the steps the run owes after them, and stops at the first step that opens a question, fails or ends the run: a step named after that one does not run in that call. When the preview names more than one, its line says so: `Owed to the engine: 'approve', 'fetch'; it runs them until a step opens a question, fails or ends the run.` It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in — names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:
+
+```text
+Advancing run <id> (workflow 'cli-owed-wf') with no project code (nothing to load under /home/me/project), in this shell's environment.
+This program: tester (from REALM_OPERATOR) · project code: neither side records project code.
+Last recorded driver: none recorded.
+Owed to the engine: 'after'.
+→ after
+Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id <id> --provider <provider> --model <model>
+If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.
+Run <id>: phase 'running'
+```
+
+Each guard it decides prints `Guard step '<guard>' passed.`, also when a later step completes the run, in the order the steps ran: a guard decided before a later step is printed before that step's line. The guard that ended the run prints its sentence (`Guard step '<guard>' aborted the run.`) and `Reason:` when it has one. A guard that failed — its path found nothing — is a step that failed: a `Stopped: '<guard>' failed: <reason>` line follows, and the exit code is 1, as for an `auto` step that failed.
+
+The first line names the folder the project code is loaded from, or says `with no project code (nothing to load under <folder>)` when that folder holds none (no `realm.yaml`, no extension module); a `--project` the workflow's own project folder overrides is said on the next line, `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is loaded from there.`, or `… <folder> (no project code there).` when it holds none (both added after version 0.46.0). With `--extensions-module`, the first line names that module, `with the module <path> (--extensions-module)`, followed by `and the realm.yaml of <folder>` only when that folder has a `realm.yaml`, which the command then reads; the folder's extension modules are not loaded, so the `--project` line ends `…, and its realm.yaml is loaded from there.`, or `… <folder> (no realm.yaml there).` when it has none. `--project` is used only for a workflow registered without a project folder (`realm run advance --help` says so). The expiry line is printed when the call carries the expiry out, before the steps it led to; every other line in the reply's `warnings` is printed as `⚠ <line>` after the steps that ran (added after version 0.46.0, which printed only the expiry line, on stderr, after the steps). At an open question the command runs nothing, and its `Nothing is owed to the engine: a question is open — realm run respond …` line is composed from the run's record as the command read it: when another program answers the question meanwhile, the steps that answer made ready are left for the next `realm run advance`. That command, here and in the `Stopped:` line of a question the call opened, gives the choices as `--choice <one of: approve, reject>`, a placeholder to replace, or the choice itself when the question has only one.
+
+The preview's `project code` words compare the code this program loaded with what the run last recorded:
+
+| Words                                                       | Means                                                                                                                                                                             |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `same as the run's last record`                             | The same files with the same hashes.                                                                                                                                              |
+| `differs from the run's last record`                        | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override changed.                                                          |
+| `not comparable with the run's last record`                 | The run records project code and this program loaded none, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |
+| `not comparable — the run has recorded no project code yet` | This program loaded project code, and the run has recorded none: no program with project code has run a step of it yet, as on a run just created. It is not a mismatch.           |
+| `neither side records project code`                         | Neither the run nor this program loaded project code.                                                                                                                             |
+
+`Last recorded driver:` names the program on the run's newest evidence entry that names one, with that entry's step and time: `<program> at step '<step>', <time>.`, or `none recorded.` A step's own entry names the program that ran it when that program recorded its name; an answer to a question names none, and neither does a guard's decision. So the program that answered a question is not named here: after an answer whose write ran no cleanup step, the line still names the program that ran the question's step and opened the question. `realm run inspect` shows who answered, on that step's `Answer:` line (`answered by <name>`, the name `--by` gave, or `answered by (not stated)`). When newer entries name no program, the line ends `; 1 newer entry records no driver.` (or `; <n> newer entries record no driver.`). Each one counts but a question's answer, the entry its expiry writes and a guard's decision: a step run by a program that recorded no name (a library call made without `driver`, for one), and an entry realm writes without running a step, such as the one `realm run reclaim` writes for the step whose claim it frees.
+
+When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.`
+
+`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when an operator ended it, it goes on `. An operator ended this run, with the reason "<reason>"; to run the work again, start a new run.`, never with `realm run resume`, which would erase that ending and its reason), a question opened (with the `realm run respond` command; when steps wait for its answer — ready by what they depend on, but held while a question is open — it names them first: `a question is open ('<step>' waits for its answer) — realm run respond …`, and the preview's `Nothing is owed to the engine:` line does the same), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several; put the provider and model you drive the run with in place of the two placeholders; the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`. A run the command completes gets no `Stopped:` line: the phase line says it. When the run ends during the call and has cleanup steps, one line per cleanup step that ending ran or left pending follows, just before the phase line, in the order the engine runs them, with the status the run's record holds for it: `finalizer '<name>': <status>` — `completed`, `failed` when its handler threw, or `pending` when this program could not run it (a `⚠` line above says why). A cleanup step that completed or failed when the run ended before, and `realm run resume` reopened the run, does not run again and gets no line. When the ending left cleanup steps `pending`, the next line names them and the command that runs them: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <id> --force` (`Cleanup steps left pending: '<a>', '<b>' — to run them with code that has their handlers: …` for several); the preview of a run that ended with cleanup steps pending prints the same line after its last line. While another drainer's lease on one of them has not passed, the line is `Cleanup step left pending: '<name>' — held by another drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>: realm run drain <id> --force`, and a `⚠ finalizer '<name>' left pending — held by another drainer's lease until <time> (realm cannot tell whether it is still running)` line above says why it is `pending` (added after version 0.46.0). A step another process took while this one was about to run it is said as a fact, and the command goes on with what is left. The command prints `→ <step>` as it starts a step, before it claims it, so the losing program prints both lines, in this order — the second says another program took the step first, so it did not run here:
+
+```text
+→ process
+• Step 'process' was taken by racer-a (from REALM_OPERATOR, via advance) at 2026-10-05T00:02:25.302Z; not run here.
+```
+
+When another program settles the step or takes it over (after `realm run reclaim <id> --step <step> --force` freed this program's claim, for one), or ends the run (`realm run abandon`, for one), while this one is running it, the outcome this program reached for the step is not recorded. The command says so, read from the run's record, never that the step failed, and goes on with what is left:
+
+```text
+→ process
+• Step 'process' was taken by racer-b (from REALM_OPERATOR, via advance), and completed; this program's outcome for it was not recorded.
+→ notify
+Run 65d2afc8-2cb3-4401-808c-1d83a40bf989: phase 'completed'
+```
+
+The line ends `, and failed; …` when the other program's run of the step failed. While the other program still holds the step it reads `• Step '<step>' was taken by <program> at <time>; this program's outcome for it was not recorded.`, and when the run ended without the step settling, `• Step '<step>': the run ended (<phase>) before this program's outcome for it was recorded.` When no program holds the step and it has not settled, it reads `• Step '<step>': another process removed the claim this program held on it; this program's outcome for it was not recorded.`, and the step is owed again: the command goes on with it as with any owed step. A step whose outcome was not recorded did not fail here, also when the other program's run of it failed: the exit code is the one for what is left. When the record changed after the command read it and before it claimed the step (another program ended the run, or opened a question on another step), the step did not run here: no line says it did, and the `Stopped:` lines say what the record shows. Added after version 0.46.0.
+
+When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reason>` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reason>` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). A reason that ends with a command ends the line there, with no full stop, so the command can be copied as printed; any other ends with a full stop. With more than one reason, the opening ends with its colon and each reason is a line of its own, indented two spaces (added after version 0.46.0, which joined them with `; ` and ended the line with a full stop). When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`):
+
+```text
+The engine can run nothing now: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+Run 507090b5-3b5b-4a6c-a814-3faa03404f95 stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 507090b5-3b5b-4a6c-a814-3faa03404f95 — or end it: realm run abandon 507090b5-3b5b-4a6c-a814-3faa03404f95
+```
+
+After a call that ran other steps, the same way out takes the place of the `Run <id>: phase '<phase>'` line. A step another program holds:
+
+```text
+In flight: 'process' is in flight, taken by crown (from REALM_OPERATOR, via advance) since 2026-10-04T22:26:13.994Z.
+The engine can run nothing now: 'process' is in flight in another program — wait for it, or see realm run inspect 65d2afc8-2cb3-4401-808c-1d83a40bf989
+```
+
+Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0. The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).
 
 ## `resume`
 
@@ -120,6 +231,21 @@ Add the other flags the run was driven with, such as --extensions-module or --pr
 ```
 
 Fill in `<provider>` and `<model>` before you run the second line. `<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
+
+When the step that is ready again is one only the engine runs, one line names it (`the step` / `the steps`, and for more than one, `until a step opens a question, fails or ends the run,` before `without a model`) and the call that runs it without a model, and the `Drive it with:` lines are printed only when an agent step is ready too. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
+
+```text
+Resumed run '8bc06d55-77fb-43f4-937f-8d166fad20cf': step 'a' re-enabled and run reset to 'running'.
+To run the step the engine owes ('a') without a model: realm run advance 8bc06d55-77fb-43f4-937f-8d166fad20cf
+```
+
+When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, driving the run would only stop on that step: the step and the way out take the place of the `Drive it with:` lines. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
+
+```text
+Resumed run '729eaab3-6203-46cb-9c5c-3714070723a8': step 'a' re-enabled and run reset to 'running'.
+'a' cannot run (input_schema): Invalid input for step 'a': the input must have required property 'n'.
+Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): for 'a', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8 — or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8
+```
 
 `resume` runs no step. Cleanup steps that had not yet run for the ended run are cancelled, and each is named on a line that starts with `⚠`.
 
@@ -316,6 +442,8 @@ A cleanup step that another process took less than its lease time ago is reporte
   • [0] release: lease held (expires 2026-10-01T23:01:37.538Z) — a drainer is executing NOW
 ```
 
+With `--force` while that lease has not passed, the pass stops at that step and runs nothing more: it prints `⚠ finalizer '<name>' left pending — held by another drainer's lease until <time> (realm cannot tell whether it is still running)`, then `Cleanup step left pending: '<name>' — held by another drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>: realm run drain <id> --force`, and exits 1 — never `has no pending finalizers`. After that time the command runs it. Added after version 0.46.0.
+
 With `--force`:
 
 ```text
@@ -347,8 +475,8 @@ Drained 1/1 run(s).
 With `--expired`, a gate whose time has passed is reported first, with the choice it would be settled with. If the settled choice would make a guard step ready, the report says what the guard would then do: `would pass`, `would pass and complete the run`, `would then abort the run (<reason>)` or `would then fail the run (<reason>)`. Nothing is written:
 
 ```text
-Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 0m ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
-Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired 0m ago — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.
+Run '0e0ace7e-e57c-400c-a63a-eaf685688d19': gate expired 18s ago — would enact settle_default 'hold'; guard 'only_if_shipping' would then abort the run (The order was held.) on --force.
+Run '230b0939-9c61-40e4-8b6f-910594a81e92': gate expired 17s ago — would enact settle_default 'ship'; guard 'only_if_shipping' would pass on --force.
 ```
 
 The report leaves the guard out when the run's registered workflow cannot be read.
@@ -366,14 +494,40 @@ Run '0e0ace7e-e57c-400c-a63a-eaf685688d19' has no pending finalizers. Nothing to
 ✓ gate enacted (settle_default 'ship').
 Guard step 'only_if_shipping' passed.
 Run '230b0939-9c61-40e4-8b6f-910594a81e92' is not terminal (phase: 'running') — nothing further to drain.
+An agent step is ready: 'ship' — drive it with realm agent --run-id 230b0939-9c61-40e4-8b6f-910594a81e92 --provider <provider> --model <model>
+```
+
+When the enacted gate leaves `auto` steps only the engine runs, one more line names them. Added after version 0.46.0:
+
+```text
+✓ gate enacted (settle_default 'approve').
+Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing further to drain.
+To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
+```
+
+When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead. Added after version 0.46.0:
+
+```text
+✓ gate enacted (settle_default 'approve').
+Run '1d703406-777f-4bc6-a6bc-6058b4d8f490' is not terminal (phase: 'running') — nothing further to drain.
+'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490 — or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490
+```
+
+When it leaves no work for the engine and nothing that cannot run, but an agent step ready or a step in flight in another program, the line `realm run advance` prints for it follows (the guard that passed above leaves the agent step `ship` ready). Added after version 0.46.0, which prints nothing after `nothing further to drain.` there:
+
+```text
+✓ gate enacted (settle_default 'approve').
+Run '7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857' is not terminal (phase: 'running') — nothing further to drain.
+'pack' is in flight in another program — wait for it, or see realm run inspect 7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857
 ```
 
 With `--all --expired`, the list names what each gate declared, without the choice or the guard. With `--force`, what each guard did is printed under its run:
 
 ```text
 2 run(s) WOULD be drained:
-  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate expired 0m ago — would enact settle_default
-  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate expired 0m ago — would enact settle_default
+  • 962cb7f0-a894-4592-aadc-a4907ef14c9c: gate expired 41s ago — would enact settle_default
+  • ce8296d1-c5d3-4ea6-b62c-7dc0f795fb09: gate expired 40s ago — would enact settle_default
 
 Re-run with --force to actually drain them.
 ```
@@ -391,13 +545,24 @@ When there is nothing to do, it prints one of:
 
 ```text
 Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to drain.
-Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f.
-Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To end the run, answer its gate first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>. The answer can end the run by itself. If the run is still open after it: realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28.
-Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 0m ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired; add --force to carry it out.
+Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f
+Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
+To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd
+Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
+Run 'e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'write' — drive it with realm agent --run-id e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68 --provider <provider> --model <model>
+To end the run instead: realm run abandon e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68
+Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') — nothing to drain. 'fetch' is in flight in another program — wait for it, or see realm run inspect 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25
+To end the run instead: realm run abandon 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25
+Run '22efc6a7-01f8-4256-9d2f-74621b621d28' is not terminal (phase: 'gate_waiting') — nothing to drain. To go on, answer its question first: realm run respond 22efc6a7-01f8-4256-9d2f-74621b621d28 --gate 817f3921-6ddd-4bda-9506-762892ae37e7 --choice <one of: approve, reject>
+The answer can end the run by itself; if it does not, realm run respond names what the run owes next, and realm run abandon 22efc6a7-01f8-4256-9d2f-74621b621d28 ends it.
+Run '94bf33c8-3933-47c4-ad50-556d0b298e6c' is not terminal (phase: 'gate_waiting') — nothing to drain. Its gate expired 25s ago. To see what the expiry will do: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired
+To carry it out: realm run drain 94bf33c8-3933-47c4-ad50-556d0b298e6c --expired --force
 No runs with an actionable pending finalizer.
 ```
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the three `is not terminal … nothing to drain` lines above, or for one of:
+The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop). At a question, the second line says that after the answer `realm run respond` names what the run owes next (added after version 0.46.0, which named only `realm run abandon` for a run still open after the answer).
+
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.
@@ -450,7 +615,7 @@ Purged 2/3 run(s) (4.9 KB freed, store-reported). 0 already gone, 1 blocked, 0 f
 | `blocked`      | Runs that were left in place. `drain_pending` means the run still owes a cleanup step; see [`drain`](#drain). |
 | `failed`       | Runs that could not be deleted because of an error.                                                           |
 
-The line about `realm run resume` counts the selected runs that had a failed step, which `resume` could have made runnable again.
+The line about `realm run resume` counts the selected runs that had a failed step `resume` could have made runnable again: a failed cleanup step is not counted, since `resume --from` refuses it. A run whose workflow cannot be read is counted when it has any failed step: `resume` refuses it until the workflow is registered again, and only the workflow tells a cleanup step from another.
 
 Given a run ID in place of `--older-than`, `purge` works on that one run:
 

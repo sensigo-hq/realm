@@ -110,9 +110,12 @@ describe('executeStep', () => {
     expect(envelope.status).toBe('blocked');
     expect(envelope.blocked_reason).toBeDefined();
     expect(envelope.agent_action).toBe('resolve_precondition');
-    // next_actions contains step-one (auto — instruction is null)
-    expect(envelope.next_actions).toHaveLength(0); // auto step → no instruction → filtered out
-    expect(envelope.blocked_reason?.suggestion).toContain('step');
+    // issue #625 PR-2a: step-one (auto) is owed to the engine — the one act names it
+    expect(envelope.next_actions).toHaveLength(1);
+    expect(envelope.next_actions[0]!.instruction!.tool).toBe('advance_run');
+    // decision C136: next_actions holds only the act, so the suggestion names it (it said "Call one
+    // of the steps indicated in next_actions" while none was).
+    expect(envelope.blocked_reason?.suggestion).toBe('Call advance_run, as next_actions says.');
     expect(envelope.context_hint).toContain('step-two');
   });
 
@@ -145,7 +148,9 @@ describe('executeStep', () => {
     });
 
     expect(envelope.status).toBe('blocked');
-    expect(envelope.agent_action).toBe('resolve_precondition');
+    // issue #625 PR-2a (decision C104, C94's rule): nothing can be called, so report_to_user —
+    // never resolve_precondition, which points at next_actions.
+    expect(envelope.agent_action).toBe('report_to_user');
     expect(envelope.next_actions).toHaveLength(0);
     expect(envelope.blocked_reason?.suggestion).toBeDefined();
   });
@@ -1532,7 +1537,7 @@ describe('executeStep', () => {
         workflowVersion: 1,
         params: {},
       });
-      const action = buildNextActions(def, run)[0]!;
+      const action = buildNextActions(def, run, undefined, new Date())[0]!;
       expect(action.instruction!.tool).toBe('execute_step');
       expect(Object.keys(action)).not.toContain('expected_timeout');
       expect(JSON.stringify(action)).not.toContain('60s');
@@ -1561,8 +1566,10 @@ describe('executeStep', () => {
         workflowVersion: 1,
         params: {},
       });
-      const action = buildNextActions(def, run)[0]!;
-      expect(action.instruction!.tool).toBe('do_enrich');
+      // issue #625 PR-2a (decision C5): an auto step is never its own next action — its handler is
+      // no tool a client can call; the one act is `advance_run`.
+      const action = buildNextActions(def, run, undefined, new Date())[0]!;
+      expect(action.instruction!.tool).toBe('advance_run');
       expect(Object.keys(action)).not.toContain('expected_timeout');
       expect(JSON.stringify(action)).not.toContain('60s');
     });
@@ -1588,7 +1595,7 @@ describe('executeStep', () => {
         params: {},
       });
 
-      const actions = buildNextActions(agentStepDef, run);
+      const actions = buildNextActions(agentStepDef, run, undefined, new Date());
       expect(actions).toHaveLength(1);
       const action = actions[0]!;
       expect(action.instruction).not.toBeNull();
@@ -1632,9 +1639,13 @@ describe('executeStep', () => {
         params: {},
       });
 
-      // Auto steps without handlers are filtered out of next_actions
-      const actions = buildNextActions(autoStepDef, run);
-      expect(actions).toHaveLength(0);
+      // issue #625 PR-2a: an auto step is never its own next action — the one act runs it
+      const actions = buildNextActions(autoStepDef, run, undefined, new Date());
+      expect(actions).toHaveLength(1);
+      expect(actions[0]!.instruction!.tool).toBe('advance_run');
+      expect(actions[0]!.human_readable).toBe(
+        "Call advance_run to run the step the engine owes: 'fetch-data'. It runs it with this server's extensions and environment.",
+      );
     });
   });
 

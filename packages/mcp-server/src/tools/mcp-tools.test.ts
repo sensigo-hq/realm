@@ -340,7 +340,8 @@ describe('mcp tool handlers', () => {
     expect((parsed['errors'] as string[])[0]).toContain('unexpected failure');
     expect(parsed['run_id']).toBe('test-run');
     expect(parsed['command']).toBe('review_security');
-    expect(parsed['error_code']).toBe('ENGINE_INTERNAL');
+    // #625 PR-2a, decision C172: a run read that fails is answered as the library answers it.
+    expect(parsed['error_code']).toBe('ENGINE_STORE_FAILED');
   });
 
   it('handleExecuteStepTool propagates WorkflowError.agentAction to MCP response', async () => {

@@ -7,6 +7,17 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
 import {
+  describePending,
+  stepsThatCannotRun,
+  owedList,
+  owedCallWords,
+  pendingCleanupLine,
+  waitingWords,
+  resumeWay,
+  dueExpiry,
+  capabilityMarkerWayOut,
+  cannotRunWayOut,
+  cannotRunWayOutApplies,
   CACHE_BASES,
   CACHE_STATES,
   SEAL_ARMS,
@@ -20,6 +31,7 @@ import {
   composeDriveFailureCosts,
   describeClaimHolder,
   isAnswerEntry,
+  outputSourceOf,
 } from '@sensigo/realm';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
@@ -27,6 +39,7 @@ import {
 // rendering matches `realm run list --stuck`'s own `idle: <age>` humanization exactly, rather
 // than re-implementing a second formatter.
 import { formatGateAge } from './list.js';
+import { agentReadyReason } from './run-advance.js';
 import type {
   RunStore,
   RunRecord,
@@ -47,6 +60,7 @@ import {
   UNSHOWABLE_NAME,
   describeProgram,
   renderAnswerLine,
+  quotedForTerminal,
 } from '../lib/holder-render.js';
 
 /**
@@ -205,6 +219,35 @@ function renderExtensionIdentity(
 }
 
 /** Truncates a JSON-serialised summary to a readable single line. */
+/**
+ * F4 (framework §5 E1): the one line `realm run inspect` renders for a bare `auto` step's entry — where
+ * its output came from, or why that is not recorded — from core's `outputSourceOf`. `undefined` for an
+ * entry that is not a bare step's (or whose workflow cannot be read and that carries no source).
+ */
+export function outputSourceLine(
+  snap: EvidenceSnapshot,
+  definition: WorkflowDefinition | undefined,
+): string | undefined {
+  const read = outputSourceOf(snap, definition);
+  if ('absent_cause' in read) {
+    return read.absent_cause === 'predates_output_source'
+      ? 'Output source: not recorded — this entry was written before Realm recorded it'
+      : undefined;
+  }
+  switch (read.source) {
+    case 'driven_step':
+      return 'Output source: driven_step — what the call that named the step returned';
+    case 'dependency': {
+      const dep = definition?.steps[snap.step_id]?.depends_on?.[0];
+      return `Output source: dependency — ${dep !== undefined ? `'${dep}'` : 'its dependency'}'s recorded output`;
+    }
+    case 'run_params':
+      return "Output source: run_params — the run's params";
+    case 'none':
+      return 'Output source: none — nothing to copy, so {} was recorded';
+  }
+}
+
 function formatSummary(value: unknown, maxLength = 120): string {
   const raw = JSON.stringify(value);
   if (raw.length <= maxLength) return raw;
@@ -618,6 +661,74 @@ export async function inspectRun(
   if (run.terminal_reason !== undefined) {
     lines.push(`Cause: ${run.terminal_reason}`);
   }
+  // decision C205: a run that ended with failed steps `realm run resume` takes (core's one rule,
+  // C204 — never a cleanup step) names them and the command that makes them runnable again.
+  // F2: the operator's own read surface names the fact for a run an operator ended too, with what
+  // resuming it does — no other surface offers it there.
+  const resumable = definition === undefined ? undefined : resumeWay(run, definition);
+  if (resumable !== undefined) {
+    lines.push(
+      `Resumable: ${resumable.steps.map((step) => `'${step}'`).join(', ')} — ${resumable.command}` +
+        (deriveRunPhase(run) === 'abandoned'
+          ? " — resuming erases the operator's ending and its reason, and records no one and no reason for the undo"
+          : ''),
+    );
+  }
+  // decision C211 (walk c14 W3-4's class): cleanup steps the ending left pending — the command that
+  // runs them.
+  const cleanup = pendingCleanupLine(run, new Date());
+  if (cleanup !== undefined) lines.push(cleanup);
+  // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
+  // step this record shows cannot run — an engine step, or an agent step refused before its claim
+  // (decision C82). No registry here: a capability need is judged by the run's own marker (what the
+  // runner that last attempted the step lacked), else is unknown (decision C33).
+  // decision C95: an open question whose time is up and that declares `on_expiry` is owed engine
+  // work too — named here with the command that carries it out.
+  const inspectNow = new Date();
+  if (
+    definition !== undefined &&
+    !run.terminal_state &&
+    (run.pending_gate === undefined || dueExpiry(run.pending_gate, inspectNow) !== undefined)
+  ) {
+    const pending = describePending(definition, run, undefined, inspectNow);
+    if (pending.act !== undefined) {
+      // decision C207: with several owed, where the call stops — the clause the preview ends with.
+      // decision C212: the words after the command are set off by a space — no punctuation follows
+      // it (`owedCallWords`).
+      lines.push(
+        `Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}${owedCallWords(pending)}`,
+      );
+    }
+    // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm
+    // run respond` print.
+    const ready = agentReadyReason(run.id, pending.agent_steps);
+    if (ready !== undefined) lines.push(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`);
+    for (const e of stepsThatCannotRun(pending)) {
+      // decision C41: a capability refusal judged from the run's marker (inspect passes no
+      // registry) is past tense — no runner was consulted here.
+      const verb = e.basis === 'marker' ? 'Could not run' : 'Cannot run';
+      // decision C53: the marker line ends with its way out — a program that has the extension
+      // runs the step.
+      const wayOut = e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '';
+      lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}${wayOut}`);
+    }
+    // decision C62: when the run cannot go on until its workflow is corrected, the way out follows
+    // the steps that cannot run — the line `realm run advance` and the drive's stop line print.
+    if (cannotRunWayOutApplies(run, pending)) lines.push(cannotRunWayOut(run, definition, pending));
+  }
+  // decision C211 (walk c14 W2-2): at an open question, the steps it holds — they go on after the
+  // answer, and nothing is owed until then.
+  if (
+    definition !== undefined &&
+    !run.terminal_state &&
+    run.pending_gate !== undefined &&
+    dueExpiry(run.pending_gate, inspectNow) === undefined
+  ) {
+    const waiting = waitingWords(describePending(definition, run, undefined, inspectNow));
+    if (waiting !== undefined) {
+      lines.push(`Question open on '${run.pending_gate.step_name}': ${waiting}.`);
+    }
+  }
   // issue #401: failed drive attempts. Before this, a run whose drive kept dying showed nothing
   // here at all — the console said so once, at the time, to whoever happened to be watching.
   //
@@ -915,6 +1026,8 @@ export async function inspectRun(
         lines.push(`     Resolved: ${formatSummary(lastSnap.resolved_params)}`);
       }
       lines.push(`     Output: ${formatSummary(lastSnap.output_summary)}`);
+      const lastSource = outputSourceLine(lastSnap, definition);
+      if (lastSource !== undefined) lines.push(`     ${lastSource}`);
       if (lastSnap.trace !== undefined) {
         lines.push(`     Trace:  ${lastSnap.trace.length} entries (not hashed).`);
         if (lastSnap.trace_summary?.truncated) {
@@ -1006,6 +1119,8 @@ export async function inspectRun(
           lines.push(`     Resolved: ${formatSummary(snap.resolved_params)}`);
         }
         lines.push(`     Output: ${formatSummary(snap.output_summary)}`);
+        const source = outputSourceLine(snap, definition);
+        if (source !== undefined) lines.push(`     ${source}`);
         if (snap.trace !== undefined) {
           lines.push(`     Trace:  ${snap.trace.length} entries (not hashed).`);
           if (snap.trace_summary?.truncated) {
@@ -1062,16 +1177,10 @@ export async function inspectRun(
     const answerEntries = snaps.filter((s) => isAnswerEntry(s));
     (view?.answers ?? []).forEach((answer, i) => {
       const message = answerEntries[i]?.gate_message;
-      // The question is printed quoted, on one line, with every control character written as an
-      // escape: a run parameter in it may carry a newline or a terminal sequence. JSON quoting
-      // escapes U+0000–U+001F; the house's control set (`holder.ts`) also holds U+007F–U+009F
-      // (U+009B starts a terminal sequence), which JSON leaves raw, so those are escaped too.
+      // The question is printed quoted, on one line, every control character an escape
+      // (`quotedForTerminal`, shared with `realm workflow run`'s question line).
       if (message !== undefined) {
-        const quoted = JSON.stringify(message).replace(
-          /[\u007f-\u009f]/g,
-          (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
-        );
-        lines.push(`     Message:  ${quoted}`);
+        lines.push(`     Message:  ${quotedForTerminal(message)}`);
       }
       lines.push(`     ${renderAnswerLine(answer)}`);
     });

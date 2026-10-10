@@ -46,3 +46,32 @@ export function boundResolvedValue(v: unknown): unknown {
     s.length <= REDACTION_CHAR_CAP ? s : s.slice(0, REDACTION_CHAR_CAP) + '…[truncated]',
   );
 }
+
+/**
+ * The escaped, bounded value renderer (issue #625 PR-2a, F2; F5 renders the precondition refusal's
+ * value through it): a free-text or step-output value as one line a surface can print — written as
+ * JSON, so a newline, an escape character or any other control character is its escape sequence and
+ * can neither start a line nor drive a terminal (the C1 controls and the Unicode line separators,
+ * which JSON leaves as they are, are escaped too); THEN capped and email-scrubbed by
+ * {@link boundResolvedValue}. Escaping comes first because it can grow a value up to six times
+ * (`\u001b` for one character), and the cap must hold on what is printed. `undefined` reads
+ * `undefined`.
+ */
+export function escapedBoundedValue(v: unknown): string {
+  let json: string;
+  if (v === undefined) {
+    json = 'undefined';
+  } else {
+    try {
+      json = JSON.stringify(v) ?? String(v);
+    } catch {
+      json = '<unserializable>';
+    }
+  }
+  const escaped = json.replace(
+    // eslint-disable-next-line no-control-regex -- the control characters are what is escaped
+    /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+  return boundResolvedValue(escaped) as string;
+}

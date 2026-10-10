@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import {
+  expiryCarriedOutLine,
   advanceRun,
   describeAnswerEnding,
   describeEndedBy,
@@ -54,6 +55,13 @@ import type { ResponseEnvelope } from '../types/response-envelope.js';
 // ---------------------------------------------------------------------------
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
+
+/**
+ * F9: `describeAnswerEnding`'s `before` — the record read before the answer. In these cells the
+ * answer is the run's first ending, and cleanup steps are minted at an ending, so the record before
+ * it held none: every cleanup step the ending ran gets its line.
+ */
+const NO_CLEANUP_BEFORE: Pick<RunRecord, 'finalizer_ledger'> = {};
 
 /** The sentence a late answer whose choice matched the expiry's default has always carried. */
 const LATE_SAME_CHOICE =
@@ -279,7 +287,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
     });
   });
 
-  it('a guard that cannot RESOLVE a path: the reply says "…failed with a resolution error. Run is terminated." and the reason is the guard\'s recorded error', async () => {
+  it('a guard that cannot RESOLVE a path: the reply says "…failed with a resolution error. Run is terminated." and, the run having failed with the guard `realm run resume` takes (decision C205), the way back in; the reason is the guard\'s recorded error', async () => {
     await withStore(async (store) => {
       const def = gateThenGuard({ guard: { abort_unless: ['nope.field == true'] } });
       const { runId, gateId } = await openGate(store, def);
@@ -291,9 +299,10 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       expect(reply.status).toBe('ok');
       // (a) red when the cascade does not settle the guard; (b) prints `guards`.
       expect(reply.guards).toEqual([{ step: 'check', outcome: 'resolution_error' }]);
-      // (a) red when the sentence is replaced or reworded; (b) prints the sentence.
+      // (a) red when the sentence is replaced or reworded, or the way back in (decision C205) is
+      //     dropped or names another step; (b) prints the sentence.
       expect(reply.context_hint).toBe(
-        "Guard step 'check' failed with a resolution error. Run is terminated.",
+        `Guard step 'check' failed with a resolution error. Run is terminated. To make the failed step runnable again: realm run resume ${runId} --from check`,
       );
       // (a) red when `reason` is dropped, or is not the guard's own recorded evidence error;
       //     (b) prints the `ended_by` object.
@@ -347,7 +356,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // (a) red when the guard's sentence replaces the answer's own on a run that goes on;
       //     (b) prints the sentence.
       expect(reply.context_hint).toBe(
-        "Gate 'confirm' resolved with choice 'approve'. 1 step(s) now available.",
+        "Gate 'confirm' resolved with choice 'approve'. Ready for the agent: 'finish'.",
       );
       // (a) red when the reply's data is emptied on a run that goes on; (b) prints the choice.
       expect(reply.data['choice']).toBe('approve');
@@ -407,7 +416,14 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // What a surface prints after this answer: the ending first, the reason, then the finalizer.
       // (a) red when the composer drops a line, reorders them, or rewords the finalizer line;
       //     (b) prints the lines.
-      expect(describeAnswerEnding(reply, record)).toEqual([
+      expect(
+        describeAnswerEnding(reply, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+          now: new Date(),
+        }),
+      ).toEqual([
         "Guard step 'check' aborted the run.",
         'Reason: Not approved — stopping.',
         "finalizer 'notify': completed",
@@ -517,7 +533,7 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       expect(reply.ended_by).toBeUndefined();
       // (a) red when a non-ending guard empties the step's own reply; (b) prints the values.
       expect(reply.data).toEqual({ ok: true });
-      expect(reply.context_hint).toBe("Step 'work' completed. 1 step(s) now available.");
+      expect(reply.context_hint).toBe("Step 'work' completed. Ready for the agent: 'finish'.");
       expect(offeredSteps(reply)).toEqual(['finish']);
       // (a) red when a guard that let the run go on is listed with a phase other than 'running';
       //     (b) prints the list.
@@ -834,7 +850,15 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(lateAnswerOutcome(reply, record)).toEqual({ choice: 'reject', phase: 'aborted' });
       // (a) red when the composer drops the expiry sentence or joins it to the guard's on one
       //     line; (b) prints the lines.
-      expect(describeAnswerEnding(reply, record)).toEqual([
+      expect(
+        describeAnswerEnding(reply, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+          now: new Date(),
+        }),
+      ).toEqual([
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -872,7 +896,15 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(lateAnswerOutcome(reply, record)).toEqual({ choice: 'reject', phase: 'aborted' });
       // (a) red when the refused form's lines lose the refusal, the ending or the reason;
       //     (b) prints the lines.
-      expect(describeAnswerEnding(reply, record)).toEqual([
+      expect(
+        describeAnswerEnding(reply, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+          now: new Date(),
+        }),
+      ).toEqual([
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
         refusal,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -896,13 +928,22 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(sameReply.answer_recorded).toBe(false);
       expect(sameReply.guards).toEqual([{ step: 'check', outcome: 'pass' }]);
       expect(sameReply.ended_by).toBeUndefined();
-      expect(sameReply.context_hint).toBe(LATE_SAME_CHOICE);
+      // decision C185: what the run owes follows the sentence while the run goes on.
+      expect(sameReply.context_hint).toBe(`${LATE_SAME_CHOICE} Ready for the agent: 'finish'.`);
       const sameRecord = await store.get(same.runId);
       expect(lateAnswerOutcome(sameReply, sameRecord)).toEqual({
         choice: 'approve',
         phase: 'running',
       });
-      expect(describeAnswerEnding(sameReply, sameRecord)).toEqual([
+      expect(
+        describeAnswerEnding(sameReply, sameRecord, {
+          gateId: same.gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+          now: new Date(),
+        }),
+      ).toEqual([
+        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
       ]);
@@ -925,7 +966,15 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         choice: 'approve',
         phase: 'running',
       });
-      expect(describeAnswerEnding(otherReply, otherRecord)).toEqual([
+      expect(
+        describeAnswerEnding(otherReply, otherRecord, {
+          gateId: other.gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+          now: new Date(),
+        }),
+      ).toEqual([
+        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
         `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
       ]);
@@ -979,7 +1028,14 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       const record = await store.get(runId);
       expect(lateAnswerOutcome(same, record)).toEqual({ choice: 'approve', phase: 'running' });
       // (a) red when the composer prints nothing for this reply; (b) prints the lines.
-      expect(describeAnswerEnding(same, record)).toEqual([LATE_SAME_CHOICE]);
+      expect(
+        describeAnswerEnding(same, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+          now: new Date(),
+        }),
+      ).toEqual([LATE_SAME_CHOICE]);
 
       const different = await submitHumanResponse(store, def, {
         runId,
@@ -1038,7 +1094,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(ran.status).toBe('ok');
       // (a) red when the disclosure line does not name the guard the expiry's write settled;
       //     (b) prints the warnings that mention the enactment.
-      expect(ran.warnings.filter((w) => w.includes('enacted_via: execute_step'))).toEqual([
+      expect(ran.warnings.filter((w) => w.includes('(enacted_via: executeStep).'))).toEqual([
         expect.stringContaining("Guard step 'check' passed."),
       ]);
 
@@ -1057,7 +1113,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       });
       // (a) red when the disclosure line does not say the guard ended the run, or drops its
       //     reason; (b) prints the warnings that mention the enactment.
-      expect(refused.warnings.filter((w) => w.includes('enacted_via: execute_step'))).toEqual([
+      expect(refused.warnings.filter((w) => w.includes('(enacted_via: executeStep).'))).toEqual([
         expect.stringContaining(
           "Guard step 'check' aborted the run. Reason: Not approved (timed out to reject).",
         ),
@@ -1118,7 +1174,10 @@ describe('issue #625 — a store WITHOUT settleStep settles no guard in the writ
       expect(reply.ended_by).toBeUndefined();
       // (a) red when the guard's sentence is appended on a store that settled no guard;
       //     (b) prints the sentence.
-      expect(reply.context_hint).toBe(LATE_SAME_CHOICE);
+      // decision C185: what the run owes follows (the guard, owed: this store settled none).
+      expect(reply.context_hint).toBe(
+        `${LATE_SAME_CHOICE} Owed to the engine: 'check' — call advance_run.`,
+      );
       const record = await store.get(runId);
       expect(record.settled?.['confirm']).toMatchObject({
         choice: 'reject',
@@ -1183,8 +1242,6 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
       const reply = await advanceRun(store, def, {
         runId: run.id,
         command: 'work',
-        input: {},
-        dispatcher: echo,
       });
 
       // (a) red when the tail's guard loop is not reached from a direct call, or the wrapper
@@ -1204,14 +1261,12 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
       const reply = await advanceRun(store, def, {
         runId: run.id,
         command: 'work',
-        input: {},
-        dispatcher: echo,
       });
 
       // (a) red when a direct call runs or claims the agent step, or invents a list;
       //     (b) prints the values.
       expect(reply.status).toBe('ok');
-      expect(reply.context_hint).toBe(`Run '${run.id}' advanced from its stored record.`);
+      expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran. Ready for the agent: 'work'.`);
       expect(reply.chained_auto_steps).toBeUndefined();
       expect((await store.get(run.id)).version).toBe(run.version);
     });
@@ -1354,7 +1409,12 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
     expect(describeEndedBy(base)).toEqual([]);
     // A recorded answer whose write settled no guard prints nothing extra.
     expect(
-      describeAnswerEnding({ ...base, status: 'ok', errors: [] }, gateOpenRecord(gateThenGuard())),
+      describeAnswerEnding({ ...base, status: 'ok', errors: [] }, gateOpenRecord(gateThenGuard()), {
+        gateId: 'g',
+        via: 'submitHumanResponse',
+        before: NO_CLEANUP_BEFORE,
+        now: new Date(),
+      }),
     ).toEqual([]);
   });
 });

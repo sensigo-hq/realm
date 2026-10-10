@@ -18,7 +18,7 @@ You define workflows in YAML. The engine enforces step order, checks each agent 
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `@sensigo/realm`         | [![npm](https://img.shields.io/npm/v/@sensigo/realm)](https://www.npmjs.com/package/@sensigo/realm)                 | Core engine — state guard, execution loop, evidence capture |
 | `@sensigo/realm-cli`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-cli)](https://www.npmjs.com/package/@sensigo/realm-cli)         | `realm` CLI for building, operating, and serving workflows  |
-| `@sensigo/realm-mcp`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp)         | `realm-mcp` MCP server — 10 tools for AI agent connections  |
+| `@sensigo/realm-mcp`     | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp)         | `realm-mcp` MCP server — 11 tools for AI agent connections  |
 | `@sensigo/realm-testing` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-testing)](https://www.npmjs.com/package/@sensigo/realm-testing) | Testing utilities — fixtures, assertions, in-memory store   |
 
 ## Installation
@@ -37,7 +37,7 @@ npm install -g @sensigo/realm-mcp
 
 The agent config below uses `realm mcp` from the CLI, which needs no second install. Reach for
 `@sensigo/realm-mcp` when you are embedding the server programmatically, or want the standalone
-`realm-mcp` bin — it runs the same server and the same ten tools, but resolves neither
+`realm-mcp` bin — it runs the same server and the same eleven tools, but resolves neither
 workflow-declared project extensions nor the `realm.yaml` deployment manifest.
 
 **Programmatic use**
@@ -145,7 +145,7 @@ REALM_SERVE_TOKEN=<secret> realm serve --port 3001
 
 This starts an HTTP MCP server protected by Bearer token authentication. Use `--dev` to skip auth during local development.
 
-Once connected the agent has access to 10 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `submit_human_response`, `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace`.
+Once connected the agent has access to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response`, `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace` (`advance_run` was added after version 0.46.0).
 
 The agent calls `list_workflows` to discover registered workflows, then `get_workflow_protocol` for the matched workflow to receive explicit step-by-step instructions. It cannot execute a step out of order or submit output that fails schema validation.
 
@@ -162,7 +162,7 @@ Workflows can declare their own custom adapters and step handlers — no wrapper
 extensions: ./registry.js # relative module path(s); the default export declares { adapters, handlers, processors }
 ```
 
-The `realm` commands that check or run a workflow (`workflow validate`, `register`, `watch`, `test`, `workflow run`, `agent`, `listen`, `mcp`, `serve`, `run respond`, `run drain`) load the declared code the same way, with fail-fast loading and an enforced trust boundary; the commands that only read runs (`run list`, `inspect`, `attempts`, `diff`, `replay`, `export`) never load it. See [when each command loads the code](docs/reference/project-extensions.md#when-each-command-loads-the-code).
+The `realm` commands that check or run a workflow (`workflow validate`, `register`, `watch`, `test`, `workflow run`, `agent`, `listen`, `mcp`, `serve`, `run respond`, `run drain`, `run advance`) load the declared code the same way, with fail-fast loading and an enforced trust boundary; the commands that only read runs (`run list`, `inspect`, `attempts`, `diff`, `replay`, `export`) never load it (`run advance` was added after version 0.46.0). See [when each command loads the code](docs/reference/project-extensions.md#when-each-command-loads-the-code).
 
 ## CLI Reference
 
@@ -201,7 +201,7 @@ Start at the [documentation index](docs/README.md), or read the same pages at [r
 - [Guides](docs/guides/first-workflow.md) — one task each, from a first workflow to deploying a project
 - [Workflow file reference](docs/reference/workflow/top-level-fields.md) — every field of `workflow.yaml`
 - [Command-line reference](docs/reference/cli/realm-workflow.md) — every `realm` command
-- [MCP reference](docs/reference/mcp/tools.md) — the 10 tools and their replies
+- [MCP reference](docs/reference/mcp/tools.md) — the 11 tools and their replies
 - [Adapters](docs/reference/adapters.md), [Handlers](docs/reference/handlers.md), [Deployment manifest](docs/reference/deployment-manifest.md) and [Project extensions](docs/reference/project-extensions.md)
 - [Testing package](docs/reference/testing-package.md) and [Core library](docs/reference/core-library.md)
 - [Error codes](docs/reference/error-codes.md), [Run record and export bundle format](docs/reference/run-record-and-export.md), [Environment variables and files on disk](docs/reference/environment-and-files.md), [Glossary](docs/reference/glossary.md)

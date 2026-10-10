@@ -17,15 +17,29 @@ import type {
   Attributed,
 } from '@sensigo/realm';
 import {
+  describePending,
+  owedList,
+  owedWords,
+  respondCommand,
+  sentenceEnd,
+  cannotGoOnLines,
+  type PendingView,
   WorkflowError,
   applySettlement,
   deriveRunPhase,
   getWorkflowForRun,
   describeGuardLines,
   guardEndingOf,
+  // issue #625 PR-2a (F1): how long ago a gate expired — core's one duration formatter (seconds
+  // under a minute, never `0m`).
+  formatDuration,
+  shellWord,
+  pendingCleanupLine,
+  pendingCleanupWay,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
+import { agentReadyReason, inFlightReasons } from './run-advance.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -52,21 +66,69 @@ const nothingToDrain = (runId: string): string =>
  *   behind the gate, any of which can end the run; `abandon` then refuses ("already terminal").
  *   The sentence therefore names `abandon` only for a run that is still open after the answer.
  */
-const wayOutOf = (runId: string, run: RunRecord, now: Date): string => {
+/**
+ * decision C205: the way on of a run that has not ended, owes the engine nothing and has no step
+ * that cannot run — the ready line for an agent step (the drive), else one line per step in flight
+ * in another program (wait for it); empty when neither. The same words `realm run advance` and
+ * `realm run respond` print.
+ */
+const waysOnWithoutEngineWork = (runId: string, run: RunRecord, pending: PendingView): string[] => {
+  const ready = agentReadyReason(runId, pending.agent_steps);
+  // decision C212: each line ends with its command — no full stop.
+  if (ready !== undefined)
+    return [sentenceEnd(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`)];
+  return inFlightReasons(runId, run).map((reason) => sentenceEnd(reason));
+};
+
+/**
+ * The way out of a run that has not ended, as lines: the first follows `… — nothing to drain. ` on
+ * the refusal's own line, each other is a line of its own. Decision C212: a command ends its line —
+ * no punctuation follows it.
+ */
+/** The run's view with the workflow it was read from (F15: each refused step's way out reads it). */
+type OwedView = PendingView & { workflow: WorkflowDefinition };
+
+const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView): string[] => {
   const gate = run.pending_gate;
-  if (gate === undefined) return `To end the run: realm run abandon ${runId}.`;
+  if (gate === undefined) {
+    // decision C64: when nothing can run from here, each engine step that cannot run and the way
+    // out — core's lines (`correct the workflow …` for a refusal before the claim).
+    const cannotGoOn = pending === undefined ? [] : cannotGoOnLines(run, pending, pending.workflow);
+    if (cannotGoOn.length > 0) return [cannotGoOn.join(' ')];
+    // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
+    // stays the alternative, never the only way out named.
+    if (pending?.act !== undefined) {
+      // decision C207: with several owed, where the call stops — never a promise that all run.
+      const { steps, until } = owedWords(pending);
+      return [
+        `To run ${steps} the engine owes (${owedList(pending)})${until}: realm run advance ${runId}`,
+        `To end the run instead: realm run abandon ${runId}`,
+      ];
+    }
+    // decision C205: an agent step ready — the drive; a step in flight in another program — wait
+    // for it. Each with the way out beside it.
+    const goOn = pending === undefined ? [] : waysOnWithoutEngineWork(runId, run, pending);
+    return goOn.length > 0
+      ? [...goOn, `To end the run instead: realm run abandon ${runId}`]
+      : [`To end the run: realm run abandon ${runId}`];
+  }
   const expiry = classifyGateExpiry(run, now);
   if (expiry.kind === 'enactable') {
-    return (
-      `Its gate expired ${formatOverdueDuration(expiry.overdueMs)} ago. To see what the expiry ` +
-      `will do: realm run drain ${runId} --expired; add --force to carry it out.`
-    );
+    return [
+      `Its gate expired ${formatDuration(expiry.overdueMs)} ago. To see what the expiry ` +
+        `will do: realm run drain ${runId} --expired`,
+      `To carry it out: realm run drain ${runId} --expired --force`,
+    ];
   }
-  return (
-    `To end the run, answer its gate first: realm run respond ${runId} --gate ${gate.gate_id} ` +
-    `--choice <one of: ${gate.choices.join(', ')}>. The answer can end the run by itself. ` +
-    `If the run is still open after it: realm run abandon ${runId}.`
-  );
+  // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice). Decision
+  // C211 (walk c14 W1-2): after the answer, `respond` names what the run owes next — `advance`, the
+  // drive, or nothing when the answer ended the run — and `abandon` is the way to end it then (it
+  // refuses a run that waits on a question).
+  return [
+    `To go on, answer its question first: ${respondCommand(runId, gate.gate_id, gate.choices)}`,
+    `The answer can end the run by itself; if it does not, realm run respond names what the run ` +
+      `owes next, and realm run abandon ${runId} ends it.`,
+  ];
 };
 
 /**
@@ -88,17 +150,6 @@ export function classifyGateExpiry(run: RunRecord, now: Date): GateExpiryClass {
   if (overdueMs < 0) return { kind: 'not_expired' };
   if (gate.on_expiry === undefined) return { kind: 'finding_only', overdueMs };
   return { kind: 'enactable', disposition: gate.on_expiry, overdueMs };
-}
-
-/** Local duration formatter (issue #291) — CLI-side, mirrors core's own `formatOverdueDuration`
- *  shape independently (no cross-package import for a two-branch formatter). */
-function formatOverdueDuration(ms: number): string {
-  const totalMinutes = Math.floor(Math.max(0, ms) / 60_000);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalDays = Math.floor(totalHours / 24);
-  if (totalMinutes < 60) return `${totalMinutes}m`;
-  if (totalHours < 24) return `${totalHours}h ${totalMinutes % 60}m`;
-  return `${totalDays}d ${totalHours % 24}h`;
 }
 
 /**
@@ -296,7 +347,7 @@ function renderGateExpiryDryRun(
   if (!expiredFlag) return false;
   const cls = classifyGateExpiry(run, now);
   if (cls.kind === 'enactable') {
-    const overdue = formatOverdueDuration(cls.overdueMs);
+    const overdue = formatDuration(cls.overdueMs);
     // issue #625: the line names the choice a `settle_default` would settle, then what the
     // guards that choice unlocks would do — one clause per guard.
     console.log(
@@ -308,7 +359,7 @@ function renderGateExpiryDryRun(
     return true;
   }
   if (cls.kind === 'finding_only') {
-    const overdue = formatOverdueDuration(cls.overdueMs);
+    const overdue = formatDuration(cls.overdueMs);
     console.log(
       `Run '${runId}': gate expired ${overdue} ago — finding-only (no on_expiry declared, nothing to enact).`,
     );
@@ -324,14 +375,16 @@ function renderDryRun(
   expiredFlag = false,
   declared?: ReadonlySet<string>,
   predictedGuards: readonly string[] = [],
+  pending?: OwedView,
 ): void {
   const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag, predictedGuards);
   if (!run.terminal_state) {
     if (!gateReported) {
+      const [first, ...more] = wayOutOf(runId, run, now, pending);
       console.log(
-        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run, now),
+        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ${first}`,
       );
+      for (const line of more) console.log(line);
     }
     return;
   }
@@ -350,9 +403,9 @@ function renderDryRun(
         ? declared === undefined
           ? // walk 2: after "could not read the copy", predicting "would lease and run" sent the
             // operator into a --force that REFUSED (Workflow not found). Say what --force will do.
-            `unknown — the workflow copy could not be read, so --force will refuse until it is repaired; to void it instead: realm run drain ${runId} --void ${e.name} --force`
+            `unknown — the workflow copy could not be read, so --force will refuse until it is repaired; to void it instead: realm run drain ${runId} --void ${shellWord(e.name)} --force`
           : !declared.has(e.name)
-            ? `NOT declared by the workflow definition — --force would leave it pending; to void it: realm run drain ${runId} --void ${e.name} --force`
+            ? `NOT declared by the workflow definition — --force would leave it pending; to void it: realm run drain ${runId} --void ${shellWord(e.name)} --force`
             : 'actionable — would lease and run on --force, if its handler resolves on this surface'
         : e.class === 'lease_held'
           ? `lease held (expires ${e.lease_deadline}) — a drainer is executing NOW`
@@ -562,7 +615,7 @@ export async function runDrainAction(
           const cls = classifyGateExpiry(r, now);
           if (cls.kind === 'enactable') {
             console.log(
-              `  • ${r.id}: gate expired ${formatOverdueDuration(cls.overdueMs)} ago — would enact ${cls.disposition}`,
+              `  • ${r.id}: gate expired ${formatDuration(cls.overdueMs)} ago — would enact ${cls.disposition}`,
             );
           }
         }
@@ -669,6 +722,21 @@ export async function runDrainAction(
 
   try {
     const run = await runStore.get(runId);
+    // issue #625 PR-2a: what the engine owes on a live run with no open question — a JSON read of
+    // the registered copy; when it cannot be read, nothing is added to the line.
+    const ownedWork = async (r: RunRecord): Promise<OwedView | undefined> => {
+      if (r.terminal_state || r.pending_gate !== undefined) return undefined;
+      try {
+        const wf = await getWorkflowForRun(workflowStore, r, {
+          retryVerb: 'drain again',
+          verb: 'drain',
+        });
+        return { ...describePending(wf, r, undefined, now), workflow: wf };
+      } catch (err) {
+        if (!(err instanceof WorkflowError)) throw err;
+        return undefined;
+      }
+    };
     const gateClass = classifyGateExpiry(run, now);
     const hasEnactableGate = opts.expired === true && gateClass.kind === 'enactable';
 
@@ -709,15 +777,24 @@ export async function runDrainAction(
           if (!(err instanceof WorkflowError)) throw err;
         }
       }
-      renderDryRun(runId, run, now, opts.expired === true, declared, predictedGuards);
+      renderDryRun(
+        runId,
+        run,
+        now,
+        opts.expired === true,
+        declared,
+        predictedGuards,
+        await ownedWork(run),
+      );
       return;
     }
 
     if (!run.terminal_state && !hasEnactableGate) {
+      const [first, ...more] = wayOutOf(runId, run, now, await ownedWork(run));
       console.error(
-        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ` +
-          wayOutOf(runId, run, now),
+        `Run '${runId}' is not terminal (phase: '${deriveRunPhase(run)}') — nothing to drain. ${first}`,
       );
+      for (const line of more) console.error(line);
       process.exit(1);
     }
 
@@ -760,6 +837,24 @@ export async function runDrainAction(
       console.log(
         `Run '${runId}' is not terminal (phase: '${deriveRunPhase(workingRun)}') — nothing further to drain.`,
       );
+      // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
+      const owed = await ownedWork(workingRun);
+      if (owed?.act !== undefined) {
+        // decision C207: with several owed, where the call stops.
+        const { steps, until } = owedWords(owed);
+        // decision C212: the line ends with its command — no full stop.
+        console.log(
+          `To run ${steps} the engine owes (${owedList(owed)})${until}: realm run advance ${runId}`,
+        );
+      }
+      // decision C64: the expiry left nothing that can run from here — the steps and the way out.
+      const cannotGoOn = owed === undefined ? [] : cannotGoOnLines(workingRun, owed, owed.workflow);
+      for (const line of cannotGoOn) console.log(line);
+      // decision C205: with no engine work and nothing that cannot run, an agent step ready (the
+      // drive) or a step in flight in another program (wait for it).
+      if (owed !== undefined && owed.act === undefined && cannotGoOn.length === 0) {
+        for (const line of waysOnWithoutEngineWork(runId, workingRun, owed)) console.log(line);
+      }
       return;
     }
 
@@ -800,7 +895,19 @@ export async function runDrainAction(
           : `Drained run '${runId}' (${outcome.attempted.length} ran) — ${outcome.leftPending.length} finalizer(s) left pending: ${names}. To void:`,
       );
       for (const name of outcome.leftPending)
-        console.log(`  realm run drain ${runId} --void ${name} --force`);
+        console.log(`  realm run drain ${runId} --void ${shellWord(name)} --force`);
+      process.exit(1);
+      return;
+    }
+    // F12 (review G2-R4, G3-1): the pass halted at another drainer's lease (its `⚠` line above says
+    // so) and left that cleanup step pending: said as held, with the lease's deadline and the command
+    // for after it — never "no pending finalizers"; exit 1, as for any pass that left a step pending.
+    const afterPass = new Date();
+    if (pendingCleanupWay(outcome.run, afterPass)?.held_until !== undefined) {
+      if (outcome.attempted.length > 0) {
+        console.log(`Drained run '${runId}' (${outcome.attempted.length} ran).`);
+      }
+      console.log(pendingCleanupLine(outcome.run, afterPass)!);
       process.exit(1);
       return;
     }

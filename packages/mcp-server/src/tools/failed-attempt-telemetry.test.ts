@@ -355,13 +355,22 @@ describe('execute_step failed-attempt records: a chained step refused after the 
       { run_id: run.id, command: 'draft', params: { text: 'hello' } },
       { runStore, workflowStore, failedAttemptStore },
     );
-    // The setup really is a chained refusal. (a) red when the engine stops stamping it;
-    // (b) prints status, code and stopped_step.
+    // #625 PR-2a re-pin (round 9): on #676's base the chain ran `publish` and returned its input
+    // refusal, stamped `stopped_step: 'publish'`. PR-2a's chain never runs a step it refuses
+    // before its claim (decision C13): the reply is `ok` and its hint names the step. A chained
+    // step's own VALIDATION_* error has no other route (an output or trace schema is checked on
+    // agent steps only), so the early return this file pins guards a reply the engine no longer
+    // makes; the no-record assertion below still holds. (a) red when the chain attempts the
+    // refused step again; (b) prints status, presence and the hint.
     expect({
       status: result.status,
-      error_code: result.error_code,
-      stopped_step: result.stopped_step,
-    }).toEqual({ status: 'error', error_code: 'VALIDATION_INPUT_SCHEMA', stopped_step: 'publish' });
+      has_stopped_step: 'stopped_step' in result,
+      hint: result.context_hint,
+    }).toEqual({
+      status: 'ok',
+      has_stopped_step: false,
+      hint: expect.stringContaining("'publish' cannot run (input_schema)"),
+    });
     // (a) red when the telemetry records a chained refusal under the called step; (b) prints the
     //     records and the stderr lines.
     expect({

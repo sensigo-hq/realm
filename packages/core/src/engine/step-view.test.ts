@@ -454,7 +454,7 @@ describe('composeStepViews — issue #625: answers', () => {
     ).toEqual({});
   });
   // Issue #625, PR-H review correction C2: the settlement writes `responded_by: 'timeout'` on the
-  // entry its expiry makes; no one answered. Keyed on `resolution`, never on the literal.
+  // entry its expiry makes; no answer was recorded in time. Keyed on `resolution`, never on the literal.
   it.each([['expired_default', { choice: 'hold' }, { choice: 'hold' }, 'hold']] as const)(
     'C2: an entry the gate’s expiry wrote (%s) reads no answerer: settled_by_expiry, whatever responded_by holds',
     (resolution, input_summary, output_summary, choice) => {

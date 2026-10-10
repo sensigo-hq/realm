@@ -1,0 +1,2477 @@
+// docs-pages-625-acting.test.ts — issue #625 PR-2a, decision C174 (round 22), lane A: every sentence
+// of `docs/reference/cli/realm-run-acting.md` about behaviour #625 PR-2a adds or changes, quoted here
+// word for word (read from the repository) and driven on the built `realm` (a child process, a fresh
+// HOME; the library from '@sensigo/realm' only sets runs up), so neither the page nor the command can
+// change alone. An example block is compared line by line with the command's real output, its run,
+// gate IDs, folders and times put in place.
+//
+// Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  JsonFileStore,
+  JsonWorkflowStore,
+  executeStep,
+  loadWorkflowFromString,
+} from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
+import { lagless } from '../test-support/lag.js';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(HERE, '../../../..');
+const CLI = join(HERE, '../../dist/index.js');
+const PAGE = 'docs/reference/cli/realm-run-acting.md';
+const flat = (t: string) => t.replace(/\s+/g, ' ');
+
+/** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
+function claim(page: string, sentence: string): void {
+  expect(
+    flat(readFileSync(join(ROOT, page), 'utf8')),
+    `${page} no longer says: ${sentence}`,
+  ).toContain(flat(sentence));
+}
+
+/** The lines of the page's first fenced block that holds `marker`. */
+function block(page: string, marker: string): string[] {
+  const text = readFileSync(join(ROOT, page), 'utf8');
+  const blocks = text.split(/^```[a-z]*\n/m).filter((_, i) => i % 2 === 1);
+  const found = blocks.find((b) => b.includes(marker));
+  if (found === undefined) throw new Error(`${page} has no block with: ${marker}`);
+  return found.replace(/\n```[\s\S]*$/, '').split('\n');
+}
+
+/** The page's block, with each page value put in place by the run's own. */
+const put = (lines: string[], values: Record<string, string>): string[] =>
+  lines
+    .filter((l) => l !== '')
+    .map((l) => Object.entries(values).reduce((t, [from, to]) => t.replaceAll(from, to), l));
+
+/** A workflow's YAML: `steps` is the steps' YAML block (indented two spaces). */
+const yamlOf = (id: string, steps: string, extensions = false): string =>
+  [
+    `id: ${id}`,
+    `name: ${id}`,
+    'version: 1',
+    ...(extensions ? ['extensions:', '  - ../../dist/registry.js'] : []),
+    'steps:',
+    steps,
+    '',
+  ].join('\n');
+
+/** `confirm`, a question (approve/reject), with `on_expiry` when given (default `approve`). */
+const CONFIRM = (onExpiry?: 'settle_default' | 'abort'): string =>
+  [
+    '  confirm:',
+    '    description: Confirm.',
+    '    execution: auto',
+    '    trust: human_confirmed',
+    '    gate:',
+    '      choices: [approve, reject]',
+    '      timeout_seconds: 3600',
+    ...(onExpiry !== undefined ? [`      on_expiry: ${onExpiry}`] : []),
+    ...(onExpiry === 'settle_default' ? ['      default_choice: approve'] : []),
+  ].join('\n');
+
+const autoStep = (name: string, deps: string[], extra: string[] = []): string =>
+  [
+    `  ${name}:`,
+    `    description: ${name}.`,
+    '    execution: auto',
+    `    depends_on: [${deps.join(', ')}]`,
+    ...extra.map((l) => `    ${l}`),
+  ].join('\n');
+
+const agentStep = (name: string, deps: string[]): string =>
+  [
+    `  ${name}:`,
+    `    description: ${name}.`,
+    '    execution: agent',
+    `    depends_on: [${deps.join(', ')}]`,
+  ].join('\n');
+
+/** An `auto` step the engine refuses before its claim: it gives `{}`, the schema needs `n`. */
+const needsN = (name: string, deps: string[]): string =>
+  autoStep(name, deps, [
+    'input_schema:',
+    '  type: object',
+    '  required: [n]',
+    '  properties:',
+    '    n: { type: number }',
+  ]);
+
+// Each cell runs the built `realm` several times as a child process: 60 s, not vitest's default 5 s.
+describe(
+  '#625 PR-2a, C174 lane A — realm-run-acting.md, sentence by sentence, from the built realm',
+  { timeout: 60_000 },
+  () => {
+    let home: string;
+    let elsewhere: string;
+    let runStore: JsonFileStore;
+    let workflowStore: JsonWorkflowStore;
+    const folders: string[] = [];
+
+    beforeEach(() => {
+      home = mkdtempSync(join(tmpdir(), 'realm-625-acting-'));
+      elsewhere = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-elsewhere-')));
+      mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+      mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
+      runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+      workflowStore = new JsonWorkflowStore(join(home, '.realm', 'workflows'));
+    });
+    afterEach(() => {
+      for (const d of [home, elsewhere, ...folders.splice(0)]) {
+        rmSync(d, { recursive: true, force: true });
+      }
+    });
+
+    /** Runs the built `realm` with this HOME (from `elsewhere` unless `cwd` is given). */
+    function realm(
+      args: string[],
+      opts: { cwd?: string; env?: Record<string, string> } = {},
+    ): { code: number | null; out: string[]; err: string[] } {
+      const r = spawnSync(process.execPath, [CLI, ...args], {
+        cwd: opts.cwd ?? elsewhere,
+        env: {
+          PATH: process.env['PATH'] ?? '',
+          HOME: home,
+          NO_COLOR: '1',
+          REALM_OPERATOR: 'tester',
+          ...opts.env,
+        },
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      const lines = (t: string) => t.split('\n').filter((l) => l !== '');
+      return { code: r.status, out: lines(r.stdout), err: lines(r.stderr) };
+    }
+
+    /**
+     * A project folder holding the workflow (`workflows/wf/workflow.yaml`), registered from that
+     * folder by the built `realm`; `code` gives it an extension module (`dist/registry.js`: handler
+     * `mark` outputs `{ from: <marker> }`, `env` outputs `{ secret: $SECRET_625 }`, `boom` throws).
+     * Returns the folder, the workflow's project folder (`trust_root`) and the registered definition.
+     */
+    async function project(
+      id: string,
+      steps: string,
+      code: boolean,
+      marker = 'the project',
+    ): Promise<{ dir: string; root: string; def: WorkflowDefinition }> {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-proj-')));
+      folders.push(dir);
+      mkdirSync(join(dir, 'workflows', 'wf'), { recursive: true });
+      if (code) {
+        mkdirSync(join(dir, 'dist'), { recursive: true });
+        writeFileSync(join(dir, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+        writeFileSync(
+          join(dir, 'dist', 'registry.js'),
+          [
+            'export default { handlers: {',
+            `  mark: { id: 'mark', execute: async () => ({ data: { from: ${JSON.stringify(marker)} } }) },`,
+            "  env: { id: 'env', execute: async () => ({ data: { secret: process.env.SECRET_625 ?? 'unset' } }) },",
+            "  boom: { id: 'boom', execute: async () => { throw new Error('boom'); } },",
+            '} };',
+            '',
+          ].join('\n'),
+          'utf8',
+        );
+      }
+      writeFileSync(join(dir, 'workflows', 'wf', 'workflow.yaml'), yamlOf(id, steps, code), 'utf8');
+      const reg = realm(['workflow', 'register', 'workflows/wf/workflow.yaml'], { cwd: dir });
+      if (reg.code !== 0) throw new Error(`fixture: register failed: ${reg.err.join('\n')}`);
+      const def = await workflowStore.get(id);
+      return { dir, root: def.trust_root!, def };
+    }
+
+    /** A workflow registered from a string (no project folder), through the library. */
+    async function fromString(id: string, steps: string): Promise<WorkflowDefinition> {
+      const def = loadWorkflowFromString(yamlOf(id, steps));
+      await workflowStore.register(def);
+      return def;
+    }
+
+    async function started(def: WorkflowDefinition): Promise<string> {
+      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      return run.id;
+    }
+
+    /** A run at its open question `confirm`; `expired` moves the question's time into the past. */
+    async function atQuestion(
+      def: WorkflowDefinition,
+      expired = false,
+    ): Promise<{ id: string; gateId: string }> {
+      const id = await started(def);
+      const opened = await executeStep(runStore, def, {
+        runId: id,
+        command: 'confirm',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+      if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
+      if (expired) {
+        const record = await runStore.get(id);
+        await runStore.update({
+          ...record,
+          pending_gate: {
+            ...record.pending_gate!,
+            opened_at: '2020-01-01T00:00:00.000Z',
+            expires_at: '2020-01-01T01:00:00.000Z',
+          },
+        });
+      }
+      return { id, gateId: opened.gate!.gate_id };
+    }
+
+    const respond = (
+      q: { id: string; gateId: string },
+      choice: string,
+      opts: { cwd?: string; extra?: string[] } = {},
+    ) =>
+      realm(
+        ['run', 'respond', q.id, '--gate', q.gateId, '--choice', choice, ...(opts.extra ?? [])],
+        opts.cwd !== undefined ? { cwd: opts.cwd } : {},
+      );
+
+    it('respond, L51 + block: an answer that leaves `auto` steps names them, the advance command (runs it / runs them), the project folder and the shell’s environment — the page’s screen', async () => {
+      claim(
+        PAGE,
+        "When the answer leaves `auto` steps that only the engine can run, one more line names them and the command that runs them (`runs it` for one step, `runs them until a step opens a question, fails or ends the run` for more: see [`advance`](#advance)), where that command loads the steps' project code from (the workflow's own project folder, whatever folder the shell is in; for a workflow made without one, the folder it runs in or its `--project`), and that the environment is that shell's.",
+      );
+      const two = await project(
+        'acting-owed-two',
+        [CONFIRM(), autoStep('process', ['confirm']), autoStep('notify', ['confirm'])].join('\n'),
+        true,
+      );
+      const q = await atQuestion(two.def);
+      const r = respond(q, 'approve');
+      const shown = put(block(PAGE, 'Responded: b178179a'), {
+        'b178179a-998d-457e-85e6-6d38439d0585': q.id,
+        '/home/me/project': two.root,
+      });
+      // (a) red when respond prints other lines than the page's screen (from an unrelated folder:
+      //     the project folder, not the shell's, is named); (b) prints both.
+      expect({ code: r.code, out: r.out }).toEqual({ code: 0, out: shown });
+      // One step: `runs it`.
+      const one = await project(
+        'acting-owed-one',
+        [CONFIRM(), autoStep('process', ['confirm'])].join('\n'),
+        true,
+      );
+      const q1 = await atQuestion(one.def);
+      // (a) red when one step is said `runs them`; (b) prints the stdout.
+      expect(respond(q1, 'approve').out[1]).toBe(
+        `Owed to the engine: 'process' — realm run advance ${q1.id} runs it, with the project code under ${one.root}, in the environment of the shell it runs in.`,
+      );
+      // A workflow made without a project folder: the folder advance runs in, or its --project.
+      const bare = await fromString(
+        'acting-owed-string',
+        [CONFIRM(), autoStep('process', ['confirm'])].join('\n'),
+      );
+      const qs = await atQuestion(bare);
+      // (a) red when the line names a folder for a workflow that has none; (b) prints the line.
+      expect(respond(qs, 'approve').out[1]).toMatch(
+        new RegExp(
+          `^Owed to the engine: 'process' — realm run advance ${qs.id} runs it, with .*the folder it runs in \\(or its --project\\), in the environment of the shell it runs in\\.$`,
+        ),
+      );
+    });
+
+    it('respond, L38 + L59: --project is used only for a workflow made without a project folder; a workflow registered from a folder loads from there and the command says --project was not used; no project code is said', async () => {
+      claim(
+        PAGE,
+        '| `--project <dir>` | No | Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose `realm.yaml` and code it loads. Default: the current folder. A workflow registered from a folder loads its code from there, and `--project` is not used (the command says so). |',
+      );
+      claim(
+        PAGE,
+        "When the workflow's own project folder holds no project code (no `realm.yaml`, no extension module), the line says `with no project code (nothing to load under <folder>)` instead.",
+      );
+      claim(
+        PAGE,
+        "When `--project` is given for a workflow that has its own project folder, the first line says it was not used: `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is loaded from there.`, or, when that folder holds no project code, `… has its own project, <folder> (no project code there).` Both added after version 0.46.0.",
+      );
+      const steps = [CONFIRM(), autoStep('process', ['confirm'])].join('\n');
+      // A folder whose realm.yaml is invalid: loading it fails, so a refusal shows it was read.
+      const bad = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-p-')));
+      folders.push(bad);
+      writeFileSync(join(bad, 'realm.yaml'), 'extensions:\n  - ./ext.mjs\n', 'utf8');
+      const loadFailed = `Error loading extensions: Deployment manifest '${bad}/realm.yaml' is invalid:`;
+      // A workflow made from a string: its realm.yaml and code come from --project, by default the
+      // current folder.
+      const made = await fromString('acting-proj-string', steps);
+      const viaFlag = respond(await atQuestion(made), 'approve', { extra: ['--project', bad] });
+      const viaCwd = respond(await atQuestion(made), 'approve', { cwd: bad });
+      const neither = respond(await atQuestion(made), 'approve');
+      // (a) red when --project (or the current folder) is not where it loads from; (b) prints both.
+      expect([viaFlag.code, viaFlag.err[0], viaCwd.code, viaCwd.err[0], neither.code]).toEqual([
+        1,
+        loadFailed,
+        1,
+        loadFailed,
+        0,
+      ]);
+      // A workflow registered from a folder that holds code: --project is not used, and said.
+      const own = await project('acting-proj-own', steps, true);
+      const q = await atQuestion(own.def);
+      const r = respond(q, 'approve', { extra: ['--project', bad] });
+      // (a) red when --project is used (the answer would fail on its realm.yaml), or not said;
+      //     (b) prints stdout.
+      expect({ code: r.code, first: r.out.slice(0, 3) }).toEqual({
+        code: 0,
+        first: [
+          `--project ${bad} was not used: workflow 'acting-proj-own' has its own project, ${own.root}, and its code is loaded from there.`,
+          `Responded: ${q.id} | choice 'approve' | new state 'running'`,
+          `Owed to the engine: 'process' — realm run advance ${q.id} runs it, with the project code under ${own.root}, in the environment of the shell it runs in.`,
+        ],
+      });
+      // Its own folder holds no project code.
+      const empty = await project('acting-proj-empty', steps, false);
+      const qe = await atQuestion(empty.def);
+      const re = respond(qe, 'approve', { extra: ['--project', bad] });
+      // (a) red when a folder with no code is said to have code; (b) prints stdout.
+      expect({ code: re.code, first: re.out.slice(0, 3) }).toEqual({
+        code: 0,
+        first: [
+          `--project ${bad} was not used: workflow 'acting-proj-empty' has its own project, ${empty.root} (no project code there).`,
+          `Responded: ${qe.id} | choice 'approve' | new state 'running'`,
+          `Owed to the engine: 'process' — realm run advance ${qe.id} runs it, with no project code (nothing to load under ${empty.root}), in the environment of the shell it runs in.`,
+        ],
+      });
+    });
+
+    it('respond, L61 + block: an answer that leaves an agent step ready says so in advance’s words, with the command that drives it — the page’s screen', async () => {
+      claim(
+        PAGE,
+        'When the answer leaves an agent step ready, the line says so in the words `realm run advance` uses, with the command that drives it.',
+      );
+      const { def } = await project(
+        'acting-agent-ready',
+        [CONFIRM(), agentStep('finish', ['confirm'])].join('\n'),
+        false,
+      );
+      const q = await atQuestion(def);
+      const r = respond(q, 'approve');
+      // (a) red when respond prints other lines than the page's screen; (b) prints both.
+      expect({ code: r.code, out: r.out }).toEqual({
+        code: 0,
+        out: put(block(PAGE, 'Responded: 4168cf62'), {
+          '4168cf62-7ae2-4ed9-a688-e149ccbe06a6': q.id,
+        }),
+      });
+      // The words advance uses for the same state: its Stopped: reason.
+      const a = realm(['run', 'advance', q.id]);
+      // (a) red when advance's words for a ready agent step differ from respond's; (b) prints it.
+      // decision C181: the waiting-process line follows it (respond's too).
+      expect(a.out.at(-1)).toBe(
+        'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+      );
+      expect(a.out.at(-2)).toBe(
+        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>`,
+      );
+    });
+
+    it('respond, L71 + block, L79: an answer that leaves nothing that can run names each step that cannot run, then the way out; a missing handler ends with its own way out and the abandon line', async () => {
+      claim(
+        PAGE,
+        'When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out.',
+      );
+      claim(
+        PAGE,
+        'A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>`',
+      );
+      const { def } = await project(
+        'acting-stuck',
+        [CONFIRM(), needsN('compute', ['confirm'])].join('\n'),
+        false,
+      );
+      const q = await atQuestion(def);
+      const r = respond(q, 'approve');
+      // (a) red when respond prints other lines than the page's screen; (b) prints both.
+      expect({ code: r.code, out: r.out }).toEqual({
+        code: 0,
+        out: put(block(PAGE, 'Responded: 77772f0c'), {
+          '77772f0c-a80d-49d3-b665-4ac186186fd1': q.id,
+        }),
+      });
+      const cap = await project(
+        'acting-capability',
+        [CONFIRM(), autoStep('x', ['confirm'], ['handler: missing_h'])].join('\n'),
+        false,
+      );
+      const qc = await atQuestion(cap.def);
+      const rc = respond(qc, 'approve');
+      // (a) red when the capability step's way out or the abandon line changes; (b) prints stdout.
+      expect(rc.out).toEqual([
+        `Responded: ${qc.id} | choice 'approve' | new state 'running'`,
+        "'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
+        `To end the run instead: realm run abandon ${qc.id}`,
+      ]);
+    });
+
+    it('respond, L116 + L127: a late answer is not recorded — the ⚠ line when this call carried the expiry out, `Not recorded:` in place of `Responded:`, then what the run owes; another choice is told it was settled by timeout', async () => {
+      claim(
+        PAGE,
+        "An answer that arrives after the gate's time is up is not recorded, and for a gate that was settled with its default choice `Not recorded:` takes the place of `Responded:`. The lines after it are the ones above: what the run owes (added after version 0.46.0).",
+      );
+      claim(
+        PAGE,
+        "When this answer is the call that carried out the expiry, its first line says so, as `realm run advance`'s does (where the expiry's choice made a guard ready, `respond` prints the guard's line on its own, after the first line; `realm run advance` adds the guard's sentence to the end of its first line): `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this respond call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: respond).`, or `… its declared abort: the run ended (enacted_via: respond).` (added after version 0.46.0).",
+      );
+      claim(
+        PAGE,
+        "| The gate's time was up, and it was settled with another choice | `Gate '80e024ee-…' was settled by timeout with choice 'hold' — your choice 'ship' was not recorded.`, after the `⚠` line when this answer carried out the expiry. Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes. |",
+      );
+      const steps = (e: 'settle_default' | 'abort') =>
+        [CONFIRM(e), autoStep('after', ['confirm'])].join('\n');
+      const settle = await project('acting-late', steps('settle_default'), false);
+      const same = await atQuestion(settle.def, true);
+      const r1 = respond(same, 'approve');
+      const owed = (id: string) =>
+        `Owed to the engine: 'after' — realm run advance ${id} runs it, with no project code (nothing to load under ${settle.root}), in the environment of the shell it runs in.`;
+      // (a) red when the late answer is recorded, the ⚠ line is not first, or the owed line is
+      //     dropped; (b) prints stdout and the exit.
+      expect({ code: r1.code, out: lagless(r1.out) }).toEqual({
+        code: 0,
+        out: [
+          `⚠ gate '${same.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
+          `Not recorded: ${same.id} | gate settled by timeout with choice 'approve' | state 'running'`,
+          owed(same.id),
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+        ],
+      });
+      const other = await atQuestion(settle.def, true);
+      const r2 = respond(other, 'reject');
+      // (a) red when another choice is not told it was settled by timeout after the ⚠ line, or the
+      //     Not recorded: line and what the run owes do not follow, in that order on stderr;
+      //     (b) prints stdout, stderr and the exit.
+      expect({ code: r2.code, out: r2.out, err: lagless(r2.err) }).toEqual({
+        code: 1,
+        out: [],
+        err: [
+          `⚠ gate '${other.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
+          `Not recorded: ${other.id} | gate settled by timeout with choice 'approve' | state 'running'`,
+          owed(other.id),
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+        ],
+      });
+      // What the guard did: the default ('approve') makes a guard ready that ends the run.
+      const guarded = await project(
+        'acting-late-guard',
+        [
+          CONFIRM('settle_default'),
+          '  only_if_rejected:',
+          '    description: Go on only when rejected.',
+          '    execution: guard',
+          '    depends_on: [confirm]',
+          `    abort_unless: ["confirm.choice == 'reject'"]`,
+          '    abort_message: The default was taken.',
+          autoStep('after', ['only_if_rejected']),
+        ].join('\n'),
+        false,
+      );
+      const g = await atQuestion(guarded.def, true);
+      const r4 = respond(g, 'reject');
+      // (a) red when what the guard did is not said between the refusal and `Not recorded:`;
+      //     (b) prints stdout, stderr and the exit.
+      expect({ code: r4.code, out: r4.out, err: lagless(r4.err) }).toEqual({
+        code: 1,
+        out: [],
+        err: [
+          `⚠ gate '${g.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: respond).`,
+          `Gate '${g.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
+          "Guard step 'only_if_rejected' aborted the run.",
+          'Reason: The default was taken.',
+          `Not recorded: ${g.id} | gate settled by timeout with choice 'approve' | state 'aborted'`,
+        ],
+      });
+      const abort = await project('acting-late-abort', steps('abort'), false);
+      const ab = await atQuestion(abort.def, true);
+      const r3 = respond(ab, 'approve');
+      // (a) red when the abort's line changes or is not first; (b) prints stdout and stderr.
+      expect(lagless([...r3.out, ...r3.err])[0]).toBe(
+        `⚠ gate '${ab.gateId}' on 'confirm' had expired <lag> before this call — this respond call first carried out its declared abort: the run ended (enacted_via: respond).`,
+      );
+    });
+
+    it('advance, L10 + L133 + L136 + block: the table row, the synopsis, and the preview printed before anything runs — the page’s screen, with REALM_OPERATOR naming the program', async () => {
+      claim(
+        PAGE,
+        '| [`advance`](#advance) | Runs what a run owes the engine, with no model. | Always |',
+      );
+      claim(
+        PAGE,
+        'names this program with `REALM_OPERATOR` or the OS user (a `REALM_OPERATOR` that cannot be used prints one line and exits 1 before any work), and prints what it is about to do before it runs anything:',
+      );
+      // (a) red when `realm run advance` leaves `realm run`, or its usage drifts from the page's
+      //     synopsis; (b) prints the help.
+      const help = realm(['run', '--help']).out.join('\n');
+      expect(help).toMatch(/^ {2}advance \[options\] <run-id>/m);
+      expect(block(PAGE, 'realm run advance <run-id>')[0]).toBe(
+        'realm run advance <run-id> [--project <dir>] [--extensions-module <path>]',
+      );
+      const usage = realm(['run', 'advance', '--help']).out.join('\n');
+      expect([
+        usage.split('\n')[0],
+        usage.includes('--project <dir>'),
+        usage.includes('--extensions-module <path>'),
+      ]).toEqual(['Usage: realm run advance [options] <run-id>', true, true]);
+      const { root, def } = await project(
+        'cli-owed-wf',
+        [autoStep('after', []), agentStep('finish', ['after'])].join('\n'),
+        false,
+      );
+      const id = await started(def);
+      // No PATH to a model and no key: the env holds only PATH, HOME, NO_COLOR and REALM_OPERATOR.
+      const r = realm(['run', 'advance', id]);
+      // (a) red when advance prints other lines than the page's screen, or exits non-zero; (b)
+      //     prints both.
+      expect({ code: r.code, out: r.out }).toEqual({
+        code: 0,
+        out: put(block(PAGE, "Advancing run <id> (workflow 'cli-owed-wf')"), {
+          '<id>': id,
+          '/home/me/project': root,
+        }),
+      });
+      // (a) red when the step did not run; (b) prints the completed steps.
+      expect((await runStore.get(id)).completed_steps).toEqual(['after']);
+      // The OS user names the program when REALM_OPERATOR is not set.
+      const os = realm(['run', 'advance', await started(def)], { env: { REALM_OPERATOR: '' } });
+      // (a) red when an unset REALM_OPERATOR is not replaced by the OS user; (b) prints the line.
+      expect(os.out[1]).toMatch(/^This program: .+ \(from the OS user\) · project code: /);
+      // A REALM_OPERATOR that cannot be used: one line, exit 1, nothing run.
+      const fresh = await started(def);
+      const bad = realm(['run', 'advance', fresh], { env: { REALM_OPERATOR: 'a\u0007b' } });
+      // (a) red when a bad name prints more than one line, exits 0 or runs a step; (b) prints all.
+      expect({
+        code: bad.code,
+        lines: [...bad.out, ...bad.err].length,
+        completed: (await runStore.get(fresh)).completed_steps,
+      }).toEqual({ code: 1, lines: 1, completed: [] });
+    });
+
+    it('advance, L136: an expired question’s declared on_expiry first — named in the preview, its ⚠ line printed before the steps it runs; then the guards and auto steps; abort ends the run', async () => {
+      claim(
+        PAGE,
+        "Runs what a run owes the engine, from this shell — no model provider, no key: first, when the open question's time is up and it declares `on_expiry`, that default or abort (the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`, and the command prints the line from its reply before the steps it runs: `⚠ gate '<gate>' on '<step>' had expired <how long> before this call — this advance call first carried out its declared settle_default: the default choice '<choice>' was recorded (enacted_via: advance).`, or `… its declared abort: the run ended …`; when the default's choice made a guard ready, the guard's sentence follows on the same line: `… (enacted_via: advance). Guard step '<guard>' passed.`); then the guards and `auto` steps that are ready.",
+      );
+      // The guard follows an auto step, so the expiry's own write makes no guard ready (see the
+      // report: when it does, the ⚠ line carries the guard's sentence).
+      const steps = (e: 'settle_default' | 'abort') =>
+        [
+          CONFIRM(e),
+          autoStep('after', ['confirm']),
+          '  only_if_approved:',
+          '    description: Go on only when approved.',
+          '    execution: guard',
+          '    depends_on: [after]',
+          `    abort_unless: ["confirm.choice == 'approve'"]`,
+          agentStep('finish', ['only_if_approved']),
+        ].join('\n');
+      const settle = await project('acting-adv-expiry', steps('settle_default'), false);
+      const q = await atQuestion(settle.def, true);
+      const r = realm(['run', 'advance', q.id]);
+      // (a) red when the expiry is not named first, its line is not before the steps, or the guard
+      //     and the auto step do not follow; (b) prints stdout.
+      expect({ code: r.code, tail: lagless(r.out.slice(3)) }).toEqual({
+        code: 0,
+        tail: [
+          "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
+          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+          '→ after',
+          "Guard step 'only_if_approved' passed.",
+          `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${q.id} --provider <provider> --model <model>`,
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+          `Run ${q.id}: phase 'running'`,
+        ],
+      });
+      const abort = await project('acting-adv-abort', steps('abort'), false);
+      const qa = await atQuestion(abort.def, true);
+      const ra = realm(['run', 'advance', qa.id]);
+      // (a) red when abort is not carried out or its line changes; (b) prints stdout.
+      expect(lagless(ra.out.slice(3))).toEqual([
+        "Owed to the engine: the expired question on 'confirm' (its declared abort).",
+        `⚠ gate '${qa.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared abort: the run ended (enacted_via: advance).`,
+        'Stopped: the run has ended (aborted)',
+        `Run ${qa.id}: phase 'aborted'`,
+      ]);
+    });
+
+    it('advance, L136 + L148: it loads the project’s code as respond does — the workflow’s own folder from anywhere, --extensions-module, or for a workflow made without one --project or the folder it runs in; the first lines say from where, and a --project not used', async () => {
+      claim(
+        PAGE,
+        "It loads the project's extensions exactly as `respond` does (`--project`, `--extensions-module`) — from the workflow's own project folder, whatever folder the shell is in, or, for a workflow made without one, from `--project` or the folder it runs in —",
+      );
+      claim(
+        PAGE,
+        "The first line names the folder the project code is loaded from, or says `with no project code (nothing to load under <folder>)` when that folder holds none (no `realm.yaml`, no extension module); a `--project` the workflow's own project folder overrides is said on the next line, `--project <dir> was not used: workflow '<id>' has its own project, <folder>, and its code is loaded from there.`, or `… <folder> (no project code there).` when it holds none (both added after version 0.46.0).",
+      );
+      claim(
+        PAGE,
+        '`--project` is used only for a workflow registered without a project folder (`realm run advance --help` says so).',
+      );
+      // (a) red when the help no longer says when --project is used; (b) prints the help.
+      expect(flat(realm(['run', 'advance', '--help']).out.join(' '))).toContain(
+        'Used only for a workflow registered without a project folder (made by an agent or from a string): the folder whose realm.yaml and code it loads (default: current directory). A workflow registered from a folder loads its code from there, and --project is not used.',
+      );
+      const bad = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-p-')));
+      folders.push(bad);
+      writeFileSync(join(bad, 'realm.yaml'), 'extensions:\n  - ./ext.mjs\n', 'utf8');
+      const steps = autoStep('a', [], ['handler: mark']);
+      // The workflow's own folder, from an unrelated folder, with --project naming another: the
+      // project's handler runs, and the lines say so.
+      const own = await project('acting-adv-own', steps, true, 'own project');
+      const id = await started(own.def);
+      const r = realm(['run', 'advance', id, '--project', bad]);
+      // (a) red when the first lines name another folder, or --project is used or not said; (b)
+      //     prints stdout.
+      expect({ code: r.code, head: r.out.slice(0, 2) }).toEqual({
+        code: 0,
+        head: [
+          `Advancing run ${id} (workflow 'acting-adv-own') with the project code under ${own.root}, in this shell's environment.`,
+          `--project ${bad} was not used: workflow 'acting-adv-own' has its own project, ${own.root}, and its code is loaded from there.`,
+        ],
+      });
+      const output = async (runId: string) =>
+        (await runStore.get(runId)).evidence.find((e) => e.step_id === 'a')?.output_summary;
+      // (a) red when other code ran the step; (b) prints the recorded output.
+      expect(await output(id)).toEqual({ from: 'own project' });
+      // The workflow's own folder holds no code: said, on both lines.
+      const empty = await project('acting-adv-empty', autoStep('a', []), false);
+      const ide = await started(empty.def);
+      const re = realm(['run', 'advance', ide, '--project', bad]);
+      // (a) red when a folder with no code is said to have code; (b) prints stdout.
+      expect(re.out.slice(0, 2)).toEqual([
+        `Advancing run ${ide} (workflow 'acting-adv-empty') with no project code (nothing to load under ${empty.root}), in this shell's environment.`,
+        `--project ${bad} was not used: workflow 'acting-adv-empty' has its own project, ${empty.root} (no project code there).`,
+      ]);
+      // --extensions-module: its module's handler runs.
+      const mod = join(bad, 'override.mjs');
+      writeFileSync(
+        mod,
+        "export default { handlers: { mark: { id: 'mark', execute: async () => ({ data: { from: 'the override' } }) } } };\n",
+        'utf8',
+      );
+      const ido = await started(own.def);
+      const ro = realm(['run', 'advance', ido, '--extensions-module', mod]);
+      // (a) red when --extensions-module is not loaded; (b) prints stdout and the record.
+      expect({ code: ro.code, out: await output(ido) }).toEqual({
+        code: 0,
+        out: { from: 'the override' },
+      });
+      // A workflow made without a project folder: --project, or the folder it runs in.
+      const made = await fromString('acting-adv-string', autoStep('a', []));
+      const viaFlag = realm(['run', 'advance', await started(made), '--project', bad]);
+      const viaCwd = realm(['run', 'advance', await started(made)], { cwd: bad });
+      const loadFailed = `Deployment manifest '${bad}/realm.yaml' is invalid:`;
+      // (a) red when --project or the shell's folder is not where its realm.yaml is read from;
+      //     (b) prints both.
+      expect([viaFlag.code, viaFlag.err[0], viaCwd.code, viaCwd.err[0]]).toEqual([
+        1,
+        loadFailed,
+        1,
+        loadFailed,
+      ]);
+    });
+
+    it("advance and respond (C209, walk c14 W3-5): with --extensions-module a realm.yaml is named only when the folder has one, which is read; the --project line and respond's owed line say what is loaded from the workflow's own project", async () => {
+      claim(
+        PAGE,
+        "With `--extensions-module`, the first line names that module, `with the module <path> (--extensions-module)`, followed by `and the realm.yaml of <folder>` only when that folder has a `realm.yaml`, which the command then reads; the folder's extension modules are not loaded, so the `--project` line ends `…, and its realm.yaml is loaded from there.`, or `… <folder> (no realm.yaml there).` when it has none.",
+      );
+      claim(
+        PAGE,
+        "With `--extensions-module`, that folder's extension modules are not loaded, and the line ends `…, and its realm.yaml is loaded from there.`, or `… <folder> (no realm.yaml there).` when it has none.",
+      );
+      const other = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-c209-')));
+      folders.push(other);
+      const mod = join(other, 'override.mjs');
+      writeFileSync(
+        mod,
+        "export default { handlers: { mark: { id: 'mark', execute: async () => ({ data: { from: 'the override' } }) } } };\n",
+        'utf8',
+      );
+      const flags = ['--extensions-module', mod, '--project', other];
+      // The workflow's own project holds code and no realm.yaml (the walk's case).
+      const own = await project('acting-c209-own', autoStep('a', [], ['handler: mark']), true);
+      const id1 = await started(own.def);
+      const r1 = realm(['run', 'advance', id1, ...flags]);
+      // (a) red when a realm.yaml is named that the folder does not have, or the --project line says
+      //     its code is loaded; (b) prints stdout.
+      expect(r1.out.slice(0, 2)).toEqual([
+        `Advancing run ${id1} (workflow 'acting-c209-own') with the module ${mod} (--extensions-module), in this shell's environment.`,
+        `--project ${other} was not used: workflow 'acting-c209-own' has its own project, ${own.root} (no realm.yaml there).`,
+      ]);
+      // The same project with a realm.yaml: named on both lines.
+      writeFileSync(join(own.root, 'realm.yaml'), 'version: 1\n', 'utf8');
+      const id2 = await started(own.def);
+      const r2 = realm(['run', 'advance', id2, ...flags]);
+      // (a) red when the realm.yaml read is not named; (b) prints stdout.
+      expect(r2.out.slice(0, 2)).toEqual([
+        `Advancing run ${id2} (workflow 'acting-c209-own') with the module ${mod} (--extensions-module) and the realm.yaml of ${own.root}, in this shell's environment.`,
+        `--project ${other} was not used: workflow 'acting-c209-own' has its own project, ${own.root}, and its realm.yaml is loaded from there.`,
+      ]);
+      // ... and it is read: an invalid one refuses the load.
+      writeFileSync(join(own.root, 'realm.yaml'), 'extensions:\n  - ./ext.mjs\n', 'utf8');
+      const r3 = realm(['run', 'advance', await started(own.def), '--extensions-module', mod]);
+      // (a) red when the command does not read the realm.yaml it names; (b) prints the refusal.
+      expect([r3.code, r3.err.find((l) => l.startsWith('Deployment manifest'))]).toEqual([
+        1,
+        `Deployment manifest '${own.root}/realm.yaml' is invalid:`,
+      ]);
+      // A workflow made from a string: the folder it runs in, or --project — named only with a realm.yaml.
+      const made = await fromString('acting-c209-string', autoStep('a', [], ['handler: mark']));
+      const id4 = await started(made);
+      const r4 = realm(['run', 'advance', id4, '--extensions-module', mod]);
+      writeFileSync(join(other, 'realm.yaml'), 'version: 1\n', 'utf8');
+      const id5 = await started(made);
+      const r5 = realm(['run', 'advance', id5, ...flags]);
+      // (a) red when the folder's realm.yaml is named without one, or not named with one; (b) prints
+      //     both first lines.
+      expect([r4.out[0], r5.out[0]]).toEqual([
+        `Advancing run ${id4} (workflow 'acting-c209-string') with the module ${mod} (--extensions-module), in this shell's environment.`,
+        `Advancing run ${id5} (workflow 'acting-c209-string') with the module ${mod} (--extensions-module) and the realm.yaml of ${other}, in this shell's environment.`,
+      ]);
+      // respond with --extensions-module on a workflow whose own project holds no code: its owed line
+      // says what the advance it names loads — as that advance then says.
+      const empty = await project(
+        'acting-c209-empty',
+        [CONFIRM(), autoStep('process', ['confirm'])].join('\n'),
+        false,
+      );
+      const q = await atQuestion(empty.def);
+      const rr = realm([
+        'run',
+        'respond',
+        q.id,
+        '--gate',
+        q.gateId,
+        '--choice',
+        'approve',
+        ...flags,
+      ]);
+      const ra = realm(['run', 'advance', q.id]);
+      // (a) red when respond says the project holds code because the override was given, or its
+      //     --project line says code is loaded; (b) prints both commands' lines.
+      expect({ respond: rr.out, advance: ra.out[0] }).toEqual({
+        respond: [
+          `--project ${other} was not used: workflow 'acting-c209-empty' has its own project, ${empty.root} (no realm.yaml there).`,
+          `Responded: ${q.id} | choice 'approve' | new state 'running'`,
+          `Owed to the engine: 'process' — realm run advance ${q.id} runs it, with no project code (nothing to load under ${empty.root}), in the environment of the shell it runs in.`,
+          'If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.',
+        ],
+        advance: `Advancing run ${q.id} (workflow 'acting-c209-empty') with no project code (nothing to load under ${empty.root}), in this shell's environment.`,
+      });
+    });
+
+    /** `a` (auto, handler `mark`) → `confirm` (a question) → `b` (auto, no handler). */
+    const A_THEN_QUESTION = [
+      autoStep('a', [], ['handler: mark']),
+      CONFIRM().replace('    gate:', '    depends_on: [a]\n    gate:'),
+      autoStep('b', ['confirm']),
+    ].join('\n');
+
+    /** Answers the run's open question through the built `realm`. */
+    async function answer(id: string): Promise<void> {
+      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const r = realm(['run', 'respond', id, '--gate', gateId, '--choice', 'approve']);
+      if (r.code !== 0) throw new Error(`fixture: respond failed: ${r.err.join('\n')}`);
+    }
+
+    it('advance, L148: the expiry line before the steps it led to; every other warning of the reply as `⚠ <line>` after the steps that ran', async () => {
+      claim(
+        PAGE,
+        "The expiry line is printed when the call carries the expiry out, before the steps it led to; every other line in the reply's `warnings` is printed as `⚠ <line>` after the steps that ran (added after version 0.46.0, which printed only the expiry line, on stderr, after the steps).",
+      );
+      const { def } = await project(
+        'acting-adv-warnings',
+        [
+          CONFIRM('settle_default'),
+          autoStep('a', ['confirm'], ['handler: mark']),
+          '  tidy:',
+          '    description: Tidy.',
+          '    execution: finalizer',
+          '    handler: missing_fin',
+          '    on_outcome: always',
+        ].join('\n'),
+        true,
+      );
+      const q = await atQuestion(def, true);
+      const r = realm(['run', 'advance', q.id]);
+      // (a) red when the expiry line moves after the step, a reply warning is not printed after
+      //     the steps, or anything goes to stderr; (b) prints stdout and stderr.
+      expect({ tail: lagless(r.out.slice(3)), err: r.err }).toEqual({
+        tail: [
+          "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
+          `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+          '→ a',
+          "⚠ finalizer 'tidy' left pending — handler not available on this surface",
+          // decision C208: the run ended during the call — its cleanup step's outcome.
+          "finalizer 'tidy': pending",
+          // decision C211 (walk c14 W3-4): the cleanup step left pending — the command that runs it.
+          `Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain ${q.id} --force`,
+          `Run ${q.id}: phase 'completed'`,
+        ],
+        err: [],
+      });
+    });
+
+    it('advance, L150–L158: the preview’s project code words, each row on its case', async () => {
+      claim(
+        PAGE,
+        "The preview's `project code` words compare the code this program loaded with what the run last recorded:",
+      );
+      claim(PAGE, "| `same as the run's last record` | The same files with the same hashes. |");
+      claim(
+        PAGE,
+        "| `differs from the run's last record` | Comparable, and different: a code file, an entry module, the `realm.yaml` or the `--extensions-module` override changed. |",
+      );
+      claim(
+        PAGE,
+        "| `not comparable with the run's last record` | The run records project code and this program loaded none, the two fingerprints were taken under different rules, one was cut short at its size limit, or one side's load failed. |",
+      );
+      claim(
+        PAGE,
+        '| `not comparable — the run has recorded no project code yet` | This program loaded project code, and the run has recorded none: no program with project code has run a step of it yet, as on a run just created. It is not a mismatch. |',
+      );
+      claim(
+        PAGE,
+        '| `neither side records project code` | Neither the run nor this program loaded project code. |',
+      );
+      const words = (out: string[]) => out[1]?.replace(/^This program: .* · project code: /, '');
+      const coded = await project('acting-words', A_THEN_QUESTION, true);
+      // A run just created: no program with project code has run a step of it yet.
+      const id = await started(coded.def);
+      const first = realm(['run', 'advance', id]);
+      // (a) red when a fresh run is called a mismatch or refused; (b) prints the words and the run.
+      expect({
+        code: first.code,
+        words: words(first.out),
+        ran: (await runStore.get(id)).completed_steps,
+      }).toEqual({
+        code: 0,
+        words: 'not comparable — the run has recorded no project code yet.',
+        ran: ['a'],
+      });
+      await answer(id);
+      // The same files.
+      // (a) red when the same code is not said the same; (b) prints the words.
+      expect(words(realm(['run', 'advance', id]).out)).toBe("same as the run's last record.");
+      // A code file changed.
+      const id2 = await started(coded.def);
+      realm(['run', 'advance', id2]);
+      await answer(id2);
+      writeFileSync(
+        join(coded.dir, 'dist', 'registry.js'),
+        "export default { handlers: { mark: { id: 'mark', execute: async () => ({ data: { from: 'changed' } }) } } };\n",
+        'utf8',
+      );
+      // (a) red when a changed code file is not said to differ; (b) prints the words.
+      expect(words(realm(['run', 'advance', id2]).out)).toBe("differs from the run's last record.");
+      // The run records project code and this program loaded none.
+      const made = await fromString('acting-words-string', A_THEN_QUESTION);
+      const mod = join(coded.dir, 'dist', 'registry.js');
+      const id3 = await started(made);
+      realm(['run', 'advance', id3, '--extensions-module', mod]);
+      await answer(id3);
+      // (a) red when loading nothing against a recorded fingerprint is not "not comparable"; (b)
+      //     prints the words.
+      expect(words(realm(['run', 'advance', id3]).out)).toBe(
+        "not comparable with the run's last record.",
+      );
+      // Neither side.
+      const bare = await project('acting-words-bare', autoStep('a', []), false);
+      // (a) red when no code on either side is said otherwise; (b) prints the words.
+      expect(words(realm(['run', 'advance', await started(bare.def)]).out)).toBe(
+        'neither side records project code.',
+      );
+    });
+
+    it('advance, L160 + L169 + L176 + blocks: when the engine can run nothing the last preview line says why and nothing runs; the way out after a refused step; a step another program holds', async () => {
+      claim(
+        PAGE,
+        "When another program holds an owed step, the preview says so before anything runs, once, with the program and the time: `In flight: '<step>' is in flight, taken by <program> since <time>.`",
+      );
+      claim(
+        PAGE,
+        'When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reason>` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reason>` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). A reason that ends with a command ends the line there, with no full stop, so the command can be copied as printed; any other ends with a full stop. With more than one reason, the opening ends with its colon and each reason is a line of its own, indented two spaces (added after version 0.46.0, which joined them with `; ` and ended the line with a full stop).',
+      );
+      claim(
+        PAGE,
+        "When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`):",
+      );
+      claim(
+        PAGE,
+        "After a call that ran other steps, the same way out takes the place of the `Run <id>: phase '<phase>'` line. A step another program holds:",
+      );
+      // A step that cannot run: the page's screen.
+      const stuck = await project('acting-nothing-refused', needsN('compute', []), false);
+      const id = await started(stuck.def);
+      const r = realm(['run', 'advance', id]);
+      // (a) red when the last lines differ from the page's screen, exit 0, or a step ran; (b)
+      //     prints both.
+      expect({
+        code: r.code,
+        tail: r.out.slice(3),
+        ran: (await runStore.get(id)).evidence.length,
+      }).toEqual({
+        code: 1,
+        tail: put(block(PAGE, "The engine can run nothing now: 'compute' cannot run"), {
+          '507090b5-3b5b-4a6c-a814-3faa03404f95': id,
+        }),
+        ran: 0,
+      });
+      // ...and the run picks up the corrected definition once registered again.
+      writeFileSync(
+        join(stuck.dir, 'workflows', 'wf', 'workflow.yaml'),
+        yamlOf('acting-nothing-refused', autoStep('compute', [])),
+        'utf8',
+      );
+      // (a) red when registering the corrected workflow again fails; (b) prints the exit.
+      expect(
+        realm(['workflow', 'register', 'workflows/wf/workflow.yaml'], { cwd: stuck.dir }).code,
+      ).toBe(0);
+      const fixed = realm(['run', 'advance', id]);
+      // (a) red when the corrected definition is not the one the run uses; (b) prints stdout.
+      expect(fixed.out.slice(-2)).toEqual(['→ compute', `Run ${id}: phase 'completed'`]);
+      // A step another program holds: the page's screen.
+      const held = await project('acting-nothing-held', autoStep('process', []), false);
+      const idh = await started(held.def);
+      await runStore.claimStep(idh, 'process', held.def, {
+        by: 'crown',
+        by_source: 'ambient',
+        channel: 'advance',
+      });
+      const since = (await runStore.get(idh)).claims!['process']!.since;
+      const h = realm(['run', 'advance', idh]);
+      // (a) red when the lines differ from the page's screen, or In flight is said twice; (b)
+      //     prints both.
+      expect({ code: h.code, tail: h.out.slice(3) }).toEqual({
+        code: 0,
+        tail: put(block(PAGE, "In flight: 'process' is in flight, taken by crown"), {
+          '2026-10-04T22:26:13.994Z': since!,
+          '65d2afc8-2cb3-4401-808c-1d83a40bf989': idh,
+        }),
+      });
+      // Nothing owed: the run ended; only agent steps are ready; a question is open.
+      const ended = await started(held.def);
+      // (a) red when the run cannot be ended (fixture); (b) prints the exit.
+      expect(realm(['run', 'abandon', ended]).code).toBe(0);
+      const agentOnly = await project('acting-nothing-agent', agentStep('finish', []), false);
+      const ida = await started(agentOnly.def);
+      const asked = await project('acting-nothing-question', CONFIRM(), false);
+      const q = await atQuestion(asked.def);
+      const before = await runStore.get(q.id);
+      // decision C181: the preview's reason line (a waiting-process line may follow it).
+      const last = (runId: string) =>
+        realm(['run', 'advance', runId])
+          .out.filter((l) => l.startsWith('Nothing is owed') || l.startsWith('The engine can'))
+          .at(-1);
+      // (a) red when a reason or its opening words change; (b) prints the three lines.
+      expect([last(ended), last(ida), last(q.id)]).toEqual([
+        // F2: a run an operator ended says that ending and its reason, never the undo.
+        'Nothing is owed to the engine: the run has ended (abandoned). An operator ended this run, with the reason "Abandoned via realm run abandon"; to run the work again, start a new run.',
+        `Nothing is owed to the engine: an agent step is ready: 'finish' — drive it with realm agent --run-id ${ida} --provider <provider> --model <model>`,
+        `Nothing is owed to the engine: a question is open — realm run respond ${q.id} --gate ${q.gateId} --choice <one of: approve, reject>`,
+      ]);
+      // (a) red when advance at an open question changes the run; (b) prints both records' steps.
+      const afterQ = await runStore.get(q.id);
+      expect([afterQ.completed_steps, afterQ.pending_gate?.gate_id]).toEqual([
+        before.completed_steps,
+        q.gateId,
+      ]);
+      // After a call that ran other steps: the way out in place of the phase line.
+      const ranFirst = await project(
+        'acting-nothing-after',
+        [autoStep('a', []), needsN('compute', ['a'])].join('\n'),
+        false,
+      );
+      const idr = await started(ranFirst.def);
+      const rr = realm(['run', 'advance', idr]);
+      // (a) red when the phase line comes back after steps ran, or exit 0; (b) prints stdout.
+      expect({ code: rr.code, tail: rr.out.slice(-3) }).toEqual({
+        code: 1,
+        tail: [
+          '→ a',
+          "Stopped: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'",
+          // F15: `compute` (with `depends_on`) is refused for its input — its own way out
+          `Run ${idr} stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance ${idr} — or end it: realm run abandon ${idr}`,
+        ],
+      });
+    });
+
+    it('advance, C191 (walk c9, W3-Y1): `Last recorded driver:` names the program on the newest entry that names one — after an answer, still the program that opened the question; inspect shows who answered; newer entries with no program are counted', async () => {
+      claim(
+        PAGE,
+        "`Last recorded driver:` names the program on the run's newest evidence entry that names one, with that entry's step and time: `<program> at step '<step>', <time>.`, or `none recorded.` A step's own entry names the program that ran it when that program recorded its name; an answer to a question names none, and neither does a guard's decision. So the program that answered a question is not named here: after an answer whose write ran no cleanup step, the line still names the program that ran the question's step and opened the question. `realm run inspect` shows who answered, on that step's `Answer:` line (`answered by <name>`, the name `--by` gave, or `answered by (not stated)`). When newer entries name no program, the line ends `; 1 newer entry records no driver.` (or `; <n> newer entries record no driver.`). Each one counts but a question's answer, the entry its expiry writes and a guard's decision: a step run by a program that recorded no name (a library call made without `driver`, for one), and an entry realm writes without running a step, such as the one `realm run reclaim` writes for the step whose claim it frees.",
+      );
+      const { def } = await project(
+        'cli-c191-wf',
+        [
+          CONFIRM(),
+          '  g:',
+          '    description: g.',
+          '    execution: guard',
+          '    depends_on: [confirm]',
+          `    abort_unless: ["confirm.choice == 'approve'"]`,
+          autoStep('after', ['g']),
+          agentStep('later', ['after']),
+          agentStep('more', ['after']),
+        ].join('\n'),
+        false,
+      );
+      const id = await started(def);
+      const as = (who: string) => ({ env: { REALM_OPERATOR: who } });
+      const driverLine = (who: string) => realm(['run', 'advance', id], as(who)).out[2];
+      // `opener` runs `confirm`, whose question opens; `answerer` answers it (`--by alice`), and the
+      // answer's write decides the guard `g`.
+      const opened = realm(['run', 'advance', id], as('opener'));
+      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const answered = realm(
+        ['run', 'respond', id, '--gate', gateId, '--choice', 'approve', '--by', 'alice'],
+        as('answerer'),
+      );
+      const confirmAt = (await runStore.get(id)).evidence.find(
+        (e) => e.step_id === 'confirm' && e.kind !== 'gate_response',
+      )!.completed_at;
+      const afterAnswer = driverLine('third');
+      const inspect = realm(['run', 'inspect', id]).out;
+      const afterAt = (await runStore.get(id)).evidence.find(
+        (e) => e.step_id === 'after',
+      )!.completed_at;
+      const afterStep = driverLine('fourth');
+      // Two library calls without `driver`: their entries name no program.
+      for (const step of ['later', 'more']) {
+        const r = await executeStep(runStore, def, {
+          runId: id,
+          command: step,
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        expect(r.status, JSON.stringify(r)).toBe('ok');
+        if (step === 'later') {
+          // (a) red when one newer entry is not counted in the singular; (b) prints the line.
+          expect(driverLine('fifth')).toBe(
+            `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}; 1 newer entry records no driver.`,
+          );
+        }
+      }
+      // (a) red when the line names the answerer, counts the answer or the guard as an entry with no
+      //     program, or inspect does not show who answered and who opened the question; (b) prints all.
+      expect({
+        opened: opened.out[2],
+        answered: answered.code,
+        afterAnswer,
+        answerLine: inspect.find((l) => l.trim().startsWith('Answer: ')),
+        openedThrough: inspect.find((l) => l.trim().startsWith('Question opened through: ')),
+        afterStep,
+        two: driverLine('sixth'),
+      }).toEqual({
+        opened: 'Last recorded driver: none recorded.',
+        answered: 0,
+        afterAnswer: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'confirm', ${confirmAt}.`,
+        answerLine: expect.stringMatching(
+          /^\s+Answer: approve · answered by alice \(as stated, not verified\) · proof: /,
+        ),
+        openedThrough: '     Question opened through: opener (from REALM_OPERATOR, via advance)',
+        afterStep: `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}.`,
+        two: `Last recorded driver: third (from REALM_OPERATOR, via advance) at step 'after', ${afterAt}; 2 newer entries record no driver.`,
+      });
+      // An answer without `--by`: `answered by (not stated)`.
+      const other = await atQuestion(def);
+      expect(respond(other, 'approve').code).toBe(0);
+      // (a) red when an unstated answerer is shown otherwise; (b) prints the line.
+      expect(
+        realm(['run', 'inspect', other.id]).out.find((l) => l.trim().startsWith('Answer: ')),
+      ).toMatch(/^\s+Answer: approve · answered by \(not stated\) · proof: /);
+    });
+
+    it('advance, C197 (walk c10, W4-3): `realm run reclaim`’s entry is one newer entry that records no driver; the choice a question’s expiry made is not counted', async () => {
+      claim(
+        PAGE,
+        "Each one counts but a question's answer, the entry its expiry writes and a guard's decision: a step run by a program that recorded no name (a library call made without `driver`, for one), and an entry realm writes without running a step, such as the one `realm run reclaim` writes for the step whose claim it frees.",
+      );
+      const as = (who: string) => ({ env: { REALM_OPERATOR: who } });
+      // `opener` runs `a`; another program takes the agent step `b`; `realm run reclaim --force` frees
+      // it — the reclaim's entry is the newest, and names no program.
+      const { def } = await project(
+        'cli-c197-reclaim',
+        [autoStep('a', []), agentStep('b', ['a'])].join('\n'),
+        false,
+      );
+      const id = await started(def);
+      expect(realm(['run', 'advance', id], as('opener')).code).toBe(0);
+      await runStore.claimStep(id, 'b', def, {
+        by: 'holder',
+        by_source: 'ambient',
+        channel: 'agent',
+      });
+      const reclaimed = realm(['run', 'reclaim', id, '--step', 'b', '--force']);
+      const record = await runStore.get(id);
+      const aAt = record.evidence.find((e) => e.step_id === 'a')!.completed_at;
+      const newest = record.evidence.at(-1)!;
+      // The question's expiry: `opener` runs `confirm`, whose question opens; its time is up, and
+      // `expirer` carries out its declared default — the expiry's entry is the newest, and is not
+      // counted.
+      const { def: q } = await project('cli-c197-expiry', CONFIRM('settle_default'), false);
+      const qid = await started(q);
+      expect(realm(['run', 'advance', qid], as('opener')).code).toBe(0);
+      const open = await runStore.get(qid);
+      await runStore.update({
+        ...open,
+        pending_gate: {
+          ...open.pending_gate!,
+          opened_at: '2020-01-01T00:00:00.000Z',
+          expires_at: '2020-01-01T01:00:00.000Z',
+        },
+      });
+      expect(realm(['run', 'advance', qid], as('expirer')).code).toBe(0);
+      const expired = await runStore.get(qid);
+      const confirmAt = expired.evidence.find(
+        (e) => e.step_id === 'confirm' && e.kind !== 'gate_response',
+      )!.completed_at;
+      // (a) red when the reclaim's entry is not counted, the expiry's choice is, or the fixture's
+      //     entries are not the ones named; (b) prints the lines and the entries.
+      expect({
+        reclaimed: reclaimed.code,
+        newest: {
+          step: newest.step_id,
+          reclaimed: newest.output_summary['reclaimed'],
+          by: newest.driven_by,
+        },
+        reclaimLine: realm(['run', 'advance', id], as('third')).out[2],
+        expiry: { kind: expired.evidence.at(-1)!.kind, by: expired.evidence.at(-1)!.responded_by },
+        expiryLine: realm(['run', 'advance', qid], as('third')).out[2],
+      }).toEqual({
+        reclaimed: 0,
+        newest: { step: 'b', reclaimed: true, by: undefined },
+        reclaimLine: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'a', ${aAt}; 1 newer entry records no driver.`,
+        expiry: { kind: 'gate_response', by: 'timeout' },
+        expiryLine: `Last recorded driver: opener (from REALM_OPERATOR, via advance) at step 'confirm', ${confirmAt}.`,
+      });
+    });
+
+    it('advance, L148 (open question): at an open question advance runs nothing, and its line is the respond command composed from the record it read', async () => {
+      // F7 (a): the line is composed from the record the command read (core's `answerAction`),
+      // never from a call of the writer `advanceRun`.
+      claim(
+        PAGE,
+        "At an open question the command runs nothing, and its `Nothing is owed to the engine: a question is open — realm run respond …` line is composed from the run's record as the command read it: when another program answers the question meanwhile, the steps that answer made ready are left for the next `realm run advance`.",
+      );
+      const { def } = await project('acting-open-q', A_THEN_QUESTION, true);
+      const id = await started(def);
+      realm(['run', 'advance', id]);
+      const gateId = (await runStore.get(id)).pending_gate!.gate_id;
+      const again = realm(['run', 'advance', id]);
+      // (a) red when the line names another gate or choices, or a step runs; (b) prints stdout.
+      expect({ last: again.out.at(-1), done: (await runStore.get(id)).completed_steps }).toEqual({
+        last: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${gateId} --choice <one of: approve, reject>`,
+        done: ['a'],
+      });
+    });
+
+    it('advance, L162 + L183: one `Stopped:` line per reason, in the page’s order; a completed run gets none; exit 1 when a step failed or cannot run, else 0', async () => {
+      claim(
+        PAGE,
+        "`Stopped:` lines say why it stopped, one line for each reason that holds, in this order: a step that failed (`'<step>' failed: <error>`, only when the run's record lists the step as failed, and never for a step it started whose outcome was not recorded: when another program's run of that step failed, the step's own line says so, `…, and failed; this program's outcome for it was not recorded.` (below), and no failed line is printed), a refusal that failed no step (`'<step>': <error>`: the step it is about, with the engine's words, or the engine's words alone when the refusal names no step), the run ended (`the run has ended (<phase>)`; when an engine failure ended it and a step failed that `realm run resume` takes, it goes on `— to make '<step>' runnable again: realm run resume <id> --from <step>`, or, for several, `— to make a failed step runnable again: realm run resume <id> --from <one of: …>` with their names; when an operator ended it, it goes on `. An operator ended this run, with the reason \"<reason>\"; to run the work again, start a new run.`, never with `realm run resume`, which would erase that ending and its reason), a question opened (with the `realm run respond` command; when steps wait for its answer — ready by what they depend on, but held while a question is open — it names them first: `a question is open ('<step>' waits for its answer) — realm run respond …`, and the preview's `Nothing is owed to the engine:` line does the same), each step that cannot run (`'<step>' cannot run (<check>): <why>`, or `cannot run here (capability)` for a handler or adapter this program lacks, ending with its way out: `— load the missing extension, or run the step on a runner that has it`), work the engine still owes when the call stops, after a refusal for one (`the engine still owes '<step>' — to run it: realm run advance <id>`, or, for several, `the engine still owes '<a>', '<b>' — to run them until a step opens a question, fails or ends the run: realm run advance <id>`), agent steps ready (`an agent step is ready: '<step>' — drive it with realm agent --run-id <id> --provider <provider> --model <model>` for one, `agent steps are ready: '<a>', '<b>' — drive them with …` for several; put the provider and model you drive the run with in place of the two placeholders; the next line is the one `respond` prints after its commands, `If a realm workflow run or realm agent is still waiting on this run, it goes on by itself; the line above is for when none is.`, also after a preview line that names agent steps ready), each step another program holds (`'<step>' is in flight in another program — wait for it, or see realm run inspect <id>`), and otherwise `nothing is ready to run now`.",
+      );
+      claim(PAGE, 'A run the command completes gets no `Stopped:` line: the phase line says it.');
+      claim(
+        PAGE,
+        'Exit code 1 when a `Stopped:` line gives a step that failed or a refusal, or when a step cannot run, else 0.',
+      );
+      const go = async (id: string, steps: string) => {
+        const { def } = await project(id, steps, true);
+        const runId = await started(def);
+        const r = realm(['run', 'advance', runId]);
+        return {
+          id: runId,
+          code: r.code,
+          stopped: r.out.filter((l) => l.startsWith('Stopped:')),
+          last: r.out.at(-1),
+        };
+      };
+      const failed = await go('acting-stop-failed', autoStep('a', [], ['handler: boom']));
+      const question = await go(
+        'acting-stop-question',
+        [autoStep('a', []), CONFIRM().replace('    gate:', '    depends_on: [a]\n    gate:')].join(
+          '\n',
+        ),
+      );
+      const gateId = (await runStore.get(question.id)).pending_gate!.gate_id;
+      const both = await go(
+        'acting-stop-both',
+        [autoStep('a', []), needsN('compute', ['a']), agentStep('finish', ['a'])].join('\n'),
+      );
+      const capability = await go(
+        'acting-stop-capability',
+        [autoStep('a', []), autoStep('x', ['a'], ['handler: missing_h'])].join('\n'),
+      );
+      const two = await go(
+        'acting-stop-two',
+        [autoStep('a', []), agentStep('f1', ['a']), agentStep('f2', ['a'])].join('\n'),
+      );
+      const completes = await go('acting-stop-completes', autoStep('a', []));
+      // (a) red when a reason's words, their order, or the exit code changes; (b) prints them all.
+      expect(
+        [failed, question, both, capability, two, completes].map((s) => [s.code, s.stopped]),
+      ).toEqual([
+        [
+          1,
+          [
+            "Stopped: 'a' failed: Handler 'boom' threw: boom",
+            // decision C202: the way on from the failed step.
+            `Stopped: the run has ended (failed) — to make 'a' runnable again: realm run resume ${failed.id} --from a`,
+          ],
+        ],
+        [
+          0,
+          [
+            `Stopped: a question is open — realm run respond ${question.id} --gate ${gateId} --choice <one of: approve, reject>`,
+          ],
+        ],
+        [
+          1,
+          [
+            "Stopped: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'",
+            `Stopped: an agent step is ready: 'finish' — drive it with realm agent --run-id ${both.id} --provider <provider> --model <model>`,
+          ],
+        ],
+        [
+          1,
+          [
+            "Stopped: 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it",
+          ],
+        ],
+        [
+          0,
+          [
+            `Stopped: agent steps are ready: 'f1', 'f2' — drive them with realm agent --run-id ${two.id} --provider <provider> --model <model>`,
+          ],
+        ],
+        [0, []],
+      ]);
+      // (a) red when a completed run gets no phase line; (b) prints it.
+      expect(completes.last).toBe(`Run ${completes.id}: phase 'completed'`);
+      // The run ended: an expired abort.
+      const { def } = await project('acting-stop-ended', CONFIRM('abort'), false);
+      const q = await atQuestion(def, true);
+      const ended = realm(['run', 'advance', q.id]);
+      // (a) red when the ending's reason changes; (b) prints stdout.
+      expect(ended.out.filter((l) => l.startsWith('Stopped:'))).toEqual([
+        'Stopped: the run has ended (aborted)',
+      ]);
+    });
+
+    it('advance, L162 + block: a step another process took between the pick and the claim — `→ <step>` then the fact, and the command goes on with what is left', async () => {
+      claim(
+        PAGE,
+        'A step another process took while this one was about to run it is said as a fact, and the command goes on with what is left. The command prints `→ <step>` as it starts a step, before it claims it, so the losing program prints both lines, in this order — the second says another program took the step first, so it did not run here:',
+      );
+      const { def } = await project(
+        'acting-race',
+        [autoStep('process', []), autoStep('notify', [])].join('\n'),
+        false,
+      );
+      const id = await started(def);
+      // The other program's claim lands in the window between this program's pick and its claim:
+      // a module this `realm` loads (--extensions-module) claims `process` as racer-a first.
+      const core = pathToFileURL(realpathSync(join(ROOT, 'packages/core/dist/index.js'))).href;
+      const racer = join(elsewhere, 'racer.mjs');
+      writeFileSync(
+        racer,
+        [
+          `import { JsonFileStore } from ${JSON.stringify(core)};`,
+          'const claim = JsonFileStore.prototype.claimStep;',
+          'let raced = false;',
+          'JsonFileStore.prototype.claimStep = async function (runId, step, definition, claimant) {',
+          "  if (!raced && step === 'process') {",
+          '    raced = true;',
+          "    await claim.call(this, runId, step, definition, { by: 'racer-a', by_source: 'ambient', channel: 'advance' });",
+          '  }',
+          '  return claim.call(this, runId, step, definition, claimant);',
+          '};',
+          'export default { handlers: {} };',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      const r = realm(['run', 'advance', id, '--extensions-module', racer]);
+      const since = (await runStore.get(id)).claims!['process']!.since!;
+      const at = r.out.indexOf('→ process');
+      // (a) red when the lines differ from the page's screen (or are not adjacent), the command
+      //     stops instead of going on, or the run's `process` was run here; (b) prints stdout.
+      expect({
+        code: r.code,
+        pair: r.out.slice(at, at + 2),
+        rest: r.out.slice(at + 2),
+        ran: (await runStore.get(id)).completed_steps,
+      }).toEqual({
+        code: 0,
+        pair: put(block(PAGE, "• Step 'process' was taken by racer-a"), {
+          '2026-10-05T00:02:25.302Z': since,
+        }),
+        rest: [
+          '→ notify',
+          `Stopped: 'process' is in flight in another program — wait for it, or see realm run inspect ${id}`,
+          `Run ${id}: phase 'running'`,
+        ],
+        ran: ['notify'],
+      });
+    });
+
+    it('advance, L183: the steps run in this shell’s environment (its secrets, its .env); two programs with the same code and different secrets look the same to the preview', async () => {
+      claim(
+        PAGE,
+        "The steps run in this shell's environment (its secrets, its `.env`); two programs with the same code and different secrets look the same to the preview (#592).",
+      );
+      const { def } = await project(
+        'acting-env',
+        [
+          autoStep('a', [], ['handler: env']),
+          CONFIRM().replace('    gate:', '    depends_on: [a]\n    gate:'),
+          autoStep('b', ['confirm'], ['handler: env']),
+        ].join('\n'),
+        true,
+      );
+      const id = await started(def);
+      // (a) red when the first program's call fails (fixture); (b) prints the exit.
+      expect(realm(['run', 'advance', id], { env: { SECRET_625: 'from the shell' } }).code).toBe(0);
+      await answer(id);
+      // Another shell: no SECRET_625 set, a .env in its folder that holds another value.
+      const other = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-acting-dotenv-')));
+      folders.push(other);
+      writeFileSync(join(other, '.env'), 'SECRET_625=from the dotenv\n', 'utf8');
+      const second = realm(['run', 'advance', id], { cwd: other });
+      const outputs = (await runStore.get(id)).evidence
+        .filter((e) => e.step_id === 'a' || e.step_id === 'b')
+        .map((e) => [e.step_id, e.output_summary]);
+      // (a) red when a step does not see its shell's environment or .env, or the preview tells the
+      //     two secrets apart; (b) prints the outputs and the preview's words.
+      expect({ words: second.out[1], outputs }).toEqual({
+        words:
+          "This program: tester (from REALM_OPERATOR) · project code: same as the run's last record.",
+        outputs: [
+          ['a', { secret: 'from the shell' }],
+          ['b', { secret: 'from the dotenv' }],
+        ],
+      });
+    });
+
+    it('resume, L210 + L219 + blocks: a step only the engine runs gets the advance line and (decision C205) no Drive it with: lines; a step that cannot run gets the step and the way out in place of the Drive it with: lines', async () => {
+      claim(
+        PAGE,
+        'When the step that is ready again is one only the engine runs, one line names it (`the step` / `the steps`, and for more than one, `until a step opens a question, fails or ends the run,` before `without a model`) and the call that runs it without a model, and the `Drive it with:` lines are printed only when an agent step is ready too. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:',
+      );
+      claim(
+        PAGE,
+        'When the step that is ready again cannot run — the workflow was registered again with a check the step fails — and nothing else can run, driving the run would only stop on that step: the step and the way out take the place of the `Drive it with:` lines.',
+      );
+      const failing = autoStep('a', [], ['handler: boom']);
+      const proj = await project('acting-resume', failing, true);
+      const id = await started(proj.def);
+      const failedOnce = async (runId: string) => {
+        realm(['run', 'advance', runId]);
+        // (a) red when advance does not fail `a` (fixture); (b) prints the failed steps.
+        expect((await runStore.get(runId)).failed_steps, 'fixture').toEqual(['a']);
+      };
+      await failedOnce(id);
+      const r = realm(['run', 'resume', id, '--from', 'a']);
+      // (a) red when resume prints other lines than the page's screen; (b) prints both.
+      expect({ code: r.code, out: r.out }).toEqual({
+        code: 0,
+        out: put(block(PAGE, "Resumed run '8bc06d55"), {
+          '8bc06d55-77fb-43f4-937f-8d166fad20cf': id,
+        }),
+      });
+      // Registered again with a check `a` fails: the step and the way out.
+      const id2 = await started(proj.def);
+      await failedOnce(id2);
+      writeFileSync(
+        join(proj.dir, 'workflows', 'wf', 'workflow.yaml'),
+        yamlOf(
+          'acting-resume',
+          needsN('a', []).replace('    depends_on: []', '    depends_on: []\n    handler: boom'),
+          true,
+        ),
+        'utf8',
+      );
+      // (a) red when registering the corrected workflow again fails; (b) prints the exit.
+      expect(
+        realm(['workflow', 'register', 'workflows/wf/workflow.yaml'], { cwd: proj.dir }).code,
+      ).toBe(0);
+      const r2 = realm(['run', 'resume', id2, '--from', 'a']);
+      // (a) red when resume prints the Drive it with: lines for a step that cannot run, or other
+      //     lines than the page's screen; (b) prints both.
+      expect({ code: r2.code, out: r2.out }).toEqual({
+        code: 0,
+        out: put(block(PAGE, "Resumed run '729eaab3"), {
+          '729eaab3-6203-46cb-9c5c-3714070723a8': id2,
+        }),
+      });
+    });
+
+    it('drain, L474 + L482 + blocks: --expired --force on a gate whose default leaves an engine step names it; when it leaves nothing that can run, the step and the way out follow', async () => {
+      claim(
+        PAGE,
+        'When the enacted gate leaves `auto` steps only the engine runs, one more line names them.',
+      );
+      claim(
+        PAGE,
+        'When it leaves nothing that can run from here, the steps that cannot run and the way out follow instead.',
+      );
+      const owes = await project(
+        'acting-drain-owes',
+        [CONFIRM('settle_default'), autoStep('after', ['confirm'])].join('\n'),
+        false,
+      );
+      const q = await atQuestion(owes.def, true);
+      const r = realm(['run', 'drain', q.id, '--expired', '--force']);
+      // (a) red when drain prints other lines than the page's screen; (b) prints both.
+      expect({ code: r.code, out: r.out }).toEqual({
+        code: 0,
+        out: put(
+          block(
+            PAGE,
+            "Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing further",
+          ),
+          {
+            'daeede5e-c0dd-4b88-9caf-6efa089902dd': q.id,
+          },
+        ),
+      });
+      const stuck = await project(
+        'acting-drain-stuck',
+        [CONFIRM('settle_default'), needsN('compute', ['confirm'])].join('\n'),
+        false,
+      );
+      const qs = await atQuestion(stuck.def, true);
+      const rs = realm(['run', 'drain', qs.id, '--expired', '--force']);
+      // (a) red when drain prints other lines than the page's screen; (b) prints both.
+      expect({ out: rs.out }).toEqual({
+        out: put(block(PAGE, "Run '1d703406"), {
+          '1d703406-777f-4bc6-a6bc-6058b4d8f490': qs.id,
+        }),
+      });
+    });
+
+    it('drain, L515 + L516: nothing to drain on a run in `running` — the step the engine owes and both ways out; a step that cannot run and its way out', async () => {
+      const shown = block(PAGE, 'No runs with an actionable pending finalizer.');
+      const owes = await project('acting-drain-nothing', autoStep('after', []), false);
+      const id = await started(owes.def);
+      const stuck = await project('acting-drain-nothing-stuck', needsN('compute', []), false);
+      const ids = await started(stuck.def);
+      // decision C205: an agent step ready; a step in flight in another program.
+      const ready = await project('acting-drain-nothing-ready', agentStep('write', []), false);
+      const ida = await started(ready.def);
+      const held = await project('acting-drain-nothing-held', autoStep('fetch', []), false);
+      const idf = await started(held.def);
+      await runStore.claimStep(idf, 'fetch', held.def, {
+        by: 'other@host',
+        by_source: 'derived',
+        channel: 'advance',
+      });
+      const line = (runId: string) => {
+        const r = realm(['run', 'drain', runId]);
+        return { code: r.code, lines: [...r.out, ...r.err] };
+      };
+      claim(
+        PAGE,
+        "The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop).",
+      );
+      // The page's lines for one run (decision C212: the way out on the line after its command).
+      const of = (pageId: string, runId: string): string[] =>
+        shown.filter((l) => l.includes(pageId)).map((l) => l.replaceAll(pageId, runId));
+      // (a) red when a line differs from the page's (its run ID put in place); (b) prints them.
+      expect([line(id), line(ids), line(ida), line(idf)]).toEqual([
+        { code: 0, lines: of('daeede5e-c0dd-4b88-9caf-6efa089902dd', id) },
+        { code: 0, lines: of('573ff99d-44fc-42c9-98e8-c394fed45e6e', ids) },
+        { code: 0, lines: of('e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68', ida) },
+        { code: 0, lines: of('5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25', idf) },
+      ]);
+      // (a) red when a run's way out is joined to its command on one line; (b) prints the counts.
+      expect([
+        of('daeede5e-c0dd-4b88-9caf-6efa089902dd', id).length,
+        of('573ff99d-44fc-42c9-98e8-c394fed45e6e', ids).length,
+      ]).toEqual([2, 1]);
+    });
+
+    describe('round 29 — C206, C207, C208 (walk c13): the one choice form, where one advance call stops, the cleanup steps’ outcomes', () => {
+      const UNTIL = 'until a step opens a question, fails or ends the run';
+      const LISTEN = 'docs/reference/cli/realm-listen.md';
+      const READING = 'docs/reference/cli/realm-run-reading.md';
+      /** An `auto` step that opens a question with these choices. */
+      const question = (name: string, choices: string, deps: string[] = []): string =>
+        autoStep(name, deps, ['trust: human_confirmed', 'gate:', `  choices: [${choices}]`]);
+      /** A cleanup step (`on_outcome: always`) with this handler. */
+      const cleanup = (name: string, handler: string): string =>
+        [
+          `  ${name}:`,
+          `    description: ${name}.`,
+          '    execution: finalizer',
+          `    handler: ${handler}`,
+          '    on_outcome: always',
+        ].join('\n');
+      const gateOf = async (id: string): Promise<string> =>
+        (await runStore.get(id)).pending_gate!.gate_id;
+      /** The lines from the first that starts with `from`. */
+      const from = (lines: string[], start: string): string[] =>
+        lines.slice(lines.findIndex((l) => l.startsWith(start)));
+
+      it('advance (C207): one call runs the owed steps one at a time, and the steps the run owes after them, and stops at the first step that opens a question or fails — the preview says so when it names more than one', async () => {
+        claim(
+          PAGE,
+          "It runs them one at a time, and the steps the run owes after them, and stops at the first step that opens a question, fails or ends the run: a step named after that one does not run in that call. When the preview names more than one, its line says so: `Owed to the engine: 'approve', 'fetch'; it runs them until a step opens a question, fails or ends the run.`",
+        );
+        claim(
+          LISTEN,
+          'their names (`realm run advance <run-id>` runs them until a step opens a question, fails or ends the run).',
+        );
+        const q = await project(
+          'c207-question',
+          [question('approve', 'ship, hold'), autoStep('fetch', [])].join('\n'),
+          false,
+        );
+        const qid = await started(q.def);
+        const qa = realm(['run', 'advance', qid]);
+        const qRecord = await runStore.get(qid);
+        const failing = await project(
+          'c207-fails',
+          [autoStep('a', [], ['handler: boom']), autoStep('b', [], ['handler: mark'])].join('\n'),
+          true,
+        );
+        const fid = await started(failing.def);
+        const fa = realm(['run', 'advance', fid]);
+        const plain = await project(
+          'c207-plain',
+          [autoStep('a', []), autoStep('b', []), autoStep('c', ['a'])].join('\n'),
+          false,
+        );
+        const pid = await started(plain.def);
+        const pa = realm(['run', 'advance', pid]);
+        const chain = await project(
+          'c207-chain',
+          [autoStep('a', []), autoStep('c', ['a'])].join('\n'),
+          false,
+        );
+        const cid = await started(chain.def);
+        const ca = realm(['run', 'advance', cid]);
+        // (a) red when several owed read as a promise that all run, one owed gets the clause, the
+        //     call runs a step named after one that opened a question or failed, or stops before
+        //     the steps the run owes after the named ones; (b) prints them.
+        expect({
+          question: { code: qa.code, out: from(qa.out, 'Owed to the engine') },
+          questionCompleted: qRecord.completed_steps,
+          fails: { code: fa.code, out: from(fa.out, 'Owed to the engine') },
+          plain: { code: pa.code, out: from(pa.out, 'Owed to the engine') },
+          chain: { code: ca.code, out: from(ca.out, 'Owed to the engine') },
+        }).toEqual({
+          question: {
+            code: 0,
+            out: [
+              `Owed to the engine: 'approve', 'fetch'; it runs them ${UNTIL}.`,
+              '→ approve',
+              // decision C211 (walk c14 W2-2): `fetch`, owed and not run, waits for the answer — named.
+              `Stopped: a question is open ('fetch' waits for its answer) — realm run respond ${qid} --gate ${qRecord.pending_gate?.gate_id} --choice <one of: ship, hold>`,
+              `Run ${qid}: phase 'gate_waiting'`,
+            ],
+          },
+          questionCompleted: [],
+          fails: {
+            code: 1,
+            out: [
+              `Owed to the engine: 'a', 'b'; it runs them ${UNTIL}.`,
+              '→ a',
+              "Stopped: 'a' failed: Handler 'boom' threw: boom",
+              `Stopped: the engine still owes 'b' — to run it: realm run advance ${fid}`,
+              `Run ${fid}: phase 'running'`,
+            ],
+          },
+          plain: {
+            code: 0,
+            out: [
+              `Owed to the engine: 'a', 'b'; it runs them ${UNTIL}.`,
+              '→ a',
+              '→ b',
+              '→ c',
+              `Run ${pid}: phase 'completed'`,
+            ],
+          },
+          chain: {
+            code: 0,
+            out: ["Owed to the engine: 'a'.", '→ a', '→ c', `Run ${cid}: phase 'completed'`],
+          },
+        });
+        // The question answered, the step named after it is owed again, and the next call runs it.
+        const answered = realm([
+          'run',
+          'respond',
+          qid,
+          '--gate',
+          await gateOf(qid),
+          '--choice',
+          'ship',
+        ]);
+        const next = realm(['run', 'advance', qid]);
+        expect({
+          answered: answered.out[1],
+          next: next.out.filter((l) => l.startsWith('→ ') || l.startsWith('Run ')),
+        }).toEqual({
+          answered: `Owed to the engine: 'fetch' — realm run advance ${qid} runs it, with no project code (nothing to load under ${q.root}), in the environment of the shell it runs in.`,
+          next: ['→ fetch', `Run ${qid}: phase 'completed'`],
+        });
+      });
+
+      it('advance (C207): work still owed after a refusal, for several — `to run them until a step opens a question, fails or ends the run`', async () => {
+        claim(
+          PAGE,
+          `(\`the engine still owes '<step>' — to run it: realm run advance <id>\`, or, for several, \`the engine still owes '<a>', '<b>' — to run them ${UNTIL}: realm run advance <id>\`)`,
+        );
+        const d = await project(
+          'c207-still-owes',
+          [
+            autoStep('a', [], ['trust: human_confirmed', 'gate:', '  message: "{{ nope.x }}"']),
+            autoStep('b', []),
+            autoStep('c', []),
+          ].join('\n'),
+          false,
+        );
+        const id = await started(d.def);
+        const a = realm(['run', 'advance', id]);
+        // (a) red when several still owed read as a promise that all run; (b) prints the lines.
+        expect(from(a.out, '→ a')).toEqual([
+          '→ a',
+          "Stopped: 'a': gate.message has unresolvable references: nope.x",
+          `Stopped: the engine still owes 'b', 'c' — to run them ${UNTIL}: realm run advance ${id}`,
+          `Run ${id}: phase 'running'`,
+        ]);
+      });
+
+      it('respond, resume, drain and inspect (C207): with several owed, each says where that call stops; following respond’s, the call stops at the question and the step named after it does not run', async () => {
+        claim(
+          PAGE,
+          `one more line names them and the command that runs them (\`runs it\` for one step, \`runs them ${UNTIL}\` for more: see [\`advance\`](#advance)),`,
+        );
+        claim(
+          PAGE,
+          `one line names it (\`the step\` / \`the steps\`, and for more than one, \`${UNTIL},\` before \`without a model\`) and the call that runs it without a model,`,
+        );
+        claim(
+          READING,
+          `and the \`realm run advance\` command that runs them, followed, for more than one, by where that call stops: \` runs them ${UNTIL}\`, or, for an expired question's declared default, \` carries it out, then runs what that leaves owed ${UNTIL}\`.`,
+        );
+        // respond: the answer leaves a question and another step owed.
+        const r = await project(
+          'c207-respond',
+          [
+            CONFIRM(),
+            question('approve', 'ship, hold', ['confirm']),
+            autoStep('notify', ['confirm']),
+          ].join('\n'),
+          false,
+        );
+        const q = await atQuestion(r.def);
+        const answered = respond(q, 'approve');
+        const advanced = realm(['run', 'advance', q.id]);
+        const afterAnswer = await runStore.get(q.id);
+        // resume: `a` fails beside `b`, the run is abandoned, then resumed.
+        const res = await project(
+          'c207-resume',
+          [autoStep('a', [], ['handler: boom']), autoStep('b', [], ['handler: mark'])].join('\n'),
+          true,
+        );
+        const rid = await started(res.def);
+        realm(['run', 'advance', rid]);
+        realm(['run', 'abandon', rid]);
+        const resumed = realm(['run', 'resume', rid, '--from', 'a']);
+        // drain on a live run, and after an enactment, each owing two.
+        const dr = await project(
+          'c207-drain',
+          [question('approve', 'ship, hold'), autoStep('fetch', [])].join('\n'),
+          false,
+        );
+        const did = await started(dr.def);
+        const drained = realm(['run', 'drain', did]);
+        const inspected = realm(['run', 'inspect', did]);
+        const ex = await project(
+          'c207-drain-expired',
+          [CONFIRM('settle_default'), autoStep('x', ['confirm']), autoStep('y', ['confirm'])].join(
+            '\n',
+          ),
+          false,
+        );
+        const eq = await atQuestion(ex.def, true);
+        const enacted = realm(['run', 'drain', eq.id, '--expired', '--force']);
+        // (a) red when a surface names several owed as a promise that all run, or the call it names
+        //     runs the step after the one that opened a question; (b) prints them.
+        expect({
+          respond: answered.out[1],
+          advanced: from(advanced.out, 'Owed to the engine'),
+          notifyRan: afterAnswer.completed_steps.includes('notify'),
+          resumed: resumed.out.at(-1),
+          drained: drained.out,
+          inspected: inspected.out.filter((l) => l.startsWith('Owed to the engine')),
+          enacted: enacted.out.filter((l) => l.startsWith('To run')),
+        }).toEqual({
+          respond: `Owed to the engine: 'approve', 'notify' — realm run advance ${q.id} runs them ${UNTIL}, with no project code (nothing to load under ${r.root}), in the environment of the shell it runs in.`,
+          advanced: [
+            `Owed to the engine: 'approve', 'notify'; it runs them ${UNTIL}.`,
+            '→ approve',
+            `Stopped: a question is open ('notify' waits for its answer) — realm run respond ${q.id} --gate ${afterAnswer.pending_gate?.gate_id} --choice <one of: ship, hold>`,
+            `Run ${q.id}: phase 'gate_waiting'`,
+          ],
+          notifyRan: false,
+          resumed: `To run the steps the engine owes ('a', 'b') ${UNTIL}, without a model: realm run advance ${rid}`,
+          drained: [
+            `Run '${did}' is not terminal (phase: 'running') — nothing to drain. To run the steps the engine owes ('approve', 'fetch') ${UNTIL}: realm run advance ${did}`,
+            `To end the run instead: realm run abandon ${did}`,
+          ],
+          inspected: [
+            `Owed to the engine: 'approve', 'fetch' — realm run advance ${did} runs them ${UNTIL}`,
+          ],
+          enacted: [
+            `To run the steps the engine owes ('x', 'y') ${UNTIL}: realm run advance ${eq.id}`,
+          ],
+        });
+      });
+
+      it('advance (C206): a question with one choice — the answer command names that choice, and runs as printed; `<one of: …>` is for several', async () => {
+        claim(
+          PAGE,
+          'That command, here and in the `Stopped:` line of a question the call opened, gives the choices as `--choice <one of: approve, reject>`, a placeholder to replace, or the choice itself when the question has only one.',
+        );
+        const d = await project(
+          'c206-one-choice',
+          [question('approve', 'ack'), autoStep('after', ['approve'])].join('\n'),
+          false,
+        );
+        const id = await started(d.def);
+        const opened = realm(['run', 'advance', id]);
+        const gate = await gateOf(id);
+        const again = realm(['run', 'advance', id]);
+        // The printed command, as printed.
+        const cmd = opened.out.at(-2)!.replace(/^Stopped: a question is open — /, '');
+        const ran = realm(cmd.split(' ').slice(1));
+        // (a) red when one choice is given as `<one of: ack>`, or the printed command does not run;
+        //     (b) prints them.
+        expect({
+          stop: opened.out.at(-2),
+          again: again.out.at(-1),
+          ran: [ran.code, ran.out[0]],
+        }).toEqual({
+          stop: `Stopped: a question is open — realm run respond ${id} --gate ${gate} --choice ack`,
+          again: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${gate} --choice ack`,
+          ran: [0, `Responded: ${id} | choice 'ack' | new state 'running'`],
+        });
+      });
+
+      it('advance (C208): a run that ends during the call gets one line per cleanup step, before the phase line — completed, failed, or pending when this program could not run it; a run that had ended gets none', async () => {
+        claim(
+          PAGE,
+          "When the run ends during the call and has cleanup steps, one line per cleanup step that ending ran or left pending follows, just before the phase line, in the order the engine runs them, with the status the run's record holds for it: `finalizer '<name>': <status>` — `completed`, `failed` when its handler threw, or `pending` when this program could not run it (a `⚠` line above says why).",
+        );
+        const failed = await project(
+          'c208-failed',
+          [autoStep('fetch', [], ['handler: boom']), cleanup('tidy', 'boom')].join('\n'),
+          true,
+        );
+        const fid = await started(failed.def);
+        const fa = realm(['run', 'advance', fid]);
+        const fAgain = realm(['run', 'advance', fid]);
+        const done = await project(
+          'c208-completed',
+          [autoStep('fetch', [], ['handler: mark']), cleanup('tidy', 'mark')].join('\n'),
+          true,
+        );
+        const cid = await started(done.def);
+        const ca = realm(['run', 'advance', cid]);
+        const pending = await project(
+          'c208-pending',
+          [autoStep('fetch', [], ['handler: mark']), cleanup('tidy', 'missing')].join('\n'),
+          true,
+        );
+        const pid = await started(pending.def);
+        const pa = realm(['run', 'advance', pid]);
+        // The run ended by a guard the call decided, and by an expired question's declared abort.
+        const guarded = await project(
+          'c208-guard',
+          [
+            autoStep('a', [], ['handler: mark']),
+            '  check:',
+            '    description: Check.',
+            '    execution: guard',
+            '    depends_on: [a]',
+            `    abort_unless: ["a.from == 'nowhere'"]`,
+            cleanup('tidy', 'mark'),
+          ].join('\n'),
+          true,
+        );
+        const gid = await started(guarded.def);
+        const ga = realm(['run', 'advance', gid]);
+        const expiring = await project(
+          'c208-expiry',
+          [CONFIRM('abort'), autoStep('after', ['confirm']), cleanup('tidy', 'mark')].join('\n'),
+          true,
+        );
+        const eq = await atQuestion(expiring.def, true);
+        const ea = realm(['run', 'advance', eq.id]);
+        // (a) red when a cleanup step's outcome is left out, its line moves, or a run that had
+        //     already ended gets one; (b) prints them.
+        expect({
+          failed: { code: fa.code, out: from(fa.out, '→ fetch') },
+          again: fAgain.out.filter((l) => l.startsWith('finalizer ')),
+          completed: { code: ca.code, out: from(ca.out, '→ fetch') },
+          pending: { code: pa.code, out: from(pa.out, '→ fetch') },
+          guard: ga.out.slice(-3),
+          expiry: ea.out.slice(-3),
+        }).toEqual({
+          failed: {
+            code: 1,
+            out: [
+              '→ fetch',
+              "Stopped: 'fetch' failed: Handler 'boom' threw: boom",
+              `Stopped: the run has ended (failed) — to make 'fetch' runnable again: realm run resume ${fid} --from fetch`,
+              "finalizer 'tidy': failed",
+              `Run ${fid}: phase 'failed'`,
+            ],
+          },
+          again: [],
+          completed: {
+            code: 0,
+            out: ['→ fetch', "finalizer 'tidy': completed", `Run ${cid}: phase 'completed'`],
+          },
+          pending: {
+            code: 0,
+            out: [
+              '→ fetch',
+              "⚠ finalizer 'tidy' left pending — handler not available on this surface",
+              "finalizer 'tidy': pending",
+              // decision C211 (walk c14 W3-4): the command that runs it.
+              `Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain ${pid} --force`,
+              `Run ${pid}: phase 'completed'`,
+            ],
+          },
+          guard: [
+            'Stopped: the run has ended (aborted)',
+            "finalizer 'tidy': completed",
+            `Run ${gid}: phase 'aborted'`,
+          ],
+          expiry: [
+            'Stopped: the run has ended (aborted)',
+            "finalizer 'tidy': completed",
+            `Run ${eq.id}: phase 'aborted'`,
+          ],
+        });
+      });
+    });
+
+    describe('round 30 — C211, C212 (walk c14 W2-1, W2-2, W3-4, W1-2, W1-1): the ways on from both axes; no punctuation after a command', () => {
+      const READING = 'docs/reference/cli/realm-run-reading.md';
+      const question = (name: string, choices: string, deps: string[] = []): string =>
+        autoStep(name, deps, ['trust: human_confirmed', 'gate:', `  choices: [${choices}]`]);
+      const cleanup = (name: string, handler: string, on = 'always'): string =>
+        [
+          `  ${name}:`,
+          `    description: ${name}.`,
+          '    execution: finalizer',
+          `    handler: ${handler}`,
+          `    on_outcome: ${on}`,
+        ].join('\n');
+      const gateOf = async (id: string): Promise<string> =>
+        (await runStore.get(id)).pending_gate!.gate_id;
+
+      it('advance and inspect (C211, walk c14 W2-2): a step the open question holds is named — on the Stopped line, the next preview and inspect', async () => {
+        claim(
+          PAGE,
+          "a question opened (with the `realm run respond` command; when steps wait for its answer — ready by what they depend on, but held while a question is open — it names them first: `a question is open ('<step>' waits for its answer) — realm run respond …`, and the preview's `Nothing is owed to the engine:` line does the same),",
+        );
+        claim(
+          READING,
+          "| `Question open on '<step>'` | When steps wait for the open question's answer | Those steps: `Question open on '<step>': '<a>' waits for its answer.` — ready by what they depend on, held while the question is open; nothing is owed to the engine until it is answered. Added after version 0.46.0. |",
+        );
+        const p = await project(
+          'c211-w',
+          [
+            CONFIRM(),
+            question('q', 'yes, no', ['confirm']),
+            autoStep('z', ['confirm'], ['handler: mark']),
+          ].join('\n'),
+          true,
+        );
+        const q = await atQuestion(p.def);
+        realm(['run', 'respond', q.id, '--gate', q.gateId, '--choice', 'approve']);
+        const first = realm(['run', 'advance', q.id]);
+        const g = await gateOf(q.id);
+        const again = realm(['run', 'advance', q.id]);
+        const inspected = realm(['run', 'inspect', q.id]);
+        const answered = realm(['run', 'respond', q.id, '--gate', g, '--choice', 'yes']);
+        const last = realm(['run', 'advance', q.id]);
+        // (a) red when a line says nothing waits, or `z` is said owed while the question is open;
+        //     (b) prints the lines.
+        expect({
+          stopped: first.out.find((l) => l.startsWith('Stopped:')),
+          again: again.out.at(-1),
+          inspect: inspected.out.find((l) => l.startsWith('Question open on')),
+          owedAfter: answered.out.find((l) => l.startsWith('Owed to the engine')),
+          completed: last.out.at(-1),
+        }).toEqual({
+          stopped: `Stopped: a question is open ('z' waits for its answer) — realm run respond ${q.id} --gate ${g} --choice <one of: yes, no>`,
+          again: `Nothing is owed to the engine: a question is open ('z' waits for its answer) — realm run respond ${q.id} --gate ${g} --choice <one of: yes, no>`,
+          inspect: "Question open on 'q': 'z' waits for its answer.",
+          owedAfter: `Owed to the engine: 'z' — realm run advance ${q.id} runs it, with the project code under ${p.root}, in the environment of the shell it runs in.`,
+          completed: `Run ${q.id}: phase 'completed'`,
+        });
+      });
+
+      it('advance (C211, walk c14 W2-1): the preview of an expired question whose declared default it carries out says it then runs what that leaves owed', async () => {
+        claim(
+          PAGE,
+          "(the preview names it as `the expired question on '<step>' (its declared <on_expiry>)`, and for a declared default goes on `; then it runs what that leaves owed until a step opens a question, fails or ends the run.`,",
+        );
+        const p = await project(
+          'c211-qx',
+          [
+            CONFIRM('settle_default'),
+            autoStep('p', ['confirm'], ['handler: mark']),
+            autoStep('n', ['confirm'], ['handler: mark']),
+          ].join('\n'),
+          true,
+        );
+        const q = await atQuestion(p.def, true);
+        const r = realm(['run', 'advance', q.id]);
+        const ab = await project(
+          'c211-qx-abort',
+          [CONFIRM('abort'), autoStep('p', ['confirm'])].join('\n'),
+          false,
+        );
+        const qa = await atQuestion(ab.def, true);
+        const ra = realm(['run', 'advance', qa.id]);
+        // (a) red when the preview stops at the expiry, or an abort is said to run what follows;
+        //     (b) prints the lines.
+        expect({ settle: lagless(r.out.slice(3)), abort: ra.out[3] }).toEqual({
+          settle: [
+            "Owed to the engine: the expired question on 'confirm' (its declared settle_default); then it runs what that leaves owed until a step opens a question, fails or ends the run.",
+            `⚠ gate '${q.gateId}' on 'confirm' had expired <lag> before this call — this advance call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: advance).`,
+            '→ p',
+            '→ n',
+            `Run ${q.id}: phase 'completed'`,
+          ],
+          abort: "Owed to the engine: the expired question on 'confirm' (its declared abort).",
+        });
+      });
+
+      it('advance, inspect and drain (C211, walk c14 W3-4): cleanup steps left pending are named with the command that runs them — and it runs them', async () => {
+        claim(
+          PAGE,
+          "When the ending left cleanup steps `pending`, the next line names them and the command that runs them: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <id> --force` (`Cleanup steps left pending: '<a>', '<b>' — to run them with code that has their handlers: …` for several); the preview of a run that ended with cleanup steps pending prints the same line after its last line.",
+        );
+        claim(
+          READING,
+          "| `Cleanup step left pending`, `Cleanup steps left pending` | When the run ended with cleanup steps left `pending` | Those steps, in the order the engine runs them, and the command that runs them: `— to run it with code that has its handler: realm run drain <id> --force`. Added after version 0.46.0. While another drainer's lease on one of them has not passed: `— held by another drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>: realm run drain <id> --force` (added after version 0.46.0). |",
+        );
+        const p = await project(
+          'c211-p',
+          [
+            autoStep('a', [], ['handler: mark']),
+            cleanup('tidy', 'missing_fin'),
+            cleanup('note', 'mark'),
+          ].join('\n'),
+          true,
+        );
+        const id = await started(p.def);
+        const first = realm(['run', 'advance', id]);
+        const again = realm(['run', 'advance', id]);
+        const inspected = realm(['run', 'inspect', id]);
+        const line = `Cleanup steps left pending: 'tidy', 'note' — to run them with code that has their handlers: realm run drain ${id} --force`;
+        // The way on, followed: a module that has the handler, then the command as printed.
+        const mod = join(p.dir, 'fin.mjs');
+        writeFileSync(
+          mod,
+          "export default { handlers: { missing_fin: { id: 'missing_fin', execute: async () => ({ data: {} }) }, mark: { id: 'mark', execute: async () => ({ data: {} }) } } };\n",
+          'utf8',
+        );
+        const drained = realm(['run', 'drain', id, '--force', '--extensions-module', mod]);
+        const ledger = (await runStore.get(id)).finalizer_ledger;
+        // (a) red when no line names the way on, a line names it twice, or the command does not run
+        //     them; (b) prints the lines and the ledger.
+        expect({
+          first: first.out.slice(-4),
+          again: again.out.slice(3),
+          inspect: inspected.out.filter((l) => l.startsWith('Cleanup step')),
+          drained: drained.code,
+          ledger: [ledger?.['tidy']?.status, ledger?.['note']?.status],
+        }).toEqual({
+          first: [
+            "finalizer 'tidy': pending",
+            "finalizer 'note': pending",
+            line,
+            `Run ${id}: phase 'completed'`,
+          ],
+          again: ['Nothing is owed to the engine: the run has ended (completed).', line],
+          inspect: [line],
+          drained: 0,
+          ledger: ['completed', 'completed'],
+        });
+      });
+
+      it('respond (C211): a guard behind the answer ends the run with a cleanup step this program cannot run — its outcome, then the command that runs it, once', async () => {
+        claim(
+          PAGE,
+          "When one is left `pending` (this program has no handler for it), the next line names the command that runs it: `Cleanup step left pending: '<name>' — to run it with code that has its handler: realm run drain <id> --force` (added after version 0.46.0).",
+        );
+        const p = await project(
+          'c211-p-respond',
+          [
+            CONFIRM(),
+            '  check:',
+            '    description: Check.',
+            '    execution: guard',
+            '    depends_on: [confirm]',
+            `    abort_unless: ["confirm.choice == 'approve'"]`,
+            cleanup('tidy', 'missing_fin'),
+          ].join('\n'),
+          true,
+        );
+        const q = await atQuestion(p.def);
+        const r = realm(['run', 'respond', q.id, '--gate', q.gateId, '--choice', 'reject']);
+        // (a) red when the command is not named, or named twice; (b) prints the lines.
+        expect(r.out.slice(r.out.indexOf("finalizer 'tidy': pending"))).toEqual([
+          "finalizer 'tidy': pending",
+          `Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain ${q.id} --force`,
+          `Responded: ${q.id} | choice 'reject' | new state 'aborted'`,
+        ]);
+      });
+
+      it("respond (C211, the architect's addendum): a late answer whose expiry's default made a guard fail the run gives the way back in, and resume takes it", async () => {
+        claim(
+          PAGE,
+          'Then what the guard did, if this answer carried out the expiry — a guard that failed goes on with the way back in, `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0) — the `Not recorded:` line, and what the run owes.',
+        );
+        const p = await project(
+          'c211-late-guard',
+          [
+            CONFIRM('settle_default'),
+            '  check:',
+            '    description: Check.',
+            '    execution: guard',
+            '    depends_on: [confirm]',
+            '    abort_unless: ["nope.x == 1"]',
+          ].join('\n'),
+          false,
+        );
+        const q = await atQuestion(p.def, true);
+        const r = realm(['run', 'respond', q.id, '--gate', q.gateId, '--choice', 'reject']);
+        const resumed = realm(['run', 'resume', q.id, '--from', 'check']);
+        // (a) red when the guard's line ends without the way back in; (b) prints stderr and resume's exit.
+        expect({
+          guard: r.err.find((l) => l.startsWith("Guard step 'check'")),
+          resumed: resumed.code,
+        }).toEqual({
+          guard: `Guard step 'check' failed with a resolution error. Run is terminated. To make the failed step runnable again: realm run resume ${q.id} --from check`,
+          resumed: 0,
+        });
+      });
+
+      it('drain (C211, walk c14 W1-2): at a question, the way on after the answer is what respond names — and it is advance here', async () => {
+        claim(
+          PAGE,
+          'At a question, the second line says that after the answer `realm run respond` names what the run owes next (added after version 0.46.0, which named only `realm run abandon` for a run still open after the answer).',
+        );
+        const shown = block(PAGE, 'No runs with an actionable pending finalizer.');
+        const p = await project(
+          'c211-drain-q',
+          [question('approve', 'ok'), autoStep('after', ['approve'], ['handler: mark'])].join('\n'),
+          true,
+        );
+        const id = await started(p.def);
+        realm(['run', 'advance', id]);
+        const g = await gateOf(id);
+        const drained = realm(['run', 'drain', id]);
+        const answered = realm(['run', 'respond', id, '--gate', g, '--choice', 'ok']);
+        const advanced = realm(['run', 'advance', id]);
+        const page = shown
+          .filter((l) => l.includes('22efc6a7-01f8-4256-9d2f-74621b621d28'))
+          .map((l) =>
+            l
+              .replaceAll('22efc6a7-01f8-4256-9d2f-74621b621d28', id)
+              .replaceAll('817f3921-6ddd-4bda-9506-762892ae37e7', g)
+              .replace('--choice <one of: approve, reject>', '--choice ok'),
+          );
+        // (a) red when drain's lines differ from the page's, or the way on it names does not lead on;
+        //     (b) prints the lines.
+        expect({
+          drained: drained.out,
+          owed: answered.out.find((l) => l.startsWith('Owed to the engine')),
+          last: advanced.out.at(-1),
+        }).toEqual({
+          drained: page,
+          owed: `Owed to the engine: 'after' — realm run advance ${id} runs it, with the project code under ${p.root}, in the environment of the shell it runs in.`,
+          last: `Run ${id}: phase 'completed'`,
+        });
+      });
+
+      it('advance (C212, walk c14 W1-1): a line that ends with a command has no full stop — the one-choice answer pasted from the preview runs; several reasons are each a line', async () => {
+        claim(
+          PAGE,
+          'A reason that ends with a command ends the line there, with no full stop, so the command can be copied as printed; any other ends with a full stop. With more than one reason, the opening ends with its colon and each reason is a line of its own, indented two spaces (added after version 0.46.0, which joined them with `; ` and ended the line with a full stop).',
+        );
+        const p = await project(
+          'c212-paste',
+          [question('approve', 'ok'), autoStep('after', ['approve'], ['handler: mark'])].join('\n'),
+          true,
+        );
+        const id = await started(p.def);
+        realm(['run', 'advance', id]);
+        const g = await gateOf(id);
+        const preview = realm(['run', 'advance', id]).out.at(-1)!;
+        // Pasted into bash exactly as printed, after the dash: a `realm` on PATH that runs the built CLI.
+        const bin = realpathSync(mkdtempSync(join(tmpdir(), 'realm-625-c212-bin-')));
+        folders.push(bin);
+        writeFileSync(join(bin, 'realm'), `#!/bin/sh\nexec "${process.execPath}" "${CLI}" "$@"\n`, {
+          mode: 0o755,
+        });
+        const pasted = spawnSync(
+          'bash',
+          ['-c', preview.slice(preview.indexOf('realm run respond'))],
+          {
+            cwd: elsewhere,
+            env: { PATH: `${bin}:${process.env['PATH'] ?? ''}`, HOME: home, NO_COLOR: '1' },
+            encoding: 'utf8',
+          },
+        );
+        // Several reasons: an agent step ready beside a step another program holds.
+        const two = await project(
+          'c212-two',
+          [agentStep('write', []), autoStep('fetch', [], ['handler: mark'])].join('\n'),
+          true,
+        );
+        const tid = await started(two.def);
+        await runStore.claimStep(tid, 'fetch', two.def, {
+          by: 'other@host',
+          by_source: 'derived',
+          channel: 'advance',
+        });
+        const several = realm(['run', 'advance', tid]).out;
+        const at = several.findIndex((l) => l.startsWith('The engine can run nothing now'));
+        // (a) red when a full stop follows the command, the paste is refused, or the reasons share a
+        //     line; (b) prints the lines and the paste's exit and output.
+        expect({
+          preview,
+          pasted: [pasted.status, pasted.stdout.split('\n')[0]],
+          phase: (await runStore.get(id)).run_phase,
+          several: several.slice(at, at + 3),
+        }).toEqual({
+          preview: `Nothing is owed to the engine: a question is open — realm run respond ${id} --gate ${g} --choice ok`,
+          pasted: [0, expect.stringContaining(`Responded: ${id} | choice 'ok'`)],
+          phase: 'running',
+          several: [
+            'The engine can run nothing now:',
+            `  an agent step is ready: 'write' — drive it with realm agent --run-id ${tid} --provider <provider> --model <model>`,
+            `  'fetch' is in flight in another program — wait for it, or see realm run inspect ${tid}`,
+          ],
+        });
+      });
+    });
+
+    describe('round 30 — C210 (walk c14 W3-3): advance says only the cleanup steps its ending ran', () => {
+      const cleanup = (name: string, handler: string): string =>
+        [
+          `  ${name}:`,
+          `    description: ${name}.`,
+          '    execution: finalizer',
+          `    handler: ${handler}`,
+          '    on_outcome: always',
+        ].join('\n');
+      const from = (lines: string[], start: string): string[] =>
+        lines.slice(lines.findIndex((l) => l.startsWith(start)));
+
+      it('advance (C210): the first ending prints the cleanup step it ran; after a resume, a second ending does not run a cleanup step that completed or failed before, and prints no line for it', async () => {
+        claim(
+          PAGE,
+          'A cleanup step that completed or failed when the run ended before, and `realm run resume` reopened the run, does not run again and gets no line.',
+        );
+        const runs: Record<string, unknown> = {};
+        for (const [name, handler] of [
+          ['completed', 'mark'],
+          ['failed', 'boom'],
+        ] as const) {
+          const p = await project(
+            `c210-${name}`,
+            [
+              autoStep('a', [], ['handler: mark']),
+              autoStep('b', ['a'], ['handler: boom']),
+              cleanup('tidy', handler),
+            ].join('\n'),
+            true,
+          );
+          const id = await started(p.def);
+          const first = realm(['run', 'advance', id]);
+          const resumed = realm(['run', 'resume', id, '--from', 'b']);
+          const second = realm(['run', 'advance', id]);
+          const record = await runStore.get(id);
+          runs[name] = {
+            first: { code: first.code, tail: from(first.out, 'finalizer ') },
+            resumed: resumed.code,
+            second: { code: second.code, tail: from(second.out, '→ b') },
+            tidyRuns: record.evidence.filter((e) => e.step_id === 'tidy').length,
+            ledger: record.finalizer_ledger?.['tidy']?.status,
+          };
+        }
+        const resumeLine = (id: string) =>
+          `Stopped: the run has ended (failed) — to make 'b' runnable again: realm run resume ${id} --from b`;
+        // (a) red when the second ending prints a cleanup step it did not run, or the first ending
+        //     leaves its line out; (b) prints both calls' lines, the cleanup step's runs and status.
+        expect(
+          JSON.parse(JSON.stringify(runs).replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, '<id>')) as unknown,
+        ).toEqual({
+          completed: {
+            first: { code: 1, tail: ["finalizer 'tidy': completed", "Run <id>: phase 'failed'"] },
+            resumed: 0,
+            second: {
+              code: 1,
+              tail: [
+                '→ b',
+                "Stopped: 'b' failed: Handler 'boom' threw: boom",
+                resumeLine('<id>'),
+                "Run <id>: phase 'failed'",
+              ],
+            },
+            tidyRuns: 1,
+            ledger: 'completed',
+          },
+          failed: {
+            first: { code: 1, tail: ["finalizer 'tidy': failed", "Run <id>: phase 'failed'"] },
+            resumed: 0,
+            second: {
+              code: 1,
+              tail: [
+                '→ b',
+                "Stopped: 'b' failed: Handler 'boom' threw: boom",
+                resumeLine('<id>'),
+                "Run <id>: phase 'failed'",
+              ],
+            },
+            tidyRuns: 1,
+            ledger: 'failed',
+          },
+        });
+      });
+    });
+
+    it("purge (C213, round 28 finding 3): the resume count is resume's own rule — a failed cleanup step is not counted; a run whose workflow cannot be read is counted with any failed step", async () => {
+      claim(
+        PAGE,
+        'The line about `realm run resume` counts the selected runs that had a failed step `resume` could have made runnable again: a failed cleanup step is not counted, since `resume --from` refuses it. A run whose workflow cannot be read is counted when it has any failed step: `resume` refuses it until the workflow is registered again, and only the workflow tells a cleanup step from another.',
+      );
+      const steps = [
+        autoStep('s', [], ['handler: boom']),
+        '  clean:',
+        '    description: Clean up.',
+        '    execution: finalizer',
+        '    handler: boom',
+        '    on_outcome: fail',
+      ].join('\n');
+      const p = await project('c213-purge', steps, true);
+      const id = await started(p.def);
+      realm(['run', 'advance', id]);
+      const resumed = realm(['run', 'resume', id, '--from', 's']);
+      const abandoned = realm(['run', 'abandon', id]);
+      const after = await runStore.get(id);
+      const refused = realm(['run', 'resume', id, '--from', 'clean']);
+      const cleanOnly = realm(['run', 'purge', id]);
+      const failed = await started(p.def);
+      realm(['run', 'advance', failed]);
+      const withStep = realm(['run', 'purge', failed]);
+      // The workflow no longer readable: its registry entry removed.
+      rmSync(join(home, '.realm', 'workflows', 'c213-purge.json'));
+      const unread = realm(['run', 'purge', id]);
+      const line = (r: { out: string[] }) => r.out.find((l) => l.includes("'realm run resume'"));
+      // (a) red when a failed cleanup step counts as a resume path, a step resume takes does not,
+      //     or an unreadable workflow's run is not counted; (b) prints the lines and the record.
+      expect({
+        resumed: resumed.code,
+        abandoned: abandoned.code,
+        state: [after.run_phase, after.failed_steps],
+        refused: refused.code,
+        cleanOnly: line(cleanOnly),
+        withStep: line(withStep),
+        unread: line(unread),
+      }).toEqual({
+        resumed: 0,
+        abandoned: 0,
+        state: ['abandoned', ['clean']],
+        refused: 1,
+        cleanOnly: "None of the 1 selected run(s) are resumable via 'realm run resume'.",
+        withStep:
+          "1 of 1 selected run(s) are resumable via 'realm run resume' — purging would destroy that path permanently.",
+        unread:
+          "1 of 1 selected run(s) are resumable via 'realm run resume' — purging would destroy that path permanently.",
+      });
+    });
+
+    describe('round 28 — C205: the ways on of respond and drain on the states C202 did not list', () => {
+      const OTHER = {
+        by: 'other@host',
+        by_source: 'derived' as const,
+        channel: 'advance' as const,
+      };
+      /** The shipping workflow of the page's guard screens: `approve` (ship/hold, default ship),
+       *  the guard `only_if_shipping`, then the agent step `ship`. */
+      const SHIPPING = [
+        '  approve:',
+        '    description: Approve.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    gate:',
+        '      choices: [ship, hold]',
+        '      timeout_seconds: 3600',
+        '      on_expiry: settle_default',
+        '      default_choice: ship',
+        '  only_if_shipping:',
+        '    description: Ship only when approved.',
+        '    execution: guard',
+        '    depends_on: [approve]',
+        `    abort_unless: ["approve.choice == 'ship'"]`,
+        '    abort_message: The order was held.',
+        agentStep('ship', ['only_if_shipping']),
+      ].join('\n');
+      async function openApprove(def: WorkflowDefinition, expired: boolean) {
+        const id = await started(def);
+        const opened = await executeStep(runStore, def, {
+          runId: id,
+          command: 'approve',
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        if (opened.status !== 'confirm_required') throw new Error(`fixture: ${opened.status}`);
+        if (expired) {
+          const record = await runStore.get(id);
+          await runStore.update({
+            ...record,
+            pending_gate: {
+              ...record.pending_gate!,
+              opened_at: '2020-01-01T00:00:00.000Z',
+              expires_at: '2020-01-01T01:00:00.000Z',
+            },
+          });
+        }
+        return { id, gateId: opened.gate!.gate_id };
+      }
+
+      it("respond: an answer that leaves nothing to name but a step in flight in another program says to wait for it — the page's screen", async () => {
+        claim(
+          PAGE,
+          'When the answer leaves nothing to name but a step in flight in another program, the line says to wait for it, in the words `realm run advance` uses. Added after version 0.46.0:',
+        );
+        const def = await fromString(
+          'acting-c205-held',
+          [CONFIRM(), autoStep('pack', []), autoStep('done', ['confirm', 'pack'])].join('\n'),
+        );
+        const id = await started(def);
+        await runStore.claimStep(id, 'pack', def, OTHER);
+        const opened = await executeStep(runStore, def, {
+          runId: id,
+          command: 'confirm',
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        const r = respond({ id, gateId: opened.gate!.gate_id }, 'approve');
+        // (a) red when the step in flight is not named, or another way on is offered; (b) prints both.
+        expect({ code: r.code, out: r.out }).toEqual({
+          code: 0,
+          out: put(block(PAGE, 'Responded: 5c1e8a42'), {
+            '5c1e8a42-3f0b-4d7e-9a61-2b8f0c4d7e13': id,
+          }),
+        });
+      });
+
+      it('respond: a guard that failed goes on with the way back in, and following it, `realm run resume` takes the guard', async () => {
+        claim(
+          PAGE,
+          'A guard that failed is listed as a failed step `realm run resume` takes, so the second sentence goes on with the way back in: `To make the failed step runnable again: realm run resume <id> --from <step>` (added after version 0.46.0).',
+        );
+        const def = await fromString(
+          'acting-c205-guard',
+          [
+            CONFIRM(),
+            '  check:',
+            '    description: Check.',
+            '    execution: guard',
+            '    depends_on: [confirm]',
+            '    abort_unless: ["nope.field == true"]',
+          ].join('\n'),
+        );
+        const q = await atQuestion(def);
+        const r = respond(q, 'approve');
+        const resumed = realm(['run', 'resume', q.id, '--from', 'check']);
+        // (a) red when the sentence loses the way back in, names another step, or resume refuses
+        //     the step it names; (b) prints both.
+        expect({ first: r.out[0], code: r.code, resumed: resumed.code }).toEqual({
+          first: `Guard step 'check' failed with a resolution error. Run is terminated. To make the failed step runnable again: realm run resume ${q.id} --from check`,
+          code: 0,
+          resumed: 0,
+        });
+      });
+
+      it("respond and drain --expired --force, the guard that passed (the page's screens): the agent step `ship` it leaves ready is named with its drive", async () => {
+        const def = await fromString('acting-c205-ship', SHIPPING);
+        const q = await openApprove(def, false);
+        const r = respond(q, 'ship');
+        const e = await openApprove(def, true);
+        const d = realm(['run', 'drain', e.id, '--expired', '--force']);
+        // (a) red when a line differs from the page's screens (their run IDs put in place); (b)
+        //     prints both.
+        expect([r.out, d.out]).toEqual([
+          put(block(PAGE, 'Responded: 989c0619'), {
+            '989c0619-1bda-4b2e-b5e3-4d33d6519a67': q.id,
+          }),
+          put(block(PAGE, "Run '230b0939-9c61-40e4-8b6f-910594a81e92' is not terminal"), {
+            '230b0939-9c61-40e4-8b6f-910594a81e92': e.id,
+          }),
+        ]);
+      });
+
+      it("drain --expired --force: an enactment that leaves only a step in flight in another program names it — the page's screen", async () => {
+        claim(
+          PAGE,
+          'When it leaves no work for the engine and nothing that cannot run, but an agent step ready or a step in flight in another program, the line `realm run advance` prints for it follows (the guard that passed above leaves the agent step `ship` ready). Added after version 0.46.0, which prints nothing after `nothing further to drain.` there:',
+        );
+        const def = await fromString(
+          'acting-c205-drain-held',
+          [
+            CONFIRM('settle_default'),
+            autoStep('pack', []),
+            autoStep('done', ['confirm', 'pack']),
+          ].join('\n'),
+        );
+        const id = await started(def);
+        await runStore.claimStep(id, 'pack', def, OTHER);
+        const opened = await executeStep(runStore, def, {
+          runId: id,
+          command: 'confirm',
+          input: {},
+          dispatcher: async () => ({}),
+        });
+        const record = await runStore.get(id);
+        await runStore.update({
+          ...record,
+          pending_gate: {
+            ...record.pending_gate!,
+            opened_at: '2020-01-01T00:00:00.000Z',
+            expires_at: '2020-01-01T01:00:00.000Z',
+          },
+        });
+        expect(opened.status, 'fixture').toBe('confirm_required');
+        const d = realm(['run', 'drain', id, '--expired', '--force']);
+        // (a) red when the step in flight is not named, or another way on is offered; (b) prints both.
+        expect(d.out).toEqual(
+          put(block(PAGE, "Run '7d2e9b14"), { '7d2e9b14-5a3c-4f81-b0e6-93c4a1f2d857': id }),
+        );
+      });
+    });
+  },
+);

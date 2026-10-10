@@ -27,6 +27,9 @@ import {
   WorkflowError,
   sealRunLevel,
   renderLoaderWarning,
+  describePending,
+  owedNames,
+  cannotGoOnLines,
 } from '@sensigo/realm';
 import type {
   WorkflowDefinition,
@@ -662,10 +665,21 @@ export async function sweepExpiredGates(
       );
       if (outcome.applied) {
         result.enacted += 1;
+        // issue #625 PR-2a (D7.7): an expiry that leaves the run open with engine work owed names
+        // it — nothing else is attending a run the sweeper just moved on.
+        const owedView = outcome.run.terminal_state
+          ? undefined
+          : describePending(definition, outcome.run, undefined, now);
+        // decision C64: an expiry that leaves nothing able to run from here names the steps and the
+        // way out — core's lines.
+        const cannotGoOn =
+          owedView === undefined ? [] : cannotGoOnLines(outcome.run, owedView, definition);
         deps.logger.info('listen: sweeper enacted an expired gate', {
           run_id: run.id,
           gate_id: gate.gate_id,
           disposition: gate.on_expiry,
+          ...(owedView?.act !== undefined ? { owed: owedNames(owedView) } : {}),
+          ...(cannotGoOn.length > 0 ? { cannot_go_on: cannotGoOn } : {}),
         });
         if (outcome.transitioned) {
           deps.logger.info(

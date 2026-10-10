@@ -1,6 +1,9 @@
 // run-agent.test.ts — Tests for runAgent() and MCP tool dispatch.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { InvalidArgumentError } from 'commander';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import type {
@@ -479,12 +482,22 @@ describe('runAgent — wedge detection on attach (#101, detect-only)', () => {
     };
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await runAgent(deps, { definition: wedgeWf, existingRunId: run.id, params: {} });
+    // issue #625 PR-2a (D6.2): the loop first watches the record (injected short windows here).
+    await runAgent(deps, {
+      definition: wedgeWf,
+      existingRunId: run.id,
+      params: {},
+      inFlightPollMs: 5,
+      inFlightWatchMs: 20,
+    });
     const out = logSpy.mock.calls.flat().join('\n');
     logSpy.mockRestore();
 
-    expect(out).toContain('wedged');
-    expect(out).toContain('review: claim_unknown_age');
+    // An unknown-age claim: never "its runner likely died" (that is said only past a deadline).
+    expect(out).toContain(
+      "• Step 'review' has been in flight since an unrecorded time, taken before program names were recorded; the record has not changed for 0s.",
+    );
+    expect(out).not.toContain('likely died');
     expect(out).toContain(`realm run reclaim ${run.id} --step review --force`);
     expect(provider.callStep).not.toHaveBeenCalled(); // detect-only — attach does NOT execute
   });
@@ -820,6 +833,13 @@ class ConcurrentWriterStore extends InMemoryStore {
 
 describe('runAgent — schema-feedback repair loop (issue #217)', () => {
   it('test 1: repair-success — 2 provider calls; attempt-2 prompt carries the summary, never the raw AJV leak (enum.allowedValues)', async () => {
+    // #625 PR-2a, C163: tools.md's run_version row says this repair reads the refusal's run_version.
+    expect(
+      readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/mcp/tools.md'),
+        'utf8',
+      ).replace(/\s+/g, ' '),
+    ).toContain("`realm agent`'s repair of an answer reads that.");
     const def = agentWorkflow({
       output_schema: {
         type: 'object',
@@ -1119,7 +1139,7 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     expect(secondPrompt).toContain('rejected by the input schema validator');
   });
 
-  it('test 5: auto-step never repairs — exactly one executeChain submission (one auto-banner print), no repair message', async () => {
+  it('test 5: auto-step never repairs — refused once before its claim (one cannot-run line, no attempt banner), no repair message', async () => {
     const def: WorkflowDefinition = {
       id: 'auto-repair-wf',
       name: 'Auto Repair WF',
@@ -1155,10 +1175,18 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
 
     expect(result).toBe('failed');
     expect(provider.callStep).not.toHaveBeenCalled();
+    // issue #625 PR-2a (decision C31): a step refused before its claim is named once and never
+    // attempted — no `→ [auto]` banner (the step does not run); the one write-free read is not shown.
     const autoLines = logSpy.mock.calls
       .flat()
       .filter((l) => typeof l === 'string' && l.includes('→ [auto] finalize'));
-    expect(autoLines).toHaveLength(1);
+    expect(autoLines).toHaveLength(0);
+    const cannotLines = logSpy.mock.calls
+      .flat()
+      .filter(
+        (l) => typeof l === 'string' && l.startsWith("• Step 'finalize' cannot run (input_schema)"),
+      );
+    expect(cannotLines).toHaveLength(1);
     const printed = errorSpy.mock.calls.flat().join('\n');
     expect(printed).not.toContain('repairing');
     expect(printed).not.toContain('schema-repair');

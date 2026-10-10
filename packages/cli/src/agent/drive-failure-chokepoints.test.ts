@@ -326,14 +326,28 @@ describe('#401 chokepoint (3) — the mid-loop throw carries the current step', 
       params: {},
     });
 
-    // Throws once, on the per-attempt version read — which only happens after a step has been
-    // selected. Counted rather than armed by name because the reads before it (attach, then
-    // eligibility) are what make the step name exist at all. The fence's OWN re-read must still
-    // succeed, or the entry degrades to the console lostLine and there is nothing to assert.
-    let reads = 0;
+    // Throws once, on the first store read AFTER the drive has selected `classify` — keyed on the
+    // selection itself, never on a count of reads (issue #625 PR-2a: the loop top reads more than it
+    // did, and the next added read must not move this cell). The drive reads a step's own model
+    // clock (`llm_timeout_seconds`) only once that step is selected, after `currentStepName` is set
+    // and before its per-attempt version read; nothing at the loop top, and nothing in core, reads
+    // it. A non-enumerable getter observes that read without changing the definition anything
+    // serializes. The fence's OWN re-read must still succeed (the throw is one-shot), or the entry
+    // degrades to the console lostLine and there is nothing to assert.
+    let selected = false;
+    let thrown = false;
+    Object.defineProperty(wf.steps['classify']!, 'llm_timeout_seconds', {
+      enumerable: false,
+      get() {
+        selected = true;
+        return undefined;
+      },
+    });
     store.get = async (id: string) => {
-      reads++;
-      if (reads === 3) throw new Error('store read exploded mid-loop');
+      if (selected && !thrown) {
+        thrown = true;
+        throw new Error('store read exploded mid-loop');
+      }
       return original(id);
     };
 

@@ -221,7 +221,7 @@ function composeAnswerView(entry: Record<string, unknown>): AnswerView {
         ? outputChoice
         : undefined;
   // An entry the gate's expiry wrote carries `resolution` (and the settlement's literal
-  // `responded_by: 'timeout'`, never migrated): no one answered — the expiry wrote the default
+  // `responded_by: 'timeout'`, never migrated): no answer was recorded in time — the expiry wrote the default
   // choice. Keyed on `resolution`, never on the literal — a caller may state `timeout` as its own
   // name. (The abort expiry's entry never reaches here: `isAnswerEntry` leaves it out.)
   const settledByExpiry = entry['resolution'] !== undefined;

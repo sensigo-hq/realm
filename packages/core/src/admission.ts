@@ -1,8 +1,8 @@
 /**
  * The admission rule (architecture framework v1.27 §4; `plans/holder-slice/rebase-620/admission-decision.md`).
  *
- * Every exported engine function that takes a store, a registry or a driver admits the call HERE,
- * as its first statement. The checks live in ONE declared, ordered table, so a new check is a row in
+ * Every exported engine function that takes a store, a registry, a driver or a caller admits the
+ * call HERE, as its first statement. The checks live in ONE declared, ordered table, so a new check is a row in
  * the table and never a new block at the top of a function — two pieces of work that each add a
  * check cannot collide at the engine's front door (they did: #620 PR-C and #625 PR-H, 2026-10-03).
  *
@@ -20,11 +20,13 @@
  */
 import { assertReleaseLine, assertRegistryLine } from './release-line.js';
 import { validateDriver } from './engine/holder.js';
+import { validateCaller } from './engine/callers.js';
 import { ExtensionRegistry } from './extensions/registry.js';
 
 /** The engine functions that admit their calls here. A source-text witness pins each call. */
 export const ENGINE_ENTRIES = [
   'executeStep',
+  'executeEngineStep',
   'submitHumanResponse',
   'drainFinalizers',
   'advanceRun',
@@ -36,12 +38,17 @@ export const ENGINE_ENTRIES = [
 
 export type EngineEntry = (typeof ENGINE_ENTRIES)[number];
 
-/** What the host handed to one entry. An entry that takes no registry or no driver omits it. */
+/** What the host handed to one entry. An entry that takes no registry, driver or caller omits it. */
 export interface HostWiring {
   store: unknown;
   storeKind: 'run store' | 'workflow store';
   registry?: unknown;
   driver?: unknown;
+  /**
+   * The entry's `caller` (decisions C133, C151): a word from the entry's own list
+   * (`ENTRY_CALLERS`), never a free label.
+   */
+  caller?: unknown;
 }
 
 interface HostWiringCheck {
@@ -63,6 +70,10 @@ export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
   {
     id: 'driver_shape',
     check: (_entry, w) => validateDriver(w.driver),
+  },
+  {
+    id: 'caller',
+    check: (entry, w) => validateCaller(entry, w.caller),
   },
 ];
 

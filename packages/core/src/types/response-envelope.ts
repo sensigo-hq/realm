@@ -27,7 +27,10 @@ export interface NextAction {
 export type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
 
 export interface BlockedReason {
-  /** Step names currently eligible for execution. */
+  /**
+   * The steps that can be called now: the agent steps the run's view offers and the `auto` steps
+   * it does not refuse — never a step refused before its claim (issue #625 PR-2a, decision C94).
+   */
   eligible_steps: string[];
   suggestion?: string;
 }
@@ -102,8 +105,11 @@ export interface ResponseEnvelope {
    */
   error_code?: ErrorCode;
   /**
-   * Additional structured context from the WorkflowError. Only present when
-   * error_code is set and the error carries non-empty details.
+   * Additional structured context. On an error: the WorkflowError's details, present when
+   * error_code is set and the error carries non-empty details. On a late answer that names the
+   * choice the question's expiry recorded (`status: 'ok'`, `answer_recorded: false`, decision
+   * C185): `runId`, `gateId`, `winning_choice` and `resolved_by: 'timeout'` — the fields the
+   * refusal of another choice carries.
    */
   error_details?: Record<string, unknown>;
   agent_action?: AgentAction;
@@ -121,7 +127,10 @@ export interface ResponseEnvelope {
    * could be loaded (`buildPreExecutionErrorEnvelope` / `errorEnvelope`).
    */
   run_phase?: RunPhase;
-  /** Steps available for execution. Empty array means terminal or blocked — check status and run_phase. */
+  /**
+   * What to call next. Empty means nothing can be called now: the run has ended, waits on a person
+   * or another process, or cannot go on — check status, agent_action and run_phase.
+   */
   next_actions: NextAction[];
   blocked_reason?: BlockedReason;
   gate?: GateInfo;
@@ -201,11 +210,16 @@ export interface ResponseEnvelope {
    * - the step the call named (`command`), when that step stopped the call; or
    * - a step the engine ran AFTER it: `command`'s own call returned `ok`, so it settled; or,
    * - after MCP `start_run` (whose `command` is the tool's name), the `auto` step the engine was
-   *   running when the call stopped.
+   *   running when the call stopped;
+   * - after `advanceRun` / MCP `advance_run` (whose `command` is no step), the `auto` step it ran
+   *   that stopped the call (issue #625 PR-2a).
    *
-   * Absent on every `ok` reply and on an error of the chain itself (the depth limit; a guard's
-   * settlement that could not be written — those errors name their guard in their own text). A
-   * refusal thrown before any step is called (the release-line and driver checks) is not a reply.
+   * Absent on every `ok` reply and on an error of the chain itself (a guard's settlement that could
+   * not be written, or that a different attempt had already settled — those errors name their guard
+   * in their own text). A refusal thrown before any step is called (the release-line and driver
+   * checks) is not a reply. An `auto` step the engine refuses before its claim (issue #625 PR-2a,
+   * decision C13) is never run by the chain, so it stops no call: the reply is `ok` and names it in
+   * its `context_hint`.
    *
    * Read it before naming the step a non-`ok` reply belongs to: `command` names what the caller
    * asked for, not the step that stopped. When it differs from `command`, the engine ran it after

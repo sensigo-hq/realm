@@ -1506,7 +1506,7 @@ steps:
 
   it("the CAUSE clause's claim is only true while `checkPreconditions` has ONE engine call site", () => {
     // The message asserts the engine never evaluates preconditions on a guard. That rests entirely
-    // on there being a single call site, inside `executeStep`. A second one added anywhere in the
+    // on there being a single call site, inside `checkPreClaim` (used by `executeStep`). A second one added anywhere in the
     // engine would make this message a confident lie, and nothing else in the suite would notice.
     //
     // SCOPE, deliberately: `packages/core/src`, excluding tests, the definition in
@@ -1536,7 +1536,9 @@ steps:
     };
     walk(root);
     expect(callSites).toHaveLength(1);
-    expect(callSites[0]).toContain('execution-loop.ts');
+    // issue #625 PR-2a: the one call site is `checkPreClaim` (pending.ts), which `executeStep` and
+    // the run's view call — both only for eligible `auto`/`agent` steps, never for a guard.
+    expect(callSites[0]).toContain('pending.ts');
   });
 
   it('CONTROL: the same guard without `preconditions` loads', () => {

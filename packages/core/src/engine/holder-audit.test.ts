@@ -158,12 +158,32 @@ describe('the OS user is read at exactly two production sites', () => {
 
 describe('the claim token is passed back at exactly one non-test host site', () => {
   it('only the MCP tool passes claimToken into submitHumanResponse; no CLI surface does (it never passes one)', () => {
-    const hosts = FILES.filter((f) => /^(cli|mcp-server)\//.test(rel(f)))
-      .filter((f) => /\bclaimToken\b/.test(stripped.get(f)!))
+    const hostFiles = FILES.filter((f) => /^(cli|mcp-server)\//.test(rel(f)));
+    const answering = hostFiles
+      .filter((f) =>
+        callsOf(stripped.get(f)!, /submitHumanResponse/).some((args) =>
+          args.some((a) => /\bclaimToken\b/.test(a)),
+        ),
+      )
       .map(rel);
     // (a) red when the CLI (respond, the run prompt, the Slack attendant) starts passing a token,
     //     or a second tool does; (b) prints the files.
-    expect(hosts).toEqual(['mcp-server/src/tools/submit-human-response.ts']);
+    expect(answering).toEqual(['mcp-server/src/tools/submit-human-response.ts']);
+    // decision C179 (round 23): the one other host use is `realm workflow run`'s own claim — the
+    // claim its agent step's prompt holds, let go with `release_step` — never an answer's proof.
+    // (a) red when a CLI file uses a claim token anywhere else; (b) prints the lines.
+    const uses = hostFiles
+      .filter((f) => !rel(f).startsWith('mcp-server/'))
+      .flatMap((f) =>
+        stripped
+          .get(f)!
+          .split('\n')
+          .filter((l) => /\bclaimToken\b/.test(l))
+          .map((l) => `${rel(f)}: ${l.trim()}`),
+      );
+    expect(uses).toEqual([
+      "cli/src/commands/run.ts: { kind: 'release_step', step, ...(token !== undefined ? { claimToken: token } : {}) },",
+    ]);
   });
 });
 

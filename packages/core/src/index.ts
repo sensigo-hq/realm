@@ -30,6 +30,11 @@ export { hashParams, canonicalJson } from './store/params-hash.js';
 export { decideIdempotencyPolicy } from './store/idempotency-policy.js';
 export type { IdempotencyDecision } from './store/idempotency-policy.js';
 export { executeStep } from './engine/execution-loop.js';
+// Issue #625 PR-2a (F1): the one duration formatter — `<n>s` under a minute, then `<m>m`, `<h>h <m>m`,
+// `<d>d <h>h`.
+export { formatDuration } from './utils/duration.js';
+// Issue #625 PR-2a (F6): the one POSIX shell quoter for a value a printed command carries.
+export { shellWord, quotedCommand } from './utils/shell-word.js';
 /**
  * Issue #625 holder slice (PR-H): the vocabulary and the pure functions for who took a step and how a
  * caller proves it was handed the reply that opened a question. Core reads no environment and no OS
@@ -101,8 +106,9 @@ export {
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
 } from './engine/execution-loop.js';
 export type { SubmitGateOptions, ExecuteChainOptions } from './engine/execution-loop.js';
-// Issue #625 (PR-1). `advanceRun` is the chain's tail (settle eligible guards, then run the next
-// auto step), moved out of `executeChain`, which is its only production caller. The rest is the
+// Issue #625 (PR-1, PR-2a). `advanceRun` runs what the engine owes on a run (settle eligible
+// guards, then run its eligible auto steps); `start_run`, `advance_run`, `realm run advance` and the
+// `realm agent` loop call it. The rest is the
 // ONE mint of what a settlement write's guards mean on a reply and on a screen: the ending reader
 // and its printed lines for a surface holding a settlement result (`realm run drain --expired`,
 // the gate-expiry timer), and the composer for a surface that speaks after an answer
@@ -115,9 +121,120 @@ export {
   describeEndedBy,
   guardPassedLine,
   describeAnswerEnding,
+  finalizerOutcomeLines,
   lateAnswerOutcome,
+  expiryCarriedOutLine,
+  runReadError,
+  terminalAnswerRefusalMessage,
+  withResumeOffer,
+  withPendingCleanup,
+  withEndedRunWays,
+  endedRunWaysSentence,
+  pendingGateQuestion,
 } from './engine/execution-loop.js';
-export type { AdvanceRunState, GuardEnding } from './engine/execution-loop.js';
+export type {
+  AdvanceRunOptions,
+  AdvanceCaller,
+  StepCaller,
+  EngineStepCaller,
+  ChainCaller,
+  AnswerCaller,
+  EnactedVia,
+  ExecuteEngineStepOptions,
+  GuardEnding,
+} from './engine/execution-loop.js';
+export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/execution-loop.js';
+// F4: where an evidence entry's output came from — the source, or why it has none (`OUTPUT_SOURCES`, the
+// vocabulary, is exported with the run record's types).
+export {
+  OUTPUT_SOURCE_ABSENT_CAUSES,
+  isBareAutoStep,
+  outputSourceOf,
+} from './engine/output-source.js';
+export type { OutputSourceAbsentCause } from './engine/output-source.js';
+// F7: the one rule for "another program got there first" — the stop kinds and the classifier every
+// loop reads.
+export { STOP_KINDS, classifyStop, isRaceStop, stopAbout } from './engine/stop-kind.js';
+export type {
+  HaltStop,
+  HaltStopKind,
+  NotRecordedKind,
+  RaceStop,
+  RaceStopKind,
+  StopClassification,
+  StopKind,
+  StopRecord,
+  StopReply,
+} from './engine/stop-kind.js';
+// Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
+export { ENTRY_CALLERS } from './engine/callers.js';
+// Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
+export {
+  PRE_CLAIM_REFUSALS,
+  AGENT_PRE_CLAIM_REFUSALS,
+  CAPABILITY_BASES,
+  checkPreClaim,
+  engineStepInput,
+  describePending,
+  stepsThatCannotRun,
+  owedNames,
+  owedList,
+  owedWords,
+  owedRunsClause,
+  owedCallWords,
+  cannotRunWords,
+  cannotRunClause,
+  cannotRunWayOut,
+  cannotRunWayOutTools,
+  cannotRunWayOutApplies,
+  cannotGoOnHere,
+  cannotGoOnLines,
+  resumeWay,
+  // F2: what a surface may OFFER to `realm run resume` (an engine failure only), and what it says in
+  // the offer's place for a run an operator ended.
+  offeredResumeWay,
+  operatorEndingSentence,
+  oneOf,
+  respondCommand,
+  waitingOnAnswer,
+  waitingWords,
+  pendingCleanupWay,
+  pendingCleanupLine,
+  pendingCleanupSentence,
+  heldLeaseWords,
+  capabilityMarkerWayOut,
+  withFullStop,
+  endsWithCommand,
+  sentenceEnd,
+  ADVANCE_OWED,
+  composeNextActionsStatusWord,
+  describeNext,
+  PROGRAM_FITS,
+  judgeProgramFit,
+  describeRunDriver,
+  dueExpiry,
+  dueExpiryWords,
+  callableSteps,
+  // decisions C103, C104: the open question, its one answer composer and its reader; why a step
+  // cannot be called.
+  openQuestionOf,
+  answerableQuestion,
+  openQuestionWords,
+  answerAction,
+  answerOf,
+  notCallableReason,
+} from './engine/pending.js';
+export type {
+  PreClaimRefusal,
+  AgentPreClaimRefusal,
+  PreClaimRefused,
+  CapabilityBasis,
+  EngineRunnable,
+  PendingView,
+  ProgramFit,
+  DueExpiry,
+  OpenQuestion,
+} from './engine/pending.js';
 export {
   findEligibleSteps,
   isWorkflowComplete,

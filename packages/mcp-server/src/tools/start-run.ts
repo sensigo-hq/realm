@@ -1,13 +1,17 @@
-// start-run tool — creates a new run and chains through initial auto steps.
+// start-run tool — creates a new run and runs its first automatic steps (advanceRun).
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   validateRunParams,
   JsonWorkflowStore,
   JsonFileStore,
-  executeChain,
+  advanceRun,
+  withEndedRunWays,
+  classifyStop,
+  endedRunWaysSentence,
   buildNextActions,
-  findEligibleSteps,
+  describeNext,
+  describePending,
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -15,17 +19,60 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
-  type StepDispatcher,
   type ResponseEnvelope,
   type RunStore,
   type TraceBufferStore,
   type FailedAttemptStore,
   ExtensionRegistry,
   type Attributed,
+  type RunRecord,
+  type WorkflowDefinition,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
+
+/**
+ * The hint of a reply that hands back a run on which this call ran nothing (decisions C45, C57, C64,
+ * C65): `Run '<id>' created for workflow '<wf>'.` (with the supersede clause when the run replaced
+ * another), or `Matched existing run '<id>' (idempotent) in phase '<phase>'; no new run created.`
+ * for a run an idempotency key matched — then, on a live run, what comes next ({@link describeNext}):
+ * the open question it waits on (decision C103), the agent steps ready, the engine's owed work, each
+ * engine step that cannot run and, when the run cannot go on until its workflow is corrected, the way
+ * out. `start_run`'s reply
+ * and every `started` entry of `start_run_batch` carry it; neither composes its own.
+ *
+ * @param run      The record the store returned: the run created, or the one the key matched.
+ * @param current  The record the reply describes — `run`, or the one a capability block's attempt
+ *                 left (decision C52).
+ */
+export function handBackHint(args: {
+  run: RunRecord;
+  current: RunRecord;
+  definition: WorkflowDefinition;
+  registry?: ExtensionRegistry;
+  deduped: boolean;
+  /**
+   * decisions C95, C117: the call's clock — a matched run whose open question is due names its
+   * expiry as owed, never its answer. Required: a hint built without one assumed nothing had expired.
+   */
+  now: Date;
+}): string {
+  const { run, current, definition, registry, deduped, now } = args;
+  // decision C103: a run waiting on a question is described too — `describeNext` names the
+  // question, its choices and the act, as `next_actions` holds its answer.
+  const describes = !current.terminal_state;
+  const next = describes
+    ? describeNext(describePending(definition, current, registry, now), current, definition)
+    : '';
+  if (deduped) {
+    // decisions C205, C211: a matched run that has ended says the ways back in.
+    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}${endedRunWaysSentence(current, definition, new Date())}`;
+  }
+  return run.rerun_of !== undefined
+    ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
+    : `Run '${run.id}' created for workflow '${definition.id}'.${next}`;
+}
 
 /** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
 function logDedup(fields: Record<string, unknown>): void {
@@ -70,9 +117,6 @@ export interface HandleRunStores {
    */
   driver?: Attributed;
 }
-
-// Fallback dispatcher for agent steps and auto steps without a registry entry.
-const passthroughDispatcher: StepDispatcher = async () => ({});
 
 /**
  * Business logic for the start_run tool.
@@ -134,9 +178,8 @@ export async function handleStartRun(
   // auto-step handlers/adapters, warn so the operator can provision before a step blocks recoverably.
   // The `?? createDefaultRegistry()` fallback is a HARD invariant — it mirrors the dispatch sites, so a
   // filesystem-only workflow with no supplied registry does not false-warn.
-  const warnings: string[] = unmetCapabilities(definition, registry ?? createDefaultRegistry()).map(
-    capabilityWarning,
-  );
+  const unmet = unmetCapabilities(definition, registry ?? createDefaultRegistry());
+  const warnings: string[] = unmet.map(capabilityWarning);
   if (deduped) {
     // Observational only — a legitimate same-caller retry also hits an active run. Keyed on
     // terminal_state, never the persisted run_phase.
@@ -169,57 +212,116 @@ export async function handleStartRun(
     });
   }
 
-  const eligible = findEligibleSteps(definition, run);
-  const firstAutoStep = eligible.find((name) => definition.steps[name]?.execution === 'auto');
-
-  if (firstAutoStep !== undefined) {
-    const result = await executeChain(runStore, definition, {
+  // issue #625 PR-2a (decision C1): ONLY the creating call runs work. A deduped match runs nothing
+  // — an idempotent create has no side effect on a match — and its reply names what the run owes
+  // (the agent steps, the advance act) through `buildNextActions` below.
+  // decision C52: the record the creation reply is composed from — the created record, or the one a
+  // capability block left (its attempt wrote the marker and an entry).
+  let createdRun = run;
+  let capabilityBlock: ResponseEnvelope | undefined;
+  if (!deduped) {
+    const result = await advanceRun(runStore, definition, {
       runId: run.id,
-      command: firstAutoStep,
-      input: params,
-      dispatcher: passthroughDispatcher,
+      caller: 'start_run',
       ...(registry !== undefined ? { registry } : {}),
+      ...(stores?.traceBufferStore !== undefined
+        ? { traceBufferStore: stores.traceBufferStore }
+        : {}),
       ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
     });
-    // Source run_phase from the final run so the spread can't drop it.
-    const finalRun = await runStore.get(run.id).catch(() => run);
-    return {
-      ...result,
-      run_id: run.id,
-      data: {},
-      evidence: [],
-      run_phase: finalRun.run_phase,
-      warnings: [...result.warnings, ...warnings],
-      // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
-      // agent should not need a second call to learn that `on_terminal_match: 'rerun'` replaced a run.
-      ...(finalRun.rerun_of !== undefined
-        ? {
-            rerun_of: finalRun.rerun_of,
-            // walk 2: the hint is what an agent reads first; a supersede must be said there, not
-            // only carried as a key below the next_actions block.
-            context_hint: `${result.context_hint} This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`,
-          }
-        : {}),
-      deduped,
-    };
+    const ranSomething =
+      result.status !== 'ok' ||
+      result.chained_auto_steps !== undefined ||
+      result.run_version !== run.version;
+    // decision C52: a capability block is not this call's failure — the run was created and is
+    // healthy; a runner with the extension runs the step. The reply is the creation reply (status
+    // ok), its hint names the step through describeNext, and the block's message (its own
+    // `context_hint`: "Step '<s>' is blocked: …") rides in `warnings`, in place of that step's
+    // pre-flight warning (decision C58). A failed step is returned as is.
+    // F7: the reply read by core's classifier (one rule for every host — no code list here).
+    const afterAdvance =
+      result.status === 'error' ? await runStore.get(run.id).catch(() => run) : undefined;
+    if (
+      afterAdvance !== undefined &&
+      classifyStop(result, undefined, afterAdvance)?.kind === 'capability'
+    ) {
+      capabilityBlock = result;
+      createdRun = afterAdvance;
+    } else if (ranSomething) {
+      // decision C10: the phase is derived from the record advanceRun leaves.
+      const finalRun = await runStore.get(run.id).catch(() => run);
+      // decisions C205, C211 (the architect's addendum): a run this call ended — its own step
+      // failed, or cleanup steps were left pending — says the ways back in.
+      return {
+        ...withEndedRunWays(result, finalRun, definition, new Date()),
+        run_id: run.id,
+        data: {},
+        evidence: [],
+        run_phase: deriveRunPhase(finalRun),
+        warnings: [...result.warnings, ...warnings],
+        // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
+        // agent should not need a second call to learn that `on_terminal_match: 'rerun'` replaced
+        // a run.
+        ...(finalRun.rerun_of !== undefined
+          ? {
+              rerun_of: finalRun.rerun_of,
+              // walk 2: the hint is what an agent reads first; a supersede must be said there, not
+              // only carried as a key below the next_actions block.
+              context_hint: `${result.context_hint} This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`,
+            }
+          : {}),
+        deduped,
+      };
+    }
   }
 
-  const nextActions = buildNextActions(definition, run);
+  // decision C95: with the clock, a run the key matched whose open question is due (its time is up,
+  // `on_expiry` declared) is handed back with the `advance_run` act that carries it out.
+  const now = new Date();
+  const nextActions = createdRun.terminal_state
+    ? []
+    : buildNextActions(definition, createdRun, registry, now);
+  // decision C58: the block happened, so the pre-flight warning for the same step ("If reached it
+  // will block") is dropped beside it. The blocked steps are the ones whose `capability_blocks`
+  // marker this call's attempt wrote — a created run carries none before it.
+  const blockedHere =
+    capabilityBlock === undefined
+      ? new Set<string>()
+      : new Set(
+          Object.keys(createdRun.capability_blocks ?? {}).filter(
+            (step) => run.capability_blocks?.[step] === undefined,
+          ),
+        );
+  const droppedPreflight = new Set(
+    unmet.filter((requirement) => blockedHere.has(requirement.step)).map(capabilityWarning),
+  );
   return {
     command: 'start_run',
     run_id: run.id,
-    run_version: run.version,
+    run_version: createdRun.version,
     status: 'ok',
     data: {},
     evidence: [],
-    warnings,
+    warnings:
+      capabilityBlock !== undefined
+        ? [...warnings.filter((w) => !droppedPreflight.has(w)), capabilityBlock.context_hint]
+        : warnings,
     errors: [],
-    context_hint: deduped
-      ? `Matched existing run '${run.id}' (idempotent) in phase '${derivedPhase}'; no new run created.`
-      : run.rerun_of !== undefined
-        ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).`
-        : `Run '${run.id}' created for workflow '${definition.id}'.`,
-    run_phase: derivedPhase,
+    ...(capabilityBlock?.chained_auto_steps !== undefined
+      ? { chained_auto_steps: capabilityBlock.chained_auto_steps }
+      : {}),
+    // issue #625 PR-2a (decisions C45, C57, C64): a run this call ran nothing on — created, or
+    // matched by its key — says what comes next in its own hint, so a step that cannot run, and the
+    // way out when the run cannot go on, are named on the reply that hands the run back.
+    context_hint: handBackHint({
+      run,
+      current: createdRun,
+      definition,
+      ...(registry !== undefined ? { registry } : {}),
+      deduped,
+      now,
+    }),
+    run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
     deduped,
     next_actions: nextActions,
@@ -231,7 +333,7 @@ export function registerStartRun(server: McpServer, opts?: HandleRunStores): voi
   markServedByTool(opts);
   server.tool(
     'start_run',
-    'Create a new workflow run and chain through initial auto steps.',
+    'Create a new workflow run and run its first automatic steps.',
     {
       workflow_id: z.string(),
       params: z.record(z.unknown()).optional().default({}),

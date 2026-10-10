@@ -9,7 +9,7 @@
 | `realm mcp`   | Over the standard input and output of the process. | The assistant's client, on your machine. | The client that started it. |
 | `realm serve` | Over HTTP.                                         | You.                                     | Anyone who has the token.   |
 
-Both serve the 10 tools listed in [MCP tools](../mcp/tools.md), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
+Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
 
 ## `realm mcp`
 
@@ -36,7 +36,7 @@ Other commands use the folder they are started in as the project. `realm mcp` do
 
 ### `realm-mcp`
 
-The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server with no flags. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked.
+The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server with no flags. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked. `start_run` still creates the run and replies `status: ok`; the block is in its `warnings` (added after version 0.46.0, which replies `status: error`):
 
 ```text
 Step 'fetch' is blocked: its handler 'fetch_record' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. …
@@ -122,7 +122,7 @@ It does not start in these cases:
 realm serve: this realm command's own packages disagree: its realm-mcp runs @sensigo/realm 0.46.1 (/usr/lib/node_modules/@sensigo/realm-cli/node_modules/@sensigo/realm-mcp/node_modules/@sensigo/realm) and was handed a workflow store from @sensigo/realm 0.46.0 (/usr/lib/node_modules/@sensigo/realm-cli/node_modules/@sensigo/realm). Reinstall @sensigo/realm-cli so every @sensigo package it installs is one version (npm ls -g @sensigo/realm lists the copies of a global install; npm ls @sensigo/realm in a project).
 ```
 
-`realm mcp` prints the same line beginning `realm mcp:`. Any other error that stops the server from being built is printed as `realm serve: <message>` or `realm mcp: <message>`. A registry is also checked when a tool resolves it for a call: a registry from another realm version that the server's registry provider returned is refused in that tool's reply, with `error_code` `ENGINE_RELEASE_LINE_MISMATCH` and a message that begins `The registry the server's registry provider returned for start_run` (or `start_run_batch`, `execute_step`, `submit_human_response`). Any other error while a request is handled is logged as `realm serve: <message>` and the request is answered with `500`; the server keeps running. A program that builds the server itself must catch the refusal: an `http` request handler that throws ends the process. When the `@sensigo/realm` the workflow's code imports is not the version the command runs, both commands print [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and go on. This was added in 0.46.0.
+`realm mcp` prints the same line beginning `realm mcp:`. Any other error that stops the server from being built is printed as `realm serve: <message>` or `realm mcp: <message>`. A registry is also checked when a tool resolves it for a call: a registry from another realm version that the server's registry provider returned is refused in that tool's reply, with `error_code` `ENGINE_RELEASE_LINE_MISMATCH` and a message that begins `The registry the server's registry provider returned for start_run` (or `start_run_batch`, `execute_step`, `submit_human_response`, `get_run_state`, `advance_run`). Any other error while a request is handled is logged as `realm serve: <message>` and the request is answered with `500`; the server keeps running. A program that builds the server itself must catch the refusal: an `http` request handler that throws ends the process. When the `@sensigo/realm` the workflow's code imports is not the version the command runs, both commands print [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and go on. This was added in 0.46.0.
 
 ## What both read when a tool is called
 

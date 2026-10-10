@@ -33,7 +33,7 @@ export interface WorkflowProtocol {
   description?: string;
   params_schema?: JsonSchema;
   steps: ProtocolStep[];
-  /** e.g. "2 of 4 steps require agent action. 2 are handled automatically." */
+  /** e.g. "2 of 4 steps require agent action. 2 are run by the engine." */
   agent_steps_summary: string;
   rules: string[];
   error_handling: Record<string, string>;
@@ -45,6 +45,7 @@ const DEFAULT_RULES = [
   "When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
   'Do NOT auto-confirm any human gate. The user must decide.',
   'Do NOT ask the user for permission between steps unless the system tells you to.',
+  'When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.',
 ];
 
 const ERROR_HANDLING: Record<string, string> = {
@@ -110,7 +111,10 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
           : trustVerdict === 'lawful_no_gate'
             ? ` (this step declares 'trust: ${renderTrustValue(step.trust)}' — accepted but inert; ${step.execution} steps never gate)`
             : ` (this step declares 'trust: ${renderTrustValue(step.trust)}', which the loader refuses on ${step.execution} steps — this definition reached the protocol without going through it)`;
-      agent_involvement = `none — the engine runs this ${step.execution} step automatically; do NOT call execute_step for it${trustNote}.`;
+      agent_involvement =
+        step.execution === 'guard'
+          ? `none — the engine settles this guard step itself; when next_actions names advance_run, call it, and do NOT call execute_step for it${trustNote}.`
+          : `none — the engine runs this finalizer step itself when the run ends; do NOT call execute_step for it${trustNote}.`;
     } else if (trustVerdict === 'refuse') {
       // issue #508 (final correction): `buildTrustRefusal` (types/workflow-definition.ts) —
       // the same composer L1/L2/the run-health finding all use, with its own `'briefing'`
@@ -128,11 +132,12 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
       });
       refusedStepCount++;
     } else if (step.execution === 'auto' && !hasGate) {
-      agent_involvement = 'none — engine handles this automatically';
+      agent_involvement =
+        'none — the engine runs this step; when next_actions names advance_run, call it';
       autoStepCount++;
     } else if (step.execution === 'auto' && hasGate) {
       agent_involvement =
-        'YOU will receive `status: confirm_required` after this step runs — the engine executes it automatically, then opens a gate. Read `gate.agent_hint` for presentation instructions, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
+        'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
       possible_gate = { choices: ['approve', 'reject'] };
       autoStepCount++;
     } else if (step.execution === 'agent' && !hasGate) {
@@ -194,7 +199,7 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
   const agent_steps_summary =
     `${agentStepCount} of ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} ` +
     `${agentStepCount === 1 ? 'requires' : 'require'} agent action. ` +
-    `${autoStepCount} ${autoStepCount === 1 ? 'is' : 'are'} handled automatically.`;
+    `${autoStepCount} ${autoStepCount === 1 ? 'is' : 'are'} run by the engine.`;
 
   const rules = definition.protocol?.rules ?? DEFAULT_RULES;
 
@@ -223,8 +228,8 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
           // can never reach 'completed' while the refused step is never corrected.
           `Call start_run with workflow_id '${definition.id}'. ${refusedStepCount} of this workflow's ${totalSteps} ${totalSteps === 1 ? 'step' : 'steps'} ${refusedStepCount === 1 ? 'has' : 'have'} an invalid 'trust' value and will be refused by the engine (VALIDATION_TRUST_VALUE) before it can run — see that step's agent_involvement for what to tell the user. Any step depending on it returns status: blocked until the workflow is corrected and re-registered (the refusal itself carries no next_action); steps that do not depend on it are unaffected.`
         : agentStepCount > 0
-          ? `Call start_run with workflow_id '${definition.id}'. The engine will run auto steps automatically and return control at the first step requiring agent action. Follow the next_action in each response until the workflow completes.`
-          : `Call start_run with workflow_id '${definition.id}'. The engine handles all steps automatically. Follow the next_action in each response until the workflow completes.`;
+          ? `Call start_run with workflow_id '${definition.id}'. The engine runs the steps it owns and returns control at the first step requiring agent action; when next_actions names advance_run, call it. Follow the next_action in each response until the workflow completes.`
+          : `Call start_run with workflow_id '${definition.id}'. The engine runs every step; when next_actions names advance_run, call it. Follow the next_action in each response until the workflow completes.`;
 
   const protocol: WorkflowProtocol = {
     workflow_id: definition.id,
