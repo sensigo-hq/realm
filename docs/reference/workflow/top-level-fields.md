@@ -125,7 +125,7 @@ Follow the next_action instruction in each response exactly.
 When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.
 Do NOT auto-confirm any human gate. The user must decide.
 Do NOT ask the user for permission between steps unless the system tells you to.
-When next_actions names advance_run, call it: the engine owes steps that only advance_run runs.
+When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.
 ```
 
 The fifth rule was added after version 0.46.0. Setting `rules` removes all five, including the two about human gates.

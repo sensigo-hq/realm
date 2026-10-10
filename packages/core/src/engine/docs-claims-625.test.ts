@@ -690,12 +690,12 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   );
 
   // --- now (lines 102, 119: C150, C157) -------------------------------------------------------
-  it('C163 line 102: advanceRun given a number or a string as now throws a TypeError at an open question, before anything is written; with none it runs its steps', async () => {
+  it('C163 line 102: advanceRun given a number or a string as now throws a TypeError at an open question that declares on_expiry, before anything is written; with none it runs its steps', async () => {
     claim(
       "`now` is a `Date`, the time the call judges a question's expiry by (default: the current time).",
     );
     claim(
-      'Pass a `Date`: given a number or a string, a call that meets an open question throws a `TypeError` (`now.getTime is not a function`) before anything is written, and a call that meets none runs its steps.',
+      'Pass a `Date`: given a number or a string, a call that meets an open question that declares `on_expiry` throws a `TypeError` (`now.getTime is not a function`) before anything is written; any other call runs as given.',
     );
     const d = gated();
     const { runId } = await atQuestion(d);

@@ -100,7 +100,7 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - `advance_run`'s reply names the step that stopped the call in `stopped_step`, as
     `execute_step` and `start_run` do.
   - When no step is refused before its claim, the last of those lines is
-    `To end the run instead: realm run abandon <id>.` (a step this program lacks the handler or
+    `To end the run instead: realm run abandon <id>` (a step this program lacks the handler or
     adapter for names its own way out).
   - A step refused for a missing handler or adapter, judged with the caller's own extensions, ends
     with its way out (`— load the missing extension, or run the step on a runner that has it`).
@@ -309,6 +309,12 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **The protocol no longer forbids `execute_step` for an `auto` step (issue #625, PR-2a).**
+  `get_workflow_protocol`'s fifth standard rule reads `When next_actions names advance_run, call it:
+the engine owes steps it runs when you call advance_run.`, and an `auto` step's `agent_involvement`
+  reads `none — the engine runs this step; when next_actions names advance_run, call it`. They said
+  that only `advance_run` runs such a step and not to call `execute_step` for it, but `execute_step`
+  called by name runs it. A guard step and a cleanup step keep `do NOT call execute_step for it`.
 - **Two stop lines say what is true (issue #625, PR-2a).** `realm workflow run` said `No eligible
 steps in phase 'running'. Workflow stalled.` when the engine owed work the command does not run (a
   guard, for one); it now says `The engine owes '<step>', which this command does not run.`, and
@@ -450,7 +456,8 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
 - **BREAKING — the owed call replaces three silent states (issue #625, PR-2a).** `get_run_state`'s
   `next_actions_status` value `auto_pending` (documented as "not awaiting the agent") is removed and
   replaced by `advance_owed`.
-  - `advance_owed` is set exactly when the act is present and no agent step is ready.
+  - `advance_owed` is set exactly when the act is present and no agent step is ready, unless a
+    step's claim is past its time: the status is then `claim_stale`, with the act still in the list.
   - With an agent step ready, the status is `ok` and the act is in the list.
   - An `auto` step with a `handler` is no longer turned into a next action naming the handler (no
     client can call it).
@@ -498,7 +505,7 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
   - An input its schema rejects is recorded as the same `validation_rejected` drive failure as
     before, so `realm run list --stuck` still names it.
   - ONE line closes the drive, exit 1:
-    `✗ The drive stops: nothing else can run, and '<s>' cannot run (<check>). Run <id> stays open (phase '<phase>'): correct the workflow, register it again, then realm run advance <id>; or end it: realm run abandon <id>.`
+    `✗ The drive stops: nothing else can run, and '<s>' cannot run (<check>). Run <id> stays open (phase '<phase>'): correct the workflow, register it again, then realm run advance <id> — or end it: realm run abandon <id>`
   - Before, a precondition refusal made the drive re-run the step forever.
   - A capability block keeps its own exit (`⚠ … is blocked … re-attach`).
   - Each drive that has nothing else to run attempts the step once.

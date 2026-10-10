@@ -1345,7 +1345,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   it("C163 start_run_batch: each entry's next_actions names its run's first call, its hint the creation sentence and what comes next", async () => {
     claim(
       'mcp/tools.md',
-      "Each entry's `next_actions` names its run's first call, and its `context_hint` is the sentence `start_run`'s reply carries for a run on which nothing ran: `Run '<id>' created for workflow '<workflow>'.` (or `Matched existing run …` for a repeat), then what comes next",
+      "Each entry's `next_actions` names its run's first call — empty when what the run owes needs a handler or adapter this server lacks (its `context_hint` then names the step: `'<step>' cannot run here (capability): …`) — and its `context_hint` is the sentence `start_run`'s reply carries for a run on which nothing ran: `Run '<id>' created for workflow '<workflow>'.` (or `Matched existing run …` for a repeat), then what comes next",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(AGENT_THEN_AUTO);
@@ -1725,7 +1725,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      "Call it when `next_actions` names it: every reply and `get_run_state` end `next_actions` with this act whenever engine work is owed and nobody is running it — after a gate is answered, when a question's time is up and it declares `on_expiry`, after `resume`, and for a run `start_run_batch` created.",
+      "Call it when `next_actions` names it: every reply and `get_run_state` end `next_actions` with this act whenever engine work this server can run is owed and nobody is running it — after a gate is answered, when a question's time is up and it declares `on_expiry`, after `resume`, and for a run `start_run_batch` created.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(FORK);
@@ -2057,7 +2057,7 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
   it('C163 advance_run: offered after resume — a failed auto step made runnable again is engine work owed', async () => {
     claim(
       'mcp/tools.md',
-      "every reply and `get_run_state` end `next_actions` with this act whenever engine work is owed and nobody is running it — after a gate is answered, when a question's time is up and it declares `on_expiry`, after `resume`, and for a run `start_run_batch` created.",
+      "every reply and `get_run_state` end `next_actions` with this act whenever engine work this server can run is owed and nobody is running it — after a gate is answered, when a question's time is up and it declares `on_expiry`, after `resume`, and for a run `start_run_batch` created.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(STEPS);

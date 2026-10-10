@@ -31,7 +31,7 @@ A run moves only when something calls the engine. On each call the engine does t
 2. It runs every `auto` and `guard` step that is now allowed, one after another.
 3. It stops at the next `agent` step, at a gate, or at the end of the run, and replies with what to do next.
 
-Not every call does step 2. An answer to a gate (`submit_human_response`, or `realm run respond`) decides only the `guard` steps the answer makes ready. `start_run_batch`, and a `start_run` that matches an existing run by its idempotency key, run no step. After a step that fails or is refused, nothing more runs in that call. What such a call leaves owed, `advance_run` runs (see below).
+Not every call does step 2. An answer to a gate (`submit_human_response`, or `realm run respond`) decides only the `guard` steps the answer makes ready. `start_run_batch`, and a `start_run` that matches an existing run by its idempotency key, run no step. After a step that fails, or a step you called that is refused, nothing more runs in that call; a step the engine refuses before its claim is skipped, and the rest run. What such a call leaves owed, `advance_run` runs (see below).
 
 Here is the start of a real run of the pull-request review example. The first step is `auto`, so the engine ran it inside the very first call:
 
