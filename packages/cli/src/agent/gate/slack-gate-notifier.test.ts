@@ -441,8 +441,14 @@ function makeGateStore(gate: PendingGate): RunStore {
     skipped_steps: [],
     evidence: [],
   };
-  const get = vi.fn().mockResolvedValueOnce(openRun).mockResolvedValue(completedRun);
-  const update = vi.fn().mockResolvedValue(completedRun);
+  // F9: every read before the answer is written sees the open run (the notifier now reads it before
+  // the answer too, for its finalizer lines), and every read after it the completed one.
+  let answered = false;
+  const get = vi.fn().mockImplementation(async () => (answered ? completedRun : openRun));
+  const update = vi.fn().mockImplementation(async () => {
+    answered = true;
+    return completedRun;
+  });
   return declared({ get, update } as unknown as RunStore);
 }
 

@@ -309,6 +309,13 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **`realm run respond` says only the cleanup steps its answer's ending ran (issue #625, PR-2a).**
+  The rule `realm run advance` follows now holds for every caller of the one composer: `realm run
+respond`, the reply in a Slack gate thread and `realm workflow run`'s prompt name only the cleanup
+  steps the answer's ending ran or left pending. After `realm run resume`, an answer that ended the
+  run again printed `finalizer '<name>': completed` for a cleanup step that ran at the first ending.
+  `finalizerOutcomeLines(run, before)` and `describeAnswerEnding`'s `before` (the record read before
+  the call) are required.
 - **A `realm.yaml` is named only when one is read (issue #625, PR-2a).** With `--extensions-module`,
   `realm run advance`'s first line said `… and the realm.yaml of <folder>` for a folder with none, its
   `--project … was not used` line said the project's code was loaded (the override replaces it), and

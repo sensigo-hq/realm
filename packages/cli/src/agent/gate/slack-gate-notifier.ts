@@ -389,6 +389,10 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
         // submitHumanResponse signals failure by RETURNING an error envelope (it does not throw);
         // gate on that status so we never post a false confirmation or abort on a failed submit.
         // (The catch below still handles an unexpected throw identically.)
+        // F9: the record before the answer — the finalizer lines name only the cleanup steps this
+        // answer's ending ran or left pending. A record this read could not get leaves every
+        // cleanup step's line (the answer's own call then reads it, or refuses).
+        const before = await store.get(runId).catch(() => undefined);
         const result = await submitHumanResponse(store, definition, {
           runId,
           gateId: gate.gate_id,
@@ -410,6 +414,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
               gateId: gate.gate_id,
               via: 'agent',
               workflow: definition,
+              before: before ?? {},
             });
           } catch {
             // The record could not be read (only the finalizer outcomes need it): the reply's own
@@ -442,6 +447,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
                   gateId: gate.gate_id,
                   via: 'agent',
                   workflow: definition,
+                  before: before ?? {},
                 });
               } catch {
                 // The answer IS recorded — a failed read here must not reach the catch below and

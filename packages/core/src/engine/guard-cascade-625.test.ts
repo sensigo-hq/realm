@@ -56,6 +56,13 @@ import type { ResponseEnvelope } from '../types/response-envelope.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
+/**
+ * F9: `describeAnswerEnding`'s `before` — the record read before the answer. In these cells the
+ * answer is the run's first ending, and cleanup steps are minted at an ending, so the record before
+ * it held none: every cleanup step the ending ran gets its line.
+ */
+const NO_CLEANUP_BEFORE: Pick<RunRecord, 'finalizer_ledger'> = {};
+
 /** The sentence a late answer whose choice matched the expiry's default has always carried. */
 const LATE_SAME_CHOICE =
   'the outcome matches your choice, but it was settled by timeout; your response was not recorded.';
@@ -409,7 +416,13 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // What a surface prints after this answer: the ending first, the reason, then the finalizer.
       // (a) red when the composer drops a line, reorders them, or rewords the finalizer line;
       //     (b) prints the lines.
-      expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
+      expect(
+        describeAnswerEnding(reply, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+        }),
+      ).toEqual([
         "Guard step 'check' aborted the run.",
         'Reason: Not approved — stopping.',
         "finalizer 'notify': completed",
@@ -836,7 +849,13 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(lateAnswerOutcome(reply, record)).toEqual({ choice: 'reject', phase: 'aborted' });
       // (a) red when the composer drops the expiry sentence or joins it to the guard's on one
       //     line; (b) prints the lines.
-      expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
+      expect(
+        describeAnswerEnding(reply, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+        }),
+      ).toEqual([
         `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
@@ -875,7 +894,13 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(lateAnswerOutcome(reply, record)).toEqual({ choice: 'reject', phase: 'aborted' });
       // (a) red when the refused form's lines lose the refusal, the ending or the reason;
       //     (b) prints the lines.
-      expect(describeAnswerEnding(reply, record, { gateId, via: 'submitHumanResponse' })).toEqual([
+      expect(
+        describeAnswerEnding(reply, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+        }),
+      ).toEqual([
         `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
         refusal,
         "Guard step 'check' aborted the run.",
@@ -911,6 +936,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         describeAnswerEnding(sameReply, sameRecord, {
           gateId: same.gateId,
           via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
         }),
       ).toEqual([
         `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
@@ -940,6 +966,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
         describeAnswerEnding(otherReply, otherRecord, {
           gateId: other.gateId,
           via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
         }),
       ).toEqual([
         `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
@@ -996,9 +1023,13 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       const record = await store.get(runId);
       expect(lateAnswerOutcome(same, record)).toEqual({ choice: 'approve', phase: 'running' });
       // (a) red when the composer prints nothing for this reply; (b) prints the lines.
-      expect(describeAnswerEnding(same, record, { gateId, via: 'submitHumanResponse' })).toEqual([
-        LATE_SAME_CHOICE,
-      ]);
+      expect(
+        describeAnswerEnding(same, record, {
+          gateId,
+          via: 'submitHumanResponse',
+          before: NO_CLEANUP_BEFORE,
+        }),
+      ).toEqual([LATE_SAME_CHOICE]);
 
       const different = await submitHumanResponse(store, def, {
         runId,
@@ -1375,6 +1406,7 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
       describeAnswerEnding({ ...base, status: 'ok', errors: [] }, gateOpenRecord(gateThenGuard()), {
         gateId: 'g',
         via: 'submitHumanResponse',
+        before: NO_CLEANUP_BEFORE,
       }),
     ).toEqual([]);
   });

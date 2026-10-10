@@ -772,7 +772,13 @@ export const runCommand = new Command('run')
             // decision C146: the answer the composer speaks for — this gate, named as this command.
             // decision C211: the workflow — the way back in after a late answer whose expiry ended
             // the run reads resume's rule over it.
-            const answered = { gateId: g.gate_id, via: 'run' as const, workflow: definition };
+            // F9: `before`, the record this prompt read before the answer.
+            const answered = {
+              gateId: g.gate_id,
+              via: 'run' as const,
+              workflow: definition,
+              before: run,
+            };
             const respondResult = await submitHumanResponse(store, definition, {
               runId,
               gateId: g.gate_id,

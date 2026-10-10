@@ -5193,20 +5193,18 @@ function lateExpiryLines(
  * {@link describeAnswerEnding}), the Slack gate notifier, the terminal run prompt and `realm run
  * advance`. Empty for a run with no cleanup step in its ledger.
  *
- * Decision C210: given `before` (the record the call read before its writes), only the cleanup steps
- * whose status changed since — the ones the ending in this call ran or left pending. A cleanup step
- * that completed or failed at an earlier ending (before a resume) is never run again (`mintFresh`'s
- * never-downgrade), and one this ending did not select keeps its `voided`: neither gets a line.
+ * Decision C210, F9: `before` is the record the call read before its writes — every caller passes
+ * it (one rule): only the cleanup steps whose status changed since get a line — the ones the ending in
+ * this call ran or left pending. A cleanup step that completed or failed at an earlier ending (before
+ * a resume) is never run again (`mintFresh`'s never-downgrade), and one this ending did not select
+ * keeps its `voided`: neither gets a line.
  */
 export function finalizerOutcomeLines(
   run: Pick<RunRecord, 'finalizer_ledger'>,
-  before?: Pick<RunRecord, 'finalizer_ledger'>,
+  before: Pick<RunRecord, 'finalizer_ledger'>,
 ): string[] {
   return Object.entries(run.finalizer_ledger ?? {})
-    .filter(
-      ([name, entry]) =>
-        before === undefined || before.finalizer_ledger?.[name]?.status !== entry.status,
-    )
+    .filter(([name, entry]) => before.finalizer_ledger?.[name]?.status !== entry.status)
     .sort(([, a], [, b]) => a.rank - b.rank)
     .map(([name, entry]) => `finalizer '${name}': ${entry.status}`);
 }
@@ -5215,7 +5213,9 @@ export function finalizerOutcomeLines(
  * issue #625: what a surface that speaks after an ANSWER prints about what the answer's write
  * settled — the ONE composer for `realm run respond`, the Slack gate notifier and the terminal run
  * prompt. `run` is the record the surface reads after the call (finalizers already drained);
- * `answer` is the gate answered and the surface's own `caller` word (`respond`, `agent`, `run`).
+ * `answer` is the gate answered, the surface's own `caller` word (`respond`, `agent`, `run`), and
+ * (F9) `before`, the record the surface read before the answer — the finalizer lines name only the
+ * cleanup steps this answer's ending ran or left pending (decision C210's rule, for every caller).
  *
  *  - a LATE answer (`answer_recorded: false` — the gate's expiry beat it): first the line that says
  *    which call carried the expiry out (decision C146: `⚠ … this <via> call first carried out …`,
@@ -5240,12 +5240,14 @@ export function describeAnswerEnding(
     // decision C211: the run's workflow — the way back in after a late answer whose expiry ended
     // the run reads resume's rule over it.
     workflow?: Parameters<typeof resumeWay>[1];
+    // F9: the record the caller read before the answer (decision C210's `before`).
+    before: Pick<RunRecord, 'finalizer_ledger'>;
   },
 ): string[] {
   // decision C211 (walk c14 W3-4's class): after each cleanup step's outcome, the command that runs
   // the ones the ending left pending.
   const finalizerLines = (): string[] => [
-    ...finalizerOutcomeLines(run),
+    ...finalizerOutcomeLines(run, answer.before),
     ...[pendingCleanupLine(run)].filter((line): line is string => line !== undefined),
   ];
   const passedLines = (): string[] => (reply.guards ?? []).map((g) => guardPassedLine(g.step));

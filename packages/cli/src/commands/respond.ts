@@ -214,7 +214,13 @@ export async function respondToGate(
       // (this one, or another), then the refusal and what the expiry's guards did.
       lines = [
         ...withCleanupLine(
-          describeAnswerEnding(result, lateRun, { gateId: options.gate, via: 'respond', workflow }),
+          describeAnswerEnding(result, lateRun, {
+            gateId: options.gate,
+            via: 'respond',
+            workflow,
+            // F9: the record this command read before its answer.
+            before: run,
+          }),
           lateRun,
         ),
         ...(late !== undefined
@@ -236,7 +242,13 @@ export async function respondToGate(
 
   const updatedRun = await runStore.get(runId);
   const lines = withCleanupLine(
-    describeAnswerEnding(result, updatedRun, { gateId: options.gate, via: 'respond', workflow }),
+    describeAnswerEnding(result, updatedRun, {
+      gateId: options.gate,
+      via: 'respond',
+      workflow,
+      // F9: the record this command read before its answer.
+      before: run,
+    }),
     updatedRun,
   );
   // issue #625: an `ok` reply is not always a recorded answer — when the gate's expiry had

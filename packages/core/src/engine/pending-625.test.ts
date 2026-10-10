@@ -1979,8 +1979,9 @@ describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where 
     // (a) red when a line is left out, the order is not the rank order, or the words change; (b)
     //     prints them.
     expect({
-      two: finalizerOutcomeLines({ finalizer_ledger: ledger } as unknown as RunRecord),
-      none: finalizerOutcomeLines({} as RunRecord),
+      // F9: `before` is required; a record before the call with no cleanup step gives every line.
+      two: finalizerOutcomeLines({ finalizer_ledger: ledger } as unknown as RunRecord, {}),
+      none: finalizerOutcomeLines({} as RunRecord, {}),
     }).toEqual({ two: ["finalizer 'note': failed", "finalizer 'tidy': completed"], none: [] });
   });
 
