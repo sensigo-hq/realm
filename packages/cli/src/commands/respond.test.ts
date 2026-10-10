@@ -1,9 +1,10 @@
 // Tests for respondToGate — CLI respond command logic.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { respondToGate, respondCommand } from './respond.js';
 import {
   JsonFileStore,
@@ -11,9 +12,11 @@ import {
   WorkflowError,
   ExtensionRegistry,
   executeStep,
+  submitHumanResponse,
+  composeStepViews,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
-import type { WorkflowDefinition, StepHandler } from '@sensigo/realm';
+import type { WorkflowDefinition, StepHandler, RunRecord } from '@sensigo/realm';
 import { clearProjectExtensionsCache } from '../extensions/load-project-extensions.js';
 
 const gateWorkflow: WorkflowDefinition = {
@@ -27,6 +30,30 @@ const gateWorkflow: WorkflowDefinition = {
       execution: 'auto',
       trust: 'human_confirmed',
       gate: { choices: ['approve', 'reject'] },
+    },
+  },
+};
+
+/**
+ * #706 walk W8-R1: a question (`decide`) and an `auto` step after it, so an answer leaves the run
+ * `running` and the `Responded:` line ends `new state 'running'`.
+ */
+const answererWorkflow: WorkflowDefinition = {
+  id: 'respond-answerer-wf',
+  name: 'Respond Answerer Workflow',
+  version: 1,
+  schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+  steps: {
+    decide: {
+      description: 'Auto step with gate',
+      execution: 'auto',
+      trust: 'human_confirmed',
+      gate: { choices: ['ship', 'hold'] },
+    },
+    after: {
+      description: 'The step after the question',
+      execution: 'auto',
+      depends_on: ['decide'],
     },
   },
 };
@@ -475,5 +502,212 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     expect(errored()).toContain('respond again');
     expect(errored()).not.toContain('Error loading extensions');
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+// #706 walk W8-R1: the `Responded:` line's answerer clause names the answer the RECORD holds, never
+// this command's own `--by`. A repeat of the recorded choice records nothing (core's `already_settled`
+// path) and still prints `Responded:` — so it must name whoever's answer the record keeps.
+//
+// Every cell carries (a) the change that turns it red and (b) what it prints on failure: the printed
+// line and the record's answers as the step view reads them (choice, answerer, proof) — never an
+// environment. Cell 8 (`realm run inspect`'s and `realm workflow run`'s answer lines, unchanged) is
+// the existing pins in inspect-holder-625.test.ts and run-prompt-625.test.ts.
+// -------------------------------------------------------------------------------------------------
+describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
+  let runDir: string;
+  let runStore: JsonFileStore;
+  let workflowStore: JsonWorkflowStore;
+  let registry: ExtensionRegistry;
+  let runId: string;
+  let gateId: string;
+
+  beforeEach(async () => {
+    runDir = await mkdtemp(join(tmpdir(), 'realm-respond-answerer-run-'));
+    runStore = new JsonFileStore(runDir);
+    workflowStore = new JsonWorkflowStore(
+      await mkdtemp(join(tmpdir(), 'realm-respond-answerer-wf-')),
+    );
+    await workflowStore.register(answererWorkflow);
+    registry = new ExtensionRegistry();
+    const { run } = await runStore.create({
+      workflowId: answererWorkflow.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const opened = await executeStep(runStore, answererWorkflow, {
+      runId: run.id,
+      command: 'decide',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    expect(opened.status).toBe('confirm_required');
+    runId = run.id;
+    gateId = opened.gate!.gate_id;
+  });
+
+  /** `realm run respond <run> --gate <gate> --choice ship [--by <by>]`: its `Responded:` line. */
+  async function respond(by?: string, store: JsonFileStore = runStore): Promise<string> {
+    const outcome = await respondToGate(
+      runId,
+      { gate: gateId, choice: 'ship', ...(by !== undefined ? { by } : {}) },
+      store,
+      workflowStore,
+      registry,
+    );
+    // The owed lines follow the `Responded:` line; the cells compare the first line only.
+    return outcome.lastLine.split('\n')[0]!;
+  }
+
+  /** The record's answers to the question, as the step view reads them — what a failure prints. */
+  async function recordedAnswers(): Promise<string> {
+    return JSON.stringify(composeStepViews(await runStore.get(runId))['decide']?.answers ?? []);
+  }
+
+  const respondedLine = (clause: string): string =>
+    `Responded: ${runId} | choice 'ship'${clause} | new state 'running'`;
+
+  it('1. a repeat names the answerer the record holds, never its own --by', async () => {
+    await respond('alice');
+    const bob = await respond('bob');
+    // (a) red when the clause is composed from this command's `--by`: bob's line names bob, while
+    //     the record keeps alice. (b) prints bob's line and the record's answers.
+    expect(bob, `the record's answers: ${await recordedAnswers()}`).toBe(
+      respondedLine(' | answered by alice (as stated)'),
+    );
+  });
+
+  it('2. no name recorded, --by given: the repeat says (not stated), never its own name', async () => {
+    await respond();
+    const bob = await respond('bob');
+    // (a) red when the clause is composed from `--by`: bob's line names bob, while the record holds
+    //     no name. (b) prints bob's line and the record's answers.
+    expect(bob, `the record's answers: ${await recordedAnswers()}`).toBe(
+      respondedLine(' | answered by (not stated)'),
+    );
+  });
+
+  it('3. a repeat without --by after a named answer names the recorded answerer', async () => {
+    await respond('alice');
+    const anonymous = await respond();
+    // (a) red when the clause is said only when `--by` was given (`byGiven ? … : ''` for every
+    //     answer): the line has no clause. (b) prints the line and the record's answers.
+    expect(anonymous, `the record's answers: ${await recordedAnswers()}`).toBe(
+      respondedLine(' | answered by alice (as stated)'),
+    );
+  });
+
+  it('4. a recorded name that cannot be printed: the repeat prints the one phrase, no byte of the name', async () => {
+    // A host program's own call through core's `submitHumanResponse` (no CLI or MCP door bounds the
+    // name): core stores the control character, and the record reads the name as unreadable.
+    const host = await submitHumanResponse(runStore, answererWorkflow, {
+      runId,
+      gateId,
+      choice: 'ship',
+      respondedBy: 'al\u0007ice',
+      registry,
+    });
+    const before = await recordedAnswers();
+    // Witness of the setup: (a) red when core refuses the name (then bob's answer would be the one
+    // recorded and the cell would test something else); (b) prints the reply's status and errors.
+    expect(host.status, `the host's answer: ${host.status} ${JSON.stringify(host.errors)}`).toBe(
+      'ok',
+    );
+    expect(
+      composeStepViews(await runStore.get(runId))['decide']?.answers?.map((a) => a.answered_by),
+      `the record's answers: ${before}`,
+    ).toEqual([{ by: null, absent_cause: 'name_unreadable' }]);
+    const bob = await respond('bob');
+    // (a) red when the clause is composed from `--by` (bob's name), or when an unreadable name reads
+    //     as `(not stated)`, or when the stored bytes are printed. (b) prints bob's line, JSON-quoted
+    //     so a control character shows as an escape, and the record's answers.
+    const shown = `bob's line: ${JSON.stringify(bob)}; the record's answers: ${await recordedAnswers()}`;
+    expect(bob, shown).toBe(
+      respondedLine(
+        ' | answered by a recorded name that cannot be printed (control characters, or not a name with its source)',
+      ),
+    );
+    expect(bob.includes('\u0007'), shown).toBe(false);
+    expect(bob.includes('alice'), shown).toBe(false);
+  });
+
+  it("5. the race: bob reads the question open, alice's answer lands, bob's submit finds it settled — bob's line names alice", async () => {
+    // Bob's own store over the same folder (a delegating wrapper is refused at admission). Its FIRST
+    // read returns the record with the question open — after alice's answer, written through the
+    // other instance, has landed. Bob's submit then reads the settled question (`already_settled`).
+    const bobStore = new JsonFileStore(runDir);
+    const read = bobStore.get.bind(bobStore);
+    const reads: RunRecord[] = [];
+    let aliceStatus: string | undefined;
+    bobStore.get = async (id: string): Promise<RunRecord> => {
+      const record = await read(id);
+      reads.push(record);
+      if (reads.length === 1) {
+        const alice = await submitHumanResponse(runStore, answererWorkflow, {
+          runId,
+          gateId,
+          choice: 'ship',
+          respondedBy: 'alice',
+          caller: 'respond',
+          registry,
+        });
+        aliceStatus = alice.status;
+      }
+      return record;
+    };
+    const bob = await respond('bob', bobStore);
+    const answersAfter = composeStepViews(await runStore.get(runId))['decide']?.answers ?? [];
+    // (b) what every assertion here prints: bob's reads (question open? record version), alice's
+    //     reply status, bob's line and the record's answers.
+    const shown =
+      `bob's reads: ${JSON.stringify(reads.map((r) => [r.pending_gate?.gate_id === gateId, r.version]))}; ` +
+      `alice's reply: ${String(aliceStatus)}; bob's line: ${bob}; ` +
+      `the record's answers: ${JSON.stringify(answersAfter)}`;
+    // Witnesses of the race — (a) each red when the setup misfires: bob's first read saw the question
+    // open; alice's answer was recorded; the record holds exactly one answer (alice's).
+    expect(reads[0]?.pending_gate?.gate_id, shown).toBe(gateId);
+    expect(aliceStatus, shown).toBe('ok');
+    expect(answersAfter.length, shown).toBe(1);
+    // (a) red when the clause is composed from `--by` (bob), or from the record bob read BEFORE his
+    //     call (the question open: no answer, so no clause).
+    expect(bob, shown).toBe(respondedLine(' | answered by alice (as stated)'));
+  });
+
+  it('6. (preservation) a first answer with --by names that answerer', async () => {
+    const alice = await respond('alice');
+    // (a) red when a recorded name stops being said, or its words change. (b) prints the line and
+    //     the record's answers.
+    expect(alice, `the record's answers: ${await recordedAnswers()}`).toBe(
+      respondedLine(' | answered by alice (as stated)'),
+    );
+  });
+
+  it('7. (preservation) a first answer with no --by prints no clause', async () => {
+    const anonymous = await respond();
+    // (a) red when a clause is printed for an answer nobody named, with no `--by` given. (b) prints
+    //     the line and the record's answers.
+    expect(anonymous, `the record's answers: ${await recordedAnswers()}`).toBe(respondedLine(''));
+  });
+
+  it('9. the reference page and the CHANGELOG say the line names the answerer the record holds', () => {
+    const repo = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+    const flat = (t: string): string => t.replace(/\s+/g, ' ');
+    // (a) red when the file no longer holds the sentence word for word (whitespace flattened);
+    // (b) prints the file's name and the sentence it should hold — never the whole file.
+    const says = (file: string, sentence: string): void => {
+      expect(
+        flat(readFileSync(join(repo, file), 'utf8')).includes(flat(sentence)),
+        `${file} no longer says: ${sentence}`,
+      ).toBe(true);
+    };
+    says(
+      'docs/reference/cli/realm-run-acting.md',
+      'Giving the same answer again prints the `Responded:` line again, naming the answerer the record holds (`answered by <name> (as stated)`, or `answered by (not stated)` when you gave `--by` and the record holds no name); it records no new answer.',
+    );
+    says(
+      'CHANGELOG.md',
+      '`realm run respond` prints the derived phase, the answerer the record holds (`answered by <name> (as stated)`; `answered by (not stated)` when `--by` was given and the record holds no name), and the owed line.',
+    );
   });
 });
