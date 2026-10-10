@@ -309,6 +309,10 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **`advance_run` names the guard that ended the run, whoever decided it (issue #625, PR-2a).** When
+  the call's own loop decides a guard that ends the run — one pending after `realm run resume --from
+<guard>`, for one — the reply carries `guards` and `ended_by`, as when a step's write decides it
+  (they were missing); `execute_step`'s chain, the same loop, too.
 - **A cleanup step under another drainer's lease is said as held (issue #625, PR-2a).** Every line
   that names a pending cleanup step and the command that runs it — `realm run inspect`, `realm run
 advance`, `realm run respond`, the MCP replies and `get_run_state`'s `cleanup_pending` (now with

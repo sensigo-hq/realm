@@ -581,6 +581,12 @@ export async function advanceRunFromShell(
     .filter((step) => workflow.steps[step]?.execution === 'guard' && !guardsSaid.has(step));
   const after = await runStore.get(runId);
   if (endingLines.length > 0) {
+    // F13: a guard that passed in this call before the one that ended the run (not yet said before
+    // a step's line) gets its passed line first, as below — also now that the loop's own guard
+    // ending carries `ended_by`.
+    for (const guard of chainedGuards) {
+      if (guard !== result.ended_by?.step) print(guardPassedLine(guard));
+    }
     for (const line of endingLines) print(line);
   } else {
     // decision C174 (pinning lane A, F2): only the guard the record names as the run's ending ended

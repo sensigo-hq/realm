@@ -7487,6 +7487,10 @@ async function advanceLoop(
               : guardSettleOutcome === 'resolution_error'
                 ? `Guard step '${guardName}' failed with a resolution error. Run is terminated.`
                 : `Guard step '${guardName}' passed and completed the run.`;
+          // F13 (review F-R4): the guard this loop decided ended the run — the reply says so as a
+          // step's write that ends the run says it (the one reply rule): `guards`, the guard this
+          // write settled, and `ended_by`, its seal arm, step and reason, read off the record.
+          const loopEnding = guardEndingOfRun(finalGuardRun);
           return {
             command: options.command,
             run_id: options.runId,
@@ -7499,6 +7503,16 @@ async function advanceLoop(
             context_hint: migratedContextHint,
             run_phase: finalGuardRun.run_phase,
             next_actions: [],
+            guards: [{ step: guardName, outcome: guardSettleOutcome }],
+            ...(loopEnding !== undefined
+              ? {
+                  ended_by: {
+                    arm: loopEnding.arm,
+                    step: loopEnding.step,
+                    ...(loopEnding.reason !== undefined ? { reason: loopEnding.reason } : {}),
+                  },
+                }
+              : {}),
             ...(finalGuardRun.defaulted_steps?.length
               ? { defaulted_steps: finalGuardRun.defaulted_steps }
               : {}),
