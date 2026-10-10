@@ -73,7 +73,7 @@ When the answer leaves nothing that can run from here — no agent step ready, n
 ```text
 Responded: 77772f0c-a80d-49d3-b665-4ac186186fd1 | choice 'approve' | new state 'running'
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
-Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1 — or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1
+Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1 — or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1
 ```
 
 A step that needs a handler or adapter this program lacks ends with its own way out (`— load the missing extension, or run the step on a runner that has it.`), and when no step is refused before its claim the last line is `To end the run instead: realm run abandon <id>`
@@ -191,11 +191,11 @@ Run 65d2afc8-2cb3-4401-808c-1d83a40bf989: phase 'completed'
 
 The line ends `, and failed; …` when the other program's run of the step failed. While the other program still holds the step it reads `• Step '<step>' was taken by <program> at <time>; this program's outcome for it was not recorded.`, and when the run ended without the step settling, `• Step '<step>': the run ended (<phase>) before this program's outcome for it was recorded.` When no program holds the step and it has not settled, it reads `• Step '<step>': another process removed the claim this program held on it; this program's outcome for it was not recorded.`, and the step is owed again: the command goes on with it as with any owed step. A step whose outcome was not recorded did not fail here, also when the other program's run of it failed: the exit code is the one for what is left. When the record changed after the command read it and before it claimed the step (another program ended the run, or opened a question on another step), the step did not run here: no line says it did, and the `Stopped:` lines say what the record shows. Added after version 0.46.0.
 
-When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reason>` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reason>` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). A reason that ends with a command ends the line there, with no full stop, so the command can be copied as printed; any other ends with a full stop. With more than one reason, the opening ends with its colon and each reason is a line of its own, indented two spaces (added after version 0.46.0, which joined them with `; ` and ended the line with a full stop). When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the one way out — correcting the workflow and registering it again is the fix, since the run picks up the corrected definition:
+When the engine can run nothing, the last preview line says why and nothing runs. It opens `Nothing is owed to the engine: <reason>` when nothing is owed (the run ended, a question is open, only agent steps are ready), and `The engine can run nothing now: <reason>` when steps are still owed to the engine but none can run here now (a step that cannot run, or a step in flight in another program). A reason that ends with a command ends the line there, with no full stop, so the command can be copied as printed; any other ends with a full stop. With more than one reason, the opening ends with its colon and each reason is a line of its own, indented two spaces (added after version 0.46.0, which joined them with `; ` and ended the line with a full stop). When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`):
 
 ```text
 The engine can run nothing now: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
-Run 507090b5-3b5b-4a6c-a814-3faa03404f95 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 507090b5-3b5b-4a6c-a814-3faa03404f95 — or end it: realm run abandon 507090b5-3b5b-4a6c-a814-3faa03404f95
+Run 507090b5-3b5b-4a6c-a814-3faa03404f95 stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 507090b5-3b5b-4a6c-a814-3faa03404f95 — or end it: realm run abandon 507090b5-3b5b-4a6c-a814-3faa03404f95
 ```
 
 After a call that ran other steps, the same way out takes the place of the `Run <id>: phase '<phase>'` line. A step another program holds:
@@ -244,7 +244,7 @@ When the step that is ready again cannot run — the workflow was registered aga
 ```text
 Resumed run '729eaab3-6203-46cb-9c5c-3714070723a8': step 'a' re-enabled and run reset to 'running'.
 'a' cannot run (input_schema): Invalid input for step 'a': the input must have required property 'n'.
-Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8 — or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8
+Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): for 'a', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8 — or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8
 ```
 
 `resume` runs no step. Cleanup steps that had not yet run for the ended run are cancelled, and each is named on a line that starts with `⚠`.
@@ -511,7 +511,7 @@ When it leaves nothing that can run from here, the steps that cannot run and the
 ✓ gate enacted (settle_default 'approve').
 Run '1d703406-777f-4bc6-a6bc-6058b4d8f490' is not terminal (phase: 'running') — nothing further to drain.
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
-Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): correct the workflow, register it again, then realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490 — or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490
+Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490 — or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490
 ```
 
 When it leaves no work for the engine and nothing that cannot run, but an agent step ready or a step in flight in another program, the line `realm run advance` prints for it follows (the guard that passed above leaves the agent step `ship` ready). Added after version 0.46.0, which prints nothing after `nothing further to drain.` there:
@@ -548,7 +548,7 @@ Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to
 Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f
 Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
 To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd
-Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): correct the workflow, register it again, then realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
+Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
 Run 'e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'write' — drive it with realm agent --run-id e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68 --provider <provider> --model <model>
 To end the run instead: realm run abandon e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68
 Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') — nothing to drain. 'fetch' is in flight in another program — wait for it, or see realm run inspect 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25

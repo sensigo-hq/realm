@@ -72,9 +72,17 @@ function def(steps: Record<string, StepDefinition>, extra?: Partial<WorkflowDefi
   return { id: 'pending-wf', name: 'Pending', version: 1, steps, ...extra } as WorkflowDefinition;
 }
 
-/** The tools' way out, as a literal (decisions C51, C57, C60). */
+/** The tools' way out, as a literal (decisions C51, C57, C60) — F15: for trust and precondition. */
 const TOOLS_WAY_OUT_TEXT =
   'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
+/** F15: the tools' way out for a step refused for its input — with no `depends_on` (the run's params). */
+const inputWayOutParams = (step: string): string =>
+  `For '${step}', start a run with params that fit, or correct its input_schema and register the workflow again, or call execute_step for it with input that fits; then, after a fix, call advance_run; or end the run with abandon_run.`;
+/** F15: the same, for a step with `depends_on` (the engine gives it no input). */
+const inputWayOutDeps = (step: string): string =>
+  `For '${step}', the engine gives it no input, so correct its input_schema and register the workflow again, or call execute_step for it with input that fits; then, after a fix, call advance_run; or end the run with abandon_run.`;
+/** F15: the workflow the hand-built views read (`x`, with no `depends_on`). */
+const X_DEF = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
 
 /** An open run with nothing in flight and no question open — the run describeNext reads (C57). */
 const OPEN_RUN = {
@@ -173,8 +181,8 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       cannot_run: [],
     };
     const act = { instruction: null, human_readable: '', orientation: '' };
-    expect(describeNext({ ...base }, OPEN_RUN)).toBe(' No step is ready.');
-    expect(describeNext({ ...base, agent_steps: ['a', 'b'] }, OPEN_RUN)).toBe(
+    expect(describeNext({ ...base }, OPEN_RUN, X_DEF)).toBe(' No step is ready.');
+    expect(describeNext({ ...base, agent_steps: ['a', 'b'] }, OPEN_RUN, X_DEF)).toBe(
       " Ready for the agent: 'a', 'b'.",
     );
     expect(
@@ -186,6 +194,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
           act,
         },
         OPEN_RUN,
+        X_DEF,
       ),
     ).toBe(
       " Owed to the engine: 'g', 'x' — call advance_run; it runs them until a step opens a question, fails or ends the run.",
@@ -199,6 +208,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
           act,
         },
         OPEN_RUN,
+        X_DEF,
       ),
     ).toBe(" Ready for the agent: 'a'. Owed to the engine: 'x' — call advance_run.");
   });
@@ -223,19 +233,20 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     // decision C36: `here` for capability only — a runner with the handler could run it. Another
     // runner can run it, so no way out follows (C57).
     expect(
-      describeNext(refused('capability', "handler 'h' is not registered here"), OPEN_RUN),
+      describeNext(refused('capability', "handler 'h' is not registered here"), OPEN_RUN, X_DEF),
     ).toBe(" 'x' cannot run here (capability): handler 'h' is not registered here.");
     // decision C57: a step refused before its claim with nothing else ready — the run cannot go on
     // until its workflow is corrected, so the sentence ends with the way out.
-    expect(describeNext(refused('trust', 'bad trust'), OPEN_RUN)).toBe(
+    expect(describeNext(refused('trust', 'bad trust'), OPEN_RUN, X_DEF)).toBe(
       ` 'x' cannot run (trust): bad trust. ${TOOLS_WAY_OUT_TEXT}`,
     );
     // decision C37: a refusal that ends with a full stop gets no second one.
-    expect(describeNext(refused('precondition', 'Resolved value: undefined.'), OPEN_RUN)).toBe(
-      ` 'x' cannot run (precondition): Resolved value: undefined. ${TOOLS_WAY_OUT_TEXT}`,
-    );
-    expect(describeNext(refused('input_schema', "'n' must be number"), OPEN_RUN)).toBe(
-      ` 'x' cannot run (input_schema): 'n' must be number. ${TOOLS_WAY_OUT_TEXT}`,
+    expect(
+      describeNext(refused('precondition', 'Resolved value: undefined.'), OPEN_RUN, X_DEF),
+    ).toBe(` 'x' cannot run (precondition): Resolved value: undefined. ${TOOLS_WAY_OUT_TEXT}`);
+    expect(describeNext(refused('input_schema', "'n' must be number"), OPEN_RUN, X_DEF)).toBe(
+      // F15: refused for its input, `x` with no `depends_on` — its own way out
+      ` 'x' cannot run (input_schema): 'n' must be number. ${inputWayOutParams('x')}`,
     );
     // After the agent and the owed clauses, in that order; `No step is ready.` never beside them.
     expect(
@@ -251,12 +262,13 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
           act,
         },
         OPEN_RUN,
+        X_DEF,
       ),
     ).toBe(
       " Ready for the agent: 'a'. Owed to the engine: 'y' — call advance_run. 'x' cannot run (trust): bad.",
     );
     // Nothing else is said: only then `No step is ready.`
-    expect(describeNext({ ...base }, OPEN_RUN)).toBe(' No step is ready.');
+    expect(describeNext({ ...base }, OPEN_RUN, X_DEF)).toBe(' No step is ready.');
   });
 
   it("C33 at the reply sites: an answer judges the capability check with the CALL's registry, as get_run_state does", async () => {
@@ -833,7 +845,10 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
         const refusal = before.engine_runnable[0]!.refusal!;
         // decision C51: nothing else is ready, so the reply ends with the way out in the tools' words.
         expect(reply.context_hint).toBe(
-          `Run '${run.id}': nothing ran. 'x' cannot run (${member}): ${refusal}${refusal.endsWith('.') ? '' : '.'} Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`,
+          `Run '${run.id}': nothing ran. 'x' cannot run (${member}): ${refusal}${refusal.endsWith('.') ? '' : '.'} ${
+            // F15: refused for its input (no `depends_on`): its own way out
+            member === 'input_schema' ? inputWayOutParams('x') : TOOLS_WAY_OUT_TEXT
+          }`,
         );
         expect(reply.context_hint).not.toContain('..');
         expect(
@@ -892,7 +907,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       await store.claimStep(one.id, 'a', d, other);
       await store.claimStep(one.id, 'b', d, other);
       const both = await store.get(one.id);
-      const sentence = describeNext(describePending(d, both, undefined, new Date()), both);
+      const sentence = describeNext(describePending(d, both, undefined, new Date()), both, d);
       // (a) red when the steps in flight are not named, the plural words are wrong, or the wait is
       //     dropped; (b) prints the sentence.
       expect(sentence).toBe(
@@ -1430,10 +1445,12 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
     expect(CAPABILITY_BASES).toEqual(['registry', 'marker']);
     expect(cannotRunWords(byRegistry)).toBe('cannot run here (capability)');
     expect(cannotRunWords(byMarker)).toBe('could not run (capability)');
-    expect(describeNext(describePending(d, live, new ExtensionRegistry(), new Date()), live)).toBe(
+    expect(
+      describeNext(describePending(d, live, new ExtensionRegistry(), new Date()), live, d),
+    ).toBe(
       " 'x' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.",
     );
-    expect(describeNext(describePending(d, marked, undefined, new Date()), marked)).toBe(
+    expect(describeNext(describePending(d, marked, undefined, new Date()), marked, d)).toBe(
       " 'x' could not run (capability): handler 'h' was not registered in the runner that last attempted it.",
     );
     // No basis on a refusal that is not capability's, nor on a runnable entry.
@@ -1547,7 +1564,7 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
         refusal: FINDING_VOICE,
       });
       expect(entry.refusal).not.toContain('parked');
-      expect(describeNext(describePending(d, run, undefined, new Date()), run)).toBe(
+      expect(describeNext(describePending(d, run, undefined, new Date()), run, d)).toBe(
         ` Ready for the agent: 'ask'. 'work' cannot run (trust): ${FINDING_VOICE}`,
       );
       // checkPreClaim carries both: the view's words, and the error executeStep returns.
@@ -1575,7 +1592,22 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
   });
 
   it("C51: advance_run's nothing-ran reply ends with the tools' way out only when nothing else is ready and a step is refused before its claim", async () => {
-    expect(cannotRunWayOutTools()).toBe(TOOLS_WAY_OUT);
+    // F15: the tools' way out for a trust refusal (its words unchanged).
+    const trustEntry = {
+      step: 'x',
+      runnable_here: false as const,
+      refused_by: 'trust' as const,
+      refusal: 'bad',
+    };
+    const trustView = {
+      agent_actions: [],
+      agent_steps: [],
+      agent_refused: [],
+      pending_guards: [],
+      engine_runnable: [trustEntry],
+      cannot_run: [trustEntry],
+    };
+    expect(cannotRunWayOutTools(OPEN_RUN, X_DEF, trustView)).toBe(TOOLS_WAY_OUT);
     // Present: covered member by member by the three L5 cells (trust, precondition, input schema).
     // Absent when an agent step is ready beside the refused step.
     const withAgent = def({
@@ -1773,7 +1805,9 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       const reply = await stepReply(store, afterStep);
       expect(reply.status).toBe('ok');
       expect(reply.next_actions).toEqual([]);
-      expect(reply.context_hint).toBe(`Step 'ask' completed. ${REFUSAL} ${TOOLS_WAY_OUT_TEXT}`);
+      expect(reply.context_hint).toBe(
+        `Step 'ask' completed. ${REFUSAL} ${inputWayOutDeps('compute')}`,
+      );
       const control = await stepReply(store, afterStepWithAgent);
       expect(control.context_hint).toBe(
         `Step 'ask' completed. Ready for the agent: 'ask2'. ${REFUSAL}`,
@@ -1787,7 +1821,9 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       const reply = await stepReply(store, afterStep);
       expect(reply.status).toBe('ok');
       expect(reply.next_actions).toEqual([]);
-      expect(reply.context_hint).toBe(`Step 'ask' completed. ${REFUSAL} ${TOOLS_WAY_OUT_TEXT}`);
+      expect(reply.context_hint).toBe(
+        `Step 'ask' completed. ${REFUSAL} ${inputWayOutDeps('compute')}`,
+      );
       const control = await stepReply(store, afterStepWithAgent);
       expect(control.context_hint).toBe(
         `Step 'ask' completed. Ready for the agent: 'ask2'. ${REFUSAL}`,
@@ -1801,7 +1837,7 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       expect(reply.status).toBe('ok');
       expect(reply.next_actions).toEqual([]);
       expect(reply.context_hint).toBe(
-        `Gate 'b' resolved with choice 'approve'. ${REFUSAL} ${TOOLS_WAY_OUT_TEXT}`,
+        `Gate 'b' resolved with choice 'approve'. ${REFUSAL} ${inputWayOutDeps('compute')}`,
       );
       const control = await answerReply(store, afterAnswerWithAgent);
       expect(control.context_hint).toBe(
@@ -1817,7 +1853,7 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       expect(reply.status).toBe('ok');
       expect(reply.next_actions).toEqual([]);
       expect(reply.context_hint).toBe(
-        `Gate 'b' resolved with choice 'approve'. ${REFUSAL} ${TOOLS_WAY_OUT_TEXT}`,
+        `Gate 'b' resolved with choice 'approve'. ${REFUSAL} ${inputWayOutDeps('compute')}`,
       );
       const control = await answerReply(store, afterAnswerWithAgent);
       expect(control.context_hint).toBe(
@@ -1838,10 +1874,10 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       const { run } = await store.create({ workflowId: only.id, workflowVersion: 1, params: {} });
       const reply = await advanceRun(store, only, { runId: run.id });
       expect(reply.context_hint).toBe(
-        `Run '${run.id}': nothing ran. ${REFUSAL} ${TOOLS_WAY_OUT_TEXT}`,
+        `Run '${run.id}': nothing ran. ${REFUSAL} ${inputWayOutParams('compute')}`,
       );
       // Once: the way out is said by describeNext alone, never appended a second time.
-      expect(reply.context_hint.split(TOOLS_WAY_OUT_TEXT)).toHaveLength(2);
+      expect(reply.context_hint.split(inputWayOutParams('compute'))).toHaveLength(2);
       const control = await store.create({
         workflowId: withAgent.id,
         workflowVersion: 1,
@@ -1859,33 +1895,44 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       compute: { description: 'C', execution: 'auto', depends_on: [], input_schema: needsN },
     });
     const pending = describePending(only, OPEN_RUN, undefined, new Date());
-    expect(describeNext(pending, OPEN_RUN)).toBe(` ${REFUSAL} ${TOOLS_WAY_OUT_TEXT}`);
+    // F15: `compute` here has no `depends_on` — its own way out names a run with params that fit
+    expect(describeNext(pending, OPEN_RUN, only)).toBe(
+      ` ${REFUSAL} ${inputWayOutParams('compute')}`,
+    );
     const inFlight = { ...OPEN_RUN, in_progress_steps: ['other'] } as unknown as RunRecord;
-    expect(describeNext(pending, inFlight)).toBe(` ${REFUSAL}`);
+    expect(describeNext(pending, inFlight, only)).toBe(` ${REFUSAL}`);
     const gated = {
       ...OPEN_RUN,
       pending_gate: { gate_id: 'g', step_name: 'b' },
     } as unknown as RunRecord;
-    expect(describeNext(pending, gated)).toBe(` ${REFUSAL}`);
+    expect(describeNext(pending, gated, only)).toBe(` ${REFUSAL}`);
     const ended = { ...OPEN_RUN, terminal_state: true } as unknown as RunRecord;
-    expect(describeNext(pending, ended)).toBe(` ${REFUSAL}`);
+    expect(describeNext(pending, ended, only)).toBe(` ${REFUSAL}`);
   });
 
-  it('C60: cannotRunWayOut, the CLI form, is pinned whole in core', async () => {
+  it('C60: cannotRunWayOut, the CLI form, is pinned whole in core — F15: the one fix for trust and precondition', async () => {
     await withStore(async (store) => {
       const { run } = await store.create({
         workflowId: 'pending-wf',
         workflowVersion: 1,
         params: {},
       });
-      expect(cannotRunWayOut(run)).toBe(
+      const d = def({
+        x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
+      });
+      expect(cannotRunWayOut(run, d, describePending(d, run, undefined, new Date()))).toBe(
         `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
       );
     });
   });
 
-  it('C60: cannotRunWayOutTools, the tools form, is pinned whole in core', () => {
-    expect(cannotRunWayOutTools()).toBe(
+  it('C60: cannotRunWayOutTools, the tools form, is pinned whole in core — F15: the one fix for trust and precondition', () => {
+    const d = def({
+      x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
+    });
+    expect(
+      cannotRunWayOutTools(OPEN_RUN, d, describePending(d, OPEN_RUN, undefined, new Date())),
+    ).toBe(
       'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.',
     );
   });

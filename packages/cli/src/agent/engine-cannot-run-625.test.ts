@@ -84,7 +84,12 @@ const PRE_CLAIM: readonly Member[] = ['trust', 'precondition', 'input_schema'];
 
 /** decision C31: the ONE closing line of a drive that stops on a step refused before its claim. */
 const stopLine = (check: PreClaimMember | string, step = 'x'): string =>
-  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run> — or end it: realm run abandon <run>`;
+  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): ${
+    // F15: a step refused for its input (here with no `depends_on`) gets its own way out.
+    check === 'input_schema'
+      ? `for '${step}', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <run>`
+      : 'correct the workflow, register it again, then realm run advance <run>'
+  } — or end it: realm run abandon <run>`;
 
 /** `d2f0b3cf`'s screen for a capability block on the single-branch fixture (captured). */
 const BASE_CAPABILITY_LINES: Record<'capability_first' | 'capability_later', string[]> = {
@@ -337,7 +342,11 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
     vi.restoreAllMocks();
     const runId = (await store.list())[0]!.id;
     expect(result).toBe('failed');
-    expect(lines.at(-1)!.split(runId).join('<run>')).toBe(stopLine('precondition', 'zeta'));
+    // F15: `alpha` beside it is refused for its input — each step's own way out, in the workflow's
+    // order, then the run's once.
+    expect(lines.at(-1)!.split(runId).join('<run>')).toBe(
+      "error: \n✗ The drive stops: nothing else can run, and 'zeta' cannot run (precondition). Run <run> stays open (phase 'running'): for 'zeta', correct the workflow and register it again; for 'alpha', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <run> — or end it: realm run abandon <run>",
+    );
     // Both are named, in definition order; only the first is the stop.
     const named = lines.filter((l) => l.startsWith('log: • Step '));
     expect(named.map((l) => l.slice('log: • Step '.length).split(' ')[0])).toEqual([

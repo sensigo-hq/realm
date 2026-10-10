@@ -342,7 +342,10 @@ async function withWayOutOnOwnRefusal(
   const own = stepsThatCannotRun(pending).find((e) => e.step === args.command);
   if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust') return result;
   if (!cannotRunWayOutApplies(fresh, pending)) return result;
-  return { ...result, context_hint: `${result.context_hint} ${cannotRunWayOutTools()}` };
+  return {
+    ...result,
+    context_hint: `${result.context_hint} ${cannotRunWayOutTools(fresh, definition, pending)}`,
+  };
 }
 
 /**

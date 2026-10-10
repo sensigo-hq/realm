@@ -2109,7 +2109,9 @@ async function executeStepBody(
     const nextActions = run.terminal_state ? [] : nextActionsOf(view, run.id);
     const why = notCallableReason(definition, run, options.command, view);
     const tail =
-      run.terminal_state || view.open_question !== undefined ? '' : describeNext(view, run);
+      run.terminal_state || view.open_question !== undefined
+        ? ''
+        : describeNext(view, run, definition);
     return {
       command: options.command,
       run_id: options.runId,
@@ -4679,7 +4681,7 @@ async function executeStepBody(
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
       : migratedNextActions.length > 0 || hasCannotRun(migratedPending)
-        ? `Step '${options.command}' completed.${describeNext(migratedPending, finalRun)}`
+        ? `Step '${options.command}' completed.${describeNext(migratedPending, finalRun, definition)}`
         : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
     // issue #625: this step's own write settled every guard it made eligible. When one of them
@@ -4869,7 +4871,7 @@ async function executeStepBody(
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
     : nextActions.length > 0 || hasCannotRun(stepPending)
-      ? `Step '${options.command}' completed.${describeNext(stepPending, savedRun)}`
+      ? `Step '${options.command}' completed.${describeNext(stepPending, savedRun, definition)}`
       : `Step '${options.command}' completed. Waiting for other steps to complete.`;
 
   return {
@@ -5530,7 +5532,7 @@ async function composeExpiryReply(
           ...lateSameChoiceDetails(finalRun.id, originalGateId, entry.choice),
           ...lateTime,
         },
-        context_hint: `${LATE_SAME_CHOICE_SENTENCE}${view !== undefined ? describeNext(view, finalRun) : ''}`,
+        context_hint: `${LATE_SAME_CHOICE_SENTENCE}${view !== undefined ? describeNext(view, finalRun, definition) : ''}`,
         run_phase: finalRun.run_phase,
         next_actions: finalRun.terminal_state
           ? []
@@ -5566,7 +5568,7 @@ async function composeExpiryReply(
       finalRun.id,
       finalRun.version,
       err,
-      `${err.message}${view !== undefined ? describeNext(view, finalRun) : ''}`,
+      `${err.message}${view !== undefined ? describeNext(view, finalRun, definition) : ''}`,
       finalRun.run_phase,
     );
     return {
@@ -5838,7 +5840,7 @@ export async function submitHumanResponse(
                   }
                 : {}),
               context_hint: gateSettledByTimeout(noopRun, stepName)
-                ? `${LATE_SAME_CHOICE_SENTENCE}${noopRun.terminal_state ? '' : describeNext(describePending(definition, noopRun, options.registry, now), noopRun)}`
+                ? `${LATE_SAME_CHOICE_SENTENCE}${noopRun.terminal_state ? '' : describeNext(describePending(definition, noopRun, options.registry, now), noopRun, definition)}`
                 : `Gate '${options.gateId}' was already resolved with choice '${options.choice}' — no action was taken.`,
               run_phase: noopRun.run_phase,
               next_actions: noopRun.terminal_state
@@ -5886,7 +5888,7 @@ export async function submitHumanResponse(
             options.runId,
             result.run.version,
             err,
-            `${err.message}${conflictView !== undefined ? describeNext(conflictView, result.run) : ''}`,
+            `${err.message}${conflictView !== undefined ? describeNext(conflictView, result.run, definition) : ''}`,
             result.run.run_phase,
           );
           const conflictWithNext = {
@@ -6064,7 +6066,7 @@ export async function submitHumanResponse(
       : buildNextActions(definition, finalRun, options.registry, now);
     const migratedOrientation = finalRun.terminal_state
       ? `Run completed (phase: '${finalRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun, options.registry, now), finalRun)}`;
+      : `Gate '${resolvedGateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, finalRun, options.registry, now), finalRun, definition)}`;
 
     // issue #625: the answer's own write settled every guard the answer made eligible, so no guard
     // is left "eligible, to be decided by some later call" — the reply lists them in `guards`, and
@@ -6378,7 +6380,7 @@ export async function submitHumanResponse(
     : buildNextActions(definition, savedRun, options.registry, now);
   const orientation = savedRun.terminal_state
     ? `Run completed (phase: '${savedRun.run_phase}'). Call get_run_state with run_id '${options.runId}' to retrieve the full evidence record.`
-    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun, options.registry, now), savedRun)}`;
+    : `Gate '${gateStepName}' resolved with choice '${options.choice}'.${describeNext(describePending(definition, savedRun, options.registry, now), savedRun, definition)}`;
 
   return withGateClaim(
     {
@@ -7871,7 +7873,7 @@ function composeAfterRaces(
       : `Run '${run.id}':${ranHere ? '' : ' nothing ran.'}`;
   const tail = run.terminal_state
     ? ` The run ended (${deriveRunPhase(run)}).`
-    : describeNext(describePending(definition, run, registry, now), run);
+    : describeNext(describePending(definition, run, registry, now), run, definition);
   const ended = run.terminal_state && context.races.some((r) => r.stop.kind === 'run_ended');
   return {
     ...reply,
@@ -7905,7 +7907,7 @@ function nothingRanHint(
   if (expiryCarriedOut) {
     const outcome = run.terminal_state
       ? ` The run ended (${deriveRunPhase(run)}).`
-      : describeNext(describePending(definition, run, registry, now), run);
+      : describeNext(describePending(definition, run, registry, now), run, definition);
     if (expiryGuards.length === 0) {
       return `Run '${run.id}': its expired question was carried out as declared (see warnings); no step ran.${outcome}`;
     }
@@ -7918,7 +7920,7 @@ function nothingRanHint(
   // decisions C51, C57: when the run cannot go on until its workflow is corrected, describeNext
   // ends with the way out in the tools' words — the same condition `realm run advance` prints its
   // own form under, and the same sentence every other reply that says what comes next ends with.
-  return `Run '${run.id}': nothing ran.${describeNext(describePending(definition, run, registry, now), run)}`;
+  return `Run '${run.id}': nothing ran.${describeNext(describePending(definition, run, registry, now), run, definition)}`;
 }
 
 /** The options of {@link advanceRun} (issue #625 PR-2a). No dispatcher: the engine runs only its own steps. */

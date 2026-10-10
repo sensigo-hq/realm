@@ -85,12 +85,15 @@ const waysOnWithoutEngineWork = (runId: string, run: RunRecord, pending: Pending
  * the refusal's own line, each other is a line of its own. Decision C212: a command ends its line —
  * no punctuation follows it.
  */
-const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: PendingView): string[] => {
+/** The run's view with the workflow it was read from (F15: each refused step's way out reads it). */
+type OwedView = PendingView & { workflow: WorkflowDefinition };
+
+const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView): string[] => {
   const gate = run.pending_gate;
   if (gate === undefined) {
     // decision C64: when nothing can run from here, each engine step that cannot run and the way
     // out — core's lines (`correct the workflow …` for a refusal before the claim).
-    const cannotGoOn = pending === undefined ? [] : cannotGoOnLines(run, pending);
+    const cannotGoOn = pending === undefined ? [] : cannotGoOnLines(run, pending, pending.workflow);
     if (cannotGoOn.length > 0) return [cannotGoOn.join(' ')];
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
@@ -372,7 +375,7 @@ function renderDryRun(
   expiredFlag = false,
   declared?: ReadonlySet<string>,
   predictedGuards: readonly string[] = [],
-  pending?: PendingView,
+  pending?: OwedView,
 ): void {
   const gateReported = renderGateExpiryDryRun(runId, run, now, expiredFlag, predictedGuards);
   if (!run.terminal_state) {
@@ -721,14 +724,14 @@ export async function runDrainAction(
     const run = await runStore.get(runId);
     // issue #625 PR-2a: what the engine owes on a live run with no open question — a JSON read of
     // the registered copy; when it cannot be read, nothing is added to the line.
-    const ownedWork = async (r: RunRecord): Promise<PendingView | undefined> => {
+    const ownedWork = async (r: RunRecord): Promise<OwedView | undefined> => {
       if (r.terminal_state || r.pending_gate !== undefined) return undefined;
       try {
         const wf = await getWorkflowForRun(workflowStore, r, {
           retryVerb: 'drain again',
           verb: 'drain',
         });
-        return describePending(wf, r, undefined, now);
+        return { ...describePending(wf, r, undefined, now), workflow: wf };
       } catch (err) {
         if (!(err instanceof WorkflowError)) throw err;
         return undefined;
@@ -845,7 +848,7 @@ export async function runDrainAction(
         );
       }
       // decision C64: the expiry left nothing that can run from here — the steps and the way out.
-      const cannotGoOn = owed === undefined ? [] : cannotGoOnLines(workingRun, owed);
+      const cannotGoOn = owed === undefined ? [] : cannotGoOnLines(workingRun, owed, owed.workflow);
       for (const line of cannotGoOn) console.log(line);
       // decision C205: with no engine work and nothing that cannot run, an agent step ready (the
       // drive) or a step in flight in another program (wait for it).

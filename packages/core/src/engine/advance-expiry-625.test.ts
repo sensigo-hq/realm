@@ -186,7 +186,7 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       "Run is active. Engine work is owed: the expired question on 'confirm' (its declared settle_default).",
     );
     expect(owedList(view)).toBe("the expired question on 'confirm' (its declared settle_default)");
-    expect(describeNext(view, run)).toBe(
+    expect(describeNext(view, run, d)).toBe(
       // decision C211 (walk c14 W2-1): the call then runs what the default leaves owed — said.
       " Owed to the engine: the expired question on 'confirm' (its declared settle_default) — call advance_run; then it runs what that leaves owed until a step opens a question, fails or ends the run.",
     );

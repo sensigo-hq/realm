@@ -238,6 +238,15 @@ describe(
         /For a refusal before the claim it prints one line, `(✗ The drive stops: [^`]+)`/.exec(
           page,
         )![1]!;
+      // F15: the page's own words for each step's way out.
+      const fixWayTemplate =
+        /— `(for '<step>', correct the workflow and register it again)` for a refused/.exec(
+          page,
+        )![1]!;
+      const inputWayTemplate =
+        /`(for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again)` for an input refused with no `depends_on`/.exec(
+          page,
+        )![1]!;
       const h = home();
       const { call, workflowStore, runStore } = await connect(h);
       // The loader refuses an invalid trust, so the stored definition is written as an object: a
@@ -337,7 +346,22 @@ describe(
       //     not the alphabetical `n`) with the page's one line, or exits other than 1; (b) prints it.
       expect({ code: agent.code, err: agent.err }).toEqual({
         code: 1,
-        err: [fill(stopTemplate, { step: 't', check: 'trust', id, phase: 'running' })],
+        // F15: two of the refused steps are refused for their input, so the line gives each step's
+        // own way out, in the workflow's order, in the page's words.
+        err: [
+          fill(stopTemplate, { step: 't', check: 'trust', id, phase: 'running' }).replace(
+            /: correct the workflow, register it again, then realm run advance .*$/,
+            `: ${['t', 'p', 's', 'n']
+              .map((step) =>
+                fill(why[step]![0] === 'input_schema' ? inputWayTemplate : fixWayTemplate, {
+                  step,
+                }),
+              )
+              .join(
+                '; ',
+              )}; then, after a fix, realm run advance ${id} — or end it: realm run abandon ${id}`,
+          ),
+        ],
       });
       // A program that has the handler runs it; the refused steps stay refused there too.
       const capable = new ExtensionRegistry();
@@ -675,7 +699,7 @@ describe(
       //     inspect does not print the page's line; (b) prints the view, the sentence and the screen.
       expect({
         view: marked.engine_runnable,
-        next: describeNext(marked, twice),
+        next: describeNext(marked, twice, def),
         inspect: inspected.find((l) => l.startsWith('Could not run')),
       }).toEqual({
         view: [

@@ -696,11 +696,12 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        'Waiting does not help then: the run cannot go on until the workflow is corrected and registered again (the run picks up the corrected definition), or it is ended with `abandon_run`.',
+        // F15: the one fix is for a refused `trust` or precondition (this cell's steps).
+        'Waiting does not help then: for a refused `trust` or precondition the run cannot go on until the workflow is corrected and registered again (the run picks up the corrected definition), or it is ended with `abandon_run`;',
       );
       claim(
         PAGE,
-        "Every reply that says what comes next ends with that way out — the reply of the step or the answer that left the run there, `start_run`'s creation reply, and `advance_run`'s reply, which runs nothing: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` A step refused for its handler or adapter also says what it was judged from, in `basis` (added after version 0.46.0): `registry` — the server's own extensions lack it (`refusal`: `handler '<name>' is not registered here`).",
+        "Every reply that says what comes next ends with that way out — the reply of the step or the answer that left the run there, `start_run`'s creation reply, and `advance_run`'s reply, which runs nothing: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`, or, with a step refused for its input, each step's own way and then the run's ([MCP tools](tools.md#advance_run); added after version 0.46.0). A step refused for its handler or adapter also says what it was judged from, in `basis` (added after version 0.46.0): `registry` — the server's own extensions lack it (`refusal`: `handler '<name>' is not registered here`).",
       );
       const { call, workflowStore } = await connect();
       // start_run's creation reply: the head auto step is refused.

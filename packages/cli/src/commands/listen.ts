@@ -672,7 +672,8 @@ export async function sweepExpiredGates(
           : describePending(definition, outcome.run, undefined, now);
         // decision C64: an expiry that leaves nothing able to run from here names the steps and the
         // way out — core's lines.
-        const cannotGoOn = owedView === undefined ? [] : cannotGoOnLines(outcome.run, owedView);
+        const cannotGoOn =
+          owedView === undefined ? [] : cannotGoOnLines(outcome.run, owedView, definition);
         deps.logger.info('listen: sweeper enacted an expired gate', {
           run_id: run.id,
           gate_id: gate.gate_id,

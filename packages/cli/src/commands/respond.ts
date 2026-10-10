@@ -63,7 +63,7 @@ function nextLines(
   const pending = describePending(workflow, run, registry, new Date());
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
   // that cannot run and the way out — core's lines, never a copy.
-  const cannotGoOn = cannotGoOnLines(run, pending);
+  const cannotGoOn = cannotGoOnLines(run, pending, workflow);
   const ready = agentReadyReason(runId, pending.agent_steps);
   // decision C207: with several owed, where the call stops — never a promise that all of them run.
   const { them, until } = owedWords(pending);

@@ -503,7 +503,7 @@ export async function advanceRunFromShell(
     // by itself.
     const readyPreview = agentReadyReason(runId, pending.agent_steps);
     if (readyPreview !== undefined && reasons.includes(readyPreview)) print(attendingLine(1));
-    if (cannotRunWayOutApplies(run, pending)) print(cannotRunWayOut(run));
+    if (cannotRunWayOutApplies(run, pending)) print(cannotRunWayOut(run, workflow, pending));
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
@@ -692,7 +692,7 @@ export async function advanceRunFromShell(
   // last line is the way out (it carries the phase); otherwise the phase line.
   print(
     cannotRunWayOutApplies(after, afterView)
-      ? cannotRunWayOut(after)
+      ? cannotRunWayOut(after, workflow, afterView)
       : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
   );
   const refused = !after.terminal_state && stepsThatCannotRun(afterView).length > 0;

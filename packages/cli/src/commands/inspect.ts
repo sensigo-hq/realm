@@ -714,7 +714,7 @@ export async function inspectRun(
     }
     // decision C62: when the run cannot go on until its workflow is corrected, the way out follows
     // the steps that cannot run — the line `realm run advance` and the drive's stop line print.
-    if (cannotRunWayOutApplies(run, pending)) lines.push(cannotRunWayOut(run));
+    if (cannotRunWayOutApplies(run, pending)) lines.push(cannotRunWayOut(run, definition, pending));
   }
   // decision C211 (walk c14 W2-2): at an open question, the steps it holds — they go on after the
   // answer, and nothing is owed until then.

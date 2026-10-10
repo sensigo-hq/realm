@@ -796,7 +796,10 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
         ).toBe(true);
         expect(lines[3]).toContain(refusal);
         expect(lines[4]).toBe(
-          `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
+          // F15: a step refused for its input (here with no `depends_on`) gets its own way out.
+          check === 'input_schema'
+            ? `Run ${run.id} stays open (phase 'running'): for 'x', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance ${run.id} — or end it: realm run abandon ${run.id}`
+            : `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
         );
       } finally {
         rmSync(home, { recursive: true, force: true });

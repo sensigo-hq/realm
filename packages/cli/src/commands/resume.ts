@@ -255,7 +255,7 @@ export const resumeCommand = new Command('resume')
           stuck: cannotGoOnHere(resumed, pending),
           agentReady: pending.agent_steps.length > 0,
           // decision C64: the resumed run cannot go on from here — the steps and the way out.
-          cannotGoOn: cannotGoOnLines(resumed, pending),
+          cannotGoOn: cannotGoOnLines(resumed, pending, wf),
         };
       } catch {
         // The resume itself succeeded; the owed line is advisory.

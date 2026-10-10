@@ -747,7 +747,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // still open, so the way out is said of an open run — F7 (e).)
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
-                  cannotRunWayOut(currentRun),
+                  cannotRunWayOut(currentRun, definition, view),
               );
               return 'failed';
             }
@@ -827,7 +827,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // picks up the corrected definition), then advance — or to end the run.
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
-                  cannotRunWayOut(currentRun),
+                  cannotRunWayOut(
+                    currentRun,
+                    definition,
+                    describePending(definition, currentRun, deps.registry, new Date()),
+                  ),
               );
               return 'failed';
             }

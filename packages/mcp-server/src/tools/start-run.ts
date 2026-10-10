@@ -63,7 +63,7 @@ export function handBackHint(args: {
   // question, its choices and the act, as `next_actions` holds its answer.
   const describes = !current.terminal_state;
   const next = describes
-    ? describeNext(describePending(definition, current, registry, now), current)
+    ? describeNext(describePending(definition, current, registry, now), current, definition)
     : '';
   if (deduped) {
     // decisions C205, C211: a matched run that has ended says the ways back in.

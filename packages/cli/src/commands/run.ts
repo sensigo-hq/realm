@@ -139,7 +139,10 @@ export function renderDetachMap(
    * Decision C202: what the run owes and what is ready — `describePending` on `record` — and the
    * workflow (which failed steps `realm run resume` takes).
    */
-  ways: { pending: PendingView; workflow: Parameters<typeof resumeWay>[1] },
+  ways: {
+    pending: PendingView;
+    workflow: Parameters<typeof resumeWay>[1] & Parameters<typeof cannotGoOnLines>[2];
+  },
   opts?: {
     headline?: string;
     /**
@@ -213,7 +216,7 @@ export function renderDetachMap(
   } else if (cannotGoOnHere(record, pending)) {
     // decision C202: the run cannot go on from here — core's lines: each step that cannot run, then
     // the way out (which ends with `realm run abandon`).
-    lines.push(...cannotGoOnLines(record, pending).map((line) => `  ${line}`));
+    lines.push(...cannotGoOnLines(record, pending, ways.workflow).map((line) => `  ${line}`));
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
   } else {
@@ -909,6 +912,7 @@ export const runCommand = new Command('run')
             const cannotGoOn = cannotGoOnLines(
               record,
               describePending(definition, record, registry, new Date()),
+              definition,
             );
             if (cannotGoOn.length > 0) {
               console.error('\nWorkflow stalled: nothing else can run.');

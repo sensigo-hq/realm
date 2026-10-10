@@ -103,9 +103,6 @@ const needsN = (name: string, deps: string[]): string =>
     '    n: { type: number }',
   ]);
 
-const wayOut = (id: string): string =>
-  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
-
 // Each cell runs the built `realm` several times as a child process: 60 s, not vitest's default 5 s.
 describe(
   '#625 PR-2a, C174 lane A — realm-run-acting.md, sentence by sentence, from the built realm',
@@ -905,7 +902,7 @@ describe(
       );
       claim(
         PAGE,
-        'When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the one way out — correcting the workflow and registering it again is the fix, since the run picks up the corrected definition:',
+        "When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`):",
       );
       claim(
         PAGE,
@@ -1001,7 +998,8 @@ describe(
         tail: [
           '→ a',
           "Stopped: 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'",
-          wayOut(idr),
+          // F15: `compute` (with `depends_on`) is refused for its input — its own way out
+          `Run ${idr} stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance ${idr} — or end it: realm run abandon ${idr}`,
         ],
       });
     });

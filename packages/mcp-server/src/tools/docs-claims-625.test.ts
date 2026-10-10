@@ -1235,7 +1235,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   it('C163 start_run: a new run that cannot go on — the step that cannot run, then the way out', async () => {
     claim(
       'mcp/tools.md',
-      'When the new run cannot go on until its workflow is corrected — its only owed steps are refused before their claim and nothing else is ready — the hint ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`',
+      "When nothing else is ready and the new run's only owed steps are refused before their claim, the hint ends with the way out `advance_run`'s reply gives (below): `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` for a refused `trust` or precondition, and each step's own way for a step refused for its input.",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(CANNOT_GO_ON);
@@ -1654,7 +1654,9 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
   it('C163 advance_run: a run that cannot go on — the step that cannot run, then the way out; the step is not run and the act is not offered for it', async () => {
     claim(
       'mcp/tools.md',
-      'When the run cannot go on until its workflow is corrected — every owed step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready — the hint ends with the way out:',
+      // F15: the one fix is said for a refused `trust` or precondition; a step refused for its input
+      // gets its own way out.
+      'When nothing else is ready and every owed step is refused before its claim — an invalid `trust`, a failed precondition, an input its schema refuses — the hint ends with the way out:',
     );
     claim(
       'mcp/tools.md',

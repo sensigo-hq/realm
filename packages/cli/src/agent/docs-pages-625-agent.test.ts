@@ -83,7 +83,12 @@ function wf(
 
 const HEADER = ['log: \nRealm Agent — c174 c v1', 'log: Run ID: <run>\n'];
 const stopLine = (check: string, step: string): string =>
-  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <run> — or end it: realm run abandon <run>`;
+  `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): ${
+    // F15: a step refused for its input (in these fixtures, with `depends_on`) gets its own way out.
+    check === 'input_schema'
+      ? `for '${step}', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance <run>`
+      : 'correct the workflow, register it again, then realm run advance <run>'
+  } — or end it: realm run abandon <run>`;
 
 interface Drive {
   result: string;
@@ -807,7 +812,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
 
     it('the ninth row (an auto step refused before its claim, nothing else) and the ninth case: the schema refused the input the engine built; open, in running', async () => {
       const LINE =
-        "✗ The drive stops: nothing else can run, and 'file' cannot run (input_schema). Run 50e31961-… stays open (phase 'running'): correct the workflow, register it again, then realm run advance 50e31961-… — or end it: realm run abandon 50e31961-…";
+        "✗ The drive stops: nothing else can run, and 'file' cannot run (input_schema). Run 50e31961-… stays open (phase 'running'): for 'file', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 50e31961-… — or end it: realm run abandon 50e31961-…";
       claim(
         AGENT_PAGE,
         `| Nothing else can run, and an \`auto\` step is refused before it is claimed | \`${LINE}\` | Open, in \`running\`. |`,

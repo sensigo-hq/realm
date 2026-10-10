@@ -52,15 +52,19 @@ const missing: StepDefinition = {
 };
 const INPUT =
   "'x' cannot run (input_schema): Invalid input for step 'x': the input must have required property 'n'.";
+// F15: `x` is refused for its input and has no `depends_on` (the engine gives it the run's params):
+// its own way out, then the run's once. Before F15 the line said "correct the workflow" for it.
 const wayOut = (id: string): string =>
-  `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
+  `Run ${id} stays open (phase 'running'): for 'x', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance ${id} — or end it: realm run abandon ${id}`;
+/** F15: the workflow the way out reads (`x`'s `depends_on`). */
+const ALL = def({ x: needsN, y: missing });
 
 describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
   it('a refusal before the claim: each step that cannot run, then the way out (correct the workflow)', async () => {
     await withRun(async (run) => {
       const view = describePending(def({ x: needsN }), run, new ExtensionRegistry(), new Date());
       expect(cannotGoOnHere(run, view)).toBe(true);
-      expect(cannotGoOnLines(run, view)).toEqual([INPUT, wayOut(run.id)]);
+      expect(cannotGoOnLines(run, view, ALL)).toEqual([INPUT, wayOut(run.id)]);
     });
   });
 
@@ -68,7 +72,7 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
     await withRun(async (run) => {
       const view = describePending(def({ y: missing }), run, new ExtensionRegistry(), new Date());
       expect(cannotRunWayOutApplies(run, view)).toBe(false);
-      expect(cannotGoOnLines(run, view)).toEqual([
+      expect(cannotGoOnLines(run, view, ALL)).toEqual([
         "'y' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
         `To end the run instead: realm run abandon ${run.id}`,
       ]);
@@ -88,7 +92,7 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
         },
       };
       const view = describePending(def({ y: missing }), marked, undefined, new Date());
-      expect(cannotGoOnLines(marked, view)).toEqual([
+      expect(cannotGoOnLines(marked, view, ALL)).toEqual([
         `'y' could not run (capability): handler 'missing_h' was not registered in the runner that last attempted it — from a program that has it: realm run advance ${run.id}`,
         `To end the run instead: realm run abandon ${run.id}`,
       ]);
@@ -106,7 +110,7 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
         new ExtensionRegistry(),
         new Date(),
       );
-      expect(cannotGoOnLines(run, view)).toEqual([
+      expect(cannotGoOnLines(run, view, ALL)).toEqual([
         INPUT,
         "'y' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
         wayOut(run.id),
@@ -122,7 +126,7 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
         new ExtensionRegistry(),
         new Date(),
       );
-      expect(cannotGoOnLines(run, withAgent)).toEqual([]);
+      expect(cannotGoOnLines(run, withAgent, ALL)).toEqual([]);
       const withAct = describePending(
         def({ x: needsN, b: { description: 'B', execution: 'auto', depends_on: [] } }),
         run,
@@ -130,19 +134,25 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
         new Date(),
       );
       expect(withAct.act).toBeDefined();
-      expect(cannotGoOnLines(run, withAct)).toEqual([]);
+      expect(cannotGoOnLines(run, withAct, ALL)).toEqual([]);
       const stuck: PendingView = describePending(
         def({ x: needsN }),
         run,
         new ExtensionRegistry(),
         new Date(),
       );
-      expect(cannotGoOnLines({ ...run, in_progress_steps: ['z'] }, stuck)).toEqual([]);
+      expect(cannotGoOnLines({ ...run, in_progress_steps: ['z'] }, stuck, ALL)).toEqual([]);
       expect(
-        cannotGoOnLines({ ...run, pending_gate: { gate_id: 'g' } } as unknown as RunRecord, stuck),
+        cannotGoOnLines(
+          { ...run, pending_gate: { gate_id: 'g' } } as unknown as RunRecord,
+          stuck,
+          ALL,
+        ),
       ).toEqual([]);
-      expect(cannotGoOnLines({ ...run, terminal_state: true } as RunRecord, stuck)).toEqual([]);
-      expect(cannotGoOnLines(run, stuck)).toEqual([INPUT, wayOut(run.id)]);
+      expect(cannotGoOnLines({ ...run, terminal_state: true } as RunRecord, stuck, ALL)).toEqual(
+        [],
+      );
+      expect(cannotGoOnLines(run, stuck, ALL)).toEqual([INPUT, wayOut(run.id)]);
     });
   });
 
@@ -160,7 +170,10 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
       };
       // (a) red when `cannotGoOnHere` drops its last conjunct (every surface would then print a
       //     bare "To end the run instead" with no reason); (b) prints the boolean and the lines.
-      expect({ here: cannotGoOnHere(run, nothing), lines: cannotGoOnLines(run, nothing) }).toEqual({
+      expect({
+        here: cannotGoOnHere(run, nothing),
+        lines: cannotGoOnLines(run, nothing, ALL),
+      }).toEqual({
         here: false,
         lines: [],
       });

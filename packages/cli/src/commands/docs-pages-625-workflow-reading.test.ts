@@ -246,7 +246,7 @@ describe(
       );
       claim(
         RD_PAGE,
-        'When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the run cannot go on until its workflow is corrected, and the way out follows the `Cannot run` lines:',
+        "When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`):",
       );
       const STAYS = ' stays open (phase ';
       /** The `Cannot run` line and the line that follows it. */
@@ -1272,7 +1272,7 @@ describe(
       it('an `auto` step whose input its schema refuses, left at its prompt: each step that cannot run and the way out, then `Inspect`', async () => {
         claim(
           WF_PAGE,
-          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id> — or end it: realm run abandon <id>`), then `Inspect`;",
+          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>`), then `Inspect`;",
         );
         mocks.question.mockImplementation(async () => {
           throw leave();
@@ -1299,7 +1299,8 @@ describe(
           map: [
             "Prompt cancelled — detached from run '<id>' at step 'c' (phase: running). The run is saved.",
             "  'c' cannot run (input_schema): Invalid input for step 'c': the input must have required property 'n'.",
-            "  Run <id> stays open (phase 'running'): correct the workflow, register it again, then realm run advance <id> — or end it: realm run abandon <id>",
+            // F15: `c` is refused for its input, with no `depends_on`: its own way out
+            "  Run <id> stays open (phase 'running'): for 'c', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>",
             '  Inspect:   realm run inspect <id>',
           ],
         });

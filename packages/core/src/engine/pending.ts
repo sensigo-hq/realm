@@ -530,17 +530,59 @@ export function cannotRunClause(entry: EngineRunnable): string {
     : clause;
 }
 
+/** F15: what a way out reads of the run's workflow — each step's `depends_on`. */
+export type WayOutSteps = {
+  readonly steps: Readonly<Record<string, { readonly depends_on?: readonly string[] } | undefined>>;
+};
+
 /**
- * The one way out for a run that stops on an engine step refused before its claim — trust,
- * precondition or input schema (decision C44): the fix (correct the workflow, register it again —
- * the run picks up the corrected definition — then advance) and the alternative (abandon). The
- * drive's stop line and `realm run advance` print it.
+ * F15 (review F-R6 = G6-R7): one step's own way out, by why the view refuses it before its claim.
+ * Trust or precondition: correct the workflow and register it again. Input schema — the engine's
+ * input for an `auto` step is the run's params when it has no `depends_on`, and nothing when it has
+ * ({@link engineStepInput}): with no `depends_on`, a new run with params that fit, or a corrected
+ * `input_schema`; with `depends_on`, the engine gives it no input, so only a corrected
+ * `input_schema`. The tools add the call that runs it with input that fits (`execute_step`).
  */
-export function cannotRunWayOut(run: RunRecord): string {
-  return (
-    `Run ${run.id} stays open (phase '${deriveRunPhase(run)}'): correct the workflow, register it ` +
-    `again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`
-  );
+function refusedStepWay(
+  entry: EngineRunnable,
+  definition: WayOutSteps,
+  words: 'cli' | 'tools',
+): string {
+  if (entry.refused_by !== 'input_schema') return 'correct the workflow and register it again';
+  const call = words === 'tools' ? ', or call execute_step for it with input that fits' : '';
+  return (definition.steps[entry.step]?.depends_on ?? []).length === 0
+    ? `start a run with params that fit, or correct its input_schema and register the workflow again${call}`
+    : `the engine gives it no input, so correct its input_schema and register the workflow again${call}`;
+}
+
+/** The steps the view refuses before their claim (never for capability), in the view's order. */
+function refusedBeforeClaim(pending: PendingView): EngineRunnable[] {
+  return stepsThatCannotRun(pending).filter((e) => e.refused_by !== 'capability');
+}
+
+/**
+ * The one way out for a run that stops on a step refused before its claim (decision C44): the fix
+ * and the alternative (abandon). F15: when every such step is refused for trust or precondition, the
+ * one fix (correct the workflow, register it again — the run picks up the corrected definition —
+ * then advance); otherwise each step's own way ({@link refusedStepWay}), in the view's order, then
+ * once the run's (advance after a fix, or abandon). The drive's stop line and `realm run advance`
+ * print it.
+ */
+export function cannotRunWayOut(
+  run: RunRecord,
+  definition: WayOutSteps,
+  pending: PendingView,
+): string {
+  const head = `Run ${run.id} stays open (phase '${deriveRunPhase(run)}'): `;
+  const refused = refusedBeforeClaim(pending);
+  if (refused.every((e) => e.refused_by !== 'input_schema')) {
+    return (
+      `${head}correct the workflow, register it ` +
+      `again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`
+    );
+  }
+  const ways = refused.map((e) => `for '${e.step}', ${refusedStepWay(e, definition, 'cli')}`);
+  return `${head}${ways.join('; ')}; then, after a fix, realm run advance ${run.id} — or end it: realm run abandon ${run.id}`;
 }
 
 /**
@@ -548,10 +590,23 @@ export function cannotRunWayOut(run: RunRecord): string {
  * sentence {@link describeNext} composes — a step's reply, an answer's reply, `start_run`'s
  * creation reply and `advance_run`'s nothing-ran reply — ends with it under
  * {@link cannotRunWayOutApplies}, as `realm run advance` prints {@link cannotRunWayOut} under the
- * same condition.
+ * same condition. F15: each step's own way, as there, with the call that runs a step refused for
+ * its input with input that fits.
  */
-export function cannotRunWayOutTools(): string {
-  return 'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
+export function cannotRunWayOutTools(
+  run: RunRecord,
+  definition: WayOutSteps,
+  pending: PendingView,
+): string {
+  void run;
+  const refused = refusedBeforeClaim(pending);
+  if (refused.every((e) => e.refused_by !== 'input_schema')) {
+    return 'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
+  }
+  const ways = refused
+    .map((e) => `for '${e.step}', ${refusedStepWay(e, definition, 'tools')}`)
+    .join('; ');
+  return `${ways.charAt(0).toUpperCase()}${ways.slice(1)}; then, after a fix, call advance_run; or end the run with abandon_run.`;
 }
 
 /**
@@ -604,7 +659,12 @@ export function capabilityMarkerWayOut(runId: string): string {
  * respond`, `realm run drain`, `realm run resume` and `realm listen`'s sweeper print these lines;
  * none composes its own.
  */
-export function cannotGoOnLines(run: RunRecord, pending: PendingView): string[] {
+export function cannotGoOnLines(
+  run: RunRecord,
+  pending: PendingView,
+  // F15: the run's workflow — each refused step's way out reads its `depends_on`.
+  definition: WayOutSteps,
+): string[] {
   if (!cannotGoOnHere(run, pending)) return [];
   // decision C212: a line that ends with a command ends without a full stop.
   const lines = stepsThatCannotRun(pending).map((e) =>
@@ -612,7 +672,7 @@ export function cannotGoOnLines(run: RunRecord, pending: PendingView): string[] 
   );
   lines.push(
     cannotRunWayOutApplies(run, pending)
-      ? cannotRunWayOut(run)
+      ? cannotRunWayOut(run, definition, pending)
       : `To end the run instead: realm run abandon ${run.id}`,
   );
   return lines;
@@ -1075,7 +1135,12 @@ export function composeNextActionsStatusWord(
  * is corrected ({@link cannotRunWayOutApplies}), it ends with the way out in the tools' words
  * (decision C57): every reply that says what comes next says it, from one place.
  */
-export function describeNext(pending: PendingView, run: RunRecord): string {
+export function describeNext(
+  pending: PendingView,
+  run: RunRecord,
+  // F15: the run's workflow — the way out reads each refused step's `depends_on`.
+  definition: WayOutSteps,
+): string {
   let sentence = '';
   // decision C103: a reply that meets an open question names it, its choices and the act.
   const question = answerableQuestion(pending);
@@ -1094,7 +1159,9 @@ export function describeNext(pending: PendingView, run: RunRecord): string {
   for (const entry of stepsThatCannotRun(pending)) {
     sentence += ` ${withFullStop(cannotRunClause(entry))}`;
   }
-  if (cannotRunWayOutApplies(run, pending)) sentence += ` ${cannotRunWayOutTools()}`;
+  if (cannotRunWayOutApplies(run, pending)) {
+    sentence += ` ${cannotRunWayOutTools(run, definition, pending)}`;
+  }
   if (sentence.length > 0) return sentence;
   // decision C205: nothing is ready because a step is in flight elsewhere — the way on is to wait.
   const held = run.in_progress_steps.filter((step) => step !== run.pending_gate?.step_name);

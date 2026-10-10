@@ -192,11 +192,11 @@ Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input
 Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it — from a program that has it: realm run advance 31ddb305-989b-42bf-8b63-fcb558ed1c23
 ```
 
-When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the run cannot go on until its workflow is corrected, and the way out follows the `Cannot run` lines:
+When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`):
 
 ```text
 Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input must have required property 'n'
-Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): correct the workflow, register it again, then realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
+Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
 ```
 
 A waiting gate looks like this:

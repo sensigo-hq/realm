@@ -309,6 +309,17 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **The way out of a run that cannot go on is true for an input its schema refuses (issue #625,
+  PR-2a).** The engine gives an `auto` step the run's params when it has no `depends_on`, and no input
+  when it has; the way out said "correct the workflow" for every refusal before the claim. It now
+  gives each refused step's own way, in the workflow's order, then the run's once: `for '<step>',
+start a run with params that fit, or correct its input_schema and register the workflow again`
+  (no `depends_on`), `for '<step>', the engine gives it no input, so correct its input_schema and
+register the workflow again` (with `depends_on`), and `for '<step>', correct the workflow and
+register it again` beside them for a refused `trust` or precondition; over MCP each input-schema
+  way adds `or call execute_step for it with input that fits`. When every refused step is refused
+  for its `trust` or a precondition, the one way out is unchanged. `cannotRunWayOut`,
+  `cannotRunWayOutTools`, `cannotGoOnLines` and `describeNext` take the run's workflow.
 - **`get_run_state` never says `claim_unknown_age` with no claim in flight (issue #625, PR-2a).** The
   open question's own claim is set aside as not work in flight; with nothing left, the status said
   `claim_unknown_age`. An expired question that declares `on_expiry`, on a server that cannot read

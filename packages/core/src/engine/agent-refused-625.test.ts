@@ -230,15 +230,18 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
       // (a) red when any consumer reads the engine steps alone (the agent member falls out) or the
       // sentence says "Ready for the agent"; (b) prints the sentence, both predicates and the lines.
       expect({
-        next: describeNext(view, run),
+        next: describeNext(view, run, d),
         here: cannotGoOnHere(run, view),
         wayOut: cannotRunWayOutApplies(run, view),
-        lines: cannotGoOnLines(run, view),
+        lines: cannotGoOnLines(run, view, d),
       }).toEqual({
-        next: ` 'ask' cannot run (precondition): ${PRE_REFUSAL('ask')} ${cannotRunWayOutTools()}`,
+        next: ` 'ask' cannot run (precondition): ${PRE_REFUSAL('ask')} ${cannotRunWayOutTools(run, d, view)}`,
         here: true,
         wayOut: true,
-        lines: [`'ask' cannot run (precondition): ${PRE_REFUSAL('ask')}`, cannotRunWayOut(run)],
+        lines: [
+          `'ask' cannot run (precondition): ${PRE_REFUSAL('ask')}`,
+          cannotRunWayOut(run, d, view),
+        ],
       });
     });
   });
@@ -251,9 +254,9 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
       const run = await freshRun(store, d);
       const view = describePending(d, run, undefined, new Date());
       expect({
-        next: describeNext(view, run),
+        next: describeNext(view, run, d),
         here: cannotGoOnHere(run, view),
-        lines: cannotGoOnLines(run, view),
+        lines: cannotGoOnLines(run, view, d),
       }).toEqual({ next: " Ready for the agent: 'ask'.", here: false, lines: [] });
     });
   });
@@ -280,7 +283,8 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
       expect(replies).toEqual({
         false:
           "Step 'first' completed. 'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'first.ok == true'. Resolved value: false. " +
-          `${cannotRunWayOutTools()} | []`,
+          // F15: a precondition refusal — the one way out, its words unchanged
+          'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run. | []',
         true: `Step 'first' completed. Ready for the agent: 'ask'. | [["execute_step","ask"]]`,
       });
     });
