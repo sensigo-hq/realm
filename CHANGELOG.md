@@ -390,7 +390,8 @@ choice '<other>' was not recorded.` and `error_details.resolved_by: "timeout"`, 
 already resolved with choice '<c>'` and had no `resolved_by`, as for a person's answer.
 - **An answer to a run that has ended names the way out that kind of ending has (issue #625,
   PR-2a).** `STATE_RUN_TERMINAL`'s message is `Run '<id>' is terminal (<phase>); cannot submit a gate
-response — …`: nothing for a completed run (`it completed, and nothing is owed.`); the preview of
+response — …`: nothing for a completed run (`it completed, and nothing is owed.`), or, when its ending
+  left a cleanup step pending, that step and the command that runs it; the preview of
   `realm run purge <id>` for an aborted one; `realm run resume <id> --from <the failed step>` or that
   preview for a failed one in which a step failed; for an abandoned one, that an operator ended it,
   its reason, and that a new run runs the work again, or that preview. The purge it names is the

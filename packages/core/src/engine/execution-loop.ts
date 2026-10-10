@@ -124,6 +124,7 @@ import {
   operatorEndingClause,
   operatorEndingSentence,
   pendingCleanupSentence,
+  pendingCleanupWay,
   pendingCleanupLine,
   type PendingView,
   type PreClaimRefused,
@@ -1319,15 +1320,20 @@ function resumeOffer(command: string): string {
  * A.3 #10, R10: a destructive act shows its blast radius first): the purge it names is the preview,
  * `realm run purge <id>` with no `--force`, which says what it would remove and removes nothing;
  * never the `--force` form. The refusal of an answer to an ended run ends with it, and so does the
- * refusal of a late answer whose run another call ended (decision C204).
+ * refusal of a late answer whose run another call ended (decision C204). F11 (review G5-2): a
+ * completed run whose ending left a cleanup step `pending` owes that step — said in
+ * {@link pendingCleanupWay}'s words, never "nothing is owed".
  */
 function endedRunWayOut(run: RunRecord, workflow: Parameters<typeof resumeWay>[1]): string {
   const phase = deriveRunPhase(run);
   const purge = `'realm run purge ${run.id}' previews what it would remove`;
   const operator = operatorEndingClause(run);
   const resume = offeredResumeWay(run, workflow);
+  const cleanup = pendingCleanupSentence(run).trim();
   return phase === 'completed'
-    ? 'it completed, and nothing is owed.'
+    ? cleanup === ''
+      ? 'it completed, and nothing is owed.'
+      : `it completed; ${cleanup.charAt(0).toLowerCase()}${cleanup.slice(1)}`
     : phase === 'aborted'
       ? `an aborted run is never resumed; ${purge}.`
       : operator !== undefined
@@ -1408,6 +1414,9 @@ export function withPendingCleanup(
   const sentence = pendingCleanupSentence(run);
   if (sentence === '') return envelope;
   const hint = envelope.context_hint;
+  // F11: said once — a reply whose hint already names the command that runs them (the refusal of
+  // an answer to a completed run says it, `endedRunWayOut`) gets no second sentence.
+  if (hint.includes(`'${pendingCleanupWay(run)!.command}'`)) return envelope;
   const offer = workflow === undefined ? undefined : endedRunOfferSentence(run, workflow);
   if (offer !== undefined && hint.endsWith(` ${offer}`)) {
     return {

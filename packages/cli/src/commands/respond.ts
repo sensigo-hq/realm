@@ -19,6 +19,7 @@ import {
   cannotGoOnLines,
   sentenceEnd,
   pendingCleanupLine,
+  pendingCleanupWay,
 } from '@sensigo/realm';
 import {
   loadProjectExtensions,
@@ -102,7 +103,14 @@ function nextLines(
  */
 function withCleanupLine(lines: string[], run: RunRecord): string[] {
   const cleanup = pendingCleanupLine(run);
-  return cleanup === undefined || lines.includes(cleanup) ? lines : [...lines, cleanup];
+  // F11: said once — a line that already names the command that runs them (the refusal of a late
+  // answer whose run completed with a cleanup step pending says it) gets no second line.
+  const command = pendingCleanupWay(run)?.command;
+  return cleanup === undefined ||
+    lines.includes(cleanup) ||
+    (command !== undefined && lines.some((l) => l.includes(`'${command}'`)))
+    ? lines
+    : [...lines, cleanup];
 }
 
 /** What `respondToGate` hands the command to print (issue #625). */
