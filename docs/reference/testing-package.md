@@ -131,7 +131,7 @@ await runFixtureTests({ workflowPath: 'flow', fixturesPath: 'flow/fixtures' });
 ]
 ```
 
-Each fixture gets a run in a new `InMemoryStore`. Nothing is written to disk. An agent step's input is the fixture's answer for it. An `auto` step gets what the engine gives it in a real run: the run's params when the step has no `depends_on`, and nothing otherwise. Added after version 0.46.0, which gives every `auto` step nothing, so a fixture whose first `auto` step needs the params fails there with `Invalid input for step '<step>'`.
+Each fixture gets a run in a new `InMemoryStore`. Nothing is written to disk. An agent step's input is the fixture's answer for it. An `auto` step gets what the engine gives it in a real run: the run's params when the step has no `depends_on`, and nothing otherwise. Added after version 0.46.0, which gives every `auto` step nothing, so a fixture whose first `auto` step needs the params fails there with `Invalid input for step '<step>'`. The engine's work — guards, `auto` steps, and an expired question's declared `on_expiry` — runs through `advanceRun` with the fixture's registry, as in a real run: an `auto` step with no handler and no service records what the engine records (the output of the one step it depends on, or the run's params when it depends on none), and the steps run in the engine's order: every step that can run, then one attempt of a step whose handler or adapter has no stand-in. Added after version 0.46.0, which recorded `{}` for such a step when the runner named it, so a fixture whose later step read its output failed where the run completes.
 
 A fixture's `error` for each kind of failure:
 

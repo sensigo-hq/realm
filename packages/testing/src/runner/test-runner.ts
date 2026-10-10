@@ -5,8 +5,8 @@ import {
   ExtensionRegistry,
   createDefaultRegistry,
   executeChain,
+  advanceRun,
   propagateSkips,
-  engineStepInput,
   describePending,
   stepsThatCannotRun,
   cannotRunWayOutApplies,
@@ -263,8 +263,8 @@ async function runSingleFixture(
       // run and its check, in core's own clause, instead of running to the iteration cap. Never a
       // run-level way out (`realm run advance` / `abandon`): this run lives in the runner's memory
       // and no command reaches it. A step whose handler or adapter this fixture's registry lacks
-      // does not stop the fixture here on its own: the pick below dispatches it, and the fixture
-      // fails with the engine's own message, as a chained step that needs it does. Beside a step
+      // does not stop the fixture here on its own: the engine's call below (`advanceRun`) attempts
+      // it, and the fixture fails with the engine's own message, as a chained step that needs it does. Beside a step
       // refused before its claim, it is named here too, with the other steps that cannot run.
       const pending = describePending(definition, currentRun, fixtureRegistry, new Date());
       if (cannotRunWayOutApplies(currentRun, pending)) {
@@ -278,28 +278,41 @@ async function runSingleFixture(
         };
       }
 
-      // issue #625 PR-2a (decisions C80, C13, C82): the pick skips a step the view above refuses
-      // before its claim — an engine step or an agent step — as production's pick never runs one — so a
-      // runnable sibling runs, and when nothing else can run the stall above names the refused
-      // step, never the iteration cap. A step refused only for capability stays pickable: it fails
-      // with the engine's own message (C75). Among the steps it may pick, the runner's order is
-      // unchanged (the first eligible one).
-      const refusedBeforeClaim = new Set(
-        stepsThatCannotRun(pending)
-          .filter((e) => e.refused_by !== 'capability')
-          .map((e) => e.step),
-      );
-      const nextStep = eligibleSteps.find((s) => !refusedBeforeClaim.has(s)) ?? eligibleSteps[0]!;
-      const stepDef = definition.steps[nextStep];
-      // Agent steps need the fixture's pre-built response as the input so the
-      // engine's input_schema validation passes before the dispatcher runs.
-      // An auto step gets what the engine gives it in a real run (issue #625 PR-2a, decisions C2,
-      // C70): the run's params for a step with no `depends_on`, otherwise nothing — so a fixture
-      // passes or fails as production does.
-      const stepInput =
-        stepDef?.execution === 'agent'
-          ? ((fixture.agent_responses[nextStep] ?? {}) as Record<string, unknown>)
-          : engineStepInput(definition, currentRun, nextStep);
+      // F10 (review G5-1): the engine's work — an expired question's declared `on_expiry`, the guards
+      // and the `auto` steps it owes — runs through the one call production makes for it,
+      // `advanceRun`, with this fixture's registry, so a bare step records what the engine records
+      // (its one dependency's output, or the run's params) and never `{}` named by the runner; a
+      // fixture passes or fails as production does. Its order is production's: every step that can
+      // run, then the one attempt of a step whose handler or adapter this registry lacks (decision
+      // C23), which fails the fixture with the engine's own message — never a spin to the iteration
+      // cap.
+      const capabilityAttempt = pending.engine_runnable.some((e) => e.refused_by === 'capability');
+      if (pending.act !== undefined || capabilityAttempt) {
+        const advanced = await advanceRun(store, definition, { runId, registry: fixtureRegistry });
+        if (advanced.status === 'error') {
+          return {
+            name: fixture.name,
+            passed: false,
+            error: advanced.errors[0] ?? 'Unknown error from step execution',
+          };
+        }
+        currentRun = await store.get(runId);
+        continue;
+      }
+
+      // An agent step: the first one the run's view offers (decision C82: an agent step refused
+      // before its claim is never offered), with the fixture's pre-built answer as its input, so the
+      // engine's input_schema validation passes before the dispatcher runs — through `executeChain`,
+      // whose chain runs what the answer makes owed, as before.
+      const nextStep = pending.agent_steps[0];
+      if (nextStep === undefined) {
+        return {
+          name: fixture.name,
+          passed: false,
+          error: `Workflow stalled: no eligible steps in phase '${currentRun.run_phase}'`,
+        };
+      }
+      const stepInput = (fixture.agent_responses[nextStep] ?? {}) as Record<string, unknown>;
       const envelope = await executeChain(store, definition, {
         runId,
         command: nextStep,

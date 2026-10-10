@@ -309,6 +309,13 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **realm-testing's runner records what the engine records (issue #625, PR-2a).**
+  `runFixtureTests` (and so `realm workflow test`) runs the engine's work — guards, `auto` steps,
+  an expired question's declared `on_expiry` — through `advanceRun` with the fixture's registry,
+  in the engine's order: every step that can run, then one attempt of a step whose handler or
+  adapter has no stand-in, which fails the fixture with the engine's message. A bare `auto` step the
+  runner named recorded `{}`, so a fixture whose later step read its output (a precondition, for
+  one) stalled where the run completes; it now records its dependency's output, or the run's params.
 - **`realm run respond` says only the cleanup steps its answer's ending ran (issue #625, PR-2a).**
   The rule `realm run advance` follows now holds for every caller of the one composer: `realm run
 respond`, the reply in a Slack gate thread and `realm workflow run`'s prompt name only the cleanup

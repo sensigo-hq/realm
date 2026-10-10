@@ -290,9 +290,9 @@ describe("#625 PR-2a, C75 — a missing stand-in fails with the engine's own mes
 // issue #625 PR-2a, decision C80: the runner's pick skips a step the view refuses before its claim
 // (trust, precondition, input schema), as production's pick does (C13): a runnable sibling runs, and
 // the fixture then ends in C75's stall — never by re-picking the refused step to the iteration cap.
-// A step refused only for capability stays pickable, and among the steps it may pick the runner's
-// order is unchanged. Each step below runs through a recording handler, so the cells see which
-// steps ran and in what order.
+// A step refused only for capability is still attempted — F10: by `advanceRun`, in the engine's
+// order (every step that can run first, decision C23). Each step below runs through a recording
+// handler, so the cells see which steps ran and in what order.
 function recordingHandlers(ran: string[], names: string[]): Record<string, StepHandler> {
   return Object.fromEntries(
     names.map((name) => [
@@ -377,7 +377,7 @@ describe("#625 PR-2a, C80 — the runner's pick skips a step refused before its 
     });
   });
 
-  it("CONTROL — a step refused only for capability, listed first, stays pickable: the engine's own message, and the step after it never runs", async () => {
+  it("CONTROL — a step refused only for capability, listed first, stays pickable: the engine's own message, after the step that can run (F10: the engine's order, decision C23)", async () => {
     const ran: string[] = [];
     const result = await runOne(
       [
@@ -399,12 +399,15 @@ describe("#625 PR-2a, C80 — the runner's pick skips a step refused before its 
       ['name: one', 'params: {}', 'agent_responses: {}', 'expected:', '  final_state: completed'],
       recordingHandlers(ran, ['file']),
     );
-    // (a) red when the pick also skips a step refused for capability (decision C75 keeps it
-    //     pickable, and the runner's order among pickable steps unchanged): 'file' then runs before
-    //     the engine's message; (b) prints the result and the steps that ran.
+    // (a) red when a step refused for capability is skipped (decision C75 keeps it attempted, and
+    //     the fixture fails with the engine's message), or — F10, review G5-1 — when the runner keeps
+    //     its own pick order: the engine's work now runs through `advanceRun`, which runs every step
+    //     that can run before its one capability attempt (decision C23), so 'file' runs first; before
+    //     F10 the runner attempted 'fetch' first and 'file' never ran; (b) prints the result and the
+    //     steps that ran.
     expect({ result, ran }).toEqual({
       result: { name: 'one', passed: false, error: "Handler 'missing_h' is not registered" },
-      ran: [],
+      ran: ['file'],
     });
   });
 });
