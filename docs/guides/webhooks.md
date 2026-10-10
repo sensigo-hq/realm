@@ -134,10 +134,16 @@ Each check has its own reply. Send these to see them.
 {"error":"forbidden"}   403
 ```
 
-**The same event again** starts nothing:
+**The same event again** starts nothing. Within the duplicate window (`ttl_minutes`, 60 minutes by default) the reply is:
 
 ```text
 {"status":"deduplicated"}   200
+```
+
+Later, while the run that event started exists (a sender's redelivery, for one), and when two copies of one delivery arrive together, the reply names that run and its phase. Nothing is started and the run is not written to, whether it is still going or has ended:
+
+```text
+{"status":"deduplicated","run_id":"746ade77-2fcf-4ad6-8710-88cdc7f63768","run_phase":"running"}   200
 ```
 
 **An event the filter does not want**, for example `"type":"ticket-closed"`, starts nothing:
@@ -152,7 +158,7 @@ Each check has its own reply. Send these to see them.
 {"error":"params_invalid","message":"Invalid params for workflow 'tickets': /ticket_id must be number","status":"rejected"}   400
 ```
 
-In none of these cases is a run created. The two `200` replies are deliberate: the sender did nothing wrong, so it should not retry.
+In none of these cases is a run created or a `realm agent` started. The `200` replies are deliberate: the sender did nothing wrong, so it should not retry.
 
 ## Choose how requests are checked
 

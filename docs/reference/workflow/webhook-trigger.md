@@ -105,13 +105,15 @@ Each condition has `value`, and exactly one of:
 
 `dedup` tells Realm how to recognise the same event delivered twice.
 
-| Key             | Type                     | Default  | What it does                                                                         |
-| --------------- | ------------------------ | -------- | ------------------------------------------------------------------------------------ |
-| `id_from`       | path                     | Required | Where the event's own ID is in the request.                                          |
-| `ttl_minutes`   | whole number, 1 to 10080 | 60       | How long an ID is remembered. 10080 minutes is seven days.                           |
-| `on_missing_id` | `skip` or `reject`       | `skip`   | What to do when the ID is not in the request: carry on without the check, or refuse. |
+| Key             | Type                     | Default  | What it does                                                                                                                                      |
+| --------------- | ------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id_from`       | path                     | Required | Where the event's own ID is in the request.                                                                                                       |
+| `ttl_minutes`   | whole number, 1 to 10080 | 60       | How long the duplicate check remembers an ID. 10080 minutes is seven days. The run store recognises the ID for as long as its run exists (below). |
+| `on_missing_id` | `skip` or `reject`       | `skip`   | What to do when the ID is not in the request: carry on without the check, or refuse.                                                              |
 
-The event's ID also becomes the run's idempotency key. A run started for event `102` has `idempotency_key: 102`.
+The event's ID also becomes the run's idempotency key. A run started for event `102` has `idempotency_key: 102`. So a delivery whose ID belongs to a run that exists starts nothing and writes nothing to that run, whether the run is still going or has ended: after `ttl_minutes`, and when two copies of one delivery arrive together, the reply is `200` with the run's `run_id` and its `run_phase` (see [Replies](#replies)). Added after version 0.46.0, which started a second `realm agent` on that run and replied `202`.
+
+With the block at the top of this page, event `102` delivered again within five minutes gets `200` `{"status":"deduplicated"}`. Delivered again later, while its run exists, it gets `200` `{"status":"deduplicated","run_id":"<the run's id>","run_phase":"running"}` (or the phase the run has reached), and no run or agent starts.
 
 Without a `dedup` block, and with `dedup: false`, deliveries are not checked: the same request twice starts two runs.
 
@@ -136,19 +138,20 @@ started a run with the parameters `{"ticket_id": 102, "source": "helpdesk"}`.
 
 `realm listen` checks a request in this order, and stops at the first check that fails.
 
-| Check                                                 | Reply when it fails                                                                                                                |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| The method is `POST`                                  | `405` `{"error":"method_not_allowed"}`                                                                                             |
-| A workflow is mounted at the address                  | `403` `{"error":"forbidden"}`                                                                                                      |
-| Fewer requests are being handled than the limit       | `503` `{"error":"busy","status":"rejected"}`                                                                                       |
-| The body is within the size limit and arrives in time | The connection is closed. No reply is sent.                                                                                        |
-| `Content-Type` is `application/json`                  | `415` `{"error":"unsupported_media_type"}`                                                                                         |
-| The `auth` check                                      | `403` `{"error":"forbidden"}`                                                                                                      |
-| The body is JSON                                      | `400` `{"error":"invalid_json"}`                                                                                                   |
-| The `filter`                                          | `200` `{"status":"ignored"}`                                                                                                       |
-| The event ID is present, with `on_missing_id: reject` | `400` `{"error":"dedup_id_unresolvable","status":"rejected"}`                                                                      |
-| The event has not been seen                           | `200` `{"status":"deduplicated"}`                                                                                                  |
-| The parameters fit `params_schema`                    | `400` `{"error":"params_invalid","message":"Invalid params for workflow 'shared': /ticket_id must be number","status":"rejected"}` |
+| Check                                                 | Reply when it fails                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The method is `POST`                                  | `405` `{"error":"method_not_allowed"}`                                                                                                                                                                                                                                   |
+| A workflow is mounted at the address                  | `403` `{"error":"forbidden"}`                                                                                                                                                                                                                                            |
+| Fewer requests are being handled than the limit       | `503` `{"error":"busy","status":"rejected"}`                                                                                                                                                                                                                             |
+| The body is within the size limit and arrives in time | The connection is closed. No reply is sent.                                                                                                                                                                                                                              |
+| `Content-Type` is `application/json`                  | `415` `{"error":"unsupported_media_type"}`                                                                                                                                                                                                                               |
+| The `auth` check                                      | `403` `{"error":"forbidden"}`                                                                                                                                                                                                                                            |
+| The body is JSON                                      | `400` `{"error":"invalid_json"}`                                                                                                                                                                                                                                         |
+| The `filter`                                          | `200` `{"status":"ignored"}`                                                                                                                                                                                                                                             |
+| The event ID is present, with `on_missing_id: reject` | `400` `{"error":"dedup_id_unresolvable","status":"rejected"}`                                                                                                                                                                                                            |
+| The event has not been seen within `ttl_minutes`      | `200` `{"status":"deduplicated"}`                                                                                                                                                                                                                                        |
+| The parameters fit `params_schema`                    | `400` `{"error":"params_invalid","message":"Invalid params for workflow 'shared': /ticket_id must be number","status":"rejected"}`                                                                                                                                       |
+| No run has the event's ID                             | `200` `{"status":"deduplicated","run_id":"746ade77-2fcf-4ad6-8710-88cdc7f63768","run_phase":"running"}`. Nothing is started, and the run is not written to. `run_phase` is the run's phase: `abandoned` for a run that was stopped, for one. Added after version 0.46.0. |
 
 A request that passes them all gets:
 

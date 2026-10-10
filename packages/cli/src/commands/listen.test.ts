@@ -14,9 +14,10 @@ import { EventEmitter } from 'node:events';
 import { createHmac } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { CURRENT_WORKFLOW_SCHEMA_VERSION, abandonRun, JsonFileStore } from '@sensigo/realm';
 import type { WorkflowDefinition, WebhookTrigger, WorkflowRegistrar } from '@sensigo/realm';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   makeListenHandler,
@@ -315,6 +316,9 @@ describe('makeListenHandler — request pipeline', () => {
     const second = await invoke(handler, reqOpts);
     expect(second.status).toBe(200);
     expect(second.body['status']).toBe('deduplicated');
+    // issue #735, cell 4 (preservation): inside the window the reply stays the bare one — the
+    // run's id is said only when the run store matched the delivery.
+    expect(second.body).not.toHaveProperty('run_id');
   });
 
   it('dedup id unresolvable + on_missing_id reject → 400', async () => {
@@ -457,12 +461,254 @@ describe('makeListenHandler — request pipeline', () => {
     const run = await deps.runStore.get(body['run_id'] as string);
     expect(run.terminal_reason).toBe('spawn_failed');
     expect(run.terminal_state).toBe(true);
-    // No dedup record on failure (so the provider's retry can re-create the run).
+    // No dedup record on failure. A retry with the same id still does not get a fresh run: the
+    // run store matches the run the spawn failure sealed (below; issue #735, residual 1).
     expect(recordSpy).not.toHaveBeenCalled();
 
-    // In-flight counter was freed (finally) — a follow-up request is not 503.
+    // In-flight counter was freed (finally) — a follow-up request is not 503. issue #735, cell 6:
+    // the retry reuses `evt-1`, the run store matches the sealed run (`created: false`), and the
+    // retry is told that run — its id and phase — with nothing spawned.
+    // (a) red when listen spawns onto the matched run again (before #735: a second spawn, 500);
+    // (b) prints the reply and the spawn count.
     const second = await invoke(handler, reqOpts);
-    expect(second.status).toBe(500); // still spawn_failed, NOT 503
+    expect({ second, spawns: deps.spawnAgent.mock.calls.length }).toEqual({
+      second: {
+        status: 200,
+        body: { status: 'deduplicated', run_id: body['run_id'], run_phase: 'failed' },
+      },
+      spawns: 1,
+    });
+  });
+
+  // ── issue #735: a delivery the run store matches starts nothing and writes nothing ──────────
+  // The window expires by the clock the dedup stores read (`Date.now()`), so only Date is faked:
+  // a bare vi.useFakeTimers() also fakes setImmediate, which makeReq uses, and hangs the handler.
+  // `deps.clock` stamps only `agent_started_at`; it does not expire the window.
+  // Beside each cell: (a) the change that turns it red; (b) what it prints when it fails.
+  const DEDUP_1M: WebhookTrigger = {
+    ...SHARED_SECRET_TRIGGER,
+    dedup: { id_from: 'body.id', ttl_minutes: 1 },
+  };
+  const T0 = Date.UTC(2026, 9, 10, 12, 0, 0);
+  const evt = (extra: Record<string, unknown> = {}) => ({
+    url: '/wf',
+    headers: { ...JSON_CT, authorization: SECRET },
+    body: JSON.stringify({ id: 'evt-735', ...extra }),
+  });
+  type Logged = [string, unknown];
+
+  /**
+   * One delivery; then `between`; then the same delivery once the 1-minute window has passed; then,
+   * when `third`, the same delivery again right away. The spawn stub returns pid 4242, then 4243.
+   */
+  async function afterTheWindow(
+    opts: {
+      trigger?: WebhookTrigger;
+      between?: (deps: ReturnType<typeof makeDeps>, runId: string) => Promise<unknown>;
+      first?: Record<string, unknown>;
+      second?: Record<string, unknown>;
+      third?: boolean;
+    } = {},
+  ) {
+    const infos: Logged[] = [];
+    let pid = 4242;
+    const deps = makeDeps({
+      spawnAgent: vi.fn((): SpawnResult => ({ pid: pid++ })),
+      logger: { ...silentLogger, info: (m: string, d?: unknown) => infos.push([m, d]) },
+    });
+    const create = vi.spyOn(deps.runStore, 'create');
+    const handler = makeListenHandler(routesFor(wf(opts.trigger ?? DEDUP_1M)), deps);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(T0);
+      const first = await invoke(handler, evt(opts.first));
+      const runId = first.body['run_id'] as string;
+      await opts.between?.(deps, runId);
+      const before = await deps.runStore.get(runId);
+      const kept = { version: before.version, agent_pid: before.agent_pid };
+      vi.setSystemTime(T0 + 60_001);
+      const second = await invoke(handler, evt(opts.second));
+      const spawns = deps.spawnAgent.mock.calls.length;
+      const after = await deps.runStore.get(runId);
+      const record = { version: after.version, agent_pid: after.agent_pid };
+      const third = opts.third === true ? await invoke(handler, evt(opts.second)) : undefined;
+      const deduplicated = infos.filter(([m]) => m === 'webhook: deduplicated');
+      return { runId, first, second, third, spawns, kept, record, create, deduplicated };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('#735 cell 1: a redelivery after the window on a RUNNING run → 200 deduplicated with the run; no second agent, the record untouched', async () => {
+    const r = await afterTheWindow();
+    // (a) red when listen ignores `created` and spawns onto the matched run (before #735: 202, a
+    //     second spawn, agent_pid 4243, the version bumped); (b) prints the reply, the spawn
+    //     count and the record's version and agent_pid before and after.
+    expect({ second: r.second, spawns: r.spawns, kept: r.kept, record: r.record }).toEqual({
+      second: {
+        status: 200,
+        body: { status: 'deduplicated', run_id: r.runId, run_phase: 'running' },
+      },
+      spawns: 1,
+      kept: { version: 1, agent_pid: 4242 },
+      record: { version: 1, agent_pid: 4242 },
+    });
+  });
+
+  it('#735 cell 2: the same on an ENDED (abandoned) run → 200 deduplicated, run_phase abandoned; no agent, the sealed record not written', async () => {
+    const r = await afterTheWindow({ between: (deps, runId) => abandonRun(deps.runStore, runId) });
+    // (a) red when listen spawns onto the ended run and writes the sealed record (before #735:
+    //     202, a spawn, the version bumped); (b) prints the reply, the spawn count, the versions.
+    expect({
+      second: r.second,
+      spawns: r.spawns,
+      version: [r.kept.version, r.record.version],
+    }).toEqual({
+      second: {
+        status: 200,
+        body: { status: 'deduplicated', run_id: r.runId, run_phase: 'abandoned' },
+      },
+      spawns: 1,
+      version: [r.kept.version, r.kept.version],
+    });
+  });
+
+  it('#735 cell 3: the matched branch records the delivery id — a third copy right away is answered inside the window without reaching the store', async () => {
+    const r = await afterTheWindow({ third: true });
+    // Green on the code before #735 too (it also recorded after a matched spawn). (a) red when the
+    // matched branch's `dedupStore.record` is deleted: the third copy reaches `create` again;
+    // (b) prints the third reply and the number of `create` calls.
+    expect({ third: r.third, creates: r.create.mock.calls.length }).toEqual({
+      third: { status: 200, body: { status: 'deduplicated' } },
+      creates: 2,
+    });
+  });
+
+  it.each([
+    ['running', undefined],
+    [
+      'abandoned',
+      (deps: ReturnType<typeof makeDeps>, runId: string) => abandonRun(deps.runStore, runId),
+    ],
+  ] as const)(
+    '#735 cell 7: the matched delivery is logged at info — webhook: deduplicated, reason matched_existing_run, the run and its phase (%s)',
+    async (phase, between) => {
+      const r = await afterTheWindow(between !== undefined ? { between } : {});
+      // (a) red when the matched delivery is not logged, or logged without its reason, run or
+      //     phase (before #735: only `webhook: dispatched`); (b) prints the logged lines' data.
+      expect(r.deduplicated).toEqual([
+        [
+          'webhook: deduplicated',
+          { path: '/wf', run_id: r.runId, run_phase: phase, reason: 'matched_existing_run' },
+        ],
+      ]);
+    },
+  );
+
+  it.each([
+    ['the same params', { note: 'a' }, {}],
+    ['other mapped params', { note: 'b' }, { params_differ: true }],
+  ] as const)(
+    '#735: a matched delivery with %s — params_differ said only when the mapped params differ',
+    async (_label, second, extra) => {
+      const r = await afterTheWindow({
+        trigger: { ...DEDUP_1M, params_map: { ticket_id: 'body.id', note: 'body.note' } },
+        first: { note: 'a' },
+        second,
+      });
+      // (a) red when a later delivery under the same id with other params is dropped without a
+      //     word, or the flag is said when the params are the same; (b) prints the logged data.
+      expect(r.deduplicated).toEqual([
+        [
+          'webhook: deduplicated',
+          {
+            path: '/wf',
+            run_id: r.runId,
+            run_phase: 'running',
+            reason: 'matched_existing_run',
+            ...extra,
+          },
+        ],
+      ]);
+    },
+  );
+
+  it('#735 cell 8: two copies of one delivery arriving together → one run and ONE agent; the second copy is told the run that won', async () => {
+    const deps = makeDeps();
+    // Both deliveries are held at the store until both have reached it (a two-party barrier):
+    // in this harness the in-memory stores never yield, so without it the first finishes first.
+    let n = 0;
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const inner = deps.runStore.create.bind(deps.runStore);
+    deps.runStore.create = async (o) => {
+      if (++n === 2) open();
+      await gate;
+      return inner(o);
+    };
+    const handler = makeListenHandler(
+      routesFor(wf({ ...SHARED_SECRET_TRIGGER, dedup: { id_from: 'body.id' } })),
+      deps,
+    );
+    const replies = await Promise.all([invoke(handler, evt()), invoke(handler, evt())]);
+    const won = replies.find((x) => x.status === 202)?.body['run_id'];
+    // (a) red when both copies start an agent (before #735: two 202s with the same run id, two
+    //     spawns); (b) prints both replies, sorted by status, and the spawn count.
+    expect({
+      replies: [...replies].sort((x, y) => y.status - x.status),
+      spawns: deps.spawnAgent.mock.calls.length,
+    }).toEqual({
+      replies: [
+        { status: 202, body: { run_id: won, status: 'accepted' } },
+        { status: 200, body: { status: 'deduplicated', run_id: won, run_phase: 'running' } },
+      ],
+      spawns: 1,
+    });
+  });
+
+  it('#735 cell 9 (preservation): a seal landing between the create and the pid write — the write fails on the version check; the run stays sealed with no agent_pid', async () => {
+    // A JsonFileStore: the in-memory store's create returns the object it keeps, so agent_pid would
+    // appear on it before the write (a shared-object artefact).
+    const dir = mkdtempSync(join(tmpdir(), 'listen-735-'));
+    const inner = new JsonFileStore(dir);
+    const store = new JsonFileStore(dir);
+    const realUpdate = store.update.bind(store);
+    store.update = async (record) => {
+      if (record.agent_pid !== undefined) await abandonRun(inner, record.id);
+      return realUpdate(record);
+    };
+    const errors: Logged[] = [];
+    const deps = makeDeps({
+      runStore: store,
+      logger: { ...silentLogger, error: (m: string, d?: unknown) => errors.push([m, d]) },
+    });
+    const handler = makeListenHandler(routesFor(wf(SHARED_SECRET_TRIGGER)), deps);
+    const reply = await invoke(handler, {
+      url: '/wf',
+      headers: { ...JSON_CT, authorization: SECRET },
+      body: '{}',
+    });
+    const runId = reply.body['run_id'] as string;
+    const run = await inner.get(runId);
+    // (a) red when listen's pid write lands on the sealed record, or a seal stops being refused
+    //     by the version check; (b) prints the reply, the seal, agent_pid, the version and the
+    //     logged lines (each with whether it names the version conflict).
+    expect({
+      reply,
+      sealed_by: run.sealed_by?.arm,
+      agent_pid: run.agent_pid,
+      version: run.version,
+      logged: errors.map(([m, d]) => [
+        m,
+        String((d as { error?: unknown } | undefined)?.error).includes('Version conflict'),
+      ]),
+    }).toEqual({
+      reply: { status: 202, body: { run_id: runId, status: 'accepted' } },
+      sealed_by: 'abandon_requested',
+      agent_pid: undefined,
+      version: 1,
+      logged: [['webhook: failed to record agent pid', true]],
+    });
   });
 });
 

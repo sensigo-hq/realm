@@ -745,6 +745,10 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
 
 ### Fixed
 
+- `realm listen` no longer starts a second `realm agent` on a run a redelivered webhook matches after
+  the duplicate window (for example GitHub's Redeliver), or when two copies of one delivery arrive
+  together, and no longer writes to that run; it answers `200` with `status: deduplicated`, the run's
+  id and its phase (#735).
 - **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
   PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
   replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on
