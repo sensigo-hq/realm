@@ -34,6 +34,8 @@ import {
   // under a minute, never `0m`).
   formatDuration,
   shellWord,
+  pendingCleanupLine,
+  pendingCleanupWay,
 } from '@sensigo/realm';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -891,6 +893,18 @@ export async function runDrainAction(
       );
       for (const name of outcome.leftPending)
         console.log(`  realm run drain ${runId} --void ${shellWord(name)} --force`);
+      process.exit(1);
+      return;
+    }
+    // F12 (review G2-R4, G3-1): the pass halted at another drainer's lease (its `⚠` line above says
+    // so) and left that cleanup step pending: said as held, with the lease's deadline and the command
+    // for after it — never "no pending finalizers"; exit 1, as for any pass that left a step pending.
+    const afterPass = new Date();
+    if (pendingCleanupWay(outcome.run, afterPass)?.held_until !== undefined) {
+      if (outcome.attempted.length > 0) {
+        console.log(`Drained run '${runId}' (${outcome.attempted.length} ran).`);
+      }
+      console.log(pendingCleanupLine(outcome.run, afterPass)!);
       process.exit(1);
       return;
     }

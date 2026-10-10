@@ -102,10 +102,11 @@ function nextLines(
  * it already (after each cleanup step's outcome); an answer that ended the run otherwise gets it here.
  */
 function withCleanupLine(lines: string[], run: RunRecord): string[] {
-  const cleanup = pendingCleanupLine(run);
+  const now = new Date();
+  const cleanup = pendingCleanupLine(run, now);
   // F11: said once — a line that already names the command that runs them (the refusal of a late
   // answer whose run completed with a cleanup step pending says it) gets no second line.
-  const command = pendingCleanupWay(run)?.command;
+  const command = pendingCleanupWay(run, now)?.command;
   return cleanup === undefined ||
     lines.includes(cleanup) ||
     (command !== undefined && lines.some((l) => l.includes(`'${command}'`)))
@@ -228,6 +229,7 @@ export async function respondToGate(
             workflow,
             // F9: the record this command read before its answer.
             before: run,
+            now: new Date(),
           }),
           lateRun,
         ),
@@ -256,6 +258,7 @@ export async function respondToGate(
       workflow,
       // F9: the record this command read before its answer.
       before: run,
+      now: new Date(),
     }),
     updatedRun,
   );

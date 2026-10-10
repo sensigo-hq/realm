@@ -169,7 +169,7 @@ export function renderDetachMap(
     const resume = resumeLine(record, ways.workflow);
     if (resume !== undefined) lines.push(resume);
     // decision C211: cleanup steps the ending left pending — the command that runs them.
-    const cleanup = pendingCleanupLine(record);
+    const cleanup = pendingCleanupLine(record, new Date());
     if (cleanup !== undefined) lines.push(`  ${cleanup}`);
     lines.push(`  Inspect:   realm run inspect ${record.id}`);
     return lines.join('\n');
@@ -778,6 +778,7 @@ export const runCommand = new Command('run')
               via: 'run' as const,
               workflow: definition,
               before: run,
+              now: new Date(),
             };
             const respondResult = await submitHumanResponse(store, definition, {
               runId,
@@ -1217,7 +1218,7 @@ export const runCommand = new Command('run')
       // above — so `run.terminal_state` is always true at this point.
       // decision C211 (walk c14 W3-4's class): cleanup steps the ending left pending — the command
       // that runs them, under the last line.
-      const cleanup = pendingCleanupLine(run);
+      const cleanup = pendingCleanupLine(run, new Date());
       if (deriveRunPhase(run) === 'completed') {
         console.log(`Run complete. Phase: ${run.run_phase}`);
         if (cleanup !== undefined) console.log(cleanup);

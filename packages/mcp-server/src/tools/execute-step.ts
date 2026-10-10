@@ -311,7 +311,7 @@ export async function handleExecuteStep(
   // in: the failed step `realm run resume` takes, the cleanup steps left pending.
   if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) return reply;
   const ended = await runStore.get(args.run_id).catch(() => undefined);
-  return ended === undefined ? reply : withEndedRunWays(reply, ended, definition);
+  return ended === undefined ? reply : withEndedRunWays(reply, ended, definition, new Date());
 }
 
 /**

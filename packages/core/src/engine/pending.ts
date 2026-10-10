@@ -756,49 +756,91 @@ export function waitingWords(pending: PendingView): string | undefined {
  * ledger's pending entries, in rank order) and the command that runs them — `realm run drain <id>
  * --force`, which runs each with the code it loads, when that code has the handler. `undefined`
  * for a run that has not ended, or has none pending.
+ *
+ * F12 (review G3-1, G7-13; framework §0 rule 10, R14): judged at the call's `now`, a pending step
+ * under another drainer's lease that has not passed is `held_until` its deadline (the latest such
+ * deadline, when several are held): the command runs nothing until then — `drainFinalizers` halts at
+ * a held lease. What the record shows, and nothing more: realm cannot tell whether that drainer is
+ * still running.
  */
 export function pendingCleanupWay(
   run: Pick<RunRecord, 'id' | 'terminal_state' | 'finalizer_ledger'>,
-): { steps: string[]; command: string } | undefined {
+  now: Date,
+): { steps: string[]; command: string; held_until?: string } | undefined {
   if (!run.terminal_state) return undefined;
-  const steps = Object.entries(run.finalizer_ledger ?? {})
+  const pending = Object.entries(run.finalizer_ledger ?? {})
     .filter(([, entry]) => entry.status === 'pending')
-    .sort(([, a], [, b]) => a.rank - b.rank)
-    .map(([name]) => name);
-  if (steps.length === 0) return undefined;
-  return { steps, command: `realm run drain ${run.id} --force` };
+    .sort(([, a], [, b]) => a.rank - b.rank);
+  if (pending.length === 0) return undefined;
+  const held = pending
+    .map(([, entry]) => entry)
+    .filter(
+      (entry) =>
+        entry.lease_token !== undefined &&
+        entry.lease_deadline !== undefined &&
+        new Date(entry.lease_deadline).getTime() > now.getTime(),
+    )
+    .map((entry) => entry.lease_deadline!)
+    .sort();
+  return {
+    steps: pending.map(([name]) => name),
+    command: `realm run drain ${run.id} --force`,
+    ...(held.length > 0 ? { held_until: held[held.length - 1]! } : {}),
+  };
+}
+
+/**
+ * F12: the words for a cleanup step under another drainer's lease that has not passed — what the
+ * record shows (the lease and its deadline), never that the drainer is alive or dead.
+ */
+export function heldLeaseWords(until: string): string {
+  return `held by another drainer's lease until ${until} (realm cannot tell whether it is still running)`;
 }
 
 /**
  * The CLI's line for {@link pendingCleanupWay} (decisions C211, C212 — the command ends it):
  * `Cleanup step left pending: 'tidy' — to run it with code that has its handler: realm run drain
- * <id> --force`. `undefined` when none is pending.
+ * <id> --force`; F12, under another drainer's lease that has not passed: `Cleanup step left
+ * pending: 'tidy' — held by another drainer's lease until <t> (realm cannot tell whether it is still
+ * running) — after <t>: realm run drain <id> --force`. `undefined` when none is pending.
  */
 export function pendingCleanupLine(
   run: Pick<RunRecord, 'id' | 'terminal_state' | 'finalizer_ledger'>,
+  now: Date,
 ): string | undefined {
-  const way = pendingCleanupWay(run);
+  const way = pendingCleanupWay(run, now);
   if (way === undefined) return undefined;
   const one = way.steps.length === 1;
+  const head = `Cleanup ${one ? 'step' : 'steps'} left pending: ${quoteList(way.steps)} — `;
+  if (way.held_until !== undefined) {
+    return `${head}${heldLeaseWords(way.held_until)} — after ${way.held_until}: ${way.command}`;
+  }
   return (
-    `Cleanup ${one ? 'step' : 'steps'} left pending: ${quoteList(way.steps)} — to run ` +
+    `${head}to run ` +
     `${one ? 'it with code that has its handler' : 'them with code that has their handlers'}: ${way.command}`
   );
 }
 
 /**
  * The tools' sentence for {@link pendingCleanupWay} (decision C211): ` Cleanup step left pending:
- * 'tidy' — 'realm run drain <id> --force' runs it with code that has its handler.` Empty when none
- * is pending.
+ * 'tidy' — 'realm run drain <id> --force' runs it with code that has its handler.`; F12, under
+ * another drainer's lease that has not passed, ` Cleanup step left pending: 'tidy' — held by another
+ * drainer's lease until <t> (realm cannot tell whether it is still running) — after <t>, 'realm run
+ * drain <id> --force' runs it with code that has its handler.` Empty when none is pending.
  */
 export function pendingCleanupSentence(
   run: Pick<RunRecord, 'id' | 'terminal_state' | 'finalizer_ledger'>,
+  now: Date,
 ): string {
-  const way = pendingCleanupWay(run);
+  const way = pendingCleanupWay(run, now);
   if (way === undefined) return '';
   const one = way.steps.length === 1;
+  const held =
+    way.held_until === undefined
+      ? ''
+      : `${heldLeaseWords(way.held_until)} — after ${way.held_until}, `;
   return (
-    ` Cleanup ${one ? 'step' : 'steps'} left pending: ${quoteList(way.steps)} — '${way.command}' ` +
+    ` Cleanup ${one ? 'step' : 'steps'} left pending: ${quoteList(way.steps)} — ${held}'${way.command}' ` +
     `runs ${one ? 'it with code that has its handler' : 'them with code that has their handlers'}.`
   );
 }

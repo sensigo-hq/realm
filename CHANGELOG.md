@@ -309,6 +309,15 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **A cleanup step under another drainer's lease is said as held (issue #625, PR-2a).** Every line
+  that names a pending cleanup step and the command that runs it — `realm run inspect`, `realm run
+advance`, `realm run respond`, the MCP replies and `get_run_state`'s `cleanup_pending` (now with
+  `held_until`) — says, while another drainer's lease on it has not passed, `held by another
+drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>:
+realm run drain <id> --force`; it offered the command as if it would run the step now.
+  `pendingCleanupWay` and its line and sentence take the call's `now`. A drain that halts at such a
+  lease warns `⚠ finalizer '<name>' left pending — held by …`, and `realm run drain --force` prints
+  the held line and exits 1 — it said `has no pending finalizers. Nothing to drain.` and exited 0.
 - **realm-testing's runner records what the engine records (issue #625, PR-2a).**
   `runFixtureTests` (and so `realm workflow test`) runs the engine's work — guards, `auto` steps,
   an expired question's declared `on_expiry` — through `advanceRun` with the fixture's registry,

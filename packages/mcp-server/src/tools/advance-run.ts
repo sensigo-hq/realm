@@ -87,7 +87,7 @@ export async function handleAdvanceRun(
       ? await runStore.get(args.run_id).catch(() => undefined)
       : undefined;
   return {
-    ...(ended === undefined ? result : withEndedRunWays(result, ended, definition)),
+    ...(ended === undefined ? result : withEndedRunWays(result, ended, definition, new Date())),
     continued_by:
       stores?.driver !== undefined
         ? stores.driver

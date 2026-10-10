@@ -163,7 +163,7 @@ export async function handleSubmitHumanResponse(
   if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) return reply;
   const ended = await runStore.get(args.run_id).catch(() => undefined);
   // F6: the cleanup sentence goes before the resume offer, whose command ends the hint.
-  return ended === undefined ? reply : withPendingCleanup(reply, ended, definition);
+  return ended === undefined ? reply : withPendingCleanup(reply, ended, definition, new Date());
 }
 
 /** Registers the submit_human_response MCP tool on the server. */

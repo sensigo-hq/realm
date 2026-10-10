@@ -676,7 +676,7 @@ export async function inspectRun(
   }
   // decision C211 (walk c14 W3-4's class): cleanup steps the ending left pending — the command that
   // runs them.
-  const cleanup = pendingCleanupLine(run);
+  const cleanup = pendingCleanupLine(run, new Date());
   if (cleanup !== undefined) lines.push(cleanup);
   // issue #625 PR-2a (D7.3): what the engine owes on a live run with no open question, and each
   // step this record shows cannot run — an engine step, or an agent step refused before its claim

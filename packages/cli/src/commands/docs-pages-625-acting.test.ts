@@ -1973,7 +1973,7 @@ describe(
         );
         claim(
           READING,
-          '| `Cleanup step left pending`, `Cleanup steps left pending` | When the run ended with cleanup steps left `pending` | Those steps, in the order the engine runs them, and the command that runs them: `— to run it with code that has its handler: realm run drain <id> --force`. Added after version 0.46.0. |',
+          "| `Cleanup step left pending`, `Cleanup steps left pending` | When the run ended with cleanup steps left `pending` | Those steps, in the order the engine runs them, and the command that runs them: `— to run it with code that has its handler: realm run drain <id> --force`. Added after version 0.46.0. While another drainer's lease on one of them has not passed: `— held by another drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>: realm run drain <id> --force` (added after version 0.46.0). |",
         );
         const p = await project(
           'c211-p',

@@ -2876,7 +2876,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     );
     say(
       'mcp/tools.md',
-      "; and for cleanup steps the ending left `pending`, ` Cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.`, which comes before the resume command, so that the command ends the hint;",
+      "; and for cleanup steps the ending left `pending`, ` Cleanup step left pending: '<name>' — 'realm run drain <id> --force' runs it with code that has its handler.` (while another drainer's lease on it has not passed: ` Cleanup step left pending: '<name>' — held by another drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>, 'realm run drain <id> --force' runs it with code that has its handler.`, added after version 0.46.0), which comes before the resume command, so that the command ends the hint;",
     );
     say(
       'mcp/tools.md',
@@ -3031,7 +3031,7 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
     );
     say(
       RUN_STATE,
-      '| `cleanup_pending` | The run ended with cleanup steps left `pending` | `steps`, those steps in the order the engine runs them, and `command`, `realm run drain <id> --force`, which runs them with code that has their handlers. Added after version 0.46.0. |',
+      "| `cleanup_pending` | The run ended with cleanup steps left `pending` | `steps`, those steps in the order the engine runs them, and `command`, `realm run drain <id> --force`, which runs them with code that has their handlers. Added after version 0.46.0. `held_until`, while another drainer's lease on one of them has not passed: the time it passes — the command runs nothing before then, and realm cannot tell whether that drainer is still running (added after version 0.46.0). |",
     );
     say(
       'mcp/tools.md',

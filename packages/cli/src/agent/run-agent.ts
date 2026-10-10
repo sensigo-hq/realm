@@ -510,7 +510,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     const ended = await deps.store.get(runId).catch(() => undefined);
     const line = ended === undefined ? undefined : resumeLine(ended, definition);
     if (line !== undefined) console.error(line);
-    const cleanup = ended === undefined ? undefined : pendingCleanupLine(ended);
+    const cleanup = ended === undefined ? undefined : pendingCleanupLine(ended, new Date());
     if (cleanup !== undefined) console.error(cleanup);
   };
   let attemptStartedAt = Date.now();
@@ -1987,7 +1987,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   if (currentRun.run_phase === 'completed') {
     console.log(`\nRun complete: ${runId}`);
     // decision C211: cleanup steps the ending left pending — the command that runs them.
-    const cleanup = pendingCleanupLine(currentRun);
+    const cleanup = pendingCleanupLine(currentRun, new Date());
     if (cleanup !== undefined) console.log(cleanup);
 
     // Print the last agent step's output so the result is visible without

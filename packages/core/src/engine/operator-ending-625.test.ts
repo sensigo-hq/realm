@@ -121,7 +121,7 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
       error: `Run '${run.id}' is terminal (abandoned); cannot submit a gate response — an operator ended this run, with the reason ${SHOWN}; to run the work again, start a new run; 'realm run purge ${run.id}' previews what it would remove.`,
       code: 'STATE_RUN_TERMINAL',
     });
-    expect(terminalAnswerRefusalMessage(run, TWO)).not.toContain('realm run resume');
+    expect(terminalAnswerRefusalMessage(run, TWO, new Date())).not.toContain('realm run resume');
   });
 
   it('an ended-run reply (execute_step, advance_run, start_run) on a run an operator ended ends with the ending; a failed one with the offer (preservation)', async () => {
@@ -143,8 +143,8 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
     // (a) red when the abandoned reply offers the undo or drops the ending, or the failed one stops
     //     offering it; (b) prints both hints.
     expect({
-      abandoned: withEndedRunWays(reply('Ended.'), abandoned, TWO).context_hint,
-      failed: withEndedRunWays(reply('Ended.'), failed, TWO).context_hint,
+      abandoned: withEndedRunWays(reply('Ended.'), abandoned, TWO, new Date()).context_hint,
+      failed: withEndedRunWays(reply('Ended.'), failed, TWO, new Date()).context_hint,
     }).toEqual({
       abandoned: `Ended. ${SENTENCE}`,
       failed: `Ended. To make the failed step runnable again: realm run resume ${failed.id} --from a`,

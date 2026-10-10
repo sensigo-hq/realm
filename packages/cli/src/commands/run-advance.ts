@@ -496,7 +496,7 @@ export async function advanceRunFromShell(
     }
     // decision C211 (walk c14 W3-4): a run that ended with cleanup steps left pending — the command
     // that runs them.
-    const cleanupPreview = pendingCleanupLine(run);
+    const cleanupPreview = pendingCleanupLine(run, now);
     if (cleanupPreview !== undefined) print(cleanupPreview);
     // decision C181: the ready line for an agent step is followed by the line `realm run respond`
     // prints after its commands — a `realm workflow run` or `realm agent` waiting on the run goes on
@@ -679,7 +679,7 @@ export async function advanceRunFromShell(
     for (const line of finalizerOutcomeLines(after, run)) print(line);
     // decision C211 (walk c14 W3-4): cleanup steps this ending left pending — the command that runs
     // them, with code that has their handlers.
-    const cleanup = pendingCleanupLine(after);
+    const cleanup = pendingCleanupLine(after, new Date());
     if (cleanup !== undefined) print(cleanup);
   }
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the

@@ -421,6 +421,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
           gateId,
           via: 'submitHumanResponse',
           before: NO_CLEANUP_BEFORE,
+          now: new Date(),
         }),
       ).toEqual([
         "Guard step 'check' aborted the run.",
@@ -854,6 +855,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           gateId,
           via: 'submitHumanResponse',
           before: NO_CLEANUP_BEFORE,
+          now: new Date(),
         }),
       ).toEqual([
         `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
@@ -899,6 +901,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           gateId,
           via: 'submitHumanResponse',
           before: NO_CLEANUP_BEFORE,
+          now: new Date(),
         }),
       ).toEqual([
         `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
@@ -937,6 +940,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           gateId: same.gateId,
           via: 'submitHumanResponse',
           before: NO_CLEANUP_BEFORE,
+          now: new Date(),
         }),
       ).toEqual([
         `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
@@ -967,6 +971,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           gateId: other.gateId,
           via: 'submitHumanResponse',
           before: NO_CLEANUP_BEFORE,
+          now: new Date(),
         }),
       ).toEqual([
         `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
@@ -1028,6 +1033,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           gateId,
           via: 'submitHumanResponse',
           before: NO_CLEANUP_BEFORE,
+          now: new Date(),
         }),
       ).toEqual([LATE_SAME_CHOICE]);
 
@@ -1407,6 +1413,7 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
         gateId: 'g',
         via: 'submitHumanResponse',
         before: NO_CLEANUP_BEFORE,
+        now: new Date(),
       }),
     ).toEqual([]);
   });

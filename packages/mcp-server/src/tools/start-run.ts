@@ -67,7 +67,7 @@ export function handBackHint(args: {
     : '';
   if (deduped) {
     // decisions C205, C211: a matched run that has ended says the ways back in.
-    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}${endedRunWaysSentence(current, definition)}`;
+    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}${endedRunWaysSentence(current, definition, new Date())}`;
   }
   return run.rerun_of !== undefined
     ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
@@ -253,7 +253,7 @@ export async function handleStartRun(
       // decisions C205, C211 (the architect's addendum): a run this call ended — its own step
       // failed, or cleanup steps were left pending — says the ways back in.
       return {
-        ...withEndedRunWays(result, finalRun, definition),
+        ...withEndedRunWays(result, finalRun, definition, new Date()),
         run_id: run.id,
         data: {},
         evidence: [],

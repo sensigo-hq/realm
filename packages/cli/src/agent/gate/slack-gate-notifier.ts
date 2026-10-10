@@ -415,6 +415,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
               via: 'agent',
               workflow: definition,
               before: before ?? {},
+              now: new Date(),
             });
           } catch {
             // The record could not be read (only the finalizer outcomes need it): the reply's own
@@ -448,6 +449,7 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
                   via: 'agent',
                   workflow: definition,
                   before: before ?? {},
+                  now: new Date(),
                 });
               } catch {
                 // The answer IS recorded — a failed read here must not reach the catch below and

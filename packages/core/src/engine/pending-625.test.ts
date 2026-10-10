@@ -2093,14 +2093,16 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
     } as never);
     // (a) red when a completed entry is named, the order is not the rank order, or a live run gets a
     //     line; (b) prints them.
+    // F12: `now` — none of these entries holds a lease.
+    const now = new Date();
     expect({
-      way: pendingCleanupWay(ended),
-      line: pendingCleanupLine(ended),
-      oneLine: pendingCleanupLine(one),
-      sentence: pendingCleanupSentence(one),
+      way: pendingCleanupWay(ended, now),
+      line: pendingCleanupLine(ended, now),
+      oneLine: pendingCleanupLine(one, now),
+      sentence: pendingCleanupSentence(one, now),
       live: [
-        pendingCleanupWay({ ...ended, terminal_state: false }),
-        pendingCleanupSentence({ ...ended, terminal_state: false }),
+        pendingCleanupWay({ ...ended, terminal_state: false }, now),
+        pendingCleanupSentence({ ...ended, terminal_state: false }, now),
       ],
     }).toEqual({
       way: { steps: ['tidy', 'note'], command: 'realm run drain r1 --force' },

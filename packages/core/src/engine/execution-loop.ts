@@ -125,6 +125,7 @@ import {
   operatorEndingSentence,
   pendingCleanupSentence,
   pendingCleanupWay,
+  heldLeaseWords,
   pendingCleanupLine,
   type PendingView,
   type PreClaimRefused,
@@ -1324,12 +1325,17 @@ function resumeOffer(command: string): string {
  * completed run whose ending left a cleanup step `pending` owes that step — said in
  * {@link pendingCleanupWay}'s words, never "nothing is owed".
  */
-function endedRunWayOut(run: RunRecord, workflow: Parameters<typeof resumeWay>[1]): string {
+function endedRunWayOut(
+  run: RunRecord,
+  workflow: Parameters<typeof resumeWay>[1],
+  // F12: the call's own clock — a cleanup step under another drainer's lease is judged at it.
+  now: Date,
+): string {
   const phase = deriveRunPhase(run);
   const purge = `'realm run purge ${run.id}' previews what it would remove`;
   const operator = operatorEndingClause(run);
   const resume = offeredResumeWay(run, workflow);
-  const cleanup = pendingCleanupSentence(run).trim();
+  const cleanup = pendingCleanupSentence(run, now).trim();
   return phase === 'completed'
     ? cleanup === ''
       ? 'it completed, and nothing is owed.'
@@ -1373,8 +1379,9 @@ function endedRunOfferSentence(
 export function terminalAnswerRefusalMessage(
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
+  now: Date,
 ): string {
-  return `Run '${run.id}' is terminal (${deriveRunPhase(run)}); cannot submit a gate response — ${endedRunWayOut(run, workflow)}`;
+  return `Run '${run.id}' is terminal (${deriveRunPhase(run)}); cannot submit a gate response — ${endedRunWayOut(run, workflow, now)}`;
 }
 
 /**
@@ -1409,14 +1416,16 @@ export function withPendingCleanup(
   run: RunRecord,
   // F6: the run's workflow, when the reply already ends with the resume offer — the cleanup sentence
   // then goes before it, so the offer's command still ends the hint.
-  workflow?: Parameters<typeof resumeWay>[1],
+  workflow: Parameters<typeof resumeWay>[1] | undefined,
+  // F12: the call's clock — a cleanup step under another drainer's lease is judged at it.
+  now: Date,
 ): ResponseEnvelope {
-  const sentence = pendingCleanupSentence(run);
+  const sentence = pendingCleanupSentence(run, now);
   if (sentence === '') return envelope;
   const hint = envelope.context_hint;
   // F11: said once — a reply whose hint already names the command that runs them (the refusal of
   // an answer to a completed run says it, `endedRunWayOut`) gets no second sentence.
-  if (hint.includes(`'${pendingCleanupWay(run)!.command}'`)) return envelope;
+  if (hint.includes(`'${pendingCleanupWay(run, now)!.command}'`)) return envelope;
   const offer = workflow === undefined ? undefined : endedRunOfferSentence(run, workflow);
   if (offer !== undefined && hint.endsWith(` ${offer}`)) {
     return {
@@ -1440,8 +1449,10 @@ export function withEndedRunWays(
   envelope: ResponseEnvelope,
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
+  // F12: the call's clock — a cleanup step under another drainer's lease is judged at it.
+  now: Date,
 ): ResponseEnvelope {
-  const tail = endedRunWaysSentence(run, workflow);
+  const tail = endedRunWaysSentence(run, workflow, now);
   if (tail === '') return envelope;
   const hint = envelope.context_hint;
   return { ...envelope, context_hint: hint.length > 0 ? `${hint}${tail}` : tail.trimStart() };
@@ -1457,12 +1468,13 @@ export function withEndedRunWays(
 export function endedRunWaysSentence(
   run: RunRecord,
   workflow: Parameters<typeof resumeWay>[1],
+  now: Date,
 ): string {
   if (!run.terminal_state) return '';
   // F2: a run an operator ended says that ending, never the undo. F6: the cleanup sentence first,
   // so the resume offer's command ends the hint.
   const offer = endedRunOfferSentence(run, workflow);
-  return `${pendingCleanupSentence(run)}${offer === undefined ? '' : ` ${offer}`}`;
+  return `${pendingCleanupSentence(run, now)}${offer === undefined ? '' : ` ${offer}`}`;
 }
 
 /**
@@ -5251,13 +5263,15 @@ export function describeAnswerEnding(
     workflow?: Parameters<typeof resumeWay>[1];
     // F9: the record the caller read before the answer (decision C210's `before`).
     before: Pick<RunRecord, 'finalizer_ledger'>;
+    // F12: the surface's clock — a cleanup step under another drainer's lease is judged at it.
+    now: Date;
   },
 ): string[] {
   // decision C211 (walk c14 W3-4's class): after each cleanup step's outcome, the command that runs
   // the ones the ending left pending.
   const finalizerLines = (): string[] => [
     ...finalizerOutcomeLines(run, answer.before),
-    ...[pendingCleanupLine(run)].filter((line): line is string => line !== undefined),
+    ...[pendingCleanupLine(run, answer.now)].filter((line): line is string => line !== undefined),
   ];
   const passedLines = (): string[] => (reply.guards ?? []).map((g) => guardPassedLine(g.step));
   if (reply.answer_recorded === false) {
@@ -5610,7 +5624,7 @@ async function composeExpiryReply(
   const err = new WorkflowError(
     // decision C204: the way out from the one rule — resume only from a step it takes.
     `Gate '${originalGateId}': the run reached a terminal outcome concurrently — your choice ` +
-      `was NOT recorded; ${endedRunWayOut(finalRun, definition)}`,
+      `was NOT recorded; ${endedRunWayOut(finalRun, definition, now)}`,
     {
       code: 'STATE_RUN_TERMINAL',
       category: 'STATE',
@@ -5984,7 +5998,7 @@ export async function submitHumanResponse(
           // stale pending_gate (never cleared), which is the best-effort step label here.
           const zombieStep = result.run.pending_gate?.step_name ?? 'submit_gate';
           // decision C170: the way out the refusal names is true for the run's kind of ending.
-          const err = new WorkflowError(terminalAnswerRefusalMessage(result.run, definition), {
+          const err = new WorkflowError(terminalAnswerRefusalMessage(result.run, definition, now), {
             code: 'STATE_RUN_TERMINAL',
             category: 'STATE',
             agentAction: 'report_to_user',
@@ -6100,7 +6114,7 @@ export async function submitHumanResponse(
       'submit_gate',
       options.runId,
       run.version,
-      new WorkflowError(terminalAnswerRefusalMessage(run, definition), {
+      new WorkflowError(terminalAnswerRefusalMessage(run, definition, now), {
         code: 'STATE_RUN_TERMINAL',
         category: 'STATE',
         agentAction: 'report_to_user',
@@ -6824,6 +6838,13 @@ export async function drainFinalizers(
     if (!leaseResult.applied) {
       if (leaseResult.reason === 'lease_held' || leaseResult.reason === 'rank_blocked') {
         run = leaseResult.run;
+        // F12 (review G7-13): the pass halts at another drainer's lease — said, with what the record
+        // shows (the lease's deadline), never that the drainer is alive or dead. Not in `leftPending`:
+        // its escape is to wait, never to void a step another drainer may be running.
+        const deadline = run.finalizer_ledger?.[finalizerName]?.lease_deadline;
+        if (leaseResult.reason === 'lease_held' && deadline !== undefined) {
+          warnings.push(`finalizer '${finalizerName}' left pending — ${heldLeaseWords(deadline)}`);
+        }
         break; // HALT the pass — a peer holds this lease, or a lower rank is still pending.
       }
       if (leaseResult.reason === 'ledger_not_pending') {

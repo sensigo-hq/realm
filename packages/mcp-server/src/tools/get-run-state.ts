@@ -336,9 +336,11 @@ export interface RunStateSummary {
   /**
    * issue #625 PR-2a (decision C211): on a run that has ended, the cleanup steps its ending left
    * `pending`, in the order the engine runs them, and the command that runs them (`realm run drain
-   * <id> --force`, with code that has their handlers). Absent when none is pending.
+   * <id> --force`, with code that has their handlers). Absent when none is pending. F12: `held_until`,
+   * when another drainer's lease on one of them has not passed — the command runs nothing until that
+   * time; realm cannot tell whether that drainer is still running.
    */
-  cleanup_pending?: { steps: string[]; command: string };
+  cleanup_pending?: { steps: string[]; command: string; held_until?: string };
   /**
    * issue #625 PR-2a (decision C211): at an open question, the steps it holds — eligible by their
    * dependencies, they go on after the answer. Absent when none waits, or the run's workflow cannot
@@ -422,7 +424,8 @@ export async function handleGetRunState(
       : await stores.workflowStore.get(run.workflow_id).catch(() => undefined);
   let resumable: { steps: string[]; command: string } | undefined;
   let waitingOnAnswer: string[] = [];
-  const cleanupPending = pendingCleanupWay(run);
+  // F12: judged at this call's clock (a lease that has not passed holds the cleanup step).
+  const cleanupPending = pendingCleanupWay(run, now);
   if (run.terminal_state) {
     nextActionsStatus = 'skipped_terminal';
     const ended = await readWorkflow();

@@ -201,6 +201,7 @@ export {
   pendingCleanupWay,
   pendingCleanupLine,
   pendingCleanupSentence,
+  heldLeaseWords,
   capabilityMarkerWayOut,
   withFullStop,
   endsWithCommand,
