@@ -309,6 +309,10 @@ inspect`'s `Cause:`.
   `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
   ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
   status, as if it had run in this call.
+- **`get_run_state` never says `claim_unknown_age` with no claim in flight (issue #625, PR-2a).** The
+  open question's own claim is set aside as not work in flight; with nothing left, the status said
+  `claim_unknown_age`. An expired question that declares `on_expiry`, on a server that cannot read
+  the run's workflow, now reads `workflow_unresolved`, as `gates.md` says.
 - **`advance_run` names the guard that ended the run, whoever decided it (issue #625, PR-2a).** When
   the call's own loop decides a guard that ends the run — one pending after `realm run resume --from
 <guard>`, for one — the reply carries `guards` and `ended_by`, as when a step's write decides it

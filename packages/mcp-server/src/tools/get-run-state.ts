@@ -499,7 +499,13 @@ export async function handleGetRunState(
         .map((c) => c.state);
       if (claimStates.includes('claim_stale')) {
         nextActionsStatus = 'claim_stale';
-      } else if (nextActions.length === 0 && !claimStates.includes('healthy')) {
+      } else if (
+        // F14 (review F-R5): only when a claim is left once the question's own is set aside — an
+        // empty list is no claim in flight, never `claim_unknown_age`.
+        claimStates.length > 0 &&
+        nextActions.length === 0 &&
+        !claimStates.includes('healthy')
+      ) {
         nextActionsStatus = 'claim_unknown_age';
       }
     }
