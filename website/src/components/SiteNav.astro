@@ -1,94 +1,110 @@
 ---
-// The site menu of the home, how-it-works and comparison pages: the logo, the links (src/data/nav.js)
-// and the light/dark switch. The docs pages show the same links through Starlight's header
-// (src/components/DocsHeaderLinks.astro).
+// The site menu of the home, how-it-works and comparison pages: the logo, the links (src/data/nav.js;
+// GitHub and npm as icons, as in the docs header) and the light/dark switch, in a bar that stays at
+// the top of the screen while the page scrolls, as the docs header does. The docs pages show the
+// same links through Starlight's header (src/components/DocsHeaderLinks.astro).
 //
 // On a screen narrower than 50rem, the width below which Starlight folds the docs header into its
-// own menu button, the links and the switch fold behind a menu button too, as the docs header does.
-// The button comes before them in the page, so a keyboard user who opens the menu tabs straight into
-// it. The folding needs the scripts below: a browser with scripts off never sees the button (the
-// styles show it only under the `site-menu-js` class), and the links stay on show under the logo.
-import { nav } from '../data/nav.js';
+// menu button, this menu folds the same way: the same button, and a sheet under the header with the
+// block the docs menu ends with (src/components/MenuBottom.astro): the site links, then the
+// Light/Dark/Auto choice (src/components/SiteThemeSelect.astro). Like Starlight's, it is a popover:
+// the browser opens and closes it, with or without scripts, and closes it on Escape or a tap outside
+// it. A browser that has no popovers never shows the button, and the links stay on show under the
+// logo (src/styles/site.css).
+import Icon from './SiteIcon.astro';
+import { ariaCurrent, nav } from '../data/nav.js';
 import Logo from './Logo.astro';
+import MenuBottom from './MenuBottom.astro';
+import SiteThemeSelect from './SiteThemeSelect.astro';
 import ThemeToggle from './ThemeToggle.astro';
 
-interface Props {
-  /** The link of the page being shown, marked as the current page in the menu. */
-  current?: string;
-}
-const { current } = Astro.props;
+const here = Astro.url.pathname;
 ---
 
-<script is:inline>
-  // Runs before the menu is drawn: from here on the panel stays folded on a narrow screen until opened,
-  // so it never shows for a moment while the page loads.
-  document.documentElement.classList.add('site-menu-js');
-</script>
-<nav class="site" aria-label="Site" data-site-nav>
-  <a class="brand" href="/" aria-label="Realm"><Logo /></a>
-  <button class="menu-btn" type="button" aria-label="Menu" aria-controls="site-menu" aria-expanded="false">
-    <svg class="open-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
-      ><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"></path></svg
-    >
-    <svg class="close-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
-      ><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"></path></svg
-    >
-  </button>
-  <div class="nav-panel" id="site-menu">
-    <div class="links">
-      {nav.map((l) => <a href={l.href} aria-current={l.href === current ? 'page' : undefined}>{l.label}</a>)}
+<header class="site-header">
+  <nav class="site" aria-label="Site" data-site-nav>
+    <a class="brand" href="/" aria-label="Realm"><Logo height="var(--site-logo-height, 30px)" /></a>
+    <div class="nav-panel">
+      <div class="links">
+        {
+          nav.map((l) =>
+            l.icon ? (
+              <a href={l.href} class="has-icon" aria-label={l.label}>
+                <Icon name={l.icon} />
+              </a>
+            ) : (
+              <a href={l.href} aria-current={ariaCurrent(l.href, here)}>
+                {l.label}
+              </a>
+            ),
+          )
+        }
+      </div>
+      <ThemeToggle />
     </div>
-    <ThemeToggle />
-  </div>
-</nav>
+    <button class="menu-btn" type="button" popovertarget="site-menu" aria-label="Menu">
+      <Icon name="bars" class="open-icon" />
+      <Icon name="close" class="close-icon" />
+    </button>
+    <div class="menu-sheet" id="site-menu" popover>
+      <MenuBottom>
+        <SiteThemeSelect />
+      </MenuBottom>
+    </div>
+  </nav>
+</header>
 <script is:inline>
   (function () {
     var nav = document.querySelector('[data-site-nav]');
     if (!nav) return;
     var btn = nav.querySelector('.menu-btn');
-    var panel = nav.querySelector('#site-menu');
+    var sheet = nav.querySelector('#site-menu');
+    var row = nav.querySelector('.nav-panel');
+    if (!sheet || typeof sheet.showPopover !== 'function') return;
     var wide = window.matchMedia('(min-width: 50rem)');
-    function isOpen() {
-      return nav.getAttribute('data-menu') === 'open';
-    }
-    function set(open) {
-      nav.setAttribute('data-menu', open ? 'open' : 'closed');
-      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }
-    set(false);
-    btn.addEventListener('click', function () {
-      set(!isOpen());
-    });
-    function inMenu(el) {
-      return el === btn || panel.contains(el);
-    }
-    // Escape closes the menu while focus is on the button or in the menu, and gives focus back to the
-    // button. Pressed elsewhere on the page, it leaves the menu alone, so the page does not jump.
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && isOpen() && inMenu(document.activeElement)) {
-        set(false);
-        btn.focus();
+    var benched = [];
+    btn.setAttribute('aria-expanded', 'false');
+    // While the sheet is open, the page under it is out of reach: Tab moves only between the header and
+    // the sheet, as in the docs menu.
+    sheet.addEventListener('toggle', function (e) {
+      // The browser works out the button's open/closed state from popovertarget; saying it outright
+      // also covers screen readers that do not.
+      btn.setAttribute('aria-expanded', e.newState === 'open' ? 'true' : 'false');
+      benched.forEach(function (el) {
+        el.inert = false;
+      });
+      benched = [];
+      if (e.newState !== 'open') return;
+      for (var el = nav; el && el !== document.body; el = el.parentElement) {
+        for (var sib = el.parentElement.firstElementChild; sib; sib = sib.nextElementSibling) {
+          if (sib === el || sib.inert || /^(SCRIPT|STYLE|TEMPLATE)$/.test(sib.tagName)) continue;
+          sib.inert = true;
+          benched.push(sib);
+        }
       }
     });
-    // Leaving the page closes the menu, so coming Back to it shows the menu closed. Opening a link in a
-    // new tab or window does not leave the page, so the menu stays as it was.
-    window.addEventListener('pagehide', function () {
-      set(false);
-    });
-    // Crossing 50rem hides either the button (wider) or the folded menu (narrower), and focus moves to
-    // what is now on show in its place: from the button to the first link, from a link or the switch
-    // to the button.
+    function close() {
+      if (sheet.matches(':popover-open')) sheet.hidePopover();
+    }
+    // Leaving the page closes the menu, so coming Back to it shows the menu closed.
+    window.addEventListener('pagehide', close);
+    // Crossing 50rem hides either the button and the sheet (wider) or the row of links (narrower), and
+    // focus moves to what is now on show in its place: from the button or the sheet to the first link,
+    // from a link or the switch to the button.
+    function inSheet(el) {
+      return el === btn || sheet.contains(el);
+    }
     function refocus(lost) {
       if (wide.matches) {
-        if (lost === btn) panel.querySelector('a').focus();
-      } else if (!isOpen() && panel.contains(lost)) {
-        btn.focus();
+        if (inSheet(lost)) row.querySelector('a').focus({ preventScroll: true });
+      } else if (row.contains(lost)) {
+        btn.focus({ preventScroll: true });
       }
     }
     wide.addEventListener('change', function () {
-      var had = inMenu(document.activeElement) ? document.activeElement : null;
-      set(false);
-      if (had) refocus(had);
+      var had = nav.contains(document.activeElement) ? document.activeElement : null;
+      close();
+      if (had && had.offsetParent === null) refocus(had);
     });
     // The browser sometimes drops focus from the hidden element before the change above runs. Losing
     // focus to nothing (no relatedTarget) is what hiding causes; a Tab or a click on another control

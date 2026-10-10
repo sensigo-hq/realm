@@ -310,6 +310,23 @@ If the publish workflow fails after some packages are published: open the failed
 
 If the tag was pushed but verification (step 7) reveals a broken artifact: publish a patch release following this entire Part B sequence with an incremented patch version.
 
+**11. Bump the website's live demo**
+
+The home page's live demo (`website/src/live/`, #624) runs the Realm release its pins name, in the visitor's browser. After a successful publish (step 7), bump it, or record in the release notes why it stays on the older release.
+
+1. In `website/package.json`, set `@sensigo/realm`, `@sensigo/realm-mcp` and `@sensigo/realm-testing` to `<version>`. Move all three together: the build refuses a bundle that holds more than one copy of `@sensigo/realm`. If realm-mcp's own pin of `@modelcontextprotocol/sdk` is now 1.31.0 or later, drop that `overrides` entry, as its `//overrides` note says. Then run `npm install --ignore-scripts` in `website/` (`website/` has no `.npmrc`, so the flag is needed).
+2. Copy the workflow from the new tag: `git show v<version>:examples/08-pr-review/workflow.yaml > website/src/live/workflow.yaml`.
+3. Re-record the replay on the new release, as the header of `website/scripts/replay/record.mjs` says:
+   - `NM` is a folder outside the repository holding a `package.json` with `@sensigo/realm-cli` and `@sensigo/realm-testing` at `<version>`, and the same `@modelcontextprotocol/sdk` pin and `$` override as `website/package.json`; run `npm install --ignore-scripts` in it.
+   - `WORK` is an empty folder outside any folder that holds a `package.json` or a `.git`; otherwise `realm workflow register` refuses and the recorder fails.
+   - In `website/`: `NM=<nm> WORK=<work> node scripts/replay/record.mjs`, then `WORK=<work> node scripts/replay/distill.mjs`, then `npx prettier --write src/data/replay.json`.
+   - The new `src/data/replay.json` should differ from the old one only in run and gate ids, durations, `realm_version` and `recorded_at`. Any other difference is a change in what the engine does; read it before going on.
+4. Run `npm run build` in `website/`. It runs the build guard (`scripts/live/smoke.mjs`), which must print `GUARD PASSED`.
+5. Serve `website/dist` (for example `python3 -m http.server 8624 --bind 0.0.0.0 --directory dist`) and run `scripts/live/walk.cjs` on it, as its header says. It must print `WALK PASSED: 0 FAIL`.
+6. Re-run the claim ledger at the top of `stageSentences` in `website/src/live/view.mjs`. The guard checks the rows marked "guard"; check the rows marked "hand" yourself on the new release.
+
+If a step shows that the new release makes a sentence of the demo untrue, change the sentence and its ledger row in `view.mjs` before deploying, or keep the demo on the older release and say why in the release notes.
+
 ---
 
 ## Naming Consistency

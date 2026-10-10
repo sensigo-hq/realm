@@ -1,0 +1,32 @@
+---
+// The site links and the Light/Dark/Auto choice, as one block. It is the bottom of the docs menu on a
+// narrow screen (src/components/MobileMenuFooter.astro, under the docs contents) and the whole menu
+// of the home, how-it-works and comparison pages (src/components/SiteNav.astro), so the two menus
+// end the same way. The theme choice comes in the slot: Starlight's own on docs pages, its copy
+// (src/components/SiteThemeSelect.astro) on the other pages.
+import MenuLinks from './MenuLinks.astro';
+---
+
+<div class="menu-bottom">
+  <div class="menu-bottom-links">
+    <MenuLinks />
+  </div>
+  <slot />
+</div>
+
+<style>
+  /* Starlight's own footer measures (its MobileMenuFooter): a line above, the links with 1rem around
+     them, then the theme choice; the docs' 1.75 line height on every page. */
+  .menu-bottom {
+    display: flex;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--c-panel);
+    padding: 0.5rem 0;
+    line-height: 1.75;
+  }
+  /* The links take a row of their own; the theme choice keeps its own width under them. */
+  .menu-bottom-links {
+    flex-basis: 100%;
+    padding-block: 1rem;
+  }
+</style>

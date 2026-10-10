@@ -1,8 +1,9 @@
 // The script every page runs in <head>, before anything is painted. It decides light or dark.
 //
 // One saved choice for the whole site, kept under Starlight's own key so the docs' switch and the
-// switch on the home and how-it-works pages (src/components/ThemeToggle.astro) read and write the
-// same value: 'dark', 'light', or '' for "follow my system" (the docs' Auto option).
+// ones on the home, how-it-works and comparison pages (src/components/ThemeToggle.astro on a wide
+// screen, src/components/SiteThemeSelect.astro in the menu on a narrow one) read and write the same
+// value: 'dark', 'light', or '' for "follow my system" (the Auto option).
 //
 // A first-time visitor gets dark. Starlight on its own would follow the system setting and save
 // '' on the first docs visit, so "never chose" and "chose Auto" would look the same. The marker

@@ -24,10 +24,7 @@ const CLI = NM + '/node_modules/@sensigo/realm-cli/dist/index.js';
 fs.rmSync(D, { recursive: true, force: true });
 fs.mkdirSync(HOME, { recursive: true });
 fs.mkdirSync(D + '/project');
-fs.copyFileSync(
-  HERE + '/../../../examples/08-pr-review/workflow.yaml',
-  D + '/project/workflow.yaml',
-);
+fs.copyFileSync(HERE + '/../../src/live/workflow.yaml', D + '/project/workflow.yaml');
 const gh = await startGitHubMockServer(HERE + '/github-fixture.json');
 fs.writeFileSync(
   D + '/project/realm.yaml',
