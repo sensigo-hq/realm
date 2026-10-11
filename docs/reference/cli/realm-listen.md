@@ -113,20 +113,20 @@ A request whose event ID belongs to a run that already exists starts nothing and
 
 Added after version 0.46.0, which started a second `realm agent` on the run, wrote to its record and replied `202`.
 
-When the run's `realm agent` cannot be started (its workflow folder is gone, for one), the run is ended as failed and the reply is:
+When the system refuses to start the run's `realm agent` at once (its workflow folder replaced by a file, for one: `ENOTDIR`), the run is ended as failed. A start that fails only after the request — the workflow's folder missing, for one — stops `realm listen` today: the request gets no reply, and the run stays `running` with no agent (#744). The reply to a failed start is:
 
 ```text
 500 {"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}
 ```
 
-A later delivery of the same event gets that same reply again, starts nothing, and is logged at `warn` as `webhook: deduplicated` with `"reason":"matched_spawn_failed_run"`. Added after version 0.46.0, which answered such a retry by starting another `realm agent` on the failed run.
+A later delivery of that same delivery's event gets that same reply again, starts nothing, and is logged at `warn` as `webhook: deduplicated` with `"reason":"matched_spawn_failed_run"`. Added after version 0.46.0, which answered such a retry by starting another `realm agent` on the failed run. One case does not behave this way yet: when two copies of one delivery arrive together while the agent fails to start, one copy can be answered `200` `{"status":"deduplicated","run_id":"<run-id>","run_phase":"running"}`, and its ID is recorded. Retries then get the bare `200` `{"status":"deduplicated"}` until the duplicate window has passed, then the `500` again, and a purge followed by a new delivery starts a new run only after the window.
 
 What to do with a run a delivery matched:
 
 - A run still going whose agent stopped: drive it again with `realm agent --run-id <run-id>`.
-- A run that has ended is not driven again: `realm agent --run-id` refuses it (`Error: Run <run-id> is already in terminal state: spawn_failed.`).
-- A run whose agent failed to start: remove it with `realm run purge <run-id> --force`, then deliver the event again. It starts a new run at once: a failed start keeps no duplicate record.
-- A run that ended any other way: purge it, then deliver the event again once `ttl_minutes` have passed since the event's first delivery. Purge does not clear the duplicate record, so until then the delivery gets `200` `{"status":"deduplicated"}` and starts nothing.
+- A run that has ended is not driven again: `realm agent --run-id` refuses it with `Error: Run <run-id> is already in terminal state: <reason>.`, naming the run's own end reason (with no model key set, it refuses on the key first).
+- A run whose agent failed to start: remove it with `realm run purge <run-id> --force`, then deliver the event again. It starts a new run at once: the copy whose start failed keeps no duplicate record. Unless two copies arrived together (the case above): then it starts one only after the duplicate window.
+- A run that ended any other way: purge it, then deliver the event again once the duplicate window has passed. The window can start again when a delivery of the event is matched in the meantime, so it is not counted from the first delivery. Purge does not clear the duplicate record, so until then the delivery gets `200` `{"status":"deduplicated"}` and starts nothing.
 
 The new process has the environment of `realm listen`, and it loads the `.env` file in the workflow's folder when it starts. The model provider's key must therefore be set where `realm listen` is started or in that `.env`. `realm agent` needs a key to start at all, even for a workflow in which no step calls a model.
 

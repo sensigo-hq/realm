@@ -637,6 +637,50 @@ describe('makeListenHandler — request pipeline', () => {
     });
   });
 
+  it('#735 correction 2: a matched run that FAILED for another reason (a failed step) keeps the 200 — only a failed START replays its 500', async () => {
+    const r = await afterTheWindow({
+      third: true,
+      // The run ends as the engine ends a failed step (settlement.ts): sealed `step_failure` with its
+      // step, the step in `failed_steps`, the engine's one-failure `terminal_reason`. Its phase
+      // derives `failed`, as a failed start's does; its first copy was answered `202`.
+      between: async (deps, runId) => {
+        const run = await deps.runStore.get(runId);
+        await deps.runStore.update({
+          ...run,
+          terminal_state: true,
+          sealed_by: { arm: 'step_failure', step: 'handle' },
+          failed_steps: [...run.failed_steps, 'handle'],
+          terminal_reason: "Step 'handle' failed: the handler threw",
+        });
+      },
+    });
+    // (a) red when the replay check keys on the phase `failed` instead of the arm `spawn_failure`
+    //     (then this run's retry gets `500 spawn_failed`, a `warn` line, and no recorded id);
+    //     (b) prints the reply, the spawn count, the logged data, the third reply and the number of
+    //     `create` calls.
+    expect({
+      second: r.second,
+      spawns: r.spawns,
+      logged: r.deduplicated,
+      third: r.third,
+      creates: r.create.mock.calls.length,
+    }).toEqual({
+      second: {
+        status: 200,
+        body: { status: 'deduplicated', run_id: r.runId, run_phase: 'failed' },
+      },
+      spawns: 1,
+      logged: [
+        [
+          'webhook: deduplicated',
+          { path: '/wf', run_id: r.runId, run_phase: 'failed', reason: 'matched_existing_run' },
+        ],
+      ],
+      third: { status: 200, body: { status: 'deduplicated' } },
+      creates: 2,
+    });
+  });
+
   it.each([
     ['running', undefined],
     [
