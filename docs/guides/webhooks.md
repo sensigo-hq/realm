@@ -140,11 +140,13 @@ Each check has its own reply. Send these to see them.
 {"status":"deduplicated"}   200
 ```
 
-Later, while the run that event started exists (a sender's redelivery, for one), and when two copies of one delivery arrive together, the reply names that run and its phase. Nothing is started and the run is not written to, whether it is still going or has ended:
+Later, while the run that event started exists (a sender's redelivery, for one), and when two copies of one delivery arrive together, the reply names that run and its phase. Nothing is started and the run is not written to, whether it is still going or has ended. Here the run had already finished:
 
 ```text
-{"status":"deduplicated","run_id":"746ade77-2fcf-4ad6-8710-88cdc7f63768","run_phase":"running"}   200
+{"status":"deduplicated","run_id":"c1f1da1f-ce29-4bcd-b12b-1556c5698fc7","run_phase":"completed"}   200
 ```
+
+`run_phase` is the phase on the run's record, not whether an agent is working on it: a run whose agent stopped still reads `running`.
 
 **An event the filter does not want**, for example `"type":"ticket-closed"`, starts nothing:
 
@@ -159,6 +161,21 @@ Later, while the run that event started exists (a sender's redelivery, for one),
 ```
 
 In none of these cases is a run created or a `realm agent` started. The `200` replies are deliberate: the sender did nothing wrong, so it should not retry.
+
+**An agent that cannot be started** (the workflow's folder was removed, for one) ends the run the request created as failed, and the reply says so. The same event again starts nothing and gets the same reply:
+
+```text
+{"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}   500
+```
+
+This `500` is deliberate: the event's work never ran, and every retry gets the same reply until you deal with the run.
+
+**To give an event's run another go:**
+
+- A run still going whose agent stopped: drive it again with `realm agent --run-id <run-id>` in the workflow's folder.
+- A run that has ended is not driven again: `realm agent --run-id` refuses it.
+- A run whose agent failed to start: remove it with `realm run purge <run-id> --force`, then deliver the event again. It starts a new run at once.
+- A run that ended any other way: purge it, then deliver the event again once `ttl_minutes` have passed since the event's first delivery. Until then the delivery gets `{"status":"deduplicated"}` and starts nothing.
 
 ## Choose how requests are checked
 

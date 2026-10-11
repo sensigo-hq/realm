@@ -241,6 +241,18 @@ function respond(res: ServerResponse, status: number, payload: Record<string, un
 }
 
 /**
+ * issue #735 (F1): the ONE reply to a delivery whose agent failed to start — the first copy's, and
+ * every retry of that delivery that matches the run the failure sealed. A replayed request gets its
+ * FIRST verdict, never a success for work that never ran.
+ */
+function spawnFailedReply(runId: string): {
+  status: 500;
+  body: { error: 'spawn_failed'; run_id: string; status: 'failed' };
+} {
+  return { status: 500, body: { error: 'spawn_failed', run_id: runId, status: 'failed' } };
+}
+
+/**
  * Builds the request handler. The handler runs the linear, fail-closed pipeline for each request.
  * All I/O is injected via `deps`; no global state except the in-flight concurrency counter.
  */
@@ -421,6 +433,22 @@ export function makeListenHandler(
       // 10b. The store matched an existing run by the delivery id, live or ended (issue #735).
       // Compared with `false` by name: a store whose create() gives no `created` is not a match.
       if (created === false) {
+        const runPhase = deriveRunPhase(run);
+        // F1: the matched run was sealed by a failed start — its agent never ran. The retry gets the
+        // first copy's reply again, and nothing is spawned or written. The delivery id is NOT
+        // recorded, so every retry keeps reaching the store and keeps getting that reply; a recorded
+        // id would answer the next retry `200 deduplicated`.
+        if (run.sealed_by?.arm === 'spawn_failure') {
+          deps.logger.warn('webhook: deduplicated', {
+            path,
+            run_id: run.id,
+            run_phase: runPhase,
+            reason: 'matched_spawn_failed_run',
+          });
+          const failed = spawnFailedReply(run.id);
+          respond(res, failed.status, failed.body);
+          return;
+        }
         if (dedupId !== undefined && dedupStore !== undefined) {
           try {
             dedupStore.record(dedupId, ttlMs);
@@ -431,18 +459,28 @@ export function makeListenHandler(
             });
           }
         }
-        const runPhase = deriveRunPhase(run);
-        // A later delivery under the same id with other params (a `ticket-updated` keyed on the
-        // ticket's id, for one) is not dropped without a word.
+        // F2: a later delivery under the same id whose MAPPED params differ from the run's — a
+        // sender that reuses one id for events whose mapped values change, for one — is said, never
+        // dropped without a word: a `warn` line and `params_differ: true` on the reply. Only the
+        // mapped params are compared, so an id reused for events that map to the same params (an id
+        // taken from a ticket's own id, with that id the only mapped value, for one) is not seen.
+        // The run's record is never changed.
         const paramsDiffer = hashParams(params) !== hashParams(run.params);
-        deps.logger.info('webhook: deduplicated', {
+        const logged = {
           path,
           run_id: run.id,
           run_phase: runPhase,
           reason: 'matched_existing_run',
           ...(paramsDiffer ? { params_differ: true } : {}),
+        };
+        if (paramsDiffer) deps.logger.warn('webhook: deduplicated', logged);
+        else deps.logger.info('webhook: deduplicated', logged);
+        respond(res, 200, {
+          status: 'deduplicated',
+          run_id: run.id,
+          run_phase: runPhase,
+          ...(paramsDiffer ? { params_differ: true } : {}),
         });
-        respond(res, 200, { status: 'deduplicated', run_id: run.id, run_phase: runPhase });
         return;
       }
 
@@ -477,7 +515,8 @@ export function makeListenHandler(
             error: String(err),
           });
         }
-        respond(res, 500, { error: 'spawn_failed', run_id: run.id, status: 'failed' });
+        const failed = spawnFailedReply(run.id);
+        respond(res, failed.status, failed.body);
         return;
       }
 

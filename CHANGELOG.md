@@ -749,6 +749,13 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   the duplicate window (for example GitHub's Redeliver), or when two copies of one delivery arrive
   together, and no longer writes to that run; it answers `200` with `status: deduplicated`, the run's
   id and its phase (#735).
+  - A retry of a delivery whose agent failed to start gets the same `500` (`spawn_failed`) again.
+    To recover, purge that run (`realm run purge <run-id> --force`) and deliver the event again: it
+    starts a new run at once.
+  - A redelivery no longer starts an agent for a run whose agent stopped; drive that run with
+    `realm agent --run-id <run-id>`.
+  - A later delivery under the same ID with other values is logged at `warn`, and its reply says
+    `params_differ: true`.
 - **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
   PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
   replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on
