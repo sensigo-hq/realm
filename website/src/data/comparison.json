@@ -373,8 +373,8 @@
         },
         "temporal": {
           "value": "Partial",
-          "note": "The approver is a field you put in the signal; the event also stores an identity string the sender sets. Not checked per approval.",
-          "source": "api history/v1/message.proto:618-635",
+          "note": "The approver is a field you put in the signal; the event also stores an identity string the sender sets. Since server 1.32 an opt-in setting adds a principal the server checks to each event; it is off by default.",
+          "source": "api history/v1/message.proto:618-635; server v1.32.0 mutable_state_impl.go:7694-7713, dynamicconfig/constants.go:930-935",
           "label": "CODE + DOCS"
         },
         "inngest": {
@@ -468,7 +468,7 @@
       "ask": "Is the record hashed, chained or signed so an edit can be detected?",
       "verdict": {
         "kind": "open",
-        "text": "None of the tools here does this. LangGraph's optional encryption comes closest: an edited value fails to decrypt."
+        "text": "None of the tools here does this. LangGraph's optional encryption hides values but does not show that a record was changed."
       },
       "cells": {
         "realm": {
@@ -478,10 +478,10 @@
           "label": "CODE + DOCS + EXECUTED"
         },
         "langgraph": {
-          "value": "Partial",
-          "note": "Optional encryption makes an edited value fail to decrypt; a deleted or reordered checkpoint goes unnoticed.",
-          "source": "serde/encrypted.py:63-78",
-          "label": "CODE"
+          "value": "No",
+          "note": "Optional encryption hides values but does not show tampering: a value stored as plain text, or encrypted text copied from another record, still loads; on Postgres, plain values and metadata are never encrypted; a deleted or reordered checkpoint goes unnoticed.",
+          "source": "checkpoint serde/encrypted.py:26-36, 65-78; checkpoint-postgres postgres/__init__.py:309-343 (langgraph 1.2.13)",
+          "label": "CODE + INFERRED"
         },
         "crewai": {
           "value": "No",
