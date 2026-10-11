@@ -746,6 +746,18 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
 
 ### Fixed
 
+- `realm listen` no longer starts a second `realm agent` on a run a redelivered webhook matches after
+  the duplicate window (for example GitHub's Redeliver), or when two copies of one delivery arrive
+  together, and no longer writes to that run; it answers `200` with `status: deduplicated`, the run's
+  id and its phase (#735).
+  - A retry of a delivery whose agent failed to start gets the same `500` (`spawn_failed`) again,
+    except when two copies of the delivery arrived together (one can then be answered `200`). To
+    recover, purge that run (`realm run purge <run-id> --force`) and deliver the event again: it
+    starts a new run at once (after the duplicate window, in that two-copy case).
+  - A redelivery no longer starts an agent for a run whose agent stopped; drive that run with
+    `realm agent --run-id <run-id>`.
+  - A later delivery under the same ID with other values, after the duplicate window, is logged at
+    `warn`, and its reply says `params_differ: true`.
 - **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
   PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
   replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on

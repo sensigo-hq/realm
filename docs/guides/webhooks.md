@@ -134,11 +134,19 @@ Each check has its own reply. Send these to see them.
 {"error":"forbidden"}   403
 ```
 
-**The same event again** starts nothing:
+**The same event again** starts nothing. Within the duplicate window (`ttl_minutes`, 60 minutes by default) the reply is:
 
 ```text
 {"status":"deduplicated"}   200
 ```
+
+Later, while the run that event started exists (a sender's redelivery, for one), and when two copies of one delivery arrive together, the reply names that run and its phase. Nothing is started and the run is not written to, whether it is still going or has ended. Here the run had already finished:
+
+```text
+{"status":"deduplicated","run_id":"c1f1da1f-ce29-4bcd-b12b-1556c5698fc7","run_phase":"completed"}   200
+```
+
+`run_phase` is the phase on the run's record, not whether an agent is working on it: a run whose agent stopped still reads `running`.
 
 **An event the filter does not want**, for example `"type":"ticket-closed"`, starts nothing:
 
@@ -152,7 +160,27 @@ Each check has its own reply. Send these to see them.
 {"error":"params_invalid","message":"Invalid params for workflow 'tickets': /ticket_id must be number","status":"rejected"}   400
 ```
 
-In none of these cases is a run created. The two `200` replies are deliberate: the sender did nothing wrong, so it should not retry.
+In none of these cases is a run created or a `realm agent` started. The `200` replies are deliberate: the sender did nothing wrong, so it should not retry.
+
+**An agent the system refuses to start at once** (the workflow's folder replaced by a file, for one: `ENOTDIR`) ends the run the request created as failed, and the reply says so. The same event again starts nothing and gets the same reply:
+
+```text
+{"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}   500
+```
+
+This `500` is deliberate: the event's work never ran, and each retry of that delivery gets the same reply until you deal with the run.
+
+Two cases do not behave this way yet:
+
+- **Two copies of one delivery arriving together while the agent fails to start.** One copy can be answered `200` `{"status":"deduplicated","run_id":"<run-id>","run_phase":"running"}`, and its ID is recorded. Retries then get the bare `{"status":"deduplicated"}` until the duplicate window has passed, then the `500` again, and purging the run and delivering again starts a new run only after the window.
+- **A start that fails only after the request** — the workflow's folder missing, for one. It stops `realm listen` today: the request gets no reply, and the run stays `running` with no agent (#744).
+
+**To give an event's run another go:**
+
+- A run still going whose agent stopped: drive it again with `realm agent --run-id <run-id>` in the workflow's folder.
+- A run that has ended is not driven again: `realm agent --run-id` refuses it.
+- A run whose agent failed to start: remove it with `realm run purge <run-id> --force`, then deliver the event again. It starts a new run at once, unless two copies arrived together (the first case above): then it starts one only after the duplicate window.
+- A run that ended any other way: purge it, then deliver the event again once the duplicate window has passed. The window can start again when a delivery of the event is matched in the meantime, so it is not counted from the first delivery. Until then the delivery gets `{"status":"deduplicated"}` and starts nothing.
 
 ## Choose how requests are checked
 

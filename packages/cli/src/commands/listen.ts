@@ -30,6 +30,8 @@ import {
   describePending,
   owedNames,
   cannotGoOnLines,
+  deriveRunPhase,
+  hashParams,
 } from '@sensigo/realm';
 import type {
   WorkflowDefinition,
@@ -239,6 +241,18 @@ function respond(res: ServerResponse, status: number, payload: Record<string, un
 }
 
 /**
+ * issue #735 (F1): the ONE reply to a delivery whose agent failed to start — the first copy's, and
+ * every retry of that delivery that matches the run the failure sealed. A replayed request gets its
+ * FIRST verdict, never a success for work that never ran.
+ */
+function spawnFailedReply(runId: string): {
+  status: 500;
+  body: { error: 'spawn_failed'; run_id: string; status: 'failed' };
+} {
+  return { status: 500, body: { error: 'spawn_failed', run_id: runId, status: 'failed' } };
+}
+
+/**
  * Builds the request handler. The handler runs the linear, fail-closed pipeline for each request.
  * All I/O is injected via `deps`; no global state except the in-flight concurrency counter.
  */
@@ -337,10 +351,11 @@ export function makeListenHandler(
       }
 
       // 8. Dedup (default on unless dedup === false).
-      // TOCTOU note: the window between check() here and record() after a successful spawn is
-      // intentional at-least-once semantics — two near-simultaneous duplicate deliveries can both
-      // pass check() and create runs. The run store's idempotencyKey (passed at create, = dedupId)
-      // is the cross-restart backstop; the in-flight dedup store is the primary, best-effort guard.
+      // This check answers a delivery whose id was recorded inside the window. It does not see two
+      // copies of one delivery arriving together (both pass check() before either is recorded), nor
+      // a copy redelivered after the window. The run store does: dedupId is passed to create() as
+      // the idempotency key, so the second copy matches the first copy's run — ONE run — and listen
+      // reads create()'s `created` (step 10): only the copy that created the run starts an agent.
       const dedup = entry.trigger.dedup;
       let dedupId: string | undefined;
       let ttlMs = 0;
@@ -397,11 +412,13 @@ export function makeListenHandler(
       // Workflows are registered ONCE at startup (prepareListenWorkflows) — the old per-webhook
       // register silently reverted fresher registrations. Restart listen after re-registering.
       let run;
+      let created: boolean | undefined;
       try {
-        // `created` is intentionally unused here: the DedupStore.check() above already
-        // short-circuits duplicates, so the run-store idempotency match is only a backstop.
-        // Do NOT wire the re-encounter signal here — it would risk a double-spawn.
-        ({ run } = await deps.runStore.create({
+        // After the window, and when two copies of one delivery arrive together, check() above
+        // does not recognise the delivery; the run store's match on the idempotency key (= dedupId)
+        // does. So listen reads `created`: a delivery that matched an existing run starts nothing
+        // and writes nothing to it (below).
+        ({ run, created } = await deps.runStore.create({
           workflowId: entry.definition.id,
           workflowVersion: entry.definition.version,
           params,
@@ -410,6 +427,60 @@ export function makeListenHandler(
       } catch (err) {
         deps.logger.error('webhook: run creation failed', { path, error: String(err) });
         respond(res, 500, { error: 'store_error', status: 'failed' });
+        return;
+      }
+
+      // 10b. The store matched an existing run by the delivery id, live or ended (issue #735).
+      // Compared with `false` by name: a store whose create() gives no `created` is not a match.
+      if (created === false) {
+        const runPhase = deriveRunPhase(run);
+        // F1: the matched run was sealed by a failed start — its agent never ran. The retry gets the
+        // first copy's reply again, and nothing is spawned or written. The delivery id is NOT
+        // recorded, so every retry keeps reaching the store and keeps getting that reply; a recorded
+        // id would answer the next retry `200 deduplicated`.
+        if (run.sealed_by?.arm === 'spawn_failure') {
+          deps.logger.warn('webhook: deduplicated', {
+            path,
+            run_id: run.id,
+            run_phase: runPhase,
+            reason: 'matched_spawn_failed_run',
+          });
+          const failed = spawnFailedReply(run.id);
+          respond(res, failed.status, failed.body);
+          return;
+        }
+        if (dedupId !== undefined && dedupStore !== undefined) {
+          try {
+            dedupStore.record(dedupId, ttlMs);
+          } catch (err) {
+            deps.logger.error('webhook: failed to record dedup id', {
+              run_id: run.id,
+              error: String(err),
+            });
+          }
+        }
+        // F2: a later delivery under the same id whose MAPPED params differ from the run's — a
+        // sender that reuses one id for events whose mapped values change, for one — is said, never
+        // dropped without a word: a `warn` line and `params_differ: true` on the reply. Only the
+        // mapped params are compared, so an id reused for events that map to the same params (an id
+        // taken from a ticket's own id, with that id the only mapped value, for one) is not seen.
+        // The run's record is never changed.
+        const paramsDiffer = hashParams(params) !== hashParams(run.params);
+        const logged = {
+          path,
+          run_id: run.id,
+          run_phase: runPhase,
+          reason: 'matched_existing_run',
+          ...(paramsDiffer ? { params_differ: true } : {}),
+        };
+        if (paramsDiffer) deps.logger.warn('webhook: deduplicated', logged);
+        else deps.logger.info('webhook: deduplicated', logged);
+        respond(res, 200, {
+          status: 'deduplicated',
+          run_id: run.id,
+          run_phase: runPhase,
+          ...(paramsDiffer ? { params_differ: true } : {}),
+        });
         return;
       }
 
@@ -444,7 +515,8 @@ export function makeListenHandler(
             error: String(err),
           });
         }
-        respond(res, 500, { error: 'spawn_failed', run_id: run.id, status: 'failed' });
+        const failed = spawnFailedReply(run.id);
+        respond(res, failed.status, failed.body);
         return;
       }
 

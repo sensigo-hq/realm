@@ -44,10 +44,10 @@ listen: binding to non-loopback host '0.0.0.0' — this server serves plaintext 
 
 ### `--dedup-store`
 
-| Kind     | IDs are kept                                              | After a restart                                            |
-| -------- | --------------------------------------------------------- | ---------------------------------------------------------- |
-| `file`   | In `~/.realm/dedup/<workflow-id>/`, one file for each ID. | An event seen before the restart is still recognised.      |
-| `memory` | In the process.                                           | Every event is new: the same request started a second run. |
+| Kind     | IDs are kept                                              | After a restart                                                                                                                                                                                                                                               |
+| -------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`   | In `~/.realm/dedup/<workflow-id>/`, one file for each ID. | An event seen before the restart is still recognised.                                                                                                                                                                                                         |
+| `memory` | In the process.                                           | The list is empty, but the run store still knows the event's ID: the same request gets `200` `deduplicated` with the run it started, and no second agent starts. When that run's agent failed to start, it gets that first reply again: `500` `spawn_failed`. |
 
 ### `--llm-timeout`
 
@@ -105,6 +105,29 @@ When a workflow's code imports a `@sensigo/realm` of another version than the co
 
 For a request that passes every check, `realm listen` creates the run, starts `realm agent --run-id <run-id> --model <model>` (with `--provider <provider>` when `realm listen` was given one) as a separate process in the workflow's folder, and replies `202`. It does not wait for the run.
 
+A request whose event ID belongs to a run that already exists starts nothing and writes nothing to that run, whether the run is still going or has ended. This happens when the sender delivers the event again after the [duplicate window](../workflow/webhook-trigger.md#dedup) (GitHub's Redeliver, for one), or when two copies of one delivery arrive together. The reply is `200` `{"status":"deduplicated","run_id":"<run-id>","run_phase":"<phase>"}`, and `realm listen` logs `webhook: deduplicated` at `info` (see [Log lines](#log-lines)). `run_phase` is the phase on the run's record, not whether an agent is working on it. When the request's mapped parameters differ from the run's, the request's values are not used: the reply adds `"params_differ":true`, and the line is logged at `warn`:
+
+```text
+200 {"status":"deduplicated","run_id":"29d749b9-077f-417b-aafc-0b4e7aaa8be1","run_phase":"running","params_differ":true}
+```
+
+Added after version 0.46.0, which started a second `realm agent` on the run, wrote to its record and replied `202`.
+
+When the system refuses to start the run's `realm agent` at once (its workflow folder replaced by a file, for one: `ENOTDIR`), the run is ended as failed. A start that fails only after the request — the workflow's folder missing, for one — stops `realm listen` today: the request gets no reply, and the run stays `running` with no agent (#744). The reply to a failed start is:
+
+```text
+500 {"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}
+```
+
+A later delivery of that same delivery's event gets that same reply again, starts nothing, and is logged at `warn` as `webhook: deduplicated` with `"reason":"matched_spawn_failed_run"`. Added after version 0.46.0, which answered such a retry by starting another `realm agent` on the failed run. One case does not behave this way yet: when two copies of one delivery arrive together while the agent fails to start, one copy can be answered `200` `{"status":"deduplicated","run_id":"<run-id>","run_phase":"running"}`, and its ID is recorded. Retries then get the bare `200` `{"status":"deduplicated"}` until the duplicate window has passed, then the `500` again, and a purge followed by a new delivery starts a new run only after the window.
+
+What to do with a run a delivery matched:
+
+- A run still going whose agent stopped: drive it again with `realm agent --run-id <run-id>`.
+- A run that has ended is not driven again: `realm agent --run-id` refuses it with `Error: Run <run-id> is already in terminal state: <reason>.`, naming the run's own end reason (with no model key set, it refuses on the key first).
+- A run whose agent failed to start: remove it with `realm run purge <run-id> --force`, then deliver the event again. It starts a new run at once: the copy whose start failed keeps no duplicate record. Unless two copies arrived together (the case above): then it starts one only after the duplicate window.
+- A run that ended any other way: purge it, then deliver the event again once the duplicate window has passed. The window can start again when a delivery of the event is matched in the meantime, so it is not counted from the first delivery. Purge does not clear the duplicate record, so until then the delivery gets `200` `{"status":"deduplicated"}` and starts nothing.
+
 The new process has the environment of `realm listen`, and it loads the `.env` file in the workflow's folder when it starts. The model provider's key must therefore be set where `realm listen` is started or in that `.env`. `realm agent` needs a key to start at all, even for a workflow in which no step calls a model.
 
 If a run's `realm agent` refuses to start (for example, no key for its provider), the run that `realm listen` created stays open, with nothing on its record. Its refusal appears in the same output as the log, and ends `If run <run-id> exists, it was not changed.` To drive the run once the cause is fixed, run `realm agent --run-id <run-id> --provider <provider> --model <model>` in the workflow's folder, with the key set, adding `--llm-timeout` if `realm listen` was given one.
@@ -127,26 +150,29 @@ Run complete: 36ae3898-4a7e-4a2b-a240-e3fc3b87240b
 
 Each line is a message, followed where there are details by a JSON object. Lines at `warn` and `error` go to standard error, the others to standard output.
 
-| Level   | Line                                                       | Logged when                                                           |
-| ------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
-| `info`  | `listen: mounted {"workflow","path","mode"}`               | A workflow is mounted.                                                |
-| `info`  | `listen: workflow has no trigger block — not mounted`      | A workflow given on the command line has no `trigger`.                |
-| `info`  | `listen: extensions loaded {…}`                            | A mounted workflow's code files were loaded.                          |
-| `info`  | `realm listen on <host>:<port> — N workflow(s) mounted`    | The server is ready.                                                  |
-| `info`  | `webhook: dispatched {"path","run_id","pid"}`              | A run was created and its driver started.                             |
-| `info`  | `webhook: rejected params_invalid — <reason>`              | A request's values did not fit `params_schema`.                       |
-| `info`  | `listen: sweeper enacted an expired gate {…}`              | `--sweep-expired-gates` carried out a gate.                           |
-| `info`  | `listen: shutting down {"reason"}`                         | A stop signal arrived.                                                |
-| `debug` | `webhook: filtered out {"path"}`                           | A request did not match the `filter`.                                 |
-| `debug` | `webhook: deduplicated {"path"}`                           | A request repeated an event already seen.                             |
-| `warn`  | `listen: workflow '<id>' uses auth.mode 'none' — …`        | A mounted workflow does not check its requests.                       |
-| `warn`  | `listen: binding to non-loopback host '<addr>' — …`        | `--host` is not the machine's own address.                            |
-| `warn`  | `webhook: verification failed {"path","mode"}`             | A request failed the `auth` check.                                    |
-| `warn`  | `webhook: duplicated security header {"path","header"}`    | A request carried the signature or secret header more than once.      |
-| `warn`  | `webhook: dedup id unresolvable, proceeding without dedup` | The event's ID was not in the request, and `on_missing_id` is `skip`. |
-| `error` | `webhook: run creation failed {"path","error"}`            | The run could not be created. The reply is `500`.                     |
-| `error` | `webhook: spawn failed {…}`                                | The driver could not be started. The run is ended as failed.          |
-| `error` | `listen: sweeper failed to enact an expired gate {…}`      | A gate could not be carried out.                                      |
+| Level   | Line                                                                           | Logged when                                                                                                                                                                                         |
+| ------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `info`  | `listen: mounted {"workflow","path","mode"}`                                   | A workflow is mounted.                                                                                                                                                                              |
+| `info`  | `listen: workflow has no trigger block — not mounted`                          | A workflow given on the command line has no `trigger`.                                                                                                                                              |
+| `info`  | `listen: extensions loaded {…}`                                                | A mounted workflow's code files were loaded.                                                                                                                                                        |
+| `info`  | `realm listen on <host>:<port> — N workflow(s) mounted`                        | The server is ready.                                                                                                                                                                                |
+| `info`  | `webhook: dispatched {"path","run_id","pid"}`                                  | A run was created and its driver started.                                                                                                                                                           |
+| `info`  | `webhook: rejected params_invalid — <reason>`                                  | A request's values did not fit `params_schema`.                                                                                                                                                     |
+| `info`  | `listen: sweeper enacted an expired gate {…}`                                  | `--sweep-expired-gates` carried out a gate.                                                                                                                                                         |
+| `info`  | `listen: shutting down {"reason"}`                                             | A stop signal arrived.                                                                                                                                                                              |
+| `debug` | `webhook: filtered out {"path"}`                                               | A request did not match the `filter`.                                                                                                                                                               |
+| `info`  | `webhook: deduplicated {"path","run_id","run_phase","reason"}`                 | A request's event ID belongs to a run that exists (`reason`: `matched_existing_run`), with the run's mapped parameters; nothing was started. Added after version 0.46.0.                            |
+| `debug` | `webhook: deduplicated {"path"}`                                               | A request repeated an event seen within `ttl_minutes`.                                                                                                                                              |
+| `warn`  | `listen: workflow '<id>' uses auth.mode 'none' — …`                            | A mounted workflow does not check its requests.                                                                                                                                                     |
+| `warn`  | `listen: binding to non-loopback host '<addr>' — …`                            | `--host` is not the machine's own address.                                                                                                                                                          |
+| `warn`  | `webhook: verification failed {"path","mode"}`                                 | A request failed the `auth` check.                                                                                                                                                                  |
+| `warn`  | `webhook: duplicated security header {"path","header"}`                        | A request carried the signature or secret header more than once.                                                                                                                                    |
+| `warn`  | `webhook: dedup id unresolvable, proceeding without dedup`                     | The event's ID was not in the request, and `on_missing_id` is `skip`.                                                                                                                               |
+| `warn`  | `webhook: deduplicated {"path","run_id","run_phase","reason","params_differ"}` | As the `info` line, but the request's mapped parameters differ from the run's (`"params_differ":true`); its values were not used. Added after version 0.46.0.                                       |
+| `warn`  | `webhook: deduplicated {"path","run_id","run_phase","reason"}`                 | A request's event ID belongs to a run whose agent failed to start (`reason`: `matched_spawn_failed_run`); the reply is that first `500` again, and nothing was started. Added after version 0.46.0. |
+| `error` | `webhook: run creation failed {"path","error"}`                                | The run could not be created. The reply is `500`.                                                                                                                                                   |
+| `error` | `webhook: spawn failed {…}`                                                    | The driver could not be started. The run is ended as failed.                                                                                                                                        |
+| `error` | `listen: sweeper failed to enact an expired gate {…}`                          | A gate could not be carried out.                                                                                                                                                                    |
 
 With `--log-level error`, a normal start prints nothing.
 
