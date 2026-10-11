@@ -5,6 +5,7 @@
 // the MCP carriers. The wording rule on every surface: a PROGRAM, past tense ("taken by", "question
 // opened through"), with how its name is known. Never "is running", "is driving", "attended by".
 import {
+  composeStepViews,
   deriveRunPhase,
   describeClaimHolder,
   offeredResumeWay,
@@ -320,11 +321,35 @@ function describeProof(
 }
 
 /**
+ * #706 walk W8-R1: the ONE reader of the answer the record holds for a step's question — the last
+ * answer of the step's view (`composeStepViews`), or `undefined` when the step has no answer. Every
+ * CLI surface that names an answerer reads it here: `realm workflow run`'s closed-question line and
+ * `realm run respond`'s `Responded:` line.
+ */
+export function recordedAnswer(run: RunRecord, step: string): AnswerView | undefined {
+  const answers = composeStepViews(run)[step]?.answers ?? [];
+  return answers[answers.length - 1];
+}
+
+/**
+ * #706 walk W8-R1: the ONE phrase for who answered a question, each absence in its own words by
+ * cause: a name → `<name> (<statedLabel>)`; a recorded name that cannot be printed → the one
+ * unshowable phrase, with no parentheses around it so nothing nests; no name stated →
+ * `(not stated)`. For any `answered_by` but `settled_by_expiry` — an answer the gate's expiry wrote
+ * has no answerer, and each caller words that case itself before it calls this.
+ */
+export function answererPhrase(by: AnswerView['answered_by'], statedLabel: string): string {
+  if (by.by !== null) return `${by.by} (${statedLabel})`;
+  if (by.absent_cause === 'name_unreadable') return UNSHOWABLE_NAME;
+  return '(not stated)';
+}
+
+/**
  * One answer, one line: `Answer: <choice> · answered by <name> (as stated, not verified) ·
  * proof: <words>`. The answerer is the caller-STATED, unverified name — or `(not stated)` — or,
- * with no parentheses around it so nothing nests, the one unshowable phrase. An answer the gate's
- * expiry wrote reads `Answer: <choice> · settled by the gate's expiry (no answer in time)`: no
- * answerer part and no proof part, since both would repeat the same fact.
+ * with no parentheses around it so nothing nests, the one unshowable phrase ({@link answererPhrase}).
+ * An answer the gate's expiry wrote reads `Answer: <choice> · settled by the gate's expiry (no
+ * answer in time)`: no answerer part and no proof part, since both would repeat the same fact.
  */
 export function renderAnswerLine(answer: AnswerView): string {
   const by = answer.answered_by;
@@ -336,14 +361,7 @@ export function renderAnswerLine(answer: AnswerView): string {
   ) {
     return `Answer: ${choice} · ${SETTLED_BY_EXPIRY_WORDS}`;
   }
-  let answerer: string;
-  if (by.by !== null) {
-    answerer = `${by.by} (as stated, not verified)`;
-  } else if (by.absent_cause === 'name_unreadable') {
-    answerer = UNSHOWABLE_NAME;
-  } else {
-    answerer = '(not stated)';
-  }
+  const answerer = answererPhrase(by, 'as stated, not verified');
   return `Answer: ${choice} · answered by ${answerer} · proof: ${describeProof(answer.claim_proof, absent)}`;
 }
 

@@ -484,8 +484,9 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
     (`Invalid input for step 'x': 'n' must be number`).
   - `executeStep`'s own message is unchanged.
   - `start_run_batch`'s `started` entries carry `next_actions`.
-  - `realm run respond` prints the derived phase, the stated answerer
-    (`answered by <name> (as stated)` with `--by`), and the owed line.
+  - `realm run respond` prints the derived phase, the answerer the record holds
+    (`answered by <name> (as stated)`; `answered by (not stated)` when `--by` was given and the
+    record holds no name), and the owed line.
   - The owed line says `runs it` / `runs them` by count; `the step` / `the steps` on drain and
     resume, and in the act's own words.
   - `realm run inspect`, `realm run drain` and `realm run resume` name the owed steps too.
