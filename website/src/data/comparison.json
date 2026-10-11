@@ -338,7 +338,7 @@
       "ask": "Is the person who answered recorded, and is their identity checked?",
       "verdict": {
         "kind": "behind",
-        "text": "Behind n8n's Slack and Telegram approvals, which can restrict who may approve and record who clicked; Dify, which records the account that answered and gives each recipient its own token; and CrewAI's paid platform, which checks the reviewer's email (per its docs). Realm records a name the caller states and checks nothing; in a test the agent approved its own gate, and the proof token, which shows only the conversation, recorded it as matched."
+        "text": "Behind n8n's Slack and Telegram approvals, which can restrict who may approve and record who clicked; Dify, which records the account that answered on its web app and gives each recipient its own token; and CrewAI's paid platform, which checks the reviewer's email (per its docs). Realm records a name the caller states and checks nothing; in a test the agent approved its own gate, and the proof token, which shows only the conversation, recorded it as matched."
       },
       "cells": {
         "realm": {
@@ -355,14 +355,14 @@
         },
         "crewai": {
           "value": "Partial",
-          "note": "Open source: no answerer recorded. Paid platform: the reviewer's identity is recorded and checked against a signed token (docs only).",
-          "source": "flow/human_feedback.py:180-185; flow-hitl-management.md",
-          "label": "CODE + DOCS"
+          "note": "Open source: no answerer recorded, and the answer itself is kept only on the running flow unless your code copies it into the flow's state. Paid platform: the reviewer's identity is recorded and checked against a signed token (docs only).",
+          "source": "flow/human_feedback.py:180-185; flow-hitl-management.md; flow/human_feedback.py:149-185, persistence/sqlite.py:301-314 (crewai 1.15.23)",
+          "label": "CODE + DOCS + INFERRED"
         },
         "mastra": {
           "value": "No",
-          "note": "The step result has no field for who resumed it; a permission check needs the enterprise edition.",
-          "source": "workflows/types.ts:74-86; workflow.ts:4701-4726",
+          "note": "The step result has no field for who resumed it; a permission check needs the enterprise edition. Its chat channels' tool-call approvals accept only the person who asked, and record no approver.",
+          "source": "workflows/types.ts:74-86; workflow.ts:4701-4726; channels/agent-channels.ts:60-61, 538-680 (@mastra/core 1.74.0)",
           "label": "CODE"
         },
         "maf": {
@@ -391,8 +391,8 @@
         },
         "dify": {
           "value": "Partial",
-          "note": "Records the submitting user and recipient; each recipient gets a token. Email links: anyone with the link can answer.",
-          "source": "models/human_input.py:72-78; human_input_service.py",
+          "note": "Records the submitting user and recipient; each recipient gets a token. Email links: anyone with the link can answer. Through its API, the answering user is a name the caller sends, and deleting a conversation deletes its answers.",
+          "source": "models/human_input.py:72-78; human_input_service.py; controllers/service_api/wraps.py:134-151, tasks/delete_conversation_task.py:84-89 (dify 1.17.1)",
           "label": "CODE + DOCS"
         }
       }
@@ -503,15 +503,15 @@
         },
         "temporal": {
           "value": "No",
-          "note": "No hashing or signing described; histories can be deleted.",
-          "source": "llms-full.txt grep; cli commands.yaml:4767",
+          "note": "No hashing or signing of the history; the same permission that sends a signal can delete a history.",
+          "source": "llms-full.txt grep; cli commands.yaml:4767; common/api/metadata.go:111-115 (server v1.32.0)",
           "label": "DOCS + CODE"
         },
         "inngest": {
           "value": "No",
-          "note": "No hashing or signing described.",
-          "source": "llms-full.txt grep",
-          "label": "DOCS"
+          "note": "No hashing or signing; Inngest itself never edits a stored event, but whoever has the database can.",
+          "source": "pkg/db/postgres/sqlc/queries.sql:235-247; migrations/000001_baseline.sql:34-47 (inngest v1.45.1)",
+          "label": "CODE"
         },
         "n8n": {
           "value": "No",
