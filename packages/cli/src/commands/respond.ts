@@ -2,7 +2,13 @@
 import { Command } from 'commander';
 import type { RunStore } from '@sensigo/realm';
 import type { WorkflowRegistrar } from '@sensigo/realm';
-import type { ExtensionRegistry, Attributed, RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type {
+  ExtensionRegistry,
+  Attributed,
+  AnswerView,
+  RunRecord,
+  WorkflowDefinition,
+} from '@sensigo/realm';
 import {
   WorkflowError,
   boundStatedName,
@@ -26,6 +32,7 @@ import {
   type LoadedProjectExtensions,
 } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
+import { answererPhrase, recordedAnswer } from '../lib/holder-render.js';
 import {
   agentReadyReason,
   attendingLine,
@@ -112,6 +119,23 @@ function withCleanupLine(lines: string[], run: RunRecord): string[] {
     (command !== undefined && lines.some((l) => l.includes(`'${command}'`)))
     ? lines
     : [...lines, cleanup];
+}
+
+/**
+ * #706 walk W8-R1 (decision C11): the answerer clause of the `Responded:` line. It reads the RECORD
+ * — `answer` is the answer the run record holds for the question's step after this call
+ * (`recordedAnswer`) — never this command's own `--by`: a repeat of the recorded choice records
+ * nothing, so its line names whoever's answer the record keeps. A name, or a recorded name that
+ * cannot be printed, is always said (`as stated`, through the one {@link answererPhrase}); no name
+ * stated is said as `(not stated)` only when `--by` was given (`byGiven`) — with no `--by` and no
+ * name, no clause, as before. No answer, or the gate's expiry's (no one answered): no clause.
+ */
+export function answererClause(answer: AnswerView | undefined, byGiven: boolean): string {
+  if (answer === undefined) return '';
+  const by = answer.answered_by;
+  if (by.by === null && by.absent_cause === 'settled_by_expiry') return '';
+  if (by.by === null && by.absent_cause !== 'name_unreadable' && !byGiven) return '';
+  return ` | answered by ${answererPhrase(by, 'as stated')}`;
 }
 
 /** What `respondToGate` hands the command to print (issue #625). */
@@ -280,12 +304,17 @@ export async function respondToGate(
       ].join('\n'),
     };
   }
-  // issue #625 PR-2a (decision C11): the recorded answerer when `--by` was given, the DERIVED
-  // phase, and — when the answer left engine work owed — the one command that runs it, with where
-  // its project code comes from and that its environment is its shell's (decision C98); when it
-  // left an agent step ready, the same ready line `realm run advance` prints (decision C96).
+  // issue #625 PR-2a (decision C11): the answerer the record holds — read after the call, for the
+  // question's step (the reply's `command`, on the recording path and on a repeat alike), never this
+  // command's `--by` (#706 walk W8-R1) —, the DERIVED phase, and — when the answer left engine work
+  // owed — the one command that runs it, with where its project code comes from and that its
+  // environment is its shell's (decision C98); when it left an agent step ready, the same ready line
+  // `realm run advance` prints (decision C96).
   const phase = deriveRunPhase(updatedRun);
-  const answeredBy = options.by !== undefined ? ` | answered by ${options.by} (as stated)` : '';
+  const answeredBy = answererClause(
+    recordedAnswer(updatedRun, result.command),
+    options.by !== undefined,
+  );
   return {
     choice: options.choice,
     newState: phase,

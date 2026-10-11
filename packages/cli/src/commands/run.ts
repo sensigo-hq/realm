@@ -25,7 +25,6 @@ import {
   owedRunsClause,
   pendingCleanupLine,
   respondCommand,
-  composeStepViews,
   describeClaimHolder,
   classifyInProgressClaims,
   pendingGateQuestion,
@@ -34,6 +33,7 @@ import {
   type NotRecordedKind,
 } from '@sensigo/realm';
 import {
+  recordedAnswer,
   renderAnswerLine,
   questionLines,
   takenPhrase,
@@ -365,8 +365,7 @@ function watchRun(
  * or — when no answer was recorded (an `on_expiry: abort`, an abandoned run) — the run's phase.
  */
 export function questionClosedLine(run: RunRecord, step: string): string {
-  const answers = composeStepViews(run)[step]?.answers ?? [];
-  const last = answers[answers.length - 1];
+  const last = recordedAnswer(run, step);
   const what =
     last !== undefined
       ? renderAnswerLine(last)
