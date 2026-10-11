@@ -515,9 +515,9 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
   // cannot go on until its workflow is corrected — not only advance_run's nothing-ran reply.
   // F15: `compute` is refused for its input — its own way out, by whether it has `depends_on`.
   const TOOLS_WAY_OUT =
-    "For 'compute', start a run with params that fit, or correct its input_schema and register the workflow again, or call execute_step for it with input that fits; then, after a fix, call advance_run; or end the run with abandon_run.";
+    "For 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.";
   const TOOLS_WAY_OUT_DEPS =
-    "For 'compute', the engine gives it no input, so correct its input_schema and register the workflow again, or call execute_step for it with input that fits; then, after a fix, call advance_run; or end the run with abandon_run.";
+    "For 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.";
   const needsN = { type: 'object', required: ['n'], properties: { n: { type: 'number' } } };
   const C57_REFUSAL =
     "'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.";

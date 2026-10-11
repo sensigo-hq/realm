@@ -329,8 +329,8 @@ realm run inspect <id> — or end it: realm run abandon <id>`, its reason in `re
 start a run with params that fit, or correct its input_schema and register the workflow again`
   (no `depends_on`), `for '<step>', the engine gives it no input, so correct its input_schema and
 register the workflow again` (with `depends_on`), and `for '<step>', correct the workflow and
-register it again` beside them for a refused `trust` or precondition; over MCP each input-schema
-  way adds `or call execute_step for it with input that fits`. When every refused step is refused
+register it again` beside them for a refused `trust` or precondition. Each step's own way reads the
+  same on every surface; it never names `execute_step`. When every refused step is refused
   for its `trust` or a precondition, the one way out is unchanged. `cannotRunWayOut`,
   `cannotRunWayOutTools`, `cannotGoOnLines` and `describeNext` take the run's workflow.
 - **`get_run_state` never says `claim_unknown_age` with no claim in flight (issue #625, PR-2a).** The
@@ -484,8 +484,9 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
     (`Invalid input for step 'x': 'n' must be number`).
   - `executeStep`'s own message is unchanged.
   - `start_run_batch`'s `started` entries carry `next_actions`.
-  - `realm run respond` prints the derived phase, the stated answerer
-    (`answered by <name> (as stated)` with `--by`), and the owed line.
+  - `realm run respond` prints the derived phase, the answerer the record holds
+    (`answered by <name> (as stated)`; `answered by (not stated)` when `--by` was given and the
+    record holds no name), and the owed line.
   - The owed line says `runs it` / `runs them` by count; `the step` / `the steps` on drain and
     resume, and in the act's own words.
   - `realm run inspect`, `realm run drain` and `realm run resume` name the owed steps too.
