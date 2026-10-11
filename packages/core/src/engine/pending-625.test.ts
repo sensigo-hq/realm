@@ -77,10 +77,10 @@ const TOOLS_WAY_OUT_TEXT =
   'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
 /** F15: the tools' way out for a step refused for its input — with no `depends_on` (the run's params). */
 const inputWayOutParams = (step: string): string =>
-  `For '${step}', start a run with params that fit, or correct its input_schema and register the workflow again, or call execute_step for it with input that fits; then, after a fix, call advance_run; or end the run with abandon_run.`;
+  `For '${step}', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.`;
 /** F15: the same, for a step with `depends_on` (the engine gives it no input). */
 const inputWayOutDeps = (step: string): string =>
-  `For '${step}', the engine gives it no input, so correct its input_schema and register the workflow again, or call execute_step for it with input that fits; then, after a fix, call advance_run; or end the run with abandon_run.`;
+  `For '${step}', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.`;
 /** F15: the workflow the hand-built views read (`x`, with no `depends_on`). */
 const X_DEF = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
 

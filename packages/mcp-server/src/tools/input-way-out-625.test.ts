@@ -2,9 +2,10 @@
 // of a run that cannot go on is true for both kinds of input-schema refusal. The engine's input for an
 // `auto` step is the run's params when it has no `depends_on`, and nothing when it has: the first is
 // fixed by a run with params that fit (or a corrected `input_schema`), the second only by a corrected
-// `input_schema` — and over MCP either can be run by `execute_step` with input that fits. A trust or
-// precondition refusal keeps "correct the workflow". Each refused step's own way, in the view's order,
-// then the run's once. Over MCP `advance_run`, as a client reads it.
+// `input_schema`. A trust or precondition refusal keeps "correct the workflow". Each refused step's own
+// way, in the view's order, then the run's once. Over MCP `advance_run`, as a client reads it. Each
+// step's own way reads the same on every surface: it never tells a caller to supply an engine step's
+// input (owner, 2026-10-11).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
@@ -16,12 +17,15 @@ import { fileURLToPath } from 'node:url';
 import {
   JsonFileStore,
   JsonWorkflowStore,
+  ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type StepDefinition,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { handleAdvanceRun } from './advance-run.js';
 import { handleExecuteStep } from './execute-step.js';
+import { handleStartRun } from './start-run.js';
+import { handleStartRunBatch } from './start-run-batch.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -56,10 +60,14 @@ async function advance(def: WorkflowDefinition, params: Record<string, unknown>)
 }
 
 describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of step (MCP)', () => {
-  it('a step with no depends_on (the engine gives it the run’s params): a run with params that fit, a corrected input_schema, or execute_step with input that fits', async () => {
+  it('a step with no depends_on (the engine gives it the run’s params): a run with params that fit, or a corrected input_schema', async () => {
     claim(
       'docs/reference/mcp/tools.md',
-      "`For '<step>', start a run with params that fit, or correct its input_schema and register the workflow again, or call execute_step for it with input that fits; then, after a fix, call advance_run; or end the run with abandon_run.` for a step with no `depends_on` (the engine gives it the run's params)",
+      "`For '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.` for a step with no `depends_on` (the engine gives it the run's params)",
+    );
+    claim(
+      'docs/reference/mcp/run-state-and-health.md',
+      "for a step refused for its input, a new run with params that fit (when the step has no `depends_on`: the engine gives it the run's params), or a corrected `input_schema`.",
     );
     const r = await advance(
       wf('f15-params', {
@@ -68,26 +76,35 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
       { n: 'five' },
     );
     // (a) red when the way out says only "correct the workflow" for an input the run's params decide
-    //     (F-R6); (b) prints the hint's end.
+    //     (F-R6), or tells the caller to supply the step's input; (b) prints the hint's end.
     expect(r.reply.context_hint.slice(r.reply.context_hint.indexOf(' For '))).toBe(
-      ` For 'first', start a run with params that fit, or correct its input_schema and register the workflow again, or call execute_step for it with input that fits; ${RUN_WAY}`,
+      ` For 'first', start a run with params that fit, or correct its input_schema and register the workflow again; ${RUN_WAY}`,
     );
-    // The way it names is real: execute_step with input that fits runs the step.
+  });
+
+  it('execute_step named on the step with input that fits still runs it today — whether an agent door may make that call is #729 PR-0’s (preservation)', async () => {
+    const r = await advance(
+      wf('f15-params-run', {
+        first: { description: 'F.', execution: 'auto', depends_on: [], input_schema: NEEDS_N },
+      }),
+      { n: 'five' },
+    );
     const ran = await handleExecuteStep(
       { run_id: r.id, command: 'first', params: { n: 5 } },
       { runStore: r.runStore, workflowStore: r.workflowStore },
     );
-    // (a) red when the call the way out names does not run the step; (b) prints its status.
+    // (a) red when execute_step by name no longer runs an `auto` step given input its schema accepts
+    //     — a behaviour this fix does not change; (b) prints its status and the completed steps.
     expect({ status: ran.status, done: (await r.runStore.get(r.id)).completed_steps }).toEqual({
       status: 'ok',
       done: ['first'],
     });
   });
 
-  it('a step with depends_on (the engine gives it no input): a corrected input_schema, or execute_step with input that fits — never a run with other params', async () => {
+  it('a step with depends_on (the engine gives it no input): a corrected input_schema — never a run with other params', async () => {
     claim(
       'docs/reference/mcp/tools.md',
-      "`For '<step>', the engine gives it no input, so correct its input_schema and register the workflow again, or call execute_step for it with input that fits; …` for one with `depends_on`",
+      "`For '<step>', the engine gives it no input, so correct its input_schema and register the workflow again; …` for one with `depends_on`",
     );
     const r = await advance(
       wf('f15-deps', {
@@ -99,7 +116,7 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
     // (a) red when the way out sends the caller to a new run's params, which this step never gets;
     //     (b) prints the hint's end.
     expect(r.reply.context_hint.slice(r.reply.context_hint.indexOf(' For '))).toBe(
-      ` For 'second', the engine gives it no input, so correct its input_schema and register the workflow again, or call execute_step for it with input that fits; ${RUN_WAY}`,
+      ` For 'second', the engine gives it no input, so correct its input_schema and register the workflow again; ${RUN_WAY}`,
     );
   });
 
@@ -127,7 +144,7 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
       tail: hint.slice(hint.indexOf(' For ')),
       runWay: hint.split(RUN_WAY).length - 1,
     }).toEqual({
-      tail: ` For 't', correct the workflow and register it again; for 'first', start a run with params that fit, or correct its input_schema and register the workflow again, or call execute_step for it with input that fits; ${RUN_WAY}`,
+      tail: ` For 't', correct the workflow and register it again; for 'first', start a run with params that fit, or correct its input_schema and register the workflow again; ${RUN_WAY}`,
       runWay: 1,
     });
   });
@@ -150,5 +167,84 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
         ' Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.',
       ),
     ).toBe(true);
+  });
+});
+
+// Owner, 2026-10-11 (#729 comment 6107585956): the agent is never told to supply an engine step's
+// input. Four more replies carry a step's own way out; each is driven here. Each case asserts both
+// that the reply never names `execute_step for it` and that it still gives the step's own way.
+describe('the way out never names execute_step for an engine step refused for its input (owner, 2026-10-11)', () => {
+  const NO_DEPS_WAY =
+    "for 'first', start a run with params that fit, or correct its input_schema and register the workflow again";
+  const DEPS_WAY =
+    "For 'second', the engine gives it no input, so correct its input_schema and register the workflow again";
+  const DEPS = wf('f706-deps', {
+    a: { description: 'A.', execution: 'auto', depends_on: [] },
+    second: { description: 'S.', execution: 'auto', depends_on: ['a'], input_schema: NEEDS_N },
+  });
+
+  async function stores(def: WorkflowDefinition) {
+    const dir = await mkdtemp(join(tmpdir(), 'f706-input-'));
+    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    await workflowStore.register(def);
+    return {
+      runStore: new JsonFileStore(join(dir, 'runs')),
+      workflowStore,
+      registry: new ExtensionRegistry(),
+    };
+  }
+
+  it('(i) execute_step on a step refused for its trust, beside one refused for its input: the reply’s way out', async () => {
+    const s = await stores(
+      wf('f706-mixed', {
+        t: { description: 'T.', execution: 'auto', depends_on: [] },
+        first: { description: 'F.', execution: 'auto', depends_on: [], input_schema: NEEDS_N },
+      }),
+    );
+    // The loader refuses an invalid trust value in a file; a registered copy written by an older
+    // version can carry one. Planted through the store's own write.
+    const stored = await s.workflowStore.get('f706-mixed');
+    (stored.steps['t'] as { trust?: unknown }).trust = 'bogus_trust';
+    await s.workflowStore.register(stored);
+    const started = await handleStartRun({ workflow_id: 'f706-mixed', params: {} }, s);
+    const hint = (await handleExecuteStep({ run_id: started.run_id, command: 't', params: {} }, s))
+      .context_hint;
+    // (a) red when the way out tells the caller to supply the input of `first` (the clause #706
+    //     added on MCP), or loses the step's own way; (b) prints the reply's context_hint.
+    expect(hint).not.toContain('execute_step for it');
+    expect(hint).toContain(NO_DEPS_WAY);
+  });
+
+  it('(ii) execute_step’s “cannot be called now” reply on a run whose next step is refused for its input', async () => {
+    const s = await stores(DEPS);
+    const started = await handleStartRun({ workflow_id: DEPS.id, params: {} }, s);
+    const reply = await handleExecuteStep({ run_id: started.run_id, command: 'a', params: {} }, s);
+    // (a) red when the blocked reply's way out names execute_step for `second`, or loses the step's
+    //     own way; (b) prints the reply's context_hint.
+    expect(reply.context_hint).not.toContain('execute_step for it');
+    expect(reply.context_hint).toContain(DEPS_WAY);
+  });
+
+  it('(iii) a deduped start_run_batch entry on a run whose next step is refused for its input', async () => {
+    const s = await stores(DEPS);
+    await handleStartRun({ workflow_id: DEPS.id, params: {}, idempotency_key: 'k' }, s);
+    const batch = await handleStartRunBatch(
+      { workflow_id: DEPS.id, items: [{ params: {}, idempotency_key: 'k' }] },
+      s,
+    );
+    const hint = batch.started[0]!.context_hint;
+    // (a) red when the deduped entry's way out names execute_step for `second`, or loses the step's
+    //     own way; (b) prints the entry's context_hint.
+    expect(hint).not.toContain('execute_step for it');
+    expect(hint).toContain(DEPS_WAY);
+  });
+
+  it('(iv) start_run’s reply on a run whose next step is refused for its input', async () => {
+    const s = await stores(DEPS);
+    const started = await handleStartRun({ workflow_id: DEPS.id, params: {} }, s);
+    // (a) red when start_run's way out names execute_step for `second`, or loses the step's own
+    //     way; (b) prints the reply's context_hint.
+    expect(started.context_hint).not.toContain('execute_step for it');
+    expect(started.context_hint).toContain(DEPS_WAY);
   });
 });

@@ -541,18 +541,14 @@ export type WayOutSteps = {
  * input for an `auto` step is the run's params when it has no `depends_on`, and nothing when it has
  * ({@link engineStepInput}): with no `depends_on`, a new run with params that fit, or a corrected
  * `input_schema`; with `depends_on`, the engine gives it no input, so only a corrected
- * `input_schema`. The tools add the call that runs it with input that fits (`execute_step`).
+ * `input_schema`. The same words on every surface: the way out never tells a caller to supply an
+ * engine step's input (owner, 2026-10-11).
  */
-function refusedStepWay(
-  entry: EngineRunnable,
-  definition: WayOutSteps,
-  words: 'cli' | 'tools',
-): string {
+function refusedStepWay(entry: EngineRunnable, definition: WayOutSteps): string {
   if (entry.refused_by !== 'input_schema') return 'correct the workflow and register it again';
-  const call = words === 'tools' ? ', or call execute_step for it with input that fits' : '';
   return (definition.steps[entry.step]?.depends_on ?? []).length === 0
-    ? `start a run with params that fit, or correct its input_schema and register the workflow again${call}`
-    : `the engine gives it no input, so correct its input_schema and register the workflow again${call}`;
+    ? 'start a run with params that fit, or correct its input_schema and register the workflow again'
+    : 'the engine gives it no input, so correct its input_schema and register the workflow again';
 }
 
 /** The steps the view refuses before their claim (never for capability), in the view's order. */
@@ -581,7 +577,7 @@ export function cannotRunWayOut(
       `again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`
     );
   }
-  const ways = refused.map((e) => `for '${e.step}', ${refusedStepWay(e, definition, 'cli')}`);
+  const ways = refused.map((e) => `for '${e.step}', ${refusedStepWay(e, definition)}`);
   return `${head}${ways.join('; ')}; then, after a fix, realm run advance ${run.id} — or end it: realm run abandon ${run.id}`;
 }
 
@@ -590,8 +586,7 @@ export function cannotRunWayOut(
  * sentence {@link describeNext} composes — a step's reply, an answer's reply, `start_run`'s
  * creation reply and `advance_run`'s nothing-ran reply — ends with it under
  * {@link cannotRunWayOutApplies}, as `realm run advance` prints {@link cannotRunWayOut} under the
- * same condition. F15: each step's own way, as there, with the call that runs a step refused for
- * its input with input that fits.
+ * same condition. F15: each step's own way, in the same words as there.
  */
 export function cannotRunWayOutTools(
   run: RunRecord,
@@ -603,9 +598,7 @@ export function cannotRunWayOutTools(
   if (refused.every((e) => e.refused_by !== 'input_schema')) {
     return 'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
   }
-  const ways = refused
-    .map((e) => `for '${e.step}', ${refusedStepWay(e, definition, 'tools')}`)
-    .join('; ');
+  const ways = refused.map((e) => `for '${e.step}', ${refusedStepWay(e, definition)}`).join('; ');
   return `${ways.charAt(0).toUpperCase()}${ways.slice(1)}; then, after a fix, call advance_run; or end the run with abandon_run.`;
 }
 
