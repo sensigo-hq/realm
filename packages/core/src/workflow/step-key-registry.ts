@@ -310,7 +310,12 @@ const W_GATE_CHOICES: StepKeyWitness = {
 };
 const W_INPUT_SCHEMA_2B: StepKeyWitness = {
   file: PEND,
-  pattern: 'validateInputSchema(input, stepDef.input_schema, step);',
+  pattern: 'validateInputSchema(checked, stepDef.input_schema, step);',
+};
+// issue #688: the check before a claim reads a consuming step's map — it validates what the map builds.
+const W_INPUT_MAP_PRECLAIM: StepKeyWitness = {
+  file: PEND,
+  pattern: 'checked = resolveInputMap(stepDef.input_map, input, run);',
 };
 const W_DESCRIPTION_GEN: StepKeyWitness = { file: GEN, pattern: 'description: step.description,' };
 const W_TOOLS_PATH: StepKeyWitness = {
@@ -335,7 +340,7 @@ const W_OPERATION_READ: StepKeyWitness = {
 };
 const W_INPUT_MAP_RESOLVE: StepKeyWitness = {
   file: EL,
-  pattern: 'const adapterParams = resolveInputMap(stepDef.input_map, options, pendingRun);',
+  pattern: 'const adapterParams = resolveInputMap(stepDef.input_map, options.input, pendingRun);',
 };
 const W_HANDLER_AUTO_DISPATCH: StepKeyWitness = {
   file: EL,
@@ -954,7 +959,7 @@ export const STEP_KEY_REGISTRY = {
   input_map: {
     auto: {
       c: 'consumed',
-      where: [W_INPUT_MAP_RESOLVE],
+      where: [W_INPUT_MAP_RESOLVE, W_INPUT_MAP_PRECLAIM],
       when: {
         desc: 'dispatch-arm-keyed: resolved on the adapter path, and delivered to handlers via the resolved params',
         witness: W_ADAPTER_DISPATCH,
@@ -1041,7 +1046,7 @@ export const STEP_KEY_REGISTRY = {
       c: 'consumed',
       where: [W_INPUT_SCHEMA_2B],
       when: {
-        desc: 'Step 2b validates the effective input against it with no kind conjunct at all; also the gate-choice fallback source on gate-trusted steps',
+        desc: 'Step 2b validates the input the step will receive against it — what its input_map builds for an auto step with a handler or a uses_service, otherwise the effective input; also the gate-choice fallback source on gate-trusted steps',
         witness: W_INPUT_SCHEMA_2B,
       },
     },

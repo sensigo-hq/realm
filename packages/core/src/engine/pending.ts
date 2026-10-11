@@ -23,6 +23,12 @@ import { escapedBoundedValue } from '../utils/redaction.js';
 import { shellWord } from '../utils/shell-word.js';
 import { checkPreconditions } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
+import {
+  consumesInputMap,
+  newRunCanChangeInput,
+  resolveInputMap,
+  type InputMapStep,
+} from './input-map.js';
 import { requirementForStep } from './capability.js';
 import { readDrivenBy, type Attributed, type ActorAbsent } from './holder.js';
 import { buildAgentActions } from './execution-loop.js';
@@ -73,6 +79,13 @@ function stepOrder(definition: WorkflowDefinition): Map<string, number> {
  * `members` (default: every check, in this order) runs only the checks it names — the run's view
  * passes {@link AGENT_PRE_CLAIM_REFUSALS} for an agent step (decision C82), whose `input` it never
  * reads.
+ *
+ * The input schema checks the input the step will receive (issue #688): for a step that consumes
+ * its `input_map` ({@link consumesInputMap}), what the map builds from the run — never `input` —
+ * and its refusal says `report_to_user`, since no input a caller sends changes it; for any other
+ * step, `input`. When the map cannot be resolved (a corrupted stored map, issue #287's runtime
+ * mirror), the input-schema check is skipped and the dispatch fails the step with the map's own
+ * defect; a corrupted map whose ENGINE input the schema refused used to be refused here instead.
  */
 export function checkPreClaim(args: {
   definition: WorkflowDefinition;
@@ -135,19 +148,43 @@ export function checkPreClaim(args: {
     }
     stage = 'input_schema';
     if (asked('input_schema') && stepDef?.input_schema !== undefined) {
-      try {
-        validateInputSchema(input, stepDef.input_schema, step);
-      } catch (err) {
-        if (err instanceof WorkflowError) {
-          // decision C37: the refusal names the field and what it must be (the first validation
-          // message). `error` is the engine's own error, unchanged — `executeStep` returns it.
-          return {
-            refused_by: 'input_schema',
-            refusal: withFirstValidationMessage(err),
-            error: err,
-          };
+      // issue #688: a step that consumes its map receives what the map builds — that is checked. A
+      // map that cannot be resolved skips the check; the dispatch then fails the step naming it.
+      const mapped = consumesInputMap(stepDef);
+      let checked: Record<string, unknown> | undefined = input;
+      if (mapped) {
+        try {
+          checked = resolveInputMap(stepDef.input_map, input, run);
+        } catch {
+          checked = undefined;
         }
-        throw err;
+      }
+      if (checked !== undefined) {
+        try {
+          validateInputSchema(checked, stepDef.input_schema, step);
+        } catch (err) {
+          if (err instanceof WorkflowError) {
+            // decision C37: the refusal names the field and what it must be (the first validation
+            // message). `error` is the engine's own error — `executeStep` returns it — unchanged,
+            // except that for a mapped input it says `report_to_user` (issue #688).
+            const error = mapped
+              ? new WorkflowError(err.message, {
+                  code: err.code,
+                  category: err.category,
+                  agentAction: 'report_to_user',
+                  retryable: err.retryable,
+                  details: err.details,
+                  ...(err.stepId !== undefined ? { stepId: err.stepId } : {}),
+                })
+              : err;
+            return {
+              refused_by: 'input_schema',
+              refusal: withFirstValidationMessage(error),
+              error,
+            };
+          }
+          throw err;
+        }
       }
     }
     stage = 'capability';
@@ -530,9 +567,12 @@ export function cannotRunClause(entry: EngineRunnable): string {
     : clause;
 }
 
-/** F15: what a way out reads of the run's workflow — each step's `depends_on`. */
+/**
+ * F15: what a way out reads of the run's workflow — each step's `depends_on`, and (issue #688) what
+ * tells whether the step consumes its `input_map` ({@link InputMapStep}).
+ */
 export type WayOutSteps = {
-  readonly steps: Readonly<Record<string, { readonly depends_on?: readonly string[] } | undefined>>;
+  readonly steps: Readonly<Record<string, InputMapStep | undefined>>;
 };
 
 /**
@@ -542,11 +582,18 @@ export type WayOutSteps = {
  * ({@link engineStepInput}): with no `depends_on`, a new run with params that fit, or a corrected
  * `input_schema`; with `depends_on`, the engine gives it no input, so only a corrected
  * `input_schema`. The same words on every surface: the way out never tells a caller to supply an
- * engine step's input (owner, 2026-10-11).
+ * engine step's input (owner, 2026-10-11). Issue #688: a step that consumes its `input_map` is
+ * checked against what the map builds, so its fix is the map or the schema — and a new run with
+ * params that fit only when the refused key is built from the run's params
+ * ({@link newRunCanChangeInput}).
  */
-function refusedStepWay(entry: EngineRunnable, definition: WayOutSteps): string {
+function refusedStepWay(entry: EngineRunnable, definition: WayOutSteps, run: RunRecord): string {
   if (entry.refused_by !== 'input_schema') return 'correct the workflow and register it again';
-  return (definition.steps[entry.step]?.depends_on ?? []).length === 0
+  const step = definition.steps[entry.step];
+  if (step !== undefined && consumesInputMap(step)) {
+    return `${newRunCanChangeInput(step, run) ? 'start a run with params that fit, or ' : ''}correct its input_map or its input_schema and register the workflow again`;
+  }
+  return (step?.depends_on ?? []).length === 0
     ? 'start a run with params that fit, or correct its input_schema and register the workflow again'
     : 'the engine gives it no input, so correct its input_schema and register the workflow again';
 }
@@ -577,7 +624,7 @@ export function cannotRunWayOut(
       `again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`
     );
   }
-  const ways = refused.map((e) => `for '${e.step}', ${refusedStepWay(e, definition)}`);
+  const ways = refused.map((e) => `for '${e.step}', ${refusedStepWay(e, definition, run)}`);
   return `${head}${ways.join('; ')}; then, after a fix, realm run advance ${run.id} — or end it: realm run abandon ${run.id}`;
 }
 
@@ -593,12 +640,13 @@ export function cannotRunWayOutTools(
   definition: WayOutSteps,
   pending: PendingView,
 ): string {
-  void run;
   const refused = refusedBeforeClaim(pending);
   if (refused.every((e) => e.refused_by !== 'input_schema')) {
     return 'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
   }
-  const ways = refused.map((e) => `for '${e.step}', ${refusedStepWay(e, definition)}`).join('; ');
+  const ways = refused
+    .map((e) => `for '${e.step}', ${refusedStepWay(e, definition, run)}`)
+    .join('; ');
   return `${ways.charAt(0).toUpperCase()}${ways.slice(1)}; then, after a fix, call advance_run; or end the run with abandon_run.`;
 }
 

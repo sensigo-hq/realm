@@ -127,6 +127,15 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
 
 ### Changed
 
+- **BREAKING — an `auto` step with a handler or a service and an `input_map` has its `input_schema`
+  checked against the input the map builds, not the caller's input (issue #688).** That is the input
+  the step receives. Caller input (MCP `execute_step`, `realm workflow run`'s typed answer) is no longer what
+  such a step's schema checks, and a schema written to fit the raw input — the workaround given on
+  #688 on 2026-10-05 — is now refused. **Upgrading:** rewrite the schema for the input the map
+  builds; `realm workflow test` follows the same rule. Core exports `consumesInputMap`,
+  `refusedInputField` and `newRunCanChangeInput`, and `WayOutSteps` carries each step's `execution`,
+  `handler`, `uses_service`, `input_map` and `input_schema`.
+
 - **`realm workflow run`'s gate prompt closes when something else settles its question (issue #625,
   PR-2a).** While the prompt waits, this process's own expiry timer, or another process (`realm run
 respond` in another terminal, `realm run advance`, `realm run drain --expired`, `realm listen`),
@@ -767,6 +776,13 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   `realm listen ./`), it no longer answers `202` and starts an agent that cannot run when that
   folder is removed; it keeps the folder's full path, so a folder created again at that path is used
   again. The `webhook: spawn failed` line now names the workflow folder as a full path (#744).
+- **An agent step, then a handler step that takes its output through `input_map` and declares an
+  `input_schema`, now runs (issue #688).** It was refused every time. Called by name, such a step's
+  refusal tells an agent `report_to_user`, and when nothing else can run it carries the way out:
+  correct the map or the schema, or, when the key the schema refuses is built from the run's params,
+  start a run with params that fit. `realm workflow run` stops on it instead of asking for it again.
+  A corrupted stored map now fails its step at dispatch, naming the defect.
+
 - **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
   PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
   replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on

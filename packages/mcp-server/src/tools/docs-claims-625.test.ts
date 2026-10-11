@@ -1160,7 +1160,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163: a step refused before its claim with nothing else to run — report_to_user and the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input, and that reply is unchanged.",
+      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply says `report_to_user`, and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);

@@ -73,7 +73,7 @@ describe('#625 PR-2a, F15 — realm run advance: the input-schema way out is tru
   it('a step with no depends_on: a run with params that fit, or a corrected input_schema', async () => {
     claim(
       'docs/reference/cli/realm-run-acting.md',
-      "for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`):",
+      "for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):",
     );
     const r = await advance(
       wf('f15-cli-params', {

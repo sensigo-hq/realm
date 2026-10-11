@@ -246,7 +246,7 @@ describe(
       );
       claim(
         RD_PAGE,
-        "When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`):",
+        "When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):",
       );
       const STAYS = ' stays open (phase ';
       /** The `Cannot run` line and the line that follows it. */
@@ -642,7 +642,7 @@ describe(
     it("line 231: an `auto` step's answer is the one typed, so a step whose input its schema refuses is asked for again", async () => {
       claim(
         WF_PAGE,
-        "An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again.",
+        "An `auto` step's answer is the one you type, so a step whose input its schema refuses is asked for again — except a step that builds its input with an `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, which no typed answer changes.",
       );
       const typed = ['{}', '{"n": 1}'];
       mocks.question.mockImplementation(async (prompt: string) => {
@@ -683,7 +683,7 @@ describe(
     it('lines 231, 234–236: a step no typed answer can unblock is not asked for; when nothing else can run the run stops, names each such step and the way out', async () => {
       claim(
         WF_PAGE,
-        'A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks — is not asked for.',
+        'A step that no typed answer can unblock — a failed precondition, an invalid `trust`, a handler or adapter this program lacks, an input its `input_map` builds that its schema refuses — is not asked for.',
       );
       claim(
         WF_PAGE,
@@ -1272,7 +1272,7 @@ describe(
       it('an `auto` step whose input its schema refuses, left at its prompt: each step that cannot run and the way out, then `Inspect`', async () => {
         claim(
           WF_PAGE,
-          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>`), then `Inspect`;",
+          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>`; for a step that builds its input with an `input_map`, `for '<step>', correct its input_map or its input_schema and register the workflow again`), then `Inspect`;",
         );
         mocks.question.mockImplementation(async () => {
           throw leave();

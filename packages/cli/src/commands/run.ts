@@ -20,6 +20,7 @@ import {
   stepsThatCannotRun,
   cannotGoOnLines,
   cannotGoOnHere,
+  consumesInputMap,
   resumeWay,
   owedList,
   owedRunsClause,
@@ -846,10 +847,16 @@ export const runCommand = new Command('run')
           // input refusal is the operator's to fix at the prompt. A precondition, trust or capability
           // refusal is not — no typed output changes it, and prompting would loop forever. Such a
           // step is not offered — an agent step refused for trust or precondition included
-          // (decision C82); when nothing else is eligible, the run cannot go on from here.
+          // (decision C82); when nothing else is eligible, the run cannot go on from here. Issue
+          // #688: neither is the input refusal of a step that consumes its `input_map` — its schema
+          // checks what the map builds, which no typed answer changes.
           const cannotPrompt = new Set(
             stepsThatCannotRun(describePending(definition, run, registry, new Date()))
-              .filter((e) => e.refused_by !== 'input_schema')
+              .filter((e) => {
+                if (e.refused_by !== 'input_schema') return true;
+                const step = definition.steps[e.step];
+                return step !== undefined && consumesInputMap(step);
+              })
               .map((e) => e.step),
           );
           const eligibleSteps = findEligibleSteps(definition, run).filter(
