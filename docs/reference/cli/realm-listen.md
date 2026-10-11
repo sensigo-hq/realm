@@ -113,7 +113,7 @@ A request whose event ID belongs to a run that already exists starts nothing and
 
 Added after version 0.46.0, which started a second `realm agent` on the run, wrote to its record and replied `202`.
 
-When the system refuses to start the run's `realm agent` at once (its workflow folder replaced by a file, for one: `ENOTDIR`), the run is ended as failed. A start that fails only after the request — the workflow's folder missing, for one — stops `realm listen` today: the request gets no reply, and the run stays `running` with no agent (#744). The reply to a failed start is:
+When the run's `realm agent` cannot be started (its workflow folder missing, or one `realm listen` may not enter), the run is ended as failed, `realm listen` logs `webhook: spawn failed` naming the folder, and it goes on serving. Version 0.46.0 stops instead when the folder is missing or cannot be entered: the request gets no reply, and the run stays `running` with no agent. The reply to a failed start is:
 
 ```text
 500 {"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}
@@ -126,7 +126,7 @@ What to do with a run a delivery matched:
 - A run still going whose agent stopped: drive it again with `realm agent --run-id <run-id>`.
 - A run that has ended is not driven again: `realm agent --run-id` refuses it with `Error: Run <run-id> is already in terminal state: <reason>.`, naming the run's own end reason (with no model key set, it refuses on the key first).
 - A run whose agent failed to start: remove it with `realm run purge <run-id> --force`, then deliver the event again. It starts a new run at once: the copy whose start failed keeps no duplicate record. Unless two copies arrived together (the case above): then it starts one only after the duplicate window.
-- A run that ended any other way: purge it, then deliver the event again once the duplicate window has passed. The window can start again when a delivery of the event is matched in the meantime, so it is not counted from the first delivery. Purge does not clear the duplicate record, so until then the delivery gets `200` `{"status":"deduplicated"}` and starts nothing.
+- A run that ended any other way: purge it, then deliver the event again once the duplicate window has passed. With `--dedup-store memory`, the window starts again each time a delivery of the event is matched in the meantime, so it is not counted from the first delivery; with the default file store, a delivery matched in the same clock hour (UTC) as the first one does not start it again. Purge does not clear the duplicate record, so until then the delivery gets `200` `{"status":"deduplicated"}` and starts nothing.
 
 The new process has the environment of `realm listen`, and it loads the `.env` file in the workflow's folder when it starts. The model provider's key must therefore be set where `realm listen` is started or in that `.env`. `realm agent` needs a key to start at all, even for a workflow in which no step calls a model.
 
@@ -171,7 +171,8 @@ Each line is a message, followed where there are details by a JSON object. Lines
 | `warn`  | `webhook: deduplicated {"path","run_id","run_phase","reason","params_differ"}` | As the `info` line, but the request's mapped parameters differ from the run's (`"params_differ":true`); its values were not used. Added after version 0.46.0.                                       |
 | `warn`  | `webhook: deduplicated {"path","run_id","run_phase","reason"}`                 | A request's event ID belongs to a run whose agent failed to start (`reason`: `matched_spawn_failed_run`); the reply is that first `500` again, and nothing was started. Added after version 0.46.0. |
 | `error` | `webhook: run creation failed {"path","error"}`                                | The run could not be created. The reply is `500`.                                                                                                                                                   |
-| `error` | `webhook: spawn failed {…}`                                                    | The driver could not be started. The run is ended as failed.                                                                                                                                        |
+| `error` | `webhook: spawn failed {"path","run_id","cwd","error"}`                        | The driver could not be started; `cwd` is the workflow's folder (added after version 0.46.0). The run is ended as failed.                                                                           |
+| `error` | `webhook: agent process error {"run_id","cwd","error"}`                        | A driver reported an error after it started. `realm listen` goes on serving. Added after version 0.46.0.                                                                                            |
 | `error` | `listen: sweeper failed to enact an expired gate {…}`                          | A gate could not be carried out.                                                                                                                                                                    |
 
 With `--log-level error`, a normal start prints nothing.
