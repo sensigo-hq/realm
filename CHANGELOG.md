@@ -761,10 +761,12 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   - A later delivery under the same ID with other values, after the duplicate window, is logged at
     `warn`, and its reply says `params_differ: true` (a delivery whose agent failed to start gets its
     `500` instead).
-- `realm listen` no longer stops when a delivery's workflow folder is missing or cannot be entered:
-  the run is ended as failed and the request gets `500` `spawn_failed`, as for any agent that cannot
-  be started, and listen keeps serving. The `webhook: spawn failed` line now names the workflow
-  folder (#744).
+- `realm listen` no longer stops when a delivery's workflow folder is missing or it may not enter
+  it: the run is ended as failed, the request gets `500` `spawn_failed`, as for any agent that cannot
+  be started, and listen keeps serving. Started inside the workflow folder (`realm listen`,
+  `realm listen ./`), it no longer answers `202` and starts an agent that cannot run when that
+  folder is removed; it keeps the folder's full path, so a folder created again at that path is used
+  again. The `webhook: spawn failed` line now names the workflow folder as a full path (#744).
 - **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
   PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
   replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on
