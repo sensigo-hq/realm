@@ -821,6 +821,11 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         AGENT_PAGE,
         "In the ninth case, when the check is `input_schema`, the step's schema refused the input the engine built for it.",
       );
+      // issue #688 (add-only): a step with a handler or a service can build its input with a map.
+      claim(
+        AGENT_PAGE,
+        'For a step with a `handler` or a `uses_service`, an `input_map` can build the input the step needs.',
+      );
       // `file` waits on `classify`: the engine builds it the input `{}` (pending.ts engineStepInput).
       const schemaOf = (required: string[]) =>
         wf({

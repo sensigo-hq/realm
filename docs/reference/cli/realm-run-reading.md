@@ -192,7 +192,7 @@ Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input
 Could not run 'process' (capability): handler 'stamp' was not registered in the runner that last attempted it — from a program that has it: realm run advance 31ddb305-989b-42bf-8b63-fcb558ed1c23
 ```
 
-When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`):
+When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):
 
 ```text
 Cannot run 'compute' (input_schema): Invalid input for step 'compute': the input must have required property 'n'

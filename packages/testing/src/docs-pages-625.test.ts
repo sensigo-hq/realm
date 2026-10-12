@@ -112,6 +112,11 @@ describe(
         PAGE,
         "An `auto` step gets what the engine gives it in a real run: the run's params when the step has no `depends_on`, and nothing otherwise.",
       );
+      // issue #688 (add-only): a mapped handler or service step gets what its map builds.
+      claim(
+        PAGE,
+        'A step with a `handler` or a `uses_service` and an `input_map` gets what the map builds.',
+      );
       const seen: Record<string, unknown> = {};
       const capture = (step: string): StepHandler =>
         ({

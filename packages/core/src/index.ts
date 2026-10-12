@@ -168,6 +168,13 @@ export type {
 } from './engine/stop-kind.js';
 // Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
 export { ENTRY_CALLERS } from './engine/callers.js';
+// Issue #688: whether a step receives what its input_map builds, and what a refusal of that input names.
+export {
+  consumesInputMap,
+  refusedInputField,
+  newRunCanChangeInput,
+  type InputMapStep,
+} from './engine/input-map.js';
 // Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
 export {
   PRE_CLAIM_REFUSALS,

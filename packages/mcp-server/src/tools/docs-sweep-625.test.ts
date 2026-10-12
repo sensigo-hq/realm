@@ -470,11 +470,15 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     });
   });
 
-  it('json-schema-blocks.md: an auto step’s input_schema is checked against the input the engine gives it, before its claim — not what input_map builds', async () => {
+  it('json-schema-blocks.md: an auto step’s input_schema is checked against the input the step will receive — what its input_map builds when it has an input_map and a handler or a uses_service, otherwise its input', () => {
+    // issue #688: (a) red when the row no longer says this (the docs flip); (b) prints the row.
     claim(
       'docs/reference/workflow/json-schema-blocks.md',
-      "| `input_schema` | An auto step | The input the engine gives the step: the run's params when the step has no `depends_on`, `{}` otherwise. Not what `input_map` builds. | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out. |",
+      "| `input_schema` | An auto step | The input the step will receive: what its `input_map` builds when the step has an `input_map` and a `handler` or `uses_service`; otherwise its input — the input a caller passes when it names the step, or the engine's: the run's params when the step has no `depends_on`, `{}` otherwise. | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out. |",
     );
+  });
+
+  it('(preservation, #688) a BARE auto step never applies its input_map, so it is still checked against the engine’s input, with today’s words', async () => {
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(
       wf(
@@ -507,7 +511,58 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     expect(String(r['context_hint'])).toContain(
       "'show' cannot run (input_schema): Invalid input for step 'show': the input must have required property 'sku'.",
     );
+    // issue #688: (a) red when a bare step counts as consuming its map — its way out would name the
+    //     input_map it never applies; (b) prints the hint.
+    expect(String(r['context_hint'])).not.toContain('input_map');
     expect((await runStore.get(runId)).completed_steps).toEqual(['order']);
+  });
+
+  it('#688: the same step with a handler runs — its schema checks what its input_map builds', async () => {
+    const seen: unknown[] = [];
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'h', {
+      id: 'h',
+      execute: async (input: { params: Record<string, unknown> }) => {
+        seen.push(input.params);
+        return { data: { shown: true } };
+      },
+    } as never);
+    const { call, workflowStore, runStore } = await connect(registry);
+    await workflowStore.register(
+      wf(
+        [
+          'id: ischemah',
+          'name: ischemah',
+          'version: 1',
+          'steps:',
+          '  order:',
+          '    description: Order.',
+          '    execution: agent',
+          '  show:',
+          '    description: Show.',
+          '    execution: auto',
+          '    handler: h',
+          '    depends_on: [order]',
+          '    input_map:',
+          '      sku: run.params.sku',
+          '    input_schema:',
+          '      type: object',
+          '      required: [sku]',
+          '',
+        ].join('\n'),
+      ),
+    );
+    const runId = (await call('start_run', { workflow_id: 'ischemah', params: { sku: 'A-100' } }))[
+      'run_id'
+    ] as string;
+    const r = await call('execute_step', { run_id: runId, command: 'order', params: {} });
+    // (a) red when the schema checks the engine's input `{}` (the step is refused, never run);
+    //     (b) prints the hint, the steps and the handler's input.
+    expect({
+      hint: r['context_hint'],
+      completed: (await runStore.get(runId)).completed_steps,
+      received: seen,
+    }).toMatchObject({ completed: ['order', 'show'], received: [{ sku: 'A-100' }] });
   });
 
   it('top-level-fields.md: the five standard rules, the fifth about advance_run', async () => {
