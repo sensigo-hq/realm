@@ -159,15 +159,17 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
     //     `status` red when the refusal is not an `error` reply; `details` red when the refusal is
     //     counted as an agent step's (`rejections` and `threshold` join `errors`); `missing` red
     //     when the rule broken is not the map's missing `text`; (b) prints the reply's status, code,
-    //     action, whole hint, `error_details` keys and the missing property, and the handler's input.
+    //     action, whole hint, `error_details` keys and the missing property, and the handler's input
+    //     — also when the reply has no `error_details` (the step ran), instead of a TypeError.
+    const details = r['error_details'] as
+      { errors?: Array<{ params?: { missingProperty?: string } }> } | undefined;
     expect({
       status: r['status'],
       code: r['error_code'],
       action: r['agent_action'],
       hint: r['context_hint'],
-      details: Object.keys(r['error_details'] as object),
-      missing: (r['error_details'] as { errors: Array<{ params: { missingProperty?: string } }> })
-        .errors[0]!.params.missingProperty,
+      details: details === undefined ? details : Object.keys(details),
+      missing: details?.errors?.[0]?.params?.missingProperty,
       received: seen,
     }).toEqual({
       status: 'error',
@@ -267,10 +269,72 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
     });
     // (a) red when a `uses_service` step is not judged on what its map builds (the caller's
     //     `path` passes the schema and the read fails, or the step stops empty), or the reply
-    //     lacks `report_to_user` or the way out; (b) prints the action and the whole hint.
-    expect({ action: r['agent_action'], hint: r['context_hint'] }).toEqual({
+    //     lacks `report_to_user` or the way out; `status`, `code` and `details` red when the
+    //     refusal is not the input-schema error with its rules — the hint is built from the run's
+    //     view, not from the reply's code, so it cannot catch that; (b) prints the status, code,
+    //     action, whole hint and `error_details` keys.
+    const details = r['error_details'] as object | undefined;
+    expect({
+      status: r['status'],
+      code: r['error_code'],
+      action: r['agent_action'],
+      hint: r['context_hint'],
+      details: details === undefined ? details : Object.keys(details),
+    }).toEqual({
+      status: 'error',
+      code: 'VALIDATION_INPUT_SCHEMA',
       action: 'report_to_user',
       hint: "Error during 'read_note'. Run phase: 'running'. For 'read_note', start a run with params that fit, or correct its input_map or its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.",
+      details: ['errors'],
+    });
+  });
+
+  it('cell 7: two refused mapped steps — the way out gives each refused step its own way, then the run’s', async () => {
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(
+      loadWorkflowFromString(
+        [
+          'id: mcp688t',
+          'name: mcp688t',
+          'version: 1',
+          'steps:',
+          '  summarize:',
+          '    description: Sum.',
+          '    execution: agent',
+          '  p1:',
+          '    description: P1.',
+          '    execution: auto',
+          '    handler: h',
+          '    depends_on: [summarize]',
+          '    input_map:',
+          '      text: context.resources.summarize.summary',
+          '    input_schema:',
+          '      type: object',
+          '      required: [text]',
+          '  p2:',
+          '    description: P2.',
+          '    execution: auto',
+          '    handler: h',
+          '    depends_on: [summarize]',
+          '    input_map:',
+          '      t: run.params.t',
+          '    input_schema:',
+          '      type: object',
+          '      required: [t]',
+          '',
+        ].join('\n'),
+      ),
+    );
+    const runId = (await call('start_run', { workflow_id: 'mcp688t', params: {} }))[
+      'run_id'
+    ] as string;
+    await call('execute_step', { run_id: runId, command: 'summarize', params: { other: 'x' } });
+    const r = await call('execute_step', { run_id: runId, command: 'p1', params: {} });
+    // (a) red when the way out names only the step called, or drops a refused step's own way
+    //     (`p2`'s new run with params that fit); (b) prints the action and the whole hint.
+    expect({ action: r['agent_action'], hint: r['context_hint'] }).toEqual({
+      action: 'report_to_user',
+      hint: "Error during 'p1'. Run phase: 'running'. For 'p1', correct its input_map or its input_schema and register the workflow again; for 'p2', start a run with params that fit, or correct its input_map or its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.",
     });
   });
 });
