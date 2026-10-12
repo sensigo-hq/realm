@@ -365,7 +365,7 @@ function missingModelMessage(
  * Issue #676 — the whole line `realm listen` prints, `Error: ` included, when it was started
  * without `--model`. Listen passes the model to every `realm agent` it starts, and each of those
  * refuses without one. It checks no API key: each child runs in the workflow's folder and loads
- * that folder's `.env` itself, so listen cannot see the keys a child will have.
+ * that folder's `.env` for any key listen's own environment does not already set (#748).
  */
 export function listenModelRefusal(provider: ProviderName | undefined): string {
   const lead =

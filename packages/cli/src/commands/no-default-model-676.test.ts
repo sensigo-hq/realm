@@ -16,6 +16,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -360,7 +361,12 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
     }
   }, 30_000);
 
-  it('E5 the model reaches the child: one webhook → the spawned realm agent asks the stand-in for m-676', async () => {
+  // issue #744: both keys are set, so the agent picks its provider only from `--provider`: without
+  // it, OpenAI wins (`llm-provider.ts:292`) and its client asks the closed local port. (a) red when
+  // listen stops passing the model or the provider to the agent (the stand-in is never asked for
+  // m-676); (b) prints the models the stand-in was asked for, and listen's output (its environment
+  // holds only PATH, HOME and the stand-in keys).
+  it('E5 the model and the provider reach the child: one webhook → the spawned realm agent asks the Anthropic stand-in for m-676', async () => {
     const stub = await notFoundStub();
     let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
     try {
@@ -376,7 +382,12 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
           '--dedup-store',
           'memory',
         ],
-        env({ ANTHROPIC_API_KEY: 'k-676', ANTHROPIC_BASE_URL: stub.url }),
+        env({
+          ANTHROPIC_API_KEY: 'k-676',
+          ANTHROPIC_BASE_URL: stub.url,
+          OPENAI_API_KEY: 'k-744',
+          OPENAI_BASE_URL: CLOSED_PORT,
+        }),
       );
       const res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
         method: 'POST',
@@ -464,11 +475,38 @@ describe('realm listen started inside its workflow folder, the folder removed (i
         dir,
       );
       rmSync(dir, { recursive: true, force: true });
-      const res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-      });
+      const named = `"cwd":${JSON.stringify(real)}`;
+      const expected = {
+        status: 500,
+        body: { error: 'spawn_failed', status: 'failed', run_id: 'string' },
+        line: expect.stringContaining(named),
+      };
+      let res: Response;
+      try {
+        res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+        });
+      } catch {
+        // No reply: listen crashed or stopped. Wait for its exit (at most 2 s; `exitCode` is still
+        // null the moment the request fails), then report the exit and its last error line.
+        const child = listen.child;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          once(child, 'exit').catch(() => undefined),
+          new Promise<void>((r) => (timer = setTimeout(r, 2_000))),
+        ]);
+        clearTimeout(timer);
+        const lastError =
+          listen
+            .output()
+            .split('\n')
+            .filter((l) => l.startsWith('Error') || l.startsWith('node:'))
+            .at(-1) ?? 'no such line';
+        expect({ status: 'no reply', exit: child.exitCode, line: lastError }).toEqual(expected);
+        return;
+      }
       const text = await res.text();
       let body: Record<string, unknown> = {};
       try {
@@ -476,7 +514,6 @@ describe('realm listen started inside its workflow folder, the folder removed (i
       } catch {
         body = { unparsable: text };
       }
-      const named = `"cwd":${JSON.stringify(real)}`;
       const spawnFailed = (): string[] =>
         listen!
           .output()
@@ -487,18 +524,17 @@ describe('realm listen started inside its workflow folder, the folder removed (i
         await new Promise((r) => setTimeout(r, 100));
       }
       // (a) red when the folder is kept relative (`202`: an agent starts in the removed folder and
-      //     exits at once), or the line does not name the folder's full path; (b) prints the status,
-      //     the body, and the `webhook: spawn failed` line or "no such line" — never the whole
-      //     output, never the environment.
+      //     exits at once), when the line does not name the folder's full path, or when listen
+      //     crashes (no reply); (b) prints the status, the body, and the `webhook: spawn failed` line
+      //     or "no such line" — or, with no reply, `status: 'no reply'`, listen's exit code and its
+      //     last `Error`/`node:` line. Never the whole output, never the environment: `startListen`
+      //     prints listen's whole output only when listen never starts, and this cell's environment
+      //     holds no secret (`env()` = PATH and HOME).
       expect({
         status: res.status,
         body: { error: body['error'], status: body['status'], run_id: typeof body['run_id'] },
         line: spawnFailed().find((l) => l.includes(named)) ?? spawnFailed()[0] ?? 'no such line',
-      }).toEqual({
-        status: 500,
-        body: { error: 'spawn_failed', status: 'failed', run_id: 'string' },
-        line: expect.stringContaining(named),
-      });
+      }).toEqual(expected);
     } finally {
       listen?.child.kill('SIGKILL');
     }

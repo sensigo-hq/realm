@@ -68,7 +68,7 @@ export interface Logger {
 }
 
 /** Result of an agent spawn — a pid on success, or an error to record as spawn_failed. */
-export type SpawnResult = { pid: number } | { error: Error };
+export type SpawnResult = { pid: number; error?: never } | { error: Error; pid?: never };
 
 /** Injected I/O dependencies — everything that touches disk, the clock, or child processes. */
 export interface ListenDeps {
@@ -944,8 +944,8 @@ export function defaultSpawnAgent(
 
 /**
  * The spawn listen's request pipeline calls: listen's options mapped, once, to each agent it starts.
- * The command passes its parsed options here unchanged, so it cannot drop one option without
- * dropping them all, and the WIRED cells test this mapping.
+ * The command passes its parsed options here unchanged; the WIRED cells test this mapping, and E5
+ * (`no-default-model-676.test.ts`) checks that the provider the command was given reaches the agent.
  *
  * issue #409: the operator's fallback clock reaches every drive listen spawns. The deps SIGNATURE is
  * unchanged — the value is closed over here rather than threaded through it.
@@ -1045,7 +1045,9 @@ export const listenCommand = new Command('listen')
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen
       // creates is driven by a `realm agent` that refuses without a model. No API key is checked
-      // here: each child loads the workflow folder's `.env` itself, so listen cannot see its keys.
+      // here. Listen loads the `.env` of the folder it is started in; those values, and listen's own
+      // environment, win over a workflow folder's `.env` in every agent, because dotenv never
+      // overrides a set key (#748).
       const model = opts.model;
       if (!hasText(model)) {
         console.error(listenModelRefusal(opts.provider));
