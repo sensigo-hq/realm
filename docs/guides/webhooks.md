@@ -89,6 +89,8 @@ realm listen on 127.0.0.1:3000 — 1 workflow(s) mounted
 
 The key and the model are needed because each run is driven by `realm agent`, which will not start without them, even though this workflow's only step does not call a model.
 
+Restart `realm listen` from the workflow's folder after any change to it, an edited `.env` included: it reads the workflow, and the `.env` of the folder it is started in, once, at start; a key already set in the shell that starts it keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set in that shell or in that `.env`.
+
 You can give `realm listen` several workflow folders. Each must have a `trigger` and its own `path`.
 
 ## 3. Send a request
@@ -162,7 +164,7 @@ Later, while the run that event started exists (a sender's redelivery, for one),
 
 In none of these cases is a run created or a `realm agent` started. The `200` replies are deliberate: the sender did nothing wrong, so it should not retry.
 
-**An agent that cannot be started** (the workflow's folder missing, or one `realm listen` may not enter) ends the run the request created as failed, and the reply says so; `realm listen` goes on serving. The same event again starts nothing and gets the same reply:
+**An agent that cannot be started** (the workflow's folder missing, or a folder `realm listen` has no permission to enter) ends the run the request created as failed, and the reply says so; `realm listen` goes on serving. The same event again starts nothing and gets the same reply:
 
 ```text
 {"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}   500

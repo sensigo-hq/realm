@@ -68,7 +68,7 @@ export interface Logger {
 }
 
 /** Result of an agent spawn — a pid on success, or an error to record as spawn_failed. */
-export type SpawnResult = { pid: number } | { error: Error };
+export type SpawnResult = { pid: number; error?: never } | { error: Error; pid?: never };
 
 /** Injected I/O dependencies — everything that touches disk, the clock, or child processes. */
 export interface ListenDeps {
@@ -892,9 +892,9 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
 /**
  * Start the detached agent for `runId` in `cwd`, and settle only when Node has answered.
  *
- * issue #744: Node reports a `cwd` that is missing (ENOENT) or may not be entered (EACCES) as an
- * `'error'` event on the next tick, not as a throw; a start that succeeds emits `'spawn'` on the
- * next tick. With no `'error'` listener, that event ended `realm listen`. So this resolves `{pid}`
+ * issue #744: Node reports a `cwd` that is missing (ENOENT) or that the process has no permission
+ * to enter (EACCES) as an `'error'` event on the next tick, not as a throw; a start that succeeds
+ * emits `'spawn'` on the next tick. With no `'error'` listener, that event ended `realm listen`. So this resolves `{pid}`
  * on `'spawn'`, `{error}` on `'error'` or on a synchronous throw (a `cwd` that is a file, ENOTDIR),
  * and keeps its `'error'` listener for the child's whole life: a later error goes to
  * `onLateError`, and never ends listen. `spawnFn` lets a test hand in a real spawn or a fake child.
@@ -944,8 +944,9 @@ export function defaultSpawnAgent(
 
 /**
  * The spawn listen's request pipeline calls: listen's options mapped, once, to each agent it starts.
- * The command passes its parsed options here unchanged, so it cannot drop one option without
- * dropping them all, and the WIRED cells test this mapping.
+ * The command passes its parsed options here unchanged; the WIRED cells test this mapping, and E5
+ * (`no-default-model-676.test.ts`) checks that the provider and the timeout the command was given
+ * reach the agent.
  *
  * issue #409: the operator's fallback clock reaches every drive listen spawns. The deps SIGNATURE is
  * unchanged — the value is closed over here rather than threaded through it.
@@ -1045,7 +1046,18 @@ export const listenCommand = new Command('listen')
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen
       // creates is driven by a `realm agent` that refuses without a model. No API key is checked
-      // here: each child loads the workflow folder's `.env` itself, so listen cannot see its keys.
+      // here. Every agent starts with listen's environment, which includes the keys listen loaded
+      // from the `.env` of the folder it is started in (or from the file `DOTENV_CONFIG_PATH`
+      // names). Those win over a workflow folder's `.env`, which only adds unset keys, unless
+      // `DOTENV_CONFIG_OVERRIDE` is set. `DOTENV_CONFIG_OVERRIDE` and `DOTENV_CONFIG_PATH` are read
+      // from the environment a process starts with: set in the shell that starts listen, they apply
+      // to listen and to every agent; written as a line in the `.env` listen loads, they leave
+      // listen's own load alone but apply to every agent, which inherits them. With
+      // `DOTENV_CONFIG_PATH` set to a full path, no workflow folder's `.env` reaches the
+      // environment (a relative path is read from each agent's own folder). By default a
+      // `${secret:NAME}` in `realm.yaml` is read from the `.env` beside it either way; with `env`
+      // listed before `dotenv` in `secrets.sources` (or alone), the agent's environment — listen's,
+      // plus what its folder's `.env` added — comes first (#748).
       const model = opts.model;
       if (!hasText(model)) {
         console.error(listenModelRefusal(opts.provider));
