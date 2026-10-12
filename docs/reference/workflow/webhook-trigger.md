@@ -161,7 +161,7 @@ A request that passes them all gets:
 202 {"run_id":"82253b6f-9564-4dd1-91bd-f4c108d33242","status":"accepted"}
 ```
 
-The reply is sent once the run exists and the separate process that drives it has started; `realm listen` does not wait for the run. When that process starts and then stops at once (no model key, for one), the request still gets this `202` and its run stays open: see the [`realm listen` reference](../cli/realm-listen.md#what-it-does-for-a-request). If that process cannot be started (its workflow folder missing, or a folder `realm listen` is not allowed to enter), the run is ended as failed, the reply is instead the one below, and `realm listen` goes on serving.
+The reply is sent once the run exists and the separate process that drives it has started; `realm listen` does not wait for the run. When that process starts and then stops at once (no model key, for one), the request still gets this `202` and its run stays open: see the [`realm listen` reference](../cli/realm-listen.md#what-it-does-for-a-request). If that process cannot be started (its workflow folder missing, or a folder `realm listen` has no permission to enter), the run is ended as failed, the reply is instead the one below, and `realm listen` goes on serving.
 
 ```text
 500 {"error":"spawn_failed","run_id":"726707a4-a0f5-4b98-bff6-8edfe9c3aba8","status":"failed"}

@@ -1045,9 +1045,12 @@ export const listenCommand = new Command('listen')
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen
       // creates is driven by a `realm agent` that refuses without a model. No API key is checked
-      // here. Listen loads the `.env` of the folder it is started in; those values, and listen's own
-      // environment, win over a workflow folder's `.env` in every agent, because dotenv never
-      // overrides a set key (#748).
+      // here. Every agent starts with listen's environment, which includes the keys listen loaded
+      // from the `.env` of the folder it is started in (or from the file `DOTENV_CONFIG_PATH`
+      // names). Those win over a workflow folder's `.env`, which only adds unset keys, unless
+      // `DOTENV_CONFIG_OVERRIDE` is set; with `DOTENV_CONFIG_PATH` set, no workflow folder's `.env`
+      // reaches the environment at all. A `${secret:NAME}` in `realm.yaml` is read from the `.env`
+      // beside it either way (#748).
       const model = opts.model;
       if (!hasText(model)) {
         console.error(listenModelRefusal(opts.provider));

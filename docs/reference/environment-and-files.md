@@ -39,7 +39,7 @@ Three more are read by libraries that Realm uses, and change what Realm does:
 
 ### The `.env` file in the current folder
 
-When any `realm` command starts, it loads a file named `.env` from the folder it is started in, and adds each line to its environment. A variable that is already set keeps its value. With `DOTENV_CONFIG_PATH` set, that file is loaded instead:
+When any `realm` command starts, it loads a file named `.env` from the folder it is started in, and adds each line to its environment. A variable that is already set keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set to any non-empty value (`false` and `0` included). With `DOTENV_CONFIG_PATH` set, that file is loaded instead:
 
 ```bash
 DOTENV_CONFIG_PATH=/etc/realm/serve.env realm serve
