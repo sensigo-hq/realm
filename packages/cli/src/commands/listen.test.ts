@@ -133,9 +133,13 @@ function fakeChild(
   throw Object.assign(new Error(`spawn ${code}`), { code, errno, syscall: 'spawn' });
 }
 
-// issue #744: temp folders for the spawn cells, removed after each cell.
+// issue #744: temp folders for the spawn cells, removed after each cell. A cell that locks a
+// folder first pushes the undo into `restores`, which runs before the removal, so a cell that fails
+// part-way leaves nothing locked (`rmSync` throws EACCES on a mode-000 tree).
 const made: string[] = [];
+const restores: Array<() => void> = [];
 afterEach(() => {
+  for (const restore of restores.splice(0)) restore();
   for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 /** A folder that does not exist, under a fresh temp dir. */
@@ -1345,9 +1349,11 @@ describe('--provider and --model on listen (issue #676)', () => {
 // missing folder, so it can only fail; the contract cell's real spawns are guarded the same way and
 // run `node -e 0`. The fakes are handed in by `fakeSpawn`, so each reads the `cwd` and the command
 // defaultSpawnAgent really passes, and A2–A5 and L1 print `called: false` if it stops using them.
-// The handler cells (B1, B2, C1, C2) stub the `spawnAgent` deps seam, which sits above the spawn;
-// each still gets a folder Node agrees with its stub (B2 existing, B1 missing then created, C1 a
-// file), so no fixture claims a start Node would not give.
+// The handler cells (B1, B2, C1, C2) stub the `spawnAgent` deps seam, which sits above the spawn.
+// B1 and B2 get a folder Node agrees with their stub (B2 existing, B1 missing then created). C1 (a
+// stub that throws) and C2 (a stub that rejects) are states the real spawner never produces —
+// `defaultSpawnAgent` catches every throw and only resolves — kept on purpose to cover the
+// handler's `catch`, the way A5 names `impossible`.
 // Beside each cell: (a) the change that turns it red; (b) what it prints when it fails.
 describe('issue #744 — an agent start that fails later', () => {
   type SpawnFn = NonNullable<Parameters<typeof defaultSpawnAgent>[4]>;
@@ -1362,10 +1368,10 @@ describe('issue #744 — an agent start that fails later', () => {
     return { spawnFn, child: () => last };
   };
   /** Settles with the result, or `'never settled'` after 2 s — a failure says so, never hangs. */
-  async function settledWithin(p: Promise<SpawnResult> | SpawnResult) {
+  async function settledWithin(p: Promise<SpawnResult> | SpawnResult, ms = 2_000) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<'never settled'>((resolve) => {
-      timer = setTimeout(() => resolve('never settled'), 2_000);
+      timer = setTimeout(() => resolve('never settled'), ms);
     });
     try {
       return await Promise.race([Promise.resolve(p), timeout]);
@@ -1523,8 +1529,11 @@ describe('issue #744 — an agent start that fails later', () => {
   it('contract — the fake and the real spawn agree, state by state, over nine folder states (Node’s own rule)', async () => {
     const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
     const node = process.execPath;
-    // The nine states, built here under a fresh folder; every mode is restored in `finally`, before
-    // the folder cleanup (`rmSync` throws EACCES on a mode-000 tree).
+    // The nine states, built here under a fresh folder; every mode is restored in `finally`, and
+    // again by the shared `afterEach` through `restores` when the cell fails before its `try`,
+    // before the folder cleanup (`rmSync` throws EACCES on a mode-000 tree). A real start settles in
+    // milliseconds, so each half waits at most 500 ms (9 states × 2 halves × 0.5 s = 9 s at worst,
+    // within the cell's own 15 s budget).
     const base = existingFolder();
     const enterable = join(base, 'enterable');
     mkdirSync(enterable);
@@ -1581,8 +1590,18 @@ describe('issue #744 — an agent start that fails later', () => {
     const real: Record<string, unknown> = {};
     const fake: Record<string, unknown> = {};
     spawnMock.mockClear();
+    restores.push(() => chmodSync(mode000, 0o755));
     chmodSync(mode000, 0o000);
+    restores.push(() => chmodSync(lockedParent, 0o755));
     chmodSync(lockedParent, 0o000);
+    // Whether the locks hold for this process: as root, or on a mount that ignores modes, Node
+    // starts in the two permission states (`X_OK` passes), and the fake does too.
+    let locksHold = false;
+    try {
+      accessSync(mode000, fsConstants.X_OK);
+    } catch {
+      locksHold = true;
+    }
     try {
       for (const [name, cwd] of states) {
         // The REAL half: Node's own spawn, guarded to this state's folder, the options as
@@ -1606,19 +1625,27 @@ describe('issue #744 — an agent start that fails later', () => {
         }) as unknown as SpawnFn;
         const realResult = await settledWithin(
           defaultSpawnAgent('run-c', cwd, { model: 'm-744' }, () => {}, realSpawn),
+          500,
         );
         real[name] = row(realResult, realPid, [...realEvents]);
         // The FAKE half: no spawn function, so it goes through the file-wide mock.
         const fakeEvents: string[] = [];
+        const callsBefore = spawnMock.mock.results.length;
         const fakePending = defaultSpawnAgent('run-c', cwd, { model: 'm-744' }, () => {});
-        const lastCall = spawnMock.mock.results.at(-1)!;
         let fakePid = 'threw';
-        if (lastCall.type === 'return') {
-          const c = lastCall.value as FakeChild;
-          fakePid = typeof c.pid;
-          record(c, fakeEvents);
+        if (spawnMock.mock.results.length === callsBefore) {
+          // The mock was not called: say so, instead of reading the previous state's call.
+          fakePid = 'not called';
+          fakeEvents.push('not called');
+        } else {
+          const lastCall = spawnMock.mock.results.at(-1)!;
+          if (lastCall.type === 'return') {
+            const c = lastCall.value as FakeChild;
+            fakePid = typeof c.pid;
+            record(c, fakeEvents);
+          }
         }
-        const fakeResult = await settledWithin(fakePending);
+        const fakeResult = await settledWithin(fakePending, 500);
         fake[name] = row(fakeResult, fakePid, [...fakeEvents]);
       }
     } finally {
@@ -1638,9 +1665,11 @@ describe('issue #744 — an agent start that fails later', () => {
       mockCalls: states.length,
     });
     expect(realCalls).toBe(states.length);
-    // As root, Node starts in the two permission states (`X_OK` passes), and the fake does too:
-    // the table below is written for an ordinary user.
-    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+    // The table Node gives on Linux and macOS. Seven rows do not depend on permissions; the two
+    // permission rows follow the access check above: EACCES when the locks hold, a start when they
+    // do not (root, or a mount that ignores modes). (a) red when Node's own behaviour changes, or
+    // the permission rows stop following the check; (b) prints the real table.
+    if (process.platform !== 'win32') {
       const failedLater = (code: string, errno: number) => ({
         settled: 'error',
         code,
@@ -1655,33 +1684,51 @@ describe('issue #744 — an agent start that fails later', () => {
         events: [],
         error: { message: `spawn ${code}`, syscall: 'spawn', errno, path: undefined },
       });
+      const started = {
+        settled: 'pid',
+        code: undefined,
+        pidAtReturn: 'number',
+        events: ['spawn'],
+        error: undefined,
+      };
+      const locked = locksHold ? failedLater('EACCES', -13) : started;
       expect(real).toEqual({
         missing: failedLater('ENOENT', -2),
         'a dangling link': failedLater('ENOENT', -2),
-        'an enterable folder': {
-          settled: 'pid',
-          code: undefined,
-          pidAtReturn: 'number',
-          events: ['spawn'],
-          error: undefined,
-        },
-        'no permission to enter (mode 000)': failedLater('EACCES', -13),
-        'inside a parent with no permission': failedLater('EACCES', -13),
+        'an enterable folder': started,
+        'no permission to enter (mode 000)': locked,
+        'inside a parent with no permission': locked,
         'a file in its place': threwAtOnce('ENOTDIR', -20),
         'a path through a file': threwAtOnce('ENOTDIR', -20),
         'a link loop': threwAtOnce('ELOOP', -osConstants.errno.ELOOP),
         'a name too long': threwAtOnce('ENAMETOOLONG', -osConstants.errno.ENAMETOOLONG),
       });
     }
-  });
+  }, 15_000);
 
-  it('the fake refuses a state it does not model: late errors after a start that fails', () => {
+  it('not modelled — the fake refuses late errors after a start that fails', () => {
     // (a) red when the fake's "not modelled" guard is removed (it then builds a child Node would
     //     never give, whose `'error'` nothing listens to — vitest reports it unhandled); (b) prints
     //     what was thrown, or that nothing was.
     expect(() =>
       fakeChild(process.execPath, missingFolder(), [], { lateErrors: [new Error('x')] }),
     ).toThrow('state not modelled');
+  });
+
+  it('not modelled — the fake refuses a spawn without a pid after a start that fails', () => {
+    // (a) red when the guard's `impossible` condition is removed (the fake then builds a failed
+    //     start whose `'error'` nothing listens to — vitest reports `spawn <node> ENOENT` unhandled);
+    //     (b) prints what was thrown, or that nothing was.
+    expect(() =>
+      fakeChild(process.execPath, missingFolder(), [], { impossible: 'spawn-without-pid' }),
+    ).toThrow('state not modelled');
+  });
+
+  it('not modelled — the fake refuses a code os.constants.errno does not know (a NUL in the path)', () => {
+    // `statSync` throws `ERR_INVALID_ARG_VALUE`, which `os.constants.errno` does not know. (a) red
+    //     when the guard's `known === undefined` condition is removed (the fake then throws
+    //     `spawn ERR_INVALID_ARG_VALUE`); (b) prints what was thrown, or that nothing was.
+    expect(() => fakeChild(process.execPath, 'a\0b', [])).toThrow('state not modelled');
   });
 
   it('types — a start result is a pid or an error, never both', () => {
@@ -1771,7 +1818,9 @@ describe('issue #744 — an agent start that fails later', () => {
   });
 
   it('C1 — the handler: a spawnAgent that throws logs webhook: spawn failed with the folder', async () => {
-    // A file at the folder's path, as the stub's synchronous ENOTDIR claims.
+    // A stub that throws: a state the real spawner never produces (`defaultSpawnAgent` catches
+    // every throw and only resolves), kept to cover the handler's `catch`. The folder's path holds
+    // a file.
     const cwd = missingFolder();
     writeFileSync(cwd, 'not a folder\n');
     const errors: Line[] = [];

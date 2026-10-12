@@ -29,17 +29,18 @@ Realm reads other variables by names that you give it:
 
 `realm agent` also reads the values of the variables in its environment, so that it can replace them with `[REDACTED]` in tool results and error messages. It leaves some values alone: see [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded).
 
-Three more are read by libraries that Realm uses, and change what Realm does:
+These are read by libraries that Realm uses, and change what Realm does (the `.env` loader reads a few more `DOTENV_CONFIG_*` variables; see its documentation):
 
-| Variable             | Read by            | What it does                                                         |
-| -------------------- | ------------------ | -------------------------------------------------------------------- |
-| `OPENAI_BASE_URL`    | OpenAI's client    | Sends `realm agent`'s OpenAI requests to another address.            |
-| `ANTHROPIC_BASE_URL` | Anthropic's client | Sends `realm agent`'s Anthropic requests to another address.         |
-| `DOTENV_CONFIG_PATH` | The `.env` loader  | The file loaded in place of `.env` in the current folder. See below. |
+| Variable                 | Read by            | What it does                                                                                       |
+| ------------------------ | ------------------ | -------------------------------------------------------------------------------------------------- |
+| `OPENAI_BASE_URL`        | OpenAI's client    | Sends `realm agent`'s OpenAI requests to another address.                                          |
+| `ANTHROPIC_BASE_URL`     | Anthropic's client | Sends `realm agent`'s Anthropic requests to another address.                                       |
+| `DOTENV_CONFIG_PATH`     | The `.env` loader  | The file loaded in place of `.env` in the current folder. See below.                               |
+| `DOTENV_CONFIG_OVERRIDE` | The `.env` loader  | Lets the `.env` file replace variables already set: any non-empty value, `false` and `0` included. |
 
 ### The `.env` file in the current folder
 
-When any `realm` command starts, it loads a file named `.env` from the folder it is started in, and adds each line to its environment. A variable that is already set keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set to any non-empty value (`false` and `0` included). With `DOTENV_CONFIG_PATH` set, that file is loaded instead:
+When any `realm` command starts, it loads a file named `.env` from the folder it is started in, and adds each line to its environment. A variable that is already set keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set to any non-empty value (`false` and `0` included) in the environment the command starts with; a `DOTENV_CONFIG_PATH` or `DOTENV_CONFIG_OVERRIDE` line inside a `.env` does not change how that file is loaded. With `DOTENV_CONFIG_PATH` set, that file is loaded instead:
 
 ```bash
 DOTENV_CONFIG_PATH=/etc/realm/serve.env realm serve

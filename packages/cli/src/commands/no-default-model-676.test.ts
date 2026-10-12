@@ -142,9 +142,27 @@ function startListen(
   });
 }
 
-/** An Anthropic stand-in: answers every request with the captured 404, echoing the model asked. */
-async function notFoundStub(): Promise<{ server: Server; url: string; models: string[] }> {
+/**
+ * An Anthropic stand-in: answers every request with the captured 404, echoing the model asked.
+ *
+ * With `hold`, it records the model as soon as a request arrives, then waits to answer until the
+ * test calls `release()` — so the agent is still waiting on it, and alive, until then. `release()` is
+ * sticky: once called, every request, also one that arrives later, is answered at once; calling it
+ * again, or with nothing waiting, does nothing. Without `hold`, every request is answered at once.
+ */
+async function notFoundStub(options: { hold?: boolean } = {}): Promise<{
+  server: Server;
+  url: string;
+  models: string[];
+  release: () => void;
+}> {
   const models: string[] = [];
+  let released = options.hold !== true;
+  const waiting: Array<() => void> = [];
+  const release = (): void => {
+    released = true;
+    for (const answer of waiting.splice(0)) answer();
+  };
   const server = createServer((req, res) => {
     let body = '';
     req.on('data', (c: Buffer) => (body += c.toString()));
@@ -156,25 +174,62 @@ async function notFoundStub(): Promise<{ server: Server; url: string; models: st
         /* not JSON: answer anyway */
       }
       models.push(model);
-      res.writeHead(404, { 'content-type': 'application/json', 'request-id': 'req_676' });
-      res.end(
-        JSON.stringify({
-          type: 'error',
-          error: { type: 'not_found_error', message: `model: ${model}` },
-          request_id: 'req_676',
-        }),
-      );
+      const answer = (): void => {
+        res.writeHead(404, { 'content-type': 'application/json', 'request-id': 'req_676' });
+        res.end(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'not_found_error', message: `model: ${model}` },
+            request_id: 'req_676',
+          }),
+        );
+      };
+      if (released) answer();
+      else waiting.push(answer);
     });
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   const { port } = server.address() as { port: number };
-  return { server, url: `http://127.0.0.1:${port}`, models };
+  return { server, url: `http://127.0.0.1:${port}`, models, release };
 }
 
 function runFiles(): string[] {
   const dir = join(home, '.realm', 'runs');
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith('.json'));
+}
+
+/** The fields E5 reads from the one run record (`drive_failures` is written only after the 404). */
+interface E5Record {
+  agent_pid?: number;
+  drive_failures?: { entries?: Array<{ declared_per_attempt_ms?: number }> };
+}
+
+/** The one run record: the only `*.json` directly under the runs folder (temp files end `.tmp`). */
+function readOnlyRun(): E5Record | undefined {
+  const files = runFiles();
+  if (files.length !== 1) return undefined;
+  return JSON.parse(readFileSync(join(home, '.realm', 'runs', files[0]!), 'utf8')) as E5Record;
+}
+
+/** Whether a process with this pid exists (`kill(pid, 0)` does not throw). */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Polls `done` every 50 ms until it holds or `ms` pass; returns whether it held. */
+async function waitUntil(done: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (!done()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return true;
 }
 
 const WF_ARG = ['--workflow', join('wf', 'workflow.yaml')];
@@ -362,13 +417,18 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
   }, 30_000);
 
   // issue #744: both keys are set, so the agent picks its provider only from `--provider`: without
-  // it, OpenAI wins (`llm-provider.ts:292`) and its client asks the closed local port. (a) red when
-  // listen stops passing the model or the provider to the agent (the stand-in is never asked for
-  // m-676); (b) prints the models the stand-in was asked for, and listen's output (its environment
-  // holds only PATH, HOME and the stand-in keys).
-  it('E5 the model and the provider reach the child: one webhook → the spawned realm agent asks the Anthropic stand-in for m-676', async () => {
-    const stub = await notFoundStub();
+  // it, OpenAI wins (`llm-provider.ts:292`) and its client asks the closed local port. The stand-in
+  // holds its 404 until the cell has seen the agent running, so the agent is alive at the hit by
+  // construction; after the 404 the run record holds the timeout the agent was given
+  // (`drive_failures.entries[0].declared_per_attempt_ms`). (a) red when listen stops passing the
+  // model, the provider or the timeout to the agent, when the cell stops checking that its agent was
+  // running at the hit, or when it stops waiting for its agent; (b) prints the models asked for,
+  // `aliveAtHit`, the declared timeout, `agentExited` and listen's output (its environment holds only
+  // PATH, HOME and the stand-in keys).
+  it('E5 the model, the provider and the timeout reach the child: one webhook → the spawned realm agent asks the Anthropic stand-in for m-676 with a 45 s timeout, and exits', async () => {
+    const stub = await notFoundStub({ hold: true });
     let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
+    let pid: number | undefined;
     try {
       listen = await startListen(
         [
@@ -379,6 +439,8 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
           'anthropic',
           '--model',
           'm-676',
+          '--llm-timeout',
+          '45',
           '--dedup-store',
           'memory',
         ],
@@ -395,17 +457,55 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
         body: '{}',
       });
       expect(res.status, await res.text()).toBe(202);
-      const deadline = Date.now() + 20_000;
-      while (stub.models.length === 0 && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      expect(stub.models, listen.output()).toContain('m-676');
+      await waitUntil(() => stub.models.includes('m-676'), 20_000);
+      // At the hit, the stand-in has not answered, so the agent is waiting on it. The record and the
+      // check are read with no await in between.
+      pid = readOnlyRun()?.agent_pid;
+      const aliveAtHit = pid !== undefined && isAlive(pid);
+      stub.release();
+      let record = readOnlyRun();
+      await waitUntil(() => {
+        record = readOnlyRun();
+        return (
+          record?.drive_failures?.entries?.[0] !== undefined && pid !== undefined && !isAlive(pid)
+        );
+      }, 10_000);
+      expect(
+        {
+          models: stub.models,
+          aliveAtHit,
+          declaredPerAttemptMs: record?.drive_failures?.entries?.[0]?.declared_per_attempt_ms,
+          agentExited: pid !== undefined && !isAlive(pid),
+        },
+        listen.output(),
+      ).toEqual({
+        models: ['m-676'],
+        aliveAtHit: true,
+        declaredPerAttemptMs: 45000,
+        agentExited: true,
+      });
     } finally {
+      // Let the agent finish and wait for it BEFORE listen goes: while listen lives it reaps the agent,
+      // and once listen is killed an exited agent can linger as a zombie that still answers
+      // `kill(pid, 0)`. An agent still alive after the bound is killed, so a failing E5 leaves nothing
+      // writing under the removed temp folder.
+      pid ??= readOnlyRun()?.agent_pid;
+      stub.release();
+      if (pid !== undefined) {
+        const agent = pid;
+        if (!(await waitUntil(() => !isAlive(agent), 10_000))) {
+          try {
+            process.kill(agent, 'SIGKILL');
+          } catch {
+            /* already gone */
+          }
+        }
+      }
       listen?.child.kill('SIGKILL');
       stub.server.closeAllConnections();
       await new Promise<void>((r) => stub.server.close(() => r()));
     }
-  }, 45_000);
+  }, 70_000);
 });
 
 describe('the re-attach command repeats the flags the CLI was given (issue #676 review)', () => {
