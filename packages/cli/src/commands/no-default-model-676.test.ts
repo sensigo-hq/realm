@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -105,14 +106,15 @@ function runCli(args: string[], childEnv: Record<string, string>): Promise<Done>
   });
 }
 
-/** Starts `realm listen` and resolves with the port from its `listening` line (20 s limit). */
+/** Starts `realm listen` in `cwd` and resolves with the port from its `listening` line (20 s limit). */
 function startListen(
   args: string[],
   childEnv: Record<string, string>,
+  cwd: string = root,
 ): Promise<{ child: ChildProcess; port: number; output: () => string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI_ENTRY, 'listen', ...args], {
-      cwd: root,
+      cwd,
       env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -444,4 +446,61 @@ describe('the re-attach command repeats the flags the CLI was given (issue #676 
         `The run is NOT failed — add handler 'publish_answer' and re-attach (\`realm agent --run-id ${runId} ${flags.join(' ')}\`).`,
     );
   }, 30_000);
+});
+
+describe('realm listen started inside its workflow folder, the folder removed (issue #744)', () => {
+  it('R1 no workflow argument, the folder removed → 500 spawn_failed, and webhook: spawn failed names the folder as a full path', async () => {
+    const dir = join(root, 'gone-744');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'workflow.yaml'), WORKFLOW, 'utf8');
+    const real = realpathSync(dir);
+    let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
+    try {
+      // No workflow argument: listen loads `./workflow.yaml` from the folder it is started in, as
+      // `realm listen ./` does.
+      listen = await startListen(
+        ['--port', '0', '--model', 'm-744', '--dedup-store', 'memory'],
+        env(),
+        dir,
+      );
+      rmSync(dir, { recursive: true, force: true });
+      const res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      const text = await res.text();
+      let body: Record<string, unknown> = {};
+      try {
+        body = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        body = { unparsable: text };
+      }
+      const named = `"cwd":${JSON.stringify(real)}`;
+      const spawnFailed = (): string[] =>
+        listen!
+          .output()
+          .split('\n')
+          .filter((l) => l.startsWith('webhook: spawn failed '));
+      const deadline = Date.now() + 10_000;
+      while (!spawnFailed().some((l) => l.includes(named)) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      // (a) red when the folder is kept relative (`202`: an agent starts in the removed folder and
+      //     exits at once), or the line does not name the folder's full path; (b) prints the status,
+      //     the body, and the `webhook: spawn failed` line or "no such line" — never the whole
+      //     output, never the environment.
+      expect({
+        status: res.status,
+        body: { error: body['error'], status: body['status'], run_id: typeof body['run_id'] },
+        line: spawnFailed().find((l) => l.includes(named)) ?? spawnFailed()[0] ?? 'no such line',
+      }).toEqual({
+        status: 500,
+        body: { error: 'spawn_failed', status: 'failed', run_id: 'string' },
+        line: expect.stringContaining(named),
+      });
+    } finally {
+      listen?.child.kill('SIGKILL');
+    }
+  }, 45_000);
 });

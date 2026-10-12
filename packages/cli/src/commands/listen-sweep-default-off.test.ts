@@ -39,7 +39,7 @@ function makeDeps(): ListenDeps {
       record: () => {},
       cleanup: () => {},
     }),
-    spawnAgent: () => ({ pid: 1 }),
+    spawnAgent: async () => ({ pid: 1 }),
     clock: () => Date.now(),
     logger: silentLogger,
   };

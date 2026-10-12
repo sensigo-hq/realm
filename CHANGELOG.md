@@ -751,13 +751,22 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   together, and no longer writes to that run; it answers `200` with `status: deduplicated`, the run's
   id and its phase (#735).
   - A retry of a delivery whose agent failed to start gets the same `500` (`spawn_failed`) again,
-    except when two copies of the delivery arrived together (one can then be answered `200`). To
-    recover, purge that run (`realm run purge <run-id> --force`) and deliver the event again: it
-    starts a new run at once (after the duplicate window, in that two-copy case).
+    whatever its values. To recover, purge that run (`realm run purge <run-id> --force`) and
+    deliver the event again: it starts a new run at once. When two copies of the delivery arrived
+    together, one can be answered `200`; its retries then get the bare `200` `status: deduplicated`
+    until the duplicate window has passed, then the `500` again, and a delivery after a purge starts
+    a new run only once the window has passed.
   - A redelivery no longer starts an agent for a run whose agent stopped; drive that run with
     `realm agent --run-id <run-id>`.
   - A later delivery under the same ID with other values, after the duplicate window, is logged at
-    `warn`, and its reply says `params_differ: true`.
+    `warn`, and its reply says `params_differ: true` (a delivery whose agent failed to start gets its
+    `500` instead).
+- `realm listen` no longer stops when a delivery's workflow folder is missing or it may not enter
+  it: the run is ended as failed, the request gets `500` `spawn_failed`, as for any agent that cannot
+  be started, and listen keeps serving. Started inside the workflow folder (`realm listen`,
+  `realm listen ./`), it no longer answers `202` and starts an agent that cannot run when that
+  folder is removed; it keeps the folder's full path, so a folder created again at that path is used
+  again. The `webhook: spawn failed` line now names the workflow folder as a full path (#744).
 - **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
   PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
   replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on

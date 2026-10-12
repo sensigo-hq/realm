@@ -3,14 +3,18 @@
 // issue #409: `node:child_process` is mocked FILE-WIDE, deliberately and safely. Vitest hoists
 // every `vi.mock` to the top of the file whatever AST depth it is written at, so a
 // describe-scoped one would silently be file-wide anyway — better to say so than to look scoped.
-// Safe here because no other cell in this file reaches child_process: they all double the
-// `spawnAgent` deps seam, which sits ABOVE the spawn.
-import { describe, it, expect, vi } from 'vitest';
+// issue #744: the mock returns a fake child that behaves as Node's does — `pid` 4242, an `unref`
+// spy, and `'spawn'` on the next tick (`fakeChild` below). The cells that call `defaultSpawnAgent`
+// reach this fake, or one they hand in through its spawn-function parameter; the #744 cell A1
+// alone reaches the real `spawn`, the same way, with a `cwd` that cannot exist. Every other cell
+// doubles the `spawnAgent` deps seam, which sits ABOVE the spawn.
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InvalidArgumentError } from 'commander';
 
-const spawnMock = vi.hoisted(() => vi.fn(() => ({ pid: 4242, unref: vi.fn() })));
+const spawnMock = vi.hoisted(() => vi.fn(() => fakeChild()));
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
 import { EventEmitter } from 'node:events';
+import type { SpawnOptions } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -27,6 +31,7 @@ import {
   defaultDedupBase,
   buildAgentArgv,
   defaultSpawnAgent,
+  makeAgentSpawner,
   listenCommand,
   type ListenDeps,
   type Logger,
@@ -36,6 +41,27 @@ import {
 import { InMemoryDedupStore } from '../lib/dedup-store.js';
 import { purgeRuns } from './purge.js';
 import type { loadProjectExtensions } from '../extensions/load-project-extensions.js';
+
+/**
+ * issue #744: a stand-in for Node's child process — `pid`, an `unref` spy, and the events Node
+ * sends, emitted on the next tick as Node does. A cell creates it in the same synchronous step as
+ * the `defaultSpawnAgent` call it hands it to, so the listeners are on before the events fire.
+ */
+type FakeChild = EventEmitter & { pid: number | undefined; unref: ReturnType<typeof vi.fn> };
+function fakeChild(
+  events: ReadonlyArray<readonly ['spawn'] | readonly ['error', Error]> = [['spawn']],
+  // An explicit `undefined` means no pid (a default parameter would turn it into 4242).
+  ...pid: [pid?: number | undefined]
+): FakeChild {
+  const child = Object.assign(new EventEmitter(), {
+    pid: pid.length === 0 ? 4242 : pid[0],
+    unref: vi.fn(),
+  });
+  process.nextTick(() => {
+    for (const [name, ...args] of events) child.emit(name, ...args);
+  });
+  return child;
+}
 
 const SECRET = 'Bearer s3cr3t';
 const ENV = { GORGIAS_TOKEN: SECRET, HMAC_SECRET: 'hmac-key', GH_SECRET: 'gh-key' };
@@ -67,7 +93,7 @@ function makeDeps(overrides: Partial<ListenDeps> = {}): ListenDeps & {
   const runStore = new InMemoryStore();
   const dedup = new InMemoryDedupStore();
   const workflowStore: Pick<WorkflowRegistrar, 'register'> = { register: vi.fn(async () => {}) };
-  const spawnAgent = vi.fn((): SpawnResult => ({ pid: 4242 }));
+  const spawnAgent = vi.fn(async (): Promise<SpawnResult> => ({ pid: 4242 }));
   return {
     workflowStore,
     runStore,
@@ -401,7 +427,9 @@ describe('makeListenHandler — request pipeline', () => {
   });
 
   it('spawn failure → 500 + run marked spawn_failed', async () => {
-    const deps = makeDeps({ spawnAgent: vi.fn((): SpawnResult => ({ error: new Error('boom') })) });
+    const deps = makeDeps({
+      spawnAgent: vi.fn(async (): Promise<SpawnResult> => ({ error: new Error('boom') })),
+    });
     const handler = makeListenHandler(routesFor(wf(SHARED_SECRET_TRIGGER)), deps);
     const { status, body } = await invoke(handler, {
       url: '/wf',
@@ -545,7 +573,7 @@ describe('makeListenHandler — request pipeline', () => {
     const warns: Logged[] = [];
     let pid = 4242;
     const deps = makeDeps({
-      spawnAgent: vi.fn((): SpawnResult => ({ pid: pid++ })),
+      spawnAgent: vi.fn(async (): Promise<SpawnResult> => ({ pid: pid++ })),
       logger: {
         ...silentLogger,
         info: (m: string, d?: unknown) => infos.push([m, d]),
@@ -656,12 +684,13 @@ describe('makeListenHandler — request pipeline', () => {
     });
     // (a) red when the replay check keys on the phase `failed` instead of the arm `spawn_failure`
     //     (then this run's retry gets `500 spawn_failed`, a `warn` line, and no recorded id);
-    //     (b) prints the reply, the spawn count, the logged data, the third reply and the number of
-    //     `create` calls.
+    //     (b) prints the reply, the spawn count, the logged info and warn lines, the third reply
+    //     and the number of `create` calls.
     expect({
       second: r.second,
       spawns: r.spawns,
       logged: r.deduplicated,
+      warned: r.deduplicatedWarn,
       third: r.third,
       creates: r.create.mock.calls.length,
     }).toEqual({
@@ -676,6 +705,7 @@ describe('makeListenHandler — request pipeline', () => {
           { path: '/wf', run_id: r.runId, run_phase: 'failed', reason: 'matched_existing_run' },
         ],
       ],
+      warned: [],
       third: { status: 200, body: { status: 'deduplicated' } },
       creates: 2,
     });
@@ -856,7 +886,7 @@ describe('makeListenHandler — request pipeline', () => {
       let attempt = 0;
       const deps = makeDeps({
         runStore: store,
-        spawnAgent: vi.fn((): SpawnResult =>
+        spawnAgent: vi.fn(async (): Promise<SpawnResult> =>
           ++attempt === 1 ? { error: new Error('ENOTDIR') } : { pid: 4250 },
         ),
       });
@@ -1056,12 +1086,17 @@ describe('--llm-timeout on listen (issue #409)', () => {
   // Each cell also asserts the RETURN: an auto-mock returning undefined would throw inside
   // defaultSpawnAgent, be CAUGHT, and return `{error}` with the args already captured — so an
   // args-only assertion would pass against a broken mock.
-  it('WIRED — the spawn carries the flag when the operator set one', () => {
+  // issue #744: the pair covers `makeAgentSpawner`, the one factory that maps listen's options to
+  // the agent's flags; the command passes its parsed options to it unchanged. Both go through the
+  // file's fake child, which sends `'spawn'` on the next tick. (a) red when the factory drops a
+  // flag (deleting its `llmTimeoutSeconds` line turns the first cell red), or the spawn settles
+  // without a pid; (b) prints the result and the argv.
+  it('WIRED — the spawn carries the flag when the operator set one', async () => {
     spawnMock.mockClear();
-    const result = defaultSpawnAgent('run-42', '/tmp/cwd', {
-      model: 'm-676',
-      llmTimeoutSeconds: 45,
-    });
+    const result = await makeAgentSpawner({ model: 'm-676', llmTimeout: 45 }, silentLogger)(
+      'run-42',
+      '/tmp/cwd',
+    );
     expect(result).toEqual({ pid: 4242 });
 
     const [cmd, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
@@ -1080,9 +1115,9 @@ describe('--llm-timeout on listen (issue #409)', () => {
     ]);
   });
 
-  it('WIRED — the spawn is unchanged when the operator set none', () => {
+  it('WIRED — the spawn is unchanged when the operator set none', async () => {
     spawnMock.mockClear();
-    const result = defaultSpawnAgent('run-43', '/tmp/cwd', { model: 'm-676' });
+    const result = await makeAgentSpawner({ model: 'm-676' }, silentLogger)('run-43', '/tmp/cwd');
     expect(result).toEqual({ pid: 4242 });
 
     const [, argv] = spawnMock.mock.calls[0]! as unknown as [string, string[]];
@@ -1180,5 +1215,311 @@ describe('--provider and --model on listen (issue #676)', () => {
       '30',
       '--no-release-line-advisory',
     ]);
+  });
+});
+
+// ── issue #744: listen waits for its agent to start or fail, and never stops on a start that fails
+// later ─────────────────────────────────────────────────────────────────────────────────────────
+// Node reports a missing `cwd` (ENOENT) or one it may not enter (EACCES) as an `'error'` event on
+// the next tick, not as a throw. Each cell's `cwd` is a folder under a fresh temp dir that does NOT
+// exist, so no copy of these cells can ever start `node <vitest worker> agent …`.
+// Beside each cell: (a) the change that turns it red; (b) what it prints when it fails.
+describe('issue #744 — an agent start that fails later', () => {
+  type SpawnFn = NonNullable<Parameters<typeof defaultSpawnAgent>[4]>;
+  type Line = [string, unknown];
+  const made: string[] = [];
+  afterEach(() => {
+    for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+  /** A folder that does not exist, under a fresh temp dir. */
+  const missingFolder = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'listen-744-'));
+    made.push(dir);
+    return join(dir, 'no-such-folder');
+  };
+  const asSpawn = (child: FakeChild): SpawnFn => (() => child) as unknown as SpawnFn;
+  /** Settles with the result, or `'never settled'` after 2 s — a failure says so, never hangs. */
+  async function settledWithin(p: Promise<SpawnResult> | SpawnResult) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'never settled'>((resolve) => {
+      timer = setTimeout(() => resolve('never settled'), 2_000);
+    });
+    try {
+      return await Promise.race([Promise.resolve(p), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  /** The result as printed: its pid, or its error's code (the message when it has none). */
+  const shown = (r: SpawnResult | 'never settled') =>
+    r === 'never settled'
+      ? r
+      : 'error' in r
+        ? { error: (r.error as NodeJS.ErrnoException).code ?? String(r.error) }
+        : { pid: r.pid };
+  const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it('A1 — a REAL start in a missing folder resolves { error } ENOENT, and nothing is left unhandled', async () => {
+    const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    const cwd = missingFolder();
+    // The real spawn only through this guard: if a change to defaultSpawnAgent stopped passing the
+    // folder, the guard throws and nothing starts — never `node <vitest worker> agent …`.
+    const guarded = ((cmd: string, args: readonly string[], opts: SpawnOptions) => {
+      if (opts.cwd !== cwd) throw new Error('A1 guard: cwd not passed to spawn');
+      return actual.spawn(cmd, args, opts);
+    }) as unknown as SpawnFn;
+    const result = await settledWithin(
+      defaultSpawnAgent('run-a1', cwd, { model: 'm-744' }, () => {}, guarded),
+    );
+    // Let the child's later events pass inside this cell: an unhandled `'error'` is reported here.
+    await nextTurn();
+    // (a) red when defaultSpawnAgent settles before Node answers, or attaches no `'error'`
+    //     listener (before #744: `{ pid: 4242 }` — the parameter is ignored and the file's mock
+    //     runs; on the real spawn, the unhandled `'error'` that ended `realm listen`), or when the
+    //     folder is not passed to spawn (the guard's error); (b) prints the result: its pid, its
+    //     error code (the guard's message when it has none), or "never settled".
+    expect(shown(result)).toEqual({ error: 'ENOENT' });
+  });
+
+  it("A2 — a child that sends 'error' instead of 'spawn' resolves { error } with that error", async () => {
+    const cwd = missingFolder();
+    const err = Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' });
+    const child = fakeChild([['error', err]], undefined);
+    const result = await settledWithin(
+      defaultSpawnAgent('run-a2', cwd, { model: 'm-744' }, () => {}, asSpawn(child)),
+    );
+    // (a) red when an `'error'` before `'spawn'` does not settle `{ error }` (before #744:
+    //     `{ pid: 4242 }` from the file's mock); (b) prints the result and whether its error is the
+    //     one the child sent.
+    expect({
+      result: shown(result),
+      same: result !== 'never settled' && 'error' in result && result.error === err,
+    }).toEqual({ result: { error: 'ENOENT' }, same: true });
+  });
+
+  it("A3 — a child that sends 'spawn' on the next tick resolves { pid }, and is unref'd", async () => {
+    const cwd = missingFolder();
+    const child = fakeChild([['spawn']]);
+    const result = await settledWithin(
+      defaultSpawnAgent('run-a3', cwd, { model: 'm-744' }, () => {}, asSpawn(child)),
+    );
+    // (a) red when the result carries no pid, or the child is not unref'd (before #744: this child is never touched, `unref` 0 calls); (b) prints the
+    //     result (or "never settled") and the `unref` call count.
+    expect({ result: shown(result), unref: child.unref.mock.calls.length }).toEqual({
+      result: { pid: 4242 },
+      unref: 1,
+    });
+  });
+
+  it("A4 — every 'error' AFTER 'spawn' goes to onLateError; nothing is left unhandled", async () => {
+    const cwd = missingFolder();
+    const onLateError = vi.fn();
+    const child = fakeChild([
+      ['spawn'],
+      ['error', new Error('late one')],
+      ['error', new Error('late two')],
+    ]);
+    const result = await settledWithin(
+      defaultSpawnAgent('run-a4', cwd, { model: 'm-744' }, onLateError, asSpawn(child)),
+    );
+    await nextTurn();
+    // (a) red when the `'error'` listener goes once the child has started or after its first late
+    //     error (`once` instead of `on`: `late two` is not received, and is reported unhandled), or
+    //     a late error is dropped; (b) prints the result and the messages the callback received.
+    expect({
+      result: shown(result),
+      received: onLateError.mock.calls.map(([e]) => (e as Error).message),
+    }).toEqual({ result: { pid: 4242 }, received: ['late one', 'late two'] });
+  });
+
+  it("A5 — a 'spawn' with no process id resolves { error } saying so", async () => {
+    const cwd = missingFolder();
+    const result = await settledWithin(
+      defaultSpawnAgent(
+        'run-a5',
+        cwd,
+        { model: 'm-744' },
+        () => {},
+        asSpawn(fakeChild([['spawn']], undefined)),
+      ),
+    );
+    // (a) red when the guard's message changes (before this correction: `the agent started without
+    //     a pid`), or a pid-less start is answered `{ pid }`; (b) prints the result and its message.
+    expect({
+      result: result === 'never settled' ? result : 'error' in result ? 'error' : 'pid',
+      message: result !== 'never settled' && 'error' in result ? result.error.message : undefined,
+    }).toEqual({
+      result: 'error',
+      message: "Node reported the agent's start without a process id",
+    });
+  });
+
+  it("L1 — the command's spawner logs an error after the start once, as webhook: agent process error", async () => {
+    const cwd = missingFolder();
+    const calls: Array<[string, string, unknown]> = [];
+    const logger: Logger = {
+      debug: (m, d) => calls.push(['debug', m, d]),
+      info: (m, d) => calls.push(['info', m, d]),
+      warn: (m, d) => calls.push(['warn', m, d]),
+      error: (m, d) => calls.push(['error', m, d]),
+    };
+    const late = new Error('late one');
+    const result = await settledWithin(
+      makeAgentSpawner(
+        { model: 'm-744' },
+        logger,
+        asSpawn(fakeChild([['spawn'], ['error', late]])),
+      )('run-l1', cwd),
+    );
+    await nextTurn();
+    // (a) red when the factory's late-error callback is not wired to the logger, logs at another
+    //     level, under another message, or without the run, the folder or the error; (b) prints
+    //     the result and every logger call (level, message, data).
+    expect({ result: shown(result), calls }).toEqual({
+      result: { pid: 4242 },
+      calls: [
+        [
+          'error',
+          'webhook: agent process error',
+          { run_id: 'run-l1', cwd, error: 'Error: late one' },
+        ],
+      ],
+    });
+  });
+
+  const routesIn = (cwd: string): Map<string, WorkflowEntry> =>
+    buildRouteTable([{ definition: wf(SHARED_SECRET_TRIGGER), workflowDir: cwd }], {
+      env: ENV,
+      logger: silentLogger,
+    });
+  const delivery = (id: string) => ({
+    url: '/wf',
+    headers: { ...JSON_CT, authorization: SECRET },
+    body: JSON.stringify({ id }),
+  });
+
+  it('B1 — the handler: a start that fails later → 500 spawn_failed, sealed spawn_failure, no agent_pid, the line names the folder; the next delivery → 202', async () => {
+    const cwd = missingFolder();
+    const errors: Line[] = [];
+    let call = 0;
+    const deps = makeDeps({
+      spawnAgent: vi.fn((): Promise<SpawnResult> =>
+        ++call === 1
+          ? Promise.resolve({
+              error: Object.assign(new Error('spawn …node ENOENT'), { code: 'ENOENT' }),
+            })
+          : Promise.resolve({ pid: 4243 }),
+      ),
+      logger: { ...silentLogger, error: (m: string, d?: unknown) => errors.push([m, d]) },
+    });
+    const handler = makeListenHandler(routesIn(cwd), deps);
+    const first = await invoke(handler, delivery('evt-744-a'));
+    const runId = first.body['run_id'] as string;
+    const run = await deps.runStore.get(runId);
+    const second = await invoke(handler, delivery('evt-744-b'));
+    // (a) red when the spawn result is not awaited (before #744: the Promise has no `error` key,
+    //     so `202` with `agent_pid` undefined and the run left running), or the line loses `cwd`;
+    //     (b) prints the first reply, the run's seal, phase and agent_pid, the spawn-failed lines'
+    //     data, and the second reply (whether its run is new).
+    expect({
+      first,
+      sealed_by: run.sealed_by,
+      run_phase: run.run_phase,
+      agent_pid: run.agent_pid,
+      logged: errors.filter(([m]) => m === 'webhook: spawn failed'),
+      second: {
+        status: second.status,
+        accepted: second.body['status'],
+        newRun: typeof second.body['run_id'] === 'string' && second.body['run_id'] !== runId,
+      },
+    }).toEqual({
+      first: { status: 500, body: { error: 'spawn_failed', run_id: runId, status: 'failed' } },
+      sealed_by: { arm: 'spawn_failure' },
+      run_phase: 'failed',
+      agent_pid: undefined,
+      logged: [
+        [
+          'webhook: spawn failed',
+          { path: '/wf', run_id: runId, cwd, error: 'Error: spawn …node ENOENT' },
+        ],
+      ],
+      second: { status: 202, accepted: 'accepted', newRun: true },
+    });
+  });
+
+  it('B2 — the handler: a start that succeeds later → 202, agent_pid recorded', async () => {
+    const cwd = missingFolder();
+    const deps = makeDeps({
+      spawnAgent: vi.fn((): Promise<SpawnResult> => Promise.resolve({ pid: 4242 })),
+    });
+    const handler = makeListenHandler(routesIn(cwd), deps);
+    const reply = await invoke(handler, delivery('evt-744-c'));
+    const run = await deps.runStore.get(reply.body['run_id'] as string);
+    // (a) red when the spawn result is not awaited (before #744: `agent_pid` undefined); (b) prints
+    //     the reply's status and the run's agent_pid.
+    expect({ status: reply.status, agent_pid: run.agent_pid }).toEqual({
+      status: 202,
+      agent_pid: 4242,
+    });
+  });
+
+  it('C1 — the handler: a spawnAgent that throws logs webhook: spawn failed with the folder', async () => {
+    const cwd = missingFolder();
+    const errors: Line[] = [];
+    const deps = makeDeps({
+      spawnAgent: vi.fn(() => {
+        throw new Error('spawn ENOTDIR');
+      }),
+      logger: { ...silentLogger, error: (m: string, d?: unknown) => errors.push([m, d]) },
+    });
+    const handler = makeListenHandler(routesIn(cwd), deps);
+    const reply = await invoke(handler, delivery('evt-744-d'));
+    // The synchronous branch of the changed line (guardrail 7 (a)); B1 is the asynchronous one.
+    // (a) red when the line loses `cwd` (before #744: no `cwd`); (b) prints the reply's status and
+    //     the spawn-failed lines' data.
+    expect({
+      status: reply.status,
+      logged: errors.filter(([m]) => m === 'webhook: spawn failed'),
+    }).toEqual({
+      status: 500,
+      logged: [
+        [
+          'webhook: spawn failed',
+          { path: '/wf', run_id: reply.body['run_id'], cwd, error: 'Error: spawn ENOTDIR' },
+        ],
+      ],
+    });
+  });
+
+  it('C2 — the handler: a spawnAgent that rejects → 500 spawn_failed, sealed spawn_failure, the line with the folder', async () => {
+    const cwd = missingFolder();
+    const errors: Line[] = [];
+    const deps = makeDeps({
+      spawnAgent: vi.fn(() => Promise.reject(new Error('rejected start'))),
+      logger: { ...silentLogger, error: (m: string, d?: unknown) => errors.push([m, d]) },
+    });
+    const handler = makeListenHandler(routesIn(cwd), deps);
+    const reply = await invoke(handler, delivery('evt-744-e'));
+    const runId = reply.body['run_id'] as string;
+    const run = await deps.runStore.get(runId);
+    // (a) red when the awaited spawn is not inside the handler's `try` (the rejection escapes the
+    //     handler and fails this cell; through the real server, `500 internal_error`); (b) prints
+    //     the reply, the run's seal and agent_pid, and the spawn-failed lines' data.
+    expect({
+      reply,
+      sealed_by: run.sealed_by,
+      agent_pid: run.agent_pid,
+      logged: errors.filter(([m]) => m === 'webhook: spawn failed'),
+    }).toEqual({
+      reply: { status: 500, body: { error: 'spawn_failed', run_id: runId, status: 'failed' } },
+      sealed_by: { arm: 'spawn_failure' },
+      agent_pid: undefined,
+      logged: [
+        [
+          'webhook: spawn failed',
+          { path: '/wf', run_id: runId, cwd, error: 'Error: rejected start' },
+        ],
+      ],
+    });
   });
 });

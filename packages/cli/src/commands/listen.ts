@@ -12,7 +12,7 @@
 //   - SIGTERM/SIGINT → server.close(); the agent child is detached and survives.
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { Command } from 'commander';
 // issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
@@ -80,7 +80,9 @@ export interface ListenDeps {
   // preserves that optionality, so a store that doesn't declare settleStep still satisfies this.
   runStore: Pick<RunStore, 'create' | 'get' | 'update' | 'list' | 'settleStep'>;
   dedupStoreFor: (workflowId: string) => DedupStore;
-  spawnAgent: (runId: string, cwd: string) => SpawnResult;
+  // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
+  // (`'error'`, which for a missing or unenterable folder comes on the next tick, not as a throw).
+  spawnAgent: (runId: string, cwd: string) => Promise<SpawnResult>;
   clock: () => number;
   logger: Logger;
 }
@@ -487,17 +489,20 @@ export function makeListenHandler(
       // 11. Spawn detached agent.
       // A thrown spawnAgent (contract violation) is funnelled into the same spawn_failed handling
       // below — so the created run is always marked and the response always carries a run_id,
-      // never a generic 500 that strands the run unmarked.
+      // never a generic 500 that strands the run unmarked. issue #744: awaited inside the same
+      // `try`, so a start Node refuses later, or a rejection, takes the same path.
       let spawnResult: SpawnResult;
       try {
-        spawnResult = deps.spawnAgent(run.id, entry.workflowDir);
+        spawnResult = await deps.spawnAgent(run.id, entry.workflowDir);
       } catch (err) {
         spawnResult = { error: err instanceof Error ? err : new Error(String(err)) };
       }
       if ('error' in spawnResult) {
+        // issue #744: `cwd` names the workflow folder — Node's message names only the Node binary.
         deps.logger.error('webhook: spawn failed', {
           path,
           run_id: run.id,
+          cwd: entry.workflowDir,
           error: String(spawnResult.error),
         });
         try {
@@ -884,19 +889,88 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
   return argv;
 }
 
-export function defaultSpawnAgent(runId: string, cwd: string, opts: AgentArgvOptions): SpawnResult {
-  try {
-    const realmBin = process.argv[1] ?? '';
-    const child = nodeSpawn(process.execPath, [realmBin, ...buildAgentArgv(runId, opts)], {
-      detached: true,
-      stdio: 'inherit',
+/**
+ * Start the detached agent for `runId` in `cwd`, and settle only when Node has answered.
+ *
+ * issue #744: Node reports a `cwd` that is missing (ENOENT) or may not be entered (EACCES) as an
+ * `'error'` event on the next tick, not as a throw; a start that succeeds emits `'spawn'` on the
+ * next tick. With no `'error'` listener, that event ended `realm listen`. So this resolves `{pid}`
+ * on `'spawn'`, `{error}` on `'error'` or on a synchronous throw (a `cwd` that is a file, ENOTDIR),
+ * and keeps its `'error'` listener for the child's whole life: a later error goes to
+ * `onLateError`, and never ends listen. `spawnFn` lets a test hand in a real spawn or a fake child.
+ */
+export function defaultSpawnAgent(
+  runId: string,
+  cwd: string,
+  opts: AgentArgvOptions,
+  onLateError: (err: Error) => void,
+  spawnFn: typeof nodeSpawn = nodeSpawn,
+): Promise<SpawnResult> {
+  return new Promise<SpawnResult>((resolve) => {
+    let settled = false;
+    const settle = (result: SpawnResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    try {
+      const realmBin = process.argv[1] ?? '';
+      const child = spawnFn(process.execPath, [realmBin, ...buildAgentArgv(runId, opts)], {
+        detached: true,
+        stdio: 'inherit',
+        cwd,
+      });
+      child.on('error', (err: Error) => {
+        if (!settled) {
+          settle({ error: err });
+          return;
+        }
+        onLateError(err);
+      });
+      child.once('spawn', () => {
+        const pid = child.pid;
+        settle(
+          pid !== undefined
+            ? { pid }
+            : { error: new Error("Node reported the agent's start without a process id") },
+        );
+      });
+      child.unref();
+    } catch (err) {
+      settle({ error: err instanceof Error ? err : new Error(String(err)) });
+    }
+  });
+}
+
+/**
+ * The spawn listen's request pipeline calls: listen's options mapped, once, to each agent it starts.
+ * The command passes its parsed options here unchanged, so it cannot drop one option without
+ * dropping them all, and the WIRED cells test this mapping.
+ *
+ * issue #409: the operator's fallback clock reaches every drive listen spawns. The deps SIGNATURE is
+ * unchanged — the value is closed over here rather than threaded through it.
+ * issue #676: and the model (always) and the provider (when given), the same way.
+ * issue #744: an error the agent process reports after it started is logged, never fatal.
+ */
+export function makeAgentSpawner(
+  listenOpts: { model: string; provider?: ProviderName; llmTimeout?: number },
+  logger: Logger,
+  spawnFn: typeof nodeSpawn = nodeSpawn,
+): (runId: string, cwd: string) => Promise<SpawnResult> {
+  const agentOpts: AgentArgvOptions = {
+    model: listenOpts.model,
+    ...(listenOpts.provider !== undefined ? { provider: listenOpts.provider } : {}),
+    ...(listenOpts.llmTimeout !== undefined ? { llmTimeoutSeconds: listenOpts.llmTimeout } : {}),
+  };
+  return (runId, cwd) =>
+    defaultSpawnAgent(
+      runId,
       cwd,
-    });
-    child.unref();
-    return { pid: child.pid ?? -1 };
-  } catch (err) {
-    return { error: err instanceof Error ? err : new Error(String(err)) };
-  }
+      agentOpts,
+      (err) =>
+        logger.error('webhook: agent process error', { run_id: runId, cwd, error: String(err) }),
+      spawnFn,
+    );
 }
 
 function resolveWorkflowFile(input: string): string {
@@ -1003,7 +1077,7 @@ export const listenCommand = new Command('listen')
         const filePath = resolveWorkflowFile(input);
         try {
           const definition = loadWorkflowFromFile(filePath);
-          inputs.push({ definition, workflowDir: join(filePath, '..') });
+          inputs.push({ definition, workflowDir: resolve(filePath, '..') });
         } catch (err) {
           console.error(
             `Error: failed to load workflow '${filePath}': ${err instanceof Error ? err.message : String(err)}`,
@@ -1051,15 +1125,7 @@ export const listenCommand = new Command('listen')
           }
           return new FileDedupStore(dedupBase, workflowId);
         },
-        // issue #409: the operator's fallback clock reaches every drive listen spawns. The deps
-        // SIGNATURE is unchanged — the value is closed over here rather than threaded through it.
-        // issue #676: and the model (always) and the provider (when given), the same way.
-        spawnAgent: (runId: string, cwd: string): SpawnResult =>
-          defaultSpawnAgent(runId, cwd, {
-            model,
-            ...(opts.provider !== undefined ? { provider: opts.provider } : {}),
-            ...(opts.llmTimeout !== undefined ? { llmTimeoutSeconds: opts.llmTimeout } : {}),
-          }),
+        spawnAgent: makeAgentSpawner({ ...opts, model }, logger),
         clock: () => Date.now(),
         logger,
       };
