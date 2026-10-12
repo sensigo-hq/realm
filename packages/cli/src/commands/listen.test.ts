@@ -135,12 +135,34 @@ function fakeChild(
 
 // issue #744: temp folders for the spawn cells, removed after each cell. A cell that locks a
 // folder first pushes the undo into `restores`, which runs before the removal, so a cell that fails
-// part-way leaves nothing locked (`rmSync` throws EACCES on a mode-000 tree).
+// part-way leaves nothing locked (`rmSync` throws EACCES on a mode-000 tree). Each undo and each
+// removal runs in its own `try`: one failure cannot skip the rest, and the first is thrown after.
 const made: string[] = [];
 const restores: Array<() => void> = [];
 afterEach(() => {
-  for (const restore of restores.splice(0)) restore();
-  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+  let failed = false;
+  let first: unknown;
+  const keep = (err: unknown): void => {
+    if (!failed) {
+      failed = true;
+      first = err;
+    }
+  };
+  for (const restore of restores.splice(0)) {
+    try {
+      restore();
+    } catch (err) {
+      keep(err);
+    }
+  }
+  for (const dir of made.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      keep(err);
+    }
+  }
+  if (failed) throw first;
 });
 /** A folder that does not exist, under a fresh temp dir. */
 function missingFolder(): string {
@@ -1367,7 +1389,10 @@ describe('issue #744 — an agent start that fails later', () => {
       (last = fakeChild(cmd, String(o.cwd), args, opts))) as unknown as SpawnFn;
     return { spawnFn, child: () => last };
   };
-  /** Settles with the result, or `'never settled'` after 2 s — a failure says so, never hangs. */
+  /**
+   * Settles with the result, or `'never settled'` after `ms` (2 s by default) — a failure says so,
+   * never hangs.
+   */
   async function settledWithin(p: Promise<SpawnResult> | SpawnResult, ms = 2_000) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<'never settled'>((resolve) => {
@@ -1530,10 +1555,12 @@ describe('issue #744 — an agent start that fails later', () => {
     const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
     const node = process.execPath;
     // The nine states, built here under a fresh folder; every mode is restored in `finally`, and
-    // again by the shared `afterEach` through `restores` when the cell fails before its `try`,
-    // before the folder cleanup (`rmSync` throws EACCES on a mode-000 tree). A real start settles in
-    // milliseconds, so each half waits at most 500 ms (9 states × 2 halves × 0.5 s = 9 s at worst,
-    // within the cell's own 15 s budget).
+    // again by the shared `afterEach` through `restores`, before the folder cleanup (`rmSync`
+    // throws EACCES on a mode-000 tree). `restores` closes the cell failing before its `try`; it is
+    // also meant for vitest timing the cell out while it waits inside its `try`: `afterEach` then
+    // runs while the cell is still pending (vitest's order; not run on this cell). A real start
+    // settles in milliseconds, so each half waits at most 500 ms (9 states × 2 halves × 0.5 s = 9 s
+    // at worst, within the cell's own 15 s budget).
     const base = existingFolder();
     const enterable = join(base, 'enterable');
     mkdirSync(enterable);
@@ -1594,13 +1621,24 @@ describe('issue #744 — an agent start that fails later', () => {
     chmodSync(mode000, 0o000);
     restores.push(() => chmodSync(lockedParent, 0o755));
     chmodSync(lockedParent, 0o000);
-    // Whether the locks hold for this process: as root, or on a mount that ignores modes, Node
-    // starts in the two permission states (`X_OK` passes), and the fake does too.
+    // Whether the locks hold for this process: as root, Node starts in the two permission states
+    // (`X_OK` passes), and the fake does too; for a normal user on Linux the check below requires
+    // that they hold.
     let locksHold = false;
     try {
       accessSync(mode000, fsConstants.X_OK);
     } catch {
       locksHold = true;
+    }
+    if (process.platform === 'linux' && process.getuid?.() !== 0) {
+      // This cell is the only test of the fake's EACCES path. (a) red when the locks do not take
+      //     for a normal user on Linux (the two `chmodSync(…, 0o000)` lines dropped, or a temp
+      //     folder on a mount that ignores modes): both halves would then start in the two
+      //     permission states and the cell would stay green; (b) prints `locksHold` and the uid.
+      expect({ locksHold, uid: process.getuid?.() }).toEqual({
+        locksHold: true,
+        uid: process.getuid?.(),
+      });
     }
     try {
       for (const [name, cwd] of states) {
@@ -1665,11 +1703,12 @@ describe('issue #744 — an agent start that fails later', () => {
       mockCalls: states.length,
     });
     expect(realCalls).toBe(states.length);
-    // The table Node gives on Linux and macOS. Seven rows do not depend on permissions; the two
-    // permission rows follow the access check above: EACCES when the locks hold, a start when they
-    // do not (root, or a mount that ignores modes). (a) red when Node's own behaviour changes, or
-    // the permission rows stop following the check; (b) prints the real table.
-    if (process.platform !== 'win32') {
+    // The table Node gives on Linux (checked there only: no macOS run is recorded). Seven rows do
+    // not depend on permissions; the two permission rows follow the access check above: EACCES when
+    // the locks hold, a start when they do not (as root; for a normal user on Linux the check above
+    // fails first). (a) red when Node's own behaviour changes, or the permission rows stop
+    // following the check; (b) prints the real table.
+    if (process.platform === 'linux') {
       const failedLater = (code: string, errno: number) => ({
         settled: 'error',
         code,

@@ -29,7 +29,7 @@ Realm reads other variables by names that you give it:
 
 `realm agent` also reads the values of the variables in its environment, so that it can replace them with `[REDACTED]` in tool results and error messages. It leaves some values alone: see [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded).
 
-These are read by libraries that Realm uses, and change what Realm does (the `.env` loader reads a few more `DOTENV_CONFIG_*` variables; see its documentation):
+These are read by libraries that Realm uses, and change what Realm does (the `.env` loader reads a few more `DOTENV_CONFIG_*` variables; see [its documentation for the version Realm uses](https://github.com/motdotla/dotenv/blob/v17.4.2/README.md)):
 
 | Variable                 | Read by            | What it does                                                                                       |
 | ------------------------ | ------------------ | -------------------------------------------------------------------------------------------------- |
