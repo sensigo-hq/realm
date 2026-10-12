@@ -72,7 +72,7 @@ Started with `{"sku": "A-100"}`, the handler received:
 
 ### Rules
 
-- **A path that finds nothing leaves its key out.** In the example, `missing` is not in what the handler received. There is no error and no warning, when the file is loaded or when the step runs. A path without one of the roots above, such as `order.id`, finds nothing.
+- **A path that finds nothing leaves its key out.** In the example, `missing` is not in what the handler received. There is no error and no warning, when the file is loaded or when the step runs — unless the step's `input_schema` requires the key: then the step is refused before its claim (`'<step>' cannot run (input_schema): …`), and its way out names the `input_map` or the `input_schema`. A path without one of the roots above, such as `order.id`, finds nothing.
 - **A bare list, number, or true or false is refused.** Wrap it in `$literal`.
 
   ```text

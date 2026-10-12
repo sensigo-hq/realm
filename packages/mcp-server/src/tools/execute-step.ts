@@ -14,6 +14,7 @@ import {
   stepsThatCannotRun,
   cannotRunWayOutApplies,
   cannotRunWayOutTools,
+  consumesInputMap,
   withEndedRunWays,
   TERMINAL_PHASES,
   type StepDispatcher,
@@ -320,9 +321,12 @@ export async function handleExecuteStep(
  * step — returns the step's own refusal.
  * Its cause is the record or the workflow, which the caller cannot change, so when the run cannot
  * go on until its workflow is corrected (`cannotRunWayOutApplies`) the reply's `context_hint` ends
- * with the way out in the tools' words (`cannotRunWayOutTools`, core's one composer). In every
- * other state — and for an input-schema refusal, which is the caller's own input (decision C3) —
- * the reply is returned unchanged.
+ * with the way out in the tools' words (`cannotRunWayOutTools`, core's one composer). Issue #688:
+ * so does an input-schema refusal of a step that consumes its `input_map` (`consumesInputMap`) —
+ * its schema checks what the map builds, never the caller's input, so the reply says
+ * `report_to_user` and must carry the person's fix. In every other state — and for any other
+ * input-schema refusal, which is the caller's own input (decision C3) — the reply is returned
+ * unchanged.
  */
 async function withWayOutOnOwnRefusal(
   result: ResponseEnvelope,
@@ -340,7 +344,12 @@ async function withWayOutOnOwnRefusal(
   }
   const pending = describePending(definition, fresh, registry, new Date());
   const own = stepsThatCannotRun(pending).find((e) => e.step === args.command);
-  if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust') return result;
+  const ownStep = definition.steps[args.command];
+  const mappedInput =
+    own?.refused_by === 'input_schema' && ownStep !== undefined && consumesInputMap(ownStep);
+  if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust' && !mappedInput) {
+    return result;
+  }
   if (!cannotRunWayOutApplies(fresh, pending)) return result;
   return {
     ...result,

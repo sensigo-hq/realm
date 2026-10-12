@@ -27,8 +27,6 @@ import type {
   WorkflowDefinition,
   StepDefinition,
   ContextWrapperFormat,
-  InputMapNode,
-  LiteralNode,
 } from '../types/workflow-definition.js';
 import { isGateTrust } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
@@ -92,7 +90,8 @@ import type {
 import { describeThrown, describeUnrecognised, releaseLineError } from '../release-line.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import type { ServiceAdapter, ServiceResponse } from '../extensions/service-adapter.js';
-import { renderTemplate, resolvePath, UnknownFilterError } from './render-template.js';
+import { renderTemplate, UnknownFilterError } from './render-template.js';
+import { resolveInputMap } from './input-map.js';
 import { generateSchemaSkeleton } from '../utils/schema-skeleton.js';
 import { formatDuration } from '../utils/duration.js';
 import { loadWorkflowContext } from './workflow-context-loader.js';
@@ -349,9 +348,6 @@ function withTimeout<T>(
   return Promise.race([dispatch(controller.signal), timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Maximum nesting depth allowed in an input_map tree. */
-const MAX_INPUT_MAP_DEPTH = 10;
-
 /**
  * Issue #220: default per-step threshold for bounded validation-rejection exhaustion — the
  * multiple-of-(schemaRetries+1) alignment formula at k=2 (two full default `realm agent` repair
@@ -362,110 +358,6 @@ const MAX_INPUT_MAP_DEPTH = 10;
  * threshold — there is no reachable default-off posture in PR-1.
  */
 export const DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD = 6;
-
-/**
- * Resolves an input_map declaration into a concrete params object.
- * Falls back to options.input when input_map is absent.
- */
-function resolveInputMap(
-  inputMap: Record<string, InputMapNode> | undefined,
-  options: ExecuteStepOptions,
-  pendingRun: RunRecord,
-): Record<string, unknown> {
-  if (inputMap === undefined) return options.input;
-  const evidenceByStep = buildEvidenceByStep(pendingRun);
-  const root: Record<string, unknown> = {
-    run: { params: pendingRun.params },
-    context: { resources: evidenceByStep },
-  };
-  const result: Record<string, unknown> = {};
-  for (const [key, node] of Object.entries(inputMap)) {
-    result[key] = resolveInputMapNode(node, root, key, 0);
-  }
-  return result;
-}
-
-/**
- * Recursively resolves a single InputMapNode. String leaves are resolved via resolvePath;
- * object nodes produce a nested Record by recursing into their entries.
- */
-function resolveInputMapNode(
-  node: InputMapNode,
-  root: Record<string, unknown>,
-  keyChain: string,
-  depth: number,
-): unknown {
-  if (depth > MAX_INPUT_MAP_DEPTH) {
-    throw new WorkflowError(
-      `input_map path "${keyChain}": exceeded maximum nesting depth of ${MAX_INPUT_MAP_DEPTH}`,
-      {
-        code: 'INPUT_MAP_DEPTH_EXCEEDED',
-        category: 'ENGINE',
-        agentAction: 'report_to_user',
-        retryable: false,
-      },
-    );
-  }
-  if (typeof node === 'string') {
-    return resolvePath(node, root);
-  }
-
-  // Literal node — return the value directly without path resolution.
-  if ('$literal' in node && Object.keys(node).length === 1) {
-    return (node as LiteralNode).$literal;
-  }
-
-  // issue #287 — the RUNTIME MIRROR of the loader's directive gate. The loader stops new
-  // registrations; this stops the ones already stored. That distinction is the whole point: a
-  // registered realm workflow RE-EXECUTES its corruption on every run, so validating only at
-  // authoring would leave existing definitions quietly producing garbage forever.
-  //
-  // Two cases, one code:
-  //   (a) any `$`-prefixed key that is not a supported directive;
-  //   (b) `$literal` WITH sibling keys — which the sole-key conjunct above lets fall through to
-  //       nested-map recursion, where the literal's own VALUE gets resolved as a context path
-  //       under a result key literally named "$literal". Silent garbage, and reachable today.
-  //
-  // Failing loudly here costs a step failure; not failing costs plausible-looking success, which
-  // is what turned the originating incident into five weeks of corrupted records.
-  const REMEDY =
-    `To pass literal data containing $-keys, wrap the subtree in $literal. input_map values ` +
-    `are context paths, nested maps, or $literal — templated strings are not supported.`;
-  const DIRECTIVE_ERROR_OPTS = {
-    code: 'INPUT_MAP_UNKNOWN_DIRECTIVE',
-    category: 'ENGINE',
-    agentAction: 'report_to_user',
-    retryable: false,
-  } as const;
-
-  // (b) `$literal` with siblings. Named accurately rather than as an "unknown directive" — the
-  // directive is fine, its company is not, and that is the mistake the author has to see.
-  if ('$literal' in node) {
-    const siblings = Object.keys(node).filter((k) => k !== '$literal');
-    throw new WorkflowError(
-      `input_map path "${keyChain}": $literal node must have exactly one key ($literal); found ` +
-        `sibling keys: ${siblings.join(', ')}. ${REMEDY}`,
-      DIRECTIVE_ERROR_OPTS,
-    );
-  }
-
-  // (a) any other reserved-prefix key.
-  for (const key of Object.keys(node)) {
-    if (!key.startsWith('$')) continue;
-    throw new WorkflowError(
-      `input_map path "${keyChain}": unknown directive '${key}' — supported directives: $literal. ` +
-        REMEDY,
-      DIRECTIVE_ERROR_OPTS,
-    );
-  }
-
-  // Nested object — recurse.
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(node)) {
-    result[key] = resolveInputMapNode(child as InputMapNode, root, `${keyChain}.${key}`, depth + 1);
-  }
-  return result;
-}
 
 /**
  * Resolves and calls the service adapter for an auto step with `uses_service`.
@@ -533,7 +425,7 @@ async function callAdapter(
   const method = stepDef.service_method ?? 'fetch';
   const operation = stepDef.operation ?? options.command;
 
-  const adapterParams = resolveInputMap(stepDef.input_map, options, pendingRun);
+  const adapterParams = resolveInputMap(stepDef.input_map, options.input, pendingRun);
 
   // Guard: `delete` is optional on ServiceAdapter. If the adapter omits it, surface
   // ADAPTER_OP_UNSUPPORTED rather than allowing a TypeError from an undefined call.
@@ -712,9 +604,13 @@ async function callHandler(
     });
   }
 
+  // issue #688: keyed on the map alone, never on `consumesInputMap` (input-map.ts). On executeStep's
+  // one arm into here (`auto` with a `handler`) the two agree; the cleanup-step drains also call this,
+  // with `input: {}`, and resolve a loader-bypassed finalizer's map here (the #519 residual class) —
+  // an `auto`-only rule would silently drop it.
   const resolvedInput =
     stepDef.input_map !== undefined
-      ? resolveInputMap(stepDef.input_map, options, pendingRun)
+      ? resolveInputMap(stepDef.input_map, options.input, pendingRun)
       : options.input;
   const handlerResolvedParams = stepDef.input_map !== undefined ? resolvedInput : undefined;
 
@@ -2166,7 +2062,8 @@ async function executeStepBody(
   // returned where it was before, in the same order. No registry is passed: the capability check
   // stays the post-claim dispatch failure that writes `capability_blocks` (decision C4).
   //
-  // `_debug` is stripped first (pure) because the input-schema member validates the stripped input.
+  // `_debug` is stripped first (pure) because the input-schema member validates the stripped input —
+  // or, for a step that consumes its `input_map`, what the map builds (issue #688).
   let debugOutput: unknown;
   let effectiveInput = options.input;
   if (Object.prototype.hasOwnProperty.call(options.input, '_debug')) {

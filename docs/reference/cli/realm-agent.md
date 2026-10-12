@@ -154,7 +154,7 @@ The lines that say why the drive stopped (`✗ Step …` and `⚠ Step … is bl
 
 In the first six cases nothing was recorded as the step's answer. The run's record keeps the failure under `Drive failures`, and `realm run list --stuck` lists the run with `drive_failing` and the kind of failure. Continue the run with `--run-id` when the cause is fixed.
 
-In the ninth case, when the check is `input_schema`, the step's schema refused the input the engine built for it. The run's record keeps the refusal under `Drive failures`. Change the step so it accepts that input, register the workflow again, and continue with `--run-id`.
+In the ninth case, when the check is `input_schema`, the step's schema refused the input the engine built for it. The run's record keeps the refusal under `Drive failures`. Change the step so it accepts that input, register the workflow again, and continue with `--run-id`. For a step with a `handler` or a `uses_service`, an `input_map` can build the input the step needs.
 
 A step that needs a handler or adapter `realm agent` was not given also stops the drive with exit code 1, with a line that starts with `⚠`. When it starts a run with `--workflow`, Realm warns about such a step first. The run stays open, in `running`. Handlers and adapters come from the project's extensions ([Project extensions](../project-extensions.md)) or from `--extensions-module`. Here the drive was started with `--extensions-module ./ext.mjs`, and its step `publish` needs a handler `publish_answer` that the module does not have:
 

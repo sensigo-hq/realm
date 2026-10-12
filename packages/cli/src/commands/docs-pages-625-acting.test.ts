@@ -902,7 +902,7 @@ describe(
       );
       claim(
         PAGE,
-        "When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`):",
+        "When the run stops on a step refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses) and nothing else is ready, the last line gives the way out — for a refused `trust` or precondition, correcting the workflow and registering it again is the fix, since the run picks up the corrected definition; for an input its schema refuses, the line names each such step's own way (a new run with params that fit, or a corrected `input_schema`; with `depends_on` the engine gives the step no input, so a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):",
       );
       claim(
         PAGE,
