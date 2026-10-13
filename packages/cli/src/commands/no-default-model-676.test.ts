@@ -421,10 +421,11 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
   // holds its 404 until the cell has seen the agent running, so the agent is alive at the hit by
   // construction; after the 404 the run record holds the timeout the agent was given
   // (`drive_failures.entries[0].declared_per_attempt_ms`). (a) red when listen stops passing the
-  // model, the provider or the timeout to the agent, when the cell stops checking that its agent was
-  // running at the hit, or when it stops waiting for its agent; (b) prints the models asked for,
-  // `aliveAtHit`, the declared timeout, `agentExited` and listen's output (its environment holds only
-  // PATH, HOME and the stand-in keys).
+  // model, the provider or the timeout to the agent, when `aliveAtHit` is read only after the agent
+  // has finished (it then reads false), or when it stops waiting for its agent; (b) prints the
+  // models asked for, `aliveAtHit`, the declared timeout, `agentExited` and listen's output (its
+  // environment holds only PATH, HOME and the stand-in keys); a request that gets no answer within
+  // 20 s fails with listen's output.
   it('E5 the model, the provider and the timeout reach the child: one webhook → the spawned realm agent asks the Anthropic stand-in for m-676 with a 45 s timeout, and exits', async () => {
     const stub = await notFoundStub({ hold: true });
     let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
@@ -451,11 +452,20 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
           OPENAI_BASE_URL: CLOSED_PORT,
         }),
       );
-      const res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-      });
+      let res: Response;
+      try {
+        res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+          signal: AbortSignal.timeout(20_000),
+        });
+      } catch (err) {
+        const e = err as Error;
+        throw new Error(`${e.name}: ${e.message}\nlisten's output:\n${listen.output()}`, {
+          cause: err,
+        });
+      }
       expect(res.status, await res.text()).toBe(202);
       await waitUntil(() => stub.models.includes('m-676'), 20_000);
       // At the hit, the stand-in has not answered, so the agent is waiting on it. The record and the
@@ -489,8 +499,12 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
       // and once listen is killed an exited agent can linger as a zombie that still answers
       // `kill(pid, 0)`. An agent still alive after the bound is killed, so a failing E5 leaves nothing
       // writing under the removed temp folder.
-      pid ??= readOnlyRun()?.agent_pid;
       stub.release();
+      try {
+        pid ??= readOnlyRun()?.agent_pid;
+      } catch {
+        /* keep going */
+      }
       if (pid !== undefined) {
         const agent = pid;
         if (!(await waitUntil(() => !isAlive(agent), 10_000))) {
@@ -505,7 +519,7 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
       stub.server.closeAllConnections();
       await new Promise<void>((r) => stub.server.close(() => r()));
     }
-  }, 70_000);
+  }, 90_000);
 });
 
 describe('the re-attach command repeats the flags the CLI was given (issue #676 review)', () => {

@@ -193,7 +193,7 @@ The first source that has the name gives the value. With `SHOP_TOKEN=tok_from_do
 | `[env, dotenv]` | `tok_from_env`                  | `tok_from_env`    |
 | `[env, dotenv]` | Not set                         | `tok_from_dotenv` |
 
-The `realm` command also loads a file named `.env` in the folder it is started in into its own environment, without replacing variables that are already set. So with `sources: [env]`, a secret in that file is found when `realm` is started in the project's folder, and is not found when it is started elsewhere.
+The `realm` command also loads a file named `.env` in the folder it is started in into its own environment, or the file `DOTENV_CONFIG_PATH` names; a variable that is already set keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set in the environment it starts with (a line in that `.env` does not count; see [Environment and files](environment-and-files.md#the-env-file-in-the-current-folder)). So with `sources: [env]`, a secret in that file is found when `realm` loads that file; otherwise it is found only if its environment already holds it — for a `realm agent` that `realm listen` starts, that is listen's environment, which includes the keys listen loaded at start (from the `.env` of the folder it was started in, or the file `DOTENV_CONFIG_PATH` names).
 
 | Case                                      | Message                                                                                                                                                             |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

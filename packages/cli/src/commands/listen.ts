@@ -894,10 +894,11 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
  *
  * issue #744: Node reports a `cwd` that is missing (ENOENT) or that the process has no permission
  * to enter (EACCES) as an `'error'` event on the next tick, not as a throw; a start that succeeds
- * emits `'spawn'` on the next tick. With no `'error'` listener, that event ended `realm listen`. So this resolves `{pid}`
- * on `'spawn'`, `{error}` on `'error'` or on a synchronous throw (a `cwd` that is a file, ENOTDIR),
- * and keeps its `'error'` listener for the child's whole life: a later error goes to
- * `onLateError`, and never ends listen. `spawnFn` lets a test hand in a real spawn or a fake child.
+ * emits `'spawn'` on the next tick. With no `'error'` listener, that event ended `realm listen`. So
+ * this resolves `{pid}` on `'spawn'`, `{error}` on `'error'` or on a synchronous throw (a `cwd`
+ * that is a file, ENOTDIR), and keeps its `'error'` listener for the child's whole life: a later
+ * error goes to `onLateError`, and never ends listen. `spawnFn` lets a test hand in a real spawn or
+ * a fake child.
  */
 export function defaultSpawnAgent(
   runId: string,
@@ -1053,8 +1054,9 @@ export const listenCommand = new Command('listen')
       // from the environment a process starts with: set in the shell that starts listen, they apply
       // to listen and to every agent; written as a line in the `.env` listen loads, they leave
       // listen's own load alone but apply to every agent, which inherits them. With
-      // `DOTENV_CONFIG_PATH` set to a full path, no workflow folder's `.env` reaches the
-      // environment (a relative path is read from each agent's own folder). By default a
+      // `DOTENV_CONFIG_PATH` set to a full path in the shell that starts listen, no workflow
+      // folder's `.env` reaches the environment (a relative path is read from each agent's own
+      // folder; as a line in listen's `.env`, it applies only to the agents). By default a
       // `${secret:NAME}` in `realm.yaml` is read from the `.env` beside it either way; with `env`
       // listed before `dotenv` in `secrets.sources` (or alone), the agent's environment — listen's,
       // plus what its folder's `.env` added — comes first (#748).
