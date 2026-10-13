@@ -10,9 +10,10 @@
 //    spawn_failed mechanics) so listen-spawned children fail their runs visibly; if it HAS
 //    begun executing, propagate the error with NO run mutation — a failed bystander attach
 //    can never kill a healthy in-flight run.
-import { sealRunLevel, getWorkflowForRun } from '@sensigo/realm';
+import { sealRunLevel, getWorkflowForRun, withFullStop, deriveRunPhase } from '@sensigo/realm';
 import type {
   LoaderWarning,
+  RunRecord,
   RunStore,
   WorkflowRegistrar,
   WorkflowDefinition,
@@ -25,6 +26,30 @@ import { identityDiffers, errorExtensionIdentityEntry } from '../extensions/exte
 
 /** Terminal reason written when extension loading fails before a run has started executing. */
 export const EXTENSIONS_LOAD_FAILED = 'extensions_load_failed';
+
+/**
+ * The refusal `realm agent --run-id` gives a run that has ended — ONE mint, thrown by both carriers:
+ * the pre-attach check ({@link resolveRunAttach}) and the agent loop (`runAgent`), so the two can
+ * never word it differently (framework rule 3). It names why the run ended: its recorded reason,
+ * ended with one mark (decision C37: a reason that already ends a sentence, such as the engine's
+ * `'Workflow completed.'`, keeps its own), or, with no recorded reason, its phase as worked out from
+ * the record, never the stored `run_phase` (PHASE_IS_GENERATED, `eligibility.ts`).
+ *
+ * issue #279 (increment 1, PR-B), design record §6: a run that still carries an undelivered
+ * finalizer is pointed at the recovery verb.
+ */
+export function terminalRunRefusal(runId: string, run: RunRecord): Error {
+  const pendingFinalizerCount = Object.values(run.finalizer_ledger ?? {}).filter(
+    (e) => e.status === 'pending',
+  ).length;
+  const drainHint =
+    pendingFinalizerCount > 0
+      ? ` ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${runId}.`
+      : '';
+  return new Error(
+    `Run ${runId} is already in terminal state: ${withFullStop(run.terminal_reason ?? deriveRunPhase(run))}${drainHint}`,
+  );
+}
 
 export interface ResolveRunAttachDeps {
   store: RunStore;
@@ -67,21 +92,8 @@ export async function resolveRunAttach(
       await deps.store.update({ ...rest, terminal_state: false });
       run = await deps.store.get(runId);
     } else {
-      // Same refusal (and message) the agent loop raises today — thrown BEFORE any
-      // extension code loads.
-      //
-      // issue #279 (increment 1, PR-B), design record §6: point at the recovery verb when the
-      // terminal run this attach targeted still carries an undelivered finalizer.
-      const pendingFinalizerCount = Object.values(run.finalizer_ledger ?? {}).filter(
-        (e) => e.status === 'pending',
-      ).length;
-      const drainHint =
-        pendingFinalizerCount > 0
-          ? ` ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${runId}.`
-          : '';
-      throw new Error(
-        `Run ${runId} is already in terminal state: ${run.terminal_reason ?? run.run_phase}.${drainHint}`,
-      );
+      // Same refusal (and message) the agent loop raises — thrown BEFORE any extension code loads.
+      throw terminalRunRefusal(runId, run);
     }
   }
 

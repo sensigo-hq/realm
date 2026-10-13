@@ -64,6 +64,7 @@ import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
 import { stoppedReasons } from '../commands/run-advance.js';
 import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js';
+import { terminalRunRefusal } from './run-attach.js';
 import {
   answerNotRecordedLine,
   describeProgram,
@@ -435,17 +436,9 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     currentRun = await deps.store.get(options.existingRunId);
     if (currentRun.terminal_state) {
       // issue #279 (increment 1, PR-B), design record §6: point at the recovery verb when the
-      // terminal run this attach targeted still carries an undelivered finalizer.
-      const pendingFinalizerCount = Object.values(currentRun.finalizer_ledger ?? {}).filter(
-        (e) => e.status === 'pending',
-      ).length;
-      const drainHint =
-        pendingFinalizerCount > 0
-          ? ` ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${options.existingRunId}.`
-          : '';
-      throw new Error(
-        `Run ${options.existingRunId} is already in terminal state: ${currentRun.terminal_reason ?? currentRun.run_phase}.${drainHint}`,
-      );
+      // terminal run this attach targeted still carries an undelivered finalizer — the one mint
+      // `resolveRunAttach` throws too.
+      throw terminalRunRefusal(options.existingRunId, currentRun);
     }
     runId = options.existingRunId;
     // in_progress_steps on attach: handled by engine's existing eligibility logic — no restart needed

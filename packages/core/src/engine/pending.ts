@@ -493,9 +493,15 @@ export function stepsThatCannotRun(pending: PendingView): EngineRunnable[] {
 
 const quoteList = (names: readonly string[]): string => names.map((n) => `'${n}'`).join(', ');
 
-/** `text.` — a full stop only when the text does not already end with one (decision C37). */
+/**
+ * Decision C37: `text.` — a full stop only when the text does not already end a sentence. A text ends
+ * a sentence when its last character is a Unicode `Sentence_Terminal` (UAX #29: in ASCII exactly `.`,
+ * `?` and `!`; also `。`, `？`, `！`, `‼`, `‽` and the other scripts' ends) or `…`. Unicode does not class
+ * `…` as terminal, but it ends a truncated text, and a stop after it would print `….`. A stored or typed
+ * reason ends however it ends, so the composer that ends the sentence checks the ending.
+ */
 export function withFullStop(text: string): string {
-  return text.endsWith('.') ? text : `${text}.`;
+  return /[\p{Sentence_Terminal}…]$/u.test(text) ? text : `${text}.`;
 }
 
 /**

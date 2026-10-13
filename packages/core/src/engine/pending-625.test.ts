@@ -48,6 +48,7 @@ import {
   owedCallWords,
   endsWithCommand,
   sentenceEnd,
+  withFullStop,
   type PendingView,
 } from './pending.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -2228,6 +2229,21 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
       [false, 'full stop'],
       [false, 'full stop'],
       [false, 'as printed'],
+    ]);
+  });
+
+  it('E1 (C37): withFullStop adds a full stop only when the text does not already end a sentence', () => {
+    // A sentence end is a Unicode Sentence_Terminal (`.`, `?`, `!`, `。` …) or `…`, which ends a
+    // truncated text. (a) red when a sentence end is not recognised, or a stop is not added after a
+    // plain word; (b) prints the pairs.
+    expect(['a', 'a.', 'a?', 'a!', 'a…', 'a...', 'a。'].map((t) => [t, withFullStop(t)])).toEqual([
+      ['a', 'a.'],
+      ['a.', 'a.'],
+      ['a?', 'a?'],
+      ['a!', 'a!'],
+      ['a…', 'a…'],
+      ['a...', 'a...'],
+      ['a。', 'a。'],
     ]);
   });
 });

@@ -7,7 +7,7 @@ import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
-import { respondCommand } from '../engine/pending.js';
+import { respondCommand, withFullStop } from '../engine/pending.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 import { admitEntry } from '../admission.js';
@@ -592,7 +592,7 @@ export async function getWorkflowForRun(
     if (run.terminal_state === true && opts.terminalOk !== true) {
       const repair = repairClause(false);
       throw copy(
-        `${err.message}. The run is terminal (${deriveRunPhase(run)}); there is nothing to ` +
+        `${withFullStop(err.message)} The run is terminal (${deriveRunPhase(run)}); there is nothing to ` +
           `${opts.verb}.${repair !== undefined ? ` ${repair}` : ''}`,
       );
     }
@@ -645,7 +645,7 @@ export async function getWorkflowForRun(
       case 'STATE_WORKFLOW_UNREADABLE':
         throw copy(
           join(
-            `${err.message}.`,
+            `${withFullStop(err.message)}`,
             terminal
               ? undefined
               : gate === undefined
@@ -659,7 +659,7 @@ export async function getWorkflowForRun(
       case 'RESOURCE_FORMAT_INVALID':
         throw copy(
           join(
-            `${err.message}.`,
+            `${withFullStop(err.message)}`,
             terminal ? undefined : disposalSentence('To end the run:'),
             repairClause(true),
           ),
@@ -669,7 +669,7 @@ export async function getWorkflowForRun(
         // double-remedy — this function's JSDoc); a gate-waiting run is told what comes after it.
         throw copy(
           join(
-            `${err.message}.`,
+            `${withFullStop(err.message)}`,
             terminal ? undefined : disposalSentence('To end the run instead:'),
             terminal || answer === undefined
               ? undefined
