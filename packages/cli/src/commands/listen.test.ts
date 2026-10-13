@@ -2093,7 +2093,7 @@ describe('E2 — early replies reach the sender', () => {
     //     or the sender's error.
     expect(got).toEqual({
       status: 413,
-      body: { error: 'payload_too_large' },
+      body: { error: 'payload_too_large', max_body_bytes: 100 },
       connection: 'close',
     });
   }, 15_000);
@@ -2121,7 +2121,10 @@ describe('E2 — early replies reach the sender', () => {
     // (a) red when the sender sees the connection reset (ECONNRESET/EPIPE) instead of the reply:
     //     a sender that writes its whole body before reading needs the server to keep reading
     //     after the reply; (b) prints the status and body, or the sender's error code.
-    expect(got).toEqual({ status: 413, body: JSON.stringify({ error: 'payload_too_large' }) });
+    expect(got).toEqual({
+      status: 413,
+      body: JSON.stringify({ error: 'payload_too_large', max_body_bytes: 100 }),
+    });
   }, 30_000);
 
   it('C5 — fetch with a streamed 50 MiB body gets 413 with its JSON', async () => {
@@ -2140,7 +2143,10 @@ describe('E2 — early replies reach the sender', () => {
     );
     // (a) red when the streamed sender sees the connection end before the reply; (b) prints the
     //     status and body, or the sender's error.
-    expect(got).toEqual({ status: 413, body: JSON.stringify({ error: 'payload_too_large' }) });
+    expect(got).toEqual({
+      status: 413,
+      body: JSON.stringify({ error: 'payload_too_large', max_body_bytes: 100 }),
+    });
   }, 30_000);
 
   it('C6 — a body arriving 1 byte every 300 ms gets 408 with its JSON, and the socket is closed within the linger', async () => {
@@ -2157,7 +2163,7 @@ describe('E2 — early replies reach the sender', () => {
     }).toEqual({
       status: 408,
       connection: 'close',
-      body: { error: 'request_timeout' },
+      body: { error: 'request_timeout', body_timeout_ms: 400 },
       closedInTime: true,
       after: expect.any(Number),
     });
@@ -2540,4 +2546,172 @@ describe('E2 — early replies reach the sender', () => {
       uploaderAfter: expect.any(Number),
     });
   }, 15_000);
+
+  // ── Part B: the limits at listen's edge ─────────────────────────────────────────────────────
+
+  it('C2 — a body declared over the limit is refused unread, and no 100 Continue is sent', async () => {
+    const { port } = await serve();
+    const s = rawSender(port, headOf('POST', '/wf', 5000, 'Expect: 100-continue\r\n'));
+    await waitFor(() => s.state.statusAt !== undefined, 1_000);
+    await sleep(100);
+    // (a) red when the declared size is not checked before reading (Node or the handler invites the
+    //     body, or the refusal comes only once the body is read or times out), when Node sends
+    //     `100 Continue` on its own, or the 413 does not name its limit; (b) prints how the reply
+    //     starts, whether a 100 was sent, and the body.
+    expect({
+      startsWith413: s.state.raw.startsWith('HTTP/1.1 413'),
+      sent100: s.state.raw.includes('100 Continue'),
+      body: parse(s.state.raw).body,
+    }).toEqual({
+      startsWith413: true,
+      sent100: false,
+      body: { error: 'payload_too_large', max_body_bytes: 100 },
+    });
+  }, 15_000);
+
+  it('C3 — a request that passes the checks is still invited with 100 Continue, and accepted', async () => {
+    const deps = makeDeps();
+    const { port } = await serve({}, deps);
+    const sock = netConnect({ host: '127.0.0.1', port, allowHalfOpen: true });
+    onTestFinished(() => {
+      sock.destroy();
+    });
+    let raw = '';
+    sock.on('data', (d: Buffer) => {
+      raw += d.toString('latin1');
+    });
+    sock.on('error', () => {});
+    sock.on('connect', () => {
+      sock.write(headOf('POST', '/wf', 2, `Expect: 100-continue\r\nAuthorization: ${SECRET}\r\n`));
+    });
+    const invited = await waitFor(() => raw.includes('HTTP/1.1 100 Continue'), 1_000);
+    sock.write('{}');
+    await waitFor(() => statuses(raw).length >= 2, 3_000);
+    const all = statuses(raw);
+    // (a) red when the 100 is never sent to a request that passes the checks (the body is then
+    //     never invited), or the request is not accepted; (b) prints whether the 100 arrived, the
+    //     final status and the spawn count.
+    expect({
+      invited,
+      finalStatus: all[all.length - 1],
+      spawns: deps.spawnAgent.mock.calls.length,
+    }).toEqual({ invited: true, finalStatus: 202, spawns: 1 });
+  }, 15_000);
+
+  it('C11 — headers that never end are closed within the body timeout, with a 408', async () => {
+    const { port, closedAt } = await serve();
+    const started = Date.now();
+    // It keeps sending, so the connection is never idle: only the header timeout can close it.
+    const s = rawSender(port, 'POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\n', 'X', 300);
+    await waitFor(() => s.state.localPort !== undefined, 2_000);
+    await waitFor(() => closedAt.has(s.state.localPort!), 400 + 1_000 + 1_500);
+    const closed = closedAt.get(s.state.localPort!);
+    const afterStart = closed === undefined ? 'still open' : closed - started;
+    // (a) red when the server applies no header timeout (Node's default holds slow headers for
+    //     about 90 s); (b) prints the close time after the sender started, and how the reply starts.
+    expect({
+      closedInTime: typeof afterStart === 'number' && afterStart <= 400 + 1_000 + 1_500,
+      afterStart,
+      replyIs408: s.state.raw === '' || s.state.raw.startsWith('HTTP/1.1 408'),
+    }).toEqual({ closedInTime: true, afterStart: expect.any(Number), replyIs408: true });
+  }, 15_000);
+
+  it("C17 — the backstop never cuts a 408's linger", async () => {
+    const { port, closedAt } = await serve({ lingerMs: 1_500 });
+    const s = rawSender(port, headOf('POST', '/wf', 10), 'a', 300);
+    const after = await closedAfter(closedAt, s.state, 1_500 + 1_500);
+    // (a) red when the whole-request backstop fires before listen's body timer and the linger have
+    //     run (a `requestTimeout` equal to the body timeout closes the socket about 1 s in); (b)
+    //     prints the status and the close time after the 408.
+    expect({
+      status: parse(s.state.raw).status,
+      lingered: typeof after === 'number' && after >= 1_300 && after <= 1_500 + 1_500,
+      after,
+    }).toEqual({ status: 408, lingered: true, after: expect.any(Number) });
+  }, 15_000);
+
+  it('C18 — a connection idle while its request is handled is closed by the backstop', async () => {
+    const { deps } = gatedSpawnDeps();
+    const { port, closedAt } = await serve({}, deps);
+    const s = rawSender(port, VALID_ONE);
+    await waitFor(() => deps.spawnAgent.mock.calls.length >= 1, 3_000);
+    const calledAt = Date.now();
+    const handled = deps.spawnAgent.mock.calls.length === 1;
+    await waitFor(() => closedAt.has(s.state.localPort!), 4_000);
+    const closed = closedAt.get(s.state.localPort!);
+    const after = closed === undefined ? 'still open' : closed - calledAt;
+    // The backstop here is 400 × 2 + 500 + 1000 = 2300 ms.
+    // (a) red when no idle timeout is set on the server (the connection is held while the handler
+    //     waits); (b) prints whether the request was being handled and the close time after that.
+    expect({
+      handled,
+      closedByBackstop: typeof after === 'number' && after >= 2_000 && after <= 3_800,
+      after,
+    }).toEqual({ handled: true, closedByBackstop: true, after: expect.any(Number) });
+  }, 15_000);
+
+  it('C19 — an HTTP/1.0 sender that keeps its connection gets both replies', async () => {
+    const { port } = await serve({}, slowSpawnDeps());
+    const s = rawSender(
+      port,
+      `POST /wf HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n` +
+        `Content-Type: application/json\r\nAuthorization: ${SECRET}\r\nContent-Length: 2\r\n\r\n{}` +
+        `GET /wf HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n`,
+    );
+    await waitFor(() => statuses(s.state.raw).length >= 2, 3_000);
+    await sleep(200);
+    // (a) red when a reply carries no length (Node then ends the connection after it, and the
+    //     queued refusal is never sent); (b) prints the statuses.
+    expect({ statuses: statuses(s.state.raw) }).toEqual({ statuses: [202, 405] });
+  }, 15_000);
+
+  it.each([
+    ['405', { method: 'GET' }, {}, { path: '/wf', status: 405, error: 'method_not_allowed' }],
+    ['403', { url: '/nope?token=s3cret' }, {}, { path: '/nope', status: 403, error: 'forbidden' }],
+    ['503', {}, { maxConcurrent: 0 }, { path: '/wf', status: 503, error: 'busy' }],
+    [
+      '413, declared',
+      { headers: { 'content-length': '5000' } },
+      { maxBodyBytes: 4 },
+      { path: '/wf', status: 413, error: 'payload_too_large', max_body_bytes: 4 },
+    ],
+    [
+      '413, read',
+      { body: 'way too long' },
+      { maxBodyBytes: 4 },
+      { path: '/wf', status: 413, error: 'payload_too_large', max_body_bytes: 4 },
+    ],
+    [
+      '408',
+      { body: '{}', noEnd: true },
+      { bodyTimeoutMs: 20 },
+      { path: '/wf', status: 408, error: 'request_timeout', body_timeout_ms: 20 },
+    ],
+    ['400', { noEnd: true }, {}, { path: '/wf', status: 400, error: 'bad_request' }],
+  ] as const)(
+    'C20 — the %s refusal logs one webhook: refused line',
+    async (row, reqOpts, options, data) => {
+      const warns: unknown[][] = [];
+      const logger: Logger = { ...silentLogger, warn: (...args: unknown[]) => warns.push(args) };
+      const handler = makeListenHandler(
+        routesFor(wf(SHARED_SECRET_TRIGGER)),
+        makeDeps({ logger }),
+        options,
+      );
+      const req = makeReq({ method: 'POST', ...reqOpts });
+      const done = handler(req, makeRes());
+      if (row === '400') {
+        await sleep(5);
+        req.emit('error', new Error('broken body'));
+      }
+      await done;
+      // (a) red when a refusal logs no line, logs twice, or logs the query string (the 403 row:
+      //     `path` is the pathname only), or a limit field is missing; (b) prints the refusal lines
+      //     logged and whether the query's token appears in any of them.
+      expect({
+        lines: warns.filter((w) => w[0] === 'webhook: refused'),
+        queryLogged: JSON.stringify(warns).includes('s3cret'),
+      }).toEqual({ lines: [['webhook: refused', data]], queryLogged: false });
+    },
+  );
 });
