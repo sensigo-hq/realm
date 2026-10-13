@@ -788,12 +788,13 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
 - `realm listen` now delivers its `413` (body too large) and `408` (body too slow) replies. Until
   now it closed the connection first, so the sender saw only a dropped connection. Every reply sent
   before the body is read in full (`405`, `403`, `503`, `413`, `408`) now closes the connection
-  after reading and discarding at most 2 seconds of what the sender is still sending, so the sender
-  receives it (up to `--max-concurrent` such connections at once; beyond that, a refused connection
-  is closed at once, and a sender still uploading may then see a dropped connection instead).
-  Before, a `405`, `403` or `503` let the sender go on uploading its whole body. A request sent on
-  the same connection after a refused one is no longer handled: the connection is closed at once,
-  and a reply not yet sent on it is lost (#744).
+  after reading and discarding at most 2 seconds of what the sender is still sending, counted from
+  when the reply is sent, so the sender receives it (up to `--max-concurrent` such connections at
+  once; beyond that, a refused connection is closed at once, and a sender still uploading may then
+  see a dropped connection instead). Before, a `405`, `403` or `503` let the sender go on uploading
+  its whole body. A request sent on the same connection after a refused one is no longer handled;
+  the replies to the requests before it are still sent, unless more than 32 such requests follow
+  (#744).
 - **An agent step, then a handler step that takes its output through `input_map` and declares an
   `input_schema`, now runs (issue #688).** It was refused every time. Called by name, such a step's
   refusal tells an agent `report_to_user`, and when nothing else can run it carries the way out:

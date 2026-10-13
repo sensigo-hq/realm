@@ -2002,6 +2002,8 @@ describe('E2 — early replies reach the sender', () => {
       raw: '',
       localPort: undefined as number | undefined,
       statusAt: undefined as number | undefined,
+      /** One arrival time per status line received, in order. */
+      statusTimes: [] as number[],
       endAt: undefined as number | undefined,
       error: undefined as string | undefined,
     };
@@ -2025,6 +2027,8 @@ describe('E2 — early replies reach the sender', () => {
       if (state.statusAt === undefined && state.raw.startsWith('HTTP/1.1 ')) {
         state.statusAt = Date.now();
       }
+      const lines = state.raw.match(/HTTP\/1\.1 \d{3}/g)?.length ?? 0;
+      while (state.statusTimes.length < lines) state.statusTimes.push(Date.now());
     });
     sock.on('end', () => {
       state.endAt = Date.now();
@@ -2326,10 +2330,31 @@ describe('E2 — early replies reach the sender', () => {
         return { pid: 4242 };
       }),
     });
-  const VALID_THEN_GET =
+  /** A request the route accepts (202). */
+  const VALID_ONE =
     `POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
-    `Authorization: ${SECRET}\r\nContent-Length: 2\r\n\r\n{}` +
-    `GET /wf HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`;
+    `Authorization: ${SECRET}\r\nContent-Length: 2\r\n\r\n{}`;
+  const VALID_THEN_GET = VALID_ONE + `GET /wf HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`;
+  /** A tiny request. It carries `Host`: without it, Node answers a 400 itself and never hands it over. */
+  const TINY = `GET /x HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`;
+  /**
+   * A spawn that waits for the test to open its gate, so the order of events is fixed whatever the
+   * machine's speed. The gate also opens when the test finishes, so no test hangs.
+   */
+  const gatedSpawnDeps = () => {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    onTestFinished(() => open());
+    const deps = makeDeps({
+      spawnAgent: vi.fn(async (): Promise<SpawnResult> => {
+        await gate;
+        return { pid: 4242 };
+      }),
+    });
+    return { deps, open: () => open() };
+  };
   /** Every status line the sender received, in order. */
   const statuses = (raw: string): number[] =>
     [...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map((m) => Number(m[1]));
@@ -2339,14 +2364,28 @@ describe('E2 — early replies reach the sender', () => {
     const s = rawSender(port, VALID_THEN_GET);
     const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
     await waitFor(() => statuses(s.state.raw).length >= 2, 1_000);
+    // The server keeps the socket at least `lingerMs` − 200 ms after the 405: the queued refusal
+    // took the free linger slot when it was written.
+    const at405 = s.state.statusTimes[1];
+    const closed = closedAt.get(s.state.localPort!);
+    const after405 = at405 === undefined || closed === undefined ? 'unknown' : closed - at405;
     // (a) red when the linger timer starts before the queued refusal is written (the socket is
-    //     destroyed with the 202 still unwritten), or when the queued refusal never closes the
-    //     socket; (b) prints the statuses received and the close time after the first status line.
+    //     destroyed with the 202 still unwritten), when the queued refusal never closes the socket,
+    //     or when it closes the way Node does instead of lingering; (b) prints the statuses received,
+    //     the close time after the first status line, and the close time after the 405.
     expect({
       statuses: statuses(s.state.raw),
       closedInTime: typeof after === 'number' && after <= LINGER + 1_500,
+      lingeredAfter405: typeof after405 === 'number' && after405 >= LINGER - 200,
       after,
-    }).toEqual({ statuses: [202, 405], closedInTime: true, after: expect.any(Number) });
+      after405,
+    }).toEqual({
+      statuses: [202, 405],
+      closedInTime: true,
+      lingeredAfter405: true,
+      after: expect.any(Number),
+      after405: expect.any(Number),
+    });
   }, 15_000);
 
   it('C15b — a queued refusal holds no linger slot while it waits', async () => {
@@ -2370,5 +2409,135 @@ describe('E2 — early replies reach the sender', () => {
       lingered: typeof after === 'number' && after >= LINGER - 200,
       after,
     }).toEqual({ status: 403, pairPendingAt403: true, lingered: true, after: expect.any(Number) });
+  }, 15_000);
+
+  it('C14 — a request pipelined after a queued refusal: the earlier replies still arrive, in order', async () => {
+    const { port, closedAt, deps } = await serve({}, slowSpawnDeps());
+    const s = rawSender(port, VALID_THEN_GET + VALID_ONE);
+    await waitFor(() => s.state.statusTimes.length >= 2, 3_000);
+    await waitFor(() => closedAt.has(s.state.localPort!), LINGER + 1_500);
+    const at405 = s.state.statusTimes[1];
+    const closed = closedAt.get(s.state.localPort!);
+    const after405 = at405 === undefined || closed === undefined ? 'unknown' : closed - at405;
+    // (a) red when the request after the refusal destroys the socket while the 202 and the 405 are
+    //     still unwritten (no reply arrives), when it is handled (a second spawn), or when the socket
+    //     is not closed within the linger after the 405; (b) prints the statuses, the spawn count and
+    //     the close time after the 405.
+    expect({
+      statuses: statuses(s.state.raw),
+      spawns: deps.spawnAgent.mock.calls.length,
+      closedInTime: typeof after405 === 'number' && after405 <= LINGER + 1_500,
+      after405,
+    }).toEqual({
+      statuses: [202, 405],
+      spawns: 1,
+      closedInTime: true,
+      after405: expect.any(Number),
+    });
+  }, 15_000);
+
+  it('C14b — up to 32 requests after a queued refusal are ignored, and the earlier replies arrive', async () => {
+    const { port } = await serve({}, slowSpawnDeps());
+    const s = rawSender(port, VALID_THEN_GET + TINY.repeat(32));
+    await waitFor(() => s.state.statusTimes.length >= 2, 3_000);
+    await sleep(200);
+    // (a) red when a request after the refusal destroys the socket before the 32nd (a cap under 32,
+    //     or no ignoring at all), or one of them is answered; (b) prints the statuses.
+    expect({ statuses: statuses(s.state.raw) }).toEqual({ statuses: [202, 405] });
+  }, 15_000);
+
+  it('C16 — past 32 requests after a queued refusal, the socket is closed at once', async () => {
+    const { port, closedAt } = await serve({}, slowSpawnDeps());
+    const started = Date.now();
+    const s = rawSender(port, VALID_THEN_GET + TINY.repeat(40));
+    await waitFor(() => s.state.localPort !== undefined, 2_000);
+    await waitFor(() => closedAt.has(s.state.localPort!), 1_000);
+    const closed = closedAt.get(s.state.localPort!);
+    const afterStart = closed === undefined ? 'still open' : closed - started;
+    // Long enough for the 202 (`LINGER` + 300 ms) to have been written, had the socket survived.
+    await sleep(LINGER + 600);
+    // (a) red when the ignoring has no cap (the socket stays open until the replies are written and
+    //     the linger ends); (b) prints the close time after the sender started and the statuses
+    //     (none: a reply not yet sent is lost past the cap, as the docs say).
+    expect({
+      closedAtOnce: typeof afterStart === 'number' && afterStart <= 200,
+      afterStart,
+      statuses: statuses(s.state.raw),
+    }).toEqual({ closedAtOnce: true, afterStart: expect.any(Number), statuses: [] });
+  }, 15_000);
+
+  it('C15c — a queued refusal written while the one linger slot is taken closes the way Node does', async () => {
+    const { deps, open } = gatedSpawnDeps();
+    const { port, closedAt } = await serve({ maxConcurrent: 1 }, deps);
+    const pair = rawSender(port, VALID_THEN_GET);
+    await waitFor(() => deps.spawnAgent.mock.calls.length >= 1, 3_000);
+    const uploader = rawSender(
+      port,
+      headOf('POST', '/nope', 1_000_000),
+      Buffer.alloc(1024, 97),
+      50,
+    );
+    await waitFor(() => uploader.state.statusAt !== undefined, 3_000);
+    open();
+    await waitFor(() => pair.state.statusTimes.length >= 2, 3_000);
+    await waitFor(() => closedAt.has(pair.state.localPort!), LINGER + 1_500);
+    const at405 = pair.state.statusTimes[1];
+    const uploaderClosed = closedAt.get(uploader.state.localPort!);
+    const uploaderOpenAt405 =
+      at405 !== undefined && (uploaderClosed === undefined || uploaderClosed > at405);
+    const last = pair.state.statusTimes[pair.state.statusTimes.length - 1];
+    const pairClosed = closedAt.get(pair.state.localPort!);
+    const pairAfter =
+      last === undefined || pairClosed === undefined ? 'unknown' : pairClosed - last;
+    // (a) red when the queued refusal lingers although the one slot is taken (its socket then closes
+    //     only at the end of the linger), or the uploader no longer held the slot when the 405 was
+    //     written; (b) prints the statuses, whether the uploader was open then, and the pair's close
+    //     time after its last status line.
+    expect({
+      statuses: statuses(pair.state.raw),
+      uploaderOpenAt405,
+      closedLikeNode: typeof pairAfter === 'number' && pairAfter < LINGER / 2,
+      pairAfter,
+    }).toEqual({
+      statuses: [202, 405],
+      uploaderOpenAt405: true,
+      closedLikeNode: true,
+      pairAfter: expect.any(Number),
+    });
+  }, 15_000);
+
+  it('C15d — a queued refusal takes the free linger slot when it is written, and gives it back', async () => {
+    const { deps, open } = gatedSpawnDeps();
+    const { port, closedAt } = await serve({ maxConcurrent: 1 }, deps);
+    const pair = rawSender(port, VALID_THEN_GET);
+    await waitFor(() => deps.spawnAgent.mock.calls.length >= 1, 3_000);
+    open();
+    await waitFor(() => pair.state.statusTimes.length >= 2, 3_000);
+    await waitFor(() => closedAt.has(pair.state.localPort!), LINGER + 1_500);
+    const at405 = pair.state.statusTimes[1];
+    const pairClosed = closedAt.get(pair.state.localPort!);
+    const pairAfter405 =
+      at405 === undefined || pairClosed === undefined ? 'unknown' : pairClosed - at405;
+    const uploader = rawSender(
+      port,
+      headOf('POST', '/nope', 1_000_000),
+      Buffer.alloc(1024, 97),
+      50,
+    );
+    const uploaderAfter = await closedAfter(closedAt, uploader.state, LINGER + 1_500);
+    // (a) red when the queued refusal closes the way Node does although the slot is free (i), or its
+    //     socket's close does not give the slot back (ii: the fresh uploader is then closed at
+    //     once); (b) prints both close times.
+    expect({
+      pairLingered: typeof pairAfter405 === 'number' && pairAfter405 >= LINGER - 200,
+      uploaderLingered: typeof uploaderAfter === 'number' && uploaderAfter >= LINGER - 200,
+      pairAfter405,
+      uploaderAfter,
+    }).toEqual({
+      pairLingered: true,
+      uploaderLingered: true,
+      pairAfter405: expect.any(Number),
+      uploaderAfter: expect.any(Number),
+    });
   }, 15_000);
 });

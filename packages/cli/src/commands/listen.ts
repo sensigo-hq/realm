@@ -10,7 +10,8 @@
 //   - body cap + timeout enforced BEFORE any verification work (fixes the legacy webhook DoS)
 //   - --max-concurrent 503 floor (the only fail-closed DoS floor independent of proxy hygiene)
 //   - a refusal before the body is read closes in stages (#744 E2): `Connection: close`, at most
-//     `lingerMs` (2 s) of reading and discarding, at most --max-concurrent such sockets at once
+//     `lingerMs` (2 s) of reading and discarding after the refusal is sent, at most
+//     --max-concurrent such sockets at once
 //   - SIGTERM/SIGINT → server.close(); the agent child is detached and survives.
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Socket } from 'node:net';
@@ -114,6 +115,9 @@ const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
   bodyTimeoutMs: 5000,
   lingerMs: 2000,
 };
+
+/** #744 E2: requests ignored on one connection after its unsent refusal, before it is destroyed. */
+const MAX_IGNORED_AFTER_REFUSAL = 32;
 
 /**
  * Normalises raw Node request headers into a Record<string,string> with lowercased keys and a null
@@ -279,8 +283,9 @@ export function makeListenHandler(
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const opts: HandlerOptions = { ...DEFAULT_HANDLER_OPTIONS, ...options };
   let inFlight = 0;
-  // #744 E2: every socket closing after a refusal, and how many of them linger (close in stages).
-  const closingSockets = new WeakSet<Socket>();
+  // #744 E2: every socket closing after a refusal, mapped to that refusal's reply and the number of
+  // later requests ignored on it; and how many of them linger (close in stages).
+  const closingSockets = new WeakMap<Socket, { refusal: ServerResponse; ignored: number }>();
   let lingeringCount = 0;
 
   /**
@@ -300,17 +305,19 @@ export function makeListenHandler(
     payload: Record<string, unknown>,
   ): void => {
     const socket = req.socket as Socket | undefined;
-    // Marked first, whether or not it lingers: the handler's guard then refuses every request sent
+    // Recorded first, whether or not it lingers: the handler's guard then handles no request sent
     // on this connection after this one.
-    if (socket !== undefined) closingSockets.add(socket);
+    if (socket !== undefined) closingSockets.set(socket, { refusal: res, ignored: 0 });
     // `writeHead`, not `setHeader`: the header must be set where the reply is written.
     res.writeHead(status, { 'Content-Type': 'application/json', Connection: 'close' });
     req.resume();
     if (socket !== undefined && !socket.destroyed && res.socket === null) {
       // The reply is queued behind an earlier reply on this connection (Node's queue,
-      // `_http_server.js:1228-1232` @ v24.21.0). It takes no linger slot while it waits: Node
-      // calls `destroySoon()` once this refusal has been written, and only then does it take a
-      // slot, if one is free, and start the timer; otherwise it closes the way Node does.
+      // `_http_server.js:1228-1232` @ v24.21.0). It takes no linger slot while it waits. Node calls
+      // `destroySoon()` once a reply that ends the connection has been written: normally this
+      // refusal; or an earlier reply that itself ends the connection (an HTTP/1.0 reply without a
+      // length), and then this refusal is never sent. Only then does it take a slot, if one is
+      // free, and start the timer; otherwise it closes the way Node does (#744).
       socket.destroySoon = () => {
         if (lingeringCount < opts.maxConcurrent) {
           lingeringCount += 1;
@@ -348,11 +355,29 @@ export function makeListenHandler(
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     // #744 E2: a request sent on a connection that is closing after a refusal is not handled (RFC
     // 9112 §9.6 allows no further request after a close; Node still hands a pipelined one to the
-    // handler). The socket is destroyed at once, which keeps that bounded: a request that gets no
-    // reply never triggers Node's pipelining backpressure, so ignoring it would let one connection
-    // create requests without limit (#744). A reply not yet written on that connection is lost.
-    if (closingSockets.has(req.socket)) {
-      req.socket.destroy();
+    // handler). When nothing is pending the socket is destroyed at once. Nothing is pending once
+    // the refusal is written, or once it holds the socket with all its bytes handed to the kernel:
+    // `'finish'` comes a tick after that, so a request in the same read still sees
+    // `writableFinished` false. While a reply ahead of the refusal is still unwritten, the request
+    // is ignored instead (read, no reply): the replies before the refusal, and the refusal itself,
+    // are then written in order, and the connection closes at the end of the refusal's linger, or
+    // at once when no linger slot is free. Past `MAX_IGNORED_AFTER_REFUSAL` such requests the
+    // socket is destroyed: that bounds the work one connection can make listen hold, since
+    // ignoring without a bound let one connection create requests without limit (#744).
+    const closing = closingSockets.get(req.socket);
+    if (closing !== undefined) {
+      const { refusal } = closing;
+      if (
+        refusal.writableFinished ||
+        (refusal.socket === req.socket && req.socket.writableLength === 0)
+      ) {
+        req.socket.destroy();
+      } else if (closing.ignored < MAX_IGNORED_AFTER_REFUSAL) {
+        closing.ignored += 1;
+        req.resume();
+      } else {
+        req.socket.destroy();
+      }
       return;
     }
 
