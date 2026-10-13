@@ -208,7 +208,7 @@ It does not start in these cases:
 | No `--model` and no `--provider` (added in 0.46.0)            | `Error: --model is required: realm has no default model, and realm listen starts realm agent for every run. Each one picks its provider from the API key it finds (OpenAI when both are set; choose one with --provider). Anthropic lists its models at https://platform.claude.com/docs/en/models/overview; OpenAI at https://developers.openai.com/api/docs/models. Nothing was started.` |
 | `--provider` is not `openai` or `anthropic` (added in 0.46.0) | `error: option '--provider <provider>' argument 'antropic' is invalid. --provider must be openai or anthropic.`                                                                                                                                                                                                                                                                             |
 
-The other flags are not checked. `--dedup-store` with a value other than `memory` means `file`. `--log-level` with an unknown value logs everything. `--max-concurrent` with a value that is not a number applies no limit.
+The other flags are not checked. `--dedup-store` with a value other than `memory` means `file`. `--log-level` with an unknown value logs everything. `--max-concurrent` with a value that is not a number applies no limit, and every refused connection is then closed at once.
 
 ## See also
 

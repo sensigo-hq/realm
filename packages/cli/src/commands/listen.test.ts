@@ -2168,14 +2168,17 @@ describe('E2 — early replies reach the sender', () => {
       const { port, closedAt } = await serve();
       const s = rawSender(port, headOf(method, path, 1_000_000), Buffer.alloc(1024, 97), 50);
       const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
-      // (a) red when the reply is not sent, or the server keeps the socket open past `lingerMs` +
+      // (a) red when the reply is not sent, the server keeps the socket open past `lingerMs` +
       //     1500 ms while the sender keeps sending (Node would read the whole body over a kept-alive
-      //     connection); (b) prints the status and the close time (or "still open after …").
+      //     connection), or the server closes it before `lingerMs` − 200 ms (no linger: a sender
+      //     still writing may see a reset instead of the reply); (b) prints the status and the
+      //     close time (or "still open after …").
       expect({ status: parse(s.state.raw).status, after }).toEqual({
         status,
         after: expect.any(Number),
       });
       expect(after as number).toBeLessThanOrEqual(LINGER + 1_500);
+      expect(after as number).toBeGreaterThanOrEqual(LINGER - 200);
     },
     15_000,
   );
@@ -2188,15 +2191,16 @@ describe('E2 — early replies reach the sender', () => {
     await sleep(200);
     const s = rawSender(port, headOf('POST', '/wf', 1_000_000), Buffer.alloc(1024, 97), 50);
     const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
-    // (a) red when the 503 is not sent, or its socket stays open past `lingerMs` + 1500 ms;
-    //     (b) prints the second request's status and close time, and whether the first is still
-    //     waiting (no reply).
+    // (a) red when the 503 is not sent, its socket stays open past `lingerMs` + 1500 ms, or it
+    //     closes before `lingerMs` − 200 ms (no linger); (b) prints the second request's status and
+    //     close time, and whether the first is still waiting (no reply).
     expect({
       status: parse(s.state.raw).status,
       after,
       firstStillWaiting: held.state.statusAt === undefined,
     }).toEqual({ status: 503, after: expect.any(Number), firstStillWaiting: true });
     expect(after as number).toBeLessThanOrEqual(LINGER + 1_500);
+    expect(after as number).toBeGreaterThanOrEqual(LINGER - 200);
   }, 15_000);
 
   it('C10 — at most --max-concurrent connections linger: the first lingers, the second is closed at once', async () => {
@@ -2250,27 +2254,121 @@ describe('E2 — early replies reach the sender', () => {
 
   it('C13 — a request pipelined after a refusal is never handed to a run; alone, it is', async () => {
     const deps = makeDeps();
-    const { port } = await serve({}, deps);
+    const { port, closedAt } = await serve({}, deps);
     const valid =
       `POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
       `Authorization: ${SECRET}\r\nContent-Length: 2\r\n\r\n{}`;
     const s = rawSender(port, headOf('POST', '/nope', 2) + '{}' + valid);
     await waitFor(() => s.state.statusAt !== undefined, 3_000);
     await sleep(LINGER + 300);
+    // The sender pipelines at once, so the guarded request follows the 403's status line directly:
+    // the guard closes the socket at once rather than leaving it to the linger.
+    const closedMs = closedAt.has(s.state.localPort!)
+      ? closedAt.get(s.state.localPort!)! - s.state.statusAt!
+      : 'still open';
     const pipelined = {
       status: parse(s.state.raw).status,
       spawns: deps.spawnAgent.mock.calls.length,
+      closedAtOnce: typeof closedMs === 'number' && closedMs <= 200,
     };
     // The positive control: the same request alone, on a new socket.
     const alone = rawSender(port, valid);
     await waitFor(() => alone.state.statusAt !== undefined, 3_000);
     await sleep(100);
     // (a) red when the pipelined request reaches the pipeline (a run is created and an agent is
-    //     spawned), or the control is refused; (b) prints the first reply's status, the spawn count
-    //     after it, and the control's status and spawn count.
+    //     spawned), when the guard leaves the socket open instead of closing it within 200 ms of
+    //     the 403, or when the control is refused; (b) prints the first reply's status, the spawn
+    //     count after it, whether the socket closed at once and when, and the control's status and
+    //     spawn count.
     expect({
       pipelined,
+      closedMs,
       alone: { status: parse(alone.state.raw).status, spawns: deps.spawnAgent.mock.calls.length },
-    }).toEqual({ pipelined: { status: 403, spawns: 0 }, alone: { status: 202, spawns: 1 } });
+    }).toEqual({
+      pipelined: { status: 403, spawns: 0, closedAtOnce: true },
+      closedMs: expect.anything(),
+      alone: { status: 202, spawns: 1 },
+    });
+  }, 15_000);
+
+  it('C13b — at the cap, a request pipelined after a refusal is not handled either', async () => {
+    const deps = makeDeps();
+    const { port, closedAt } = await serve({ maxConcurrent: 1 }, deps);
+    // The one linger slot is held by a sender to an unknown address that keeps uploading.
+    const first = rawSender(port, headOf('POST', '/nope', 1_000_000), Buffer.alloc(1024, 97), 50);
+    await waitFor(() => first.state.statusAt !== undefined, 3_000);
+    const valid =
+      `POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
+      `Authorization: ${SECRET}\r\nContent-Length: 2\r\n\r\n{}`;
+    const second = rawSender(port, headOf('POST', '/nope', 2) + '{}' + valid);
+    await waitFor(() => second.state.statusAt !== undefined, 3_000);
+    // The cap held when the second refusal was sent: the first socket was still open.
+    const firstOpenAt403 =
+      first.state.localPort !== undefined &&
+      second.state.statusAt !== undefined &&
+      (closedAt.get(first.state.localPort) ?? Infinity) > second.state.statusAt;
+    await sleep(LINGER + 300);
+    // (a) red when a refused socket that gets no linger slot is not guarded (the pipelined request
+    //     starts a run), or the cap was not full when the second refusal was sent; (b) prints the
+    //     second reply's status, whether the first socket was still open then, and the spawn count.
+    expect({
+      status: parse(second.state.raw).status,
+      firstOpenAt403,
+      spawns: deps.spawnAgent.mock.calls.length,
+    }).toEqual({ status: 403, firstOpenAt403: true, spawns: 0 });
+  }, 15_000);
+
+  /** A spawn that answers `LINGER` + 300 ms later, so an accepted request's 202 comes late. */
+  const slowSpawnDeps = () =>
+    makeDeps({
+      spawnAgent: vi.fn(async (): Promise<SpawnResult> => {
+        await sleep(LINGER + 300);
+        return { pid: 4242 };
+      }),
+    });
+  const VALID_THEN_GET =
+    `POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
+    `Authorization: ${SECRET}\r\nContent-Length: 2\r\n\r\n{}` +
+    `GET /wf HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`;
+  /** Every status line the sender received, in order. */
+  const statuses = (raw: string): number[] =>
+    [...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map((m) => Number(m[1]));
+
+  it('C15 — a refusal queued behind a slow accepted request: both replies arrive, then the socket closes', async () => {
+    const { port, closedAt } = await serve({}, slowSpawnDeps());
+    const s = rawSender(port, VALID_THEN_GET);
+    const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+    await waitFor(() => statuses(s.state.raw).length >= 2, 1_000);
+    // (a) red when the linger timer starts before the queued refusal is written (the socket is
+    //     destroyed with the 202 still unwritten), or when the queued refusal never closes the
+    //     socket; (b) prints the statuses received and the close time after the first status line.
+    expect({
+      statuses: statuses(s.state.raw),
+      closedInTime: typeof after === 'number' && after <= LINGER + 1_500,
+      after,
+    }).toEqual({ statuses: [202, 405], closedInTime: true, after: expect.any(Number) });
+  }, 15_000);
+
+  it('C15b — a queued refusal holds no linger slot while it waits', async () => {
+    const { port, closedAt } = await serve({ maxConcurrent: 1 }, slowSpawnDeps());
+    const pair = rawSender(port, VALID_THEN_GET);
+    await waitFor(() => pair.state.localPort !== undefined, 2_000);
+    await sleep(100);
+    // While the 202 is still pending, a sender to an unknown address that keeps uploading.
+    const s = rawSender(port, headOf('POST', '/nope', 1_000_000), Buffer.alloc(1024, 97), 50);
+    const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+    // The pair's 202 was still pending when this sender's 403 arrived: its refusal was queued.
+    const pairPendingAt403 =
+      s.state.statusAt !== undefined &&
+      (pair.state.statusAt === undefined || pair.state.statusAt > s.state.statusAt);
+    // (a) red when the queued refusal takes the one slot before it is written (this sender is then
+    //     closed at once), or the 202 was no longer pending; (b) prints the status, whether the 202
+    //     was pending, whether the socket lingered, and the close time after the status line.
+    expect({
+      status: parse(s.state.raw).status,
+      pairPendingAt403,
+      lingered: typeof after === 'number' && after >= LINGER - 200,
+      after,
+    }).toEqual({ status: 403, pairPendingAt403: true, lingered: true, after: expect.any(Number) });
   }, 15_000);
 });

@@ -13,7 +13,7 @@
 //     `lingerMs` (2 s) of reading and discarding, at most --max-concurrent such sockets at once
 //   - SIGTERM/SIGINT → server.close(); the agent child is detached and survives.
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { Socket } from 'node:net';
+import { Socket } from 'node:net';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -279,8 +279,8 @@ export function makeListenHandler(
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const opts: HandlerOptions = { ...DEFAULT_HANDLER_OPTIONS, ...options };
   let inFlight = 0;
-  // #744 E2: the sockets closing in stages after a refusal, and how many there are.
-  const lingeringSockets = new WeakSet<Socket>();
+  // #744 E2: every socket closing after a refusal, and how many of them linger (close in stages).
+  const closingSockets = new WeakSet<Socket>();
   let lingeringCount = 0;
 
   /**
@@ -289,9 +289,9 @@ export function makeListenHandler(
    * lingers). The reply carries `Connection: close`; the rest of the body is discarded as it arrives;
    * and, while fewer than `maxConcurrent` sockets linger, the socket closes in stages (RFC 9112
    * §9.6): the FIN after the reply, then reading and discarding what the sender still sends, then a
-   * destroy `lingerMs` after this refusal. A close with unread data makes the kernel send a reset,
-   * which a sender still writing its body sees instead of the reply. At the cap, Node closes the
-   * socket as it always has.
+   * destroy `lingerMs` after the refusal can be written. A close with unread data makes the kernel
+   * send a reset, which a sender still writing its body sees instead of the reply. At the cap, Node
+   * closes the socket as it always has.
    */
   const refuse = (
     req: IncomingMessage,
@@ -299,15 +299,35 @@ export function makeListenHandler(
     status: number,
     payload: Record<string, unknown>,
   ): void => {
+    const socket = req.socket as Socket | undefined;
+    // Marked first, whether or not it lingers: the handler's guard then refuses every request sent
+    // on this connection after this one.
+    if (socket !== undefined) closingSockets.add(socket);
     // `writeHead`, not `setHeader`: the header must be set where the reply is written.
     res.writeHead(status, { 'Content-Type': 'application/json', Connection: 'close' });
     req.resume();
-    const socket = req.socket as Socket | undefined;
-    if (socket !== undefined && !socket.destroyed && lingeringCount < opts.maxConcurrent) {
+    if (socket !== undefined && !socket.destroyed && res.socket === null) {
+      // The reply is queued behind an earlier reply on this connection (Node's queue,
+      // `_http_server.js:1228-1232` @ v24.21.0). It takes no linger slot while it waits: Node
+      // calls `destroySoon()` once this refusal has been written, and only then does it take a
+      // slot, if one is free, and start the timer; otherwise it closes the way Node does.
+      socket.destroySoon = () => {
+        if (lingeringCount < opts.maxConcurrent) {
+          lingeringCount += 1;
+          const timer = setTimeout(() => socket.destroy(), opts.lingerMs);
+          socket.once('close', () => {
+            clearTimeout(timer);
+            lingeringCount -= 1;
+          });
+          socket.end();
+        } else {
+          Socket.prototype.destroySoon.call(socket);
+        }
+      };
+    } else if (socket !== undefined && !socket.destroyed && lingeringCount < opts.maxConcurrent) {
       lingeringCount += 1;
-      lingeringSockets.add(socket);
-      // The time bound does not depend on Node: the socket is destroyed `lingerMs` after this
-      // refusal unless it has closed by then.
+      // The reply has its socket now. Here the time bound does not depend on Node: the socket is
+      // destroyed `lingerMs` after this refusal unless it has closed by then.
       const timer = setTimeout(() => socket.destroy(), opts.lingerMs);
       // The seam: Node's server calls `socket.destroySoon()` after a reply carrying
       // `Connection: close` (`_http_server.js:1124-1128` @ v24.21.0), which ends the socket and
@@ -326,9 +346,12 @@ export function makeListenHandler(
   };
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // #744 E2: no request is handled on a socket closing after a refusal (RFC 9112 §9.6 allows no
-    // further request after a close; Node still hands a pipelined one to the handler).
-    if (lingeringSockets.has(req.socket)) {
+    // #744 E2: a request sent on a connection that is closing after a refusal is not handled (RFC
+    // 9112 §9.6 allows no further request after a close; Node still hands a pipelined one to the
+    // handler). The socket is destroyed at once, which keeps that bounded: a request that gets no
+    // reply never triggers Node's pipelining backpressure, so ignoring it would let one connection
+    // create requests without limit (#744). A reply not yet written on that connection is lost.
+    if (closingSockets.has(req.socket)) {
       req.socket.destroy();
       return;
     }
@@ -1068,7 +1091,11 @@ export const listenCommand = new Command('listen')
   .option('--host <addr>', 'Host/interface to bind (default loopback)', '127.0.0.1')
   .option('--body-timeout-ms <n>', 'Max time to read a request body', '5000')
   .option('--max-body-bytes <n>', 'Max request body size in bytes', '1048576')
-  .option('--max-concurrent <n>', 'Max in-flight requests before 503', '20')
+  .option(
+    '--max-concurrent <n>',
+    'Max in-flight requests before 503; also the max refused connections closed in stages at a time',
+    '20',
+  )
   .option('--dedup-store <kind>', 'Dedup store: file | memory', 'file')
   .option('--log-level <level>', 'Log level: debug | info | warn | error', 'info')
   // issue #676: no Commander default for either. Realm has no default model; `--provider` absent
