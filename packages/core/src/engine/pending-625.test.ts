@@ -2233,10 +2233,16 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
   });
 
   it('E1 (C37): withFullStop adds a full stop only when the text does not already end a sentence', () => {
-    // A sentence end is a Unicode Sentence_Terminal (`.`, `?`, `!`, `。` …) or `…`, which ends a
-    // truncated text. (a) red when a sentence end is not recognised, or a stop is not added after a
-    // plain word; (b) prints the pairs.
-    expect(['a', 'a.', 'a?', 'a!', 'a…', 'a...', 'a。'].map((t) => [t, withFullStop(t)])).toEqual([
+    // A sentence end is judged by the last character alone: a Unicode Sentence_Terminal (`.`, `?`,
+    // `!`, `。` …) or `…`. (a) red when an end is not recognised, a stop is not added after a plain
+    // word, or a quoted literal that ends in an end mark (an input-schema refusal's pattern) loses
+    // its stop because the rule was widened to look through quotes; (b) prints the pairs.
+    expect(
+      ['a', 'a.', 'a?', 'a!', 'a…', 'a...', 'a。', 'must match pattern "^https?"'].map((t) => [
+        t,
+        withFullStop(t),
+      ]),
+    ).toEqual([
       ['a', 'a.'],
       ['a.', 'a.'],
       ['a?', 'a?'],
@@ -2244,6 +2250,7 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
       ['a…', 'a…'],
       ['a...', 'a...'],
       ['a。', 'a。'],
+      ['must match pattern "^https?"', 'must match pattern "^https?".'],
     ]);
   });
 });

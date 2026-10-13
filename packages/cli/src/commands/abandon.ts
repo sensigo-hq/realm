@@ -53,8 +53,8 @@ export const abandonCommand = new Command('abandon')
       console.log(
         `Run '${runId}' abandoned (phase: '${run.run_phase}').` +
           (alreadyAbandoned ? ' Already abandoned (no change this call).' : '') +
-          // E1 (decision C37): one mark after the reason; no clause when the record carries none, as
-          // `realm run inspect` prints `Cause:` only then.
+          // E1 (decision C37): one mark after the reason; no clause when the record carries none,
+          // as `realm run inspect` prints `Cause:` only then.
           (run.terminal_reason !== undefined
             ? ` Reason: ${withFullStop(run.terminal_reason)}`
             : '') +

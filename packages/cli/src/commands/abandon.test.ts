@@ -73,8 +73,8 @@ describe('realm run abandon (CLI command)', () => {
     expect(logged).not.toContain("'abort' is the graceful path");
   });
 
-  // E1 (decision C37): the reply's `Reason:` clause ends with ONE mark — a reason that already ends a
-  // sentence keeps its own — and is left out when the record carries no reason. (a) red when the
+  // E1 (decision C37): the reply's `Reason:` clause ends with ONE mark — a reason that already ends
+  // a sentence keeps its own — and is left out when the record carries no reason. (a) red when the
   // stop is doubled or `Reason: undefined.` comes back; (b) prints the line.
   const replyLine = (): string =>
     logSpy.mock.calls

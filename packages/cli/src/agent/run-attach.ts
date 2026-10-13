@@ -28,12 +28,14 @@ import { identityDiffers, errorExtensionIdentityEntry } from '../extensions/exte
 export const EXTENSIONS_LOAD_FAILED = 'extensions_load_failed';
 
 /**
- * The refusal `realm agent --run-id` gives a run that has ended — ONE mint, thrown by both carriers:
- * the pre-attach check ({@link resolveRunAttach}) and the agent loop (`runAgent`), so the two can
- * never word it differently (framework rule 3). It names why the run ended: its recorded reason,
- * ended with one mark (decision C37: a reason that already ends a sentence, such as the engine's
- * `'Workflow completed.'`, keeps its own), or, with no recorded reason, its phase as worked out from
- * the record, never the stored `run_phase` (PHASE_IS_GENERATED, `eligibility.ts`).
+ * The refusal `realm agent --run-id` gives a run that has ended — ONE mint, thrown by both
+ * carriers: the pre-attach check ({@link resolveRunAttach}) and the agent loop (`runAgent`), so the
+ * two can never word it differently (framework rule 3). It names the run's recorded end reason
+ * (`terminal_reason`), ended with one mark (decision C37: a reason whose last character already
+ * ends a sentence, such as the engine's `'Workflow completed.'`, keeps its own), or, with no
+ * recorded reason, its phase as worked out from the record, never the stored `run_phase`
+ * (PHASE_IS_GENERATED, `eligibility.ts`). A guard's abort writes no end reason, so its message is
+ * not named here yet (#729).
  *
  * issue #279 (increment 1, PR-B), design record §6: a run that still carries an undelivered
  * finalizer is pointed at the recovery verb.

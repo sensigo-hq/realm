@@ -124,7 +124,7 @@ A later delivery of that same delivery's event gets that same reply again, start
 What to do with a run a delivery matched:
 
 - A run still going whose agent stopped: drive it again with `realm agent --run-id <run-id>`.
-- A run that has ended is not driven again: `realm agent --run-id` refuses it with `Error: Run <run-id> is already in terminal state: <reason>.`, naming the run's own end reason (with no model key set, it refuses on the key first).
+- A run that has ended is not driven again: `realm agent --run-id` refuses it with `Error: Run <run-id> is already in terminal state: <reason>`, where `<reason>` is the run's recorded end reason with one end mark, or, when none is recorded, its phase (a run a guard aborted shows `aborted.`). With no model key set, it refuses on the key first.
 - A run whose agent failed to start: remove it with `realm run purge <run-id> --force`, then deliver the event again. It starts a new run at once: the copy whose start failed keeps no duplicate record. Unless two copies arrived together (the case above): then it starts one only after the duplicate window.
 - A run that ended any other way: purge it, then deliver the event again once the duplicate window has passed. The window starts again each time a delivery of the event is matched in the meantime, so it is not counted from the first delivery. (With the default file store and a `ttl_minutes` under 60, a delivery matched in the same clock hour, UTC, as the last one recorded does not start it again.) Purge does not clear the duplicate record, so until then the delivery gets `200` `{"status":"deduplicated"}` and starts nothing.
 

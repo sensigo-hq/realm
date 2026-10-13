@@ -645,7 +645,7 @@ export async function getWorkflowForRun(
       case 'STATE_WORKFLOW_UNREADABLE':
         throw copy(
           join(
-            `${withFullStop(err.message)}`,
+            withFullStop(err.message),
             terminal
               ? undefined
               : gate === undefined
@@ -659,7 +659,7 @@ export async function getWorkflowForRun(
       case 'RESOURCE_FORMAT_INVALID':
         throw copy(
           join(
-            `${withFullStop(err.message)}`,
+            withFullStop(err.message),
             terminal ? undefined : disposalSentence('To end the run:'),
             repairClause(true),
           ),
@@ -669,7 +669,7 @@ export async function getWorkflowForRun(
         // double-remedy — this function's JSDoc); a gate-waiting run is told what comes after it.
         throw copy(
           join(
-            `${withFullStop(err.message)}`,
+            withFullStop(err.message),
             terminal ? undefined : disposalSentence('To end the run instead:'),
             terminal || answer === undefined
               ? undefined

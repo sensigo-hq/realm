@@ -1,7 +1,7 @@
-// ended-run-refusal.test.ts — #744 follow-up E1: the refusal `realm agent --run-id` gives a run that
-// has ended. Both carriers throw it — the pre-attach check (`resolveRunAttach`) and the agent loop
-// (`runAgent`) — and it ends with ONE mark: a reason that already ends a sentence keeps its own
-// (decision C37), and with no recorded reason the phase is worked out from the record
+// ended-run-refusal.test.ts — #744 follow-up E1: the refusal `realm agent --run-id` gives a run
+// that has ended. Both carriers throw it — the pre-attach check (`resolveRunAttach`) and the agent
+// loop (`runAgent`) — and it ends with ONE mark: a reason that already ends a sentence keeps its
+// own (decision C37), and with no recorded reason the phase is worked out from the record
 // (PHASE_IS_GENERATED). Every cell asserts the whole message.
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
@@ -73,8 +73,8 @@ const completed = (run: RunRecord): void => {
   run.terminal_reason = 'Workflow completed.';
 };
 
-// (a) red when the refusal adds its own stop again, renders the stored phase, or a carrier's message
-//     differs from the other's; (b) prints the whole message.
+// (a) red when the refusal adds its own stop again, renders the stored phase, or a carrier's
+//     message differs from the other's; (b) prints the whole message.
 describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   it('E1 R1: a completed run, through the pre-attach check', async () => {
     const store = new InMemoryStore();
@@ -118,7 +118,9 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     );
   });
 
-  it('E1 R4: no recorded reason — the phase, worked out from the record', async () => {
+  // The store writes `run_phase` as derived on every update (`in-memory-store.ts:141-144`), so R4
+  // cannot tell a stored phase from a derived one; R8 pins the derivation.
+  it('E1 R4: no recorded reason — the phase', async () => {
     const store = new InMemoryStore();
     const runId = await endedRun(store, (run) => {
       run.terminal_state = true;
