@@ -777,6 +777,14 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   run when that folder is removed; it keeps the folder's full path, so a folder created again at
   that path is used again. The `webhook: spawn failed` line now names the workflow folder as a full
   path (#744).
+- `realm agent --run-id` on a run that has ended no longer ends its refusal with two full stops
+  (`… already in terminal state: Workflow completed..`), and `realm run abandon` no longer doubles
+  the stop after a reason that ends with one. A reason whose last character already ends a sentence
+  (`.`, `?`, `!`, `…`, or another script's sentence end such as `。`) gets no second mark. When a
+  run has no recorded end reason, as after a guard's abort, the refusal names its phase as worked
+  out from the record, and `realm run abandon` leaves out its `Reason:` clause instead of printing
+  `Reason: undefined.`. An error from a workflow store other than Realm's own that ends with a full
+  stop is no longer doubled where Realm quotes it (#744).
 - **An agent step, then a handler step that takes its output through `input_map` and declares an
   `input_schema`, now runs (issue #688).** It was refused every time. Called by name, such a step's
   refusal tells an agent `report_to_user`, and when nothing else can run it carries the way out:

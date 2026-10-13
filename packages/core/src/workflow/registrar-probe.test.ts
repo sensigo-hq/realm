@@ -545,6 +545,67 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     );
   });
 
+  /** A registrar whose `get` throws a store error whose message already ends with a full stop. */
+  const endsWithStop = (code: WorkflowError['code']) =>
+    declared({
+      get: async () => {
+        throw new WorkflowError('The copy is bad.', {
+          code,
+          category: 'STATE',
+          agentAction: 'stop',
+          retryable: false,
+        });
+      },
+    });
+  /**
+   * (b) What a failing E1 cell prints: the whole message, unless it quotes the store once. A value
+   * that is not a string (a call that stopped throwing) prints as it came.
+   */
+  const oneStop = (message: unknown): string =>
+    typeof message === 'string' &&
+    message.startsWith('The copy is bad. ') &&
+    !message.includes('..')
+      ? 'one stop'
+      : String(message);
+
+  // E1 (decision C37): where getWorkflowForRun quotes a store's message, a message that already
+  // ends with a full stop gets no second one. (a) red when that site adds its own stop again.
+  it('E1 W1: a terminal run (registrar.ts, the terminal refusal) quotes the store message with one stop', async () => {
+    const err = (await getWorkflowForRun(
+      endsWithStop('STATE_WORKFLOW_UNREADABLE'),
+      TERMINAL,
+      RESPOND,
+    ).catch((e: unknown) => e)) as WorkflowError;
+    expect(oneStop(err.message)).toBe('one stop');
+  });
+
+  it('E1 W2: an unreadable copy on a live run quotes the store message with one stop', async () => {
+    const err = (await getWorkflowForRun(
+      endsWithStop('STATE_WORKFLOW_UNREADABLE'),
+      makeRun(),
+      RESPOND,
+    ).catch((e: unknown) => e)) as WorkflowError;
+    expect(oneStop(err.message)).toBe('one stop');
+  });
+
+  it('E1 W3: a corrupt copy on a live run quotes the store message with one stop', async () => {
+    const err = (await getWorkflowForRun(
+      endsWithStop('RESOURCE_FORMAT_INVALID'),
+      makeRun(),
+      RESPOND,
+    ).catch((e: unknown) => e)) as WorkflowError;
+    expect(oneStop(err.message)).toBe('one stop');
+  });
+
+  it('E1 W4: a legacy copy on a live run quotes the store message with one stop', async () => {
+    const err = (await getWorkflowForRun(
+      endsWithStop('STATE_LEGACY_FORMAT'),
+      makeRun(),
+      RESPOND,
+    ).catch((e: unknown) => e)) as WorkflowError;
+    expect(oneStop(err.message)).toBe('one stop');
+  });
+
   it('C-h a corrupt copy on a LIVE run: one voice with the parse builder', async () => {
     await shape.corrupt();
     const err = (await getWorkflowForRun(store, makeRun(), RESPOND).catch(

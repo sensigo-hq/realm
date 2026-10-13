@@ -73,6 +73,51 @@ describe('realm run abandon (CLI command)', () => {
     expect(logged).not.toContain("'abort' is the graceful path");
   });
 
+  // E1 (decision C37): the reply's `Reason:` clause ends with ONE mark — a reason that already ends
+  // a sentence keeps its own — and is left out when the record carries no reason. (a) red when the
+  // stop is doubled or `Reason: undefined.` comes back; (b) prints the line.
+  const replyLine = (): string =>
+    logSpy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .join('\n')
+      .split('\n')
+      .slice(0, 2)
+      .join('\n');
+
+  it('E1 A1: a reason that ends with a full stop gets no second one', async () => {
+    const { JsonFileStore } = await import('@sensigo/realm');
+    const { run } = await new JsonFileStore().create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await abandonCommand.parseAsync([run.id, '--reason', 'Held.'], { from: 'user' });
+    expect(replyLine()).toContain('Reason: Held.\nTo run the same work again');
+  });
+
+  it('E1 A2: a reason with no end mark gets one', async () => {
+    const { JsonFileStore } = await import('@sensigo/realm');
+    const { run } = await new JsonFileStore().create({
+      workflowId: 'wf',
+      workflowVersion: 1,
+      params: {},
+    });
+    await abandonCommand.parseAsync([run.id, '--reason', 'stale'], { from: 'user' });
+    expect(replyLine()).toContain('Reason: stale.\n');
+  });
+
+  it('E1 A4: a record with no reason prints no Reason clause', async () => {
+    const { JsonFileStore, sealRunLevel } = await import('@sensigo/realm');
+    const store = new JsonFileStore();
+    const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
+    const { terminal_reason: _, ...rec } = sealRunLevel(run, 'abandon_requested', 'x');
+    await store.update(rec);
+    await abandonCommand.parseAsync([run.id], { from: 'user' });
+    const line = replyLine();
+    expect(line.includes('Reason:') ? line : 'no Reason clause').toBe('no Reason clause');
+    expect(line).toContain('To run the same work again');
+  });
+
   it('issue #558 PR-C (walk 2): line 2 names the DIRECTORY the copy was registered from when the copy reads', async () => {
     // The blank form above is the honest sentence only when realm holds no path. A registered copy
     // records `source_dir` (since v0.14) and `realm workflow run` takes a directory — so the

@@ -48,6 +48,7 @@ import {
   owedCallWords,
   endsWithCommand,
   sentenceEnd,
+  withFullStop,
   type PendingView,
 } from './pending.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
@@ -2228,6 +2229,28 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
       [false, 'full stop'],
       [false, 'full stop'],
       [false, 'as printed'],
+    ]);
+  });
+
+  it('E1 (C37): withFullStop adds a full stop only when the text does not already end a sentence', () => {
+    // A sentence end is judged by the last character alone: a Unicode Sentence_Terminal (`.`, `?`,
+    // `!`, `。` …) or `…`. (a) red when an end is not recognised, a stop is not added after a plain
+    // word, or a quoted literal that ends in an end mark (an input-schema refusal's pattern) loses
+    // its stop because the rule was widened to look through quotes; (b) prints the pairs.
+    expect(
+      ['a', 'a.', 'a?', 'a!', 'a…', 'a...', 'a。', 'must match pattern "^https?"'].map((t) => [
+        t,
+        withFullStop(t),
+      ]),
+    ).toEqual([
+      ['a', 'a.'],
+      ['a.', 'a.'],
+      ['a?', 'a?'],
+      ['a!', 'a!'],
+      ['a…', 'a…'],
+      ['a...', 'a...'],
+      ['a。', 'a。'],
+      ['must match pattern "^https?"', 'must match pattern "^https?".'],
     ]);
   });
 });

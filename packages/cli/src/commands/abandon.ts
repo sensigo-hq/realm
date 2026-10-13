@@ -13,6 +13,7 @@ export const abandonCommand = new Command('abandon')
       WorkflowError,
       ABANDON_KILL_ADVISORY,
       shellWord,
+      withFullStop,
     } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
     try {
@@ -52,7 +53,12 @@ export const abandonCommand = new Command('abandon')
       console.log(
         `Run '${runId}' abandoned (phase: '${run.run_phase}').` +
           (alreadyAbandoned ? ' Already abandoned (no change this call).' : '') +
-          ` Reason: ${run.terminal_reason}.\n` +
+          // E1 (decision C37): one mark after the reason; no clause when the record carries none,
+          // as `realm run inspect` prints `Cause:` only then.
+          (run.terminal_reason !== undefined
+            ? ` Reason: ${withFullStop(run.terminal_reason)}`
+            : '') +
+          '\n' +
           // issue #558 PR-C: the rerun path a CLI operator can actually execute. `start_run` is an
           // MCP tool — naming it here handed a CLI operator a command that does not exist.
           `To run the same work again: ${runAgain} — a fresh run; this run's evidence stays at realm run inspect ${runId}.\n` +

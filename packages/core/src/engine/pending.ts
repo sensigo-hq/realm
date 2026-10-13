@@ -493,9 +493,17 @@ export function stepsThatCannotRun(pending: PendingView): EngineRunnable[] {
 
 const quoteList = (names: readonly string[]): string => names.map((n) => `'${n}'`).join(', ');
 
-/** `text.` — a full stop only when the text does not already end with one (decision C37). */
+/**
+ * Decision C37: `text.` — a full stop only when the text does not already end a sentence, judged by
+ * its last character alone: a Unicode `Sentence_Terminal` (in ASCII exactly `.`, `?` and `!`; also
+ * `。`, `？`, `！` and the other scripts' sentence ends) or `…`, which Unicode does not class as
+ * terminal but which ends a truncated text. A closing quote or bracket after an end mark is not
+ * looked through: text alone cannot tell a quote that closes a sentence (`said "stop."`) from one
+ * that closes a literal Realm quoted (`must match pattern "^https?"`, which needs its stop), so a
+ * sentence that ends inside a quote or bracket gets a second mark.
+ */
 export function withFullStop(text: string): string {
-  return text.endsWith('.') ? text : `${text}.`;
+  return /[\p{Sentence_Terminal}…]$/u.test(text) ? text : `${text}.`;
 }
 
 /**
