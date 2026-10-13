@@ -785,6 +785,13 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   out from the record, and `realm run abandon` leaves out its `Reason:` clause instead of printing
   `Reason: undefined.`. An error from a workflow store other than Realm's own that ends with a full
   stop is no longer doubled where Realm quotes it (#744).
+- `realm listen` now delivers its `413` (body too large) and `408` (body too slow) replies. Until
+  now it closed the connection first, so the sender saw only a dropped connection. Every reply sent
+  before the body is read in full (`405`, `403`, `503`, `413`, `408`) now closes the connection
+  after reading and discarding at most 2 seconds of what the sender is still sending, so the sender
+  receives it (up to `--max-concurrent` such connections at once; beyond that, a refused connection
+  is closed at once). Before, a `405`, `403` or `503` let the sender go on uploading its whole body
+  (#744).
 - **An agent step, then a handler step that takes its output through `input_map` and declares an
   `input_schema`, now runs (issue #688).** It was refused every time. Called by name, such a step's
   refusal tells an agent `report_to_user`, and when nothing else can run it carries the way out:

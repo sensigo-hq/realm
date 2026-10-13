@@ -9,8 +9,11 @@
 //   - loopback bind by default; non-loopback host → startup TLS warning
 //   - body cap + timeout enforced BEFORE any verification work (fixes the legacy webhook DoS)
 //   - --max-concurrent 503 floor (the only fail-closed DoS floor independent of proxy hygiene)
+//   - a refusal before the body is read closes in stages (#744 E2): `Connection: close`, at most
+//     `lingerMs` (2 s) of reading and discarding, at most --max-concurrent such sockets at once
 //   - SIGTERM/SIGINT → server.close(); the agent child is detached and survives.
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { Socket } from 'node:net';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -101,12 +104,15 @@ export interface HandlerOptions {
   maxConcurrent: number;
   maxBodyBytes: number;
   bodyTimeoutMs: number;
+  /** #744 E2: how long a refused socket keeps reading and discarding before it is destroyed. */
+  lingerMs: number;
 }
 
 const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
   maxConcurrent: 20,
   maxBodyBytes: 1_048_576,
   bodyTimeoutMs: 5000,
+  lingerMs: 2000,
 };
 
 /**
@@ -219,19 +225,27 @@ function readBody(
       clearTimeout(timer);
       resolve(result);
     };
+    // #744 E2: on the cap or the timeout, stop buffering but do not destroy the request: the
+    // handler's 413/408 must still reach the sender. The rest of the body is discarded as it arrives
+    // (`resume()`), and the refusal closes the connection in stages (`refuse` below).
+    const stopBuffering = (): void => {
+      req.removeListener('data', onData);
+      req.resume();
+    };
     const timer = setTimeout(() => {
       finish({ error: 'timeout' });
-      req.destroy();
+      stopBuffering();
     }, timeoutMs);
-    req.on('data', (chunk: Buffer) => {
+    const onData = (chunk: Buffer): void => {
       size += chunk.length;
       if (size > maxBytes) {
         finish({ error: 'too_large' });
-        req.destroy();
+        stopBuffering();
         return;
       }
       chunks.push(chunk);
-    });
+    };
+    req.on('data', onData);
     req.on('end', () => finish({ body: Buffer.concat(chunks) }));
     req.on('error', () => finish({ error: 'stream' }));
   });
@@ -265,11 +279,63 @@ export function makeListenHandler(
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const opts: HandlerOptions = { ...DEFAULT_HANDLER_OPTIONS, ...options };
   let inFlight = 0;
+  // #744 E2: the sockets closing in stages after a refusal, and how many there are.
+  const lingeringSockets = new WeakSet<Socket>();
+  let lingeringCount = 0;
+
+  /**
+   * #744 E2: the one way to refuse while the body is unread or only partly read: 405, 403 (unknown
+   * address), 503, 413, 408, and the 400 for a broken body (its socket is already gone, so it never
+   * lingers). The reply carries `Connection: close`; the rest of the body is discarded as it arrives;
+   * and, while fewer than `maxConcurrent` sockets linger, the socket closes in stages (RFC 9112
+   * §9.6): the FIN after the reply, then reading and discarding what the sender still sends, then a
+   * destroy `lingerMs` after this refusal. A close with unread data makes the kernel send a reset,
+   * which a sender still writing its body sees instead of the reply. At the cap, Node closes the
+   * socket as it always has.
+   */
+  const refuse = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    status: number,
+    payload: Record<string, unknown>,
+  ): void => {
+    // `writeHead`, not `setHeader`: the header must be set where the reply is written.
+    res.writeHead(status, { 'Content-Type': 'application/json', Connection: 'close' });
+    req.resume();
+    const socket = req.socket as Socket | undefined;
+    if (socket !== undefined && !socket.destroyed && lingeringCount < opts.maxConcurrent) {
+      lingeringCount += 1;
+      lingeringSockets.add(socket);
+      // The time bound does not depend on Node: the socket is destroyed `lingerMs` after this
+      // refusal unless it has closed by then.
+      const timer = setTimeout(() => socket.destroy(), opts.lingerMs);
+      // The seam: Node's server calls `socket.destroySoon()` after a reply carrying
+      // `Connection: close` (`_http_server.js:1124-1128` @ v24.21.0), which ends the socket and
+      // destroys it once the FIN is out. On this socket only, it now only half-closes, so the socket
+      // keeps reading until the timer above. If a later Node stops calling it, the FIN is lost and
+      // the E2 cell C12's half-close check goes red.
+      socket.destroySoon = () => {
+        socket.end();
+      };
+      socket.once('close', () => {
+        clearTimeout(timer);
+        lingeringCount -= 1;
+      });
+    }
+    res.end(JSON.stringify(payload));
+  };
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // #744 E2: no request is handled on a socket closing after a refusal (RFC 9112 §9.6 allows no
+    // further request after a close; Node still hands a pipelined one to the handler).
+    if (lingeringSockets.has(req.socket)) {
+      req.socket.destroy();
+      return;
+    }
+
     // 1. Non-POST → 405.
     if (req.method !== 'POST') {
-      respond(res, 405, { error: 'method_not_allowed' });
+      refuse(req, res, 405, { error: 'method_not_allowed' });
       return;
     }
 
@@ -283,13 +349,13 @@ export function makeListenHandler(
     })();
     const entry = routes.get(path);
     if (entry === undefined) {
-      respond(res, 403, { error: 'forbidden' });
+      refuse(req, res, 403, { error: 'forbidden' });
       return;
     }
 
     // 3. Concurrency floor → 503.
     if (inFlight >= opts.maxConcurrent) {
-      respond(res, 503, { error: 'busy', status: 'rejected' });
+      refuse(req, res, 503, { error: 'busy', status: 'rejected' });
       return;
     }
 
@@ -299,11 +365,11 @@ export function makeListenHandler(
       const bodyResult = await readBody(req, opts.maxBodyBytes, opts.bodyTimeoutMs);
       if ('error' in bodyResult) {
         if (bodyResult.error === 'too_large') {
-          respond(res, 413, { error: 'payload_too_large' });
+          refuse(req, res, 413, { error: 'payload_too_large' });
         } else if (bodyResult.error === 'timeout') {
-          respond(res, 408, { error: 'request_timeout' });
+          refuse(req, res, 408, { error: 'request_timeout' });
         } else {
-          respond(res, 400, { error: 'bad_request' });
+          refuse(req, res, 400, { error: 'bad_request' });
         }
         return;
       }
@@ -669,6 +735,11 @@ export interface ListenOptions {
   maxBodyBytes: number;
   maxConcurrent: number;
   /**
+   * #744 E2: how long a socket refused before its body was read keeps reading and discarding before
+   * it is destroyed. It exists for tests; the CLI does not expose it, and it defaults to 2 s.
+   */
+  lingerMs?: number;
+  /**
    * Issue #291 (Deliverable 4f, Amendment 4): opt-in interval (ms) for the expired-gate sweeper —
    * the USER-CHOSEN always-on enactor (the `realm listen` process becomes the daemon-analogue,
    * launchd-precedent: realm itself still ships no daemon, but a user MAY run `listen` as one).
@@ -804,6 +875,7 @@ export function startListen(
     maxConcurrent: options.maxConcurrent,
     maxBodyBytes: options.maxBodyBytes,
     bodyTimeoutMs: options.bodyTimeoutMs,
+    ...(options.lingerMs !== undefined ? { lingerMs: options.lingerMs } : {}),
   });
   const server = createServer((req, res) => {
     void handler(req, res).catch((err) => {

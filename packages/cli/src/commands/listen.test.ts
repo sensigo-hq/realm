@@ -10,7 +10,7 @@
 // any other `cwd`, so it can only fail in a missing folder) and the #744 contract cell (guarded,
 // its arguments swapped to `-e 0`, over nine folder states). Every other cell doubles the
 // `spawnAgent` deps seam, which sits ABOVE the spawn.
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import { InvalidArgumentError } from 'commander';
 
 const spawnMock = vi.hoisted(() => vi.fn((cmd, args, opts) => fakeChild(cmd, opts.cwd, args)));
@@ -18,6 +18,8 @@ vi.mock('node:child_process', () => ({ spawn: spawnMock }));
 import { EventEmitter } from 'node:events';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { createHmac } from 'node:crypto';
+import { connect as netConnect, type AddressInfo } from 'node:net';
+import { Worker } from 'node:worker_threads';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION, abandonRun, JsonFileStore } from '@sensigo/realm';
@@ -45,6 +47,7 @@ import {
   defaultSpawnAgent,
   makeAgentSpawner,
   listenCommand,
+  startListen,
   type ListenDeps,
   type Logger,
   type WorkflowEntry,
@@ -238,6 +241,7 @@ function makeReq(opts: {
   req.url = opts.url ?? '/wf';
   req.headers = (opts.headers ?? {}) as IncomingMessage['headers'];
   (req as unknown as { destroy: () => void }).destroy = () => req.emit('close');
+  (req as unknown as { resume: () => IncomingMessage }).resume = () => req;
   setImmediate(() => {
     if (opts.body !== undefined && opts.body !== '') req.emit('data', Buffer.from(opts.body));
     if (opts.noEnd !== true) req.emit('end');
@@ -1919,4 +1923,354 @@ describe('issue #744 — an agent start that fails later', () => {
       ],
     });
   });
+});
+
+// ── #744 follow-up E2: listen's early replies reach the sender ───────────────────────────────────
+// Every cell starts a real server (`startListen`) on a free loopback port and sends to it with a
+// real client, because the fake harness above has no socket: its 413/408 cells pass while no sender
+// receives the reply. `lingerMs` is 500 here (2 s in the CLI). "The server closes the socket" is that
+// connection's server-side `'close'`, timed from the status line the sender received.
+describe('E2 — early replies reach the sender', () => {
+  type ServeOptions = Partial<Parameters<typeof startListen>[1]>;
+  const LINGER = 500;
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const waitFor = async (pred: () => boolean, ms: number): Promise<boolean> => {
+    const deadline = Date.now() + ms;
+    while (!pred() && Date.now() < deadline) await sleep(10);
+    return pred();
+  };
+
+  /** A real listen server with the E2 defaults; each server-side socket's close time by port. */
+  async function serve(over: ServeOptions = {}, deps = makeDeps()) {
+    const signals = ['SIGTERM', 'SIGINT'] as const;
+    const before = new Map(signals.map((sig) => [sig, process.listeners(sig)]));
+    const handle = await startListen(
+      routesFor(wf(SHARED_SECRET_TRIGGER)),
+      {
+        port: 0,
+        host: '127.0.0.1',
+        maxBodyBytes: 100,
+        bodyTimeoutMs: 400,
+        maxConcurrent: 2,
+        lingerMs: LINGER,
+        ...over,
+      } as Parameters<typeof startListen>[1],
+      deps,
+    );
+    onTestFinished(() => {
+      handle.server.closeAllConnections();
+      return handle.shutdown('test');
+    });
+    for (const sig of signals) {
+      for (const l of process.listeners(sig)) {
+        if (!before.get(sig)!.includes(l)) process.removeListener(sig, l);
+      }
+    }
+    const closedAt = new Map<number, number>();
+    handle.server.on('connection', (sock) => {
+      const port = sock.remotePort;
+      sock.once('close', () => {
+        if (port !== undefined) closedAt.set(port, Date.now());
+      });
+    });
+    const port = (handle.server.address() as AddressInfo).port;
+    return { handle, port, closedAt, deps };
+  }
+
+  /** The reply as the sender saw it: the status, the `connection` header and the JSON body. */
+  const parse = (raw: string) => {
+    const m = /^HTTP\/1\.1 (\d{3})/.exec(raw);
+    const head = raw.split('\r\n\r\n')[0] ?? '';
+    const connection = /\r\nconnection: *([^\r\n]*)/i.exec(head)?.[1]?.toLowerCase();
+    const json = /\{[^{}]*\}/.exec(raw.slice(head.length))?.[0];
+    let body: unknown;
+    try {
+      body = json === undefined ? undefined : JSON.parse(json);
+    } catch {
+      body = json;
+    }
+    return { status: m === null ? 'no reply' : Number(m[1]), connection, body };
+  };
+
+  /**
+   * S-raw: a half-open socket (`allowHalfOpen`, so the server's FIN does not end its own side),
+   * which writes `head`, then `chunk` every `everyMs` on its own schedule, after the reply too.
+   */
+  function rawSender(port: number, head: string, chunk?: string | Buffer, everyMs = 50) {
+    const sock = netConnect({ host: '127.0.0.1', port, allowHalfOpen: true });
+    const state = {
+      raw: '',
+      localPort: undefined as number | undefined,
+      statusAt: undefined as number | undefined,
+      endAt: undefined as number | undefined,
+      error: undefined as string | undefined,
+    };
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const stop = (): void => {
+      clearInterval(timer);
+      sock.destroy();
+    };
+    onTestFinished(stop);
+    sock.on('connect', () => {
+      state.localPort = sock.localPort;
+      sock.write(head);
+      if (chunk !== undefined) {
+        timer = setInterval(() => {
+          if (!sock.destroyed && sock.writable) sock.write(chunk);
+        }, everyMs);
+      }
+    });
+    sock.on('data', (d: Buffer) => {
+      state.raw += d.toString('latin1');
+      if (state.statusAt === undefined && state.raw.startsWith('HTTP/1.1 ')) {
+        state.statusAt = Date.now();
+      }
+    });
+    sock.on('end', () => {
+      state.endAt = Date.now();
+    });
+    sock.on('error', (e: NodeJS.ErrnoException) => {
+      state.error ??= e.code ?? e.message;
+    });
+    sock.on('close', () => clearInterval(timer));
+    return { state, stop };
+  }
+
+  /** A request head for S-raw. */
+  const headOf = (method: string, path: string, length: number, extra = ''): string =>
+    `${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
+    `Content-Length: ${length}\r\n${extra}\r\n`;
+
+  /** How long after its status line the server closed this sender's socket (or why it is not known). */
+  const closedAfter = async (
+    closedAt: Map<number, number>,
+    state: { localPort?: number | undefined; statusAt?: number | undefined },
+    waitMs: number,
+  ): Promise<number | string> => {
+    if (!(await waitFor(() => state.statusAt !== undefined, 3_000))) return 'no status line';
+    await waitFor(() => closedAt.has(state.localPort!), waitMs);
+    const at = closedAt.get(state.localPort!);
+    return at === undefined ? `still open after ${waitMs} ms` : at - state.statusAt!;
+  };
+
+  /** S-http / S-stream: a sender in its own thread, which posts back what it received. */
+  async function inWorker(src: string, port: number) {
+    const worker = new Worker(src, { eval: true, workerData: { port } });
+    onTestFinished(() => worker.terminate().then(() => undefined));
+    return await new Promise<Record<string, unknown>>((resolve) => {
+      const timer = setTimeout(() => resolve({ error: 'no answer within 20 s' }), 20_000);
+      worker.once('message', (m: Record<string, unknown>) => {
+        clearTimeout(timer);
+        resolve(m);
+      });
+      worker.once('error', (e: Error) => {
+        clearTimeout(timer);
+        resolve({ error: `worker: ${e.message}` });
+      });
+    });
+  }
+
+  it('C1 — a 5000-byte Buffer sent with fetch gets 413 with its JSON and Connection: close', async () => {
+    const { port } = await serve();
+    const got = await fetch(`http://127.0.0.1:${port}/wf`, {
+      method: 'POST',
+      headers: JSON_CT,
+      body: Buffer.alloc(5000, 97),
+    }).then(
+      async (res) => ({
+        status: res.status,
+        body: (await res.json()) as unknown,
+        connection: res.headers.get('connection'),
+      }),
+      (e: Error & { cause?: { code?: string } }) => ({ error: e.cause?.code ?? e.message }),
+    );
+    // (a) red when the 413 never reaches the sender (`readBody` destroys the request first), or
+    //     the reply does not carry `Connection: close`; (b) prints the status, body and header,
+    //     or the sender's error.
+    expect(got).toEqual({
+      status: 413,
+      body: { error: 'payload_too_large' },
+      connection: 'close',
+    });
+  }, 15_000);
+
+  const BIG = 50 * 1024 * 1024;
+  it('C4 — http.request writing 50 MiB in 64 KiB chunks, no Content-Length, gets 413 with its JSON', async () => {
+    const { port } = await serve();
+    const got = await inWorker(
+      `const { parentPort, workerData } = require('node:worker_threads');
+       const http = require('node:http');
+       const req = http.request({ host: '127.0.0.1', port: workerData.port, path: '/wf', method: 'POST',
+         headers: { 'content-type': 'application/json' } }, (res) => {
+         let body = ''; res.setEncoding('utf8');
+         res.on('data', (d) => (body += d));
+         res.on('end', () => parentPort.postMessage({ status: res.statusCode, body }));
+         res.on('error', (e) => parentPort.postMessage({ error: e.code || e.message }));
+       });
+       req.on('error', (e) => parentPort.postMessage({ error: e.code || e.message }));
+       const chunk = Buffer.alloc(64 * 1024, 97); let sent = 0;
+       const pump = () => { while (sent < ${BIG}) { sent += chunk.length;
+         if (!req.write(chunk)) { req.once('drain', pump); return; } } req.end(); };
+       pump();`,
+      port,
+    );
+    // (a) red when the sender sees the connection reset (ECONNRESET/EPIPE) instead of the reply:
+    //     a sender that writes its whole body before reading needs the server to keep reading
+    //     after the reply; (b) prints the status and body, or the sender's error code.
+    expect(got).toEqual({ status: 413, body: JSON.stringify({ error: 'payload_too_large' }) });
+  }, 30_000);
+
+  it('C5 — fetch with a streamed 50 MiB body gets 413 with its JSON', async () => {
+    const { port } = await serve();
+    const got = await inWorker(
+      `const { parentPort, workerData } = require('node:worker_threads');
+       let sent = 0;
+       const body = new ReadableStream({ pull(c) {
+         if (sent >= ${BIG}) { c.close(); return; }
+         sent += 65536; c.enqueue(new Uint8Array(65536).fill(97)); } });
+       fetch('http://127.0.0.1:' + workerData.port + '/wf', { method: 'POST',
+         headers: { 'content-type': 'application/json' }, body, duplex: 'half' })
+         .then(async (r) => parentPort.postMessage({ status: r.status, body: await r.text() }),
+               (e) => parentPort.postMessage({ error: (e.cause && e.cause.code) || e.message }));`,
+      port,
+    );
+    // (a) red when the streamed sender sees the connection end before the reply; (b) prints the
+    //     status and body, or the sender's error.
+    expect(got).toEqual({ status: 413, body: JSON.stringify({ error: 'payload_too_large' }) });
+  }, 30_000);
+
+  it('C6 — a body arriving 1 byte every 300 ms gets 408 with its JSON, and the socket is closed within the linger', async () => {
+    const { port, closedAt } = await serve();
+    const s = rawSender(port, headOf('POST', '/wf', 10), 'a', 300);
+    const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+    const reply = parse(s.state.raw);
+    // (a) red when the 408 never reaches the sender, or the server holds the socket past
+    //     `lingerMs` + 1500 ms; (b) prints the reply (status, connection, body) and the close time.
+    expect({
+      ...reply,
+      closedInTime: typeof after === 'number' && after <= LINGER + 1_500,
+      after,
+    }).toEqual({
+      status: 408,
+      connection: 'close',
+      body: { error: 'request_timeout' },
+      closedInTime: true,
+      after: expect.any(Number),
+    });
+  }, 15_000);
+
+  it.each([
+    ['C7', 'an unknown address', 'POST', '/nope', 403],
+    ['C8', 'a method other than POST', 'PUT', '/wf', 405],
+  ] as const)(
+    '%s — %s (%s %s) gets %i while the sender keeps sending, and the server closes within the linger',
+    async (_cell, _what, method, path, status) => {
+      const { port, closedAt } = await serve();
+      const s = rawSender(port, headOf(method, path, 1_000_000), Buffer.alloc(1024, 97), 50);
+      const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+      // (a) red when the reply is not sent, or the server keeps the socket open past `lingerMs` +
+      //     1500 ms while the sender keeps sending (Node would read the whole body over a kept-alive
+      //     connection); (b) prints the status and the close time (or "still open after …").
+      expect({ status: parse(s.state.raw).status, after }).toEqual({
+        status,
+        after: expect.any(Number),
+      });
+      expect(after as number).toBeLessThanOrEqual(LINGER + 1_500);
+    },
+    15_000,
+  );
+
+  it('C9 — at the concurrency limit, a second request gets 503 while it keeps sending, and is closed within the linger', async () => {
+    const { port, closedAt } = await serve({ maxConcurrent: 1, bodyTimeoutMs: 3_000 });
+    // The first request is held inside its body timeout by a slow body (1 byte every 300 ms).
+    const held = rawSender(port, headOf('POST', '/wf', 50), 'a', 300);
+    await waitFor(() => held.state.localPort !== undefined, 2_000);
+    await sleep(200);
+    const s = rawSender(port, headOf('POST', '/wf', 1_000_000), Buffer.alloc(1024, 97), 50);
+    const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+    // (a) red when the 503 is not sent, or its socket stays open past `lingerMs` + 1500 ms;
+    //     (b) prints the second request's status and close time, and whether the first is still
+    //     waiting (no reply).
+    expect({
+      status: parse(s.state.raw).status,
+      after,
+      firstStillWaiting: held.state.statusAt === undefined,
+    }).toEqual({ status: 503, after: expect.any(Number), firstStillWaiting: true });
+    expect(after as number).toBeLessThanOrEqual(LINGER + 1_500);
+  }, 15_000);
+
+  it('C10 — at most --max-concurrent connections linger: the first lingers, the second is closed at once', async () => {
+    const { port, closedAt } = await serve({ maxConcurrent: 1 });
+    const first = rawSender(port, headOf('POST', '/nope', 1_000_000), Buffer.alloc(1024, 97), 50);
+    await waitFor(() => first.state.statusAt !== undefined, 3_000);
+    const second = rawSender(port, headOf('POST', '/nope', 1_000_000), Buffer.alloc(1024, 97), 50);
+    const secondAfter = await closedAfter(closedAt, second.state, LINGER + 1_500);
+    const firstAfter = await closedAfter(closedAt, first.state, LINGER + 1_500);
+    // (a) red when the cap lets the second connection linger too (it then closes no sooner than
+    //     the first), or the first does not linger, or neither is closed; (b) prints both close
+    //     times after their status lines.
+    expect({
+      firstLingered: typeof firstAfter === 'number' && firstAfter >= LINGER - 200,
+      secondAtOnce: typeof secondAfter === 'number' && secondAfter < LINGER / 2,
+      firstAfter,
+      secondAfter,
+    }).toEqual({
+      firstLingered: true,
+      secondAtOnce: true,
+      firstAfter: expect.any(Number),
+      secondAfter: expect.any(Number),
+    });
+  }, 15_000);
+
+  it('C12 — a flooding sender gets 413, then the half-close at once, and the server reads for the linger before it closes', async () => {
+    const { port, closedAt } = await serve();
+    const s = rawSender(port, headOf('POST', '/wf', 5_000_000), Buffer.alloc(16 * 1024, 97), 10);
+    const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+    const halfClose =
+      s.state.endAt !== undefined && s.state.statusAt !== undefined
+        ? s.state.endAt - s.state.statusAt
+        : 'no FIN';
+    // (a) red when the 413 is not sent, the server does not half-close at once (its FIN), does
+    //     not keep reading for the linger, or holds the socket past `lingerMs` + 1500 ms;
+    //     (b) prints the status, the FIN's delay and the close time after the status line.
+    expect({
+      status: parse(s.state.raw).status,
+      halfCloseAtOnce: typeof halfClose === 'number' && halfClose <= 200,
+      lingered: typeof after === 'number' && after >= LINGER - 200 && after <= LINGER + 1_500,
+      halfClose,
+      after,
+    }).toEqual({
+      status: 413,
+      halfCloseAtOnce: true,
+      lingered: true,
+      halfClose: expect.any(Number),
+      after: expect.any(Number),
+    });
+  }, 15_000);
+
+  it('C13 — a request pipelined after a refusal is never handed to a run; alone, it is', async () => {
+    const deps = makeDeps();
+    const { port } = await serve({}, deps);
+    const valid =
+      `POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
+      `Authorization: ${SECRET}\r\nContent-Length: 2\r\n\r\n{}`;
+    const s = rawSender(port, headOf('POST', '/nope', 2) + '{}' + valid);
+    await waitFor(() => s.state.statusAt !== undefined, 3_000);
+    await sleep(LINGER + 300);
+    const pipelined = {
+      status: parse(s.state.raw).status,
+      spawns: deps.spawnAgent.mock.calls.length,
+    };
+    // The positive control: the same request alone, on a new socket.
+    const alone = rawSender(port, valid);
+    await waitFor(() => alone.state.statusAt !== undefined, 3_000);
+    await sleep(100);
+    // (a) red when the pipelined request reaches the pipeline (a run is created and an agent is
+    //     spawned), or the control is refused; (b) prints the first reply's status, the spawn count
+    //     after it, and the control's status and spawn count.
+    expect({
+      pipelined,
+      alone: { status: parse(alone.state.raw).status, spawns: deps.spawnAgent.mock.calls.length },
+    }).toEqual({ pipelined: { status: 403, spawns: 0 }, alone: { status: 202, spawns: 1 } });
+  }, 15_000);
 });
