@@ -89,7 +89,7 @@ realm listen on 127.0.0.1:3000 — 1 workflow(s) mounted
 
 The key and the model are needed because each run is driven by `realm agent`, which will not start without them, even though this workflow's only step does not call a model.
 
-Restart `realm listen` from the workflow's folder after any change to it, an edited `.env` included: it reads the workflow, and the `.env` of the folder it is started in, once, at start; a key already set in the shell that starts it keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set in that shell or in that `.env`.
+Restart `realm listen` from the workflow's folder after any change to it, an edited `.env` included: it reads the workflow, and the `.env` of the folder it is started in (or the file `DOTENV_CONFIG_PATH` names), once, at start; a key already set in the shell that starts it keeps its value, unless `DOTENV_CONFIG_OVERRIDE` is set in that shell (a line in that `.env` changes only how each agent loads its own folder's `.env`; see [`realm listen`](../reference/cli/realm-listen.md#what-it-does-when-it-starts)).
 
 You can give `realm listen` several workflow folders. Each must have a `trigger` and its own `path`.
 
