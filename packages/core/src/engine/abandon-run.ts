@@ -51,7 +51,7 @@ export async function abandonRun(
   runId: string,
   reason?: string,
 ): Promise<RunRecord> {
-  admitEntry('abandonRun', { store, storeKind: 'run store' });
+  admitEntry('abandonRun', { store, storeKind: 'run store', parts: { runId, reason } });
   const run = await store.get(runId);
 
   // Already abandoned → idempotent no-op.

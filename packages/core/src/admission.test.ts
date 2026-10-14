@@ -143,6 +143,7 @@ describe('the admission table', () => {
       'registry_release_line',
       'driver_shape',
       'caller',
+      'required_parts',
     ]);
   });
 
@@ -227,6 +228,11 @@ describe('the source-text witness: each entry admits as its first statement and 
         'assertRegistryLine',
         'validateDriver',
         'validateCaller',
+        'checkRequiredParts',
+        // issue #719 (C4): the parts check's own collector, exported beside it — an entry that
+        // called it itself would check outside the admission step.
+        'invalidParts',
+        'optionInvalidError',
       ]) {
         expect(code.match(new RegExp(`\\b${name}\\(`, 'g')) ?? [], `${file}: ${name}`).toEqual([]);
       }

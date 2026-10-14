@@ -6,7 +6,13 @@
 // warns against ("avoids circular dependency with run-agent.ts"). Shared by all THREE wait-sites:
 // slack-gate-notifier.ts's `handleBidirectionalGate`, run-agent.ts's non-Slack poll loop, and
 // run.ts's interactive prompt.
-import { applySettlement, describeGuardLines, drainFinalizers } from '@sensigo/realm';
+import {
+  applySettlement,
+  describeGuardLines,
+  drainFinalizers,
+  unreadableFactsOf,
+  WorkflowError,
+} from '@sensigo/realm';
 import type {
   EnactedVia,
   RunStore,
@@ -111,10 +117,21 @@ export function scheduleGateExpiryTimer(
       // another enactment point — silently absorbed, exactly like enactExpiredGateIfDue's own
       // advisory-not-crash posture.
     } catch (err) {
+      // issue #719 (C2, F6.4): when the run's own file cannot be read, every enactment point reads
+      // that same file — none can catch the gate until it can be read (a read error) or is repaired
+      // (damaged bytes), or is moved out. A retryable read error (EBUSY, EIO) may pass: another
+      // enactment point may still catch it.
+      const facts = unreadableFactsOf(err);
+      const stuck = facts !== undefined && !(err instanceof WorkflowError && err.retryable);
+      const until =
+        facts?.class === 'unreadable' ? 'can be read or is moved out' : 'is repaired or moved out';
+      const tail = stuck
+        ? ` — no enactment point can read this run until its file ${until}.`
+        : ' — another enactment point (submit/execute_step/reclaim/drain --expired/listen) will ' +
+          'still catch it.';
       console.warn(
         `⚠ realm: the attending-process gate-expiry timer failed for run '${runId}' ` +
-          `(${err instanceof Error ? err.message : String(err)}) — another enactment point ` +
-          `(submit/execute_step/reclaim/drain --expired/listen) will still catch it.`,
+          `(${err instanceof Error ? err.message : String(err)})${tail}`,
       );
     }
   };

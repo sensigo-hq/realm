@@ -367,7 +367,11 @@ export async function reclaimStep(
   stepName: string,
   options?: ReclaimStepOptions,
 ): Promise<ReclaimResult> {
-  admitEntry('reclaimStep', { store, storeKind: 'run store' });
+  admitEntry('reclaimStep', {
+    store,
+    storeKind: 'run store',
+    parts: { runId, stepName, options },
+  });
   const now = options?.now ?? new Date();
 
   // Guard — store capability: a store that drops `claims` cannot detect or recover a wedge.
