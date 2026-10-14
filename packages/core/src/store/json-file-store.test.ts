@@ -1,6 +1,6 @@
 // Tests for JsonFileStore: create, get, update, list, and claimStep operations.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, readdir, writeFile, readFile, unlink } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile, readFile, unlink, chmod } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import lockfile from 'proper-lockfile';
 import retry from 'retry';
 import { JsonFileStore, LOCK_RETRIES } from './json-file-store.js';
+import { unreadableFactsOf } from './run-file.js';
 import { abandonRun } from '../engine/abandon-run.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -1869,4 +1870,268 @@ describe('JsonFileStore — rerun_of, the supersede link (issue #558 PR-C)', () 
     expect(second.created).toBe(true);
     expect(second.run.rerun_of).toBe(first.run.id);
   });
+});
+
+// ─── issue #719 — a damaged run file, on a real store in a temp folder ─────────────────────────
+describe('issue #719 — a damaged run file through every reader of the JSON store', () => {
+  let d: string;
+  let st: JsonFileStore;
+  beforeEach(async () => {
+    d = await mkdtemp(join(tmpdir(), 'realm-719-jfs-'));
+    st = new JsonFileStore(d);
+    await st.list();
+  });
+  afterEach(async () => {
+    for (const f of await readdir(d)) {
+      if (f.endsWith('.json')) await chmod(join(d, f), 0o600).catch(() => undefined);
+    }
+    await rm(d, { recursive: true, force: true });
+  });
+
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  const full = (id: string, over: Partial<RunRecord> = {}) =>
+    makeRunRecord({ id, workflow_id: 'wa', ...over });
+  /** Each class, as written to `x.json`, and the code reading it must give. */
+  const CLASSES: Array<[string, () => Promise<void>, string]> = [
+    ['empty', () => writeFile(join(d, 'x.json'), ''), 'RESOURCE_FORMAT_INVALID'],
+    ['parse', () => writeFile(join(d, 'x.json'), '{not json'), 'RESOURCE_FORMAT_INVALID'],
+    [
+      'not_a_run',
+      () => writeFile(join(d, 'x.json'), JSON.stringify({ id: 'x' })),
+      'RESOURCE_FORMAT_INVALID',
+    ],
+    [
+      'mismatched',
+      () => writeFile(join(d, 'x.json'), JSON.stringify(full('other'))),
+      'RESOURCE_FORMAT_INVALID',
+    ],
+    [
+      'legacy',
+      () => writeFile(join(d, 'x.json'), JSON.stringify({ id: 'x', state: 'running' })),
+      'STATE_LEGACY_FORMAT',
+    ],
+    ...(asRoot
+      ? []
+      : ([
+          [
+            'unreadable',
+            async () => {
+              await writeFile(join(d, 'x.json'), JSON.stringify(full('x')));
+              await chmod(join(d, 'x.json'), 0o000);
+            },
+            'ENGINE_STORE_FAILED',
+          ],
+        ] as Array<[string, () => Promise<void>, string]>)),
+  ];
+  const def = {
+    id: 'wa',
+    name: 'wa',
+    version: 1,
+    steps: { a: { description: 'A.', execution: 'agent' } },
+  } as unknown as WorkflowDefinition;
+  const READERS: Array<[string, () => Promise<unknown>]> = [
+    ['get', () => st.get('x')],
+    ['update', () => st.update(full('x'))],
+    ['claimStep', () => st.claimStep('x', 'a', def)],
+    ['settleStep', () => st.settleStep('x', { kind: 'expire_gate', gateId: 'g' }, def)],
+    ['stampSeal', () => st.stampSeal('x', { arm: 'run_abandoned' } as never, 0)],
+    ['save', () => st.save(full('x'))],
+    ['list', () => st.list()],
+  ];
+
+  it.each(
+    CLASSES.flatMap(([cls, seed, code]) =>
+      READERS.map(([r, call]) => [r, cls, seed, code, call] as const),
+    ),
+  )('%s on a %s file throws its typed error', async (_reader, cls, seed, code, call) => {
+    await seed();
+    const err = await call().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    // (a) red when a reader parses past the reader (a raw SyntaxError, a cast record, no legacy
+    //     check), or names another class; (b) prints the code and the class.
+    expect({
+      code: (err as WorkflowError | undefined)?.code,
+      class: unreadableFactsOf(err)?.class,
+    }).toEqual({ code, class: cls });
+  });
+
+  it('list() throws the FIRST damaged file’s typed error, by name', async () => {
+    await writeFile(join(d, 'b.json'), '');
+    await writeFile(join(d, 'a.json'), '{not json');
+    const err = await st.list().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    // (a) red when it lists past a damaged file, or names another; (b) prints the facts.
+    expect(unreadableFactsOf(err)).toEqual({
+      resource: 'run_file',
+      class: 'parse',
+      path: join(d, 'a.json'),
+    });
+  });
+
+  it('guard: the record shapes Realm writes stay readable, params of every JSON kind included', async () => {
+    const kinds: unknown[] = [{}, null, [1, 'a'], 'text', 42];
+    for (const [i, params] of kinds.entries()) {
+      await writeFile(join(d, `p${i}.json`), JSON.stringify(full(`p${i}`, { params } as never)));
+    }
+    const read = await Promise.all(kinds.map((_, i) => st.get(`p${i}`)));
+    // (b) prints the params read back.
+    expect(read.map((r) => r.params)).toEqual(kinds);
+  });
+
+  it('listWithDiagnostics: the readable run in records; each damaged file named, sorted, with its class and path', async () => {
+    await writeFile(join(d, 'good.json'), JSON.stringify(full('good')));
+    const files: Array<[string, string, string]> = [
+      ['a-empty.json', '', 'empty'],
+      ['b-parse.json', '{not json', 'parse'],
+      ['c-not.json', JSON.stringify({ id: 'c-not' }), 'not_a_run'],
+      ['d-mis.json', JSON.stringify(full('elsewhere')), 'mismatched'],
+      ['e-leg.json', JSON.stringify({ state: 'x' }), 'legacy'],
+    ];
+    for (const [f, bytes] of files) await writeFile(join(d, f), bytes);
+    if (!asRoot) {
+      await writeFile(join(d, 'f-locked.json'), JSON.stringify(full('f-locked')));
+      await chmod(join(d, 'f-locked.json'), 0o000);
+    }
+    const listing = await st.listWithDiagnostics();
+    // (a) red when a damaged file hides the run, a file is missed, or a class is wrong; (b) prints
+    //     the ids read and each entry's file, class and path.
+    expect({
+      records: listing.records.map((r) => r.id),
+      unreadable: listing.unreadable.map((u) => [u.file, u.class, u.path]),
+    }).toEqual({
+      records: ['good'],
+      unreadable: [
+        ...files.map(([f, , cls]) => [f, cls, join(d, f)]),
+        ...(asRoot ? [] : [['f-locked.json', 'unreadable', join(d, 'f-locked.json')]]),
+      ],
+    });
+  });
+
+  describe('keyed create (B4): a damaged file refuses a new key only when it might hold it', () => {
+    const create = () =>
+      st.create({ workflowId: 'wb', workflowVersion: 1, params: {}, idempotencyKey: 'k-719' });
+    const outcome = async () => {
+      const r = await create().then(
+        (v) => ({ created: v.created }),
+        (e: unknown) => ({
+          code: (e as WorkflowError).code,
+          keyed: (e as Error).message.includes(
+            'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.',
+          ),
+        }),
+      );
+      return r;
+    };
+
+    it.each([
+      ['empty', ''],
+      ['parse', '{not json'],
+    ])('a %s file of another workflow: its key cannot be known — refused', async (_c, bytes) => {
+      await writeFile(join(d, 'x.json'), bytes);
+      // (a) red when the create goes on past a file that might hold the key; (b) prints it.
+      expect(await outcome()).toEqual({ code: 'RESOURCE_FORMAT_INVALID', keyed: true });
+    });
+
+    it.skipIf(asRoot)('an unreadable file: its key cannot be known — refused', async () => {
+      await writeFile(join(d, 'x.json'), JSON.stringify(full('x')));
+      await chmod(join(d, 'x.json'), 0o000);
+      expect(await outcome()).toEqual({ code: 'ENGINE_STORE_FAILED', keyed: true });
+    });
+
+    const READABLE: Array<[string, Record<string, unknown>, string]> = [
+      ['not_a_run', { id: 'x' }, 'RESOURCE_FORMAT_INVALID'],
+      ['mismatched', { ...full('other') }, 'RESOURCE_FORMAT_INVALID'],
+      ['legacy', { id: 'x', state: 'running' }, 'STATE_LEGACY_FORMAT'],
+    ];
+    it.each(READABLE)(
+      'guard: a %s file without the key does not stop the create',
+      async (_c, obj) => {
+        await writeFile(join(d, 'x.json'), JSON.stringify(obj));
+        expect(await outcome()).toEqual({ created: true });
+      },
+    );
+    it.each(READABLE)('a %s file carrying that key: refused', async (_c, obj, code) => {
+      await writeFile(join(d, 'x.json'), JSON.stringify({ ...obj, idempotency_key: 'k-719' }));
+      // (a) red when a readable object that may hold the key is skipped; (b) prints it.
+      expect(await outcome()).toEqual({ code, keyed: true });
+    });
+
+    it('guard: an unkeyed create is never stopped', async () => {
+      await writeFile(join(d, 'x.json'), '{not json');
+      const r = await st.create({ workflowId: 'wb', workflowVersion: 1, params: {} });
+      expect(r.created).toBe(true);
+    });
+
+    it('guard: a key whose pointer names a readable run is not stopped', async () => {
+      const first = await create();
+      await writeFile(join(d, 'x.json'), '{not json');
+      const again = await create();
+      expect([again.created, again.run.id]).toEqual([false, first.run.id]);
+    });
+  });
+
+  describe('reconcileKeys (R10): fails closed, naming every damaged file, writing nothing', () => {
+    it('two format faults: RESOURCE_FORMAT_INVALID, both named, no pointer written', async () => {
+      await writeFile(
+        join(d, 'good.json'),
+        JSON.stringify(full('good', { idempotency_key: 'k' } as never)),
+      );
+      await writeFile(join(d, 'a.json'), '');
+      await writeFile(join(d, 'b.json'), '{not json');
+      const err = (await st.reconcileKeys().catch((e: unknown) => e)) as WorkflowError;
+      // (a) red when it reconciles past them, or names only one; (b) prints the code, the files
+      //     named and whether a pointer was written.
+      expect({
+        code: err.code,
+        files: (err.details['files'] as Array<{ path: string; class: string }>).map((f) => [
+          f.path,
+          f.class,
+        ]),
+        message: err.message,
+        keysWritten: existsSync(join(d, 'keys')),
+      }).toEqual({
+        code: 'RESOURCE_FORMAT_INVALID',
+        files: [
+          [join(d, 'a.json'), 'empty'],
+          [join(d, 'b.json'), 'parse'],
+        ],
+        message:
+          `realm run reconcile did not run: 2 run file(s) in '${d}' could not be read:\n` +
+          `  ${join(d, 'a.json')}: is empty\n` +
+          `  ${join(d, 'b.json')}: is not JSON\n` +
+          "Repair, restore or move each one out ('realm run list' shows each file's way out), then run realm run reconcile again.",
+        keysWritten: false,
+      });
+    });
+
+    it.skipIf(asRoot)('any unreadable file: ENGINE_STORE_FAILED', async () => {
+      await writeFile(join(d, 'a.json'), '');
+      await writeFile(join(d, 'b.json'), JSON.stringify(full('b')));
+      await chmod(join(d, 'b.json'), 0o000);
+      const err = (await st.reconcileKeys().catch((e: unknown) => e)) as WorkflowError;
+      expect(err.code).toBe('ENGINE_STORE_FAILED');
+    });
+  });
+
+  it.skipIf(asRoot)(
+    'deleteAllForRun wrapping a read error takes the errno from the error’s details, never its code',
+    async () => {
+      await writeFile(
+        join(d, 'x.json'),
+        JSON.stringify(full('x', { terminal_state: true } as never)),
+      );
+      await chmod(join(d, 'x.json'), 0o000);
+      const err = (await st.deleteAllForRun('x').catch((e: unknown) => e)) as WorkflowError;
+      // (a) red when the wrap reads `err.code` (the error's own code) as the errno; (b) prints the
+      //     code and the failure's errno.
+      expect({
+        code: err.code,
+        errno: (err.details['failures'] as Array<{ code: string }>)[0]?.code,
+      }).toEqual({ code: 'ENGINE_ARTIFACT_DELETE_FAILED', errno: 'EACCES' });
+    },
+  );
 });

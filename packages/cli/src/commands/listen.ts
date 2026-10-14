@@ -13,6 +13,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { Command } from 'commander';
 // issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
@@ -40,6 +41,8 @@ import type {
   FilterCondition,
   DedupConfig,
   RunStore,
+  RunListing,
+  UnreadableRunFileEntry,
   WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
@@ -50,6 +53,7 @@ import {
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
 import { FileDedupStore, InMemoryDedupStore, type DedupStore } from '../lib/dedup-store.js';
+import { listRunsDiagnosed } from './list.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -78,7 +82,11 @@ export interface ListenDeps {
   // issue #291 (Deliverable 4f): widened to add 'list' (the sweep's own store-scan) + 'settleStep'
   // (the enactment write). Both OPTIONAL-shaped on the real RunStore interface already — Pick
   // preserves that optionality, so a store that doesn't declare settleStep still satisfies this.
-  runStore: Pick<RunStore, 'create' | 'get' | 'update' | 'list' | 'settleStep'>;
+  // issue #719 (B3): the JSON store's `listWithDiagnostics`, optional — when present the sweep acts
+  // on the readable runs and logs each run file it cannot read instead of failing every pass.
+  runStore: Pick<RunStore, 'create' | 'get' | 'update' | 'list' | 'settleStep'> & {
+    listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
+  };
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
   // (`'error'`, which for a missing or unenterable folder comes on the next tick, not as a throw).
@@ -688,6 +696,58 @@ export interface SweepResult {
 }
 
 /**
+ * issue #719 (B3): the run files the expiry sweeper has already logged, by path — so a damaged file
+ * is logged on first sight and again only when its class, size or mtime changes, never once per
+ * pass. The listen server makes one and hands it to every pass.
+ */
+export type SweepSeenFiles = Map<
+  string,
+  { class: string; size: number | undefined; mtimeMs: number | undefined }
+>;
+
+/**
+ * Logs the run files a sweep pass could not read (issue #719, B3): `warn` for a file not seen
+ * before, or changed since; one `debug` line with the count for the pass. Forgets a file no longer
+ * damaged.
+ */
+async function logSkippedRunFiles(
+  logger: Logger,
+  unreadable: readonly UnreadableRunFileEntry[],
+  seen: SweepSeenFiles | undefined,
+): Promise<void> {
+  const now = new Set(unreadable.map((u) => u.path));
+  if (seen !== undefined) {
+    for (const path of [...seen.keys()]) if (!now.has(path)) seen.delete(path);
+  }
+  for (const entry of unreadable) {
+    let size: number | undefined;
+    let mtimeMs: number | undefined;
+    try {
+      const st = await stat(entry.path);
+      size = st.size;
+      mtimeMs = st.mtimeMs;
+    } catch {
+      // A file that cannot be stat'ed is compared by its class alone.
+    }
+    const prior = seen?.get(entry.path);
+    const changed =
+      prior === undefined ||
+      prior.class !== entry.class ||
+      prior.size !== size ||
+      prior.mtimeMs !== mtimeMs;
+    if (changed) {
+      logger.warn('listen: run file skipped by the expiry sweeper', {
+        path: entry.path,
+        class: entry.class,
+        reason: entry.reason,
+      });
+      seen?.set(entry.path, { class: entry.class, size, mtimeMs });
+    }
+  }
+  logger.debug('listen: expiry sweeper skipped run files', { count: unreadable.length });
+}
+
+/**
  * Issue #291 (Deliverable 4f, Amendment 4 — the `realm listen` opt-in sweeper): one store-wide
  * scan for expired, enactable gates across EVERY run this store holds (not just the workflows
  * THIS `listen` process has mounted — a gate opened by any process on the same store is
@@ -701,7 +761,9 @@ export interface SweepResult {
  * `now`-injectable for deterministic tests.
  */
 export async function sweepExpiredGates(
-  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
+  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'> & {
+    sweepSeen?: SweepSeenFiles;
+  },
   now: Date = new Date(),
 ): Promise<SweepResult> {
   const result: SweepResult = {
@@ -713,7 +775,10 @@ export async function sweepExpiredGates(
   };
   if (deps.runStore.settleStep === undefined) return result;
 
-  const runs = await deps.runStore.list();
+  // issue #719 (B3): the readable runs are swept; a run file that cannot be read is logged, never
+  // allowed to fail the whole pass.
+  const { records: runs, unreadable } = await listRunsDiagnosed(deps.runStore);
+  if (unreadable.length > 0) await logSkippedRunFiles(deps.logger, unreadable, deps.sweepSeen);
   for (const run of runs) {
     if (run.terminal_state || run.pending_gate === undefined) continue;
     const gate = run.pending_gate;
@@ -815,13 +880,16 @@ export function startListen(
   });
 
   // issue #291 (Deliverable 4f): the opt-in expired-gate sweeper — a coarse setInterval, started
-  // only when the operator explicitly requested it. A pass's own errors never crash the server
-  // (sweepExpiredGates itself never throws — every failure is caught+logged per-run internally);
-  // this outer catch is defensive-only.
+  // only when the operator explicitly requested it. A pass's own errors never crash the server:
+  // each run's failure is caught and logged inside the pass, and a pass that throws (its listing
+  // failed — issue #719: e.g. the runs folder cannot be read; a damaged run FILE is logged and
+  // skipped, never thrown) is caught and logged here. One `sweepSeen` map for the server's life,
+  // so a damaged file is logged once until it changes.
+  const sweepSeen: SweepSeenFiles = new Map();
   const sweepTimer =
     options.sweepExpiredGatesIntervalMs !== undefined
       ? setInterval(() => {
-          sweepExpiredGates(deps).catch((err) => {
+          sweepExpiredGates({ ...deps, sweepSeen }).catch((err) => {
             deps.logger.error('listen: sweeper pass failed', { error: String(err) });
           });
         }, options.sweepExpiredGatesIntervalMs)

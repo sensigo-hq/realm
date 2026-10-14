@@ -31,6 +31,7 @@ import type {
   RunStore,
   PerRunArtifactStore,
   RunScopedFencePredicate,
+  UnreadableRunFileEntry,
   WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
@@ -42,6 +43,7 @@ import {
   resumeWay,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
+import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 
 export type PurgeEligibility =
   | { eligible: true; overriddenClaimStep?: string | undefined }
@@ -167,6 +169,11 @@ export interface PurgeRunsOptions {
    * refuses is no path). Absent, or a workflow that cannot be read: see {@link resumableOf}.
    */
   workflows?: Pick<WorkflowRegistrar, 'get'> | undefined;
+  /**
+   * issue #719 (B3), batch mode: told the run files that could not be read as runs — never
+   * selected, never deleted.
+   */
+  onUnreadable?: ((entries: UnreadableRunFileEntry[]) => void) | undefined;
 }
 
 /**
@@ -235,7 +242,10 @@ export async function purgeRuns(
     }
   } else {
     const thresholdMs = options.olderThan !== undefined ? parseDuration(options.olderThan) : 0;
-    const all = await anchorStore.list(options.workflow);
+    // issue #719 (B3): the readable runs are candidates; a damaged run file is reported, never
+    // purged.
+    const { records: all, unreadable } = await listRunsDiagnosed(anchorStore, options.workflow);
+    if (unreadable.length > 0) options.onUnreadable?.(unreadable);
     for (const run of all) {
       // explicit: false — a batch/cron sweep cannot prove an indeterminate-age claim's runner is
       // dead, so claim_unknown_age is refused here (skipped+warned below), not overridden.
@@ -560,6 +570,11 @@ export const purgeCommand = new Command('purge')
       ];
 
       const dryRun = opts.force !== true;
+      const onUnreadable = (entries: UnreadableRunFileEntry[]): void => {
+        for (const line of unreadableRunLines(entries, '; realm run purge did not act on them.')) {
+          console.error(line);
+        }
+      };
       try {
         const result = await purgeRuns(
           {
@@ -568,6 +583,7 @@ export const purgeCommand = new Command('purge')
             workflow: opts.workflow,
             dryRun,
             workflows: new JsonWorkflowStore(),
+            onUnreadable,
           },
           runStore,
           artifactStores,

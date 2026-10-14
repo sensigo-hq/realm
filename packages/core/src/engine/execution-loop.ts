@@ -165,7 +165,13 @@ export interface ExecuteStepOptions {
   runId: string;
   command: string;
   input: Record<string, unknown>;
-  dispatcher: StepDispatcher;
+  /**
+   * issue #719: the host's dispatcher. Required when `command` names a step Realm calls it for (see
+   * `callsHostDispatcher`): an agent step, an `auto` step with no handler and no service, or a step
+   * whose `execution` is missing or unknown. Without it such a call rejects
+   * `VALIDATION_OPTION_INVALID` before anything is read or written.
+   */
+  dispatcher?: StepDispatcher;
   /**
    * Extension registry for resolving service adapters and step handlers.
    * When omitted, the engine uses the built-in default registry (includes `FileSystemAdapter`).
@@ -284,7 +290,8 @@ export interface ExecuteChainOptions {
   runId: string;
   command: string;
   input: Record<string, unknown>;
-  dispatcher: StepDispatcher;
+  /** @see ExecuteStepOptions.dispatcher */
+  dispatcher?: StepDispatcher;
   /** @see ExecuteStepOptions.registry */
   registry?: ExtensionRegistry;
   /** @see StepMeta */
@@ -320,13 +327,13 @@ function delayMs(ms: number): Promise<void> {
  * Executes `dispatch` with a cancellation signal. If `dispatch` does not complete within `ms`
  * milliseconds, the signal is aborted and a STEP_TIMEOUT WorkflowError is thrown.
  */
-function withTimeout<T>(
+async function withTimeout<T>(
   dispatch: (signal: AbortSignal) => Promise<T>,
   ms: number,
   stepName: string,
 ): Promise<T> {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -345,7 +352,16 @@ function withTimeout<T>(
     }, ms);
   });
 
-  return Promise.race([dispatch(controller.signal), timeout]).finally(() => clearTimeout(timer));
+  // issue #719: the call runs inside an async function, so a dispatcher that throws synchronously,
+  // is not a function, or returns a plain value still settles `call` — and the `finally` clears the
+  // timer on every path. Evaluating `dispatch(...)` among `Promise.race`'s arguments left the timer
+  // running for a synchronous throw, and its STEP_TIMEOUT rejected unhandled up to an hour later.
+  const call = (async () => await dispatch(controller.signal))();
+  try {
+    return await Promise.race([call, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -1929,9 +1945,10 @@ export async function executeStep(
   admitEntry('executeStep', {
     store,
     storeKind: 'run store',
-    registry: options.registry,
-    driver: options.driver,
-    caller: options.caller,
+    registry: options?.registry,
+    driver: options?.driver,
+    caller: options?.caller,
+    parts: { definition, options },
   });
   return executeStepAs(store, definition, options, options.caller ?? 'executeStep');
 }
@@ -2973,7 +2990,9 @@ async function executeStepBody(
       if (attemptNum === 1) capClockStart = performance.now();
 
       try {
-        const makeCall = (
+        // issue #719: `async`, so a dispatcher that throws synchronously becomes a rejection like
+        // any other failure, and a plain value is the step's output (`await` on a non-promise).
+        const makeCall = async (
           signal?: AbortSignal,
         ): Promise<{
           output: Record<string, unknown>;
@@ -2991,29 +3010,38 @@ async function executeStepBody(
               signal,
             );
           } else if (stepDef?.execution === 'auto' && stepDef.handler !== undefined) {
-            return callHandler(stepDef, effectiveOptions, pendingRun, evidenceByStep, signal).then(
-              (result) => {
-                if (result.kind === 'abort') {
-                  return {
-                    output: {},
-                    resolvedParams: undefined,
-                    handlerAbort: { message: result.message },
-                  };
-                }
-                if (result.kind === 'warn') {
-                  return {
-                    output: result.output,
-                    resolvedParams: result.resolvedParams,
-                    handlerWarn: result.message,
-                  };
-                }
-                return { output: result.output, resolvedParams: result.resolvedParams };
-              },
+            const result = await callHandler(
+              stepDef,
+              effectiveOptions,
+              pendingRun,
+              evidenceByStep,
+              signal,
             );
+            if (result.kind === 'abort') {
+              return {
+                output: {},
+                resolvedParams: undefined,
+                handlerAbort: { message: result.message },
+              };
+            }
+            if (result.kind === 'warn') {
+              return {
+                output: result.output,
+                resolvedParams: result.resolvedParams,
+                handlerWarn: result.message,
+              };
+            }
+            return { output: result.output, resolvedParams: result.resolvedParams };
           } else {
-            return options
-              .dispatcher(options.command, effectiveInput, pendingRun, signal)
-              .then((result) => ({ output: result, resolvedParams: undefined }));
+            // issue #719: this branch serves exactly the steps `callsHostDispatcher` is true for, and
+            // admission's `required_parts` row guarantees the dispatcher for them.
+            const output = await options.dispatcher!(
+              options.command,
+              effectiveInput,
+              pendingRun,
+              signal,
+            );
+            return { output, resolvedParams: undefined };
           }
         };
         const callResult =
@@ -5550,9 +5578,10 @@ export async function submitHumanResponse(
   admitEntry('submitHumanResponse', {
     store,
     storeKind: 'run store',
-    registry: options.registry,
-    driver: options.driver,
-    caller: options.caller,
+    registry: options?.registry,
+    driver: options?.driver,
+    caller: options?.caller,
+    parts: { definition, options },
   });
   // decision C151: the call a late answer that carries out the question's expiry is named by.
   const via: AnswerCaller = options.caller ?? 'submitHumanResponse';
@@ -6674,7 +6703,13 @@ export async function drainFinalizers(
   // store is read (the admission step's host tier).
   driver?: Attributed,
 ): Promise<{ run: RunRecord; warnings: string[]; leftPending: string[]; attempted: string[] }> {
-  admitEntry('drainFinalizers', { store, storeKind: 'run store', registry, driver });
+  admitEntry('drainFinalizers', {
+    store,
+    storeKind: 'run store',
+    registry,
+    driver,
+    parts: { definition, runId },
+  });
   // .bind(store): a bare `store.settleStep` reference loses its `this` binding — the store's own
   // method body (e.g. JsonFileStore's `this.ensureDir()`/`this.filePath()`) would throw on
   // `this === undefined` once called through the detached reference below.
@@ -6957,9 +6992,10 @@ export async function executeEngineStep(
   admitEntry('executeEngineStep', {
     store,
     storeKind: 'run store',
-    registry: options.registry,
-    driver: options.driver,
-    caller: options.caller,
+    registry: options?.registry,
+    driver: options?.driver,
+    caller: options?.caller,
+    parts: { definition, options },
   });
   return engineStepAs(store, definition, options, options.caller ?? 'executeEngineStep');
 }
@@ -7886,9 +7922,10 @@ export async function advanceRun(
   admitEntry('advanceRun', {
     store,
     storeKind: 'run store',
-    registry: options.registry,
-    driver: options.driver,
-    caller: options.caller,
+    registry: options?.registry,
+    driver: options?.driver,
+    caller: options?.caller,
+    parts: { definition, options },
   });
 
   const caller: AdvanceCaller = options.caller ?? 'advanceRun';
@@ -8019,9 +8056,10 @@ export async function executeChain(
   admitEntry('executeChain', {
     store,
     storeKind: 'run store',
-    registry: options.registry,
-    driver: options.driver,
-    caller: options.caller,
+    registry: options?.registry,
+    driver: options?.driver,
+    caller: options?.caller,
+    parts: { definition, options },
   });
   // decision C151: the call an expiry this call carries out is named by — before its named step or
   // a step it chains into.

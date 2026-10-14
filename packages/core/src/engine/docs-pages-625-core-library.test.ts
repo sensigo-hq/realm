@@ -240,14 +240,14 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     ]).toEqual([['x'], ['execute_step'], ['y'], 'boolean', 'advance_run']);
   });
 
-  it('line 104, the executeEngineStep row and its options: runId, step and run; caller executeEngineStep (the default) or agent; another throws naming executeEngineStep before anything is read or written', async () => {
+  it('line 104, the executeEngineStep row and its options: runId, step and run; caller executeEngineStep (the default) or agent; another rejects naming executeEngineStep before anything is read or written', async () => {
     claim(
       PAGE,
       '| `executeEngineStep(store, definition, options)` | Runs one `auto` step the way the engine runs it.',
     );
     claim(
       PAGE,
-      "`options` holds `runId`, `step` and `run` (the run's record), and optionally `caller`: `executeEngineStep` (the default) or `agent`; any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`, before anything is read or written.",
+      "`options` holds `runId`, `step` and `run` (the run's record), and optionally `caller`: `executeEngineStep` (the default) or `agent`; any other value rejects with a `WorkflowError` with the code `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`, before anything is read or written.",
     );
     const { run } = await store.create({ workflowId: PLAIN.id, workflowVersion: 1, params: {} });
     const done = await executeEngineStep(store, PLAIN, {
@@ -322,10 +322,10 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     }
   });
 
-  it('lines 120: the caller row — executeStep takes executeStep or agent, executeChain takes executeChain, execute_step, agent or run; each is the call the line names; another throws before anything is read or written', async () => {
+  it('lines 120: the caller row — executeStep takes executeStep or agent, executeChain takes executeChain, execute_step, agent or run; each is the call the line names; another rejects before anything is read or written', async () => {
     claim(
       PAGE,
-      '| `caller` | No | The call the expiry line names when this call carries out an expired question first. `executeStep` takes `executeStep` (the default) or `agent`; `executeChain` takes `executeChain` (the default), `execute_step`, `agent` or `run`. Any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID` before anything is read or written. Added after version 0.46.0. |',
+      '| `caller` | No | The call the expiry line names when this call carries out an expired question first. `executeStep` takes `executeStep` (the default) or `agent`; `executeChain` takes `executeChain` (the default), `execute_step`, `agent` or `run`. Any other value rejects with a `WorkflowError` with the code `VALIDATION_CALLER_INVALID` before anything is read or written. Added after version 0.46.0. |',
     );
     claim(
       PAGE,
@@ -367,10 +367,10 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
     }
   });
 
-  it("line 124: submitHumanResponse's caller — submitHumanResponse (the default), submit_human_response, respond, run or agent is the call a late answer's expiry line names; another throws as above", async () => {
+  it("line 124: submitHumanResponse's caller — submitHumanResponse (the default), submit_human_response, respond, run or agent is the call a late answer's expiry line names; another rejects as above", async () => {
     claim(
       PAGE,
-      "`caller` is the call the expiry line names when an answer that comes after the question's time is up carries out its expiry: `submitHumanResponse` (the default), `submit_human_response`, `respond`, `run` or `agent`; any other value throws as above (added after version 0.46.0).",
+      "`caller` is the call the expiry line names when an answer that comes after the question's time is up carries out its expiry: `submitHumanResponse` (the default), `submit_human_response`, `respond`, `run` or `agent`; any other value rejects as above (added after version 0.46.0).",
     );
     for (const w of [undefined, 'submit_human_response', 'respond', 'run', 'agent'] as const) {
       const { runId, gateId } = await atQuestion();

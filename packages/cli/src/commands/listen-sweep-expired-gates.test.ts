@@ -2,10 +2,13 @@
 // store-wide expired-gate sweeper. sweepExpiredGates is exercised directly (pure I/O
 // orchestration, now-injectable) — no HTTP server needed.
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
+import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION, JsonFileStore } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate, WorkflowRegistrar } from '@sensigo/realm';
-import { sweepExpiredGates, type ListenDeps, type Logger } from './listen.js';
+import { sweepExpiredGates, type ListenDeps, type Logger, type SweepSeenFiles } from './listen.js';
 
 const silentLogger: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -57,7 +60,11 @@ function makeGate(overrides: Partial<PendingGate> = {}): PendingGate {
   };
 }
 
-async function seedGatedRun(store: InMemoryStore, def: WorkflowDefinition, gate: PendingGate) {
+async function seedGatedRun(
+  store: Pick<InMemoryStore, 'create' | 'update'>,
+  def: WorkflowDefinition,
+  gate: PendingGate,
+) {
   const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
   return store.update({
     ...run,
@@ -237,5 +244,88 @@ describe('sweepExpiredGates (issue #291, Deliverable 4f)', () => {
       errors: 0,
     });
     expect(runStore.list).not.toHaveBeenCalled();
+  });
+});
+
+describe('issue #719 — the expiry sweeper on a store with a damaged run file (a real JSON store)', () => {
+  function capture() {
+    const warns: Array<{ msg: string; data: unknown }> = [];
+    const debugs: Array<{ msg: string; data: unknown }> = [];
+    const logger: Logger = {
+      ...silentLogger,
+      warn: (msg: string, data?: unknown) => warns.push({ msg, data }),
+      debug: (msg: string, data?: unknown) => debugs.push({ msg, data }),
+    };
+    return { logger, warns, debugs };
+  }
+
+  it('logs the file once across passes, again after it changes, and still enacts the readable run’s gate', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    try {
+      const runStore = new JsonFileStore(runsDir);
+      const def = wf();
+      const run = await seedGatedRun(
+        runStore,
+        def,
+        makeGate({ on_expiry: 'settle_default', default_choice: 'approve' }),
+      );
+      const bad = join(runsDir, 'bad.json');
+      writeFileSync(bad, '{ not json');
+      const { logger, warns, debugs } = capture();
+      const sweepSeen: SweepSeenFiles = new Map();
+      const deps = { runStore, workflowStore: makeWorkflowStore([def]), logger, sweepSeen };
+      const passes = [];
+      for (let i = 0; i < 3; i++) passes.push(await sweepExpiredGates(deps, NOW));
+      const warnedAfterThree = warns.length;
+      utimesSync(bad, new Date('2030-01-01T00:00:00Z'), new Date('2030-01-01T00:00:00Z'));
+      await sweepExpiredGates(deps, NOW);
+      // (a) red when the damaged file fails the pass, is logged every pass, is not logged again
+      //     once it changed, or hides the readable run; (b) prints the enactments, the warn lines
+      //     (path, class, reason — no content) and the debug counts.
+      expect({
+        enacted: passes.map((p) => p.enacted),
+        gateSettled: (await runStore.get(run.id)).pending_gate === undefined,
+        warnedAfterThree,
+        warns: warns.map((w) => [w.msg, w.data]),
+        debugs: debugs.map((d) => [d.msg, d.data]),
+      }).toEqual({
+        enacted: [1, 0, 0],
+        gateSettled: true,
+        warnedAfterThree: 1,
+        warns: [0, 1].map(() => [
+          'listen: run file skipped by the expiry sweeper',
+          {
+            path: bad,
+            class: 'parse',
+            reason: `The run file '${bad}' is not JSON.`,
+          },
+        ]),
+        debugs: [0, 1, 2, 3].map(() => ['listen: expiry sweeper skipped run files', { count: 1 }]),
+      });
+    } finally {
+      rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('the leak cell (the sweeper’s warn line): a fault AT a token never reaches the log', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    try {
+      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
+      const { logger, warns } = capture();
+      await sweepExpiredGates(
+        {
+          runStore: new JsonFileStore(runsDir),
+          workflowStore: makeWorkflowStore([]),
+          logger,
+          sweepSeen: new Map(),
+        },
+        NOW,
+      );
+      const leaked = JSON.stringify(warns).includes('ghp_FAKE7');
+      // (a) red when the parser's text reaches the log; (b) prints booleans only.
+      expect({ warned: warns.length === 1, leaked }).toEqual({ warned: true, leaked: false });
+    } finally {
+      rmSync(runsDir, { recursive: true, force: true });
+    }
   });
 });

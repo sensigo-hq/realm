@@ -24,6 +24,7 @@ import {
   probeClassOf,
 } from './registrar.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { unreadableFactsOf, unreadableRunFileError } from '../store/run-file.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
@@ -225,15 +226,10 @@ describe('probeClassToError — the table, whole-message', () => {
     expect(err.code).toBe('STATE_WORKFLOW_UNREADABLE');
   });
 
-  it('T6 parseFailureError forks on the CAUSE — a thrown parser error vs a parsed non-object root', () => {
-    let thrown: unknown;
-    try {
-      JSON.parse('{"a"');
-    } catch (err) {
-      thrown = err;
-    }
-    expect(parseFailureError(ID, '/x/gate-558.json', thrown).message).toBe(
-      "the registered copy of 'gate-558' is not parseable JSON: Expected ':' after property name in JSON at position 4 (line 1 column 5)",
+  it('T6 parseFailureError forks on what the bytes are — not JSON (no root, no parser text) vs a parsed non-object root (issue #719)', () => {
+    // (a) red when the parser's text, or any position, comes back into the message; (b) prints it.
+    expect(parseFailureError(ID, '/x/gate-558.json').message).toBe(
+      "the registered copy of 'gate-558' is not JSON",
     );
     expect(parseFailureError(ID, '/x', null).message).toBe(
       "the registered copy of 'gate-558' is JSON but not a workflow object (it is null)",
@@ -612,9 +608,9 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       (e: unknown) => e,
     )) as WorkflowError;
     expect(err.code).toBe('RESOURCE_FORMAT_INVALID');
-    expect(err.message).toContain(
-      "the registered copy of 'gate-558' is not parseable JSON: Expected ':' after property name",
-    );
+    // issue #719 (R8): the fault, never the parser's text around it.
+    expect(err.message).toContain("the registered copy of 'gate-558' is not JSON");
+    expect(err.message.includes('after property name')).toBe(false);
     expect(err.message).toContain('To end the run: realm run abandon run-1.');
   });
 
@@ -712,3 +708,57 @@ describe('repairActFor — the act is keyed on the CLASS, minted once (review fo
 });
 const RR_ACT =
   're-register the workflow from its source (realm workflow register <path-to-workflow>)';
+
+describe('issue #719 — the registrar speaks the damaged-file vocabulary, with no parser text', () => {
+  let wfDir: string;
+  beforeEach(async () => {
+    wfDir = await mkdtemp(join(tmpdir(), 'realm-719-registrar-'));
+  });
+  afterEach(async () => {
+    await rm(wfDir, { recursive: true, force: true });
+  });
+
+  it('a registered copy that is not JSON: "is not JSON"; its facts name the copy and the class', async () => {
+    await writeFile(join(wfDir, 'w.json'), '{ not json');
+    const err = (await new JsonWorkflowStore(wfDir)
+      .get('w')
+      .catch((e: unknown) => e)) as WorkflowError;
+    // (a) red when the parser's text comes back, or the facts are not written; (b) prints them.
+    expect({ code: err.code, message: err.message, facts: unreadableFactsOf(err) }).toEqual({
+      code: 'RESOURCE_FORMAT_INVALID',
+      message: "the registered copy of 'w' is not JSON",
+      facts: { resource: 'workflow_copy', class: 'parse', path: join(wfDir, 'w.json') },
+    });
+  });
+
+  it('an empty registered copy: class empty through the facts', async () => {
+    await writeFile(join(wfDir, 'w.json'), '');
+    const err = (await new JsonWorkflowStore(wfDir)
+      .get('w')
+      .catch((e: unknown) => e)) as WorkflowError;
+    // (a) red when the facts are not written; (b) prints them.
+    expect(unreadableFactsOf(err)).toEqual({
+      resource: 'workflow_copy',
+      class: 'empty',
+      path: join(wfDir, 'w.json'),
+    });
+  });
+
+  it('repairActFor gives no act for a run file’s error (re-register or rm would free its key)', () => {
+    const err = unreadableRunFileError({
+      resource: 'run_file',
+      class: 'parse',
+      path: '/runs/x.json',
+    });
+    // (a) red when a run file is offered the registrar's re-register / rm act; (b) prints it.
+    expect(repairActFor(err)).toBeUndefined();
+  });
+
+  it('the leak cell (the registrar’s error): a fault AT a token never reaches the message', async () => {
+    await writeFile(join(wfDir, 'w.json'), '{"id": ghp_FAKE719}');
+    const err = (await new JsonWorkflowStore(wfDir).get('w').catch((e: unknown) => e)) as Error;
+    const leaked = String(err.message).includes('ghp_FAKE7');
+    // (a) red when the parser's text reaches the error; (b) prints a boolean only.
+    expect(leaked).toBe(false);
+  });
+});

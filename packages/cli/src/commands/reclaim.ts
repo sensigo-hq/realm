@@ -8,6 +8,7 @@
 import { Command } from 'commander';
 import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
+import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 
 /**
  * Pure outcome→(glyph, message) renderer (issue #221 [M4]) — the SINGLE source of both reclaim
@@ -150,7 +151,14 @@ export const reclaimCommand = new Command('reclaim')
         const nowDate = new Date(now);
         const selected: Array<{ runId: string; claim: InProgressClaimInfo }> = [];
         try {
-          const runs = await store.list(opts.workflow);
+          // issue #719 (B3): act on the readable runs; a damaged run file is reported, not acted on.
+          const { records: runs, unreadable } = await listRunsDiagnosed(store, opts.workflow);
+          for (const line of unreadableRunLines(
+            unreadable,
+            '; realm run reclaim --all did not act on them.',
+          )) {
+            console.error(line);
+          }
           for (const run of runs) {
             if (run.terminal_state) continue;
             const claims = classifyInProgressClaims(run, nowDate);

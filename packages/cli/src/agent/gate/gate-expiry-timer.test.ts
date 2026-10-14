@@ -1,6 +1,10 @@
 // gate-expiry-timer.test.ts — issue #291, Deliverable 4e: the attending-process enactment timer.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
+import { JsonFileStore } from '@sensigo/realm';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 
@@ -184,5 +188,41 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     cancel();
     // (a) red when the timer reports a write it did not make; (b) prints the calls.
     expect(onApplied).not.toHaveBeenCalled();
+  });
+});
+
+describe('issue #719 — the expiry timer on a run file that cannot be read', () => {
+  it('logs the file’s message (its way out), never its text', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-timer-'));
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => {
+      warns.push(String(m));
+    });
+    try {
+      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
+      const gate = makeGate({
+        expires_at: new Date(Date.now() - 1000).toISOString(),
+        on_expiry: 'abort',
+      });
+      const cancel = scheduleGateExpiryTimer('bad', gate, {
+        store: new JsonFileStore(runsDir),
+        definition: def,
+      });
+      for (let i = 0; i < 50 && warns.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      cancel();
+      const line = warns.join('\n');
+      // (a) red when the timer's line loses the file's message, or carries the parser's text; (b)
+      //     prints the line count and booleans only.
+      expect({
+        lines: warns.length,
+        message: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
+        leaked: line.includes('ghp_FAKE7'),
+      }).toEqual({ lines: 1, message: true, leaked: false });
+    } finally {
+      spy.mockRestore();
+      rmSync(runsDir, { recursive: true, force: true });
+    }
   });
 });

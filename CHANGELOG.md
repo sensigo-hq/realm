@@ -8,6 +8,22 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
+  `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
+  `executeChain`, `executeEngineStep`, `advanceRun`, `submitHumanResponse`, `drainFinalizers`,
+  `abandonRun`, `reclaimStep`, `getWorkflowForRun`) handed a part that is missing or of the wrong
+  type (the definition, the options or one of them, a `run` that is not a run record, the
+  `dispatcher` the named step needs) rejects before anything is read or written, naming every defect
+  at once in its message and in `details.invalid` (`{ option, expected, given_type, fields? }`: type
+  words only, never a value). Core exports `isRunRecordShape`, the one check that a value is a run
+  record, and `callsHostDispatcher`, whether Realm calls the host's dispatcher for a step.
+- **`JsonFileStore.listWithDiagnostics(workflowId?)` (issue #719).** Every readable run, and each
+  run file that cannot be read as a run, with its file, path, class (`empty`, `parse`, `not_a_run`,
+  `mismatched`, `legacy`, `unreadable`), reason and way out. Core exports `UnreadableFileFacts` (a
+  damaged stored file's facts: names, classes and type words, never its content),
+  `renderUnreadableStoredFile` and `describeStoredFileFault` (the one composer of its message),
+  `unreadableRunFilesError`, and the `RunListing`, `UnreadableRunFileEntry` and `StoredFileClass`
+  types. The facts are an error's `details` for now; a later version moves them to `facts`.
 - **The owed call (issue #625, PR-2a).** When engine work — a guard, an `auto` step — can run and
   nobody is running it, every read surface and every reply whose writer loads the definition names
   ONE call that runs it.
@@ -127,6 +143,39 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
 
 ### Changed
 
+- **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
+  file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,
+  or holding another run is `RESOURCE_FORMAT_INVALID` (`stop`); one in the format of an earlier
+  Realm is `STATE_LEGACY_FORMAT` (`report_to_user`); one that cannot be read is
+  `ENGINE_STORE_FAILED` (`stop`, retryable for `EBUSY` and `EIO`). Its details are its facts
+  (`resource: 'run_file'`, `class`, `path`, and by class `errno`, `shape`, `held_id` or `fields`),
+  and its message names the file, what is wrong with it and the way out, with what that does to the
+  run's key and side files. These replace, per surface: `ENGINE_STORE_FAILED` with the parser's text
+  (the library entries; MCP `get_run_state`, `execute_step`, `advance_run`,
+  `submit_human_response`), `ENGINE_INTERNAL` (`append_trace`, a keyed `start_run`), no code
+  (`abandon_run`), and the parser's raw error (`abandonRun`, `reclaimStep`, `drainFinalizers`). The
+  legacy message no longer says to delete `~/.realm/runs/`, which freed every key. **Upgrading:**
+  key on the new codes.
+- **BREAKING — `JsonFileStore`'s `list()` and `get()` refuse files they used to return (issue
+  #719).** `list()` throws the first damaged file's typed error where it returned a file that was
+  JSON but not a run, or in an earlier format; `get()` refuses a file holding another run. Realm's
+  own commands read through `listWithDiagnostics`. **Upgrading:** a caller that must list past a
+  damaged file calls `listWithDiagnostics`.
+- **BREAKING — the engine entries check the parts they are handed (issue #719).** `dispatcher` is
+  optional in `ExecuteStepOptions` and `ExecuteChainOptions`, and required for a step Realm calls it
+  for (an agent step, an `auto` step with neither handler nor service, or a step whose `execution`
+  is missing or unknown). A `run` given to `executeEngineStep` or `getWorkflowForRun` must be a run
+  record (each of its 14 required fields, with its type; `params` need only be present). Each
+  optional member an entry is given is type-checked (`now` a valid `Date`, the callbacks functions,
+  and so on). A defect rejects `VALIDATION_OPTION_INVALID` where a bare `TypeError` came before
+  (`now.getTime is not a function`, `Cannot read properties of undefined`), or where the call ran.
+  **Upgrading:** pass each part with its type.
+- **BREAKING — `parseFailureError(workflowId, path, root?)` (issue #719).** Its third argument is
+  the parsed JSON when it is not an object, omitted when the bytes are not JSON; it no longer takes
+  the parser's error, and its message no longer quotes it
+  (`the registered copy of '<id>' is not JSON`). The registrar's `RESOURCE_FORMAT_INVALID` details
+  gain `resource: 'workflow_copy'` and `class` (`empty`, or `parse` with `shape` for JSON that is
+  not an object). **Upgrading:** pass the parsed root, or nothing.
 - **BREAKING — an `auto` step with a handler or a service and an `input_map` has its `input_schema`
   checked against the input the map builds, not the caller's input (issue #688).** That is the input
   the step receives. Caller input (MCP `execute_step`, `realm workflow run`'s typed answer) is no longer what
@@ -755,6 +804,31 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
 
 ### Fixed
 
+- **A dispatcher's call no longer leaves its step's timer running (issue #719).** A dispatcher that
+  threw synchronously, or was not a function, left a `STEP_TIMEOUT` timer that rejected unhandled up
+  to an hour later and could end the host's process; one that returned a plain value failed with
+  `.then is not a function`. Now no timer outlives the reply, and a plain value is the step's
+  output.
+- **One damaged run file no longer takes a command down (issue #719).** `realm run list` lists the
+  readable runs and names each damaged file on standard error with its way out, exit 0, where it
+  failed, or crashed on a file that was JSON but not a run. `cleanup`, `purge --older-than`,
+  `reclaim --all`, `drain --all` and `migrate --stamp-seals` act on the readable runs and name the
+  rest; `drain --all` no longer crashes, and `migrate` counts such a file as unclassifiable.
+  `realm listen`'s expiry sweeper sweeps the readable runs and logs a damaged file once, where every
+  pass failed. `reconcile` and `gc --heal` refuse with one error naming every damaged file, where
+  they named only the first.
+- **A keyed run creation is no longer stopped by a run file that cannot hold its key (issue #719).**
+  The fallback scan reads each file through the one reader: a file whose key cannot be known (not
+  readable, empty, not JSON) still refuses a new key, now with a message naming it and its way out;
+  a readable object that is not a run, holds another run, or is in an earlier format refuses only
+  when it carries that key.
+- **No message quotes a stored file's text (issue #719).** The parser's message, which quotes the
+  file around the fault (a param, a token), no longer reaches a run file's error, the registrar's
+  parse error, or the warning for a corrupt idempotency-key pointer.
+- **`realm agent`'s `drive-failure record LOST` line says why when the store refused with a Realm
+  error (issue #719)**, such as a run file that cannot be read, with its way out.
+- **`realm run reconcile`'s exit code is documented as it is (issue #719):** 1 on a failure; the
+  page said 0.
 - `realm listen` no longer starts a second `realm agent` on a run a redelivered webhook matches after
   the duplicate window (for example GitHub's Redeliver), or when two copies of one delivery arrive
   together, and no longer writes to that run; it answers `200` with `status: deduplicated`, the run's

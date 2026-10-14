@@ -1,6 +1,6 @@
 // Local file-backed run store. Stores each run as a JSON file in ~/.realm/runs/.
 // Uses proper-lockfile to prevent concurrent writes.
-import { mkdir, readFile, readdir } from 'node:fs/promises';
+import { mkdir, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -36,8 +36,21 @@ import {
   statIfExists,
   readIfExists,
   deleteIfExists,
+  artifactDeleteFailedError,
   toArtifactDeleteFailedError,
 } from './fs-io.js';
+import {
+  inspectRunFile,
+  readRunFile,
+  runFileFaultSentence,
+  runFileWayOut,
+  runsFolderUnreadableError,
+  unreadableRunFileError,
+  unreadableRunFilesError,
+  type RunFileReading,
+  type StoredFileClass,
+  type UnreadableFileFacts,
+} from './run-file.js';
 import type { ArtifactDeletionReport } from './per-run-artifact-store.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
@@ -115,6 +128,29 @@ export interface ReconcileSummary {
     canonical_run_id: string;
     extra_live_run_ids: string[];
   }>;
+}
+
+/**
+ * issue #719 (B3): one run file the JSON store could not read as a run, as a listing reports it.
+ * `reason` is the fault sentence and `repair` the way out (`realm run list` prints both); `facts`
+ * are the damaged file's facts (no content), which a decision over every run names when it fails
+ * closed.
+ */
+export interface UnreadableRunFileEntry {
+  file: string;
+  path: string;
+  class: StoredFileClass;
+  errno?: string;
+  reason: string;
+  repair: string;
+  facts: UnreadableFileFacts;
+}
+
+/** issue #719 (B3): what {@link JsonFileStore.listWithDiagnostics} returns. */
+export interface RunListing {
+  records: RunRecord[];
+  /** Every run file that could not be read as a run, sorted by file name. */
+  unreadable: UnreadableRunFileEntry[];
 }
 
 /**
@@ -222,10 +258,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     if (raw === undefined) return undefined;
     try {
       return JSON.parse(raw) as KeyPointer;
-    } catch (err) {
+    } catch {
+      // issue #719 (R8): the parser's message quotes the file around the fault — never echoed.
       console.warn(
-        `⚠ realm: corrupt idempotency-key pointer at '${keyPath}' — treating as absent and ` +
-          `self-healing (${err instanceof Error ? err.message : String(err)}).`,
+        `⚠ realm: corrupt idempotency-key pointer at '${keyPath}' — it is not JSON; treating it ` +
+          `as absent and self-healing.`,
       );
       return undefined;
     }
@@ -271,12 +308,29 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     return record;
   }
 
-  /** Find the canonical pre-existing run for (workflowId, key) via the legacy `idempotency_key` field. */
+  /**
+   * Find the canonical pre-existing run for (workflowId, key) via the legacy `idempotency_key`
+   * field. issue #719 (B4, R13): each run file is read through the one reader, not through
+   * `list()`, so a damaged file stops this create only when it might hold the key — its key cannot
+   * be known (`unreadable`, `empty`, `parse`), or a readable object (`not_a_run`, `mismatched`,
+   * `legacy`) carries this key. Any other damaged file is skipped. Files are judged in name order.
+   */
   private async findCanonicalLegacyRun(
     workflowId: string,
     key: string,
   ): Promise<RunRecord | undefined> {
-    const matches = (await this.list(workflowId)).filter((r) => r.idempotency_key === key);
+    const matches: RunRecord[] = [];
+    for (const { reading } of await this.scanRunFiles()) {
+      if (reading.kind === 'absent') continue;
+      if (reading.kind === 'record') {
+        const r = reading.record;
+        if (r.workflow_id === workflowId && r.idempotency_key === key) matches.push(r);
+        continue;
+      }
+      if (reading.object === undefined || reading.object['idempotency_key'] === key) {
+        throw unreadableRunFileError(reading.facts, { keyedCreate: true });
+      }
+    }
     if (matches.length === 0) return undefined;
     return pickCanonical(matches).canonical;
   }
@@ -391,26 +445,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     // PROPAGATES rather than being mapped to STATE_RUN_NOT_FOUND — mapping a real I/O failure to
     // "not found" is exactly the already_purged false-attestation bug #183 exists to close.
     // #132's torn-read loudness is preserved throughout.
-    const raw = await readIfExists(path);
-    if (raw === undefined) throw this.runNotFoundError(runId);
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-
-    // Legacy format detection: runs written before Phase 35 have `state` but no `completed_steps`.
-    if ('state' in parsed && !('completed_steps' in parsed)) {
-      throw new WorkflowError(
-        'This run was created with an older version of Realm that used a state-machine model. ' +
-          'Delete ~/.realm/runs/ and start fresh.',
-        {
-          code: 'STATE_LEGACY_FORMAT',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: false,
-          details: { runId },
-        },
-      );
-    }
-
-    return parsed as unknown as RunRecord;
+    // issue #719 (B1): through the one reader — a damaged file throws its typed error (the legacy
+    // format among them, with a way out that keeps every other run's key).
+    const record = await readRunFile(path, runId);
+    if (record === undefined) throw this.runNotFoundError(runId);
+    return record;
   }
 
   async update(record: RunRecord): Promise<RunRecord> {
@@ -438,15 +477,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       throw err;
     }
     try {
-      let raw: string;
-      try {
-        raw = await readFile(path, 'utf8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT')
-          throw this.runNotFoundError(record.id);
-        throw err;
-      }
-      const stored = JSON.parse(raw) as RunRecord;
+      // issue #719 (B1): the one reader — absent is not-found; a damaged file throws its error.
+      const stored = await readRunFile(path, record.id);
+      if (stored === undefined) throw this.runNotFoundError(record.id);
 
       if (stored.version !== record.version) {
         throw new WorkflowError('Version conflict — run was modified by another process', {
@@ -510,15 +543,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       throw err;
     }
     try {
-      // Re-read the freshest version under lock.
-      let raw: string;
-      try {
-        raw = await readFile(path, 'utf8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
-        throw err;
-      }
-      const run = JSON.parse(raw) as RunRecord;
+      // Re-read the freshest version under lock (issue #719: through the one reader).
+      const run = await readRunFile(path, runId);
+      if (run === undefined) throw this.runNotFoundError(runId);
 
       // Guard: step must not already be claimed.
       if (isStepSettledOrInFlight(run, stepName)) {
@@ -618,14 +645,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       throw err;
     }
     try {
-      let raw: string;
-      try {
-        raw = await readFile(path, 'utf8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
-        throw err;
-      }
-      const fresh = JSON.parse(raw) as RunRecord;
+      // issue #719 (B1): the one reader.
+      const fresh = await readRunFile(path, runId);
+      if (fresh === undefined) throw this.runNotFoundError(runId);
 
       // issue #625: a store's own `settleStep` settles, in this SAME write, every guard the delta
       // makes eligible — so no record this store persists is "answered, guard not decided".
@@ -681,14 +703,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       throw err;
     }
     try {
-      let raw: string;
-      try {
-        raw = await readFile(path, 'utf8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw this.runNotFoundError(runId);
-        throw err;
-      }
-      const fresh = JSON.parse(raw) as RunRecord;
+      // issue #719 (B1): the one reader.
+      const fresh = await readRunFile(path, runId);
+      if (fresh === undefined) throw this.runNotFoundError(runId);
 
       // 1. Version move ⇒ THROW. The sweep classified a record that has since changed.
       if (fresh.version !== expectedVersion) {
@@ -761,9 +778,9 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       throw err;
     }
     try {
-      if (existsSync(path)) {
-        const raw = await readFile(path, 'utf8');
-        const stored = JSON.parse(raw) as RunRecord;
+      // issue #719 (B1): the one reader; a file that vanished since `existsSync` is written anew.
+      const stored = existsSync(path) ? await readRunFile(path, record.id) : undefined;
+      if (stored !== undefined) {
         if (stored.version === record.version) return;
         throw new WorkflowError(
           `Run '${record.id}' exists locally with a different version (local: ${stored.version}, incoming: ${record.version}). Manual resolution required.`,
@@ -836,11 +853,20 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * touches `keys/`; never mutates or deletes run files).
    */
   async reconcileKeys(workflowId?: string, dryRun = false): Promise<ReconcileSummary> {
-    await this.ensureDir();
+    // issue #719 (R10): a decision over every run fails closed, naming EVERY run file it cannot
+    // read, before anything is written (`list()` could only name the first).
+    const { records, unreadable } = await this.listWithDiagnostics(workflowId);
+    if (unreadable.length > 0) {
+      throw unreadableRunFilesError(
+        'realm run reconcile',
+        this.runsDir,
+        unreadable.map((u) => u.facts),
+      );
+    }
     if (!dryRun) await this.ensureKeysDir();
 
     const groups = new Map<string, RunRecord[]>();
-    for (const run of await this.list(workflowId)) {
+    for (const run of records) {
       if (run.idempotency_key === undefined) continue;
       const gk = `${run.workflow_id}\0${run.idempotency_key}`;
       const arr = groups.get(gk);
@@ -895,37 +921,80 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     return summary;
   }
 
-  async list(workflowId?: string): Promise<RunRecord[]> {
+  /**
+   * Every run file in the runs folder, read through the one reader (issue #719, B1), in name order.
+   * Torn-read-safe: every run file here is written atomically via atomicWriteFile (temp + rename),
+   * so this unlocked read never sees a truncated file. Temps end in '.tmp' → excluded by the
+   * '.json' filter. A failure to read the folder itself throws `ENGINE_STORE_FAILED` naming it.
+   *
+   * issue #107: a concurrent purge can unlink a run file between the readdir and its read — the
+   * reader answers `absent` for it (ENOENT means "no longer exists," never "corrupt").
+   */
+  private async scanRunFiles(): Promise<Array<{ file: string; reading: RunFileReading }>> {
     await this.ensureDir();
-    const entries: string[] = await readdir(this.runsDir);
-    // Torn-read-safe: every run file here is written atomically via atomicWriteFile (temp +
-    // rename), so this unlocked read never sees a truncated file. Temps end in '.tmp' → excluded
-    // by the '.json' filter. A raw non-atomic writeFile of a '.json' into runsDir would reintroduce
-    // the torn read here.
-    const jsonFiles: string[] = entries.filter((f: string) => f.endsWith('.json'));
-
-    // issue #107: a concurrent purge can unlink a run file between the readdir above and the
-    // per-file readFile below. Skip a vanished file rather than fail the whole list() — ENOENT
-    // here means "no longer exists," not "corrupt" or "torn" (#132's torn-read loudness is
-    // preserved: any OTHER error still rethrows and fails the call).
-    const maybeRecords: Array<RunRecord | undefined> = await Promise.all(
-      jsonFiles.map(async (file: string) => {
-        let raw: string;
-        try {
-          raw = await readFile(join(this.runsDir, file), 'utf8');
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-          throw err;
-        }
-        return JSON.parse(raw) as RunRecord;
-      }),
+    let entries: string[];
+    try {
+      entries = await readdir(this.runsDir);
+    } catch (err) {
+      throw runsFolderUnreadableError(this.runsDir, err);
+    }
+    const jsonFiles = entries.filter((f: string) => f.endsWith('.json')).sort();
+    return Promise.all(
+      jsonFiles.map(async (file: string) => ({
+        file,
+        reading: await inspectRunFile(join(this.runsDir, file), file.slice(0, -'.json'.length)),
+      })),
     );
-    const records: RunRecord[] = maybeRecords.filter((r): r is RunRecord => r !== undefined);
+  }
 
+  /**
+   * The run records, optionally of one workflow. issue #719 (R14): a run file that cannot be read
+   * as a run — not JSON, not a run record, holding another run, in an earlier format, or not
+   * readable — makes this THROW the first such file's typed error (by file name), as a file that
+   * was not JSON always did. {@link listWithDiagnostics} lists past them and names each.
+   */
+  async list(workflowId?: string): Promise<RunRecord[]> {
+    const scanned = await this.scanRunFiles();
+    const firstDamaged = scanned.find((s) => s.reading.kind === 'damaged');
+    if (firstDamaged !== undefined && firstDamaged.reading.kind === 'damaged') {
+      throw unreadableRunFileError(firstDamaged.reading.facts);
+    }
+    const records = scanned.flatMap((s) => (s.reading.kind === 'record' ? [s.reading.record] : []));
     if (workflowId !== undefined) {
       return records.filter((r: RunRecord) => r.workflow_id === workflowId);
     }
     return records;
+  }
+
+  /**
+   * issue #719 (B3): every readable run, plus every run file that could not be read as a run —
+   * named, classified, with its way out. CONCRETE, off the `RunStore` interface (the `listRunIds`
+   * precedent): Realm's own commands use it when the store has it, so one damaged file never hides
+   * the rest. `workflowId` filters the records; a damaged file is reported whatever the filter,
+   * since what it holds cannot be trusted.
+   */
+  async listWithDiagnostics(workflowId?: string): Promise<RunListing> {
+    const records: RunRecord[] = [];
+    const unreadable: UnreadableRunFileEntry[] = [];
+    for (const { file, reading } of await this.scanRunFiles()) {
+      if (reading.kind === 'record') {
+        if (workflowId === undefined || reading.record.workflow_id === workflowId) {
+          records.push(reading.record);
+        }
+      } else if (reading.kind === 'damaged') {
+        const { facts } = reading;
+        unreadable.push({
+          file,
+          path: facts.path,
+          class: facts.class,
+          ...(facts.errno !== undefined ? { errno: facts.errno } : {}),
+          reason: runFileFaultSentence(facts),
+          repair: runFileWayOut(facts),
+          facts,
+        });
+      }
+    }
+    return { records, unreadable };
   }
 
   /**
@@ -1076,6 +1145,23 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         // delete (or confirm the run file itself is reachable) — wrap it into the SAME aggregate
         // shape the unlink failures below use, so a caller (e.g. purge) always observes ONE
         // consistent, typed failure contract regardless of which internal step actually failed.
+        // issue #719 (R12): the reader's typed error carries the errno in `details.errno` — read
+        // there, never from `err.code`, which is the error's own code.
+        if (err instanceof WorkflowError) {
+          const errno = err.details['errno'];
+          throw artifactDeleteFailedError(
+            runId,
+            'JsonFileStore',
+            [],
+            [
+              {
+                artifact: path,
+                code: typeof errno === 'string' ? errno : 'UNKNOWN',
+                message: err.message,
+              },
+            ],
+          );
+        }
         throw toArtifactDeleteFailedError(runId, 'JsonFileStore', [], path, err);
       }
 

@@ -7,7 +7,22 @@ export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
 export { persistsField } from './store/store-fidelity.js';
 export { JsonFileStore } from './store/json-file-store.js';
-export type { ReconcileSummary } from './store/json-file-store.js';
+export type {
+  ReconcileSummary,
+  RunListing,
+  UnreadableRunFileEntry,
+} from './store/json-file-store.js';
+// issue #719: a damaged stored JSON file — its facts (the `details` of its error until #729 PR-0
+// moves them to `facts`), the ONE composer of its message, and the error a decision over every
+// run fails closed with.
+export {
+  describeStoredFileFault,
+  renderUnreadableStoredFile,
+  unreadableRunFilesError,
+} from './store/run-file.js';
+export type { UnreadableFileFacts, StoredFileClass } from './store/run-file.js';
+// issue #719: the one check that a value is a run record (admission's `run`, the store's reader).
+export { isRunRecordShape } from './types/run-record-shape.js';
 export type {
   PerRunArtifactStore,
   ArtifactDeletionReport,
@@ -149,6 +164,7 @@ export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/ex
 export {
   OUTPUT_SOURCE_ABSENT_CAUSES,
   isBareAutoStep,
+  callsHostDispatcher,
   outputSourceOf,
 } from './engine/output-source.js';
 export type { OutputSourceAbsentCause } from './engine/output-source.js';

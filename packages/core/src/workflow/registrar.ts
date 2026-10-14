@@ -11,6 +11,11 @@ import { respondCommand, withFullStop } from '../engine/pending.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 import { admitEntry } from '../admission.js';
+import {
+  describeStoredFileFault,
+  jsonShapeOf,
+  type UnreadableFileFacts,
+} from '../store/run-file.js';
 
 /** issue #558 PR-T — what a registry read can fail as, before any bytes are parsed. */
 export type ProbeFailureClass =
@@ -58,17 +63,24 @@ export function probeClassToError(
         // statement about the operating system.
         details: { class: result.class, path: result.path },
       });
-    case 'empty':
+    case 'empty': {
+      // issue #719 (R7): the damaged-file facts, and the one composer's words.
+      const facts: UnreadableFileFacts = {
+        resource: 'workflow_copy',
+        class: 'empty',
+        path: result.path,
+      };
       return new WorkflowError(
-        `the registered copy of '${workflowId}' is empty (0 bytes) — not a workflow`,
+        `the registered copy of '${workflowId}' ${describeStoredFileFault(facts)}`,
         {
           code: 'RESOURCE_FORMAT_INVALID',
           category: 'RESOURCE',
           agentAction: 'stop',
           retryable: false,
-          details: { class: result.class, path: result.path },
+          details: { ...facts },
         },
       );
+    }
     case 'registry_broken':
       return new WorkflowError(
         `the workflow registry at ${result.path} cannot be read (${result.errno ?? 'unknown'})`,
@@ -86,25 +98,29 @@ export function probeClassToError(
 /**
  * issue #558 PR-T — ONE builder for the parse class, so a corrupt copy speaks with one voice on
  * `get()`, on `listWithDiagnostics`, and in the `--stuck` probe closure.
+ *
+ * issue #719 (R7, R8): it takes what classifies the file and nothing else — `root` is the parsed
+ * JSON when it is not an object (`null`, an array, …), OMITTED when the bytes are not JSON. The
+ * parser's error is never taken: its message quotes the file around the fault. Its details are the
+ * damaged-file facts; its words are its own subject and the one composer's fault clause.
  */
-export function parseFailureError(workflowId: string, path: string, cause: unknown): WorkflowError {
-  const opts = {
-    code: 'RESOURCE_FORMAT_INVALID' as const,
-    category: 'RESOURCE' as const,
-    agentAction: 'stop' as const,
-    retryable: false,
-    details: { path },
+export function parseFailureError(workflowId: string, path: string, root?: unknown): WorkflowError {
+  const facts: UnreadableFileFacts = {
+    resource: 'workflow_copy',
+    class: 'parse',
+    path,
+    // JSON never parses to `undefined`, so an omitted `root` is exactly "not JSON".
+    ...(root !== undefined ? { shape: jsonShapeOf(root) } : {}),
   };
-  if (cause instanceof Error) {
-    return new WorkflowError(
-      `the registered copy of '${workflowId}' is not parseable JSON: ${cause.message}`,
-      opts,
-    );
-  }
-  const shape = cause === null ? 'null' : Array.isArray(cause) ? 'array' : typeof cause;
   return new WorkflowError(
-    `the registered copy of '${workflowId}' is JSON but not a workflow object (it is ${shape})`,
-    opts,
+    `the registered copy of '${workflowId}' ${describeStoredFileFault(facts)}`,
+    {
+      code: 'RESOURCE_FORMAT_INVALID',
+      category: 'RESOURCE',
+      agentAction: 'stop',
+      retryable: false,
+      details: { ...facts },
+    },
   );
 }
 
@@ -180,6 +196,9 @@ export interface RepairAct {
 }
 
 export function repairActFor(err: WorkflowError): RepairAct | undefined {
+  // issue #719 (R7): a damaged RUN file gets no act here — re-registering or removing it would
+  // free its run's key and orphan its side files; its own message carries its way out.
+  if (err.details['resource'] === 'run_file') return undefined;
   const path = String(err.details['path'] ?? '');
   if (err.code === 'RESOURCE_FORMAT_INVALID')
     return {
@@ -348,8 +367,8 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     let parsedUnknown: unknown;
     try {
       parsedUnknown = JSON.parse(raw);
-    } catch (err) {
-      throw parseFailureError(workflowId, filePath, err);
+    } catch {
+      throw parseFailureError(workflowId, filePath);
     }
     if (
       parsedUnknown === null ||
@@ -467,11 +486,11 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
       let parsedUnknown: unknown;
       try {
         parsedUnknown = JSON.parse(readFileSync(join(this.dir, entry), 'utf8'));
-      } catch (err) {
+      } catch {
         unreadable.push({
           file: entry,
           class: 'parse',
-          ...reasonAndRepair(parseFailureError(id, join(this.dir, entry), err)),
+          ...reasonAndRepair(parseFailureError(id, join(this.dir, entry))),
         });
         continue;
       }
@@ -542,7 +561,7 @@ export async function getWorkflowForRun(
   run: RunRecord,
   opts: { retryVerb: string; verb: string; terminalOk?: boolean },
 ): Promise<WorkflowDefinition> {
-  admitEntry('getWorkflowForRun', { store, storeKind: 'workflow store' });
+  admitEntry('getWorkflowForRun', { store, storeKind: 'workflow store', parts: { run, opts } });
   try {
     return await store.get(run.workflow_id);
   } catch (err) {

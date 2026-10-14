@@ -9,7 +9,10 @@ import {
   startGateReminderTimers,
   postSlackReply,
   handleBidirectionalGate,
+  createSlackGateHandler,
 } from './slack-gate-notifier.js';
+import { createServer } from 'node:http';
+import { rm, writeFile } from 'node:fs/promises';
 import type { BidirectionalGateParams } from './slack-gate-notifier.js';
 import type { PendingGate, RunStore, WorkflowDefinition, StepHandler } from '@sensigo/realm';
 import {
@@ -971,5 +974,53 @@ describe('handleBidirectionalGate — threads the registry so gate-completed run
     expect(updated.run_phase).toBe('completed');
     expect(updated.completed_steps).toContain('record_outcome');
     expect(ran).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('issue #719 — the one-way notifier waits on a run file that cannot be read', () => {
+  it('rejects with the file’s message (what realm agent prints), never its text', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'realm-719-notifier-'));
+    const server = createServer((_req, res) => {
+      res.writeHead(200);
+      res.end('ok');
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const { port } = server.address() as { port: number };
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await writeFile(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
+      const handler = createSlackGateHandler({
+        store: new JsonFileStore(runsDir),
+        definition: {
+          id: 'w',
+          name: 'w',
+          version: 1,
+          schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+          steps: { s: { description: 'd', execution: 'auto' } },
+        } as WorkflowDefinition,
+        provider: {} as never,
+        webhookUrl: `http://127.0.0.1:${port}/hook`,
+        pollIntervalMs: 10,
+      });
+      const gate: PendingGate = {
+        gate_id: 'g',
+        step_name: 's',
+        preview: {},
+        choices: ['approve'],
+        opened_at: new Date().toISOString(),
+      };
+      const err = (await handler('bad', gate).catch((e: unknown) => e)) as Error;
+      const text = String(err?.message);
+      // (a) red when the poll's error loses the file's message or carries the parser's text; (b)
+      //     prints booleans only.
+      expect({
+        message: text.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
+        leaked: text.includes('ghp_FAKE7'),
+      }).toEqual({ message: true, leaked: false });
+    } finally {
+      logs.mockRestore();
+      server.close();
+      await rm(runsDir, { recursive: true, force: true });
+    }
   });
 });

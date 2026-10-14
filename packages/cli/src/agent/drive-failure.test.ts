@@ -4,7 +4,10 @@
 // error line has already been printed, and nothing here may replace it, hide it, or crash on top
 // of it. Most of these cells are about that discipline rather than about the happy path.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WorkflowError } from '@sensigo/realm';
+import { WorkflowError, JsonFileStore } from '@sensigo/realm';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { RunRecord, DriveFailureRecord } from '@sensigo/realm';
 import {
   recordDriveFailure,
@@ -430,5 +433,26 @@ describe('W1 — real SDK error objects classify by their CONSTRUCTOR', () => {
     const built = buildEntry(err, 's', 'openai', Date.now());
     expect(built.error_class).toBe('connection_timeout');
     expect(built.attempts_sdk).toBe(2); // the measurements it did carry are still kept
+  });
+});
+
+describe('issue #719 — the fence names why, when the store refused with a Realm error', () => {
+  it('a run file that cannot be read: the one LOST line carries its message, never its text', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-drive-'));
+    try {
+      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
+      await recordDriveFailure(new JsonFileStore(runsDir), 'bad', entry());
+      const line = errors.join('\n');
+      // (a) red when the line swallows why (the store's message), or carries the parser's text;
+      //     (b) prints the line count and booleans only.
+      expect({
+        lines: errors.length,
+        lost: line.includes('drive-failure record LOST for run bad'),
+        why: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
+        leaked: line.includes('ghp_FAKE7'),
+      }).toEqual({ lines: 1, lost: true, why: true, leaked: false });
+    } finally {
+      rmSync(runsDir, { recursive: true, force: true });
+    }
   });
 });

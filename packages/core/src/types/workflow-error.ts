@@ -94,6 +94,10 @@ export type ErrorCode =
   // issue #625 PR-2a (decisions C144, C151): a `caller` a host passed to an engine entry is not one
   // of that entry's words (`ENTRY_CALLERS`). Refused before anything is read or written.
   | 'VALIDATION_CALLER_INVALID'
+  // issue #719: a part a host handed an engine entry is missing or has the wrong type (an option,
+  // the definition, a `run` that is not a run record, the dispatcher a step needs). Every defect
+  // of those parts is named at once; refused before anything is read or written.
+  | 'VALIDATION_OPTION_INVALID'
   | 'STEP_HANDLER_ERROR'
   // ENGINE
   | 'ENGINE_INTERNAL'

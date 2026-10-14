@@ -13,8 +13,9 @@
 // It writes only through `RunStore.stampSeal`. It never rewrites a record it cannot classify, and
 // never auto-corrects one it finds incoherent — an operator adjudicates those.
 import { Command } from 'commander';
-import type { RunRecord, RunStore, SealArm } from '@sensigo/realm';
-import { classifyLegacySeal, armToPhase } from '@sensigo/realm';
+import type { RunRecord, RunStore, SealArm, UnreadableRunFileEntry } from '@sensigo/realm';
+import { classifyLegacySeal, armToPhase, describeStoredFileFault } from '@sensigo/realm';
+import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 
 /** One record's disposition. Every reachable state has exactly one home here. */
 export interface MigrateBuckets {
@@ -51,6 +52,11 @@ export interface MigrateBuckets {
 export interface MigrateOptions {
   /** Dry-run is the DEFAULT; `--force` executes. */
   force?: boolean;
+  /**
+   * issue #719 (B3): told the run files that could not be read as runs. Each is also put in
+   * `unclassifiable` (R11), never written.
+   */
+  onUnreadable?: (entries: UnreadableRunFileEntry[]) => void;
 }
 
 function emptyBuckets(): MigrateBuckets {
@@ -125,7 +131,16 @@ export async function migrateStampSeals(
     );
   }
   const buckets = emptyBuckets();
-  const all = await runStore.list();
+  // issue #719 (R11): a run file that cannot be read as a run is residue — in `unclassifiable`, its
+  // `why` the file's fault, printed and never written — so the shipped exit ladder applies.
+  const { records: all, unreadable } = await listRunsDiagnosed(runStore);
+  for (const entry of unreadable) {
+    buckets.unclassifiable.push({
+      id: entry.file.slice(0, -'.json'.length),
+      why: describeStoredFileFault(entry.facts),
+    });
+  }
+  if (unreadable.length > 0) options.onUnreadable?.(unreadable);
 
   for (const run of all) {
     if (!run.terminal_state) continue;
@@ -367,7 +382,17 @@ export const runMigrateCommand = new Command('migrate')
     const { JsonFileStore } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
     try {
-      const buckets = await migrateStampSeals(runStore, { force: opts.force ?? false });
+      const buckets = await migrateStampSeals(runStore, {
+        force: opts.force ?? false,
+        onUnreadable: (entries) => {
+          for (const line of unreadableRunLines(
+            entries,
+            '; realm run migrate did not act on them.',
+          )) {
+            console.error(line);
+          }
+        },
+      });
       for (const line of renderMigrateReport(buckets, { force: opts.force ?? false })) {
         console.log(line);
       }

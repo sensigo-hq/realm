@@ -288,6 +288,13 @@ export async function recordDriveFailure(
     console.error(lostLine(runId, entry));
   } catch (err) {
     if (workflowErrorCode(err) === 'STATE_RUN_NOT_FOUND') return;
-    console.error(lostLine(runId, entry));
+    // issue #719: a typed store error says why the record was lost — a run file that cannot be
+    // read names the file and its way out — so its message rides the one line, unchanged. An
+    // untyped error is not echoed: its text is not Realm's to vouch for.
+    console.error(
+      err instanceof WorkflowError
+        ? `${lostLine(runId, entry)} — ${err.message}`
+        : lostLine(runId, entry),
+    );
   }
 }

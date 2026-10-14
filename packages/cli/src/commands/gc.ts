@@ -48,9 +48,14 @@
 // storage-version-migrator does the identical read-then-write-back-unmodified trick to migrate
 // encryption-at-rest/API versions across a whole etcd population with zero bespoke migration code.
 import { readdir, lstat, unlink, stat } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { Command } from 'commander';
-import { type ArtifactDeletionReport, WorkflowError, deleteIfExists } from '@sensigo/realm';
+import {
+  type ArtifactDeletionReport,
+  WorkflowError,
+  deleteIfExists,
+  unreadableRunFilesError,
+} from '@sensigo/realm';
 import type {
   OrphanSweepableStore,
   OrphanArtifact,
@@ -58,8 +63,10 @@ import type {
   RunRecord,
   RunPhase,
   RunScopedFencePredicate,
+  RunListing,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
+import { listRunsDiagnosed } from './list.js';
 
 /**
  * Minimum `--older-than` EITHER sweep will ever honor (1 hour) — a conservative floor for hygiene
@@ -471,21 +478,30 @@ export interface SweepStalePhasesResult {
  * rewrite). Records already matching are never even passed to `update()` — untouched, byte-for-
  * byte, verified in tests.
  *
- * `store.list()`'s fail-closed contract (issue #132/#183: `JSON.parse` uncaught on a corrupt
- * file) is INHERITED here deliberately, uncaught — a single unparseable run file aborts the
- * WHOLE heal pass rather than silently healing a partial, possibly-wrong population. No
- * per-file try/catch salvage: see the module's own report footer / CHANGELOG for why this is
- * accepted, not worked around.
+ * FAIL-CLOSED, deliberately (issue #132/#183): a run file that cannot be read as a run aborts the
+ * WHOLE heal pass rather than healing a partial, possibly-wrong population. issue #719 (R10): the
+ * listing is read through `listWithDiagnostics` when the store has it, so the ONE error names EVERY
+ * such file (`unreadableRunFilesError`), and nothing is written; a store without it fails on the
+ * first, through `list()`.
  *
  * No age gate (unlike the other two sweeps): healing is a no-op rewrite of a record already on
  * disk, safe at any age — there is no in-flight-write window to guard against the way there is
  * for a `.tmp` or a fresh WAL.
  */
 export async function sweepStalePhases(
-  store: Pick<RunStore, 'list' | 'update'>,
+  store: Pick<RunStore, 'list' | 'update'> & {
+    listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
+  },
   options: SweepStalePhasesOptions,
 ): Promise<SweepStalePhasesResult> {
-  const records = await store.list();
+  const { records, unreadable } = await listRunsDiagnosed(store);
+  if (unreadable.length > 0) {
+    throw unreadableRunFilesError(
+      'realm run gc --heal',
+      dirname(unreadable[0]!.path),
+      unreadable.map((u) => u.facts),
+    );
+  }
 
   const result: SweepStalePhasesResult = {
     healed: [],
