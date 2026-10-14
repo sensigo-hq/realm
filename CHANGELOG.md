@@ -4,7 +4,14 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.47.0] — 2026-10-14
+
+Ten BREAKING changes; Realm is pre-1.0, so they ship in a minor, and each says how to upgrade
+(**Upgrading**). New is the owed call: one view of what a run owes the engine, and one call that
+runs it (`advance_run` over MCP, `realm run advance` from a shell), named by every surface that
+says what comes next. An `auto` step that uses its `input_map` has its `input_schema` checked
+against the input the map builds. `realm listen` now delivers its early replies (`413`, `408`) and
+bounds what it reads after them. The release also carries security updates (see Security).
 
 ### Added
 
@@ -557,6 +564,10 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
   - The auto-step chain has no depth limit (each step runs at most once per call).
   - Pre-claim refusals (trust, precondition, input schema) are one function shared by `executeStep`
     and the view.
+  - **Upgrading:** a client that read `next_actions_status: auto_pending` reads `advance_owed` and
+    calls `advance_run` (or runs `realm run advance`); a fixture or workflow that relied on a bare
+    `auto` step's copied output, or on `{}` for a second step with no `depends_on`, gets its
+    dependency's output, or the run's params.
 
 - **BREAKING — `@sensigo/realm-testing`'s fixture runner (`runFixtureTests`, `realm workflow test`)
   gives an `auto` step the input the engine gives it in a real run (issue #625, PR-2a).** An `auto`
@@ -901,6 +912,9 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
 
 ### Security
 
+- **`@sensigo/realm-cli` `<= 0.46.0`** — one advisory,
+  [GHSA-gxfq-7822-gwcj](https://github.com/sensigo-hq/realm/security/advisories/GHSA-gxfq-7822-gwcj).
+  Upgrade to 0.47.0; the advisory gives the details.
 - **`@modelcontextprotocol/sdk` 1.30.0 → 1.31.0** — one HIGH advisory,
   [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h) / CVE-2026-104850: the
   SDK's OAuth client could send the credentials it held (stored from an earlier sign-in, or
