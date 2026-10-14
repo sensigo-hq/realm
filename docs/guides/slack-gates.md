@@ -103,6 +103,7 @@ It prints:
 ```text
 Realm Agent — Slack gate test v1
 Run ID: 71b0ed55-f198-41b1-a6e2-e9234b1fab1c
+Caching: no step is cached; this workflow has no agent step.
 
 → [auto] review
 
@@ -113,6 +114,8 @@ Run ID: 71b0ed55-f198-41b1-a6e2-e9234b1fab1c
    Waiting for approval...
   ℹ  Socket Mode connected.
 ```
+
+The `Caching:` line says that no request asks to be cached: this workflow has no agent step (the line was added after version 0.47.0; see [`realm agent`](../reference/cli/realm-agent.md#what-it-prints)).
 
 Notice `Socket Mode connected`. Realm is now listening. In Slack, the channel shows a message headed "Workflow gate waiting for approval", with the gate's name, your gate message, and the choices.
 

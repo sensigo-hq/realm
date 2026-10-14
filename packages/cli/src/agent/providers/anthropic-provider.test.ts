@@ -1,9 +1,14 @@
 // anthropic-provider.test.ts — Tests for AnthropicProvider callStep and callStepWithTools.
 // All tests mock the @anthropic-ai/sdk package — no real API calls are made.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AnthropicProvider } from './anthropic-provider.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } from './anthropic-provider.js';
 import { WorkflowError } from '@sensigo/realm';
-import { CLASS_B_NO_TEXT_MARKER, setAdditionalRedactionValues } from './agent-utils.js';
+import {
+  CLASS_B_NO_TEXT_MARKER,
+  buildSystemPrompt,
+  setAdditionalRedactionValues,
+} from './agent-utils.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -1080,6 +1085,8 @@ describe('AnthropicProvider.capabilities', () => {
       jsonMode: false,
       toolArgsStrict: true,
       providerId: 'anthropic',
+      // issue #600 PR 2: always declared; a provider built without a setting asks for nothing.
+      promptCache: 'off',
     });
   });
 });
@@ -1653,5 +1660,155 @@ describe('cut after hiding (GHSA-gxfq cell 17)', () => {
       .catch((e: unknown) => e);
     // (a) red when this site cuts the model text before hiding it.
     expect(facts(err, 'max_tool_calls reached; final extraction failed: ')).toEqual(HIDDEN);
+  });
+});
+
+// =========================================================================
+// issue #600 PR 2 — what the single-shot request asks Anthropic to cache (B1, B2), and what each
+// request records (B3, B4). On a failing CI host each cell prints the request's `system` field or
+// the recorded request facts: prompt text and field values, never an environment, header or key.
+// =========================================================================
+describe('AnthropicProvider — the cache request and the request facts (issue #600 PR 2)', () => {
+  const SCHEMA = { type: 'object', properties: { x: { type: 'string' } } };
+  const at = (value: '5m' | '1h' | 'off') =>
+    new AnthropicProvider('claude-sonnet-4-5', {
+      promptCache: { value, source: 'stated', by: 'realm agent' },
+    });
+  // The three single-shot requests `buildOpts` builds: the first, the strict ladder's retry after
+  // a 400, and the non-JSON retry. Returns every request body the SDK was handed, in order.
+  const threeRequests = async (
+    provider: AnthropicProvider,
+  ): Promise<Array<Record<string, unknown>>> => {
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    await provider.callStep('prompt', SCHEMA);
+    mockCreate
+      .mockRejectedValueOnce(Object.assign(new Error('rejected'), { status: 400 }))
+      .mockResolvedValueOnce(makeTextResponse('{"x":"b"}'));
+    await provider.callStepWithMeta('prompt', SCHEMA, undefined, { structuredOutputStrict: true });
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('not JSON'))
+      .mockResolvedValueOnce(makeTextResponse('{"x":"c"}'));
+    await provider.callStep('prompt', SCHEMA);
+    return mockCreate.mock.calls.map((c) => c[0] as Record<string, unknown>);
+  };
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  // G1. (a) red when the helper returns the plain string for 5m; (b) prints each request's system.
+  it('G1 — 5m: all three single-shot requests carry exactly cache_control { type: ephemeral }', async () => {
+    const bodies = await threeRequests(at('5m'));
+    expect(bodies).toHaveLength(5);
+    const system = buildSystemPrompt(SCHEMA, undefined, true);
+    for (const body of bodies) {
+      expect(body['system']).toEqual([
+        { type: 'text', text: system, cache_control: { type: 'ephemeral' } },
+      ]);
+    }
+  });
+
+  // G2. (a) red when 1h drops its ttl; (b) prints each request's system.
+  it("G2 — 1h: all three requests carry cache_control { type: ephemeral, ttl: '1h' }", async () => {
+    const bodies = await threeRequests(at('1h'));
+    const system = buildSystemPrompt(SCHEMA, undefined, true);
+    for (const body of bodies) {
+      expect(body['system']).toEqual([
+        { type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } },
+      ]);
+    }
+  });
+
+  // G3. (a) red when off still builds the block; (b) prints the two bodies.
+  it("G3 — off: the plain string, and the body deep-equals a provider's built with no setting", async () => {
+    const off = await threeRequests(at('off'));
+    const today = await threeRequests(new AnthropicProvider('claude-sonnet-4-5'));
+    expect(off).toEqual(today);
+    const system = buildSystemPrompt(SCHEMA, undefined, true);
+    for (const body of off) expect(body['system']).toBe(system);
+  });
+
+  // G4. (a) red when 5m sends ttl: '5m'; (b) prints the cache_control sent.
+  it('G4 — 5m sends no ttl key at all', async () => {
+    const bodies = await threeRequests(at('5m'));
+    for (const body of bodies) {
+      const block = (body['system'] as Array<{ cache_control: Record<string, unknown> }>)[0]!;
+      expect(Object.keys(block.cache_control)).toEqual(['type']);
+    }
+  });
+
+  // G7 (Anthropic). (a) red when PROMPT_CACHE_LIFETIMES['5m'] is 3600, when ttl_sent is true for
+  // 5m, or when off writes a lifetime; (b) prints the recorded request facts.
+  it('G7 — each setting writes its B3 row on the record', async () => {
+    const facts = async (provider: AnthropicProvider) => {
+      mockCreate.mockReset();
+      mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+      const { usage } = await provider.callStepWithMeta('prompt', SCHEMA);
+      const { request_index: _i, request_start: _s, ...rest } = usage![0]!;
+      return rest;
+    };
+    expect(await facts(at('5m'))).toEqual({
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 300,
+      cache_ttl_sent: false,
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      cache_split_offered: true,
+    });
+    expect(await facts(at('1h'))).toEqual({
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 3600,
+      cache_ttl_sent: true,
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      cache_split_offered: true,
+    });
+    expect(await facts(at('off'))).toEqual({
+      cache_requested: 'off',
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      cache_split_offered: true,
+    });
+    // Built with no setting: off, and no source or runner, because none was given.
+    expect(await facts(new AnthropicProvider('claude-sonnet-4-5'))).toEqual({
+      cache_requested: 'off',
+      cache_split_offered: true,
+    });
+  });
+
+  // G8 (Anthropic). (a) red when `model` is read from the requested model instead of the response;
+  // (b) prints the recorded model.
+  it("G8 — model is the response's own (a dated id), never the requested one; none without one", async () => {
+    mockCreate.mockResolvedValueOnce({
+      ...makeTextResponse('{"x":"a"}'),
+      model: 'claude-sonnet-4-5-20260101',
+    });
+    const answered = await at('5m').callStepWithMeta('prompt', SCHEMA);
+    expect(answered.usage![0]!.model).toBe('claude-sonnet-4-5-20260101');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const unnamed = await at('5m').callStepWithMeta('prompt', SCHEMA);
+    expect(unnamed.usage![0]).not.toHaveProperty('model');
+  });
+
+  // G10 (Anthropic, the SDK mocked). The real SDK's environment-variable route is
+  // `endpoint-600.test.ts`'s. (a) red when endpoint is always 'default'; (b) prints the endpoint.
+  it("G10 — endpoint: 'default' at the SDK's own address, 'custom' elsewhere, absent without baseURL", async () => {
+    const withBase = (baseURL: string) =>
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return { messages: { create: mockCreate }, baseURL };
+      } as never);
+    withBase(ANTHROPIC_DEFAULT_BASE_URL);
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const native = await at('5m').callStepWithMeta('prompt', SCHEMA);
+    expect(native.usage![0]!.endpoint).toBe('default');
+    withBase('https://gateway.example/anthropic');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const gateway = await at('5m').callStepWithMeta('prompt', SCHEMA);
+    expect(gateway.usage![0]!.endpoint).toBe('custom');
+    expect(JSON.stringify(gateway.usage)).not.toContain('gateway.example');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const mocked = await at('5m').callStepWithMeta('prompt', SCHEMA);
+    expect(mocked.usage![0]).not.toHaveProperty('endpoint');
   });
 });

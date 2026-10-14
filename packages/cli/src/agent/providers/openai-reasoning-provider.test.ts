@@ -1,10 +1,15 @@
 // openai-reasoning-provider.test.ts — Tests for OpenAIReasoningProvider.
 // All tests mock the openai package — no real API calls are made.
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import OpenAI from 'openai';
 import { OpenAIReasoningProvider } from './openai-reasoning-provider.js';
+import { OPENAI_DEFAULT_BASE_URL } from './openai-provider.js';
 import { ToolCapableLlmProvider, resolveProvider } from './llm-provider.js';
 import { setAdditionalRedactionValues } from './agent-utils.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
+
+// issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
+const TEST_PROMPT_CACHE = { value: '5m', source: 'runner_default', by: 'realm agent' } as const;
 
 // ---------- shared mock for the openai package ----------------------------
 const mockCreate = vi.fn();
@@ -185,7 +190,11 @@ describe('resolveProvider routing for reasoning models', () => {
   // 8. o1-mini routes to OpenAIReasoningProvider
   // -----------------------------------------------------------------------
   it('resolveProvider routes o1-mini to OpenAIReasoningProvider', async () => {
-    const provider = await resolveProvider('openai', 'o1-mini');
+    const provider = await resolveProvider({
+      provider: 'openai',
+      model: 'o1-mini',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(provider).toBeInstanceOf(OpenAIReasoningProvider);
     expect(provider).not.toBeInstanceOf(ToolCapableLlmProvider);
   });
@@ -195,7 +204,11 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes o3 to OpenAIProvider, not OpenAIReasoningProvider', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider('openai', 'o3');
+    const provider = await resolveProvider({
+      provider: 'openai',
+      model: 'o3',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
     expect(provider).toBeInstanceOf(ToolCapableLlmProvider);
     expect(provider).toBeInstanceOf(OpenAIProvider);
@@ -206,7 +219,11 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes o3-mini to OpenAIProvider, not OpenAIReasoningProvider', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider('openai', 'o3-mini');
+    const provider = await resolveProvider({
+      provider: 'openai',
+      model: 'o3-mini',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
     expect(provider).toBeInstanceOf(ToolCapableLlmProvider);
     expect(provider).toBeInstanceOf(OpenAIProvider);
@@ -217,7 +234,11 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes o4-mini to OpenAIProvider, not OpenAIReasoningProvider', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider('openai', 'o4-mini');
+    const provider = await resolveProvider({
+      provider: 'openai',
+      model: 'o4-mini',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
     expect(provider).toBeInstanceOf(ToolCapableLlmProvider);
     expect(provider).toBeInstanceOf(OpenAIProvider);
@@ -228,7 +249,11 @@ describe('resolveProvider routing for reasoning models', () => {
   // -----------------------------------------------------------------------
   it('resolveProvider routes gpt-4o to OpenAIProvider (regression guard)', async () => {
     const { OpenAIProvider } = await import('./openai-provider.js');
-    const provider = await resolveProvider('openai', 'gpt-4o');
+    const provider = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-4o',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(provider).toBeInstanceOf(OpenAIProvider);
     expect(provider).not.toBeInstanceOf(OpenAIReasoningProvider);
   });
@@ -448,5 +473,59 @@ describe('cut after hiding (GHSA-gxfq cell 17)', () => {
       .catch((e: unknown) => e);
     // (a) red when this site cuts the model text before hiding it.
     expect(facts(err, 'OpenAI returned non-JSON content after retry: ')).toEqual(HIDDEN);
+  });
+});
+
+// =========================================================================
+// issue #600 PR 2 — what each o1 request records (B3, B4). Realm sends o1 no cache field. On a
+// failing CI host each cell prints the recorded request facts: field values, never an
+// environment, header or key.
+// =========================================================================
+describe('OpenAIReasoningProvider — the request facts (issue #600 PR 2)', () => {
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  // G7 (o1). (a) red when o1 does not write provider_rules; (b) prints the facts.
+  it('G7 — provider_rules and cache_split_offered false; no lifetime fields', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const { usage } = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    const { request_index: _i, request_start: _s, ...rest } = usage![0]!;
+    expect(rest).toEqual({ cache_requested: 'provider_rules', cache_split_offered: false });
+    expect(JSON.stringify(mockCreate.mock.calls[0]![0])).not.toContain('cache');
+  });
+
+  // G8 (o1). (a) red when `model` is read from the requested model; (b) prints the model.
+  it("G8 — model is the response's own (a dated id), never the requested one; none without one", async () => {
+    mockCreate.mockResolvedValueOnce({
+      ...makeTextResponse('{"x":"a"}'),
+      model: 'o1-mini-2026-01-01',
+    });
+    const answered = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    expect(answered.usage![0]!.model).toBe('o1-mini-2026-01-01');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const unnamed = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    expect(unnamed.usage![0]).not.toHaveProperty('model');
+  });
+
+  // G10 (o1, the SDK mocked), against OpenAI's one constant. (a) red when endpoint is always
+  // 'default'; (b) prints the endpoint.
+  it("G10 — endpoint: 'default' at OpenAI's address, 'custom' elsewhere, absent without baseURL", async () => {
+    const withBase = (baseURL: string) =>
+      vi.mocked(OpenAI).mockImplementationOnce(function () {
+        return { chat: { completions: { create: mockCreate } }, baseURL };
+      } as never);
+    withBase(OPENAI_DEFAULT_BASE_URL);
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const native = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    expect(native.usage![0]!.endpoint).toBe('default');
+    withBase('https://compat.example/v1');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const compat = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    expect(compat.usage![0]!.endpoint).toBe('custom');
+    expect(JSON.stringify(compat.usage)).not.toContain('compat.example');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const mocked = await new OpenAIReasoningProvider('o1-mini').callStepWithMeta('prompt');
+    expect(mocked.usage![0]).not.toHaveProperty('endpoint');
   });
 });

@@ -219,7 +219,7 @@ describe(
       });
       // (a) red when the drive asks its model for a step the prompt holds, says nothing while it waits,
       //     prints `✓`, or shows the person's answer as its own `Result`; (b) prints the screen.
-      expect({ calls: d.calls, result: d.result, lines: d.lines.slice(2) }).toEqual({
+      expect({ calls: d.calls, result: d.result, lines: d.lines.slice(4) }).toEqual({
         calls: 0,
         result: 'completed',
         lines: [
@@ -343,7 +343,7 @@ describe(
         watchMs: 50,
       });
       // (a) red when the drive asks the model, or says the run ended; (b) prints the screen.
-      expect({ calls: d.calls, result: d.result, lines: d.lines.slice(2) }).toEqual({
+      expect({ calls: d.calls, result: d.result, lines: d.lines.slice(4) }).toEqual({
         calls: 0,
         result: 'failed',
         lines: [
@@ -725,7 +725,7 @@ describe(
       });
       // (a) red when the drive holds the step during its model call, prints `✓` for the dropped answer,
       //     does not wait, or does not ask again once the prompt lets the step go; (b) prints the screen.
-      expect({ during, calls: d.calls, result: d.result, lines: d.lines.slice(2) }).toEqual({
+      expect({ during, calls: d.calls, result: d.result, lines: d.lines.slice(4) }).toEqual({
         during: [
           { claimed: false, inFlight: false },
           { claimed: false, inFlight: false },

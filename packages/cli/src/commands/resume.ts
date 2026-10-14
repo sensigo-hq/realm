@@ -270,7 +270,7 @@ export const resumeCommand = new Command('resume')
           (noDrive
             ? ''
             : `\nDrive it with: realm agent --run-id ${runId} --provider <provider> --model <model>\n` +
-              `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${runId} shows the extension module the run loaded).`),
+              `Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect ${runId} shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).`),
       );
       for (const { disclosure } of voided) {
         console.log(`  ⚠ ${disclosure}`);

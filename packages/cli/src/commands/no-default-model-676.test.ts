@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { JsonFileStore } from '@sensigo/realm';
+import { startAnthropicStub } from '../agent/test-support/anthropic-stub.js';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const ANTHROPIC_LIST = 'https://platform.claude.com/docs/en/models/overview';
@@ -154,9 +155,12 @@ async function notFoundStub(options: { hold?: boolean } = {}): Promise<{
   server: Server;
   url: string;
   models: string[];
+  /** Issue #600 PR 2: each request's `system` field, as sent. */
+  systems: unknown[];
   release: () => void;
 }> {
   const models: string[] = [];
+  const systems: unknown[] = [];
   let released = options.hold !== true;
   const waiting: Array<() => void> = [];
   const release = (): void => {
@@ -168,12 +172,16 @@ async function notFoundStub(options: { hold?: boolean } = {}): Promise<{
     req.on('data', (c: Buffer) => (body += c.toString()));
     req.on('end', () => {
       let model = '';
+      let system: unknown;
       try {
-        model = String((JSON.parse(body) as { model?: unknown }).model);
+        const parsed = JSON.parse(body) as { model?: unknown; system?: unknown };
+        model = String(parsed.model);
+        system = parsed.system;
       } catch {
         /* not JSON: answer anyway */
       }
       models.push(model);
+      systems.push(system);
       const answer = (): void => {
         res.writeHead(404, { 'content-type': 'application/json', 'request-id': 'req_676' });
         res.end(
@@ -190,7 +198,7 @@ async function notFoundStub(options: { hold?: boolean } = {}): Promise<{
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   const { port } = server.address() as { port: number };
-  return { server, url: `http://127.0.0.1:${port}`, models, release };
+  return { server, url: `http://127.0.0.1:${port}`, models, systems, release };
 }
 
 function runFiles(): string[] {
@@ -486,6 +494,11 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
           aliveAtHit,
           declaredPerAttemptMs: record?.drive_failures?.entries?.[0]?.declared_per_attempt_ms,
           agentExited: pid !== undefined && !isAlive(pid),
+          // issue #600 PR 2 (G20 leg 1): listen's default reaches the child — 1h, sent as `ttl`.
+          // (a) red when listen does not mark its child --spawned-by-listen (the child then asks
+          // for 5m, with no ttl).
+          cacheControl: (stub.systems[0] as Array<{ cache_control?: unknown }> | undefined)?.[0]
+            ?.cache_control,
         },
         listen.output(),
       ).toEqual({
@@ -493,6 +506,7 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
         aliveAtHit: true,
         declaredPerAttemptMs: 45000,
         agentExited: true,
+        cacheControl: { type: 'ephemeral', ttl: '1h' },
       });
     } finally {
       // Let the agent finish and wait for it BEFORE listen goes: while listen lives it reaps the agent,
@@ -520,6 +534,133 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
       await new Promise<void>((r) => stub.server.close(() => r()));
     }
   }, 90_000);
+});
+
+// issue #600 PR 2 (G20, legs 2 and 3): the crown — a real webhook to `realm listen`, the agent it
+// starts, and what that agent asks Anthropic to cache. Leg 1 rides E5 above. The harness is E5's;
+// each cell waits for the agent to exit before listen is killed. On a failing CI host each cell
+// prints the `system` field sent, the stored request facts and listen's output (its environment
+// holds only PATH, HOME and the dummy keys).
+describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR 2)', () => {
+  /** Posts one webhook, then waits until `done` holds and the agent the record names has exited. */
+  async function oneWebhook(
+    listen: { port: number; output: () => string },
+    done: () => boolean,
+  ): Promise<void> {
+    const res = await fetch(`http://127.0.0.1:${listen.port}/hook-676`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(20_000),
+    });
+    expect(res.status, listen.output()).toBe(202);
+    expect(await waitUntil(done, 20_000), listen.output()).toBe(true);
+    const pid = readOnlyRun()?.agent_pid;
+    if (pid !== undefined && !(await waitUntil(() => !isAlive(pid), 10_000))) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  // Leg 2. (a) red when listen does not forward the stated value (the child asks for its 1h
+  // default, a block); (b) prints the `system` field sent.
+  it('G20 leg 2: listen --prompt-cache off → the child sends the plain string', async () => {
+    const stub = await notFoundStub();
+    let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
+    try {
+      listen = await startListen(
+        [
+          'wf',
+          '--port',
+          '0',
+          '--provider',
+          'anthropic',
+          '--model',
+          'm-600',
+          '--prompt-cache',
+          'off',
+          '--dedup-store',
+          'memory',
+        ],
+        env({ ANTHROPIC_API_KEY: 'k-600', ANTHROPIC_BASE_URL: stub.url }),
+      );
+      await oneWebhook(listen, () => stub.systems.length > 0);
+      expect(typeof stub.systems[0], listen.output()).toBe('string');
+      expect(listen.output()).toContain(
+        'listen: caching {"anthropic":"off","set_by":"--prompt-cache off"}',
+      );
+    } finally {
+      listen?.child.kill('SIGKILL');
+      stub.server.closeAllConnections();
+      await new Promise<void>((r) => stub.server.close(() => r()));
+    }
+  }, 60_000);
+
+  // Leg 3, on the 200 stand-in. (a) red when listen does not forward the stated value, or does not
+  // mark its child (the record then says `realm agent`); (b) prints the stored facts, the `system`
+  // field sent and listen's output.
+  it("G20 leg 3: listen --prompt-cache 5m → the child's request asks for 5m, recorded as stated on realm listen; its start line says so", async () => {
+    const stub = await startAnthropicStub({ finalContent: { summary: 'ok' } });
+    let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
+    try {
+      listen = await startListen(
+        [
+          'wf',
+          '--port',
+          '0',
+          '--provider',
+          'anthropic',
+          '--model',
+          'm-600',
+          '--prompt-cache',
+          '5m',
+          '--dedup-store',
+          'memory',
+        ],
+        env({ ANTHROPIC_API_KEY: 'k-600', ANTHROPIC_BASE_URL: stub.baseUrl }),
+      );
+      const stored = () =>
+        (
+          readOnlyRun() as
+            | {
+                evidence?: Array<{
+                  diagnostics?: { cache?: { requests?: Array<Record<string, unknown>> } };
+                }>;
+              }
+            | undefined
+        )?.evidence?.[0]?.diagnostics?.cache?.requests?.[0];
+      await oneWebhook(listen, () => stored() !== undefined);
+      const request = stored()!;
+      expect(
+        {
+          cache_requested: request['cache_requested'],
+          cache_lifetime_s: request['cache_lifetime_s'],
+          cache_ttl_sent: request['cache_ttl_sent'],
+          cache_requested_source: request['cache_requested_source'],
+          cache_requested_by: request['cache_requested_by'],
+          cacheControl: (stub.requests[0]!['system'] as Array<{ cache_control?: unknown }>)[0]!
+            .cache_control,
+        },
+        listen.output(),
+      ).toEqual({
+        cache_requested: 'lifetime',
+        cache_lifetime_s: 300,
+        cache_ttl_sent: false,
+        cache_requested_source: 'stated',
+        cache_requested_by: 'realm listen',
+        cacheControl: { type: 'ephemeral' },
+      });
+      expect(listen.output()).toContain(
+        "Caching: Anthropic is asked to cache each step's fixed instructions for 5m (set by realm listen --prompt-cache 5m).",
+      );
+    } finally {
+      listen?.child.kill('SIGKILL');
+      await stub.close();
+    }
+  }, 60_000);
 });
 
 describe('the re-attach command repeats the flags the CLI was given (issue #676 review)', () => {
@@ -565,6 +706,53 @@ describe('the re-attach command repeats the flags the CLI was given (issue #676 
     const files = runFiles();
     expect(files).toHaveLength(1);
     const runId = files[0]!.replace(/\.json$/, '');
+    const line = r.stderr.split('\n').find((l) => l.startsWith("⚠ Step 'publish' is blocked:"));
+    expect(line).toBe(
+      "⚠ Step 'publish' is blocked: handler 'publish_answer' is not registered in this runner. " +
+        `The run is NOT failed — add handler 'publish_answer' and re-attach (\`realm agent --run-id ${runId} ${flags.join(' ')}\`).`,
+    );
+  }, 30_000);
+
+  // issue #600 PR 2 (C6, G22): a stated --prompt-cache is repeated last. The workflow has an agent
+  // step after the blocked one, so the setting has a step to apply to (C3e) and no model is called.
+  // (a) red when the stated value is not repeated; (b) prints the command line.
+  it('a stated --prompt-cache is repeated after --mint-writer-nonce', async () => {
+    const dir = join(root, 'blocked-600');
+    mkdirSync(dir);
+    writeFileSync(
+      join(dir, 'workflow.yaml'),
+      [
+        'id: reattach-cli-600',
+        'name: Reattach CLI 600',
+        'version: 1',
+        'steps:',
+        '  publish:',
+        '    description: Publish.',
+        '    execution: auto',
+        '    handler: publish_answer',
+        '  ask:',
+        '    description: Answer.',
+        '    execution: agent',
+        '    depends_on: [publish]',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const flags = [
+      '--provider',
+      'anthropic',
+      '--model',
+      'm-600',
+      '--mint-writer-nonce',
+      '--prompt-cache',
+      '1h',
+    ];
+    const r = await runCli(
+      ['agent', '--workflow', join('blocked-600', 'workflow.yaml'), ...flags],
+      env({ ANTHROPIC_API_KEY: 'k-600', ANTHROPIC_BASE_URL: CLOSED_PORT }),
+    );
+    expect(r.code).toBe(1);
+    const runId = runFiles()[0]!.replace(/\.json$/, '');
     const line = r.stderr.split('\n').find((l) => l.startsWith("⚠ Step 'publish' is blocked:"));
     expect(line).toBe(
       "⚠ Step 'publish' is blocked: handler 'publish_answer' is not registered in this runner. " +

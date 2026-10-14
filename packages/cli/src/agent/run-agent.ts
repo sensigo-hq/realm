@@ -65,7 +65,13 @@ import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensio
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
 import { stoppedReasons } from '../commands/run-advance.js';
-import { recordDriveFailure, buildEntry, MESSAGE_CAP } from './drive-failure.js';
+import {
+  recordDriveFailure,
+  buildEntry,
+  MESSAGE_CAP,
+  stampRequestProvider,
+} from './drive-failure.js';
+import { promptCacheStartLine, type ResolvedPromptCache } from './prompt-cache.js';
 import { terminalRunRefusal } from './run-attach.js';
 import {
   answerNotRecordedLine,
@@ -188,6 +194,14 @@ export interface AgentDeps {
    * for the operator to fill in.
    */
   reattachFlags?: string;
+  /**
+   * Issue #600 PR 2 — the caching setting `realm agent` resolved for this drive (`--prompt-cache`,
+   * or the runner's default), with where it came from and which runner chose it. The provider was
+   * built with the same setting; this copy is what the drive's start line names. Absent for a
+   * `--provider-module` run and for a host that calls `runAgent` itself: the start line then says
+   * what the provider asks for without saying where the setting came from.
+   */
+  promptCache?: ResolvedPromptCache;
 }
 
 /**
@@ -524,7 +538,17 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
     }
 
     console.log(`\nRealm Agent — ${definition.name} v${definition.version}`);
-    console.log(`Run ID: ${runId}\n`);
+    console.log(`Run ID: ${runId}`);
+    // issue #600 PR 2 (D1): what this drive asks the provider to cache, and why.
+    console.log(
+      promptCacheStartLine({
+        caps,
+        promptCache: deps.promptCache,
+        moduleProviderId: deps.providerId,
+        definition,
+      }),
+    );
+    console.log('');
 
     // Initialise MCP client if any steps declare tools.
     let mcpClient: McpClient | undefined;
@@ -1621,7 +1645,12 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
                     ...(structuredOutputMetaForStep !== undefined
                       ? { structuredOutput: structuredOutputMetaForStep }
                       : {}),
-                    ...(usageForStep !== undefined ? { usage: usageForStep } : {}),
+                    // issue #600 PR 2 (C4): each request carries the provider that served it,
+                    // stamped here from the drive's one provenance source, over anything an
+                    // adapter or a provider module wrote.
+                    ...(usageForStep !== undefined
+                      ? { usage: stampRequestProvider(usageForStep, providerForEvidence) }
+                      : {}),
                   },
                 }
               : {}),

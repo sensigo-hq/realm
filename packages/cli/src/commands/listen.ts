@@ -34,7 +34,10 @@ import { Command, InvalidArgumentError } from 'commander';
 // flags cannot drift on what they accept. The listen→agent edge is one-way and cycle-free.
 import { parseLlmTimeout, parseProvider } from './agent.js';
 import { hasText, listenModelRefusal, type ProviderName } from '../agent/providers/llm-provider.js';
+// issue #600 PR 2: the SAME parser `realm agent --prompt-cache` uses.
+import { parsePromptCache } from '../agent/prompt-cache.js';
 import {
+  type PromptCacheSetting,
   loadWorkflowFromFile,
   JsonFileStore,
   JsonWorkflowStore,
@@ -1222,6 +1225,8 @@ export type AgentArgvOptions = {
   model: string;
   provider?: ProviderName;
   llmTimeoutSeconds?: number;
+  /** Issue #600 PR 2: listen's `--prompt-cache`, only when the operator stated it. */
+  promptCache?: PromptCacheSetting;
 };
 
 /**
@@ -1238,6 +1243,11 @@ export type AgentArgvOptions = {
  * in-memory clock, which is true — the operator did set it. That label is never persisted; what
  * the run record carries is the CONSEQUENCE: `declared_per_attempt_ms` present, and a fired
  * ceiling naming `--llm-timeout` as the lever.
+ *
+ * CACHING (issue #600 PR 2): a stated `--prompt-cache` is passed on as given; unstated, nothing is
+ * passed and the child uses listen's default (1h). `--spawned-by-listen` is always passed, so the
+ * child knows listen started it: its default is listen's, its runner is recorded as `realm
+ * listen`, and a setting its provider cannot apply is disclosed on its start line, never refused.
  */
 export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] {
   const argv = ['agent', '--run-id', runId];
@@ -1246,6 +1256,8 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
   if (opts.llmTimeoutSeconds !== undefined) {
     argv.push('--llm-timeout', String(opts.llmTimeoutSeconds));
   }
+  if (opts.promptCache !== undefined) argv.push('--prompt-cache', opts.promptCache);
+  argv.push('--spawned-by-listen');
   // issue #620 PR-C: listen tells the operator once at startup; a child per webhook would repeat it.
   argv.push('--no-release-line-advisory');
   return argv;
@@ -1315,9 +1327,15 @@ export function defaultSpawnAgent(
  * unchanged — the value is closed over here rather than threaded through it.
  * issue #676: and the model (always) and the provider (when given), the same way.
  * issue #744: an error the agent process reports after it started is logged, never fatal.
+ * issue #600 PR 2: and a stated `--prompt-cache`, the same way.
  */
 export function makeAgentSpawner(
-  listenOpts: { model: string; provider?: ProviderName; llmTimeout?: number },
+  listenOpts: {
+    model: string;
+    provider?: ProviderName;
+    llmTimeout?: number;
+    promptCache?: PromptCacheSetting;
+  },
   logger: Logger,
   spawnFn: typeof nodeSpawn = nodeSpawn,
 ): (runId: string, cwd: string) => Promise<SpawnResult> {
@@ -1325,6 +1343,7 @@ export function makeAgentSpawner(
     model: listenOpts.model,
     ...(listenOpts.provider !== undefined ? { provider: listenOpts.provider } : {}),
     ...(listenOpts.llmTimeout !== undefined ? { llmTimeoutSeconds: listenOpts.llmTimeout } : {}),
+    ...(listenOpts.promptCache !== undefined ? { promptCache: listenOpts.promptCache } : {}),
   };
   return (runId, cwd) =>
     defaultSpawnAgent(
@@ -1335,6 +1354,24 @@ export function makeAgentSpawner(
         logger.error('webhook: agent process error', { run_id: runId, cwd, error: String(err) }),
       spawnFn,
     );
+}
+
+/**
+ * Issue #600 PR 2 (D2) — what listen's startup line says each provider is asked to cache. A child
+ * that uses Anthropic asks for the stated setting, or listen's default (1h); Realm asks OpenAI for
+ * no caching. With `--provider`, only that provider's agents are started, so the other is named
+ * only as `not used` (OpenAI) or not at all (Anthropic).
+ */
+export function listenCachingFacts(
+  provider: ProviderName | undefined,
+  promptCache: PromptCacheSetting | undefined,
+): Record<string, string> {
+  if (provider === 'openai') return { openai: 'asked for no caching', anthropic: 'not used' };
+  const anthropic = {
+    anthropic: promptCache ?? '1h',
+    set_by: promptCache === undefined ? "realm listen's default" : `--prompt-cache ${promptCache}`,
+  };
+  return provider === 'anthropic' ? anthropic : { ...anthropic, openai: 'asked for no caching' };
 }
 
 function resolveWorkflowFile(input: string): string {
@@ -1415,6 +1452,13 @@ export const listenCommand = new Command('listen')
       'No default: absent means each drive uses its own 600s fallback.',
     parseLlmTimeout,
   )
+  // issue #600 PR 2: no Commander default. Unstated, nothing is passed and each child uses
+  // listen's default (1h), recorded as `runner_default`.
+  .option(
+    '--prompt-cache <setting>',
+    'Passed to each realm agent it starts: off, 5m or 1h. Default: each agent asks Anthropic for 1h. Other providers are asked for no caching.',
+    parsePromptCache,
+  )
   .option(
     '--sweep-expired-gates <seconds>',
     'OPT-IN (issue #291): store-wide sweep interval (seconds) that enacts expired, enactable ' +
@@ -1436,6 +1480,7 @@ export const listenCommand = new Command('listen')
         llmTimeout?: number;
         provider?: ProviderName;
         model?: string;
+        promptCache?: PromptCacheSetting;
       },
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen
@@ -1456,6 +1501,16 @@ export const listenCommand = new Command('listen')
       const model = opts.model;
       if (!hasText(model)) {
         console.error(listenModelRefusal(opts.provider));
+        process.exit(1);
+        return;
+      }
+      // issue #600 PR 2 (C3c): with `--provider openai` every agent listen starts uses OpenAI, so a
+      // caching setting can never apply. Refused here, before anything listens, rather than
+      // disclosed by every child it would start.
+      if (opts.provider === 'openai' && opts.promptCache !== undefined) {
+        console.error(
+          'Error: --prompt-cache sets caching only for Anthropic; with --provider openai every agent realm listen starts uses OpenAI, which Realm asks for no caching, so the flag would change nothing. Remove --prompt-cache, or use --provider anthropic.',
+        );
         process.exit(1);
         return;
       }
@@ -1567,6 +1622,8 @@ export const listenCommand = new Command('listen')
         deps,
       );
 
+      // issue #600 PR 2 (D2): what each provider's agents are asked to cache.
+      logger.info('listen: caching', listenCachingFacts(opts.provider, opts.promptCache));
       const addr = handle.server.address() as { port: number } | null;
       logger.info(
         `realm listen on ${host}:${addr?.port ?? opts['port']} — ${routes.size} workflow(s) mounted`,

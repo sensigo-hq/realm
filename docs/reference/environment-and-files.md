@@ -31,12 +31,12 @@ Realm reads other variables by names that you give it:
 
 These are read by libraries that Realm uses, and change what Realm does (the `.env` loader reads a few more `DOTENV_CONFIG_*` variables; see [its documentation for the version Realm uses](https://github.com/motdotla/dotenv/blob/v17.4.2/README.md)):
 
-| Variable                 | Read by            | What it does                                                                                       |
-| ------------------------ | ------------------ | -------------------------------------------------------------------------------------------------- |
-| `OPENAI_BASE_URL`        | OpenAI's client    | Sends `realm agent`'s OpenAI requests to another address.                                          |
-| `ANTHROPIC_BASE_URL`     | Anthropic's client | Sends `realm agent`'s Anthropic requests to another address.                                       |
-| `DOTENV_CONFIG_PATH`     | The `.env` loader  | The file loaded in place of `.env` in the current folder. See below.                               |
-| `DOTENV_CONFIG_OVERRIDE` | The `.env` loader  | Lets the `.env` file replace variables already set: any non-empty value, `false` and `0` included. |
+| Variable                 | Read by            | What it does                                                                                                                                                                                      |
+| ------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_BASE_URL`        | OpenAI's client    | Sends `realm agent`'s OpenAI requests to another address.                                                                                                                                         |
+| `ANTHROPIC_BASE_URL`     | Anthropic's client | Sends `realm agent`'s Anthropic requests to another address. A service there that refuses the request to cache makes each agent step fail: use `--prompt-cache off` (added after version 0.47.0). |
+| `DOTENV_CONFIG_PATH`     | The `.env` loader  | The file loaded in place of `.env` in the current folder. See below.                                                                                                                              |
+| `DOTENV_CONFIG_OVERRIDE` | The `.env` loader  | Lets the `.env` file replace variables already set: any non-empty value, `false` and `0` included.                                                                                                |
 
 ### The `.env` file in the current folder
 

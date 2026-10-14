@@ -3,13 +3,18 @@
 import {
   WorkflowError,
   validateAgentSubmission,
+  PROMPT_CACHE_LIFETIMES,
+  type CacheRequestSource,
   type JsonSchema,
+  type PromptCacheSetting,
   type StructuredOutputMeta,
   type UsageRecord,
 } from '@sensigo/realm';
 import {
   ToolCapableLlmProvider,
   ANTHROPIC_MODELS_URL,
+  endpointOf,
+  responseModel,
   type ProviderCapabilities,
   type CallStepWithMetaResult,
 } from './llm-provider.js';
@@ -100,6 +105,30 @@ export function resolveMaxTokens(model: string): number {
  * rather you stream than have the request die on a timeout it cannot distinguish from a hang.
  */
 export const MAX_NONSTREAMING_TOKENS = 21_333;
+
+/**
+ * Issue #600 PR 2 (B4) — the Anthropic SDK's own default address (`@anthropic-ai/sdk` 0.120.0,
+ * `client.js:96`): a request through a client whose `baseURL` is anything else went to a custom
+ * endpoint.
+ */
+export const ANTHROPIC_DEFAULT_BASE_URL = 'https://api.anthropic.com';
+
+/**
+ * Issue #600 PR 2 (B1) — the single-shot request's `system`: the plain string when nothing is asked
+ * to be cached (byte-for-byte the request before caching), else one text block whose
+ * `cache_control` marks the whole fixed part — the profile, Realm's instructions and the schema —
+ * as the part to cache. `5m` sends no `ttl` (the provider's default lifetime, 5 minutes); `1h`
+ * sends `ttl: '1h'`. The tools path never calls this.
+ */
+function systemWithCache(
+  systemPrompt: string,
+  setting: PromptCacheSetting,
+): string | Array<{ type: 'text'; text: string; cache_control: Record<string, string> }> {
+  if (setting === 'off') return systemPrompt;
+  const cacheControl: Record<string, string> =
+    setting === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
+  return [{ type: 'text', text: systemPrompt, cache_control: cacheControl }];
+}
 
 /**
  * issue #401 — realm re-imposes the SDK's rule, because realm's own `timeout` DISABLES it.
@@ -234,6 +263,8 @@ function toUsageRecord(
   index: number,
   requestStart: string,
   u: AnthropicUsage | undefined,
+  // issue #600 PR 2 (B3): what realm asked for and where it sent the request; spread in as given.
+  facts: Partial<UsageRecord> = {},
 ): UsageRecord {
   const num = (v: number | null | undefined): number | undefined =>
     typeof v === 'number' ? v : undefined;
@@ -253,9 +284,10 @@ function toUsageRecord(
   // tokens in a request is the summation of `input_tokens`, `cache_creation_input_tokens`, and
   // `cache_read_input_tokens`"). It is therefore computable ONLY when all three terms were
   // reported. Treating an unreported cache counter as a 0 contribution would make the TOTAL a
-  // lower bound while every surface still labelled it `measured` — the record's own rule ("Every
-  // optional field means THE PROVIDER DID NOT REPORT IT; none is ever defaulted to `0`") applied
-  // at the stored field and broken at the number derived from it. An explicit 0 IS a report, so
+  // lower bound while every surface still labelled it `measured` — the record's own rule ("The
+  // token counters and `cache_creation` are what THE PROVIDER REPORTED: an absent one was not
+  // reported, and none is ever defaulted to `0`") applied at the stored field and broken at the
+  // number derived from it. An explicit 0 IS a report, so
   // this only withholds the total when a counter is genuinely missing; `uncached_input_tokens`
   // below is still recorded, so nothing the provider did report is lost.
   const promptTokens =
@@ -277,6 +309,7 @@ function toUsageRecord(
       ? { cache_read_input_tokens: cacheReadInputTokens }
       : {}),
     ...(Object.keys(split).length > 0 ? { cache_creation: split } : {}),
+    ...facts,
   };
 }
 
@@ -344,8 +377,25 @@ async function createMessageWithLadder(
  * Retries once if the model returns non-JSON content.
  */
 export class AnthropicProvider extends ToolCapableLlmProvider {
-  constructor(private readonly model: string) {
+  /** Issue #600 PR 2 — what this instance asks to cache, and where that came from. */
+  private readonly promptCache: {
+    value: PromptCacheSetting;
+    source?: CacheRequestSource;
+    by?: string;
+  };
+
+  /**
+   * `promptCache` (issue #600 PR 2): what the single-shot request asks to cache. Without it the
+   * provider asks for nothing (`off`) — the request is byte-for-byte the one before caching.
+   */
+  constructor(
+    private readonly model: string,
+    opts?: {
+      promptCache?: { value: PromptCacheSetting; source?: CacheRequestSource; by?: string };
+    },
+  ) {
     super();
+    this.promptCache = opts?.promptCache ?? { value: 'off' };
   }
 
   /**
@@ -359,7 +409,39 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * via a `response_format` json_object mode.
    */
   capabilities(): ProviderCapabilities {
-    return { jsonMode: false, toolArgsStrict: true, providerId: 'anthropic' };
+    // issue #600 PR 2 (B2): what the single-shot request asks to cache, always — `off` included.
+    return {
+      jsonMode: false,
+      toolArgsStrict: true,
+      providerId: 'anthropic',
+      promptCache: this.promptCache.value,
+    };
+  }
+
+  /**
+   * Issue #600 PR 2 (B3) — what realm asked for on a single-shot request, and where it sent it:
+   * the response's `model`, the ask (`lifetime` with its seconds and whether the lifetime was sent,
+   * or `off`), its source and runner when given, the endpoint, and that Anthropic reports a
+   * lifetime split. Never `provider`: `realm agent` stamps that.
+   */
+  private requestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
+    const { value, source, by } = this.promptCache;
+    const model = responseModel(response);
+    const endpoint = endpointOf(client, ANTHROPIC_DEFAULT_BASE_URL);
+    return {
+      ...(model !== undefined ? { model } : {}),
+      ...(value === 'off'
+        ? { cache_requested: 'off' as const }
+        : {
+            cache_requested: 'lifetime' as const,
+            cache_lifetime_s: PROMPT_CACHE_LIFETIMES[value],
+            cache_ttl_sent: value === '1h',
+          }),
+      ...(source !== undefined ? { cache_requested_source: source } : {}),
+      ...(by !== undefined ? { cache_requested_by: by } : {}),
+      ...(endpoint !== undefined ? { endpoint } : {}),
+      cache_split_offered: true,
+    };
   }
 
   /**
@@ -488,7 +570,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         const opts: Record<string, unknown> = {
           model: this.model,
           max_tokens: resolveMaxTokens(this.model),
-          system: systemPrompt,
+          system: systemWithCache(systemPrompt, this.promptCache.value),
           messages: [{ role: 'user', content: userContent }],
         };
         if (submitTool !== undefined) {
@@ -507,7 +589,9 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
       const toolUse = blocks.find((b) => b.type === 'tool_use' && b.name === SUBMIT_TOOL_NAME);
       const textBlock = blocks.find((b) => b.type === 'text');
       const usage = readAnthropicUsage(response);
-      requests.push(toUsageRecord(requests.length, requestStart, usage));
+      requests.push(
+        toUsageRecord(requests.length, requestStart, usage, this.requestFacts(response, client)),
+      );
       return {
         ...(toolUse !== undefined ? { toolInput: toolUse.input as Record<string, unknown> } : {}),
         text: textBlock?.text ?? '',

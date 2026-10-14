@@ -768,3 +768,327 @@ describe('#600 PR 1b — one composed record agrees on inspect and get_run_state
     expect(figure).toEqual({ value: 1776, reported: 2, of: 2 });
   });
 });
+
+// =========================================================================================
+// issue #600 PR 2 (D3, G25): the request facts on the three cost lines, through one composer.
+// On a failing CI host each cell prints the rendered line: test values only.
+// =========================================================================================
+describe('#600 PR 2 — the model and the ask on the cost lines', () => {
+  /** The step's `Diagnostics:` line for these requests, without its label. */
+  const stepLine = async (
+    requests: UsageRecord[],
+    state: 'engaged' | 'write_only' | 'never_engaged' = 'engaged',
+  ): Promise<string> => {
+    const out = await render({
+      input_token_estimate: 1,
+      precondition_trace: [],
+      cache: { state, basis: 'provider_reported', requests },
+    });
+    const line = out.split('\n').find((l) => l.includes('Diagnostics: '));
+    return line === undefined
+      ? `(no Diagnostics line in: ${out})`
+      : line.split('Diagnostics: ')[1]!;
+  };
+  /** The failed drive's `usage:` line for these requests. */
+  const failureLine = async (usage: UsageRecord[]): Promise<string> => {
+    const out = await renderFailure(usage);
+    return out.split('\n').find((l) => l.startsWith('    usage: ')) ?? `(no usage line in: ${out})`;
+  };
+  const lifetime = (
+    s: number | undefined,
+    extra: Partial<UsageRecord> = {},
+  ): Partial<UsageRecord> => ({
+    cache_requested: 'lifetime',
+    ...(s !== undefined ? { cache_lifetime_s: s } : {}),
+    ...extra,
+  });
+
+  // guard: a request with none of PR 2's fields prints exactly what 0.47.0 printed (the line is
+  // byte-identical; the A5 absence is withheld). Green on the base by design.
+  it('guard: a record without the request facts prints the line it printed before', async () => {
+    expect(
+      await stepLine(
+        [
+          req({
+            prompt_tokens: 100,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 40,
+          }),
+        ],
+        'write_only',
+      ),
+    ).toBe(
+      '~1 tokens (estimate, step input) | 100 prompt tokens (measured, first request) | 5 output tokens | no preconditions | cache: read 0, wrote 40 (included in the prompt; provider-reported, 1 request)',
+    );
+  });
+
+  it('model: one name for every request; several; named by some of the requests', async () => {
+    expect(await stepLine([req({ prompt_tokens: 1, model: 'claude-x-20260101' })])).toContain(
+      '| 1 prompt tokens (measured, first request) | output not reported | model claude-x-20260101 | no preconditions |',
+    );
+    expect(
+      await stepLine([
+        req({ model: 'a-1' }, 0),
+        req({ model: 'b-2' }, 1),
+        req({ model: 'a-1' }, 2),
+      ]),
+    ).toContain('| models a-1, b-2 (the requests used different models) |');
+    expect(await stepLine([req({ model: 'a-1' }, 0), req({}, 1)])).toContain(
+      '| model a-1 (named by 1 of 2 requests) |',
+    );
+  });
+
+  // (a) red when quotedForTerminal is removed (the quote marks go); (b) prints the line.
+  it('a name that needs it is quoted, a quote mark escaped', async () => {
+    expect(await stepLine([req({ model: 'my "model"' })])).toContain('| model "my \\"model\\"" |');
+  });
+
+  it('the ask, per kind: a lifetime, off, the provider’s rules', async () => {
+    const asks = await Promise.all([
+      stepLine([
+        req(
+          lifetime(300, {
+            cache_ttl_sent: false,
+            cache_requested_source: 'runner_default',
+            cache_requested_by: 'realm agent',
+          }),
+        ),
+      ]),
+      stepLine([
+        req(
+          lifetime(3600, {
+            cache_ttl_sent: true,
+            cache_requested_source: 'stated',
+            cache_requested_by: 'realm listen',
+          }),
+        ),
+      ]),
+      stepLine([req(lifetime(90, { cache_ttl_sent: true, cache_requested_source: 'stated' }))]),
+      stepLine([
+        req({
+          cache_requested: 'off',
+          cache_requested_source: 'stated',
+          cache_requested_by: 'realm agent',
+        }),
+      ]),
+      stepLine([req({ cache_requested: 'provider_rules' })]),
+    ]);
+    expect(asks.map((l) => l.slice(l.indexOf('(1 request)') + '(1 request)'.length))).toEqual([
+      "; asked for 5m (the provider's default lifetime; realm agent's default)",
+      '; asked for 1h (sent as 1h; stated on realm listen)',
+      '; asked for 90s (sent as 90s; stated)',
+      '; asked for no caching (stated on realm agent)',
+      "; asked for nothing (the provider's own caching, if any, applies)",
+    ]);
+  });
+
+  // (a) red when quotedForTerminal is removed (the control byte would reach the terminal raw);
+  // (b) prints the line.
+  it('an unknown ask, an unknown source, a lifetime that is not valid, and one not stated', async () => {
+    const lines = await Promise.all([
+      stepLine([req({ cache_requested: 'weird\u0007' as never })]),
+      stepLine([
+        req(lifetime(300, { cache_ttl_sent: false, cache_requested_source: 'x\u001b' as never })),
+      ]),
+      ...[0, 604_801, 1.5, -1].map((s) => stepLine([req(lifetime(s, { cache_ttl_sent: false }))])),
+      stepLine([req(lifetime(undefined))]),
+    ]);
+    const asks = lines.map((l) => l.slice(l.indexOf('; asked') + 2));
+    expect(asks).toEqual([
+      'asked: unrecognized "weird\\u0007"',
+      'asked for 5m (the provider\'s default lifetime; unrecognized source "x\\u001b")',
+      'asked for a lifetime: unrecognized lifetime',
+      'asked for a lifetime: unrecognized lifetime',
+      'asked for a lifetime: unrecognized lifetime',
+      'asked for a lifetime: unrecognized lifetime',
+      'asked for a lifetime the record does not state',
+    ]);
+    // No control byte reaches the terminal raw.
+    // eslint-disable-next-line no-control-regex
+    expect(lines.join('')).not.toMatch(/[\u0000-\u001f]/);
+  });
+
+  it('<src>: each row; <sent>: absent', async () => {
+    const src = async (extra: Partial<UsageRecord>) => {
+      const l = await stepLine([req(lifetime(300, { cache_ttl_sent: false, ...extra }))]);
+      return l.slice(l.indexOf('lifetime; ') + 'lifetime; '.length, -1);
+    };
+    expect([
+      await src({ cache_requested_source: 'stated', cache_requested_by: 'ci-bot' }),
+      await src({ cache_requested_source: 'runner_default', cache_requested_by: 'ci-bot' }),
+      await src({ cache_requested_source: 'stated' }),
+      await src({ cache_requested_source: 'runner_default' }),
+      await src({}),
+    ]).toEqual([
+      'stated on ci-bot',
+      "ci-bot's default",
+      'stated',
+      "a runner's default",
+      'source not recorded',
+    ]);
+    const unsent = await stepLine([req(lifetime(300, { cache_requested_source: 'stated' }))]);
+    expect(unsent).toContain('; asked for 5m (whether Realm sent it is not recorded; stated)');
+  });
+
+  it('several asks are joined by ", then"; recorded by some of the requests', async () => {
+    const l = await stepLine([
+      req(
+        lifetime(3600, {
+          cache_ttl_sent: true,
+          cache_requested_source: 'runner_default',
+          cache_requested_by: 'realm listen',
+        }),
+        0,
+      ),
+      req(
+        {
+          cache_requested: 'off',
+          cache_requested_source: 'stated',
+          cache_requested_by: 'realm agent',
+        },
+        1,
+      ),
+      req({}, 2),
+    ]);
+    expect(l).toContain(
+      "; asked for 1h (sent as 1h; realm listen's default), then asked for no caching (stated on realm agent) (recorded by 2 of 3 requests)",
+    );
+  });
+
+  // (a) red when the mismatch clause never fires; (b) prints the line.
+  it('the lifetime-mismatch clause, both ways', async () => {
+    const asked1h = await stepLine([
+      req(
+        lifetime(3600, {
+          cache_ttl_sent: true,
+          cache_creation_input_tokens: 70,
+          cache_creation: { ephemeral_5m_input_tokens: 70, ephemeral_1h_input_tokens: 0 },
+        }),
+      ),
+    ]);
+    const asked5m = await stepLine([
+      req(
+        lifetime(300, {
+          cache_ttl_sent: false,
+          cache_creation_input_tokens: 30,
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 30 },
+        }),
+      ),
+    ]);
+    const matched = await stepLine([
+      req(
+        lifetime(3600, {
+          cache_ttl_sent: true,
+          cache_creation_input_tokens: 70,
+          cache_creation: { ephemeral_1h_input_tokens: 70 },
+        }),
+      ),
+    ]);
+    expect(
+      [asked1h, asked5m, matched].map(
+        (l) => /; (\d+ of the tokens written[^;]*)$/.exec(l)?.[1] ?? 'none',
+      ),
+    ).toEqual([
+      '70 of the tokens written were kept for 5m, not the 1h asked',
+      '30 of the tokens written were kept for 1h, not the 5m asked',
+      'none',
+    ]);
+  });
+
+  // (a) red when the nothing-cached clause never fires; (b) prints the line.
+  it('the nothing-cached clause: a lifetime asked, every request reporting 0 read and 0 written', async () => {
+    const zero = await stepLine(
+      [
+        req(
+          lifetime(300, {
+            cache_ttl_sent: false,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          }),
+        ),
+      ],
+      'never_engaged',
+    );
+    expect(zero).toMatch(
+      /; nothing was written or read: the cached part may be shorter than the model's minimum, or an endpoint behind ANTHROPIC_BASE_URL dropped the request to cache$/,
+    );
+    // Not when a request did not report both, nor when nothing was asked.
+    const silent = await stepLine([
+      req(lifetime(300, { cache_ttl_sent: false, cache_read_input_tokens: 0 })),
+    ]);
+    const off = await stepLine(
+      [req({ cache_requested: 'off', cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })],
+      'never_engaged',
+    );
+    expect([silent, off].map((l) => l.includes('nothing was written or read'))).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  // (a) red when the failure line does not use the shared composer; (b) prints the line.
+  it('the failed-drive line: the model, then the ask, as the step line says them', async () => {
+    expect(
+      await failureLine([
+        req({
+          prompt_tokens: 5,
+          model: 'claude-x-20260101',
+          ...lifetime(300, {
+            cache_ttl_sent: false,
+            cache_requested_source: 'runner_default',
+            cache_requested_by: 'realm agent',
+          }),
+        }),
+      ]),
+    ).toBe(
+      "    usage: 1 request billed before the throw — 5 prompt tokens, output not reported, cache not reported; model claude-x-20260101; asked for 5m (the provider's default lifetime; realm agent's default)",
+    );
+  });
+
+  // (a) red when the earlier attempt's line does not use the shared composer; (b) prints the lines.
+  it("a two-attempt step: each attempt's line carries its own model and ask", async () => {
+    const attempt = (status: 'error' | 'success', request: UsageRecord) =>
+      makeSnapshot('step_one', {
+        status,
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: { state: 'engaged', basis: 'provider_reported', requests: [request] },
+        },
+      });
+    const run = makeRun([
+      attempt(
+        'error',
+        req({
+          prompt_tokens: 111,
+          model: 'model-a',
+          ...lifetime(3600, {
+            cache_ttl_sent: true,
+            cache_requested_source: 'runner_default',
+            cache_requested_by: 'realm listen',
+          }),
+        }),
+      ),
+      attempt(
+        'success',
+        req({
+          prompt_tokens: 222,
+          model: 'model-b',
+          ...lifetime(300, {
+            cache_ttl_sent: false,
+            cache_requested_source: 'stated',
+            cache_requested_by: 'realm agent',
+          }),
+        }),
+      ),
+    ]);
+    const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef));
+    const first = out.split('\n').find((l) => l.includes('attempt 1/2: '));
+    const last = out.split('\n').find((l) => l.includes('Diagnostics (attempt 2/2): '));
+    expect([first?.trim(), last?.trim()]).toEqual([
+      "attempt 1/2: 111 prompt tokens (measured, first request) | output not reported | model model-a | cache: not reported by the provider (1 request); asked for 1h (sent as 1h; realm listen's default)",
+      "Diagnostics (attempt 2/2): ~1 tokens (estimate, step input) | 222 prompt tokens (measured, first request) | output not reported | model model-b | no preconditions | cache: not reported by the provider (1 request); asked for 5m (the provider's default lifetime; stated on realm agent)",
+    ]);
+  });
+});

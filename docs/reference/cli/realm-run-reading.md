@@ -266,7 +266,7 @@ The check reads the files and computes their hashes. It does not load or run the
 | `Message`                             | The answered gate had a message                                                       | The question as the person read it, in quotes, printed before its answer.                                                                                                                                                                                                                                                                                                                          |
 | `Answer`                              | The step's gate was answered                                                          | One line for each answer: the choice, who answered, and the proof of the `claim_token`. See below. Added in 0.46.0.                                                                                                                                                                                                                                                                                |
 | `Tool calls`                          | An agent step called tools                                                            | One line for each call: the server, the tool and the time taken. `Tools declared, none called` if it had tools and used none.                                                                                                                                                                                                                                                                      |
-| `Diagnostics`                         | The step is an agent or an auto step                                                  | An estimate of the input's size, the measured prompt and output tokens if `realm agent` drove the step, each precondition with its result, and what the provider reported about its cache.                                                                                                                                                                                                         |
+| `Diagnostics`                         | The step is an agent or an auto step                                                  | An estimate of the input's size, the measured prompt and output tokens if `realm agent` drove the step, each precondition with its result, and what the provider reported about its cache. Where the step's requests recorded them, also the model that answered and what Realm asked the provider to cache (added after version 0.47.0).                                                          |
 | `cost`                                | An agent step's attempt recorded no usage, or recorded it in a form realm cannot read | Why: `not recorded — realm has no usage figures for this attempt (…)`, or `unreadable — the recorded usage is not a list`. A step that runs code prints no `cost` line.                                                                                                                                                                                                                            |
 
 A step that `realm agent` drove has measured numbers:
@@ -289,6 +289,18 @@ A step that called a tool, with `--verbose`:
 ```
 
 Without `--verbose`, only the `[notes:list_directory]  7ms` line is printed.
+
+A step that `realm agent` drives also names the model and what the drive asked the provider to cache. Here Anthropic was asked for 5 minutes, `realm agent`'s default, and wrote the fixed part of the request to its cache:
+
+```text
+  1. classify               [profile: support-lead] success   0ms   hash: b92a7fe0
+     Taken by: ops@server-1 (from the OS user, via agent)
+     Input:  {"category":"billing","urgent":true,"reason":"The customer was charged twice this month."}
+     Output: {"category":"billing","urgent":true,"reason":"The customer was charged twice this month."}
+     Diagnostics: ~23 tokens (estimate, step input) | 1840 prompt tokens (measured, first request) | 38 output tokens | model claude-sonnet-5-5 | no preconditions | cache: read 0, wrote 1800 (included in the prompt; provider-reported, 1 request); asked for 5m (the provider's default lifetime; realm agent's default)
+```
+
+`model` names the model the provider's answer named; `models a, b (the requests used different models)` when the requests differ. After the cache figures, `asked for` says what Realm asked for and who chose it: `asked for 1h (sent as 1h; stated on realm agent)` for `--prompt-cache 1h`, `asked for no caching (stated on realm agent)` for `--prompt-cache off`, and `asked for nothing (the provider's own caching, if any, applies)` for a provider Realm asks for no caching. It adds `70 of the tokens written were kept for 5m, not the 1h asked` when the provider kept a write for another lifetime than the one asked, and says what can cause it when a lifetime was asked and nothing was written or read. A step whose attempts asked differently shows each attempt's own words on its `attempt i/n` line. The `usage` line under a drive failure adds the same after its cache figures. A step recorded by version 0.47.0 or earlier prints none of these, as above. Added after version 0.47.0.
 
 A step that ran more than once has one line for each attempt. `Input`, `Output` and `Diagnostics` are those of the last attempt:
 

@@ -317,7 +317,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       expect(r.stdout).toBe(
         `Resumed run '${run.id}': step 'a' re-enabled and run reset to 'running'.\n` +
           `Drive it with: realm agent --run-id ${run.id} --provider <provider> --model <model>\n` +
-          `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${run.id} shows the extension module the run loaded).\n`,
+          `Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect ${run.id} shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).\n`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });

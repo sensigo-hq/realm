@@ -28,8 +28,10 @@ type DisclosureRoute =
       // CONFORMING shape (a real Anthropic response: every cache key present). `partial` is the
       // non-conforming one a third-party `--provider-module` can produce — no total, one write
       // spelling. A field whose only render arm needs the second shape asserts against `partial`,
-      // so its probe cannot be satisfied by a clause another field produced.
-      probe: (out: string, partial: string) => void;
+      // so its probe cannot be satisfied by a clause another field produced. Issue #600 PR 2 adds
+      // `mismatch`: a request that asked for 1h, part of whose write was kept for 5m, carrying every
+      // request fact — the only shape on which the lifetime split has text of its own.
+      probe: (out: string, partial: string, mismatch: string) => void;
     }
   | { surface: 'waived'; reason: string };
 
@@ -172,6 +174,50 @@ const partialStore = {
   get: async () => partialRun,
   list: async () => [partialRun],
 } as never;
+
+// issue #600 PR 2 — the MISMATCH shape: one request that asked for 1h (sent as 1h, stated on realm
+// agent) and whose write was kept for 5m: a 5-minute split above 0, matching
+// `cache_creation_input_tokens`, and every request fact set. `DIAG` cannot show the split: its only
+// write figure is 0, and its `wrote 0` probe above is the discriminating one.
+const mismatchRun = {
+  ...(run as unknown as RunRecord),
+  id: 'run_diag3',
+  evidence: [
+    {
+      ...(run as unknown as RunRecord).evidence[0]!,
+      diagnostics: {
+        ...DIAG,
+        cache: {
+          state: 'write_only',
+          basis: 'provider_reported',
+          requests: [
+            {
+              request_index: 0,
+              request_start: '2026-01-01T00:00:00.000Z',
+              prompt_tokens: 900,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 64,
+              cache_creation: { ephemeral_5m_input_tokens: 64, ephemeral_1h_input_tokens: 0 },
+              model: 'claude-x-20260101',
+              cache_requested: 'lifetime',
+              cache_lifetime_s: 3600,
+              cache_ttl_sent: true,
+              cache_requested_source: 'stated',
+              cache_requested_by: 'realm agent',
+              provider: 'anthropic',
+              endpoint: 'custom',
+              cache_split_offered: true,
+            },
+          ],
+        },
+      },
+    },
+  ],
+} as unknown as RunRecord;
+const mismatchStore = {
+  get: async () => mismatchRun,
+  list: async () => [mismatchRun],
+} as never;
 const workflowStore = {
   get: async () => {
     throw new Error('not registered');
@@ -184,10 +230,11 @@ describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect rea
   it('runs each field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_diag1', store, workflowStore, { verbose: true });
     const partial = await inspectRun('run_diag2', partialStore, workflowStore, { verbose: true });
+    const mismatch = await inspectRun('run_diag3', mismatchStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(STEP_DIAGNOSTICS_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out, partial);
+      if (route.surface === 'rendered') route.probe(out, partial, mismatch);
       else
         expect(
           route.reason.trim().length,
@@ -257,23 +304,75 @@ const USAGE_DISCLOSURE = {
     surface: 'waived',
     reason:
       'The screen shows the COUNT (`N requests`), taken from the array length. The index exists so ' +
-      "a consumer pairing entries after a JSON round-trip never depends on array position — PR 2's " +
-      "duplicate-write detector reads it. No operator question needs a single request's ordinal.",
+      'a consumer pairing entries after a JSON round-trip never depends on array position — the ' +
+      "cost-aware fan-out's duplicate-write detector (its PR-1) reads it. No operator question " +
+      "needs a single request's ordinal.",
   },
   request_start: {
     surface: 'waived',
     reason:
-      "Per-request timestamps exist for the TTL/cadence work (the plan's §8.9): whether a 5-minute " +
-      "cache stayed warm between calls is answered from these, and that question is PR 2's. No " +
+      'Per-request timestamps exist for the cadence work: whether a cache stayed warm between calls ' +
+      "is answered from these, and that question is the cadence unit's (#675, after #616). No " +
       "operator question today is answered by one request's start time.",
   },
+  // issue #600 PR 2: the lifetime split moves from waived to rendered — the one line it changes is
+  // the mismatch clause, when a write was kept for another lifetime than the one asked.
   cache_creation: {
+    surface: 'rendered',
+    probe: (out, _partial, mismatch) => {
+      expect(mismatch).toContain('; 64 of the tokens written were kept for 5m, not the 1h asked');
+      expect(out).not.toContain('of the tokens written were kept for');
+    },
+  },
+  // issue #600 PR 2: the request facts. Each probe reads the mismatch shape, and the conforming
+  // shape (which carries none of them) shows none of their words.
+  model: {
+    surface: 'rendered',
+    probe: (out, _partial, mismatch) => {
+      expect(mismatch).toContain('| model claude-x-20260101 |');
+      expect(out).not.toContain('| model ');
+    },
+  },
+  cache_requested: {
+    surface: 'rendered',
+    probe: (out, _partial, mismatch) => {
+      expect(mismatch).toContain('; asked for 1h');
+      expect(out).not.toContain('asked for');
+    },
+  },
+  cache_lifetime_s: {
+    surface: 'rendered',
+    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('asked for 1h ('),
+  },
+  cache_ttl_sent: {
+    surface: 'rendered',
+    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('(sent as 1h; '),
+  },
+  cache_requested_source: {
+    surface: 'rendered',
+    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('; stated on '),
+  },
+  cache_requested_by: {
+    surface: 'rendered',
+    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('stated on realm agent)'),
+  },
+  provider: {
     surface: 'waived',
     reason:
-      "The TTL split. `cache_creation_input_tokens` EQUALS its sum by the provider's own documented " +
-      'invariant, and that aggregate IS rendered — so rendering the split too would print the same ' +
-      "tokens twice under two names. It is carried because it is the provider's own datum and " +
-      "because PR 4's TTL choice is decided from it.",
+      'The change that prices model calls (#600 PR P) reads it to price the request at the ' +
+      'provider that served it. Until then the step line names the model, which says more.',
+  },
+  endpoint: {
+    surface: 'waived',
+    reason:
+      'The change that prices model calls (#600 PR P) renders the custom-endpoint note from it ' +
+      "(a price list prices a provider's own endpoint).",
+  },
+  cache_split_offered: {
+    surface: 'waived',
+    reason:
+      'The change that prices model calls (#600 PR P) keys its lifetime-split precondition on it; ' +
+      'on its own it changes no line.',
   },
   uncached_input_tokens: {
     surface: 'rendered',
@@ -292,10 +391,11 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
   it('runs each field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_diag1', store, workflowStore, { verbose: true });
     const partial = await inspectRun('run_diag2', partialStore, workflowStore, { verbose: true });
+    const mismatch = await inspectRun('run_diag3', mismatchStore, workflowStore, { verbose: true });
     for (const [field, route] of Object.entries(USAGE_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
-      if (route.surface === 'rendered') route.probe(out, partial);
+      if (route.surface === 'rendered') route.probe(out, partial, mismatch);
       else
         expect(
           route.reason.trim().length,
@@ -304,14 +404,23 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field, and the waiver set is exactly the four named above', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the five named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_creation',
       'cache_creation_input_tokens',
+      'cache_lifetime_s',
       'cache_read_input_tokens',
+      'cache_requested',
+      'cache_requested_by',
+      'cache_requested_source',
+      'cache_split_offered',
+      'cache_ttl_sent',
       'cache_write_tokens',
+      'endpoint',
+      'model',
       'output_tokens',
       'prompt_tokens',
+      'provider',
       'request_index',
       'request_start',
       'uncached_input_tokens',
@@ -324,7 +433,15 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // money field could be re-routed to `waived` with a plausible reason and nothing would notice —
     // the probe loop only runs probes for `rendered` entries, so the guard would fall silent about
     // exactly the numbers it exists to guard. A fourth waiver is a decision someone makes in this
-    // file. `output_tokens` moved OUT of this set (issue #600 PR 1b / #611) — it renders now.
-    expect(waived).toEqual(['cache_creation', 'request_index', 'request_start']);
+    // file. `output_tokens` moved OUT of this set (issue #600 PR 1b / #611) — it renders now, and
+    // `cache_creation` (issue #600 PR 2: the mismatch clause). PR 2 adds three waivers, each naming
+    // the change that will render it.
+    expect(waived).toEqual([
+      'cache_split_offered',
+      'endpoint',
+      'provider',
+      'request_index',
+      'request_start',
+    ]);
   });
 });

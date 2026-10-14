@@ -27,10 +27,11 @@
 // because it will have been rewritten to `[REDACTED]`. The shipped cell uses
 // `sk-ant-test-composed-journey-0000` for exactly this reason.
 //
-// WIRE FIDELITY, and what is decoration. The provider reads only `content[]` (its `type`, `id`,
-// `name`, `input`, `text`) and `stop_reason`. `id`, `model` and `usage` are echoed here because a
-// real response carries them and a stub that omits them invites someone to "simplify" the shape
-// until it stops resembling the API — they are not read.
+// WIRE FIDELITY, and what is decoration. The provider reads `content[]` (its `type`, `id`, `name`,
+// `input`, `text`), `stop_reason`, `usage` (issue #600 PR 1a: the token counters and, PR 2, the
+// `cache_creation` lifetime split) and `model` (issue #600 PR 2: the model that answered, recorded
+// on each request). `id` is echoed because a real response carries it and a stub that omits it
+// invites someone to "simplify" the shape until it stops resembling the API — it is not read.
 //
 // ONE THING THE REAL SDK CHECKS THAT A MODULE MOCK NEVER COULD: it throws "Streaming is
 // required…" BEFORE any network call when `max_tokens` exceeds the non-streaming ceiling.
@@ -88,7 +89,19 @@ export interface AnthropicStubOptions {
     output_tokens: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+    /**
+     * Issue #600 PR 2 — the lifetime split of the written tokens, as Anthropic reports it. Omitted
+     * from the payload when absent here.
+     */
+    cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
   };
+  /**
+   * Issue #600 PR 2 — the `model` the response names. Absent echoes the requested model; a real
+   * API answers with a dated id (`claude-x` → `claude-x-20260101`), which this lets a cell script,
+   * so it can prove the record holds the answered model, never the requested one. `null` sends a
+   * response with no `model` field at all.
+   */
+  answeredModel?: string | null;
 }
 
 export interface AnthropicStub {
@@ -188,13 +201,16 @@ export async function startAnthropicStub(options: AnthropicStubOptions): Promise
         ...(usage.cache_creation_input_tokens !== undefined
           ? { cache_creation_input_tokens: usage.cache_creation_input_tokens }
           : {}),
+        ...(usage.cache_creation !== undefined ? { cache_creation: usage.cache_creation } : {}),
       };
 
       const payload = {
         id: 'msg_1',
         type: 'message',
         role: 'assistant',
-        model: body['model'],
+        ...(options.answeredModel === null
+          ? {}
+          : { model: options.answeredModel ?? body['model'] }),
         content,
         stop_reason: singleShot || toolAlreadyAnswered ? 'end_turn' : 'tool_use',
         stop_sequence: null,

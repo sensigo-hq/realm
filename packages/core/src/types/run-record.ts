@@ -360,8 +360,65 @@ export const CACHE_BASES = ['provider_reported', 'unobservable'] as const;
 export type CacheBasis = (typeof CACHE_BASES)[number];
 
 /**
- * Issue #600 — one entry per wire request a step made, in wire order. Every optional field means
- * THE PROVIDER DID NOT REPORT IT; none is ever defaulted to `0`.
+ * Issue #600 PR 2 — the words `--prompt-cache` takes (`realm agent`, `realm listen`). Produced by the
+ * CLI's `parsePromptCache`; never stored — the record stores the class it maps to
+ * ({@link CACHE_REQUESTS}).
+ */
+export const PROMPT_CACHE_SETTINGS = ['off', '5m', '1h'] as const;
+export type PromptCacheSetting = (typeof PROMPT_CACHE_SETTINGS)[number];
+
+/**
+ * Issue #600 PR 2 — the lifetime, in seconds, each setting other than `off` asks for. Produced by
+ * the Anthropic adapter, which writes it as `UsageRecord.cache_lifetime_s`. Its keys are exactly the
+ * settings that ask for a lifetime.
+ */
+export const PROMPT_CACHE_LIFETIMES = { '5m': 300, '1h': 3600 } as const satisfies Record<
+  Exclude<PromptCacheSetting, 'off'>,
+  number
+>;
+
+/**
+ * Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored
+ * (`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with
+ * `--prompt-cache off`), `lifetime` (asked for a cache lifetime; the Anthropic adapter with `5m` or
+ * `1h`), `provider_rules` (realm sends no cache field and the provider's own caching rules apply;
+ * the OpenAI and o1 adapters).
+ */
+export const CACHE_REQUESTS = ['off', 'lifetime', 'provider_rules'] as const;
+export type CacheRequest = (typeof CACHE_REQUESTS)[number];
+
+/**
+ * Issue #600 PR 2 — where a request's cache setting came from (`UsageRecord.cache_requested_source`):
+ * `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default). Produced by
+ * the CLI's `resolvePromptCache` and written by the Anthropic adapter it is handed to.
+ */
+export const CACHE_REQUEST_SOURCES = ['stated', 'runner_default'] as const;
+export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
+
+/**
+ * Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the
+ * provider SDK's own default address (`default`) or another one (`custom`: `--base-url`,
+ * `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). Produced by each adapter from its SDK client's
+ * `baseURL`; the address itself is never stored.
+ */
+export const REQUEST_ENDPOINTS = ['default', 'custom'] as const;
+export type RequestEndpoint = (typeof REQUEST_ENDPOINTS)[number];
+
+/**
+ * Issue #600 PR 2 — why a step's `CostView` has no readable value for a request fact (`models`,
+ * `cache_requested`), derived at read and never written (framework §5 E1): `none_readable` (realm
+ * drove the requests — at least one carries `provider` — and holds no readable value: none was
+ * stated, or the one stated was refused) or `predates_request_facts` (written by Realm 0.47.0 or
+ * earlier, or by a host that does not record it). Produced by core's `composeCostView`.
+ */
+export const REQUEST_FACT_ABSENT_CAUSES = ['predates_request_facts', 'none_readable'] as const;
+export type RequestFactAbsentCause = (typeof REQUEST_FACT_ABSENT_CAUSES)[number];
+
+/**
+ * Issue #600 — one entry per wire request a step made, in wire order. The token counters and
+ * `cache_creation` are what THE PROVIDER REPORTED: an absent one was not reported, and none is ever
+ * defaulted to `0`. `model` is what the provider's response named. The other request fields (issue
+ * #600 PR 2) are what realm asked for and where it sent the request.
  *
  * ENGINE semantics, not either provider's own field names — no consumer of this record may need to
  * know which provider produced it (R21). The two providers' "input tokens" mean OPPOSITE things:
@@ -405,6 +462,37 @@ export interface UsageRecord {
    * this record never needs to re-derive that sum from the split.
    */
   cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+  /**
+   * Issue #600 PR 2 — the model the provider's response named (a dated id, for one), when the
+   * response named one. Written by the adapter; bounded where it enters the record
+   * (`boundRequestFacts`). Not redacted.
+   */
+  model?: string;
+  /** Issue #600 PR 2 — what realm asked the provider to cache on this request. Written by the adapter. */
+  cache_requested?: CacheRequest;
+  /** Issue #600 PR 2 — the lifetime asked for, in seconds; present iff `cache_requested` is `lifetime`. */
+  cache_lifetime_s?: number;
+  /**
+   * Issue #600 PR 2 — whether realm sent that lifetime on the wire (`true`), or asked for the
+   * provider's default one (`false`); present iff `cache_requested` is `lifetime`.
+   */
+  cache_ttl_sent?: boolean;
+  /** Issue #600 PR 2 — where the setting came from, when the adapter was given it. */
+  cache_requested_source?: CacheRequestSource;
+  /** Issue #600 PR 2 — the runner that chose the setting (`realm agent`, `realm listen`), when given. */
+  cache_requested_by?: string;
+  /**
+   * Issue #600 PR 2 — the provider that served the request. Stamped by `realm agent` from its one
+   * provider fact (`anthropic`, `openai`, `openai-reasoning`, `module:<file>`), never by an adapter.
+   */
+  provider?: string;
+  /** Issue #600 PR 2 — which kind of endpoint the request went to. Written by the adapter. */
+  endpoint?: RequestEndpoint;
+  /**
+   * Issue #600 PR 2 — whether the provider reports a lifetime split of its cache writes
+   * (`cache_creation`). Written by the adapter whenever it writes `cache_requested`.
+   */
+  cache_split_offered?: boolean;
 }
 
 /** Issue #600 — the per-step roll-up plus the per-request detail. */

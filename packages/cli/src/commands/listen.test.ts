@@ -46,6 +46,7 @@ import {
   buildAgentArgv,
   defaultSpawnAgent,
   makeAgentSpawner,
+  listenCachingFacts,
   listenCommand,
   startListen,
   type ListenDeps,
@@ -1182,6 +1183,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'run-1',
       '--model',
       'm-676',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
   });
@@ -1195,6 +1197,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'm-676',
       '--llm-timeout',
       '45',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
   });
@@ -1231,6 +1234,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'm-676',
       '--llm-timeout',
       '45',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
   });
@@ -1250,6 +1254,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'run-43',
       '--model',
       'm-676',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
     expect(argv).not.toContain('--llm-timeout');
@@ -1276,6 +1281,7 @@ describe('--llm-timeout on listen (issue #409)', () => {
       'm-676',
       '--llm-timeout',
       '45',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
   });
@@ -1333,6 +1339,7 @@ describe('--provider and --model on listen (issue #676)', () => {
       'anthropic',
       '--model',
       'm-676',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
   });
@@ -1344,6 +1351,7 @@ describe('--provider and --model on listen (issue #676)', () => {
       'run-2',
       '--model',
       'gpt-x',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
   });
@@ -1361,8 +1369,91 @@ describe('--provider and --model on listen (issue #676)', () => {
       'm-676',
       '--llm-timeout',
       '30',
+      '--spawned-by-listen',
       '--no-release-line-advisory',
     ]);
+  });
+
+  // issue #600 PR 2 (C5, G21). (a) red when a stated value is not passed, is passed out of place, or
+  // `--spawned-by-listen` lands after the silencer; (b) prints the argv.
+  it('buildAgentArgv with a stated --prompt-cache: after --llm-timeout; --spawned-by-listen just before the silencer', () => {
+    expect(
+      buildAgentArgv('run-4', { model: 'm-600', llmTimeoutSeconds: 30, promptCache: 'off' }),
+    ).toEqual([
+      'agent',
+      '--run-id',
+      'run-4',
+      '--model',
+      'm-600',
+      '--llm-timeout',
+      '30',
+      '--prompt-cache',
+      'off',
+      '--spawned-by-listen',
+      '--no-release-line-advisory',
+    ]);
+  });
+
+  // (a) red when makeAgentSpawner drops the stated value; (b) prints the argv.
+  it('WIRED — the spawn carries a stated --prompt-cache, and nothing when none was stated', async () => {
+    spawnMock.mockClear();
+    await makeAgentSpawner({ model: 'm-600', promptCache: '5m' }, silentLogger)(
+      'run-43',
+      existingFolder(),
+    );
+    await makeAgentSpawner({ model: 'm-600' }, silentLogger)('run-44', existingFolder());
+    const argvs = spawnMock.mock.calls.map((c) => (c as unknown as [string, string[]])[1].slice(1));
+    expect(argvs).toEqual([
+      [
+        'agent',
+        '--run-id',
+        'run-43',
+        '--model',
+        'm-600',
+        '--prompt-cache',
+        '5m',
+        '--spawned-by-listen',
+        '--no-release-line-advisory',
+      ],
+      [
+        'agent',
+        '--run-id',
+        'run-44',
+        '--model',
+        'm-600',
+        '--spawned-by-listen',
+        '--no-release-line-advisory',
+      ],
+    ]);
+  });
+});
+
+// ── issue #600 PR 2 (D2, G24): listen's startup line says what each provider's agents are asked to
+// cache. Beside each cell: (a) the change that turns it red; (b) it prints the line it built.
+describe('issue #600 PR 2 — the listen: caching line', () => {
+  const line = (...args: Parameters<typeof listenCachingFacts>) =>
+    `listen: caching ${JSON.stringify(listenCachingFacts(...args))}`;
+
+  // (a) red when the openai field is dropped.
+  it("no --provider: Anthropic's setting, who set it, and OpenAI asked for no caching", () => {
+    expect([line(undefined, undefined), line(undefined, '5m')]).toEqual([
+      'listen: caching {"anthropic":"1h","set_by":"realm listen\'s default","openai":"asked for no caching"}',
+      'listen: caching {"anthropic":"5m","set_by":"--prompt-cache 5m","openai":"asked for no caching"}',
+    ]);
+  });
+
+  // (a) red when the openai field is printed with --provider anthropic.
+  it('--provider anthropic: the same, without openai', () => {
+    expect(line('anthropic', 'off')).toBe(
+      'listen: caching {"anthropic":"off","set_by":"--prompt-cache off"}',
+    );
+  });
+
+  // (a) red when --provider openai claims an Anthropic setting.
+  it('--provider openai: OpenAI asked for no caching, Anthropic not used', () => {
+    expect(line('openai', undefined)).toBe(
+      'listen: caching {"openai":"asked for no caching","anthropic":"not used"}',
+    );
   });
 });
 

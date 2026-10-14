@@ -93,7 +93,7 @@ It stops where the run next needs something else, such as an agent step or a que
 realm agent --run-id <run-id> --model <model>
 ```
 
-`<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 has a default model, so `--model` can be left out there.
+`<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout`, `--mint-writer-nonce` or `--prompt-cache` if you used them. Realm records the model each request named and the caching it asked for, but not the other flags: `realm run inspect` shows the model and the caching setting of each request on its cost line (added after version 0.47.0), the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 has a default model, so `--model` can be left out there.
 
 An assistant connected over MCP can pick the run up as well, by asking for its state and following the reply.
 

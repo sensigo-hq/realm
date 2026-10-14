@@ -1,7 +1,8 @@
 // openai-provider.test.ts — Tests for OpenAIProvider callStep and callStepWithTools.
 // All tests mock the openai package — no real API calls are made.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OpenAIProvider } from './openai-provider.js';
+import OpenAI from 'openai';
+import { OpenAIProvider, OPENAI_DEFAULT_BASE_URL } from './openai-provider.js';
 import { WorkflowError } from '@sensigo/realm';
 import { CLASS_B_NO_TEXT_MARKER, setAdditionalRedactionValues } from './agent-utils.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
@@ -1264,5 +1265,89 @@ describe('cut after hiding (GHSA-gxfq cell 17)', () => {
       .catch((e: unknown) => e);
     // (a) red when this site cuts the model text before hiding it.
     expect(facts(err, 'OpenAI returned non-JSON content under strict decoding: ')).toEqual(HIDDEN);
+  });
+});
+
+// =========================================================================
+// issue #600 PR 2 — what each OpenAI request records (B3, B4). Realm sends OpenAI no cache field.
+// On a failing CI host each cell prints the recorded request facts: field values, never an
+// environment, header or key.
+// =========================================================================
+describe('OpenAIProvider — the request facts (issue #600 PR 2)', () => {
+  const SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['x'],
+    properties: { x: { type: 'string' } },
+  };
+  const facts = (usage: ReadonlyArray<Record<string, unknown>> | undefined) => {
+    const { request_index: _i, request_start: _s, prompt_tokens: _p, ...rest } = usage![0]!;
+    return rest;
+  };
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  // G7 (OpenAI), both record sites: the JSON-mode path and the strict path. (a) red when OpenAI
+  // does not write provider_rules, or writes cache_split_offered true; (b) prints the facts.
+  it('G7 — provider_rules and cache_split_offered false, on both record sites; no lifetime fields', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const plain = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', SCHEMA);
+    expect(facts(plain.usage as never)).toEqual({
+      cache_requested: 'provider_rules',
+      cache_split_offered: false,
+    });
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const strict = await new OpenAIProvider('gpt-4o').callStepWithMeta(
+      'prompt',
+      SCHEMA,
+      undefined,
+      {
+        structuredOutputStrict: true,
+      },
+    );
+    expect(facts(strict.usage as never)).toEqual({
+      cache_requested: 'provider_rules',
+      cache_split_offered: false,
+    });
+    // Realm sends OpenAI no cache field.
+    for (const call of mockCreate.mock.calls) {
+      expect(JSON.stringify(call[0])).not.toContain('cache');
+    }
+  });
+
+  // G8 (OpenAI). (a) red when `model` is read from the requested model; (b) prints the model.
+  it("G8 — model is the response's own (a dated id), never the requested one; none without one", async () => {
+    mockCreate.mockResolvedValueOnce({
+      ...makeTextResponse('{"x":"a"}'),
+      model: 'gpt-4o-2026-01-01',
+    });
+    const answered = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', SCHEMA);
+    expect(answered.usage![0]!.model).toBe('gpt-4o-2026-01-01');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const unnamed = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', SCHEMA);
+    expect(unnamed.usage![0]).not.toHaveProperty('model');
+  });
+
+  // G10 (OpenAI, the SDK mocked). The real SDK's --base-url and environment-variable routes are
+  // `endpoint-600.test.ts`'s. (a) red when endpoint is always 'default'; (b) prints the endpoint.
+  it("G10 — endpoint: 'default' at the SDK's own address, 'custom' elsewhere, absent without baseURL", async () => {
+    const withBase = (baseURL: string) =>
+      vi.mocked(OpenAI).mockImplementationOnce(function () {
+        return { chat: { completions: { create: mockCreate } }, baseURL };
+      } as never);
+    withBase(OPENAI_DEFAULT_BASE_URL);
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const native = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', SCHEMA);
+    expect(native.usage![0]!.endpoint).toBe('default');
+    withBase('https://compat.example/v1');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const compat = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', SCHEMA);
+    expect(compat.usage![0]!.endpoint).toBe('custom');
+    expect(JSON.stringify(compat.usage)).not.toContain('compat.example');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const mocked = await new OpenAIProvider('gpt-4o').callStepWithMeta('prompt', SCHEMA);
+    expect(mocked.usage![0]).not.toHaveProperty('endpoint');
   });
 });

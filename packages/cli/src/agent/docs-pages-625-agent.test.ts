@@ -81,7 +81,14 @@ function wf(
   } as WorkflowDefinition;
 }
 
-const HEADER = ['log: \nRealm Agent — c174 c v1', 'log: Run ID: <run>\n'];
+// issue #600 PR 2 (D1): the drive's cache line follows `Run ID:`, then the blank line. This
+// stand-in provider declares no caching capability, so the line is form F2.
+const HEADER = [
+  'log: \nRealm Agent — c174 c v1',
+  'log: Run ID: <run>',
+  'log: Caching: Realm asks this provider for no caching; any caching it does is its own.',
+  'log: ',
+];
 const stopLine = (check: string, step: string): string =>
   `error: \n✗ The drive stops: nothing else can run, and '${step}' cannot run (${check}). Run <run> stays open (phase 'running'): ${
     // F15: a step refused for its input (in these fixtures, with `depends_on`) gets its own way out.
@@ -480,7 +487,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
         ],
       });
       expect(
-        d.lines[2]!.startsWith(
+        d.lines[HEADER.length]!.startsWith(
           "log: • Step 'ask' cannot run (precondition): Precondition failed for step 'ask'. ",
         ),
       ).toBe(true);

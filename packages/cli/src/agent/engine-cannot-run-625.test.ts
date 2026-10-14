@@ -77,7 +77,14 @@ const CANNOT_LINE: Record<Member, string> = {
     "log: • Step 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it",
 };
 
-const HEADER = ['log: \nRealm Agent — c23 v1', 'log: Run ID: <run>\n'];
+// issue #600 PR 2 (D1): the drive's cache line follows `Run ID:`, then the blank line. This
+// stand-in provider declares no caching capability, so the line is form F2.
+const HEADER = [
+  'log: \nRealm Agent — c23 v1',
+  'log: Run ID: <run>',
+  'log: Caching: Realm asks this provider for no caching; any caching it does is its own.',
+  'log: ',
+];
 
 type PreClaimMember = 'trust' | 'precondition' | 'input_schema';
 const PRE_CLAIM: readonly Member[] = ['trust', 'precondition', 'input_schema'];
