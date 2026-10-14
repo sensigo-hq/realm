@@ -3241,3 +3241,50 @@ describe('E2 — early replies reach the sender', () => {
     });
   }, 15_000);
 });
+
+describe('issue #719 — listen’s keyed create on a store with a run file that might hold the key', () => {
+  it('500 store_error; the log line carries the file’s message and none of its text (the leak cell, listen log)', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-listen-'));
+    try {
+      // A run file whose key cannot be known, its fault AT a token (F719-AU-4).
+      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
+      const errors: Array<{ msg: string; data: unknown }> = [];
+      const logger: Logger = {
+        ...silentLogger,
+        error: (msg: string, data?: unknown) => errors.push({ msg, data }),
+      };
+      const trigger: WebhookTrigger = { ...SHARED_SECRET_TRIGGER, dedup: { id_from: 'body.id' } };
+      const deps = makeDeps({ runStore: new JsonFileStore(runsDir) as never, logger });
+      const handler = makeListenHandler(routesFor(wf(trigger)), deps);
+      const { status, body } = await invoke(handler, {
+        url: '/wf',
+        headers: { ...JSON_CT, authorization: SECRET },
+        body: JSON.stringify({ id: 'evt-719' }),
+      });
+      const line = JSON.stringify(errors);
+      // (a) red when the create goes on, the reply changes, the log line loses the file's message,
+      //     or it carries the parser's text; (b) prints the status, the body and booleans only.
+      expect({
+        status,
+        body,
+        logged: errors.map((e) => e.msg),
+        carries: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
+        keyedSentence: line.includes(
+          'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.',
+        ),
+        leaked: line.includes('ghp_FAKE7'),
+        spawned: deps.spawnAgent.mock.calls.length,
+      }).toEqual({
+        status: 500,
+        body: { error: 'store_error', status: 'failed' },
+        logged: ['webhook: run creation failed'],
+        carries: true,
+        keyedSentence: true,
+        leaked: false,
+        spawned: 0,
+      });
+    } finally {
+      rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+});

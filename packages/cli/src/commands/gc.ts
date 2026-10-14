@@ -48,9 +48,15 @@
 // storage-version-migrator does the identical read-then-write-back-unmodified trick to migrate
 // encryption-at-rest/API versions across a whole etcd population with zero bespoke migration code.
 import { readdir, lstat, unlink, stat } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { Command } from 'commander';
-import { type ArtifactDeletionReport, WorkflowError, deleteIfExists } from '@sensigo/realm';
+import {
+  type ArtifactDeletionReport,
+  WorkflowError,
+  deleteIfExists,
+  shellWord,
+  unreadableRunFilesError,
+} from '@sensigo/realm';
 import type {
   OrphanSweepableStore,
   OrphanArtifact,
@@ -58,8 +64,10 @@ import type {
   RunRecord,
   RunPhase,
   RunScopedFencePredicate,
+  RunListing,
 } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
+import { listRunsDiagnosed } from './list.js';
 
 /**
  * Minimum `--older-than` EITHER sweep will ever honor (1 hour) — a conservative floor for hygiene
@@ -434,6 +442,11 @@ export interface SweepStalePhasesOptions {
       | 'sealed_by'
     >,
   ) => RunPhase;
+  /**
+   * issue #719 (C2): the command the operator ran, flags included — a refusal over damaged run
+   * files tells them to run it again. Default: `realm run gc --heal`, with `--force` when `force`.
+   */
+  command?: string;
 }
 
 /** One mismatched record's before/after phase — carried through every bucket below so a report
@@ -471,21 +484,30 @@ export interface SweepStalePhasesResult {
  * rewrite). Records already matching are never even passed to `update()` — untouched, byte-for-
  * byte, verified in tests.
  *
- * `store.list()`'s fail-closed contract (issue #132/#183: `JSON.parse` uncaught on a corrupt
- * file) is INHERITED here deliberately, uncaught — a single unparseable run file aborts the
- * WHOLE heal pass rather than silently healing a partial, possibly-wrong population. No
- * per-file try/catch salvage: see the module's own report footer / CHANGELOG for why this is
- * accepted, not worked around.
+ * FAIL-CLOSED, deliberately (issue #132/#183): a run file that cannot be read as a run aborts the
+ * WHOLE heal pass rather than healing a partial, possibly-wrong population. issue #719 (R10): the
+ * listing is read through `listWithDiagnostics` when the store has it, so the ONE error names EVERY
+ * such file (`unreadableRunFilesError`), and nothing is written; a store without it fails on the
+ * first, through `list()`.
  *
  * No age gate (unlike the other two sweeps): healing is a no-op rewrite of a record already on
  * disk, safe at any age — there is no in-flight-write window to guard against the way there is
  * for a `.tmp` or a fresh WAL.
  */
 export async function sweepStalePhases(
-  store: Pick<RunStore, 'list' | 'update'>,
+  store: Pick<RunStore, 'list' | 'update'> & {
+    listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
+  },
   options: SweepStalePhasesOptions,
 ): Promise<SweepStalePhasesResult> {
-  const records = await store.list();
+  const { records, unreadable } = await listRunsDiagnosed(store);
+  if (unreadable.length > 0) {
+    throw unreadableRunFilesError(
+      options.command ?? `realm run gc --heal${options.force ? ' --force' : ''}`,
+      dirname(unreadable[0]!.path),
+      unreadable.map((u) => u.facts),
+    );
+  }
 
   const result: SweepStalePhasesResult = {
     healed: [],
@@ -762,6 +784,16 @@ export function gcExitCode(
   return anyFailure ? 1 : 0;
 }
 
+/** issue #719 (C2): the `realm run gc` command the operator ran, flags included. */
+function gcCommandLine(opts: { olderThan?: string; force?: boolean; heal?: boolean }): string {
+  return [
+    'realm run gc',
+    ...(opts.olderThan !== undefined ? [`--older-than ${shellWord(opts.olderThan)}`] : []),
+    ...(opts.heal === true ? ['--heal'] : []),
+    ...(opts.force === true ? ['--force'] : []),
+  ].join(' ');
+}
+
 export const gcCommand = new Command('gc')
   .description(
     'Sweep orphaned atomic-write .tmp files, run-less orphaned WAL/sidecar artifacts, and ' +
@@ -879,7 +911,11 @@ export const gcCommand = new Command('gc')
       let healSweepError: string | undefined;
       if (opts.heal === true && opts.force !== true) {
         try {
-          healPreview = await sweepStalePhases(runStore, { force: false, deriveRunPhase });
+          healPreview = await sweepStalePhases(runStore, {
+            force: false,
+            deriveRunPhase,
+            command: gcCommandLine(opts),
+          });
         } catch (err) {
           healSweepError = err instanceof Error ? err.message : String(err);
         }
@@ -934,7 +970,11 @@ export const gcCommand = new Command('gc')
       // known) and costs nothing to leave in place.
       if (opts.heal === true && healSweepError === undefined) {
         try {
-          healResult = await sweepStalePhases(runStore, { force: true, deriveRunPhase });
+          healResult = await sweepStalePhases(runStore, {
+            force: true,
+            deriveRunPhase,
+            command: gcCommandLine(opts),
+          });
         } catch (err) {
           healSweepError = err instanceof Error ? err.message : String(err);
         }

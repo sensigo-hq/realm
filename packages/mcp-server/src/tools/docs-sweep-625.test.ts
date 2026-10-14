@@ -625,14 +625,14 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     expect(hint).toContain("'ask' cannot run (precondition)");
   });
 
-  it('error-codes.md: get_run_state on a run that does not exist carries STATE_RUN_NOT_FOUND; a record it cannot read is ENGINE_STORE_FAILED', async () => {
+  it('error-codes.md: get_run_state on a run that does not exist carries STATE_RUN_NOT_FOUND; the ENGINE_STORE_FAILED row names the reads that give it', async () => {
     claim(
       'docs/reference/error-codes.md',
       "`get_run_state`'s reply for a run that does not exist carries `STATE_RUN_NOT_FOUND` too. Up to version 0.46.0 it had the message and no `error_code`.",
     );
     claim(
       'docs/reference/error-codes.md',
-      "The store failed while a step was being run, or a run's record could not be read (`execute_step`, `submit_human_response`, `advance_run`, `get_run_state`, and the library calls).",
+      "A run's file in the JSON store cannot be read (a read error), the runs folder cannot be read or made, a run store failed to read a run (`Failed to load run from store: <its message>`), or the store failed while a step was being run (`execute_step`, `submit_human_response`, `advance_run`, `get_run_state`, and the library calls).",
     );
     const { call } = await connect();
     const r = await call('get_run_state', { run_id: 'no-such-run-625' });

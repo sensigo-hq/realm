@@ -147,9 +147,8 @@ export const workflowListCommand = new Command('list')
           },
           {
             cls: 'empty',
-            one: (names) => `⚠ 1 file in the registry is empty (0 bytes): ${names}`,
-            many: (n, names) =>
-              `⚠ ${String(n)} files in the registry are empty (0 bytes): ${names}`,
+            one: (names) => `⚠ 1 file in the registry is empty: ${names}`,
+            many: (n, names) => `⚠ ${String(n)} files in the registry are empty: ${names}`,
           },
           {
             cls: 'not_a_file',

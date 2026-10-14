@@ -80,7 +80,7 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     await workflowListCommand.parseAsync([], { from: 'user' });
 
     const out = stderr();
-    expect(out).toContain(`⚠ 1 file in the registry is empty (0 bytes): d.json${TAIL}`);
+    expect(out).toContain(`⚠ 1 file in the registry is empty: d.json${TAIL}`);
     expect(out).toContain(
       `⚠ 1 entry in the registry is a directory, not a workflow file: e.json${TAIL}`,
     );

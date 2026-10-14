@@ -7,7 +7,36 @@ export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
 export { persistsField } from './store/store-fidelity.js';
 export { JsonFileStore } from './store/json-file-store.js';
-export type { ReconcileSummary } from './store/json-file-store.js';
+export type {
+  ReconcileSummary,
+  RunListing,
+  UnreadableRunFileEntry,
+} from './store/json-file-store.js';
+// issue #719: a damaged stored JSON file — its facts (the `details` of its error until #729 PR-0
+// moves them to `facts`) and their ONE reader, the ONE composer of its message, the error a
+// decision over every run fails closed with and its reader, the scope predicate of every
+// workflow-scoped read, how a file-held id is shown, and the trace files a run keeps beside it.
+export {
+  describeStoredFileFault,
+  renderUnreadableStoredFile,
+  unreadableRunFilesError,
+  unreadableFactsOf,
+  unreadableRunFilesOf,
+  damagedFileConcerns,
+  isCopyOfReadableRun,
+  displayId,
+  RUN_ID_LENGTH,
+  TRACE_BUFFER_FILE_PREFIX,
+  SEALED_TRACE_FILE_PREFIX,
+  TRACE_FILE_SUFFIX,
+} from './store/run-file.js';
+export type {
+  UnreadableFileFacts,
+  UnreadableRunFilesFacts,
+  StoredFileClass,
+} from './store/run-file.js';
+// issue #719: the one check that a value is a run record (admission's `run`, the store's reader).
+export { isRunRecordShape } from './types/run-record-shape.js';
 export type {
   PerRunArtifactStore,
   ArtifactDeletionReport,
@@ -149,6 +178,7 @@ export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/ex
 export {
   OUTPUT_SOURCE_ABSENT_CAUSES,
   isBareAutoStep,
+  callsHostDispatcher,
   outputSourceOf,
 } from './engine/output-source.js';
 export type { OutputSourceAbsentCause } from './engine/output-source.js';
@@ -501,7 +531,11 @@ export {
   PROBE_FAILURE_CLASSES,
   STUCK_DEFINITION_PARSE_CAP_BYTES,
 } from './workflow/registrar.js';
-export type { ProbeResult, ProbeFailureClass } from './workflow/registrar.js';
+export type {
+  ProbeResult,
+  ProbeFailureClass,
+  WorkflowCopyParseFault,
+} from './workflow/registrar.js';
 export {
   GUARD_PROHIBITED_STEP_KEYS,
   FINALIZER_PROHIBITED_STEP_KEYS,

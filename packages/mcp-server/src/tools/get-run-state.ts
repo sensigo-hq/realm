@@ -360,7 +360,9 @@ export async function handleGetRunState(
   assertToolStores(stores, 'handleGetRunState');
   const runStore = stores?.runStore ?? new JsonFileStore();
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
-  // WorkflowError, or ENGINE_STORE_FAILED naming its cause.
+  // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
+  // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
+  // untyped throw, ENGINE_STORE_FAILED naming its cause.
   const run = await runStore.get(args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });

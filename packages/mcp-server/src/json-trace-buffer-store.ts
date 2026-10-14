@@ -46,7 +46,14 @@ import type {
   FenceRunReader,
   RunScopedFencePredicate,
 } from '@sensigo/realm';
-import { WorkflowError, brandClass } from '@sensigo/realm';
+import {
+  WorkflowError,
+  brandClass,
+  TRACE_BUFFER_FILE_PREFIX,
+  SEALED_TRACE_FILE_PREFIX,
+  TRACE_FILE_SUFFIX,
+  RUN_ID_LENGTH,
+} from '@sensigo/realm';
 import { REALM_MCP_BRAND } from './brand.js';
 
 /** Line format stored in the JSONL WAL file — literally `SealedWalLine` (issue #197 PR-1: a
@@ -59,9 +66,9 @@ type WalLine = SealedWalLine;
  *  form) — so it can be recovered by FIXED-LENGTH slicing rather than splitting on `-`, which
  *  would break the moment a base64url step segment itself contains `-` or `_` (both are valid
  *  base64url alphabet characters). See `listOrphans` below for where this matters (issue #163). */
-const WAL_PREFIX = 'trace-buffer-';
-const WAL_SUFFIX = '.jsonl';
-const RUN_ID_LENGTH = 36;
+// issue #719: the names are core's (a damaged run file's way out names these files), defined once.
+const WAL_PREFIX = TRACE_BUFFER_FILE_PREFIX;
+const WAL_SUFFIX = TRACE_FILE_SUFFIX;
 
 /** Sealed-artifact filename shape (issue #197 PR-1, the `seal` rung — design §4):
  *  `sealed-trace-<runId>-<base64url(stepId)>.<seq>.jsonl`. Distinct, non-overlapping prefix from
@@ -70,7 +77,7 @@ const RUN_ID_LENGTH = 36;
  *  `.`-delimited `seq` is unambiguous against the rest of the name: neither a UUID nor the
  *  base64url alphabet ever contains a literal `.`, so the LAST `.` in the middle segment is always
  *  the seq separator, never part of the runId or step segment. */
-const SEALED_PREFIX = 'sealed-trace-';
+const SEALED_PREFIX = SEALED_TRACE_FILE_PREFIX;
 
 /** Parses a sealed-artifact filename back into its constituent parts, mirroring
  *  `runIdFromWalPath`'s fixed-length-36 discipline for the runId portion. Returns `undefined` for
@@ -226,7 +233,7 @@ export class JsonTraceBufferStore
 
   private walPath(runId: string, stepId: string): string {
     const safeStepId = Buffer.from(stepId).toString('base64url');
-    return join(this.runsDir, `trace-buffer-${runId}-${safeStepId}.jsonl`);
+    return join(this.runsDir, `${WAL_PREFIX}${runId}-${safeStepId}${WAL_SUFFIX}`);
   }
 
   /** Builds the on-disk path for one sealed artifact — see `SEALED_PREFIX`'s doc for the shape
@@ -667,7 +674,7 @@ export class JsonTraceBufferStore
     runId: string,
     dirEntries: readonly string[] | undefined,
   ): Promise<string[]> {
-    const prefix = `trace-buffer-${runId}-`;
+    const prefix = `${WAL_PREFIX}${runId}-`;
     let files: readonly string[];
     if (dirEntries !== undefined) {
       files = dirEntries;
@@ -876,7 +883,7 @@ export class JsonTraceBufferStore
    * yields `{}` — never a throw.
    */
   async readAllForRun(runId: string): Promise<Record<string, unknown[]>> {
-    const prefix = `trace-buffer-${runId}-`;
+    const prefix = `${WAL_PREFIX}${runId}-`;
     let files: string[];
     try {
       files = await readdir(this.runsDir);

@@ -87,7 +87,7 @@ Every run has one file under `~/.realm/runs/`, named after the run ID. This is t
 
 `realm run inspect <run-id>` prints the record. `realm run list` lists the runs.
 
-The record is a plain file. Realm does not detect changes made to it by hand; see [Evidence](evidence.md).
+The record is a plain file. Realm does not detect a change made to it by hand that leaves a valid run record; an edit that breaks the record (not JSON, a required field missing or of the wrong type, another run's `id`) is refused, naming the file, by every command that reads the run. See [Evidence](evidence.md).
 
 ## Running without registering
 
