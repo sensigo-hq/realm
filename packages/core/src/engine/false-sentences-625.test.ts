@@ -108,9 +108,10 @@ describe('#625 PR-2a, F17 — core-library.md says what the build does', () => {
       'VALIDATION_OPTION_INVALID',
       'VALIDATION_OPTION_INVALID',
     ]);
-    expect([JSON.stringify(await s.get(plainId)), JSON.stringify(await s.get(timedId))]).toEqual(
-      before,
-    );
+    // issue #719 (C5): booleans, so a failure prints whether each record is unchanged — never the
+    // records themselves.
+    const after = [JSON.stringify(await s.get(plainId)), JSON.stringify(await s.get(timedId))];
+    expect(after.map((a, i) => a === before[i])).toEqual([true, true]);
   });
 
   it.each([

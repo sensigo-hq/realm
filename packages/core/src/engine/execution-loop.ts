@@ -134,12 +134,14 @@ import {
   resolvePostDispatchAgentAction,
 } from './error-resolution.js';
 
+/** The host's dispatcher for a step. issue #719 (C4): it may return the step's output as a plain
+ *  value, as well as through a promise. */
 export type StepDispatcher = (
   stepName: string,
   input: Record<string, unknown>,
   run: RunRecord,
   signal?: AbortSignal,
-) => Promise<Record<string, unknown>>;
+) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
 /**
  * What the DRIVER observed about this step's attempt, threaded into every evidence-capture site.
@@ -228,8 +230,8 @@ export interface ExecuteStepOptions {
    * The caller, naming itself (decision C151): the call the expiry line names (`this <caller> call
    * …`, `enacted_via`) when this call carries out an expired question first. Default
    * `'executeStep'` (a program's own call); the one other word is `'agent'` (round 20's finding 5
-   * trimmed `executeEngineStep`, which no longer calls through here). Any other value THROWS
-   * `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
+   * trimmed `executeEngineStep`, which no longer calls through here). With any other value the call
+   * REJECTS `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
    */
   caller?: StepCaller;
 }
@@ -280,8 +282,9 @@ export interface SubmitGateOptions {
    * The caller, naming itself (decision C151): the call the expiry line names (`this <caller> call
    * …`, `enacted_via`) when this late answer carries out the question's expiry. Default
    * `'submitHumanResponse'` (a program's own call); the MCP tool passes `'submit_human_response'`,
-   * `realm run respond` `'respond'`, `realm workflow run` `'run'`, `realm agent` `'agent'`. Any other value
-   * THROWS `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
+   * `realm run respond` `'respond'`, `realm workflow run` `'run'`, `realm agent` `'agent'`. With any
+   * other value the call REJECTS `VALIDATION_CALLER_INVALID` before anything is read or written
+   * (the admission step).
    */
   caller?: AnswerCaller;
 }
@@ -310,8 +313,9 @@ export interface ExecuteChainOptions {
    * The caller, naming itself (decision C151): the call the expiry line names (`this <caller> call
    * …`, `enacted_via`) when this call carries out an expired question first — before its named step
    * or before a step it chains into. Default `'executeChain'` (a program's own call); the MCP tool
-   * passes `'execute_step'`, `realm agent` `'agent'`, `realm workflow run` `'run'`. Any other value THROWS
-   * `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
+   * passes `'execute_step'`, `realm agent` `'agent'`, `realm workflow run` `'run'`. With any other
+   * value the call REJECTS `VALIDATION_CALLER_INVALID` before anything is read or written (the
+   * admission step).
    */
   caller?: ChainCaller;
 }
@@ -6699,8 +6703,8 @@ export async function drainFinalizers(
   registry: ExtensionRegistry | undefined,
   runId: string,
   // issue #625 (holder slice): the program whose code and credentials run the cleanup steps this
-  // pass leases — stamped as `driven_by` on their entries. A malformed value THROWS, before the
-  // store is read (the admission step's host tier).
+  // pass leases — stamped as `driven_by` on their entries. With a malformed value the call
+  // REJECTS, before the store is read (the admission step's host tier).
   driver?: Attributed,
 ): Promise<{ run: RunRecord; warnings: string[]; leftPending: string[]; attempted: string[] }> {
   admitEntry('drainFinalizers', {
@@ -6708,7 +6712,7 @@ export async function drainFinalizers(
     storeKind: 'run store',
     registry,
     driver,
-    parts: { definition, runId },
+    parts: { definition, registry, runId },
   });
   // .bind(store): a bare `store.settleStep` reference loses its `this` binding — the store's own
   // method body (e.g. JsonFileStore's `this.ensureDir()`/`this.filePath()`) would throw on
@@ -6963,8 +6967,8 @@ export interface ExecuteEngineStepOptions {
   /**
    * The caller, naming itself (decision C151): the call the expiry line names when this call
    * carries out an expired question first. Default `'executeEngineStep'`; `realm agent` passes
-   * `'agent'`. Any other value THROWS `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`
-   * (decision C155), before anything is read or written (the admission step).
+   * `'agent'`. With any other value the call REJECTS `VALIDATION_CALLER_INVALID`, naming
+   * `executeEngineStep` (decision C155), before anything is read or written (the admission step).
    */
   caller?: EngineStepCaller;
 }
@@ -7894,8 +7898,8 @@ export interface AdvanceRunOptions {
    * The caller, naming itself (decision C124): the `enacted_via` of the line that says this call
    * carried out an expired question (`this <caller> call …`), and the reply's `command` unless
    * `command` is given. Default `'advanceRun'` (a program's own call); the MCP tool passes
-   * `'advance_run'`, `realm run advance` `'advance'`. Any other value THROWS before anything is
-   * read or written (decision C133, the admission step).
+   * `'advance_run'`, `realm run advance` `'advance'`. With any other value the call REJECTS before
+   * anything is read or written (decision C133, the admission step).
    */
   caller?: AdvanceCaller;
   /** Labels the reply only. Default: the caller. */

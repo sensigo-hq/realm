@@ -2,13 +2,20 @@
 // store-wide expired-gate sweeper. sweepExpiredGates is exercised directly (pure I/O
 // orchestration, now-injectable) — no HTTP server needed.
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, utimesSync, renameSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { WorkflowError, CURRENT_WORKFLOW_SCHEMA_VERSION, JsonFileStore } from '@sensigo/realm';
 import type { WorkflowDefinition, PendingGate, WorkflowRegistrar } from '@sensigo/realm';
-import { sweepExpiredGates, type ListenDeps, type Logger, type SweepSeenFiles } from './listen.js';
+import {
+  sweepExpiredGates,
+  startListen,
+  type ListenDeps,
+  type Logger,
+  type SweepSeenFiles,
+  type WorkflowEntry,
+} from './listen.js';
 
 const silentLogger: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -298,6 +305,14 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
             path: bad,
             class: 'parse',
             reason: `The run file '${bad}' is not JSON.`,
+            // issue #719 (C2): the warn carries the way out (walk M8).
+            repair:
+              `Restore it from a backup or repair it: the run keeps its record and its ` +
+              `idempotency key. Or move it out of '${runsDir}' together with ` +
+              `'bad.attempts.jsonl', 'trace-buffer-bad-*.jsonl' and 'sealed-trace-bad-*.jsonl' ` +
+              `(moved alone, they become orphans that 'realm run gc --older-than <age> --force' ` +
+              `deletes). If it held an idempotency key, the next delivery with that key starts a ` +
+              `new run.`,
           },
         ]),
         debugs: [0, 1, 2, 3].map(() => ['listen: expiry sweeper skipped run files', { count: 1 }]),
@@ -306,6 +321,141 @@ describe('issue #719 — the expiry sweeper on a store with a damaged run file (
       rmSync(runsDir, { recursive: true, force: true });
     }
   });
+
+  it('a file repaired, then damaged again exactly as before, is warned again: the seen-map is pruned on every pass (C6)', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    try {
+      const bad = join(runsDir, 'bad.json');
+      const aside = join(runsDir, 'bad.aside');
+      const at = new Date('2030-01-01T00:00:00Z');
+      writeFileSync(bad, '{ not json');
+      utimesSync(bad, at, at);
+      const { logger, warns } = capture();
+      const sweepSeen: SweepSeenFiles = new Map();
+      const deps = {
+        runStore: new JsonFileStore(runsDir),
+        workflowStore: makeWorkflowStore([]),
+        logger,
+        sweepSeen,
+      };
+      await sweepExpiredGates(deps, NOW);
+      renameSync(bad, aside); // repaired: no damaged file on the next pass
+      await sweepExpiredGates(deps, NOW);
+      const remembered = sweepSeen.size;
+      renameSync(aside, bad); // damaged again — same class, size and mtime
+      utimesSync(bad, at, at);
+      await sweepExpiredGates(deps, NOW);
+      // (a) red when a clean pass keeps the repaired file's entry (pruned only on a pass that
+      //     skipped a file), so its return is never warned; (b) prints the warn count and the map's
+      //     size after the clean pass.
+      expect({ warned: warns.length, remembered }).toEqual({ warned: 2, remembered: 0 });
+    } finally {
+      rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('startListen hands the sweeper ONE seen-map for the server’s life: a damaged file is warned once across ticks (C5)', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+    const { logger, warns, debugs } = capture();
+    const tick = vi.spyOn(global, 'setInterval');
+    let handle: Awaited<ReturnType<typeof startListen>> | undefined;
+    try {
+      writeFileSync(join(runsDir, 'bad.json'), '{ not json');
+      const deps: ListenDeps = {
+        workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
+        runStore: new JsonFileStore(runsDir),
+        dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
+        spawnAgent: async () => ({ pid: 1 }),
+        clock: () => Date.now(),
+        logger,
+      };
+      handle = await startListen(
+        new Map<string, WorkflowEntry>(),
+        {
+          port: 0,
+          host: '127.0.0.1',
+          bodyTimeoutMs: 5000,
+          maxBodyBytes: 1_048_576,
+          maxConcurrent: 20,
+          sweepExpiredGatesIntervalMs: 60_000,
+        },
+        deps,
+      );
+      const call = tick.mock.calls.find(([, ms]) => ms === 60_000);
+      const fire = call?.[0] as (() => void) | undefined;
+      for (let i = 1; i <= 3; i++) {
+        fire?.();
+        // Each pass that skips the file logs one debug line: the pass has ended.
+        await vi.waitFor(() => expect(debugs.length).toBe(i));
+      }
+      // (a) red when a tick builds a new map (or none), so the file is warned on every pass; (b)
+      //     prints whether the tick was found and the warn count.
+      expect({ ticked: fire !== undefined, warned: warns.length }).toEqual({
+        ticked: true,
+        warned: 1,
+      });
+    } finally {
+      tick.mockRestore();
+      if (handle !== undefined) await handle.shutdown('test-cleanup');
+      rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  it.skipIf(asRoot)(
+    'a runs folder that cannot be read: `listen: sweeper pass failed`, naming the folder and its way out (the docs row, C2)',
+    async () => {
+      const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));
+      const errors: Array<{ msg: string; data: unknown }> = [];
+      const logger: Logger = {
+        ...silentLogger,
+        error: (msg: string, data?: unknown) => errors.push({ msg, data }),
+      };
+      const tick = vi.spyOn(global, 'setInterval');
+      let handle: Awaited<ReturnType<typeof startListen>> | undefined;
+      try {
+        const deps: ListenDeps = {
+          workflowStore: makeWorkflowStore([]) as unknown as ListenDeps['workflowStore'],
+          runStore: new JsonFileStore(runsDir),
+          dedupStoreFor: () => ({ check: () => false, record: () => {}, cleanup: () => {} }),
+          spawnAgent: async () => ({ pid: 1 }),
+          clock: () => Date.now(),
+          logger,
+        };
+        handle = await startListen(
+          new Map<string, WorkflowEntry>(),
+          {
+            port: 0,
+            host: '127.0.0.1',
+            bodyTimeoutMs: 5000,
+            maxBodyBytes: 1_048_576,
+            maxConcurrent: 20,
+            sweepExpiredGatesIntervalMs: 60_000,
+          },
+          deps,
+        );
+        const fire = tick.mock.calls.find(([, ms]) => ms === 60_000)?.[0] as
+          (() => void) | undefined;
+        chmodSync(runsDir, 0o000);
+        fire?.();
+        await vi.waitFor(() => expect(errors.length).toBe(1));
+        chmodSync(runsDir, 0o700);
+        const error = String((errors[0]?.data as { error?: unknown } | undefined)?.error);
+        // (a) red when the line, the folder or its way out is not as the docs row says; (b) prints
+        //     the message and booleans only (the error is a path and fixed words).
+        expect({
+          msg: errors[0]?.msg,
+          folder: error.includes(`The runs folder '${runsDir}' cannot be read (EACCES).`),
+          wayOut: error.includes('Give this user read access to it; nothing in it was changed.'),
+        }).toEqual({ msg: 'listen: sweeper pass failed', folder: true, wayOut: true });
+      } finally {
+        chmodSync(runsDir, 0o700);
+        tick.mockRestore();
+        if (handle !== undefined) await handle.shutdown('test-cleanup');
+        rmSync(runsDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('the leak cell (the sweeper’s warn line): a fault AT a token never reaches the log', async () => {
     const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-sweep-'));

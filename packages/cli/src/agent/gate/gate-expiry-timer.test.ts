@@ -192,7 +192,7 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
 });
 
 describe('issue #719 — the expiry timer on a run file that cannot be read', () => {
-  it('logs the file’s message (its way out), never its text', async () => {
+  it('logs the file’s message (its way out) and that no enactment point can read the run, never its text', async () => {
     const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-timer-'));
     const warns: string[] = [];
     const spy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => {
@@ -215,11 +215,23 @@ describe('issue #719 — the expiry timer on a run file that cannot be read', ()
       const line = warns.join('\n');
       // (a) red when the timer's line loses the file's message, or carries the parser's text; (b)
       //     prints the line count and booleans only.
+      // issue #719 (C2): the tail is true for a damaged file — every enactment point reads that
+      // same file, so none "will still catch it".
       expect({
         lines: warns.length,
         message: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
+        noneCanRead: line.endsWith(
+          ' — no enactment point can read this run until its file is repaired or moved out.',
+        ),
+        falseTail: line.includes('will still catch it'),
         leaked: line.includes('ghp_FAKE7'),
-      }).toEqual({ lines: 1, message: true, leaked: false });
+      }).toEqual({
+        lines: 1,
+        message: true,
+        noneCanRead: true,
+        falseTail: false,
+        leaked: false,
+      });
     } finally {
       spy.mockRestore();
       rmSync(runsDir, { recursive: true, force: true });

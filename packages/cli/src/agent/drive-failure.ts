@@ -290,9 +290,13 @@ export async function recordDriveFailure(
     if (workflowErrorCode(err) === 'STATE_RUN_NOT_FOUND') return;
     // issue #719: a typed store error says why the record was lost — a run file that cannot be
     // read names the file and its way out — so its message rides the one line, unchanged. An
-    // untyped error is not echoed: its text is not Realm's to vouch for.
+    // untyped error is not echoed: its text is not Realm's to vouch for. issue #719 (C6): when the
+    // failure being recorded IS that store error (the same file failed both reads), the entry's
+    // message already carries it — said once.
+    const said =
+      err instanceof WorkflowError && entry.message === sanitizeError(err).slice(0, MESSAGE_CAP);
     console.error(
-      err instanceof WorkflowError
+      err instanceof WorkflowError && !said
         ? `${lostLine(runId, entry)} — ${err.message}`
         : lostLine(runId, entry),
     );

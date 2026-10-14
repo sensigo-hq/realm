@@ -345,7 +345,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
   it('C163 error_code: on an error — except create_workflow refusing its steps, whose errors say what is wrong', async () => {
     claim(
       'mcp/tools.md',
-      "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that is not a Realm error (from a run store of your own)",
+      "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that is not a Realm error (a store's own failure, such as a full disk or a permission error)",
     );
     const { call } = await connect();
     const r = await call('create_workflow', {
@@ -370,7 +370,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
     async (tool) => {
       claim(
         'mcp/tools.md',
-        "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that is not a Realm error (from a run store of your own)",
+        "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that is not a Realm error (a store's own failure, such as a full disk or a permission error)",
       );
       const { call, runStore } = await connect();
       // issue #719: a run file the JSON store cannot read is now its own typed error, with a code;
@@ -2324,7 +2324,7 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
   });
 
   const CANNOT_READ_MCP =
-    'A run whose file the JSON store cannot read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable by this user) is refused by every tool that reads it with that file\'s code: `RESOURCE_FORMAT_INVALID` or `ENGINE_STORE_FAILED` with `agent_action: "stop"`, or `STATE_LEGACY_FORMAT` with `report_to_user`.';
+    'A run whose file the JSON store cannot read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) is refused by every tool that reads it with that file\'s code: `RESOURCE_FORMAT_INVALID` or `ENGINE_STORE_FAILED` with `agent_action: "stop"`, or `STATE_LEGACY_FORMAT` with `report_to_user`.';
   const UNTYPED_MCP =
     'Any other failure is refused by `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` with `ENGINE_STORE_FAILED`, naming the cause (`Failed to load run from store: <its message>`), as the library answers it;';
   it.each([

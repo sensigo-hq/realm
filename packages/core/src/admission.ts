@@ -25,7 +25,7 @@
 import { assertReleaseLine, assertRegistryLine } from './release-line.js';
 import { validateDriver } from './engine/holder.js';
 import { validateCaller } from './engine/callers.js';
-import { checkRequiredParts } from './engine/required-parts.js';
+import { checkRequiredParts, givenTypeOf, optionInvalidError } from './engine/required-parts.js';
 import { ExtensionRegistry } from './extensions/registry.js';
 
 /** The engine functions that admit their calls here. A source-text witness pins each call. */
@@ -71,7 +71,16 @@ interface HostWiringCheck {
 export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
   {
     id: 'store_release_line',
-    check: (entry, w) => assertReleaseLine(w.store, `the ${w.storeKind} handed to ${entry}`),
+    check: (entry, w) => {
+      // issue #719 (C4): no store at all is the host's missing part, named as one — not a store
+      // of an undeclared release line.
+      if (w.store === undefined || w.store === null) {
+        throw optionInvalidError(entry, [
+          { option: 'store', expected: `a ${w.storeKind}`, given_type: givenTypeOf(w.store) },
+        ]);
+      }
+      assertReleaseLine(w.store, `the ${w.storeKind} handed to ${entry}`);
+    },
   },
   {
     id: 'registry_release_line',

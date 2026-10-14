@@ -18,7 +18,7 @@
 | [`reconcile`](#reconcile) | Rebuilds the index of idempotency keys.                       | Unless `--dry-run` is given |
 | [`migrate`](#migrate)     | Records the ending of runs that were written by old versions. | Only with `--force`         |
 
-A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1; `purge <id> --force` then deletes nothing (added after version 0.46.0).
+A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1 (added after version 0.46.0); `purge <id> --force` then deletes nothing, as before.
 
 When the `@sensigo/realm` the workflow's code imports is not the version the command runs, the command prints [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and goes on. This was added in 0.46.0.
 
@@ -700,7 +700,7 @@ No stale-phase records found to heal.
 
 Correcting a record sets its time of last change to now. `realm run purge --older-than` and `realm run cleanup --older-than` read that time.
 
-**Exit code:** 0. 1 if a file could not be read or deleted (with `--heal`, a run file that cannot be read as a run: one error names every such file and what is wrong with it, and nothing is healed; added after version 0.46.0, which named only the first, with the parser's message), or for:
+**Exit code:** 0. 1 if a file could not be read or deleted (with `--heal`, a run file that cannot be read as a run: one error names every such file and what is wrong with it, nothing is healed, and it says to run the same command, flags included, again; added after version 0.46.0, which failed with the parser's message, naming no file), or for:
 
 ```text
 --older-than must be at least 1h (got '30m'). gc refuses to reap crash residue younger than that, even with --force.
@@ -729,7 +729,7 @@ Would write 1 pointer(s) across 1 key group(s); 0 already current.
 
 Without `--dry-run`, the line starts with `Wrote`. Run again, it prints `Wrote 0 pointer(s) across 1 key group(s); 1 already current.` A key group is one key of one workflow. See [Idempotency and batches](../../guides/idempotency-and-batches.md) for a store where two runs hold one key.
 
-**Exit code:** 0. 1 when a run file cannot be read as a run (one error names every such file and what is wrong with it, and nothing is written; added after version 0.46.0), or when the store fails. Up to version 0.46.0 this page said 0 for every case; a failure exited 1 then too.
+**Exit code:** 0. 1 when a run file cannot be read as a run (one error names every such file, or with `--workflow` every such file that can concern that workflow, and what is wrong with it, and says to run the same command, flags included, again; nothing is written; added after version 0.46.0), or when the store fails. Up to version 0.46.0 this page said 0 for every case; a failure exited 1 then too.
 
 ## `migrate`
 
@@ -739,11 +739,11 @@ realm run migrate --stamp-seals [--force] [--detailed-exitcode]
 
 Since version 0.39, a run that ends records what ended it, which `realm run inspect` prints as `Sealed by`. `migrate --stamp-seals` works out that value for finished runs written by older versions and stores it. It does not change a run's time of last change.
 
-| Flag                  | Required | What it does                                                                                                                |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                 |
-| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                    |
-| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending. |
+| Flag                  | Required | What it does                                                                                                                                                          |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                                                           |
+| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                                                              |
+| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending, or if a run file cannot be read as a run. |
 
 On two runs written by version 0.38:
 
@@ -779,7 +779,7 @@ Nothing would be stamped — every terminal run already carries its seal arm.
 Residue: 0 terminal run(s) still without a recorded seal arm.
 ```
 
-**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above. A run file that cannot be read as a run counts as a run that could not be classified: it is listed with what is wrong with it, named on standard error with its way out, and makes `--detailed-exitcode` give 2 (added after version 0.46.0).
+**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above. A run file that cannot be read as a run is listed in its own group (`<n> run file(s) could not be read and were left untouched:`) with what is wrong with it, and named on standard error with its way out; the residue line counts it apart from the terminal runs (`Residue: <n> terminal run(s) still without a recorded seal arm; <m> run file(s) could not be read.`), and it makes `--detailed-exitcode` give 2 (added after version 0.46.0).
 
 ## See also
 

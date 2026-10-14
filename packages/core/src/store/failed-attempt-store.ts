@@ -29,7 +29,7 @@ import { brandClass, REALM_BRAND } from '../brand.js';
  *  server-generated UUIDv4 runId, so stripping it back off is unambiguous (no delimiter
  *  ambiguity the way the WAL filename has, since there is no second segment after the runId
  *  here — see JsonTraceBufferStore.listOrphans for the trickier case). */
-const SIDECAR_SUFFIX = '.attempts.jsonl';
+export const SIDECAR_SUFFIX = '.attempts.jsonl';
 
 /**
  * Append-and-stop byte ceiling per sidecar (~80+ full ≤3072B records — ample forensics). Approximate
@@ -59,7 +59,7 @@ export class FailedAttemptStore implements PerRunArtifactStore, OrphanSweepableS
 
   /** Sidecar path — derived ONLY from the (server-generated UUID) runId. `.jsonl` is mandatory. */
   private sidecarPath(runId: string): string {
-    return join(this.runsDir, `${runId}.attempts.jsonl`);
+    return join(this.runsDir, `${runId}${SIDECAR_SUFFIX}`);
   }
 
   /**

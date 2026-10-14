@@ -455,4 +455,24 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       rmSync(runsDir, { recursive: true, force: true });
     }
   });
+
+  it('the failure being recorded IS the store’s refusal (the same file failed both reads): its message said once (C6)', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-drive-'));
+    try {
+      writeFileSync(join(runsDir, 'bad.json'), '{not json');
+      const store = new JsonFileStore(runsDir);
+      const refusal = await store.get('bad').catch((e: unknown) => e);
+      await recordDriveFailure(store, 'bad', buildEntry(refusal, 's', 'anthropic', Date.now()));
+      const line = errors.join('\n');
+      // (a) red when the store's message is appended to an entry that already carries it (the
+      //     fault printed twice on one line); (b) prints the line count and how often the fault
+      //     appears.
+      expect({ lines: errors.length, faultTimes: line.split('is not JSON').length - 1 }).toEqual({
+        lines: 1,
+        faultTimes: 1,
+      });
+    } finally {
+      rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
 });

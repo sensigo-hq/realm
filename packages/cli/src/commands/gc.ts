@@ -54,6 +54,7 @@ import {
   type ArtifactDeletionReport,
   WorkflowError,
   deleteIfExists,
+  shellWord,
   unreadableRunFilesError,
 } from '@sensigo/realm';
 import type {
@@ -441,6 +442,11 @@ export interface SweepStalePhasesOptions {
       | 'sealed_by'
     >,
   ) => RunPhase;
+  /**
+   * issue #719 (C2): the command the operator ran, flags included — a refusal over damaged run
+   * files tells them to run it again. Default: `realm run gc --heal`, with `--force` when `force`.
+   */
+  command?: string;
 }
 
 /** One mismatched record's before/after phase — carried through every bucket below so a report
@@ -497,7 +503,7 @@ export async function sweepStalePhases(
   const { records, unreadable } = await listRunsDiagnosed(store);
   if (unreadable.length > 0) {
     throw unreadableRunFilesError(
-      'realm run gc --heal',
+      options.command ?? `realm run gc --heal${options.force ? ' --force' : ''}`,
       dirname(unreadable[0]!.path),
       unreadable.map((u) => u.facts),
     );
@@ -778,6 +784,16 @@ export function gcExitCode(
   return anyFailure ? 1 : 0;
 }
 
+/** issue #719 (C2): the `realm run gc` command the operator ran, flags included. */
+function gcCommandLine(opts: { olderThan?: string; force?: boolean; heal?: boolean }): string {
+  return [
+    'realm run gc',
+    ...(opts.olderThan !== undefined ? [`--older-than ${shellWord(opts.olderThan)}`] : []),
+    ...(opts.heal === true ? ['--heal'] : []),
+    ...(opts.force === true ? ['--force'] : []),
+  ].join(' ');
+}
+
 export const gcCommand = new Command('gc')
   .description(
     'Sweep orphaned atomic-write .tmp files, run-less orphaned WAL/sidecar artifacts, and ' +
@@ -895,7 +911,11 @@ export const gcCommand = new Command('gc')
       let healSweepError: string | undefined;
       if (opts.heal === true && opts.force !== true) {
         try {
-          healPreview = await sweepStalePhases(runStore, { force: false, deriveRunPhase });
+          healPreview = await sweepStalePhases(runStore, {
+            force: false,
+            deriveRunPhase,
+            command: gcCommandLine(opts),
+          });
         } catch (err) {
           healSweepError = err instanceof Error ? err.message : String(err);
         }
@@ -950,7 +970,11 @@ export const gcCommand = new Command('gc')
       // known) and costs nothing to leave in place.
       if (opts.heal === true && healSweepError === undefined) {
         try {
-          healResult = await sweepStalePhases(runStore, { force: true, deriveRunPhase });
+          healResult = await sweepStalePhases(runStore, {
+            force: true,
+            deriveRunPhase,
+            command: gcCommandLine(opts),
+          });
         } catch (err) {
           healSweepError = err instanceof Error ? err.message : String(err);
         }

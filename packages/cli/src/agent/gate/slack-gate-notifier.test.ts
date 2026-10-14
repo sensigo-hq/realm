@@ -1024,3 +1024,50 @@ describe('issue #719 — the one-way notifier waits on a run file that cannot be
     }
   });
 });
+
+describe('issue #719 C5 — the two-way notifier’s thread post on a run file that cannot be read', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('the leak cell (the Slack thread): a fault AT a token never reaches a posted text', async () => {
+    const runsDir = await mkdtemp(join(tmpdir(), 'realm-719-twoway-'));
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await writeFile(join(runsDir, 'run1.json'), '{"params":{"token": ghp_FAKE719}}');
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal('fetch', mockFetch);
+      let capturedOnEvent: ((event: SlackGateEvent) => void) | undefined;
+      vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
+        capturedOnEvent = opts.onEvent;
+        return { close: vi.fn() };
+      });
+      const promise = handleBidirectionalGate(
+        makeGateParams({ store: new JsonFileStore(runsDir) }),
+      );
+      capturedOnEvent?.({
+        event_id: 'E719',
+        thread_ts: '1234567890.000',
+        user: 'U1',
+        text: 'approve',
+        ts: '1234567890.719',
+      });
+      // The poll's read of the damaged file ends the wait; the finally's drain lands the post.
+      await promise.catch(() => undefined);
+      const posted = mockFetch.mock.calls
+        .filter(([url]) => String(url).includes('postMessage'))
+        .map(([, init]) => String((init as { body?: unknown }).body));
+      // (a) red when the parser's text reaches the thread; (b) prints booleans only — whether the
+      //     submit-error post was made, whether it names the file's fault, and whether any posted
+      //     text holds the token.
+      expect({
+        postedTheError: posted.some((b) => b.includes("Couldn't record your response")),
+        namesTheFault: posted.some((b) => b.includes('is not JSON')),
+        leaked: posted.some((b) => b.includes('ghp_FAKE7')),
+      }).toEqual({ postedTheError: true, namesTheFault: true, leaked: false });
+    } finally {
+      warns.mockRestore();
+      await rm(runsDir, { recursive: true, force: true });
+    }
+  });
+});

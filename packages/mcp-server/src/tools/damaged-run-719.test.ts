@@ -2,7 +2,7 @@
 // cannot read gives that file's own code, and a message naming the file — never its text. Over a
 // real MCP client, on a real JSON store in a temp folder.
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -16,12 +16,13 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
 });
 
-async function connect(bad: string) {
+async function connect(bad: string, mode?: number) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-719-mcp-'));
   dirs.push(dir);
   const runsDir = join(dir, 'runs');
   await mkdir(runsDir, { recursive: true });
   await writeFile(join(runsDir, 'bad.json'), bad);
+  if (mode !== undefined) await chmod(join(runsDir, 'bad.json'), mode);
   const runStore = new JsonFileStore(runsDir);
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   await workflowStore.register({
@@ -56,20 +57,50 @@ const TOOLS: Array<[string, Record<string, unknown>]> = [
   ['start_run', { workflow_id: 'w', params: {}, idempotency_key: 'k-719' }],
 ];
 
+/** Each class an MCP reply must carry (issue #719, C5): its bytes (and mode), its code, its agent
+ *  action and its fault sentence's ending. A legacy file carries the key, so `start_run`'s new key
+ *  is refused by it too (a readable object carrying the key). */
+const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+const CLASSES: Array<[string, string, number | undefined, string, string, string]> = [
+  ['parse', '{ not json', undefined, 'RESOURCE_FORMAT_INVALID', 'stop', 'is not JSON.'],
+  [
+    'legacy',
+    '{"id":"bad","state":"running","idempotency_key":"k-719"}',
+    undefined,
+    'STATE_LEGACY_FORMAT',
+    'report_to_user',
+    'is in the format of an earlier Realm.',
+  ],
+  ...(asRoot
+    ? []
+    : ([
+        ['unreadable', '{}', 0o000, 'ENGINE_STORE_FAILED', 'stop', 'cannot be read (EACCES).'],
+      ] as Array<[string, string, number | undefined, string, string, string]>)),
+];
+
 describe('issue #719 — the MCP tools on a run file that cannot be read', () => {
-  it.each(TOOLS)('%s: the file’s code, the file named', async (tool, args) => {
-    const { call, path } = await connect('{ not json');
-    const reply = JSON.parse(await call(tool, args)) as Record<string, unknown>;
-    // (a) red when the tool answers ENGINE_STORE_FAILED, ENGINE_INTERNAL or no code, or loses the
-    //     path; (b) prints the status, the code and whether the first error names the file.
-    expect({
-      status: reply['status'],
-      error_code: reply['error_code'],
-      names: ((reply['errors'] as string[] | undefined)?.[0] ?? '').includes(
-        `The run file '${path}' is not JSON.`,
-      ),
-    }).toEqual({ status: 'error', error_code: 'RESOURCE_FORMAT_INVALID', names: true });
-  });
+  it.each(
+    CLASSES.flatMap(([cls, bytes, mode, code, action, fault]) =>
+      TOOLS.map(([tool, args]) => [tool, cls, args, bytes, mode, code, action, fault] as const),
+    ),
+  )(
+    '%s on a %s file: its code, its agent action, the file named',
+    async (tool, _cls, args, bytes, mode, code, action, fault) => {
+      const { call, path } = await connect(bytes, mode);
+      const reply = JSON.parse(await call(tool, args)) as Record<string, unknown>;
+      // (a) red when the tool answers ENGINE_INTERNAL or no code, another code or agent action for
+      //     the class, or loses the path; (b) prints the status, the code, the action and whether
+      //     the first error names the file.
+      expect({
+        status: reply['status'],
+        error_code: reply['error_code'],
+        agent_action: reply['agent_action'],
+        names: ((reply['errors'] as string[] | undefined)?.[0] ?? '').includes(
+          `The run file '${path}' ${fault}`,
+        ),
+      }).toEqual({ status: 'error', error_code: code, agent_action: action, names: true });
+    },
+  );
 
   it('start_run_batch: the failed item carries the file’s code and names the file', async () => {
     const { call, path } = await connect('{ not json');

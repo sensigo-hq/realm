@@ -40,10 +40,11 @@ export function isBareAutoStep(step: StepDefinition | undefined): boolean {
  * not a guard or a finalizer (the engine settles those itself), and it is not an `auto` step with a
  * handler or a service (those run the handler or the adapter). So: every `agent` step, every bare
  * `auto` step, and a step whose `execution` is missing or unknown. The one predicate admission's
- * `required_parts` row and `makeCall`'s dispatcher branch both serve.
+ * `required_parts` row and `makeCall`'s dispatcher branch both serve. A step that is not an object
+ * (`null`, a string, … — a definition the host built wrong) is not one: no error escapes here.
  */
 export function callsHostDispatcher(step: StepDefinition | undefined): boolean {
-  if (step === undefined) return false;
+  if (step === null || typeof step !== 'object') return false;
   if (step.execution === 'guard' || step.execution === 'finalizer') return false;
   return !(
     step.execution === 'auto' &&

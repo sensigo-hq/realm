@@ -24,7 +24,11 @@ import {
   probeClassOf,
 } from './registrar.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import { unreadableFactsOf, unreadableRunFileError } from '../store/run-file.js';
+import {
+  renderUnreadableStoredFile,
+  unreadableFactsOf,
+  unreadableRunFileError,
+} from '../store/run-file.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
@@ -226,18 +230,20 @@ describe('probeClassToError — the table, whole-message', () => {
     expect(err.code).toBe('STATE_WORKFLOW_UNREADABLE');
   });
 
-  it('T6 parseFailureError forks on what the bytes are — not JSON (no root, no parser text) vs a parsed non-object root (issue #719)', () => {
-    // (a) red when the parser's text, or any position, comes back into the message; (b) prints it.
-    expect(parseFailureError(ID, '/x/gate-558.json').message).toBe(
+  it('T6 parseFailureError takes the fault, stated — not JSON vs JSON that is not an object (issue #719)', () => {
+    const at = '/x/gate-558.json';
+    // (a) red when the parser's text, or any position, comes back into the message, or the copy is
+    //     named by anything but its file; (b) prints it.
+    expect(parseFailureError(at, { kind: 'not_json' }).message).toBe(
       "the registered copy of 'gate-558' is not JSON",
     );
-    expect(parseFailureError(ID, '/x', null).message).toBe(
+    expect(parseFailureError(at, { kind: 'not_object', shape: 'null' }).message).toBe(
       "the registered copy of 'gate-558' is JSON but not a workflow object (it is null)",
     );
-    expect(parseFailureError(ID, '/x', [1]).message).toBe(
+    expect(parseFailureError(at, { kind: 'not_object', shape: 'array' }).message).toBe(
       "the registered copy of 'gate-558' is JSON but not a workflow object (it is array)",
     );
-    expect(parseFailureError(ID, '/x', 7).message).toBe(
+    expect(parseFailureError(at, { kind: 'not_object', shape: 'number' }).message).toBe(
       "the registered copy of 'gate-558' is JSON but not a workflow object (it is number)",
     );
   });
@@ -676,15 +682,19 @@ describe('repairActFor — the act is keyed on the CLASS, minted once (review fo
     }
     // The parse classes carry no probe class and share the one act + the conditioned alternative
     // (review folds C11 + R10: re-register for a registered copy; rm for a file nothing registered).
-    expect(repairActFor(parseFailureError('w', '/p/w.json', new SyntaxError('boom')))).toEqual({
+    expect(repairActFor(parseFailureError('/p/w.json', { kind: 'not_json' }))).toEqual({
       act: RR_ACT,
       alternative: RM_ALT,
     });
-    expect(repairActFor(parseFailureError('w', '/p/w.json', null))).toEqual({
+    expect(
+      repairActFor(parseFailureError('/p/w.json', { kind: 'not_object', shape: 'null' })),
+    ).toEqual({
       act: RR_ACT,
       alternative: RM_ALT,
     });
-    expect(probeClassOf(parseFailureError('w', '/p/w.json', null))).toBeUndefined();
+    expect(
+      probeClassOf(parseFailureError('/p/w.json', { kind: 'not_object', shape: 'null' })),
+    ).toBeUndefined();
     expect(
       probeClassOf(
         probeClassToError(
@@ -754,11 +764,82 @@ describe('issue #719 — the registrar speaks the damaged-file vocabulary, with 
     expect(repairActFor(err)).toBeUndefined();
   });
 
-  it('the leak cell (the registrar’s error): a fault AT a token never reaches the message', async () => {
+  it('the leak cell (the registrar’s error): a fault AT a token never reaches the error, its details or its stack', async () => {
     await writeFile(join(wfDir, 'w.json'), '{"id": ghp_FAKE719}');
-    const err = (await new JsonWorkflowStore(wfDir).get('w').catch((e: unknown) => e)) as Error;
-    const leaked = String(err.message).includes('ghp_FAKE7');
-    // (a) red when the parser's text reaches the error; (b) prints a boolean only.
+    const err = (await new JsonWorkflowStore(wfDir)
+      .get('w')
+      .catch((e: unknown) => e)) as WorkflowError;
+    const serialised = `${err.message}\n${JSON.stringify(err.details)}\n${String(err.stack)}`;
+    const leaked = serialised.includes('ghp_FAKE7');
+    // (a) red when the parser's text reaches the message, the details or the stack; (b) prints a
+    //     boolean only.
     expect(leaked).toBe(false);
+  });
+
+  it('a whitespace-only registered copy is empty, as a run file is (C6)', async () => {
+    await writeFile(join(wfDir, 'w.json'), '  \n\t');
+    const err = (await new JsonWorkflowStore(wfDir)
+      .get('w')
+      .catch((e: unknown) => e)) as WorkflowError;
+    const listed = (await new JsonWorkflowStore(wfDir).listWithDiagnostics()).unreadable.map(
+      (u) => [u.file, u.class],
+    );
+    // (a) red when whitespace is read as "is not JSON" (one vocabulary, two rules); (b) prints
+    //     the class through get() and through the listing.
+    expect({ get: unreadableFactsOf(err)?.class, listed }).toEqual({
+      get: 'empty',
+      listed: [['w.json', 'empty']],
+    });
+  });
+
+  it('the one composer builds every workflow-copy message, from its facts alone (C3)', async () => {
+    const thrown: Array<[string, unknown]> = [];
+    const store = new JsonWorkflowStore(wfDir);
+    for (const [label, bytes] of [
+      ['empty (zero bytes)', ''],
+      ['empty (whitespace)', ' \n'],
+      ['parse (not JSON)', '{ not json'],
+      ['parse (an array)', '[1]'],
+      ['parse (null)', 'null'],
+    ] as const) {
+      await writeFile(join(wfDir, 'w.json'), bytes);
+      thrown.push([label, await store.get('w').catch((e: unknown) => e)]);
+    }
+    thrown.push(['parseFailureError', parseFailureError('/p/w.json', { kind: 'not_json' })]);
+    thrown.push([
+      'parseFailureError (shape)',
+      parseFailureError('/p/w.json', { kind: 'not_object', shape: 'boolean' }),
+    ]);
+    const notRebuilt = thrown
+      .filter(([, err]) => {
+        const facts = unreadableFactsOf(err);
+        return (
+          facts?.resource !== 'workflow_copy' ||
+          renderUnreadableStoredFile(facts) !== (err as Error).message
+        );
+      })
+      .map(([label]) => label);
+    // (a) red when the registrar builds a message of its own (a template beside the composer);
+    //     (b) prints the labels whose message the composer does not rebuild.
+    expect(notRebuilt).toEqual([]);
+  });
+
+  it('probeClassOf reads only a workflow copy’s facts, never a run file’s (C6)', () => {
+    const runFile = (cls: 'empty' | 'unreadable') =>
+      unreadableRunFileError({
+        resource: 'run_file',
+        class: cls,
+        path: '/runs/x.json',
+        ...(cls === 'unreadable' ? { errno: 'EACCES' } : {}),
+      });
+    // (a) red when a run file's `empty`/`unreadable` is read as a registry probe class; (b)
+    //     prints the three answers.
+    expect({
+      runEmpty: probeClassOf(runFile('empty')),
+      runUnreadable: probeClassOf(runFile('unreadable')),
+      copyEmpty: probeClassOf(
+        probeClassToError({ ok: false, class: 'empty', path: '/w/w.json' }, 'w'),
+      ),
+    }).toEqual({ runEmpty: undefined, runUnreadable: undefined, copyEmpty: 'empty' });
   });
 });

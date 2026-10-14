@@ -1,9 +1,10 @@
 // run-file.ts — issue #719: ONE reader for a run file of the JSON store, and ONE composer for what
-// a damaged stored JSON file says — a run file here, a registered workflow copy in the registrar.
-// A damaged file is classified by what its bytes ARE, never by the parser's message: that message
-// quotes the file around the fault, and a run file's params can hold a token.
-import { basename, dirname } from 'node:path';
+// a damaged stored JSON file says — a run file and the runs folder here, a registered workflow
+// copy in the registrar. A damaged file is classified by what its bytes ARE, never by the parser's
+// message: that message quotes the file around the fault, and a run file's params can hold a token.
+import { basename, dirname, join } from 'node:path';
 import { readIfExists, FsIoError, errnoCode, isRetryableArtifactErrno } from './fs-io.js';
+import { SIDECAR_SUFFIX } from './failed-attempt-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
 import {
@@ -12,6 +13,7 @@ import {
   type RunRecordFieldProblem,
 } from '../types/run-record-shape.js';
 import { withFullStop } from '../engine/pending.js';
+import { quotedCommand } from '../utils/shell-word.js';
 
 /**
  * What a damaged stored JSON file is (issue #719, R7) — the shipped vocabulary of the registrar's
@@ -19,9 +21,9 @@ import { withFullStop } from '../engine/pending.js';
  *  - `empty`: zero bytes, or whitespace only;
  *  - `parse`: not JSON, or JSON that is not an object (`shape` says what it is);
  *  - `not_a_run`: an object that is not a run record (`fields` names what is missing or mistyped);
- *  - `mismatched`: a run record whose `id` is not the file's name (`held_id`);
+ *  - `mismatched`: a run record whose `id` is not the file's name (`held_id`, `held_present`);
  *  - `legacy`: written by an earlier Realm (`state` without `completed_steps`);
- *  - `unreadable`: the file cannot be read (`errno`).
+ *  - `unreadable`: the file (or the runs folder) cannot be read (`errno`).
  */
 export const STORED_FILE_CLASSES = [
   'empty',
@@ -34,13 +36,25 @@ export const STORED_FILE_CLASSES = [
 export type StoredFileClass = (typeof STORED_FILE_CLASSES)[number];
 
 /**
- * The facts of one damaged stored file (issue #719, R7): names, classes and type words — never its
- * content. Written as the `details` of every such error, on run files and on the registrar's
- * `empty` and `parse` failures. The `details` slot is temporary: #729 PR-0 moves these facts to
- * `error.facts`; read them through {@link unreadableFactsOf}.
+ * The trace files the MCP server writes beside a run's file, by name (issue #719, C2): a step's
+ * write-ahead buffer `trace-buffer-<runId>-<step>.jsonl` and its sealed copies
+ * `sealed-trace-<runId>-<step>.<seq>.jsonl`. Defined once here, in core, because the way out of a
+ * damaged run file names them; `json-trace-buffer-store.ts` (mcp-server) imports them.
+ */
+export const TRACE_BUFFER_FILE_PREFIX = 'trace-buffer-';
+export const SEALED_TRACE_FILE_PREFIX = 'sealed-trace-';
+export const TRACE_FILE_SUFFIX = '.jsonl';
+
+/**
+ * The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendment 7): names, classes and
+ * type words — never its content. Written as the `details` of every such error, on run files, on
+ * the runs folder and on the registrar's `empty` and `parse` failures. The `details` slot is
+ * temporary: #729 PR-0 moves these facts to `error.facts`; read them through
+ * {@link unreadableFactsOf}. {@link renderUnreadableStoredFile} builds every message from them
+ * alone.
  */
 export interface UnreadableFileFacts {
-  resource: 'run_file' | 'workflow_copy';
+  resource: 'run_file' | 'workflow_copy' | 'run_folder';
   class: StoredFileClass;
   path: string;
   /** `unreadable` only: the operating system's error code. */
@@ -49,16 +63,57 @@ export interface UnreadableFileFacts {
   shape?: string;
   /** `mismatched` only: the run id the file holds. */
   held_id?: string;
+  /** `mismatched` only: whether the held run's own file (`<held_id>.json`, same folder) reads as
+   *  that run; absent when the held id is not one text may show ({@link displayId}), which is
+   *  never looked up. */
+  held_present?: boolean;
   /** `not_a_run` only: each required field missing or of the wrong type (names only). */
   fields?: RunRecordFieldProblem[];
+  /** A keyed create only: what the file refuses — every new idempotency key on the store (what it
+   *  holds cannot be read), or the one key it carries. */
+  refused?: 'every_new_key' | 'this_key';
 }
 
 /** The facts a damaged-file error carries, or `undefined` for any other error — the ONE reader. */
 export function unreadableFactsOf(err: unknown): UnreadableFileFacts | undefined {
   if (!(err instanceof WorkflowError)) return undefined;
   const resource = err.details['resource'];
-  if (resource !== 'run_file' && resource !== 'workflow_copy') return undefined;
+  if (resource !== 'run_file' && resource !== 'workflow_copy' && resource !== 'run_folder') {
+    return undefined;
+  }
   return err.details as unknown as UnreadableFileFacts;
+}
+
+/** What {@link unreadableRunFilesError} carries: the command that did not run, the runs folder, and
+ *  every run file it could not read. */
+export interface UnreadableRunFilesFacts {
+  command: string;
+  folder: string;
+  files: UnreadableFileFacts[];
+}
+
+/** The facts of a decision that failed closed over damaged run files, or `undefined` for any other
+ *  error — the ONE reader of {@link unreadableRunFilesError}'s details. */
+export function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined {
+  if (!(err instanceof WorkflowError)) return undefined;
+  const { command, folder, files } = err.details;
+  if (typeof command !== 'string' || typeof folder !== 'string' || !Array.isArray(files)) {
+    return undefined;
+  }
+  return err.details as unknown as UnreadableRunFilesFacts;
+}
+
+/** An id a file holds, as text may show it (issue #719, C6): one made of letters, digits, `.`,
+ *  `_` and `-`, at most 64 characters, as it is; any other as `another run id (not shown)` — a
+ *  file's content can hold anything, a newline or a terminal escape included. */
+export function displayId(id: string): string {
+  return /^[A-Za-z0-9._-]{1,64}$/.test(id) ? id : 'another run id (not shown)';
+}
+
+/** `run '<id>'` for an id text may show; `another run id (not shown)` for any other. */
+function runRef(id: string): string {
+  const shown = displayId(id);
+  return shown === id ? `run '${id}'` : shown;
 }
 
 /** The file's name without `.json` — a run file's run id, a registered copy's workflow id. */
@@ -98,8 +153,13 @@ export function describeStoredFileFault(facts: UnreadableFileFacts): string {
       const tail = more > 0 ? `; …and ${more} more` : '';
       return `is JSON but not a run record (${named.join('; ')}${tail})`;
     }
-    case 'mismatched':
-      return `holds run '${facts.held_id ?? ''}', not '${fileId(facts.path)}'`;
+    case 'mismatched': {
+      const held = facts.held_id ?? '';
+      const shown = displayId(held);
+      return shown === held
+        ? `holds run '${held}', not '${fileId(facts.path)}'`
+        : `holds ${shown}, not '${fileId(facts.path)}'`;
+    }
     case 'legacy':
       return 'is in the format of an earlier Realm';
     case 'unreadable':
@@ -112,86 +172,120 @@ function retryableFor(facts: UnreadableFileFacts): boolean {
   return facts.class === 'unreadable' && isRetryableArtifactErrno(facts.errno ?? 'UNKNOWN');
 }
 
-/** A run file's fault, as its sentence: `The run file '<path>' <fault clause>.` */
+/** A run file's (or the runs folder's) fault, as its sentence — the one place its path is shown:
+ *  `The run file '<path>' <fault clause>.` */
 export function runFileFaultSentence(facts: UnreadableFileFacts): string {
-  return withFullStop(`The run file '${facts.path}' ${describeStoredFileFault(facts)}`);
+  const subject = facts.resource === 'run_folder' ? 'The runs folder' : 'The run file';
+  return withFullStop(`${subject} '${facts.path}' ${describeStoredFileFault(facts)}`);
+}
+
+/** The three side files a run keeps beside its file, named exactly (issue #719, C2). */
+function sideFiles(id: string): string {
+  return (
+    `'${id}${SIDECAR_SUFFIX}', '${TRACE_BUFFER_FILE_PREFIX}${id}-*${TRACE_FILE_SUFFIX}' and ` +
+    `'${SEALED_TRACE_FILE_PREFIX}${id}-*${TRACE_FILE_SUFFIX}'`
+  );
+}
+
+/** The way out of a file, or of the runs folder, that cannot be read — by its errno. */
+function unreadableWayOut(facts: UnreadableFileFacts): string {
+  const folder = facts.resource === 'run_folder';
+  const unchanged = folder ? 'nothing in it was changed' : 'this file was not changed';
+  const errno = facts.errno ?? 'UNKNOWN';
+  let text: string;
+  if (errno === 'EACCES' || errno === 'EPERM') {
+    text = `Give this user read access to it; ${unchanged}.`;
+  } else if (errno === 'EISDIR' && !folder) {
+    text = `It is a folder, not a file: move it out of '${dirname(facts.path)}'; nothing was changed.`;
+  } else if (errno === 'EBUSY' || errno === 'EIO') {
+    text = withFullStop(
+      `${unchanged.charAt(0).toUpperCase()}${unchanged.slice(1)}; the read may succeed if retried`,
+    );
+  } else {
+    text = `Check that it is a ${folder ? 'folder' : 'file'} this user can read; ${unchanged}.`;
+  }
+  return retryableFor(facts) ? `${text} Then retry.` : text;
 }
 
 /**
- * The way out for a damaged run file (issue #719, B5): what to do, and what it does to the run's
- * key and its side files. No new command and no new state — a restore, a repair or a move.
+ * The way out for a damaged run file (issue #719, B5, C2): what to do, and what it does to the
+ * run's key and its side files. No new command and no new state — a restore, a repair or a move.
+ * The file's path is shown once, in the fault sentence; the way out says "it".
  */
 export function runFileWayOut(facts: UnreadableFileFacts): string {
+  if (facts.class === 'unreadable') return unreadableWayOut(facts);
   const folder = dirname(facts.path);
   const id = fileId(facts.path);
-  const moveWithSideFiles = `move it out of '${folder}' together with every file there whose name contains '${id}'`;
   const keyEffect =
     'If it held an idempotency key, the next delivery with that key starts a new run.';
   switch (facts.class) {
     case 'empty':
     case 'parse':
     case 'not_a_run':
-      return withFullStop(
-        `Restore '${facts.path}' from a backup or repair it; the run and its key are kept. Or ` +
-          `${moveWithSideFiles} (its attempt log and trace files; moved alone, they become ` +
-          `orphans that 'realm run gc --force' deletes). ${keyEffect}`,
+      return (
+        `Restore it from a backup or repair it: the run keeps its record and its idempotency ` +
+        `key. Or move it out of '${folder}' together with ${sideFiles(id)} (moved alone, they ` +
+        `become orphans that 'realm run gc --older-than <age> --force' deletes). ${keyEffect}`
+      );
+    case 'legacy':
+      return (
+        `It was written by an earlier Realm, in a format this version cannot read. Move it out ` +
+        `of '${folder}' together with ${sideFiles(id)}. ${keyEffect}`
       );
     case 'mismatched': {
       const held = facts.held_id ?? '';
-      return withFullStop(
-        `It is named '${id}' but holds run '${held}'. If it is a copy, move it out of ` +
-          `'${folder}'; run '${held}' is not affected`,
+      // An id text may not show was never looked up (`held_present` absent): nothing is claimed
+      // about the run it names.
+      if (facts.held_present === undefined)
+        return `It holds ${runRef(held)}; move it out of '${folder}'.`;
+      if (facts.held_present) {
+        return (
+          `It is a copy of run '${held}', whose own file is readable; move it out of ` +
+          `'${folder}' — nothing else changes.`
+        );
+      }
+      return (
+        `It holds run '${held}', whose own file is missing: rename it to '${held}.json' to ` +
+        `restore that run, or move it out of '${folder}'.`
       );
     }
-    case 'legacy':
-      return withFullStop(
-        `It was written by an earlier Realm. Restore it from a backup of that version, or ` +
-          `${moveWithSideFiles}. ${keyEffect}`,
-      );
-    case 'unreadable':
-      return (
-        withFullStop(
-          `Check that '${facts.path}' is a file this user can read; this file was not changed`,
-        ) + (retryableFor(facts) ? ' Then retry.' : '')
-      );
   }
 }
 
-/** The sentence a keyed create adds (issue #719, B4). */
-const KEYED_CREATE_SENTENCE =
-  'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.';
+/** The sentence a keyed create adds (issue #719, B4, C2), by what the file refuses. The key itself
+ *  is never echoed. */
+function keyedCreateSentence(refused: NonNullable<UnreadableFileFacts['refused']>): string {
+  return refused === 'every_new_key'
+    ? 'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.'
+    : 'A run with this idempotency key cannot be created until the file is repaired or moved out.';
+}
 
 /**
- * issue #719 — the ONE composer for a damaged stored file's message, data in: built from the facts
- * alone (no error object, no record, no parser text), so every surface — and #729 PR-0's renderers
- * — says the same words. A run file: its fault sentence, the keyed-create sentence when asked, and
- * the way out. A registered workflow copy: the registrar's subject and the fault clause (its repair
- * act is the registrar's own, `repairActFor`).
+ * issue #719 — the ONE composer for a damaged stored file's message, from its facts alone (no error
+ * object, no record, no parser text, no options), so every surface — and #729 PR-0's renderers —
+ * says the same words. A run file or the runs folder: its fault sentence, the keyed-create
+ * sentence when the facts carry `refused`, and the way out. A registered workflow copy: the
+ * registrar's subject and the fault clause (its repair act is the registrar's own, `repairActFor`).
  */
-export function renderUnreadableStoredFile(
-  facts: UnreadableFileFacts,
-  options: { keyedCreate?: boolean } = {},
-): string {
+export function renderUnreadableStoredFile(facts: UnreadableFileFacts): string {
   if (facts.resource === 'workflow_copy') {
     return `the registered copy of '${fileId(facts.path)}' ${describeStoredFileFault(facts)}`;
   }
   return [
     runFileFaultSentence(facts),
-    ...(options.keyedCreate === true ? [KEYED_CREATE_SENTENCE] : []),
+    ...(facts.refused !== undefined ? [keyedCreateSentence(facts.refused)] : []),
     runFileWayOut(facts),
   ].join(' ');
 }
 
 /**
- * The typed error for a damaged run file (issue #719, B2): `unreadable` → `ENGINE_STORE_FAILED`
- * (retryable by its errno); `legacy` → `STATE_LEGACY_FORMAT`; every other class →
- * `RESOURCE_FORMAT_INVALID`. Its details are the facts.
+ * The typed error for a damaged run file or an unreadable runs folder (issue #719, B2):
+ * `unreadable` → `ENGINE_STORE_FAILED` (retryable by its errno); `legacy` → `STATE_LEGACY_FORMAT`;
+ * every other class → `RESOURCE_FORMAT_INVALID`. Its details are the facts; its message is the
+ * composer's.
  */
-export function unreadableRunFileError(
-  facts: UnreadableFileFacts,
-  options: { keyedCreate?: boolean } = {},
-): WorkflowError {
-  const message = renderUnreadableStoredFile(facts, options);
+export function unreadableRunFileError(facts: UnreadableFileFacts): WorkflowError {
+  const message = renderUnreadableStoredFile(facts);
   const details = { ...facts } as unknown as Record<string, unknown>;
   if (facts.class === 'unreadable') {
     return new WorkflowError(message, {
@@ -221,36 +315,26 @@ export function unreadableRunFileError(
 }
 
 /**
- * The runs folder itself cannot be read (issue #719, B1): `ENGINE_STORE_FAILED` naming the folder,
- * retryable by its errno.
+ * The runs folder itself cannot be read, or made (issue #719, B1, C3): `ENGINE_STORE_FAILED` naming
+ * the folder, retryable by its errno, through the one composer.
  */
 export function runsFolderUnreadableError(folder: string, err: unknown): WorkflowError {
   const errno = err instanceof FsIoError ? err.code : (errnoCode(err) ?? 'UNKNOWN');
-  const facts: UnreadableFileFacts = {
-    resource: 'run_file',
+  return unreadableRunFileError({
+    resource: 'run_folder',
     class: 'unreadable',
     path: folder,
     errno,
-  };
-  const retryable = retryableFor(facts);
-  return new WorkflowError(
-    `The runs folder '${folder}' cannot be read (${errno}). Check that '${folder}' is a folder ` +
-      `this user can read; nothing in it was changed.${retryable ? ' Then retry.' : ''}`,
-    {
-      code: 'ENGINE_STORE_FAILED',
-      category: 'ENGINE',
-      agentAction: 'stop',
-      retryable,
-      details: { ...facts },
-    },
-  );
+  });
 }
 
 /**
- * issue #719 (R10, B3) — a decision over EVERY run (`realm run reconcile`, `realm run gc --heal`)
- * fails closed when any run file cannot be read: ONE error naming every such file, and nothing is
+ * issue #719 (R10, B3, C3) — a decision over EVERY run (`realm run reconcile`,
+ * `realm run gc --heal`) fails closed when any run file cannot be read: ONE error naming every such file, and nothing is
  * written. `RESOURCE_FORMAT_INVALID` when every file's fault is in its bytes, else
- * `ENGINE_STORE_FAILED`.
+ * `ENGINE_STORE_FAILED`. `command` is the exact command the operator ran, flags included, as its
+ * caller passes it. Its details are typed ({@link UnreadableRunFilesFacts}); read them through
+ * {@link unreadableRunFilesOf}.
  */
 export function unreadableRunFilesError(
   command: string,
@@ -261,14 +345,20 @@ export function unreadableRunFilesError(
   const lines = [
     `${command} did not run: ${files.length} run file(s) in '${runsFolder}' could not be read:`,
     ...files.map((f) => `  ${f.path}: ${describeStoredFileFault(f)}`),
-    `Repair, restore or move each one out ('realm run list' shows each file's way out), then run ${command} again.`,
+    `Repair, restore or move each one out ('realm run list' shows each file's way out), then ` +
+      `run ${quotedCommand(command)} again.`,
   ];
+  const facts: UnreadableRunFilesFacts = {
+    command,
+    folder: runsFolder,
+    files: files.map((f) => ({ ...f })),
+  };
   return new WorkflowError(lines.join('\n'), {
     code: anyUnreadable ? 'ENGINE_STORE_FAILED' : 'RESOURCE_FORMAT_INVALID',
     category: anyUnreadable ? 'ENGINE' : 'RESOURCE',
     agentAction: 'stop',
     retryable: files.length > 0 && files.every(retryableFor),
-    details: { files: files.map((f) => ({ ...f })) },
+    details: facts as unknown as Record<string, unknown>,
   });
 }
 
@@ -284,13 +374,43 @@ export type RunFileReading =
     };
 
 /**
+ * issue #719 (C1): whether a damaged run file can concern a workflow — the ONE scope predicate of
+ * the keyed fallback scan and of every workflow-scoped read. False when the file is JSON that is
+ * not an object (it names no workflow and holds no key), and when its object names ANOTHER
+ * workflow by a string `workflow_id`; true otherwise — a file whose content cannot be read
+ * (`unreadable`, `empty`, not JSON), an object with no string `workflow_id`, or one naming this
+ * workflow.
+ */
+export function damagedFileConcerns(
+  reading: { facts: UnreadableFileFacts; object?: Record<string, unknown> },
+  workflowId: string,
+): boolean {
+  if (reading.facts.class === 'parse' && reading.facts.shape !== undefined) return false;
+  const named = reading.object?.['workflow_id'];
+  return !(typeof named === 'string' && named !== workflowId);
+}
+
+/**
  * Reads one run file and says what it holds, in this order (issue #719, B1): a read error other
  * than `ENOENT` → `unreadable`; `ENOENT` → absent; zero bytes or whitespace only → `empty`; not
  * JSON, or JSON that is not an object → `parse`; an object with `state` and without
  * `completed_steps` → `legacy`; an object that is not a run record → `not_a_run`; a record whose
- * `id` is not the file's name → `mismatched`. No class is decided from the parser's message.
+ * `id` is not the file's name → `mismatched`, with whether the run it holds reads from its own file
+ * (`held_present`). No class is decided from the parser's message.
  */
 export async function inspectRunFile(path: string, expectedId: string): Promise<RunFileReading> {
+  const reading = await classifyRunFile(path, expectedId);
+  if (reading.kind !== 'damaged' || reading.facts.class !== 'mismatched') return reading;
+  const held = reading.facts.held_id ?? '';
+  // Only an id that names a file in this folder (no separator, no `..` path) is looked up.
+  if (displayId(held) !== held) return reading;
+  const heldReading = await classifyRunFile(join(dirname(path), `${held}.json`), held);
+  return { ...reading, facts: { ...reading.facts, held_present: heldReading.kind === 'record' } };
+}
+
+/** {@link inspectRunFile}'s classes, without the held run's look-up (so a chain of copies never
+ *  reads more than one more file). */
+async function classifyRunFile(path: string, expectedId: string): Promise<RunFileReading> {
   let raw: string | undefined;
   try {
     raw = await readIfExists(path);

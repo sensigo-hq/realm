@@ -288,8 +288,9 @@ export type StuckDefinitionProbe =
  *                          {@link StuckDefinitionProbe}. `undefined` ⇒ zero findings, no footer.
  * @param listing           issue #719 (R15): the whole listing (`listRunsDiagnosed`), when the
  *                          caller has read it — then `store.list()` is not called, so one damaged
- *                          run file never hides the rest. When every file is damaged, the output
- *                          says `No readable runs found.`; the caller prints the damaged files.
+ *                          run file never hides the rest. When damaged files exist and no
+ *                          readable run matches, the output says `No readable runs found` (with
+ *                          the filter); the caller prints the damaged files.
  * @returns                 Formatted output string.
  */
 export async function listRuns(
@@ -303,9 +304,9 @@ export async function listRuns(
   listing?: RunListing,
 ): Promise<string> {
   const runs = listing !== undefined ? listing.records : await store.list(workflowId);
-  if (runs.length === 0 && listing !== undefined && listing.unreadable.length > 0) {
-    return 'No readable runs found.';
-  }
+  // issue #719 (C2): with damaged run files in the store, an empty result says "readable" — stdout
+  // alone (piped, or with stderr gone) must not say no run matched when a damaged file may be one.
+  const damaged = listing !== undefined && listing.unreadable.length > 0;
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   let filtered = runs;
@@ -396,9 +397,18 @@ export async function listRuns(
 
   if (filtered.length === 0) {
     const scope = workflowId !== undefined ? ` for workflow '${workflowId}'` : '';
-    return stuck === true
-      ? `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`
-      : `No runs found${scope}.`;
+    const readable = damaged ? 'readable ' : '';
+    if (stuck === true) {
+      return `No ${readable}stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`;
+    }
+    if (!damaged) return `No runs found${scope}.`;
+    const filters = [
+      ...(workflowId !== undefined ? [`workflow '${workflowId}'`] : []),
+      ...(statusFilter !== undefined ? [`status '${statusFilter}'`] : []),
+    ];
+    return filters.length > 0
+      ? `No readable runs found for ${filters.join(' and ')}.`
+      : 'No readable runs found.';
   }
 
   filtered.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());

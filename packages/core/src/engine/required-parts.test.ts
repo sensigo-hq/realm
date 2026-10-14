@@ -4,6 +4,7 @@
 // names and type words only) and the store calls — never a value.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -111,7 +112,7 @@ const CALL: Record<EngineEntry, (s: RunStore, p: Parts) => Promise<unknown>> = {
     submitHumanResponse(s, p['definition'] as never, p['options'] as never),
   abandonRun: (s, p) => abandonRun(s, p['runId'] as never, p['reason'] as never),
   drainFinalizers: (s, p) =>
-    drainFinalizers(s, p['definition'] as never, undefined, p['runId'] as never),
+    drainFinalizers(s, p['definition'] as never, p['registry'] as never, p['runId'] as never),
   getWorkflowForRun: (s, p) => getWorkflowForRun(s as never, p['run'] as never, p['opts'] as never),
   reclaimStep: (s, p) =>
     reclaimStep(s, p['runId'] as never, p['stepName'] as never, p['options'] as never),
@@ -495,4 +496,259 @@ describe('issue #719 A2 (R2) — `run` must be a run record', () => {
       );
     },
   );
+});
+
+describe('issue #719 C4 — a wrong registry is refused where it was handed in, before any read', () => {
+  const REGISTRY_AT: Array<[EngineEntry, string]> = [
+    ['executeStep', 'options.registry'],
+    ['executeChain', 'options.registry'],
+    ['executeEngineStep', 'options.registry'],
+    ['advanceRun', 'options.registry'],
+    ['submitHumanResponse', 'options.registry'],
+    ['drainFinalizers', 'registry'],
+  ];
+  const WRONG: Array<[string, unknown]> = [
+    ['a string', 'x'],
+    ['a number', 7],
+    ['an empty object', {}],
+    ['null', null],
+  ];
+  it.each(REGISTRY_AT.flatMap(([e, at]) => WRONG.map(([label, v]) => [e, at, label, v] as const)))(
+    '%s: %s as %s',
+    async (entry, at, _label, value) => {
+      // (a) red when a registry the engine cannot call is admitted (it then claims the step and
+      //     fails it with a bare TypeError, walk S1); (b) prints the outcome.
+      expect(await outcome(entry, withPart(BASE[entry](), at, value))).toEqual({
+        code: 'VALIDATION_OPTION_INVALID',
+        invalid: [at],
+        calls: [],
+      });
+    },
+  );
+
+  it("the details name it 'an extension registry', by its type word only", async () => {
+    const { s } = trapStore();
+    const err = (await advanceRun(s, AGENT, { runId: 'r', registry: 'SECRETVALUE' } as never).catch(
+      (e: unknown) => e,
+    )) as { details?: { invalid?: unknown }; message?: string };
+    // (a) red when the expected phrase or the type word changes, or the value is echoed; (b)
+    //     prints the details and whether the message holds the value.
+    expect({
+      invalid: err.details?.invalid,
+      echoed: String(err.message).includes('SECRETVALUE'),
+    }).toEqual({
+      invalid: [
+        { option: 'options.registry', expected: 'an extension registry', given_type: 'string' },
+      ],
+      echoed: false,
+    });
+  });
+});
+
+describe('issue #719 C4 — a member that is not an option of the entry is refused, not ignored', () => {
+  const UNKNOWN_AT: Array<[EngineEntry, string]> = [
+    ['executeStep', 'options.bogusOption'],
+    ['executeChain', 'options.bogusOption'],
+    ['executeEngineStep', 'options.bogusOption'],
+    ['advanceRun', 'options.bogusOption'],
+    ['submitHumanResponse', 'options.bogusOption'],
+    ['getWorkflowForRun', 'opts.bogusOption'],
+    ['reclaimStep', 'options.bogusOption'],
+  ];
+  it.each(UNKNOWN_AT)('%s: %s', async (entry, at) => {
+    const parts = entry === 'reclaimStep' ? { ...BASE[entry](), options: {} } : BASE[entry]();
+    // (a) red when an unknown member is silently ignored; (b) prints the outcome.
+    expect(await outcome(entry, withPart(parts, at, true))).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      invalid: [at],
+      calls: [],
+    });
+  });
+
+  it("0.46.0's advanceRun options (a dispatcher and an input) are refused, both named, as text", async () => {
+    const { s, calls } = trapStore();
+    const err = (await advanceRun(s, AGENT, {
+      runId: 'r',
+      dispatcher,
+      input: { a: 1 },
+    } as never).catch((e: unknown) => e)) as {
+      code?: string;
+      message?: string;
+      details?: { invalid?: unknown };
+    };
+    // (a) red when an upgraded host's dispatcher is dropped without a word (walk S2); (b) prints
+    //     the code, the details, the message (type words only) and the store calls.
+    expect({ code: err.code, invalid: err.details?.invalid, message: err.message, calls }).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      invalid: [
+        {
+          option: 'options.dispatcher',
+          expected: 'not an option of advanceRun',
+          given_type: 'function',
+        },
+        { option: 'options.input', expected: 'not an option of advanceRun', given_type: 'object' },
+      ],
+      message:
+        'advanceRun was called with 2 invalid option(s): options.dispatcher is not an option of ' +
+        'advanceRun (got function); options.input is not an option of advanceRun (got object). ' +
+        'Nothing was read or written.',
+      calls: [],
+    });
+  });
+});
+
+describe('issue #719 C2 — "at once" has one stated limit: the dispatcher is judged once the definition and command are sound', () => {
+  it.each([
+    ['definition.steps', 'x'],
+    ['options.command', 7],
+  ])(
+    'executeStep with %s defective and no dispatcher for an agent step: only that part is named',
+    async (path, value) => {
+      const parts = withPart(
+        withPart(BASE.executeStep(), 'options.dispatcher', ABSENT),
+        path,
+        value,
+      );
+      // (a) red when the docs' limit stops being true (the dispatcher named while the step it is
+      //     for cannot be known); (b) prints the outcome.
+      expect(await outcome('executeStep', parts)).toEqual({
+        code: 'VALIDATION_OPTION_INVALID',
+        invalid: [path],
+        calls: [],
+      });
+    },
+  );
+});
+
+describe('issue #719 C4 — the dispatcher is type-checked whenever it is given', () => {
+  it.each([
+    [
+      'a uses_service step',
+      { description: 'd', execution: 'auto', uses_service: 's', operation: 'o' } as StepDefinition,
+    ],
+    ['a handler step', { description: 'd', execution: 'auto', handler: 'h' } as StepDefinition],
+  ])('%s with a dispatcher that is not a function: refused', async (_label, step) => {
+    const parts = withPart(
+      { ...BASE.executeStep(), definition: defWith(step) },
+      'options.dispatcher',
+      'x',
+    );
+    // (a) red when a dispatcher is checked only when the step needs one; (b) prints the outcome.
+    expect(await outcome('executeStep', parts)).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      invalid: ['options.dispatcher'],
+      calls: [],
+    });
+  });
+});
+
+describe('issue #719 C4 — null, one rule: undefined is absent, null is refused for every typed member', () => {
+  it.each(TYPED.map(([entry, path]) => [entry, path] as const))(
+    '%s: %s as null',
+    async (entry, path) => {
+      // (a) red when a null optional member is taken for absent (a default) instead of refused;
+      //     (b) prints the outcome.
+      expect(await outcome(entry, withPart(BASE[entry](), path, null))).toEqual({
+        code: 'VALIDATION_OPTION_INVALID',
+        invalid: [path],
+        calls: [],
+      });
+    },
+  );
+
+  it.each([
+    ['options.driver', 'VALIDATION_ACTOR_INVALID'],
+    ['options.caller', 'VALIDATION_CALLER_INVALID'],
+  ])(
+    'guard: executeStep with %s null is refused by its own row, before any read',
+    async (path, code) => {
+      // (b) prints the code and the store calls.
+      const o = await outcome('executeStep', withPart(BASE.executeStep(), path, null));
+      expect({ code: o.code, calls: o.calls }).toEqual({ code, calls: [] });
+    },
+  );
+});
+
+describe('issue #719 C4 — a step that is not an object, and a missing store', () => {
+  it.each(['executeStep', 'executeChain'] as const)(
+    '%s: a command naming a null step — admission does not throw; the call goes on',
+    async (entry) => {
+      const parts = {
+        ...BASE[entry](),
+        definition: { id: 'w', name: 'w', version: 1, steps: { work: null } },
+      };
+      const { s, calls } = trapStore();
+      const err = await CALL[entry](s, parts).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      // (a) red when admission throws a bare TypeError reading the null step; (b) prints whether
+      //     the error is a TypeError and whether the store was reached.
+      expect({ typeError: err instanceof TypeError, reachedStore: calls.length > 0 }).toEqual({
+        typeError: false,
+        reachedStore: true,
+      });
+    },
+  );
+
+  const STORE_KIND: Record<EngineEntry, string> = {
+    executeStep: 'a run store',
+    executeChain: 'a run store',
+    executeEngineStep: 'a run store',
+    advanceRun: 'a run store',
+    submitHumanResponse: 'a run store',
+    abandonRun: 'a run store',
+    drainFinalizers: 'a run store',
+    reclaimStep: 'a run store',
+    getWorkflowForRun: 'a workflow store',
+  };
+  it.each(
+    (Object.keys(STORE_KIND) as EngineEntry[]).flatMap((e) => [
+      [e, 'null', null] as const,
+      [e, 'undefined', undefined] as const,
+    ]),
+  )(
+    '%s: a %s store is the missing part, named — not release-line advice',
+    async (entry, label, store) => {
+      const err = (await CALL[entry](store as never, BASE[entry]()).catch((e: unknown) => e)) as {
+        code?: string;
+        details?: { invalid?: unknown };
+        message?: string;
+      };
+      // (a) red when an absent store gets ENGINE_RELEASE_LINE_UNDECLARED ("declare it once"); (b)
+      //     prints the code, the details and the message.
+      expect({ code: err.code, invalid: err.details?.invalid, message: err.message }).toEqual({
+        code: 'VALIDATION_OPTION_INVALID',
+        invalid: [{ option: 'store', expected: STORE_KIND[entry], given_type: label }],
+        message: `${entry} was called with 1 invalid option(s): store must be ${STORE_KIND[entry]} (got ${label}). Nothing was read or written.`,
+      });
+    },
+  );
+});
+
+describe('issue #719 C4 — the Date check is a brand check', () => {
+  it('a Date from another realm is accepted: the call goes on to its store', async () => {
+    const foreign = runInNewContext('new Date(0)') as unknown;
+    const o = await outcome('advanceRun', withPart(BASE.advanceRun(), 'options.now', foreign));
+    // (a) red when a valid Date of another realm is refused (`instanceof`); (b) prints the outcome.
+    expect({ refused: o.code === 'VALIDATION_OPTION_INVALID', used: o.calls.length > 0 }).toEqual({
+      refused: false,
+      used: true,
+    });
+  });
+
+  it('an object that only inherits Date.prototype is refused as not a valid Date, never a TypeError', async () => {
+    const fake = Object.create(Date.prototype) as unknown;
+    const { s, calls } = trapStore();
+    const err = (await advanceRun(s, AGENT, { runId: 'r', now: fake } as never).catch(
+      (e: unknown) => e,
+    )) as { code?: string; details?: { invalid?: unknown } };
+    // (a) red when `getTime()` throws inside admission ("this is not a Date object."); (b) prints
+    //     the code, the details and the store calls.
+    expect({ code: err.code, invalid: err.details?.invalid, calls }).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      invalid: [{ option: 'options.now', expected: 'a valid Date', given_type: 'object' }],
+      calls: [],
+    });
+  });
 });

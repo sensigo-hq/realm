@@ -13,10 +13,11 @@ import {
   readFileSync,
   symlinkSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JsonFileStore } from '@sensigo/realm';
+import { JsonFileStore, abandonRun, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -56,14 +57,29 @@ async function readableRun(): Promise<string> {
   return run.id;
 }
 
+/** A readable run of workflow `w`, with `over` written into its file. */
+async function runWith(over: Record<string, unknown>): Promise<string> {
+  const id = await readableRun();
+  const file = join(runs, `${id}.json`);
+  const rec = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+  writeFileSync(file, JSON.stringify({ ...rec, ...over }, null, 2));
+  return id;
+}
+
+/** A file's bytes, as a hash — a cell compares two hashes, never the bytes. */
+const hashOf = (p: string) => createHash('sha256').update(readFileSync(p)).digest('hex');
+
 const BAD = 'bad';
 const badPath = () => join(runs, `${BAD}.json`);
-const wayOut = (p: string, id: string) =>
-  `Restore '${p}' from a backup or repair it; the run and its key are kept. Or move it out of ` +
-  `'${runs}' together with every file there whose name contains '${id}' (its attempt log and ` +
-  `trace files; moved alone, they become orphans that 'realm run gc --force' deletes). If it held ` +
-  `an idempotency key, the next delivery with that key starts a new run.`;
-const badLine = () => `⚠ The run file '${badPath()}' is not JSON. ${wayOut(badPath(), BAD)}`;
+/** issue #719 (C2): the way out of a file that is empty, not JSON or not a run — the path said
+ *  once (in the fault sentence), the three side files named exactly. */
+const wayOut = (id: string) =>
+  `Restore it from a backup or repair it: the run keeps its record and its idempotency key. Or ` +
+  `move it out of '${runs}' together with '${id}.attempts.jsonl', 'trace-buffer-${id}-*.jsonl' ` +
+  `and 'sealed-trace-${id}-*.jsonl' (moved alone, they become orphans that 'realm run gc ` +
+  `--older-than <age> --force' deletes). If it held an idempotency key, the next delivery with ` +
+  `that key starts a new run.`;
+const badLine = () => `⚠ The run file '${badPath()}' is not JSON. ${wayOut(BAD)}`;
 
 describe('issue #719 — realm run list: the readable runs on stdout, each damaged file on stderr, exit 0', () => {
   it.each([[[]], [['--workflow', 'w']], [['--status', 'running']], [['--stuck']]])(
@@ -91,29 +107,136 @@ describe('issue #719 — realm run list: the readable runs on stdout, each damag
       lines: 2,
     });
   });
+
+  it.each([
+    [['--workflow', 'other'], "No readable runs found for workflow 'other'."],
+    [['--status', 'completed'], "No readable runs found for status 'completed'."],
+    [
+      ['--workflow', 'w', '--status', 'completed'],
+      "No readable runs found for workflow 'w' and status 'completed'.",
+    ],
+  ])(
+    'a filter no readable run matches, with a damaged file present: %j says "readable" and the filter (C2)',
+    async (flags, text) => {
+      await readableRun();
+      writeFileSync(badPath(), '{ not json');
+      const r = realm(['run', 'list', ...flags]);
+      // (a) red when stdout says no run matched while a damaged file may be one (walk M5), or
+      //     drops the filter; (b) prints the exit and stdout.
+      expect({ code: r.code, out: r.out.trim() }).toEqual({ code: 0, out: text });
+    },
+  );
+
+  it('guard: no damaged file and a filter that matches nothing: the shipped text', async () => {
+    await readableRun();
+    const r = realm(['run', 'list', '--workflow', 'other']);
+    expect({ code: r.code, out: r.out.trim() }).toEqual({
+      code: 0,
+      out: "No runs found for workflow 'other'.",
+    });
+  });
 });
 
 describe('issue #719 — the commands that act on runs act on the readable ones and name the rest', () => {
-  const BATCH: Array<[string, string[], string, number]> = [
-    ['cleanup', ['run', 'cleanup', '--older-than', '0m'], 'realm run cleanup', 0],
-    ['purge', ['run', 'purge', '--older-than', '0m'], 'realm run purge', 0],
-    ['reclaim --all', ['run', 'reclaim', '--all'], 'realm run reclaim --all', 0],
-    ['drain --all', ['run', 'drain', '--all'], 'realm run drain --all', 0],
+  /** A registered copy of workflow `w` whose step `s` is idempotent (for `reclaim --all`). */
+  const registerW = () => {
+    const dir = join(home, '.realm', 'workflows');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'w.json'),
+      JSON.stringify({
+        id: 'w',
+        name: 'w',
+        version: 1,
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+        steps: { s: { description: 'S.', execution: 'auto', idempotent: true } },
+      }),
+    );
+  };
+  const DONE = {
+    terminal_state: true,
+    run_phase: 'completed',
+    terminal_reason: 'Workflow completed.',
+  };
+  /** Each command: a readable run it acts on, its args, the stdout line that says it acted, its
+   *  name in the count line, and its exit. */
+  const BATCH: Array<
+    [string, () => Promise<unknown>, string[], (id: string) => string, string, number]
+  > = [
+    [
+      'cleanup',
+      () => runWith({}),
+      ['run', 'cleanup', '--older-than', '0m'],
+      () => 'Marked 1 run(s) as abandoned.',
+      'realm run cleanup',
+      0,
+    ],
+    [
+      'purge --force',
+      async () => {
+        const id = await readableRun();
+        await abandonRun(new JsonFileStore(runs), id, 'old');
+        return id;
+      },
+      ['run', 'purge', '--older-than', '0m', '--force'],
+      () => 'Purged 1/1 run(s)',
+      'realm run purge',
+      0,
+    ],
+    [
+      'reclaim --all',
+      async () => {
+        registerW();
+        return runWith({
+          in_progress_steps: ['s'],
+          claims: { s: { deadline: '2020-01-01T00:00:00.000Z' } },
+        });
+      },
+      ['run', 'reclaim', '--all'],
+      (id) => `  • ${id} / s  (deadline 2020-01-01T00:00:00.000Z,`,
+      'realm run reclaim --all',
+      0,
+    ],
+    [
+      'drain --all',
+      () =>
+        runWith({
+          ...DONE,
+          sealed_by: { arm: 'complete' },
+          finalizer_ledger: { fin: { status: 'pending', rank: 0 } },
+        }),
+      ['run', 'drain', '--all'],
+      (id) => `  • ${id}`,
+      'realm run drain --all',
+      0,
+    ],
     [
       'migrate --stamp-seals --detailed-exitcode',
+      () => runWith(DONE),
       ['run', 'migrate', '--stamp-seals', '--detailed-exitcode'],
+      (id) => `  • ${id}: complete (phase completed)`,
       'realm run migrate',
       2,
     ],
   ];
-  it.each(BATCH)('%s', async (_label, args, command, code) => {
-    await readableRun();
+  it.each(BATCH)('%s', async (_label, seed, args, actedLine, command, code) => {
+    const id = (await seed()) as string;
     writeFileSync(badPath(), '{ not json');
+    const before = hashOf(badPath());
     const r = realm(args);
-    // (a) red when the command fails or crashes on the damaged file, acts on it, or does not name
-    //     it; (b) prints the exit and stderr.
-    expect({ code: r.code, err: r.err }).toEqual({
+    // (a) red when the command fails or crashes on the damaged file, stops acting on the readable
+    //     run once a file is damaged, touches the damaged file, or does not name it; (b) prints the
+    //     exit, whether stdout says it acted on the readable run, whether the damaged file's bytes
+    //     are unchanged (hashes compared, never shown) and stderr.
+    expect({
+      code: r.code,
+      acted: r.out.split('\n').some((l) => l.startsWith(actedLine(id))),
+      untouched: hashOf(badPath()) === before,
+      err: r.err,
+    }).toEqual({
       code,
+      acted: true,
+      untouched: true,
       err: [
         badLine(),
         `⚠ 1 run file(s) in '${runs}' could not be read; ${command} did not act on them.`,
@@ -121,17 +244,35 @@ describe('issue #719 — the commands that act on runs act on the readable ones 
     });
   });
 
-  it('cleanup acts on the readable run; migrate counts the damaged file as unclassifiable', async () => {
-    await readableRun();
+  it('migrate: the damaged file in its own group, and the residue counts no file as a terminal run (C2)', async () => {
+    await runWith(DONE);
     writeFileSync(badPath(), '{ not json');
-    const cleaned = realm(['run', 'cleanup', '--older-than', '0m']);
-    const migrated = realm(['run', 'migrate', '--stamp-seals']);
-    // (b) prints the two stdout lines that say so.
+    const r = realm(['run', 'migrate', '--stamp-seals']);
+    const lines = r.out.split('\n');
+    // (a) red when a damaged file is counted as a terminal run without a seal arm, or listed as a
+    //     run that could not be classified; (b) prints the exit and the three lines.
     expect({
-      marked: cleaned.out.includes('Marked 1 run(s) as abandoned.'),
-      unclassifiable: migrated.out.includes(`  • ${BAD}: is not JSON`),
-      migrateExit: migrated.code,
-    }).toEqual({ marked: true, unclassifiable: true, migrateExit: 0 });
+      code: r.code,
+      group: lines.includes('1 run file(s) could not be read and were left untouched:'),
+      bullet: lines.includes(`  • ${BAD}: is not JSON`),
+      notClassified: lines.some((l) => l.includes('could NOT be classified')),
+      residue: lines.find((l) => l.startsWith('Residue:')),
+    }).toEqual({
+      code: 0,
+      group: true,
+      bullet: true,
+      notClassified: false,
+      residue:
+        'Residue: 1 terminal run(s) still without a recorded seal arm; 1 run file(s) could not be read.',
+    });
+  });
+
+  it('guard: migrate on a store with no damaged file keeps its residue line', async () => {
+    await runWith(DONE);
+    const r = realm(['run', 'migrate', '--stamp-seals']);
+    expect(r.out.split('\n').find((l) => l.startsWith('Residue:'))).toBe(
+      'Residue: 1 terminal run(s) still without a recorded seal arm.',
+    );
   });
 });
 
@@ -161,7 +302,7 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
     expect({
       code: r.code,
       fault: text.includes(`The run file '${badPath()}' is not JSON.`),
-      wayOut: text.includes(wayOut(badPath(), BAD)),
+      wayOut: text.includes(wayOut(BAD)),
     }).toEqual({ code: 1, fault: true, wayOut: true });
   });
 
@@ -183,7 +324,7 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
     expect({
       code: r.code,
       fault: text.includes(`The run file '${badPath()}' is not JSON.`),
-      wayOut: text.includes(wayOut(badPath(), BAD)),
+      wayOut: text.includes(wayOut(BAD)),
     }).toEqual({ code: 1, fault: true, wayOut: true });
   });
 
@@ -206,25 +347,33 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
 
 describe('issue #719 — a decision over every run fails closed, naming every damaged file, exit 1', () => {
   const tail = (command: string) =>
-    `Repair, restore or move each one out ('realm run list' shows each file's way out), then run ${command} again.`;
+    `Repair, restore or move each one out ('realm run list' shows each file's way out), then run '${command}' again.`;
 
-  it('realm run reconcile: one error naming both, no pointer written', async () => {
-    await readableRun();
-    writeFileSync(badPath(), '{ not json');
-    writeFileSync(join(runs, 'empty.json'), '');
-    const r = realm(['run', 'reconcile']);
-    // (a) red when it reconciles past them, or names only the first; (b) prints exit and stderr.
-    expect({ code: r.code, err: r.err, keys: existsSync(join(runs, 'keys')) }).toEqual({
-      code: 1,
-      err: [
-        `realm run reconcile did not run: 2 run file(s) in '${runs}' could not be read:`,
-        `  ${badPath()}: is not JSON`,
-        `  ${join(runs, 'empty.json')}: is empty`,
-        tail('realm run reconcile'),
-      ],
-      keys: false,
-    });
-  });
+  it.each([
+    [['run', 'reconcile'], 'realm run reconcile'],
+    [['run', 'reconcile', '--dry-run'], 'realm run reconcile --dry-run'],
+    [['run', 'reconcile', '--workflow', 'w'], 'realm run reconcile --workflow w'],
+  ])(
+    '%j: one error naming both, the exact command to run again, no pointer written',
+    async (args, command) => {
+      await readableRun();
+      writeFileSync(badPath(), '{ not json');
+      writeFileSync(join(runs, 'empty.json'), '');
+      const r = realm(args);
+      // (a) red when it reconciles past them, names only the first, or tells the operator to run
+      //     a command other than the one they ran (flags dropped); (b) prints exit and stderr.
+      expect({ code: r.code, err: r.err, keys: existsSync(join(runs, 'keys')) }).toEqual({
+        code: 1,
+        err: [
+          `${command} did not run: 2 run file(s) in '${runs}' could not be read:`,
+          `  ${badPath()}: is not JSON`,
+          `  ${join(runs, 'empty.json')}: is empty`,
+          tail(command),
+        ],
+        keys: false,
+      });
+    },
+  );
 
   it('realm run gc --heal --force: one error naming both, nothing healed', async () => {
     const id = await readableRun();
@@ -241,11 +390,11 @@ describe('issue #719 — a decision over every run fails closed, naming every da
       code: r.code,
       named: [
         text.includes(
-          `realm run gc --heal did not run: 2 run file(s) in '${runs}' could not be read:`,
+          `realm run gc --heal --force did not run: 2 run file(s) in '${runs}' could not be read:`,
         ),
         text.includes(`  ${badPath()}: is not JSON`),
         text.includes(`  ${join(runs, 'empty.json')}: is empty`),
-        text.includes(tail('realm run gc --heal')),
+        text.includes(tail('realm run gc --heal --force')),
       ],
       unchanged: readFileSync(file, 'utf8') === before,
     }).toEqual({ code: 1, named: [true, true, true, true], unchanged: true });

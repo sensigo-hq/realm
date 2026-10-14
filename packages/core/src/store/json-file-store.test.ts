@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import lockfile from 'proper-lockfile';
 import retry from 'retry';
 import { JsonFileStore, LOCK_RETRIES } from './json-file-store.js';
-import { unreadableFactsOf } from './run-file.js';
+import { unreadableFactsOf, unreadableRunFilesOf } from './run-file.js';
 import { abandonRun } from '../engine/abandon-run.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -2011,53 +2011,149 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
     });
   });
 
-  describe('keyed create (B4): a damaged file refuses a new key only when it might hold it', () => {
-    const create = () =>
-      st.create({ workflowId: 'wb', workflowVersion: 1, params: {}, idempotencyKey: 'k-719' });
-    const outcome = async () => {
-      const r = await create().then(
+  describe('keyed create (B4, C1): a damaged file refuses a key only when it can affect the create', () => {
+    const create = (workflowId = 'wb') =>
+      st.create({ workflowId, workflowVersion: 1, params: {}, idempotencyKey: 'k-719' });
+    const EVERY =
+      'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.';
+    const THIS =
+      'A run with this idempotency key cannot be created until the file is repaired or moved out.';
+    /** What the create gave: created, or the refusal's code, its `refused` fact and which sentence
+     *  it says (never the key: it is not echoed). */
+    const outcome = async (workflowId = 'wb') =>
+      create(workflowId).then(
         (v) => ({ created: v.created }),
         (e: unknown) => ({
           code: (e as WorkflowError).code,
-          keyed: (e as Error).message.includes(
-            'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.',
-          ),
+          refused: unreadableFactsOf(e)?.refused,
+          sentence: (e as Error).message.includes(EVERY)
+            ? 'every_new_key'
+            : (e as Error).message.includes(THIS)
+              ? 'this_key'
+              : 'none',
         }),
       );
-      return r;
-    };
 
     it.each([
-      ['empty', ''],
-      ['parse', '{not json'],
-    ])('a %s file of another workflow: its key cannot be known — refused', async (_c, bytes) => {
-      await writeFile(join(d, 'x.json'), bytes);
-      // (a) red when the create goes on past a file that might hold the key; (b) prints it.
-      expect(await outcome()).toEqual({ code: 'RESOURCE_FORMAT_INVALID', keyed: true });
-    });
-
-    it.skipIf(asRoot)('an unreadable file: its key cannot be known — refused', async () => {
-      await writeFile(join(d, 'x.json'), JSON.stringify(full('x')));
-      await chmod(join(d, 'x.json'), 0o000);
-      expect(await outcome()).toEqual({ code: 'ENGINE_STORE_FAILED', keyed: true });
-    });
-
-    const READABLE: Array<[string, Record<string, unknown>, string]> = [
-      ['not_a_run', { id: 'x' }, 'RESOURCE_FORMAT_INVALID'],
-      ['mismatched', { ...full('other') }, 'RESOURCE_FORMAT_INVALID'],
-      ['legacy', { id: 'x', state: 'running' }, 'STATE_LEGACY_FORMAT'],
-    ];
-    it.each(READABLE)(
-      'guard: a %s file without the key does not stop the create',
-      async (_c, obj) => {
-        await writeFile(join(d, 'x.json'), JSON.stringify(obj));
+      ['an array', '[1,2]'],
+      ['a string', '"x"'],
+      ['a number', '42'],
+      ['a boolean', 'true'],
+      ['null', 'null'],
+    ])(
+      'a run file holding JSON that is %s (no workflow, no key): the create goes on, as 0.46.0 did',
+      async (_c, bytes) => {
+        await writeFile(join(d, 'x.json'), bytes);
+        // (a) red when a file that can hold no key refuses every new key (`b53cee02`); (b) prints
+        //     the outcome.
         expect(await outcome()).toEqual({ created: true });
       },
     );
-    it.each(READABLE)('a %s file carrying that key: refused', async (_c, obj, code) => {
-      await writeFile(join(d, 'x.json'), JSON.stringify({ ...obj, idempotency_key: 'k-719' }));
-      // (a) red when a readable object that may hold the key is skipped; (b) prints it.
-      expect(await outcome()).toEqual({ code, keyed: true });
+
+    it.each([
+      ['empty', ''],
+      ['not JSON', '{not json'],
+    ])(
+      'guard: a file that is %s: what it holds cannot be read — every new key refused',
+      async (_c, bytes) => {
+        await writeFile(join(d, 'x.json'), bytes);
+        // (b) prints the code, the `refused` fact and the sentence.
+        expect(await outcome()).toEqual({
+          code: 'RESOURCE_FORMAT_INVALID',
+          refused: 'every_new_key',
+          sentence: 'every_new_key',
+        });
+      },
+    );
+
+    it.skipIf(asRoot)(
+      'an unreadable file: every new key refused, with its `refused` fact',
+      async () => {
+        await writeFile(join(d, 'x.json'), JSON.stringify(full('x')));
+        await chmod(join(d, 'x.json'), 0o000);
+        // (a) red when the fact or the sentence is not the store-wide one; (b) prints them.
+        expect(await outcome()).toEqual({
+          code: 'ENGINE_STORE_FAILED',
+          refused: 'every_new_key',
+          sentence: 'every_new_key',
+        });
+      },
+    );
+
+    /** A readable damaged object, each class, naming workflow `workflowId` (or none). */
+    const OBJECTS: Array<[string, (w: string | undefined) => Record<string, unknown>, string]> = [
+      [
+        'not_a_run',
+        (w) => ({ id: 'x', ...(w !== undefined ? { workflow_id: w } : {}) }),
+        'RESOURCE_FORMAT_INVALID',
+      ],
+      [
+        'mismatched',
+        (w) => ({ ...full('other'), ...(w !== undefined ? { workflow_id: w } : {}) }),
+        'RESOURCE_FORMAT_INVALID',
+      ],
+      [
+        'legacy',
+        (w) => ({ id: 'x', state: 'running', ...(w !== undefined ? { workflow_id: w } : {}) }),
+        'STATE_LEGACY_FORMAT',
+      ],
+    ];
+    it.each(OBJECTS)(
+      'a %s file naming ANOTHER workflow and carrying the key: the create goes on',
+      async (_c, obj) => {
+        await writeFile(
+          join(d, 'x.json'),
+          JSON.stringify({ ...obj('wa'), idempotency_key: 'k-719' }),
+        );
+        // (a) red when a file of workflow `wa` refuses a key of workflow `wb` (a Realm key belongs
+        //     to one workflow); (b) prints the outcome.
+        expect(await outcome()).toEqual({ created: true });
+      },
+    );
+    it.each(OBJECTS)(
+      'a %s file naming THIS workflow and carrying the key: this key refused',
+      async (_c, obj, code) => {
+        await writeFile(
+          join(d, 'x.json'),
+          JSON.stringify({ ...obj('wb'), idempotency_key: 'k-719' }),
+        );
+        // (a) red when a file that may hold this key is skipped, or refuses every key; (b) prints
+        //     the code, the fact and the sentence.
+        expect(await outcome()).toEqual({ code, refused: 'this_key', sentence: 'this_key' });
+      },
+    );
+    it.each(OBJECTS.filter(([c]) => c !== 'mismatched'))(
+      'a %s file naming NO workflow and carrying the key: this key refused',
+      async (_c, obj, code) => {
+        await writeFile(
+          join(d, 'x.json'),
+          JSON.stringify({ ...obj(undefined), idempotency_key: 'k-719' }),
+        );
+        // (a) red when a file whose workflow cannot be known is treated as another workflow's;
+        //     (b) prints the code, the fact and the sentence.
+        expect(await outcome()).toEqual({ code, refused: 'this_key', sentence: 'this_key' });
+      },
+    );
+    it.each(OBJECTS)(
+      'guard: a %s file of this workflow WITHOUT the key does not stop the create',
+      async (_c, obj) => {
+        await writeFile(join(d, 'x.json'), JSON.stringify(obj('wb')));
+        expect(await outcome()).toEqual({ created: true });
+      },
+    );
+
+    it('a mismatched copy of a run whose own file reads, both carrying the key: the run is reused, as 0.46.0 did', async () => {
+      // No pointer (a store from before pointers): the scan runs.
+      const run = full('r1', {
+        workflow_id: 'wb',
+        idempotency_key: 'k-719',
+        terminal_state: false,
+      } as never);
+      await writeFile(join(d, 'r1.json'), JSON.stringify(run));
+      await writeFile(join(d, 'r1.bak.json'), JSON.stringify(run));
+      const r = await create();
+      // (a) red when the copy refuses the key the real run answers; (b) prints created and the id.
+      expect([r.created, r.run.id]).toEqual([false, 'r1']);
     });
 
     it('guard: an unkeyed create is never stopped', async () => {
@@ -2074,38 +2170,101 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
     });
   });
 
-  describe('reconcileKeys (R10): fails closed, naming every damaged file, writing nothing', () => {
-    it('two format faults: RESOURCE_FORMAT_INVALID, both named, no pointer written', async () => {
+  describe('workflow-scoped reads (C1): only a damaged file that concerns the workflow stops them', () => {
+    beforeEach(async () => {
+      await writeFile(
+        join(d, 'b1.json'),
+        JSON.stringify(full('b1', { workflow_id: 'wb' } as never)),
+      );
+      await writeFile(join(d, 'x.json'), JSON.stringify({ id: 'x', workflow_id: 'wa' }));
+    });
+
+    it("list('wb') and reconcileKeys('wb') read past a damaged object naming workflow 'wa'", async () => {
+      const listed = await st.list('wb').then(
+        (rs) => rs.map((r) => r.id),
+        (e: unknown) => (e as WorkflowError).code,
+      );
+      const reconciled = await st.reconcileKeys('wb').then(
+        (s) => s.groups,
+        (e: unknown) => (e as WorkflowError).code,
+      );
+      // (a) red when a file of another workflow stops this workflow's read; (b) prints the ids
+      //     listed and the groups reconciled (or the code).
+      expect({ listed, reconciled }).toEqual({ listed: ['b1'], reconciled: 0 });
+    });
+
+    it("guard: list('wa'), reconcileKeys('wa') and the unfiltered list() still refuse it", async () => {
+      const code = (p: Promise<unknown>) =>
+        p.then(
+          () => 'ok',
+          (e: unknown) => (e as WorkflowError).code,
+        );
+      // (b) prints the three codes.
+      expect({
+        listA: await code(st.list('wa')),
+        reconcileA: await code(st.reconcileKeys('wa')),
+        listAll: await code(st.list()),
+      }).toEqual({
+        listA: 'RESOURCE_FORMAT_INVALID',
+        reconcileA: 'RESOURCE_FORMAT_INVALID',
+        listAll: 'RESOURCE_FORMAT_INVALID',
+      });
+    });
+
+    it('guard: listWithDiagnostics(workflowId) filters the records only, and reports every damaged file', async () => {
+      const listing = await st.listWithDiagnostics('wb');
+      // (b) prints the ids and the damaged files.
+      expect({
+        records: listing.records.map((r) => r.id),
+        unreadable: listing.unreadable.map((u) => u.file),
+      }).toEqual({ records: ['b1'], unreadable: ['x.json'] });
+    });
+  });
+
+  describe('reconcileKeys (R10, C3, C6): fails closed, naming every damaged file, writing nothing', () => {
+    it('two format faults: RESOURCE_FORMAT_INVALID, both named through the one helper, the caller’s command, no pointer written', async () => {
       await writeFile(
         join(d, 'good.json'),
         JSON.stringify(full('good', { idempotency_key: 'k' } as never)),
       );
       await writeFile(join(d, 'a.json'), '');
       await writeFile(join(d, 'b.json'), '{not json');
-      const err = (await st.reconcileKeys().catch((e: unknown) => e)) as WorkflowError;
-      // (a) red when it reconciles past them, or names only one; (b) prints the code, the files
-      //     named and whether a pointer was written.
+      const err = (await st
+        .reconcileKeys(undefined, false, { command: 'realm run reconcile --dry-run' })
+        .catch((e: unknown) => e)) as WorkflowError;
+      const facts = unreadableRunFilesOf(err);
+      // (a) red when it reconciles past them, names only one, loses the command or the folder from
+      //     its facts, or names a command of its own; (b) prints the code, the facts' command,
+      //     folder and files, the message and whether a pointer was written.
       expect({
         code: err.code,
-        files: (err.details['files'] as Array<{ path: string; class: string }>).map((f) => [
-          f.path,
-          f.class,
-        ]),
+        command: facts?.command,
+        folder: facts?.folder,
+        files: facts?.files.map((f) => [f.path, f.class]),
         message: err.message,
         keysWritten: existsSync(join(d, 'keys')),
       }).toEqual({
         code: 'RESOURCE_FORMAT_INVALID',
+        command: 'realm run reconcile --dry-run',
+        folder: d,
         files: [
           [join(d, 'a.json'), 'empty'],
           [join(d, 'b.json'), 'parse'],
         ],
         message:
-          `realm run reconcile did not run: 2 run file(s) in '${d}' could not be read:\n` +
+          `realm run reconcile --dry-run did not run: 2 run file(s) in '${d}' could not be read:\n` +
           `  ${join(d, 'a.json')}: is empty\n` +
           `  ${join(d, 'b.json')}: is not JSON\n` +
-          "Repair, restore or move each one out ('realm run list' shows each file's way out), then run realm run reconcile again.",
+          "Repair, restore or move each one out ('realm run list' shows each file's way out), then run 'realm run reconcile --dry-run' again.",
         keysWritten: false,
       });
+    });
+
+    it('without a command from its caller, core names no CLI command', async () => {
+      await writeFile(join(d, 'a.json'), '');
+      const err = await st.reconcileKeys().catch((e: unknown) => e);
+      // (a) red when core hardcodes `realm run reconcile`; (b) prints the command fact.
+      expect(unreadableRunFilesOf(err)?.command).toBe('reconcileKeys');
     });
 
     it.skipIf(asRoot)('any unreadable file: ENGINE_STORE_FAILED', async () => {
@@ -2117,21 +2276,67 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
     });
   });
 
-  it.skipIf(asRoot)(
-    'deleteAllForRun wrapping a read error takes the errno from the error’s details, never its code',
-    async () => {
-      await writeFile(
-        join(d, 'x.json'),
-        JSON.stringify(full('x', { terminal_state: true } as never)),
-      );
-      await chmod(join(d, 'x.json'), 0o000);
+  describe('deleteAllForRun (C6): a damaged run file’s typed error comes through as it is', () => {
+    it('a file that is not JSON: RESOURCE_FORMAT_INVALID with its facts, not a delete failure', async () => {
+      await writeFile(join(d, 'x.json'), '{not json');
       const err = (await st.deleteAllForRun('x').catch((e: unknown) => e)) as WorkflowError;
-      // (a) red when the wrap reads `err.code` (the error's own code) as the errno; (b) prints the
-      //     code and the failure's errno.
+      // (a) red when the typed error is wrapped (its class lost, errno `UNKNOWN`); (b) prints the
+      //     code and the facts.
+      expect({ code: err.code, facts: unreadableFactsOf(err) }).toEqual({
+        code: 'RESOURCE_FORMAT_INVALID',
+        facts: { resource: 'run_file', class: 'parse', path: join(d, 'x.json') },
+      });
+    });
+
+    it.skipIf(asRoot)(
+      'guard: a file this user cannot read keeps the delete-failure wrap, its errno from the details',
+      async () => {
+        await writeFile(
+          join(d, 'x.json'),
+          JSON.stringify(full('x', { terminal_state: true } as never)),
+        );
+        await chmod(join(d, 'x.json'), 0o000);
+        const err = (await st.deleteAllForRun('x').catch((e: unknown) => e)) as WorkflowError;
+        // (b) prints the code and the failure's errno (the per-run artifact contract's L4 shape).
+        expect({
+          code: err.code,
+          errno: (err.details['failures'] as Array<{ code: string }>)[0]?.code,
+        }).toEqual({ code: 'ENGINE_ARTIFACT_DELETE_FAILED', errno: 'EACCES' });
+      },
+    );
+  });
+
+  describe('save() (C6): a key is never repointed away from an owner whose file is damaged', () => {
+    it('the import refuses, naming the owner’s file; the pointer still names the owner', async () => {
+      const owner = await st.create({
+        workflowId: 'wa',
+        workflowVersion: 1,
+        params: {},
+        idempotencyKey: 'k-import',
+      });
+      await writeFile(join(d, `${owner.run.id}.json`), '{not json');
+      const imported = full('imp', { idempotency_key: 'k-import' } as never);
+      const err = await st.save(imported).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      const again = await st
+        .create({ workflowId: 'wa', workflowVersion: 1, params: {}, idempotencyKey: 'k-import' })
+        .then(
+          () => 'created or reused',
+          (e: unknown) => unreadableFactsOf(e)?.path,
+        );
+      // (a) red when the owner's read failure is taken for a missing owner and the key repointed to
+      //     the import; (b) prints the refusal's code and class, and what the key's pointer reads.
       expect({
-        code: err.code,
-        errno: (err.details['failures'] as Array<{ code: string }>)[0]?.code,
-      }).toEqual({ code: 'ENGINE_ARTIFACT_DELETE_FAILED', errno: 'EACCES' });
-    },
-  );
+        code: (err as WorkflowError | undefined)?.code,
+        class: unreadableFactsOf(err)?.class,
+        pointerReads: again,
+      }).toEqual({
+        code: 'RESOURCE_FORMAT_INVALID',
+        class: 'parse',
+        pointerReads: join(d, `${owner.run.id}.json`),
+      });
+    });
+  });
 });

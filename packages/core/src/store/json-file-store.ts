@@ -40,6 +40,7 @@ import {
   toArtifactDeleteFailedError,
 } from './fs-io.js';
 import {
+  damagedFileConcerns,
   inspectRunFile,
   readRunFile,
   runFileFaultSentence,
@@ -47,6 +48,7 @@ import {
   runsFolderUnreadableError,
   unreadableRunFileError,
   unreadableRunFilesError,
+  unreadableFactsOf,
   type RunFileReading,
   type StoredFileClass,
   type UnreadableFileFacts,
@@ -310,26 +312,43 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
 
   /**
    * Find the canonical pre-existing run for (workflowId, key) via the legacy `idempotency_key`
-   * field. issue #719 (B4, R13): each run file is read through the one reader, not through
-   * `list()`, so a damaged file stops this create only when it might hold the key — its key cannot
-   * be known (`unreadable`, `empty`, `parse`), or a readable object (`not_a_run`, `mismatched`,
-   * `legacy`) carries this key. Any other damaged file is skipped. Files are judged in name order.
+   * field. issue #719 (B4, C1): each run file is read through the one reader, not through
+   * `list()`, so a damaged file stops this create only when it can affect it — it concerns this
+   * workflow ({@link damagedFileConcerns}), AND what it holds cannot be read (it refuses every
+   * new key) or its object carries this key (it refuses this key). A `mismatched` copy of a run
+   * whose own file reads in the same scan is skipped: that run answers the key, as it did before
+   * #719. Any other damaged file is skipped. Files are judged in name order.
    */
   private async findCanonicalLegacyRun(
     workflowId: string,
     key: string,
   ): Promise<RunRecord | undefined> {
+    const scanned = await this.scanRunFiles();
+    const readableIds = new Set(
+      scanned.flatMap((s) => (s.reading.kind === 'record' ? [s.reading.record.id] : [])),
+    );
     const matches: RunRecord[] = [];
-    for (const { reading } of await this.scanRunFiles()) {
+    for (const { reading } of scanned) {
       if (reading.kind === 'absent') continue;
       if (reading.kind === 'record') {
         const r = reading.record;
         if (r.workflow_id === workflowId && r.idempotency_key === key) matches.push(r);
         continue;
       }
-      if (reading.object === undefined || reading.object['idempotency_key'] === key) {
-        throw unreadableRunFileError(reading.facts, { keyedCreate: true });
+      if (!damagedFileConcerns(reading, workflowId)) continue;
+      const { facts, object } = reading;
+      if (object === undefined) {
+        throw unreadableRunFileError({ ...facts, refused: 'every_new_key' });
       }
+      if (object['idempotency_key'] !== key) continue;
+      if (
+        facts.class === 'mismatched' &&
+        facts.held_id !== undefined &&
+        readableIds.has(facts.held_id)
+      ) {
+        continue;
+      }
+      throw unreadableRunFileError({ ...facts, refused: 'this_key' });
     }
     if (matches.length === 0) return undefined;
     return pickCanonical(matches).canonical;
@@ -825,7 +844,12 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     try {
       const pointer = await this.readPointer(keyPath);
       if (pointer !== undefined && pointer.run_id !== record.id) {
-        const owner = await this.get(pointer.run_id).catch(() => undefined);
+        // issue #719 (C6): only a missing owner is "missing" — a damaged owner's read failure
+        // propagates (the import refuses, naming the file); no key is repointed away from it.
+        const owner = await this.get(pointer.run_id).catch((err: unknown) => {
+          if (err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND') return undefined;
+          throw err;
+        });
         if (owner !== undefined && !owner.terminal_state) {
           throw new WorkflowError(
             `Idempotency key for workflow '${record.workflow_id}' is already owned by a different live run '${owner.id}'; refusing to repoint to imported run '${record.id}'.`,
@@ -851,17 +875,35 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * existing runs. Groups runs by (workflow_id, key), writes the pointer to the canonical run
    * (see {@link pickCanonical}). Idempotent (re-running writes nothing new), reversible (only
    * touches `keys/`; never mutates or deletes run files).
+   *
+   * issue #719 (R10, C1, C6): fails closed, naming EVERY run file it cannot read that concerns the
+   * workflow it reconciles ({@link damagedFileConcerns}; every damaged file when `workflowId` is
+   * absent), before anything is written. `options.command` is the command its caller ran, flags
+   * included, which the refusal tells the operator to run again; core names no CLI command
+   * (default: `reconcileKeys`).
    */
-  async reconcileKeys(workflowId?: string, dryRun = false): Promise<ReconcileSummary> {
-    // issue #719 (R10): a decision over every run fails closed, naming EVERY run file it cannot
-    // read, before anything is written (`list()` could only name the first).
-    const { records, unreadable } = await this.listWithDiagnostics(workflowId);
-    if (unreadable.length > 0) {
-      throw unreadableRunFilesError(
-        'realm run reconcile',
-        this.runsDir,
-        unreadable.map((u) => u.facts),
-      );
+  async reconcileKeys(
+    workflowId?: string,
+    dryRun = false,
+    options: { command?: string } = {},
+  ): Promise<ReconcileSummary> {
+    const scanned = await this.scanRunFiles();
+    const records: RunRecord[] = [];
+    const concerning: UnreadableFileFacts[] = [];
+    for (const { reading } of scanned) {
+      if (reading.kind === 'record') {
+        if (workflowId === undefined || reading.record.workflow_id === workflowId) {
+          records.push(reading.record);
+        }
+      } else if (
+        reading.kind === 'damaged' &&
+        (workflowId === undefined || damagedFileConcerns(reading, workflowId))
+      ) {
+        concerning.push(reading.facts);
+      }
+    }
+    if (concerning.length > 0) {
+      throw unreadableRunFilesError(options.command ?? 'reconcileKeys', this.runsDir, concerning);
     }
     if (!dryRun) await this.ensureKeysDir();
 
@@ -931,9 +973,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * reader answers `absent` for it (ENOENT means "no longer exists," never "corrupt").
    */
   private async scanRunFiles(): Promise<Array<{ file: string; reading: RunFileReading }>> {
-    await this.ensureDir();
     let entries: string[];
     try {
+      // issue #719 (C3): a runs folder that cannot be made (its path is a file, or its parent is
+      // not writable) is refused through the same builder as one that cannot be read.
+      await this.ensureDir();
       entries = await readdir(this.runsDir);
     } catch (err) {
       throw runsFolderUnreadableError(this.runsDir, err);
@@ -948,16 +992,19 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
   }
 
   /**
-   * The run records, optionally of one workflow. issue #719 (R14): a run file that cannot be read
-   * as a run — not JSON, not a run record, holding another run, in an earlier format, or not
-   * readable — makes this THROW the first such file's typed error (by file name), as a file that
-   * was not JSON always did. {@link listWithDiagnostics} lists past them and names each.
+   * The run records, optionally of one workflow. issue #719 (R14, C1): a run file that cannot be
+   * read as a run — empty, not JSON, not a run record, holding another run, in an earlier format,
+   * or not readable — makes this THROW the first such file's typed error (by file name), as a file
+   * that was not JSON always did. With `workflowId`, only a damaged file that concerns that
+   * workflow ({@link damagedFileConcerns}) does: JSON that is not an object, and an object naming
+   * another workflow, are skipped. {@link listWithDiagnostics} lists past them and names each.
    */
   async list(workflowId?: string): Promise<RunRecord[]> {
     const scanned = await this.scanRunFiles();
-    const firstDamaged = scanned.find((s) => s.reading.kind === 'damaged');
-    if (firstDamaged !== undefined && firstDamaged.reading.kind === 'damaged') {
-      throw unreadableRunFileError(firstDamaged.reading.facts);
+    for (const { reading } of scanned) {
+      if (reading.kind !== 'damaged') continue;
+      if (workflowId !== undefined && !damagedFileConcerns(reading, workflowId)) continue;
+      throw unreadableRunFileError(reading.facts);
     }
     const records = scanned.flatMap((s) => (s.reading.kind === 'record' ? [s.reading.record] : []));
     if (workflowId !== undefined) {
@@ -970,8 +1017,8 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * issue #719 (B3): every readable run, plus every run file that could not be read as a run —
    * named, classified, with its way out. CONCRETE, off the `RunStore` interface (the `listRunIds`
    * precedent): Realm's own commands use it when the store has it, so one damaged file never hides
-   * the rest. `workflowId` filters the records; a damaged file is reported whatever the filter,
-   * since what it holds cannot be trusted.
+   * the rest. `workflowId` filters the records only; EVERY damaged file is reported whatever the
+   * filter (the operator's view: what it holds cannot be trusted).
    */
   async listWithDiagnostics(workflowId?: string): Promise<RunListing> {
     const records: RunRecord[] = [];
@@ -999,12 +1046,12 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
 
   /**
    * The raw set of run IDs present in `runsDir` (issue #163) — every `<id>.json` BASENAME, with
-   * NO record parse. Deliberately NOT `list()`: `list()` parses each file as a `RunRecord`
-   * (`JSON.parse(raw) as RunRecord`, uncaught) — a syntactically corrupt-but-PRESENT `<id>.json`
-   * would throw there, whereas here it correctly still counts as a live run (the file exists on
-   * disk; whatever reads it later is a separate concern from whether `realm run gc`'s orphan
-   * sweep should treat this run's WAL/sidecar as run-less). Using `list()` for the orphan sweep's
-   * `liveRunIds` would wrongly orphan — and reap — a live-but-corrupt run's artifacts.
+   * NO record parse. Deliberately NOT `list()`: `list()` reads each file through the run-file
+   * reader and throws the first that cannot be read as a run (issue #719) — a corrupt-but-PRESENT
+   * `<id>.json` would throw there, whereas here it correctly still counts as a live run (the file
+   * exists on disk; whatever reads it later is a separate concern from whether `realm run gc`'s
+   * orphan sweep should treat this run's WAL/sidecar as run-less). Using `list()` for the orphan
+   * sweep's `liveRunIds` would wrongly orphan — and reap — a live-but-corrupt run's artifacts.
    *
    * Concrete method, NOT on the `RunStore` interface (issue #163) — `gc` constructs a concrete
    * `JsonFileStore` directly (as it already does for `runsDirPath`), so no external `RunStore`
@@ -1145,8 +1192,15 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         // delete (or confirm the run file itself is reachable) — wrap it into the SAME aggregate
         // shape the unlink failures below use, so a caller (e.g. purge) always observes ONE
         // consistent, typed failure contract regardless of which internal step actually failed.
-        // issue #719 (R12): the reader's typed error carries the errno in `details.errno` — read
-        // there, never from `err.code`, which is the error's own code.
+        // issue #719 (C6): a run file whose BYTES are damaged (empty, not JSON, not a run, another
+        // run's, an earlier format) is rethrown as it is — its class and facts kept; wrapping it
+        // said errno `UNKNOWN` for a fault that has none. A file that cannot be READ keeps the
+        // wrap below, with its real errno: that is a failure to reach the artifact, which the
+        // per-run artifact contract's L3/L4 type (`details.failures`).
+        const facts = unreadableFactsOf(err);
+        if (facts !== undefined && facts.class !== 'unreadable') throw err;
+        // issue #719 (R12): any other `WorkflowError` carries an errno only in `details.errno` —
+        // read there, never from `err.code`, which is the error's own code.
         if (err instanceof WorkflowError) {
           const errno = err.details['errno'];
           throw artifactDeleteFailedError(

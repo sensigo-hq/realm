@@ -12,8 +12,8 @@ import { atomicWriteFile } from '../store/atomic-write.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 import { admitEntry } from '../admission.js';
 import {
-  describeStoredFileFault,
   jsonShapeOf,
+  renderUnreadableStoredFile,
   type UnreadableFileFacts,
 } from '../store/run-file.js';
 
@@ -63,24 +63,9 @@ export function probeClassToError(
         // statement about the operating system.
         details: { class: result.class, path: result.path },
       });
-    case 'empty': {
-      // issue #719 (R7): the damaged-file facts, and the one composer's words.
-      const facts: UnreadableFileFacts = {
-        resource: 'workflow_copy',
-        class: 'empty',
-        path: result.path,
-      };
-      return new WorkflowError(
-        `the registered copy of '${workflowId}' ${describeStoredFileFault(facts)}`,
-        {
-          code: 'RESOURCE_FORMAT_INVALID',
-          category: 'RESOURCE',
-          agentAction: 'stop',
-          retryable: false,
-          details: { ...facts },
-        },
-      );
-    }
+    case 'empty':
+      // issue #719 (R7, C3): the damaged-file facts, and the one composer's words.
+      return workflowCopyError({ resource: 'workflow_copy', class: 'empty', path: result.path });
     case 'registry_broken':
       return new WorkflowError(
         `the workflow registry at ${result.path} cannot be read (${result.errno ?? 'unknown'})`,
@@ -95,33 +80,44 @@ export function probeClassToError(
   }
 }
 
+/** issue #719 (C3): a registered copy whose bytes are wrong (`empty`, `parse`) — its facts, and
+ *  the one composer's words, built from those facts alone. */
+function workflowCopyError(facts: UnreadableFileFacts): WorkflowError {
+  return new WorkflowError(renderUnreadableStoredFile(facts), {
+    code: 'RESOURCE_FORMAT_INVALID',
+    category: 'RESOURCE',
+    agentAction: 'stop',
+    retryable: false,
+    details: { ...facts },
+  });
+}
+
+/** issue #719 (C3): what is wrong with a registered copy's bytes — they are not JSON, or they are
+ *  JSON that is not an object (`shape`: `null`, `array`, `string`, `number` or `boolean`). */
+export type WorkflowCopyParseFault = { kind: 'not_json' } | { kind: 'not_object'; shape: string };
+
 /**
  * issue #558 PR-T — ONE builder for the parse class, so a corrupt copy speaks with one voice on
  * `get()`, on `listWithDiagnostics`, and in the `--stuck` probe closure.
  *
- * issue #719 (R7, R8): it takes what classifies the file and nothing else — `root` is the parsed
- * JSON when it is not an object (`null`, an array, …), OMITTED when the bytes are not JSON. The
- * parser's error is never taken: its message quotes the file around the fault. Its details are the
- * damaged-file facts; its words are its own subject and the one composer's fault clause.
+ * issue #719 (R7, R8, C3): it takes the fault, stated — never a parsed root and never the parser's
+ * error (its message quotes the file around the fault). The copy is named by its file (`path`);
+ * its details are the damaged-file facts, and its words the one composer's.
  */
-export function parseFailureError(workflowId: string, path: string, root?: unknown): WorkflowError {
-  const facts: UnreadableFileFacts = {
+export function parseFailureError(path: string, fault: WorkflowCopyParseFault): WorkflowError {
+  return workflowCopyError({
     resource: 'workflow_copy',
     class: 'parse',
     path,
-    // JSON never parses to `undefined`, so an omitted `root` is exactly "not JSON".
-    ...(root !== undefined ? { shape: jsonShapeOf(root) } : {}),
-  };
-  return new WorkflowError(
-    `the registered copy of '${workflowId}' ${describeStoredFileFault(facts)}`,
-    {
-      code: 'RESOURCE_FORMAT_INVALID',
-      category: 'RESOURCE',
-      agentAction: 'stop',
-      retryable: false,
-      details: { ...facts },
-    },
-  );
+    ...(fault.kind === 'not_object' ? { shape: fault.shape } : {}),
+  });
+}
+
+/** The parse fault of a value that parsed: `undefined` when it is an object. */
+function notObjectFault(value: unknown): WorkflowCopyParseFault | undefined {
+  return value === null || typeof value !== 'object' || Array.isArray(value)
+    ? { kind: 'not_object', shape: jsonShapeOf(value) }
+    : undefined;
 }
 
 /**
@@ -147,8 +143,12 @@ function isProbeFailureClass(value: unknown): value is ProbeFailureClass {
   return typeof value === 'string' && (PROBE_FAILURE_CLASSES as readonly string[]).includes(value);
 }
 
-/** The probe class a read failure carries — `undefined` for the parse, legacy and foreign classes. */
+/** The probe class a read failure carries — `undefined` for the parse, legacy and foreign classes,
+ *  and for the facts of any resource other than a workflow copy (issue #719, C6: a damaged run
+ *  file's `unreadable` and `empty` are not registry probe classes). */
 export function probeClassOf(err: WorkflowError): ProbeFailureClass | undefined {
+  const resource = err.details['resource'];
+  if (resource !== undefined && resource !== 'workflow_copy') return undefined;
   const cls = err.details['class'];
   return isProbeFailureClass(cls) ? cls : undefined;
 }
@@ -364,19 +364,17 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
         workflowId,
       );
     }
+    // issue #719 (C6): whitespace only is `empty`, as for a run file.
+    if (raw.trim() === '')
+      throw probeClassToError({ ok: false, class: 'empty', path: filePath }, workflowId);
     let parsedUnknown: unknown;
     try {
       parsedUnknown = JSON.parse(raw);
     } catch {
-      throw parseFailureError(workflowId, filePath);
+      throw parseFailureError(filePath, { kind: 'not_json' });
     }
-    if (
-      parsedUnknown === null ||
-      typeof parsedUnknown !== 'object' ||
-      Array.isArray(parsedUnknown)
-    ) {
-      throw parseFailureError(workflowId, filePath, parsedUnknown);
-    }
+    const notObject = notObjectFault(parsedUnknown);
+    if (notObject !== undefined) throw parseFailureError(filePath, notObject);
     const parsed = parsedUnknown as WorkflowDefinition;
     if (
       parsed.schema_version === undefined ||
@@ -483,26 +481,53 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
         });
         continue;
       }
+      const entryPath = join(this.dir, entry);
+      // issue #719 (C6): the read in its own `try` — a read failure after the probe (a race) is
+      // `unreadable` with its errno, never "is not JSON".
+      let raw: string;
+      try {
+        raw = readFileSync(entryPath, 'utf8');
+      } catch (err) {
+        const errno = (err as NodeJS.ErrnoException).code;
+        const failure = {
+          ok: false as const,
+          class: 'unreadable' as const,
+          ...(errno !== undefined ? { errno } : {}),
+          path: entryPath,
+        };
+        unreadable.push({
+          file: entry,
+          class: 'unreadable',
+          ...(errno !== undefined ? { errno } : {}),
+          ...reasonAndRepair(probeClassToError(failure, id)),
+        });
+        continue;
+      }
+      if (raw.trim() === '') {
+        unreadable.push({
+          file: entry,
+          class: 'empty',
+          ...reasonAndRepair(probeClassToError({ ok: false, class: 'empty', path: entryPath }, id)),
+        });
+        continue;
+      }
       let parsedUnknown: unknown;
       try {
-        parsedUnknown = JSON.parse(readFileSync(join(this.dir, entry), 'utf8'));
+        parsedUnknown = JSON.parse(raw);
       } catch {
         unreadable.push({
           file: entry,
           class: 'parse',
-          ...reasonAndRepair(parseFailureError(id, join(this.dir, entry))),
+          ...reasonAndRepair(parseFailureError(entryPath, { kind: 'not_json' })),
         });
         continue;
       }
-      if (
-        parsedUnknown === null ||
-        typeof parsedUnknown !== 'object' ||
-        Array.isArray(parsedUnknown)
-      ) {
+      const notObject = notObjectFault(parsedUnknown);
+      if (notObject !== undefined) {
         unreadable.push({
           file: entry,
           class: 'parse',
-          reason: parseFailureError(id, join(this.dir, entry), parsedUnknown).message,
+          reason: parseFailureError(entryPath, notObject).message,
         });
         continue;
       }

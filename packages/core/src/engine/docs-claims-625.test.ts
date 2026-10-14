@@ -19,9 +19,11 @@ import {
   submitHumanResponse,
   buildNextActions,
   pendingGateQuestion,
+  runReadError,
 } from './execution-loop.js';
 import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { unreadableRunFileError } from '../store/run-file.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
@@ -652,6 +654,30 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     ]);
   });
 
+  it('issue #719 (C2), error-codes.md: which ENGINE_STORE_FAILED reads are worth retrying — EBUSY and EIO; not another errno, nor the untyped wrap', () => {
+    const sentence =
+      'A JSON-store read that failed with `EBUSY` or `EIO` is worth retrying; any other read is not, nor is `Failed to load run from store: …`.';
+    const page = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/error-codes.md'),
+      'utf8',
+    );
+    expect(flat(page), `error-codes.md no longer says: ${sentence}`).toContain(flat(sentence));
+    const read = (errno: string) =>
+      unreadableRunFileError({
+        resource: 'run_file',
+        class: 'unreadable',
+        path: '/r/x.json',
+        errno,
+      }).retryable;
+    // (a) red when the retry rule the sentence states changes for any of them; (b) prints the four.
+    expect({
+      EBUSY: read('EBUSY'),
+      EIO: read('EIO'),
+      EACCES: read('EACCES'),
+      untyped: runReadError(new Error('the disk is gone')).retryable,
+    }).toEqual({ EBUSY: true, EIO: true, EACCES: false, untyped: false });
+  });
+
   const STEP_CANNOT_READ =
     "`executeStep`, `executeChain` and `submitHumanResponse` answer a run they cannot read with an error reply, never a throw (`submitHumanResponse`'s names `command: submit_gate`): `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError` (a `JsonFileStore` run file that cannot be read as a run, for one: `RESOURCE_FORMAT_INVALID`, `STATE_LEGACY_FORMAT` or `ENGINE_STORE_FAILED`, naming the file and its way out), and `ENGINE_STORE_FAILED` for any other, naming its cause (`Failed to load run from store: <its message>`).";
   const NO_PHASE = 'Such a reply names no `run_phase`: no run was read.';
@@ -745,8 +771,11 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         });
       }
     }
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
-    expect(JSON.stringify(await store.get(run.id))).toBe(plainBefore);
+    // issue #719 (C5): booleans — a failure prints whether each record is unchanged, never it.
+    expect([
+      JSON.stringify(await store.get(runId)) === before,
+      JSON.stringify(await store.get(run.id)) === plainBefore,
+    ]).toEqual([true, true]);
   });
 
   const NOW_ROW =
@@ -820,7 +849,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'A run that does not exist or cannot be read gets the error reply `executeStep` gives (below).',
     );
     claim(
-      "`run` is required, and must be a run record (each of the record's required fields, with its type): otherwise the call rejects with `VALIDATION_OPTION_INVALID`, naming each field that is missing or of the wrong type, before anything is read or written.",
+      "`run` is required, and must be a run record (each of the record's required fields, with its type): otherwise the call rejects with `VALIDATION_OPTION_INVALID` before anything is read or written, naming, when `run` is an object, each field that is missing or of the wrong type.",
     );
     const d = gated();
     const { runId } = await atQuestion(d);
@@ -859,7 +888,21 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         'options.run must be a run record (got object) (workflow_id is missing; ',
       ),
     });
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
+    // issue #719 (C2): the fields are named only when `run` is an object — a `null` run, none.
+    const nullRun = (await executeEngineStep(store, d, {
+      runId,
+      step: 'after',
+      run: null,
+    } as never).catch((e: unknown) => e)) as WorkflowError;
+    const first = (nullRun.details['invalid'] as Array<Record<string, unknown>>)[0] ?? {};
+    // (a) red when a field list is claimed for a run that is not an object; (b) prints the code
+    //     and whether a field list was named.
+    expect({ code: nullRun.code, fieldsNamed: 'fields' in first }).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      fieldsNamed: false,
+    });
+    // issue #719 (C5): a boolean — a failure prints whether the record is unchanged, never it.
+    expect(JSON.stringify(await store.get(runId)) === before).toBe(true);
     // C174: a step with no `depends_on` — the same refusal, before any read.
     const lone: WorkflowDefinition = {
       id: 'dc-lone',
@@ -877,8 +920,10 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     ).rejects.toMatchObject({ code: 'VALIDATION_OPTION_INVALID' });
   });
 
-  it('C163 line 104: executeEngineStep on an agent step throws a WorkflowError and writes nothing', async () => {
-    claim('For an agent, guard or finalizer step it throws a `WorkflowError` and writes nothing.');
+  it('C163 line 104: executeEngineStep on an agent step rejects with a WorkflowError and writes nothing', async () => {
+    claim(
+      'For an agent, guard or finalizer step it rejects with a `WorkflowError` and writes nothing.',
+    );
     const d: WorkflowDefinition = {
       id: 'dc-agent',
       name: 'a',
@@ -898,8 +943,10 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'A function Realm calls for the step `command` names when it is an agent step, or an `auto` step with neither `uses_service` nor `handler`.',
     );
     claim('`executeChain` does not call it for the steps it runs after that one.');
+    // issue #719 (C4): "as a plain value" is pinned by dispatcher-timer-719.test.ts (b) — a plain
+    // object returned by the dispatcher is the step's recorded output.
     claim(
-      "What it returns is recorded as the agent step's answer, or as that `auto` step's output.",
+      "What it returns, as a plain value or through a promise, is recorded as the agent step's answer, or as that `auto` step's output.",
     );
     const d: WorkflowDefinition = {
       id: 'dc-disp',
@@ -993,10 +1040,10 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'Invalid driver.channel: not 1–64 characters of [a-z0-9_-].',
     ],
   ] as const)(
-    'C163 line 133: a driver whose %s is not one the table lists throws VALIDATION_ACTOR_INVALID naming the field, nothing read or written — from each of the four functions',
+    'C163 line 133: a driver whose %s is not one the table lists rejects VALIDATION_ACTOR_INVALID naming the field, nothing read or written — from each of the four functions',
     async (_field, driver, message) => {
       claim(
-        'Any other value throws a `WorkflowError` with the code `VALIDATION_ACTOR_INVALID` before anything is read or written, naming the field',
+        'With any other value the call rejects with a `WorkflowError` with the code `VALIDATION_ACTOR_INVALID` before anything is read or written, naming the field',
       );
       claim(
         "`executeStep`, `executeChain`, `submitHumanResponse` and `advanceRun` take an optional `driver`, your program's name: `{ by, by_source, channel }`.",

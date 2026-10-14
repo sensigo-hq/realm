@@ -33,8 +33,10 @@ export interface MigrateBuckets {
    * ruling exists to close never closes.
    */
   already_stamped: Array<{ id: string; verified: boolean; ruled?: true }>;
-  /** No arm, and the classifier refuses to guess one. Printed, never written. */
-  unclassifiable: Array<{ id: string; why: string }>;
+  /** No arm, and the classifier refuses to guess one. Printed, never written. issue #719 (C2): a
+   *  run file that could not be read as a run is here too, marked `unreadable` — it is not known to
+   *  be a terminal run, or a run at all. */
+  unclassifiable: Array<{ id: string; why: string; unreadable?: true }>;
   /** Has an arm that DISAGREES with its own evidence. Printed, never auto-rewritten. */
   incoherent: Array<{
     id: string;
@@ -138,6 +140,7 @@ export async function migrateStampSeals(
     buckets.unclassifiable.push({
       id: entry.file.slice(0, -'.json'.length),
       why: describeStoredFileFault(entry.facts),
+      unreadable: true,
     });
   }
   if (unreadable.length > 0) options.onUnreadable?.(unreadable);
@@ -318,11 +321,17 @@ export function renderMigrateReport(
       );
     }
   }
-  if (buckets.unclassifiable.length > 0) {
-    lines.push(
-      `${buckets.unclassifiable.length} run(s) could NOT be classified and were left untouched:`,
-    );
-    for (const e of buckets.unclassifiable) lines.push(`  • ${e.id}: ${e.why}`);
+  // issue #719 (C2): a run file that could not be read is not a run that could not be classified —
+  // its own group, and it is not counted as a terminal run below.
+  const unclassified = buckets.unclassifiable.filter((e) => e.unreadable !== true);
+  const unreadableFiles = buckets.unclassifiable.filter((e) => e.unreadable === true);
+  if (unclassified.length > 0) {
+    lines.push(`${unclassified.length} run(s) could NOT be classified and were left untouched:`);
+    for (const e of unclassified) lines.push(`  • ${e.id}: ${e.why}`);
+  }
+  if (unreadableFiles.length > 0) {
+    lines.push(`${unreadableFiles.length} run file(s) could not be read and were left untouched:`);
+    for (const e of unreadableFiles) lines.push(`  • ${e.id}: ${e.why}`);
   }
   if (buckets.incoherent.length > 0) {
     lines.push(
@@ -358,12 +367,16 @@ export function renderMigrateReport(
   // printed "Residue: 0" directly above a record that had failed to stamp. In a dry run nothing is
   // written, so the would-be-stamped records still count.
   const residue =
-    buckets.unclassifiable.length + buckets.failed.length + (force ? 0 : buckets.stamped.length);
+    unclassified.length + buckets.failed.length + (force ? 0 : buckets.stamped.length);
   const skipped =
     buckets.skipped_conflict.length > 0
       ? ` (+${buckets.skipped_conflict.length} skipped — arm state unknown until their own writer settles)`
       : '';
-  lines.push(`Residue: ${residue} terminal run(s) still without a recorded seal arm.${skipped}`);
+  const unread =
+    unreadableFiles.length > 0 ? `; ${unreadableFiles.length} run file(s) could not be read` : '';
+  lines.push(
+    `Residue: ${residue} terminal run(s) still without a recorded seal arm${unread}.${skipped}`,
+  );
   lines.push(ORDERING_LINE);
   return lines;
 }

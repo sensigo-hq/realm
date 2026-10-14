@@ -706,9 +706,10 @@ export type SweepSeenFiles = Map<
 >;
 
 /**
- * Logs the run files a sweep pass could not read (issue #719, B3): `warn` for a file not seen
- * before, or changed since; one `debug` line with the count for the pass. Forgets a file no longer
- * damaged.
+ * Logs the run files a sweep pass could not read (issue #719, B3, C2): `warn` for a file not seen
+ * before, or changed since, with its way out; one `debug` line with the count when the pass skipped
+ * any. Called on EVERY pass, so a file no longer damaged is forgotten even on a pass that skipped
+ * none.
  */
 async function logSkippedRunFiles(
   logger: Logger,
@@ -740,11 +741,14 @@ async function logSkippedRunFiles(
         path: entry.path,
         class: entry.class,
         reason: entry.reason,
+        repair: entry.repair,
       });
       seen?.set(entry.path, { class: entry.class, size, mtimeMs });
     }
   }
-  logger.debug('listen: expiry sweeper skipped run files', { count: unreadable.length });
+  if (unreadable.length > 0) {
+    logger.debug('listen: expiry sweeper skipped run files', { count: unreadable.length });
+  }
 }
 
 /**
@@ -778,7 +782,7 @@ export async function sweepExpiredGates(
   // issue #719 (B3): the readable runs are swept; a run file that cannot be read is logged, never
   // allowed to fail the whole pass.
   const { records: runs, unreadable } = await listRunsDiagnosed(deps.runStore);
-  if (unreadable.length > 0) await logSkippedRunFiles(deps.logger, unreadable, deps.sweepSeen);
+  await logSkippedRunFiles(deps.logger, unreadable, deps.sweepSeen);
   for (const run of runs) {
     if (run.terminal_state || run.pending_gate === undefined) continue;
     const gate = run.pending_gate;
