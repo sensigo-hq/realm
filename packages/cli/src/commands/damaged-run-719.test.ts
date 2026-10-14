@@ -187,7 +187,9 @@ describe('issue #719 — a command that reads one run by its id: the message, ex
     }).toEqual({ code: 1, fault: true, wayOut: true });
   });
 
-  it('purge <id> --force on a damaged file deletes nothing', () => {
+  // A guard: `purge <id> --force` already refused a damaged file before deleting (F719-CB-15);
+  // green before #719 and after (red-first run: reports/fix-719.flips.log, F6).
+  it('guard: purge <id> --force on a damaged file deletes nothing', () => {
     writeFileSync(badPath(), '{ not json');
     const r = realm(['run', 'purge', BAD, '--force']);
     expect({ code: r.code, kept: existsSync(badPath()) }).toEqual({ code: 1, kept: true });
