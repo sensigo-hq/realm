@@ -59,8 +59,9 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   `get_run_state` returns and `realm run inspect` does not print. Core exports the type
   `CacheRequestedEntry` (one ask) and the vocabularies `PROMPT_CACHE_SETTINGS`,
   `PROMPT_CACHE_LIFETIMES`, `CACHE_REQUESTS`, `CACHE_REQUEST_SOURCES`, `REQUEST_ENDPOINTS` and
-  `REQUEST_FACT_ABSENT_CAUSES`, and `boundRequestFacts`, which bounds the names a request record
-  carries (`model`, `cache_requested_by`, `provider`) by the rule every stored name obeys.
+  `REQUEST_FACT_ABSENT_CAUSES`, and `boundRequestFacts`, which bounds the free text a request record
+  carries (`model`, `cache_requested`, `cache_requested_source`, `cache_requested_by`, `provider`)
+  by the rule every stored name obeys.
 - **A store law for the request record.** `@sensigo/realm-testing`'s store fidelity contract gains
   `USAGE_RECORD_ROUNDTRIP`: a store must read back each of the nine fields, in a step's evidence and
   in a failed drive's usage.
@@ -127,8 +128,7 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   is shorter than the model's minimum. Realm asks OpenAI for no caching: OpenAI's own automatic
   caching is unchanged, and `--prompt-cache off` does not turn it off. **Upgrading:** a gateway
   behind `ANTHROPIC_BASE_URL` that rejects `cache_control` makes runs fail; run with
-  `--prompt-cache off`. Known limit: a strict step behind such a gateway records the 400 as a schema
-  rejection before it fails.
+  `--prompt-cache off`.
 - **`--prompt-cache` is refused where it can change nothing.** `realm agent --prompt-cache` is
   refused, before any run is created or changed, for a provider Realm asks for no caching and for a
   workflow with no agent step it could apply to (an agent step without tools). `realm listen` given

@@ -1897,7 +1897,8 @@ function buildStepDiagnostics(
  */
 export function deriveCacheDetail(input: UsageRecord[]): StepCacheDetail {
   // issue #600 PR 2 (A3): the requests this returns — the ones the step's evidence stores — carry
-  // their names (`model`, `cache_requested_by`, `provider`) bounded.
+  // their free text (`model`, `cache_requested`, `cache_requested_source`, `cache_requested_by`,
+  // `provider`) bounded.
   const requests = boundRequestFacts(input) as UsageRecord[];
   let readObserved = false;
   let writeObserved = false;

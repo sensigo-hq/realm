@@ -133,7 +133,7 @@ The command exits with code 1. The run itself is not ended: its phase is still `
 ```text
 Drive failures:
   2026-10-14T18:17:12.578Z  classify  anthropic  validation_rejected after 21ms: Invalid input for step 'classify'
-    usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache read 0, wrote 0 (included in the prompt); model claude-sonnet-5-5; asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum, or an endpoint behind ANTHROPIC_BASE_URL dropped the request to cache
+    usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache read 0, wrote 0 (included in the prompt); model claude-sonnet-5-5; asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum
 ```
 
 The `usage` line was added in 0.46.0. Version 0.45.0 prints the line above it and nothing about cost. The model and what was asked to be cached, after the cache figures, were added after version 0.47.0; see [What a run costs](#what-a-run-costs).
@@ -174,13 +174,13 @@ The measured figures in this section were added in 0.46.0. On 0.45.0 the line re
 `realm run inspect` shows, for each step the model answered, how many tokens the provider counted:
 
 ```text
-     Diagnostics: ~23 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, 1 request); asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum, or an endpoint behind ANTHROPIC_BASE_URL dropped the request to cache
+     Diagnostics: ~23 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, 1 request); asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum
 ```
 
 For the run in which the first answer was refused, the same line shows two requests:
 
 ```text
-     Diagnostics: ~23 tokens (estimate, step input) | 824 prompt tokens (measured, totals across 2 requests) | 76 output tokens (totals across 2 requests) | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, totals across 2 requests); asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum, or an endpoint behind ANTHROPIC_BASE_URL dropped the request to cache
+     Diagnostics: ~23 tokens (estimate, step input) | 824 prompt tokens (measured, totals across 2 requests) | 76 output tokens (totals across 2 requests) | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, totals across 2 requests); asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum
 ```
 
 A refused answer still costs a request. `measured` figures come from the provider's own count. `cache: not engaged` means the provider reported that no part of the prompt was read from its cache or written to it. The `estimate` is Realm's rough size of the step's input only, and is much smaller than what was sent.

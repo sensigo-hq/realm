@@ -1,4 +1,4 @@
-// request-facts.test.ts — issue #600 PR 2 (A3, G9): the names a request record carries are bounded
+// request-facts.test.ts — issue #600 PR 2 (A3, G9): the free text a request record carries is bounded
 // where the record is written. The cells write through a step's evidence (`executeStep` with
 // `stepMeta.usage`, the path `realm agent` takes) and read the STORED record back, never a render.
 // On a failing CI host each cell prints the stored request's name fields: test values only.
@@ -90,6 +90,64 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
   // (a) red when the stored name keeps its trailing newline; (b) prints the stored name.
   it('a trailing newline is trimmed, and the name is stored', async () => {
     expect((await stored({ model: 'claude-x-20260101\n' })).model).toBe('claude-x-20260101');
+  });
+
+  // The correction of #781 (W600P2-10): `cache_requested` and `cache_requested_source` are free text a
+  // provider module writes, bounded by the same rule. Read on the stored record. (a) red when the two
+  // fields are not in the bounded list; (b) prints the stored fields (lengths and endings, test values).
+  it('a 300-character cache_requested is stored cut to 200, with the house marker', async () => {
+    const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+    await executeStep(store, DEF, {
+      runId: run.id,
+      command: 'work',
+      input: {},
+      dispatcher: echo,
+      stepMeta: {
+        usage: [
+          {
+            request_index: 0,
+            request_start: '2026-10-14T00:00:00.000Z',
+            cache_requested: 'x'.repeat(300) as never,
+          },
+        ],
+      },
+    });
+    const value = (await store.get(run.id)).evidence[0]!.diagnostics!.cache!.requests[0]!
+      .cache_requested as string;
+    expect({ length: value.length, ending: value.slice(NAME_MAX_LENGTH) }).toEqual({
+      length: NAME_MAX_LENGTH + NAME_CAP_MARKER.length,
+      ending: NAME_CAP_MARKER,
+    });
+  });
+
+  it('a cache_requested_source with an inner newline is not stored; valid words are stored unchanged', async () => {
+    const write = async (extra: Partial<UsageRecord>) => {
+      const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+      await executeStep(store, DEF, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echo,
+        stepMeta: {
+          usage: [{ request_index: 0, request_start: '2026-10-14T00:00:00.000Z', ...extra }],
+        },
+      });
+      const r = (await store.get(run.id)).evidence[0]!.diagnostics!.cache!.requests[0]!;
+      return {
+        cache_requested: r.cache_requested,
+        cache_requested_source: r.cache_requested_source,
+      };
+    };
+    expect(
+      await write({ cache_requested: 'lifetime', cache_requested_source: 'sta\nted' as never }),
+    ).toEqual({
+      cache_requested: 'lifetime',
+      cache_requested_source: undefined,
+    });
+    expect(await write({ cache_requested: 'lifetime', cache_requested_source: 'stated' })).toEqual({
+      cache_requested: 'lifetime',
+      cache_requested_source: 'stated',
+    });
   });
 
   // (a) red when the function spreads every entry (a `null` would become `{}`); (b) prints the

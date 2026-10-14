@@ -1011,7 +1011,7 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
       'never_engaged',
     );
     expect(zero).toMatch(
-      /; nothing was written or read: the cached part may be shorter than the model's minimum, or an endpoint behind ANTHROPIC_BASE_URL dropped the request to cache$/,
+      /; nothing was written or read: the cached part may be shorter than the model's minimum$/,
     );
     // Not when a request did not report both, nor when nothing was asked.
     const silent = await stepLine([

@@ -468,7 +468,10 @@ export interface UsageRecord {
    * (`boundRequestFacts`). Not redacted.
    */
   model?: string;
-  /** Issue #600 PR 2 — what realm asked the provider to cache on this request. Written by the adapter. */
+  /**
+   * Issue #600 PR 2 — what realm asked the provider to cache on this request. Written by the
+   * adapter; bounded where it enters the record (`boundRequestFacts`).
+   */
   cache_requested?: CacheRequest;
   /** Issue #600 PR 2 — the lifetime asked for, in seconds; present iff `cache_requested` is `lifetime`. */
   cache_lifetime_s?: number;
@@ -477,13 +480,20 @@ export interface UsageRecord {
    * provider's default one (`false`); present iff `cache_requested` is `lifetime`.
    */
   cache_ttl_sent?: boolean;
-  /** Issue #600 PR 2 — where the setting came from, when the adapter was given it. */
+  /**
+   * Issue #600 PR 2 — where the setting came from, when the adapter was given it. Bounded where it
+   * enters the record (`boundRequestFacts`).
+   */
   cache_requested_source?: CacheRequestSource;
-  /** Issue #600 PR 2 — the runner that chose the setting (`realm agent`, `realm listen`), when given. */
+  /**
+   * Issue #600 PR 2 — the runner that chose the setting (`realm agent`, `realm listen`), when given.
+   * Bounded where it enters the record (`boundRequestFacts`).
+   */
   cache_requested_by?: string;
   /**
    * Issue #600 PR 2 — the provider that served the request. Stamped by `realm agent` from its one
    * provider fact (`anthropic`, `openai`, `openai-reasoning`, `module:<file>`), never by an adapter.
+   * Bounded where it enters the record (`boundRequestFacts`).
    */
   provider?: string;
   /** Issue #600 PR 2 — which kind of endpoint the request went to. Written by the adapter. */

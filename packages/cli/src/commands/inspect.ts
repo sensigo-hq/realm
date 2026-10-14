@@ -487,7 +487,7 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
       zeroFromEvery(cost.cache_write)
     ) {
       clauses.push(
-        "nothing was written or read: the cached part may be shorter than the model's minimum, or an endpoint behind ANTHROPIC_BASE_URL dropped the request to cache",
+        "nothing was written or read: the cached part may be shorter than the model's minimum",
       );
     }
     out.ask = clauses.join('; ');
