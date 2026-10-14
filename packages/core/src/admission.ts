@@ -7,10 +7,14 @@
  * check cannot collide at the engine's front door (they did: #620 PR-C and #625 PR-H, 2026-10-03).
  *
  * Two tiers:
- * 1. HOST WIRING — what the program that embeds realm handed in. The answer is the same on every
- *    call. A defect THROWS a typed `WorkflowError`: three of the entries (`drainFinalizers`,
- *    `abandonRun`, `getWorkflowForRun`) have no error-reply shape, so a throw is the one channel
- *    every entry shares. The first defect wins.
+ * 1. HOST WIRING — the presence and type of what the program that embeds realm handed in (issue
+ *    #719): its store, registry, driver and caller, and the parts each entry needs (the definition,
+ *    the options, `run`, the dispatcher a step needs). The answer is the same on every call. A
+ *    defect THROWS a typed `WorkflowError`: three of the entries (`drainFinalizers`, `abandonRun`,
+ *    `getWorkflowForRun`) have no error-reply shape, so a throw is the one channel every entry
+ *    shares. The first defective ROW wins; the `required_parts` row names every defect it finds at
+ *    once, and a missing container (the options, the definition) is reported alone, without its
+ *    members.
  * 2. CALLER INPUT — what this call's caller sent; a defect comes back as the entry's normal error
  *    reply. No row yet: #604's bounded reason and PR-V's required actor are the first.
  *
@@ -21,6 +25,7 @@
 import { assertReleaseLine, assertRegistryLine } from './release-line.js';
 import { validateDriver } from './engine/holder.js';
 import { validateCaller } from './engine/callers.js';
+import { checkRequiredParts, givenTypeOf, optionInvalidError } from './engine/required-parts.js';
 import { ExtensionRegistry } from './extensions/registry.js';
 
 /** The engine functions that admit their calls here. A source-text witness pins each call. */
@@ -49,6 +54,12 @@ export interface HostWiring {
    * (`ENTRY_CALLERS`), never a free label.
    */
   caller?: unknown;
+  /**
+   * issue #719: the parts the entry was handed, by parameter name (`definition`, `options`, `run`,
+   * `runId`, …), checked by the `required_parts` row against `REQUIRED_PARTS`. Absent: that row
+   * has nothing to check.
+   */
+  parts?: Record<string, unknown>;
 }
 
 interface HostWiringCheck {
@@ -60,7 +71,16 @@ interface HostWiringCheck {
 export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
   {
     id: 'store_release_line',
-    check: (entry, w) => assertReleaseLine(w.store, `the ${w.storeKind} handed to ${entry}`),
+    check: (entry, w) => {
+      // issue #719 (C4): no store at all is the host's missing part, named as one — not a store
+      // of an undeclared release line.
+      if (w.store === undefined || w.store === null) {
+        throw optionInvalidError(entry, [
+          { option: 'store', expected: `a ${w.storeKind}`, given_type: givenTypeOf(w.store) },
+        ]);
+      }
+      assertReleaseLine(w.store, `the ${w.storeKind} handed to ${entry}`);
+    },
   },
   {
     id: 'registry_release_line',
@@ -74,6 +94,11 @@ export const HOST_WIRING_CHECKS: readonly HostWiringCheck[] = [
   {
     id: 'caller',
     check: (entry, w) => validateCaller(entry, w.caller),
+  },
+  {
+    // issue #719: last — a store, registry, driver or caller defect is the likelier cause.
+    id: 'required_parts',
+    check: (entry, w) => checkRequiredParts(entry, w.parts),
   },
 ];
 

@@ -36,6 +36,23 @@ export function isBareAutoStep(step: StepDefinition | undefined): boolean {
 }
 
 /**
+ * issue #719 (R1): whether Realm calls the HOST's dispatcher for this step — the step exists, it is
+ * not a guard or a finalizer (the engine settles those itself), and it is not an `auto` step with a
+ * handler or a service (those run the handler or the adapter). So: every `agent` step, every bare
+ * `auto` step, and a step whose `execution` is missing or unknown. The one predicate admission's
+ * `required_parts` row and `makeCall`'s dispatcher branch both serve. A step that is not an object
+ * (`null`, a string, … — a definition the host built wrong) is not one: no error escapes here.
+ */
+export function callsHostDispatcher(step: StepDefinition | undefined): boolean {
+  if (step === null || typeof step !== 'object') return false;
+  if (step.execution === 'guard' || step.execution === 'finalizer') return false;
+  return !(
+    step.execution === 'auto' &&
+    (step.handler !== undefined || step.uses_service !== undefined)
+  );
+}
+
+/**
  * Where an evidence entry's output came from (F4): `{ source }` when the entry carries
  * `output_source`; otherwise `{ absent_cause }`, the first {@link OUTPUT_SOURCE_ABSENT_CAUSES} member
  * that holds. `definition` is the run's workflow, when the reader has it. `realm run inspect` renders

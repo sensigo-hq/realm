@@ -40,6 +40,7 @@ import {
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
+import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -582,7 +583,23 @@ export async function runDrainAction(
       console.error('Cannot combine a <run-id> with --all. Use one or the other.');
       process.exit(1);
     }
-    const runs = await runStore.list();
+    // issue #719 (B3): its own `try` — a listing that throws is rendered like every other failure
+    // here, never an unhandled rejection. The readable runs are acted on; a damaged run file is
+    // reported, not acted on.
+    let runs: RunRecord[];
+    try {
+      const listing = await listRunsDiagnosed(runStore);
+      runs = listing.records;
+      for (const line of unreadableRunLines(
+        listing.unreadable,
+        '; realm run drain --all did not act on them.',
+      )) {
+        console.error(line);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
     const finalizerActionable = runs.filter((r) => r.terminal_state && isBatchActionable(r, now));
     // issue #291 ([F5]): OPT-IN — without --expired, batch mode is byte-stable terminal-only
     // (a non-terminal run with an expired gate is invisible to bare `drain --all`, exactly as

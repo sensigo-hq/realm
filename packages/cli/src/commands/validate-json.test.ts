@@ -708,7 +708,7 @@ steps:
       expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
 
-    it("J9 corrupt-JSON: errors contains 'not parseable JSON', exit 1", async () => {
+    it("J9 corrupt-JSON: errors contains 'is not JSON' (issue #719: no parser text), exit 1", async () => {
       writeFileSync(join(wfDir, 'broken.json'), '{ not json', 'utf8');
 
       await expect(
@@ -718,7 +718,7 @@ steps:
       const result = parseJson();
       expect(result['valid']).toBe(false);
       const errors = result['errors'] as string[];
-      expect(errors[0]).toContain('not parseable JSON');
+      expect(errors[0]).toContain("the registered copy of 'broken' is not JSON");
       expect(exitSpy).toHaveBeenCalledWith(1);
     }, 20_000);
   });

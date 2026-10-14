@@ -76,40 +76,42 @@ async function atQuestion(s: RunStore, d: WorkflowDefinition): Promise<[string, 
 }
 
 describe('#625 PR-2a, F17 — core-library.md says what the build does', () => {
-  it('G5-3: a `now` that is not a Date at a question with no on_expiry — the call runs as given; at one that declares on_expiry it throws', async () => {
+  it('G5-3: a `now` that is not a valid Date — rejected VALIDATION_OPTION_INVALID before anything is read or written, at a question with no on_expiry and at one that declares it', async () => {
     claim(
-      'Pass a `Date`: given a number or a string, a call that meets an open question that declares `on_expiry` throws a `TypeError` (`now.getTime is not a function`) before anything is written; any other call runs as given.',
+      'Given anything else (a number, a string, or a `Date` that is not a valid time), the call rejects with `VALIDATION_OPTION_INVALID` before anything is read or written.',
     );
     const s = await store();
     const plain = asked(undefined);
     const [plainId] = await atQuestion(s, plain);
-    const replies: string[] = [];
-    for (const now of ['2026-01-01', 12345]) {
-      const r = await advanceRun(s, plain, { runId: plainId, now: now as never });
-      replies.push(`${r.status} | ${r.context_hint.split(plainId).join('<run>')}`);
-    }
     const timed = asked('abort');
     const [timedId] = await atQuestion(s, timed);
-    const thrown: string[] = [];
-    for (const now of ['2026-01-01', 12345]) {
-      try {
-        await advanceRun(s, timed, { runId: timedId, now: now as never });
-        thrown.push('no throw');
-      } catch (e) {
-        thrown.push(`${(e as Error).constructor.name}: ${(e as Error).message}`);
+    const before = [JSON.stringify(await s.get(plainId)), JSON.stringify(await s.get(timedId))];
+    const outcomes: string[] = [];
+    for (const [def, id] of [
+      [plain, plainId],
+      [timed, timedId],
+    ] as const) {
+      for (const now of ['2026-01-01', 12345]) {
+        try {
+          await advanceRun(s, def, { runId: id, now: now as never });
+          outcomes.push('no rejection');
+        } catch (e) {
+          outcomes.push(`${(e as { code?: string }).code ?? (e as Error).constructor.name}`);
+        }
       }
     }
-    const waiting =
-      "ok | Run '<run>': nothing ran. Waiting on the question on step 'q' (choices: approve, reject) — answer it with submit_human_response.";
-    // (a) red when the page says every open question throws (G5-3), or when the call at a question
-    //     with no on_expiry throws, or the one with on_expiry no longer does; (b) prints the replies.
-    expect({ replies, thrown }).toEqual({
-      replies: [waiting, waiting],
-      thrown: [
-        'TypeError: now.getTime is not a function',
-        'TypeError: now.getTime is not a function',
-      ],
-    });
+    // (a) red when a call runs on such a `now` (G5-3: it used to, at a question with no on_expiry)
+    //     or rejects with anything else; (b) prints the outcomes.
+    expect(outcomes).toEqual([
+      'VALIDATION_OPTION_INVALID',
+      'VALIDATION_OPTION_INVALID',
+      'VALIDATION_OPTION_INVALID',
+      'VALIDATION_OPTION_INVALID',
+    ]);
+    // issue #719 (C5): booleans, so a failure prints whether each record is unchanged — never the
+    // records themselves.
+    const after = [JSON.stringify(await s.get(plainId)), JSON.stringify(await s.get(timedId))];
+    expect(after.map((a, i) => a === before[i])).toEqual([true, true]);
   });
 
   it.each([

@@ -288,7 +288,8 @@ describe('validate --registered (issue #427)', () => {
     ).rejects.toThrow('process.exit');
 
     const text = out();
-    expect(text).toContain("Error: the registered copy of 'broken' is not parseable JSON:");
+    // issue #719 (R8): the fault, never the parser's text.
+    expect(text).toContain("Error: the registered copy of 'broken' is not JSON");
     expect(text).toContain(
       'The registry holds an entry for \'broken\' — realm workflow list counts it under "could not be read" instead of listing it.',
     );
@@ -349,9 +350,7 @@ describe('validate --registered (issue #427)', () => {
     await expect(
       validateCommand.parseAsync(['--registered', 'blank'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
-    expect(out()).toContain(
-      "Error: the registered copy of 'blank' is empty (0 bytes) — not a workflow",
-    );
+    expect(out()).toContain("Error: the registered copy of 'blank' is empty — not a workflow");
     expect(out()).not.toContain('    at ');
   });
 
