@@ -13,7 +13,7 @@
 | [`replay`](#replay)     | Checks a run's preconditions again with changed step outputs. |
 | [`export`](#export)     | Writes everything Realm holds about one run to one JSON file. |
 
-All six read the store in `~/.realm/`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1, except from `attempts`. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1, except from `attempts`, which does not read the run's file (added after version 0.46.0).
+All six read the store in `~/.realm/`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1, except from `attempts`. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1, except from `attempts`, which does not read the run's file (added after version 0.47.0).
 
 ## `list`
 
@@ -75,7 +75,7 @@ No stuck runs found (threshold 24h).
 No stuck runs found for workflow 'nope' (threshold 0m).
 ```
 
-**Exit code:** 0, also when nothing matches, and when a run file cannot be read as a run: the readable runs are listed, each such file is named on standard error with what is wrong with it and the way out (`⚠ <reason> <way out>`), then `⚠ <n> run file(s) in '<runs folder>' could not be read and are not listed.`; when no readable run matches, the output is `No readable runs found.`, or under a filter `No readable runs found for workflow '<id>'.` (or `for status '<status>'`, or both, joined by `and`) (added after version 0.46.0, which failed with the parser's message, or crashed on a file that was JSON but not a run). 1 for a flag that cannot be used:
+**Exit code:** 0, also when nothing matches, and when a run file cannot be read as a run: the readable runs are listed, each such file is named on standard error with what is wrong with it and the way out (`⚠ <reason> <way out>`), then `⚠ <n> run file(s) in '<runs folder>' could not be read and are not listed.`; when no readable run matches, the output is `No readable runs found.`, or under a filter `No readable runs found for workflow '<id>'.` (or `for status '<status>'`, or both, joined by `and`) (added after version 0.47.0, which failed with the parser's message, or crashed on a file that was JSON but not a run). 1 for a flag that cannot be used:
 
 ```text
 Invalid --status value 'done'. Valid values: running, gate_waiting, completed, failed, abandoned, aborted
