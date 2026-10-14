@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { JsonFileStore } from './json-file-store.js';
 import {
   displayId,
+  isCopyOfReadableRun,
   renderUnreadableStoredFile,
   unreadableFactsOf,
   unreadableRunFileError,
@@ -50,14 +51,12 @@ const record = (id: string): Record<string, unknown> => ({
 });
 
 const P = () => join(dir, 'x.json');
-/** The three side files of run `x`, named exactly. */
-const SIDE = "'x.attempts.jsonl', 'trace-buffer-x-*.jsonl' and 'sealed-trace-x-*.jsonl'";
 const KEY_EFFECT =
   'If it held an idempotency key, the next delivery with that key starts a new run.';
+/** issue #719 (F4): `x` is not a run id of 36 characters, so no side file is named. */
 const keep = () =>
   `Restore it from a backup or repair it: the run keeps its record and its idempotency key. Or ` +
-  `move it out of '${dir}' together with ${SIDE} (moved alone, they become orphans that ` +
-  `'realm run gc --older-than <age> --force' deletes). ${KEY_EFFECT}`;
+  `move it out of '${dir}'. ${KEY_EFFECT}`;
 
 /** What one damaged file is, as it is written, and what reading it must give. */
 interface ClassCase {
@@ -143,11 +142,11 @@ const CASES: ClassCase[] = [
       class: 'mismatched',
       path: P(),
       held_id: 'other',
-      held_present: false,
+      held_file: 'absent',
     }),
     message: () =>
-      `The run file '${P()}' holds run 'other', not 'x'. It holds run 'other', whose own file ` +
-      `is missing: rename it to 'other.json' to restore that run, or move it out of '${dir}'.`,
+      `The run file '${P()}' holds run 'other', not 'x'. That run's own file is missing: rename ` +
+      `this file to 'other.json' to restore the run, or move it out of '${dir}'.`,
   },
   {
     label: 'mismatched, the held run’s own file readable',
@@ -162,11 +161,11 @@ const CASES: ClassCase[] = [
       class: 'mismatched',
       path: P(),
       held_id: 'other',
-      held_present: true,
+      held_file: 'reads_as_run',
     }),
     message: () =>
-      `The run file '${P()}' holds run 'other', not 'x'. It is a copy of run 'other', whose own ` +
-      `file is readable; move it out of '${dir}' — nothing else changes.`,
+      `The run file '${P()}' holds run 'other', not 'x'. That run's own file is readable, so this ` +
+      `is a copy: move it out of '${dir}' — nothing else changes.`,
   },
   {
     label: 'mismatched, the held run’s own file present but itself damaged',
@@ -181,11 +180,10 @@ const CASES: ClassCase[] = [
       class: 'mismatched',
       path: P(),
       held_id: 'other',
-      held_present: false,
+      held_file: 'unreadable',
     }),
-    message: () =>
-      `The run file '${P()}' holds run 'other', not 'x'. It holds run 'other', whose own file ` +
-      `is missing: rename it to 'other.json' to restore that run, or move it out of '${dir}'.`,
+    // issue #719 (F1): a held file that is there but damaged is never "missing" — no rename over it.
+    message: () => `The run file '${P()}' holds run 'other', not 'x'. Move it out of '${dir}'.`,
   },
   {
     label: 'mismatched, holding an id text may not show',
@@ -194,8 +192,7 @@ const CASES: ClassCase[] = [
     agentAction: 'stop',
     facts: () => ({ resource: 'run_file', class: 'mismatched', path: P(), held_id: 'two words' }),
     message: () =>
-      `The run file '${P()}' holds another run id (not shown), not 'x'. It holds another run ` +
-      `id (not shown); move it out of '${dir}'.`,
+      `The run file '${P()}' holds another run id (not shown), not 'x'. Move it out of '${dir}'.`,
   },
   {
     label: 'legacy',
@@ -204,9 +201,8 @@ const CASES: ClassCase[] = [
     agentAction: 'report_to_user',
     facts: () => ({ resource: 'run_file', class: 'legacy', path: P() }),
     message: () =>
-      `The run file '${P()}' is in the format of an earlier Realm. It was written by an earlier ` +
-      `Realm, in a format this version cannot read. Move it out of '${dir}' together with ` +
-      `${SIDE}. ${KEY_EFFECT}`,
+      `The run file '${P()}' is in the format of an earlier Realm. This version cannot read it: ` +
+      `move it out of '${dir}'. ${KEY_EFFECT}`,
   },
   {
     label: 'unreadable (EISDIR: a folder named like a run file)',
@@ -325,8 +321,9 @@ describe('issue #719 C3 — the runs folder, through the one composer', () => {
         retryable: false,
         facts: { resource: 'run_folder', class: 'unreadable', path: dir, errno: 'EACCES' },
         message:
-          `The runs folder '${dir}' cannot be read (EACCES). Give this user read access to it; ` +
-          `nothing in it was changed.`,
+          `The runs folder '${dir}' cannot be read (EACCES). Give this user read access to it (or, ` +
+          `if it does not exist yet, write access to the folder that holds it); nothing in it was ` +
+          `changed.`,
       });
     },
   );
@@ -450,6 +447,178 @@ describe('issue #719 C6 — displayId: a file-held id enters text only when it i
       escape: false,
       empty: false,
       hiddenText: 'another run id (not shown)',
+    });
+  });
+});
+
+describe('issue #719 F1 — a copy whose held run’s file cannot be read by this user is never told to rename over it', () => {
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  it.skipIf(asRoot)('held file EACCES → held_file unreadable, the neutral way out', async () => {
+    await writeFile(P(), JSON.stringify(record('other')));
+    await writeFile(join(dir, 'other.json'), JSON.stringify(record('other')));
+    await chmod(join(dir, 'other.json'), 0o000);
+    const err = (await store.get('x').catch((e: unknown) => e)) as WorkflowError;
+    await chmod(join(dir, 'other.json'), 0o600);
+    // (a) red when a held file this user cannot read is called missing (a rename would replace
+    //     it); (b) prints the fact and the message (paths and fixed words).
+    expect({ held_file: unreadableFactsOf(err)?.held_file, message: err.message }).toEqual({
+      held_file: 'unreadable',
+      message: `The run file '${P()}' holds run 'other', not 'x'. Move it out of '${dir}'.`,
+    });
+  });
+});
+
+describe('issue #719 F4 — side files are named only when present, and only for a run id', () => {
+  /** A run id of 36 characters (a UUID). */
+  const ID = '5f0c2a3e-7b1d-4c8e-9a6f-0123456789ab';
+  const F = () => join(dir, `${ID}.json`);
+  const way = (clause: string) =>
+    `Restore it from a backup or repair it: the run keeps its record and its idempotency key. Or ` +
+    `move it out of '${dir}'${clause}. ${KEY_EFFECT}`;
+  const ORPHANS =
+    " (moved alone, they become orphans that 'realm run gc --older-than <age> --force' deletes)";
+  const read = async () => {
+    const err = (await store.get(ID).catch((e: unknown) => e)) as WorkflowError;
+    return { side_files: unreadableFactsOf(err)?.side_files, message: err.message };
+  };
+
+  it('a UUID-named file that is not JSON, with no side file: judged none, no clause', async () => {
+    await writeFile(F(), '{not json');
+    // (a) red when absent side files are named (or not judged); (b) prints the fact and message.
+    expect(await read()).toEqual({
+      side_files: [],
+      message: `The run file '${F()}' is not JSON. ${way('')}`,
+    });
+  });
+
+  it('with only its attempts file: names only it', async () => {
+    await writeFile(F(), '{not json');
+    await writeFile(join(dir, `${ID}.attempts.jsonl`), '');
+    expect(await read()).toEqual({
+      side_files: ['attempts'],
+      message: `The run file '${F()}' is not JSON. ${way(` together with '${ID}.attempts.jsonl'${ORPHANS}`)}`,
+    });
+  });
+
+  it('with all three: names all three', async () => {
+    await writeFile(F(), '{not json');
+    await writeFile(join(dir, `${ID}.attempts.jsonl`), '');
+    await writeFile(join(dir, `trace-buffer-${ID}-c3RlcA.jsonl`), '');
+    await writeFile(join(dir, `sealed-trace-${ID}-c3RlcA.1.jsonl`), '');
+    expect(await read()).toEqual({
+      side_files: ['attempts', 'trace_buffer', 'sealed_trace'],
+      message:
+        `The run file '${F()}' is not JSON. ` +
+        way(
+          ` together with '${ID}.attempts.jsonl', every 'trace-buffer-${ID}-*.jsonl' file and ` +
+            `every 'sealed-trace-${ID}-*.jsonl' file${ORPHANS}`,
+        ),
+    });
+  });
+
+  it('the walk’s case: a short name that prefixes a healthy run’s id names no side file, and none of that run’s files', async () => {
+    const healthy = '79eeded0-afc1-4c8e-9a6f-0123456789ab';
+    await writeFile(join(dir, `${healthy}.json`), JSON.stringify(record(healthy)));
+    await writeFile(join(dir, `trace-buffer-${healthy}-c3RlcA.jsonl`), '');
+    await writeFile(join(dir, `sealed-trace-${healthy}-c3RlcA.1.jsonl`), '');
+    await writeFile(join(dir, '79eeded0.json'), '{not json');
+    const err = (await store.get('79eeded0').catch((e: unknown) => e)) as WorkflowError;
+    // (a) red when a short name's glob reaches a healthy run's trace files (walk C2); (b) prints
+    //     the fact and booleans.
+    expect({
+      side_files: unreadableFactsOf(err)?.side_files,
+      namesSideFile: /trace-buffer-|sealed-trace-|attempts\.jsonl/.test(err.message),
+      namesHealthyRun: err.message.includes(healthy),
+    }).toEqual({ side_files: undefined, namesSideFile: false, namesHealthyRun: false });
+  });
+
+  it('a legacy file follows the same rule, its orphan clause included', async () => {
+    await writeFile(F(), JSON.stringify({ id: ID, state: 'running' }));
+    await writeFile(join(dir, `trace-buffer-${ID}-c3RlcA.jsonl`), '');
+    expect((await read()).message).toBe(
+      `The run file '${F()}' is in the format of an earlier Realm. This version cannot read it: ` +
+        `move it out of '${dir}' together with every 'trace-buffer-${ID}-*.jsonl' file${ORPHANS}. ` +
+        KEY_EFFECT,
+    );
+  });
+
+  it('the composer names exactly the kinds the facts list, for every combination', () => {
+    const kinds = ['attempts', 'trace_buffer', 'sealed_trace'] as const;
+    const name = {
+      attempts: `'${ID}.attempts.jsonl'`,
+      trace_buffer: `every 'trace-buffer-${ID}-*.jsonl' file`,
+      sealed_trace: `every 'sealed-trace-${ID}-*.jsonl' file`,
+    };
+    const wrong: string[] = [];
+    for (let mask = 0; mask < 8; mask++) {
+      const present = kinds.filter((_, i) => (mask >> i) & 1);
+      const msg = renderUnreadableStoredFile({
+        resource: 'run_file',
+        class: 'parse',
+        path: `/runs/${ID}.json`,
+        side_files: [...present],
+      });
+      const list = present.map((k) => name[k]);
+      const joined =
+        list.length === 0
+          ? ''
+          : ` together with ${list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`}${ORPHANS}`;
+      if (!msg.includes(`move it out of '/runs'${joined}. `))
+        wrong.push(present.join('+') || 'none');
+    }
+    // (a) red when the composer names a kind not listed, or misses one; (b) prints the wrong sets.
+    expect(wrong).toEqual([]);
+  });
+});
+
+describe('issue #719 F5 — isCopyOfReadableRun: a file holding another run whose own file reads', () => {
+  it('true only for `mismatched` with held_file reads_as_run', () => {
+    const at = (
+      cls: 'mismatched' | 'not_a_run' | 'parse',
+      held?: 'reads_as_run' | 'absent' | 'unreadable',
+    ) =>
+      isCopyOfReadableRun({
+        resource: 'run_file',
+        class: cls,
+        path: '/r/x.json',
+        ...(held !== undefined ? { held_file: held } : {}),
+      });
+    // (a) red when the class conjunct or the held-file conjunct is dropped; (b) prints each.
+    expect({
+      copy: at('mismatched', 'reads_as_run'),
+      heldAbsent: at('mismatched', 'absent'),
+      heldUnreadable: at('mismatched', 'unreadable'),
+      heldNotJudged: at('mismatched'),
+      otherClass: at('not_a_run', 'reads_as_run'),
+      parseClass: at('parse', 'reads_as_run'),
+    }).toEqual({
+      copy: true,
+      heldAbsent: false,
+      heldUnreadable: false,
+      heldNotJudged: false,
+      otherClass: false,
+      parseClass: false,
+    });
+  });
+});
+
+describe('issue #719 F6.5 — a runs folder that cannot be created says so', () => {
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  it.skipIf(asRoot)('a missing runs folder under a parent this user cannot write to', async () => {
+    const parent = join(dir, 'locked');
+    await mkdir(parent);
+    await chmod(parent, 0o500);
+    const runs = join(parent, 'runs');
+    const err = (await new JsonFileStore(runs).list().catch((e: unknown) => e)) as WorkflowError;
+    await chmod(parent, 0o700);
+    // (a) red when a folder that does not exist is told only "read access"; (b) prints the code
+    //     and the message (a path and fixed words).
+    expect({ code: err.code, message: err.message }).toEqual({
+      code: 'ENGINE_STORE_FAILED',
+      message:
+        `The runs folder '${runs}' cannot be read (EACCES). Give this user read access to it (or, ` +
+        `if it does not exist yet, write access to the folder that holds it); nothing in it was ` +
+        `changed.`,
     });
   });
 });

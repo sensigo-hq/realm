@@ -21,6 +21,7 @@ import type {
 } from './execution-loop.js';
 import type { ReclaimStepOptions } from './reclaim-step.js';
 import type { getWorkflowForRun } from '../workflow/registrar.js';
+import type { ExtensionRegistry } from '../extensions/registry.js';
 
 /** What a part must be. Each kind has one test and one phrase. */
 type PartKind =
@@ -65,16 +66,23 @@ function timeOf(value: unknown): number | undefined {
   }
 }
 
-/** issue #719 (C4): an extension registry is an object whose three methods the engine calls are
- *  functions (`extensions/registry.ts`). */
+/** issue #719 (C4, F3): the methods the engine calls on a host's registry — `getHandler` (a
+ *  handler step, a finalizer), `getAdapter` and `getOrCreateRateLimiter` (a service step), `has`
+ *  (a capability requirement, the owed view). Derived from the engine's calls; each is a member of
+ *  `ExtensionRegistry`. */
+const REGISTRY_METHODS = [
+  'getHandler',
+  'getAdapter',
+  'getOrCreateRateLimiter',
+  'has',
+] as const satisfies readonly (keyof ExtensionRegistry)[];
+
+/** issue #719 (C4, F3): an extension registry is an object on which each method the engine calls
+ *  ({@link REGISTRY_METHODS}) is a function. */
 function isExtensionRegistry(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
   try {
-    return (
-      typeof value['getHandler'] === 'function' &&
-      typeof value['getAdapter'] === 'function' &&
-      typeof value['getOrCreateRateLimiter'] === 'function'
-    );
+    return REGISTRY_METHODS.every((m) => typeof value[m] === 'function');
   } catch {
     return false;
   }

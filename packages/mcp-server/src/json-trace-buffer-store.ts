@@ -52,6 +52,7 @@ import {
   TRACE_BUFFER_FILE_PREFIX,
   SEALED_TRACE_FILE_PREFIX,
   TRACE_FILE_SUFFIX,
+  RUN_ID_LENGTH,
 } from '@sensigo/realm';
 import { REALM_MCP_BRAND } from './brand.js';
 
@@ -68,7 +69,6 @@ type WalLine = SealedWalLine;
 // issue #719: the names are core's (a damaged run file's way out names these files), defined once.
 const WAL_PREFIX = TRACE_BUFFER_FILE_PREFIX;
 const WAL_SUFFIX = TRACE_FILE_SUFFIX;
-const RUN_ID_LENGTH = 36;
 
 /** Sealed-artifact filename shape (issue #197 PR-1, the `seal` rung — design §4):
  *  `sealed-trace-<runId>-<base64url(stepId)>.<seq>.jsonl`. Distinct, non-overlapping prefix from

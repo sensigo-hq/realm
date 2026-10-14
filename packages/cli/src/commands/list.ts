@@ -38,7 +38,7 @@ export async function listRunsDiagnosed(
   if (typeof store.listWithDiagnostics === 'function') {
     return store.listWithDiagnostics(workflowId);
   }
-  return { records: await store.list(workflowId), unreadable: [] };
+  return { records: await store.list(workflowId), unreadable: [], copies: [] };
 }
 
 /**
@@ -692,6 +692,9 @@ export const listCommand = new Command('list')
           listing,
         );
         console.log(output);
+        // issue #719 (F5): a copy of a run whose own file reads is named with its way out, and
+        // not counted among the files that could not be read.
+        for (const c of listing.copies) console.error(`⚠ ${c.reason} ${c.repair}`);
         for (const line of unreadableRunLines(listing.unreadable, ' and are not listed.')) {
           console.error(line);
         }

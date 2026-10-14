@@ -350,9 +350,7 @@ describe('validate --registered (issue #427)', () => {
     await expect(
       validateCommand.parseAsync(['--registered', 'blank'], { from: 'user' }),
     ).rejects.toThrow('process.exit');
-    expect(out()).toContain(
-      "Error: the registered copy of 'blank' is empty (0 bytes) — not a workflow",
-    );
+    expect(out()).toContain("Error: the registered copy of 'blank' is empty — not a workflow");
     expect(out()).not.toContain('    at ');
   });
 

@@ -5,7 +5,7 @@
 // of it. Most of these cells are about that discipline rather than about the happy path.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WorkflowError, JsonFileStore } from '@sensigo/realm';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RunRecord, DriveFailureRecord } from '@sensigo/realm';
@@ -15,6 +15,7 @@ import {
   buildEntry,
   findDriveCall,
   lostLine,
+  MESSAGE_CAP,
 } from './drive-failure.js';
 import { setAdditionalRedactionValues } from './providers/agent-utils.js';
 
@@ -473,6 +474,46 @@ describe('issue #719 — the fence names why, when the store refused with a Real
       });
     } finally {
       rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+
+  // issue #719 (F2): said once, and whole. A run file named by a run id, with its three side files,
+  // gives a message over the entry's cap; the runs folder sits under HOME and holds USER's value,
+  // both of which the entry's sanitised copy hides. The LOST line carries the store's own text.
+  it('a message over the cap, its folder under HOME: the LOST line keeps it whole, the folder shown (F2)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'realm-719-home-'));
+    const user = 'realm719user';
+    const runsDir = join(home, user, 'runs');
+    mkdirSync(runsDir, { recursive: true });
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USER', user);
+    try {
+      const id = '5f0c2a3e-7b1d-4c8e-9a6f-0123456789ab';
+      writeFileSync(join(runsDir, `${id}.json`), '{not json');
+      writeFileSync(join(runsDir, `${id}.attempts.jsonl`), '');
+      writeFileSync(join(runsDir, `trace-buffer-${id}-x.jsonl`), '');
+      writeFileSync(join(runsDir, `sealed-trace-${id}-x.1.jsonl`), '');
+      const store = new JsonFileStore(runsDir);
+      const refusal = await store.get(id).catch((e: unknown) => e);
+      const message = refusal instanceof Error ? refusal.message : '';
+      // The precondition: the message crosses the cap, so the cell cannot pass on a short one.
+      expect({ overCap: message.length > MESSAGE_CAP }).toEqual({ overCap: true });
+      await recordDriveFailure(store, id, buildEntry(refusal, 's', 'anthropic', Date.now()));
+      const line = errors.join('\n');
+      // (a) red when the line prints the entry's capped, sanitised copy (the way out cut, the
+      //     folder hidden) or the fault twice; (b) prints the line count and booleans only.
+      expect({
+        lines: errors.length,
+        folder: line.includes(`move it out of '${runsDir}'`),
+        lastSentence: line.endsWith(
+          'If it held an idempotency key, the next delivery with that key starts a new run.',
+        ),
+        faultTimes: line.split('is not JSON').length - 1,
+        redacted: line.includes('[REDACTED]'),
+      }).toEqual({ lines: 1, folder: true, lastSentence: true, faultTimes: 1, redacted: false });
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

@@ -526,6 +526,24 @@ describe('issue #719 C4 — a wrong registry is refused where it was handed in, 
     },
   );
 
+  it.each(REGISTRY_AT)(
+    '%s: %s with getHandler, getAdapter and getOrCreateRateLimiter but no `has` is refused (F3)',
+    async (entry, at) => {
+      const noHas = {
+        getHandler: () => undefined,
+        getAdapter: () => undefined,
+        getOrCreateRateLimiter: () => undefined,
+      };
+      // (a) red when `has` — which the engine calls for a capability requirement and the owed view
+      //     — is not checked; (b) prints the outcome.
+      expect(await outcome(entry, withPart(BASE[entry](), at, noHas))).toEqual({
+        code: 'VALIDATION_OPTION_INVALID',
+        invalid: [at],
+        calls: [],
+      });
+    },
+  );
+
   it("the details name it 'an extension registry', by its type word only", async () => {
     const { s } = trapStore();
     const err = (await advanceRun(s, AGENT, { runId: 'r', registry: 'SECRETVALUE' } as never).catch(
@@ -597,7 +615,7 @@ describe('issue #719 C4 — a member that is not an option of the entry is refus
   });
 });
 
-describe('issue #719 C2 — "at once" has one stated limit: the dispatcher is judged once the definition and command are sound', () => {
+describe('issue #719 C2 — "at once" has one stated limit: a missing dispatcher is named once the definition and command are sound', () => {
   it.each([
     ['definition.steps', 'x'],
     ['options.command', 7],

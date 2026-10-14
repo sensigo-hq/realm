@@ -215,9 +215,7 @@ describe('probeClassToError — the table, whole-message', () => {
 
   it('T4 empty is a RESOURCE refusal, not a STATE one', () => {
     const err = probeClassToError({ ok: false, class: 'empty', path: '/x/gate-558.json' }, ID);
-    expect(err.message).toBe(
-      "the registered copy of 'gate-558' is empty (0 bytes) — not a workflow",
-    );
+    expect(err.message).toBe("the registered copy of 'gate-558' is empty — not a workflow");
     expect(err.code).toBe('RESOURCE_FORMAT_INVALID');
   });
 
@@ -313,7 +311,7 @@ describe('listWithDiagnostics — one class per entry, never a throw', () => {
     const byClass = Object.fromEntries(d.unreadable.map((u) => [u.class, u]));
     expect(byClass['not_a_file']?.errno).toBeUndefined();
     expect(byClass['empty']?.reason).toBe(
-      "the registered copy of 'blank' is empty (0 bytes) — not a workflow",
+      "the registered copy of 'blank' is empty — not a workflow",
     );
   });
 
@@ -431,7 +429,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       (e: unknown) => e,
     )) as WorkflowError;
     expect(err.message).toBe(
-      "the registered copy of 'gate-558' is empty (0 bytes) — not a workflow. " +
+      "the registered copy of 'gate-558' is empty — not a workflow. " +
         'To end the run: realm run abandon run-1. To repair: re-register the workflow from its ' +
         'source (realm workflow register <path-to-workflow>), then respond again; if it was ' +
         `never registered from a source, remove the file (rm ${file}) instead.`,
@@ -444,7 +442,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       (e: unknown) => e,
     )) as WorkflowError;
     expect(err.message).toBe(
-      "the registered copy of 'gate-558' is empty (0 bytes) — not a workflow. " +
+      "the registered copy of 'gate-558' is empty — not a workflow. " +
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
         'To repair: re-register the workflow from its source (realm workflow register ' +
@@ -784,11 +782,13 @@ describe('issue #719 — the registrar speaks the damaged-file vocabulary, with 
     const listed = (await new JsonWorkflowStore(wfDir).listWithDiagnostics()).unreadable.map(
       (u) => [u.file, u.class],
     );
-    // (a) red when whitespace is read as "is not JSON" (one vocabulary, two rules); (b) prints
-    //     the class through get() and through the listing.
-    expect({ get: unreadableFactsOf(err)?.class, listed }).toEqual({
+    // (a) red when whitespace is read as "is not JSON" (one vocabulary, two rules), or the message
+    //     says "(0 bytes)" of a file that has some (F6.6); (b) prints the class through get() and
+    //     the listing, and the message.
+    expect({ get: unreadableFactsOf(err)?.class, listed, message: err.message }).toEqual({
       get: 'empty',
       listed: [['w.json', 'empty']],
+      message: "the registered copy of 'w' is empty — not a workflow",
     });
   });
 

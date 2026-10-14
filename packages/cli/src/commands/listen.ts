@@ -903,12 +903,12 @@ export interface SweepResult {
 
 /**
  * issue #719 (B3): the run files the expiry sweeper has already logged, by path — so a damaged file
- * is logged on first sight and again only when its class, size or mtime changes, never once per
- * pass. The listen server makes one and hands it to every pass.
+ * is logged on first sight and again only when its class, size, mtime or way out changes, never
+ * once per pass. The listen server makes one and hands it to every pass.
  */
 export type SweepSeenFiles = Map<
   string,
-  { class: string; size: number | undefined; mtimeMs: number | undefined }
+  { class: string; size: number | undefined; mtimeMs: number | undefined; repair: string }
 >;
 
 /**
@@ -937,11 +937,14 @@ async function logSkippedRunFiles(
       // A file that cannot be stat'ed is compared by its class alone.
     }
     const prior = seen?.get(entry.path);
+    // issue #719 (F6.9): its way out too — a copy whose held file changes (missing, then present
+    // but damaged) keeps its own bytes, and its last logged advice must not outlive the change.
     const changed =
       prior === undefined ||
       prior.class !== entry.class ||
       prior.size !== size ||
-      prior.mtimeMs !== mtimeMs;
+      prior.mtimeMs !== mtimeMs ||
+      prior.repair !== entry.repair;
     if (changed) {
       logger.warn('listen: run file skipped by the expiry sweeper', {
         path: entry.path,
@@ -949,7 +952,7 @@ async function logSkippedRunFiles(
         reason: entry.reason,
         repair: entry.repair,
       });
-      seen?.set(entry.path, { class: entry.class, size, mtimeMs });
+      seen?.set(entry.path, { class: entry.class, size, mtimeMs, repair: entry.repair });
     }
   }
   if (unreadable.length > 0) {

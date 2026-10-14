@@ -21,13 +21,15 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   the step `command` names.
 - **`JsonFileStore.listWithDiagnostics(workflowId?)` (issue #719).** Every readable run, and each
   run file that cannot be read as a run, with its file, path, class (`empty`, `parse`, `not_a_run`,
-  `mismatched`, `legacy`, `unreadable`), reason and way out; `workflowId` filters the records only,
-  and every damaged file is reported whatever the filter. Core exports `UnreadableFileFacts` (a
-  damaged stored file's facts: names, classes and type words, never its content) and
-  `unreadableFactsOf`, their one reader; `renderUnreadableStoredFile` and `describeStoredFileFault`
-  (the one composer of its message, from the facts alone); `unreadableRunFilesError` and
-  `unreadableRunFilesOf`, its reader (`{ command, folder, files }`); `damagedFileConcerns`, whether
-  a damaged run file can concern a workflow; `displayId`, how a run id a file holds is shown; the
+  `mismatched`, `legacy`, `unreadable`), reason and way out, with a copy of a run whose own file
+  reads listed apart (`copies`); `workflowId` filters the records only, and every damaged file is
+  reported whatever the filter. Core exports `UnreadableFileFacts` (a damaged stored file's facts:
+  names, classes and type words, never its content) and `unreadableFactsOf`, their one reader;
+  `renderUnreadableStoredFile` and `describeStoredFileFault` (the one composer of its message, from
+  the facts alone); `unreadableRunFilesError` and `unreadableRunFilesOf`, its reader
+  (`{ command, folder, files }`); `damagedFileConcerns`, whether a damaged run file can concern a
+  workflow; `isCopyOfReadableRun`, whether it is a copy of a run whose own file reads;
+  `displayId`, how a run id a file holds is shown; the length of a run id (`RUN_ID_LENGTH`) and the
   trace files' name parts (`TRACE_BUFFER_FILE_PREFIX`, `SEALED_TRACE_FILE_PREFIX`,
   `TRACE_FILE_SUFFIX`); and the `RunListing`, `UnreadableRunFileEntry`, `UnreadableRunFilesFacts`,
   `StoredFileClass` and `WorkflowCopyParseFault` types. The facts are an error's `details` for now;
@@ -41,24 +43,25 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   Realm is `STATE_LEGACY_FORMAT` (`report_to_user`); one that cannot be read is
   `ENGINE_STORE_FAILED` (`stop`, retryable for `EBUSY` and `EIO`), as is a runs folder that cannot
   be read or made (`resource: 'run_folder'`). Its details are its facts (`resource: 'run_file'`,
-  `class`, `path`, and by class `errno`, `shape`, `held_id`, `held_present` or `fields`, and
-  `refused` on a keyed create), and its message names the file once, what is wrong with it and the
-  way out, with what that does to the run's key and its three side files, each named; a run id the
-  file holds is shown only when it is a plain id. These replace, per surface: `ENGINE_STORE_FAILED` with the parser's text
-  (the library entries; MCP `get_run_state`, `execute_step`, `advance_run`,
-  `submit_human_response`), `ENGINE_INTERNAL` (`append_trace`, a keyed `start_run`), no code
-  (`abandon_run`), and the parser's raw error (`abandonRun`, `reclaimStep`, `drainFinalizers`). The
-  legacy message no longer says to delete `~/.realm/runs/`, which freed every key. **Upgrading:**
-  key on the new codes.
+  `class`, `path`, and by class `errno`, `shape`, `held_id` and `held_file`, `side_files` or
+  `fields`, and `refused` on a keyed create), and its message names the file once, what is wrong
+  with it and the way out, with what that does to the run's key and, for a file named by a run id,
+  the side files it has, each named; a run id the file holds is shown only when it is a plain id.
+  These replace, per surface: `ENGINE_STORE_FAILED` with the parser's text (the library entries; MCP
+  `get_run_state`, `execute_step`, `advance_run`, `submit_human_response`), `ENGINE_INTERNAL`
+  (`append_trace`, a keyed `start_run`), no code (`abandon_run`), and the parser's raw error
+  (`abandonRun`, `reclaimStep`, `drainFinalizers`). The legacy message no longer says to delete
+  `~/.realm/runs/`, which freed every key. **Upgrading:** key on the new codes.
 - **BREAKING — `JsonFileStore`'s `list()` and `get()` refuse files they used to return (issue
-  #719).** `list()` throws the first damaged file's typed error: a file that is empty, not JSON,
-  JSON but not an object, not a run record, holding another run, in an earlier format, or not
-  readable — where it returned a file that was not a run record, held another run or was in an
-  earlier format. `get()` refuses a file that is not a run record or holds another run, which it
-  returned. With a `workflowId`, `list(workflowId)` and `reconcileKeys(workflowId)` refuse only a
-  damaged file that can concern that workflow: one whose content cannot be read, or an object
-  naming no workflow or that one; JSON that is not an object, and an object naming another
-  workflow, are skipped. Realm's own commands read through `listWithDiagnostics`. **Upgrading:** a
+  #719).** `list()` throws the first damaged file's typed error, a copy of a run whose own file
+  reads aside: a file that is empty, not JSON, JSON but not an object, not a run record, holding
+  another run, in an earlier format, or not readable — where it returned a file that was not a run
+  record, held another run or was in an earlier format. `get()` refuses a file that is not a run
+  record or holds another run, which it returned. With a `workflowId`, `list(workflowId)` and
+  `reconcileKeys(workflowId)` refuse only a damaged file that can concern that workflow: one whose
+  content cannot be read, or an object naming no workflow or that one; JSON that is not an object,
+  an object naming another workflow, a folder named like a run file, and a copy of a run whose own
+  file reads, are skipped. Realm's own commands read through `listWithDiagnostics`. **Upgrading:** a
   caller that must list past a damaged file calls `listWithDiagnostics`.
 - **BREAKING — the engine entries check the parts they are handed (issue #719).** `dispatcher` is
   optional in `ExecuteStepOptions` and `ExecuteChainOptions`, and required for a step Realm calls it
@@ -97,17 +100,23 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   group and counts it apart from the terminal runs in its residue line. Under a filter that no
   readable run matches, `realm run list` says `No readable runs found for <the filter>.`.
   `realm listen`'s expiry sweeper sweeps the readable runs and logs a damaged file once, with its
-  way out, where every pass failed on a file that was empty, not JSON or not readable.
-  `reconcile` and `gc --heal` refuse with one error naming every damaged file and the command to
-  run again, flags included, where they failed with the parser's message, naming no file.
+  way out (again only when the file or its way out changes), where every pass failed on a file that
+  was empty, not JSON or not readable. `reconcile` and `gc --heal` refuse with one error naming
+  every damaged file and the command to run again, flags included, where they failed on a file
+  that was not JSON with the parser's message, naming no file, and on a file they could not read
+  with the system's error, which named the file. A copy of a run whose own file reads is not a
+  damaged file: `realm run list` names it with its way out and does not count it, and the other
+  commands that read every run (`cleanup`, `purge --older-than`, `reclaim --all`, `drain --all`,
+  `migrate`, `reconcile`, `gc --heal`, the sweeper) pass over it; a read by its own name still
+  refuses it.
 - **A keyed run creation is stopped only by a run file that can affect it (issue #719).** The
   fallback scan reads each file through the one reader and the one scope rule. A file whose content
   cannot be read (not readable, empty, not JSON) still refuses every new key, now with a message
   naming it, its way out, and that every new key is refused; a file that is JSON but not an object,
   or an object naming another workflow, does not stop it (0.47.0 created past them; a `null` file
-  threw); a readable object of this workflow (or naming none) that is not a run record, holds
-  another run, or is in an earlier format refuses only the key it carries; and a copy of a run whose
-  own file reads lets that run answer its key, as in 0.47.0.
+  threw), nor does a folder named like a run file; a readable object of this workflow (or naming
+  none) that is not a run record, holds another run, or is in an earlier format refuses only the key
+  it carries; and a copy of a run whose own file reads lets that run answer its key, as in 0.47.0.
 - **No message quotes a stored file's text (issue #719).** The parser's message, which quotes the
   file around the fault (a param, a token), no longer reaches a run file's error, the registrar's
   parse error, or the warning for a corrupt idempotency-key pointer.
@@ -116,7 +125,9 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   failure being recorded is that same refusal.
 - **The attending-process expiry timer no longer says another enactment point "will still catch"
   a gate whose run file cannot be read (issue #719)**: every enactment point reads that file, and
-  the warning says so.
+  the warning says none can read the run until its file is repaired (or, for a read error, can be
+  read) or is moved out. A read error that may pass (`EBUSY`, `EIO`) keeps "another enactment point
+  … will still catch it".
 - **`realm run reconcile`'s exit code is documented as it is (issue #719):** 1 on a failure; the
   page said 0.
 

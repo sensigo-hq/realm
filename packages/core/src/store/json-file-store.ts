@@ -42,6 +42,7 @@ import {
 import {
   damagedFileConcerns,
   inspectRunFile,
+  isCopyOfReadableRun,
   readRunFile,
   runFileFaultSentence,
   runFileWayOut,
@@ -151,8 +152,13 @@ export interface UnreadableRunFileEntry {
 /** issue #719 (B3): what {@link JsonFileStore.listWithDiagnostics} returns. */
 export interface RunListing {
   records: RunRecord[];
-  /** Every run file that could not be read as a run, sorted by file name. */
+  /** Every run file that could not be read as a run, sorted by file name — copies of a readable
+   *  run excepted. */
   unreadable: UnreadableRunFileEntry[];
+  /** issue #719 (F5): every copy of a run whose own file reads ({@link isCopyOfReadableRun}),
+   *  sorted by file name. Not a damaged run: no decision over the runs counts or refuses over
+   *  it. */
+  copies: UnreadableRunFileEntry[];
 }
 
 /**
@@ -315,8 +321,8 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * field. issue #719 (B4, C1): each run file is read through the one reader, not through
    * `list()`, so a damaged file stops this create only when it can affect it — it concerns this
    * workflow ({@link damagedFileConcerns}), AND what it holds cannot be read (it refuses every
-   * new key) or its object carries this key (it refuses this key). A `mismatched` copy of a run
-   * whose own file reads in the same scan is skipped: that run answers the key, as it did before
+   * new key) or its object carries this key (it refuses this key). A copy of a run whose own file
+   * reads ({@link isCopyOfReadableRun}) is skipped: that run answers the key, as it did before
    * #719. Any other damaged file is skipped. Files are judged in name order.
    */
   private async findCanonicalLegacyRun(
@@ -324,9 +330,6 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
     key: string,
   ): Promise<RunRecord | undefined> {
     const scanned = await this.scanRunFiles();
-    const readableIds = new Set(
-      scanned.flatMap((s) => (s.reading.kind === 'record' ? [s.reading.record.id] : [])),
-    );
     const matches: RunRecord[] = [];
     for (const { reading } of scanned) {
       if (reading.kind === 'absent') continue;
@@ -337,17 +340,11 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
       }
       if (!damagedFileConcerns(reading, workflowId)) continue;
       const { facts, object } = reading;
+      if (isCopyOfReadableRun(facts)) continue;
       if (object === undefined) {
         throw unreadableRunFileError({ ...facts, refused: 'every_new_key' });
       }
       if (object['idempotency_key'] !== key) continue;
-      if (
-        facts.class === 'mismatched' &&
-        facts.held_id !== undefined &&
-        readableIds.has(facts.held_id)
-      ) {
-        continue;
-      }
       throw unreadableRunFileError({ ...facts, refused: 'this_key' });
     }
     if (matches.length === 0) return undefined;
@@ -879,8 +876,8 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * issue #719 (R10, C1, C6): fails closed, naming EVERY run file it cannot read that concerns the
    * workflow it reconciles ({@link damagedFileConcerns}; every damaged file when `workflowId` is
    * absent), before anything is written. `options.command` is the command its caller ran, flags
-   * included, which the refusal tells the operator to run again; core names no CLI command
-   * (default: `reconcileKeys`).
+   * included, which the refusal tells the operator to run again (default: `reconcileKeys`). A copy
+   * of a run whose own file reads ({@link isCopyOfReadableRun}) is not a damaged run: skipped.
    */
   async reconcileKeys(
     workflowId?: string,
@@ -897,6 +894,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         }
       } else if (
         reading.kind === 'damaged' &&
+        !isCopyOfReadableRun(reading.facts) &&
         (workflowId === undefined || damagedFileConcerns(reading, workflowId))
       ) {
         concerning.push(reading.facts);
@@ -996,13 +994,16 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * read as a run — empty, not JSON, not a run record, holding another run, in an earlier format,
    * or not readable — makes this THROW the first such file's typed error (by file name), as a file
    * that was not JSON always did. With `workflowId`, only a damaged file that concerns that
-   * workflow ({@link damagedFileConcerns}) does: JSON that is not an object, and an object naming
-   * another workflow, are skipped. {@link listWithDiagnostics} lists past them and names each.
+   * workflow ({@link damagedFileConcerns}) does: JSON that is not an object, a folder, and an
+   * object naming another workflow, are skipped. A copy of a run whose own file reads
+   * ({@link isCopyOfReadableRun}) is never one (F5). {@link listWithDiagnostics} lists past them
+   * and names each.
    */
   async list(workflowId?: string): Promise<RunRecord[]> {
     const scanned = await this.scanRunFiles();
     for (const { reading } of scanned) {
       if (reading.kind !== 'damaged') continue;
+      if (isCopyOfReadableRun(reading.facts)) continue;
       if (workflowId !== undefined && !damagedFileConcerns(reading, workflowId)) continue;
       throw unreadableRunFileError(reading.facts);
     }
@@ -1018,11 +1019,13 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
    * named, classified, with its way out. CONCRETE, off the `RunStore` interface (the `listRunIds`
    * precedent): Realm's own commands use it when the store has it, so one damaged file never hides
    * the rest. `workflowId` filters the records only; EVERY damaged file is reported whatever the
-   * filter (the operator's view: what it holds cannot be trusted).
+   * filter (the operator's view: what it holds cannot be trusted). A copy of a run whose own file
+   * reads goes in `copies`, not `unreadable` (F5).
    */
   async listWithDiagnostics(workflowId?: string): Promise<RunListing> {
     const records: RunRecord[] = [];
     const unreadable: UnreadableRunFileEntry[] = [];
+    const copies: UnreadableRunFileEntry[] = [];
     for (const { file, reading } of await this.scanRunFiles()) {
       if (reading.kind === 'record') {
         if (workflowId === undefined || reading.record.workflow_id === workflowId) {
@@ -1030,7 +1033,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         }
       } else if (reading.kind === 'damaged') {
         const { facts } = reading;
-        unreadable.push({
+        (isCopyOfReadableRun(facts) ? copies : unreadable).push({
           file,
           path: facts.path,
           class: facts.class,
@@ -1041,7 +1044,7 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         });
       }
     }
-    return { records, unreadable };
+    return { records, unreadable, copies };
   }
 
   /**

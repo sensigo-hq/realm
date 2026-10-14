@@ -11,6 +11,7 @@ import {
   describeGuardLines,
   drainFinalizers,
   unreadableFactsOf,
+  WorkflowError,
 } from '@sensigo/realm';
 import type {
   EnactedVia,
@@ -116,13 +117,18 @@ export function scheduleGateExpiryTimer(
       // another enactment point — silently absorbed, exactly like enactExpiredGateIfDue's own
       // advisory-not-crash posture.
     } catch (err) {
-      // issue #719 (C2): when the run's own file cannot be read, every enactment point reads that
-      // same file — none can catch the gate until the file is repaired or moved out.
-      const tail =
-        unreadableFactsOf(err) !== undefined
-          ? ' — no enactment point can read this run until its file is repaired or moved out.'
-          : ' — another enactment point (submit/execute_step/reclaim/drain --expired/listen) will ' +
-            'still catch it.';
+      // issue #719 (C2, F6.4): when the run's own file cannot be read, every enactment point reads
+      // that same file — none can catch the gate until it can be read (a read error) or is repaired
+      // (damaged bytes), or is moved out. A retryable read error (EBUSY, EIO) may pass: another
+      // enactment point may still catch it.
+      const facts = unreadableFactsOf(err);
+      const stuck = facts !== undefined && !(err instanceof WorkflowError && err.retryable);
+      const until =
+        facts?.class === 'unreadable' ? 'can be read or is moved out' : 'is repaired or moved out';
+      const tail = stuck
+        ? ` — no enactment point can read this run until its file ${until}.`
+        : ' — another enactment point (submit/execute_step/reclaim/drain --expired/listen) will ' +
+          'still catch it.';
       console.warn(
         `⚠ realm: the attending-process gate-expiry timer failed for run '${runId}' ` +
           `(${err instanceof Error ? err.message : String(err)})${tail}`,

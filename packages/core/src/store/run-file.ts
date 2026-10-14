@@ -2,6 +2,7 @@
 // a damaged stored JSON file says — a run file and the runs folder here, a registered workflow
 // copy in the registrar. A damaged file is classified by what its bytes ARE, never by the parser's
 // message: that message quotes the file around the fault, and a run file's params can hold a token.
+import { readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { readIfExists, FsIoError, errnoCode, isRetryableArtifactErrno } from './fs-io.js';
 import { SIDECAR_SUFFIX } from './failed-attempt-store.js';
@@ -21,7 +22,7 @@ import { quotedCommand } from '../utils/shell-word.js';
  *  - `empty`: zero bytes, or whitespace only;
  *  - `parse`: not JSON, or JSON that is not an object (`shape` says what it is);
  *  - `not_a_run`: an object that is not a run record (`fields` names what is missing or mistyped);
- *  - `mismatched`: a run record whose `id` is not the file's name (`held_id`, `held_present`);
+ *  - `mismatched`: a run record whose `id` is not the file's name (`held_id`, `held_file`);
  *  - `legacy`: written by an earlier Realm (`state` without `completed_steps`);
  *  - `unreadable`: the file (or the runs folder) cannot be read (`errno`).
  */
@@ -44,6 +45,15 @@ export type StoredFileClass = (typeof STORED_FILE_CLASSES)[number];
 export const TRACE_BUFFER_FILE_PREFIX = 'trace-buffer-';
 export const SEALED_TRACE_FILE_PREFIX = 'sealed-trace-';
 export const TRACE_FILE_SUFFIX = '.jsonl';
+/**
+ * issue #719 (F4): the length of a run id. Realm mints run ids as UUIDs (`uuidv4()`, 36 characters
+ * in their string form); the trace store recovers a run id from a file name by this length, and a
+ * damaged run file's side files are looked for only when its name is a run id of this length.
+ */
+export const RUN_ID_LENGTH = 36;
+
+/** issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder. */
+export type SideFileKind = 'attempts' | 'trace_buffer' | 'sealed_trace';
 
 /**
  * The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendment 7): names, classes and
@@ -63,10 +73,18 @@ export interface UnreadableFileFacts {
   shape?: string;
   /** `mismatched` only: the run id the file holds. */
   held_id?: string;
-  /** `mismatched` only: whether the held run's own file (`<held_id>.json`, same folder) reads as
-   *  that run; absent when the held id is not one text may show ({@link displayId}), which is
-   *  never looked up. */
-  held_present?: boolean;
+  /** `mismatched` only: what the held run's own file (`<held_id>.json`, same folder) is when it is
+   *  looked up — `reads_as_run`: it reads as that run; `absent`: there is no such file (ENOENT);
+   *  `unreadable`: anything else (damaged, in an earlier format, not readable by this user, holding
+   *  another run). UNSET only when the held id is not one text may show ({@link displayId}), which
+   *  is never looked up — unset means not judged. */
+  held_file?: 'reads_as_run' | 'absent' | 'unreadable';
+  /** `empty`, `parse`, `not_a_run` and `legacy` only: the kinds of side file present in the run's
+   *  folder for this run id (`<id>.attempts.jsonl`; `trace-buffer-<id>-*.jsonl`;
+   *  `sealed-trace-<id>-*.jsonl`). UNSET means not judged — the file's name is not a run id of
+   *  {@link RUN_ID_LENGTH} characters, or the folder could not be listed; `[]` means judged, none
+   *  present. The way out names none in both. */
+  side_files?: SideFileKind[];
   /** `not_a_run` only: each required field missing or of the wrong type (names only). */
   fields?: RunRecordFieldProblem[];
   /** A keyed create only: what the file refuses — every new idempotency key on the store (what it
@@ -110,12 +128,6 @@ export function displayId(id: string): string {
   return /^[A-Za-z0-9._-]{1,64}$/.test(id) ? id : 'another run id (not shown)';
 }
 
-/** `run '<id>'` for an id text may show; `another run id (not shown)` for any other. */
-function runRef(id: string): string {
-  const shown = displayId(id);
-  return shown === id ? `run '${id}'` : shown;
-}
-
 /** The file's name without `.json` — a run file's run id, a registered copy's workflow id. */
 function fileId(path: string): string {
   const name = basename(path);
@@ -141,7 +153,7 @@ export function describeStoredFileFault(facts: UnreadableFileFacts): string {
   const workflow = facts.resource === 'workflow_copy';
   switch (facts.class) {
     case 'empty':
-      return workflow ? 'is empty (0 bytes) — not a workflow' : 'is empty';
+      return workflow ? 'is empty — not a workflow' : 'is empty';
     case 'parse':
       return facts.shape === undefined
         ? 'is not JSON'
@@ -179,12 +191,32 @@ export function runFileFaultSentence(facts: UnreadableFileFacts): string {
   return withFullStop(`${subject} '${facts.path}' ${describeStoredFileFault(facts)}`);
 }
 
-/** The three side files a run keeps beside its file, named exactly (issue #719, C2). */
-function sideFiles(id: string): string {
-  return (
-    `'${id}${SIDECAR_SUFFIX}', '${TRACE_BUFFER_FILE_PREFIX}${id}-*${TRACE_FILE_SUFFIX}' and ` +
-    `'${SEALED_TRACE_FILE_PREFIX}${id}-*${TRACE_FILE_SUFFIX}'`
-  );
+/** The side files a run keeps beside its file that are present, named exactly (issue #719, C2,
+ *  F4): only the kinds `side_files` lists — none when it is unset (not judged) or empty. */
+function sideFilesList(id: string, kinds: readonly SideFileKind[]): string | undefined {
+  const named = [
+    ...(kinds.includes('attempts') ? [`'${id}${SIDECAR_SUFFIX}'`] : []),
+    ...(kinds.includes('trace_buffer')
+      ? [`every '${TRACE_BUFFER_FILE_PREFIX}${id}-*${TRACE_FILE_SUFFIX}' file`]
+      : []),
+    ...(kinds.includes('sealed_trace')
+      ? [`every '${SEALED_TRACE_FILE_PREFIX}${id}-*${TRACE_FILE_SUFFIX}' file`]
+      : []),
+  ];
+  if (named.length === 0) return undefined;
+  return named.length === 1
+    ? named[0]
+    : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
+}
+
+/** `move it out of '<folder>'`, with the side files present and what moving them alone does. */
+function moveOut(facts: UnreadableFileFacts): string {
+  const folder = dirname(facts.path);
+  const list = sideFilesList(fileId(facts.path), facts.side_files ?? []);
+  return list === undefined
+    ? `move it out of '${folder}'`
+    : `move it out of '${folder}' together with ${list} (moved alone, they become orphans that ` +
+        `'realm run gc --older-than <age> --force' deletes)`;
 }
 
 /** The way out of a file, or of the runs folder, that cannot be read — by its errno. */
@@ -194,7 +226,10 @@ function unreadableWayOut(facts: UnreadableFileFacts): string {
   const errno = facts.errno ?? 'UNKNOWN';
   let text: string;
   if (errno === 'EACCES' || errno === 'EPERM') {
-    text = `Give this user read access to it; ${unchanged}.`;
+    // issue #719 (F6.5): a runs folder that does not exist yet fails its creation the same way.
+    text = folder
+      ? `Give this user read access to it (or, if it does not exist yet, write access to the folder that holds it); ${unchanged}.`
+      : `Give this user read access to it; ${unchanged}.`;
   } else if (errno === 'EISDIR' && !folder) {
     text = `It is a folder, not a file: move it out of '${dirname(facts.path)}'; nothing was changed.`;
   } else if (errno === 'EBUSY' || errno === 'EIO') {
@@ -215,7 +250,6 @@ function unreadableWayOut(facts: UnreadableFileFacts): string {
 export function runFileWayOut(facts: UnreadableFileFacts): string {
   if (facts.class === 'unreadable') return unreadableWayOut(facts);
   const folder = dirname(facts.path);
-  const id = fileId(facts.path);
   const keyEffect =
     'If it held an idempotency key, the next delivery with that key starts a new run.';
   switch (facts.class) {
@@ -224,40 +258,40 @@ export function runFileWayOut(facts: UnreadableFileFacts): string {
     case 'not_a_run':
       return (
         `Restore it from a backup or repair it: the run keeps its record and its idempotency ` +
-        `key. Or move it out of '${folder}' together with ${sideFiles(id)} (moved alone, they ` +
-        `become orphans that 'realm run gc --older-than <age> --force' deletes). ${keyEffect}`
+        `key. Or ${moveOut(facts)}. ${keyEffect}`
       );
     case 'legacy':
-      return (
-        `It was written by an earlier Realm, in a format this version cannot read. Move it out ` +
-        `of '${folder}' together with ${sideFiles(id)}. ${keyEffect}`
-      );
+      // issue #719 (F6.1): the fault sentence already says what the file is — not said twice.
+      return `This version cannot read it: ${moveOut(facts)}. ${keyEffect}`;
     case 'mismatched': {
       const held = facts.held_id ?? '';
-      // An id text may not show was never looked up (`held_present` absent): nothing is claimed
-      // about the run it names.
-      if (facts.held_present === undefined)
-        return `It holds ${runRef(held)}; move it out of '${folder}'.`;
-      if (facts.held_present) {
+      // issue #719 (F1, F6.1): advice by what the held run's own file IS — never a rename over a
+      // file that is there (damaged, earlier format, unreadable): only an absent one is restored.
+      if (facts.held_file === 'reads_as_run') {
+        return `That run's own file is readable, so this is a copy: move it out of '${folder}' — nothing else changes.`;
+      }
+      if (facts.held_file === 'absent') {
         return (
-          `It is a copy of run '${held}', whose own file is readable; move it out of ` +
-          `'${folder}' — nothing else changes.`
+          `That run's own file is missing: rename this file to '${held}.json' to restore the run, ` +
+          `or move it out of '${folder}'.`
         );
       }
-      return (
-        `It holds run '${held}', whose own file is missing: rename it to '${held}.json' to ` +
-        `restore that run, or move it out of '${folder}'.`
-      );
+      return `Move it out of '${folder}'.`;
     }
   }
 }
 
 /** The sentence a keyed create adds (issue #719, B4, C2), by what the file refuses. The key itself
  *  is never echoed. */
-function keyedCreateSentence(refused: NonNullable<UnreadableFileFacts['refused']>): string {
+function keyedCreateSentence(
+  refused: NonNullable<UnreadableFileFacts['refused']>,
+  cls: StoredFileClass,
+): string {
+  // issue #719 (F6.2): a file that cannot be read is made readable, not repaired.
+  const until = cls === 'unreadable' ? 'can be read or is moved out' : 'is repaired or moved out';
   return refused === 'every_new_key'
-    ? 'A run with a new idempotency key cannot be created on this store until the file is repaired or moved out.'
-    : 'A run with this idempotency key cannot be created until the file is repaired or moved out.';
+    ? `A run with a new idempotency key cannot be created on this store until the file ${until}.`
+    : `A run with this idempotency key cannot be created until the file ${until}.`;
 }
 
 /**
@@ -273,7 +307,7 @@ export function renderUnreadableStoredFile(facts: UnreadableFileFacts): string {
   }
   return [
     runFileFaultSentence(facts),
-    ...(facts.refused !== undefined ? [keyedCreateSentence(facts.refused)] : []),
+    ...(facts.refused !== undefined ? [keyedCreateSentence(facts.refused, facts.class)] : []),
     runFileWayOut(facts),
   ].join(' ');
 }
@@ -376,7 +410,8 @@ export type RunFileReading =
 /**
  * issue #719 (C1): whether a damaged run file can concern a workflow — the ONE scope predicate of
  * the keyed fallback scan and of every workflow-scoped read. False when the file is JSON that is
- * not an object (it names no workflow and holds no key), and when its object names ANOTHER
+ * not an object (it names no workflow and holds no key), when it is a folder named like a run file
+ * (`unreadable` with `EISDIR`: it holds no run and no key, F6.3), and when its object names ANOTHER
  * workflow by a string `workflow_id`; true otherwise — a file whose content cannot be read
  * (`unreadable`, `empty`, not JSON), an object with no string `workflow_id`, or one naming this
  * workflow.
@@ -386,8 +421,20 @@ export function damagedFileConcerns(
   workflowId: string,
 ): boolean {
   if (reading.facts.class === 'parse' && reading.facts.shape !== undefined) return false;
+  // issue #719 (F6.3): a folder named like a run file holds no run and no key.
+  if (reading.facts.class === 'unreadable' && reading.facts.errno === 'EISDIR') return false;
   const named = reading.object?.['workflow_id'];
   return !(typeof named === 'string' && named !== workflowId);
+}
+
+/**
+ * issue #719 (F5): whether a damaged run file is a copy of a run whose own file reads — a file
+ * holding another run (`mismatched`) whose held run's file reads as that run. Such a file is not a
+ * damaged run: every listing puts it with the copies (`RunListing.copies`), and no decision over
+ * the runs, no keyed create and no scoped read counts or refuses over it.
+ */
+export function isCopyOfReadableRun(facts: UnreadableFileFacts): boolean {
+  return facts.class === 'mismatched' && facts.held_file === 'reads_as_run';
 }
 
 /**
@@ -396,16 +443,59 @@ export function damagedFileConcerns(
  * JSON, or JSON that is not an object → `parse`; an object with `state` and without
  * `completed_steps` → `legacy`; an object that is not a run record → `not_a_run`; a record whose
  * `id` is not the file's name → `mismatched`, with whether the run it holds reads from its own file
- * (`held_present`). No class is decided from the parser's message.
+ * (`held_file`), and for the classes whose way out moves the file, the side files present
+ * (`side_files`). No class is decided from the parser's message.
  */
 export async function inspectRunFile(path: string, expectedId: string): Promise<RunFileReading> {
   const reading = await classifyRunFile(path, expectedId);
-  if (reading.kind !== 'damaged' || reading.facts.class !== 'mismatched') return reading;
-  const held = reading.facts.held_id ?? '';
-  // Only an id that names a file in this folder (no separator, no `..` path) is looked up.
-  if (displayId(held) !== held) return reading;
-  const heldReading = await classifyRunFile(join(dirname(path), `${held}.json`), held);
-  return { ...reading, facts: { ...reading.facts, held_present: heldReading.kind === 'record' } };
+  if (reading.kind !== 'damaged') return reading;
+  const { facts } = reading;
+  if (facts.class === 'mismatched') {
+    const held = facts.held_id ?? '';
+    // Only an id that names a file in this folder (no separator, no `..` path) is looked up; any
+    // other leaves `held_file` unset (not judged).
+    if (displayId(held) !== held) return reading;
+    const heldReading = await classifyRunFile(join(dirname(path), `${held}.json`), held);
+    const held_file =
+      heldReading.kind === 'record'
+        ? 'reads_as_run'
+        : heldReading.kind === 'absent'
+          ? 'absent'
+          : 'unreadable';
+    return { ...reading, facts: { ...facts, held_file } };
+  }
+  // `unreadable`: its way out names no side file.
+  if (facts.class === 'unreadable') return reading;
+  const side_files = await sideFilesOf(path);
+  return side_files === undefined ? reading : { ...reading, facts: { ...facts, side_files } };
+}
+
+/**
+ * issue #719 (F4): the side-file kinds present beside a run file, from ONE listing of its folder —
+ * only when its name is a run id of {@link RUN_ID_LENGTH} characters (otherwise a prefix could
+ * match another run's files); `undefined` (not judged) for any other name, or when the folder
+ * cannot be listed.
+ */
+async function sideFilesOf(path: string): Promise<SideFileKind[] | undefined> {
+  const id = fileId(path);
+  if (id.length !== RUN_ID_LENGTH) return undefined;
+  let names: string[];
+  try {
+    names = await readdir(dirname(path));
+  } catch {
+    return undefined;
+  }
+  const kinds: SideFileKind[] = [];
+  if (names.includes(`${id}${SIDECAR_SUFFIX}`)) kinds.push('attempts');
+  const tracePrefix = `${TRACE_BUFFER_FILE_PREFIX}${id}-`;
+  const sealedPrefix = `${SEALED_TRACE_FILE_PREFIX}${id}-`;
+  if (names.some((n) => n.startsWith(tracePrefix) && n.endsWith(TRACE_FILE_SUFFIX))) {
+    kinds.push('trace_buffer');
+  }
+  if (names.some((n) => n.startsWith(sealedPrefix) && n.endsWith(TRACE_FILE_SUFFIX))) {
+    kinds.push('sealed_trace');
+  }
+  return kinds;
 }
 
 /** {@link inspectRunFile}'s classes, without the held run's look-up (so a chain of copies never

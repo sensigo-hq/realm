@@ -324,7 +324,7 @@ abandon is a kill — declared finalizers (if any) did NOT run and will not for 
 
 Without `--dry-run`, the first line reads `Marked 4 run(s) as abandoned.` A run it abandons shows `Sealed by: cleanup_sweep` and `Cause: Marked abandoned by realm cleanup` in `realm run inspect`.
 
-**Exit code:** 0, also when no run matches. 1 for a duration that cannot be read. A run file that cannot be read as a run is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run cleanup did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0).
+**Exit code:** 0, also when no run matches. 1 for a duration that cannot be read. A run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run cleanup did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0).
 
 ## `reclaim`
 
@@ -399,7 +399,7 @@ Reclaimed 1/1 selected claim(s).
 
 When nothing is selected, it prints `No auto-reclaimable claims found (idempotent ∧ concrete-past-deadline ∧ non-gated).` A run with no step in progress gets `Run '<id>' (running) has no in-progress claims. Nothing to reclaim.`, and a run that has ended gets `Run '<id>' is terminal (completed); it has no reclaimable claim.`
 
-**Exit code:** 0, also when there is nothing to free. With `--all`, a run file that cannot be read as a run is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run reclaim --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 for a combination that cannot be used:
+**Exit code:** 0, also when there is nothing to free. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run reclaim --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 for a combination that cannot be used:
 
 ```text
 Provide a <run-id> to inspect/reclaim, or use --all for batch mode.
@@ -564,7 +564,7 @@ No runs with an actionable pending finalizer.
 
 The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop). At a question, the second line says that after the answer `realm run respond` names what the run owes next (added after version 0.46.0, which named only `realm run abandon` for a run still open after the answer).
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. With `--all`, a run file that cannot be read as a run is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run drain --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0, which crashed). 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run drain --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0, which crashed). 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.
@@ -631,7 +631,7 @@ Re-run with --force to actually delete.
 
 When no run is old enough, it prints `No eligible runs found to purge.`
 
-**Exit code:** 0, also when a run was blocked or nothing matched. With `--older-than`, a run file that cannot be read as a run is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run purge did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 if a run could not be deleted because of an error, or for one of:
+**Exit code:** 0, also when a run was blocked or nothing matched. With `--older-than`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run purge did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 if a run could not be deleted because of an error, or for one of:
 
 ```text
 Provide a <run-id> to purge, or use --older-than for batch mode.
@@ -700,7 +700,7 @@ No stale-phase records found to heal.
 
 Correcting a record sets its time of last change to now. `realm run purge --older-than` and `realm run cleanup --older-than` read that time.
 
-**Exit code:** 0. 1 if a file could not be read or deleted (with `--heal`, a run file that cannot be read as a run: one error names every such file and what is wrong with it, nothing is healed, and it says to run the same command, flags included, again; added after version 0.47.0, which failed with the parser's message, naming no file), or for:
+**Exit code:** 0. 1 if a file could not be read or deleted (with `--heal`, a run file that cannot be read as a run, except a copy of a run whose own file reads: one error names every such file and what is wrong with it, nothing is healed, and it says to run the same command, flags included, again; added after version 0.47.0, which failed on a file that was not JSON with the parser's message, naming no file, and on a file it could not read with the system's error, which named the file), or for:
 
 ```text
 --older-than must be at least 1h (got '30m'). gc refuses to reap crash residue younger than that, even with --force.
@@ -729,7 +729,7 @@ Would write 1 pointer(s) across 1 key group(s); 0 already current.
 
 Without `--dry-run`, the line starts with `Wrote`. Run again, it prints `Wrote 0 pointer(s) across 1 key group(s); 1 already current.` A key group is one key of one workflow. See [Idempotency and batches](../../guides/idempotency-and-batches.md) for a store where two runs hold one key.
 
-**Exit code:** 0. 1 when a run file cannot be read as a run (one error names every such file, or with `--workflow` every such file that can concern that workflow, and what is wrong with it, and says to run the same command, flags included, again; nothing is written; added after version 0.47.0), or when the store fails. Up to version 0.47.0 this page said 0 for every case; a failure exited 1 then too.
+**Exit code:** 0. 1 when a run file cannot be read as a run, except a copy of a run whose own file reads (one error names every such file, or with `--workflow` every such file that can concern that workflow, and what is wrong with it, and says to run the same command, flags included, again; nothing is written; added after version 0.47.0), or when the store fails. Up to version 0.47.0 this page said 0 for every case; a failure exited 1 then too.
 
 ## `migrate`
 
@@ -739,11 +739,11 @@ realm run migrate --stamp-seals [--force] [--detailed-exitcode]
 
 Since version 0.39, a run that ends records what ended it, which `realm run inspect` prints as `Sealed by`. `migrate --stamp-seals` works out that value for finished runs written by older versions and stores it. It does not change a run's time of last change.
 
-| Flag                  | Required | What it does                                                                                                                                                          |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                                                           |
-| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                                                              |
-| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending, or if a run file cannot be read as a run. |
+| Flag                  | Required | What it does                                                                                                                                                                                                       |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                                                                                                        |
+| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                                                                                                           |
+| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending, or if a run file cannot be read as a run, except a copy of a run whose own file reads. |
 
 On two runs written by version 0.38:
 
@@ -779,7 +779,7 @@ Nothing would be stamped — every terminal run already carries its seal arm.
 Residue: 0 terminal run(s) still without a recorded seal arm.
 ```
 
-**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above. A run file that cannot be read as a run is listed in its own group (`<n> run file(s) could not be read and were left untouched:`) with what is wrong with it, and named on standard error with its way out; the residue line counts it apart from the terminal runs (`Residue: <n> terminal run(s) still without a recorded seal arm; <m> run file(s) could not be read.`), and it makes `--detailed-exitcode` give 2 (added after version 0.47.0).
+**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above. A run file that cannot be read as a run, except a copy of a run whose own file reads, is listed in its own group (`<n> run file(s) could not be read and were left untouched:`) with what is wrong with it, and named on standard error with its way out; the residue line counts it apart from the terminal runs (`Residue: <n> terminal run(s) still without a recorded seal arm; <m> run file(s) could not be read.`), and it makes `--detailed-exitcode` give 2 (added after version 0.47.0).
 
 ## See also
 

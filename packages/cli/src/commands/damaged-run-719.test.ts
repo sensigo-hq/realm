@@ -71,14 +71,12 @@ const hashOf = (p: string) => createHash('sha256').update(readFileSync(p)).diges
 
 const BAD = 'bad';
 const badPath = () => join(runs, `${BAD}.json`);
-/** issue #719 (C2): the way out of a file that is empty, not JSON or not a run — the path said
- *  once (in the fault sentence), the three side files named exactly. */
-const wayOut = (id: string) =>
+/** issue #719 (C2, F4): the way out of a file that is empty, not JSON or not a run — the path said
+ *  once (in the fault sentence). `bad` is not a run id of 36 characters, so no side file is named. */
+const wayOut = (_id: string) =>
   `Restore it from a backup or repair it: the run keeps its record and its idempotency key. Or ` +
-  `move it out of '${runs}' together with '${id}.attempts.jsonl', 'trace-buffer-${id}-*.jsonl' ` +
-  `and 'sealed-trace-${id}-*.jsonl' (moved alone, they become orphans that 'realm run gc ` +
-  `--older-than <age> --force' deletes). If it held an idempotency key, the next delivery with ` +
-  `that key starts a new run.`;
+  `move it out of '${runs}'. If it held an idempotency key, the next delivery with that key ` +
+  `starts a new run.`;
 const badLine = () => `⚠ The run file '${badPath()}' is not JSON. ${wayOut(BAD)}`;
 
 describe('issue #719 — realm run list: the readable runs on stdout, each damaged file on stderr, exit 0', () => {
@@ -399,4 +397,91 @@ describe('issue #719 — a decision over every run fails closed, naming every da
       unchanged: readFileSync(file, 'utf8') === before,
     }).toEqual({ code: 1, named: [true, true, true, true], unchanged: true });
   });
+});
+
+describe('issue #719 F5 — a copy of a run whose own file reads is not a damaged run', () => {
+  /** A readable run of workflow `w` and a copy of its file (`<id>.bak.json`). */
+  async function runAndCopy(
+    over: Record<string, unknown> = {},
+  ): Promise<{ id: string; copy: string }> {
+    const id = await runWith(over);
+    const copy = join(runs, `${id}.bak.json`);
+    writeFileSync(copy, readFileSync(join(runs, `${id}.json`)));
+    return { id, copy };
+  }
+
+  it('realm run list prints the copy with its way out and does not count it', async () => {
+    const { id, copy } = await runAndCopy();
+    const before = hashOf(copy);
+    const r = realm(['run', 'list']);
+    // (a) red when a copy is counted among the files that could not be read, or not named; (b)
+    //     prints the exit, whether the run is listed, the stderr lines and the unchanged-bytes check.
+    expect({
+      code: r.code,
+      listed: r.out.includes(id),
+      err: r.err,
+      untouched: hashOf(copy) === before,
+    }).toEqual({
+      code: 0,
+      listed: true,
+      err: [
+        `⚠ The run file '${copy}' holds run '${id}', not '${id}.bak'. That run's own file is ` +
+          `readable, so this is a copy: move it out of '${runs}' — nothing else changes.`,
+      ],
+      untouched: true,
+    });
+  });
+
+  it.each([
+    [['run', 'reconcile'], 'reconcile'],
+    [['run', 'gc', '--heal'], 'gc --heal'],
+  ])('%j runs past a copy, exit 0', async (args) => {
+    const { copy } = await runAndCopy();
+    const before = hashOf(copy);
+    const r = realm(args);
+    // (a) red when a copy makes a decision over every run fail closed; (b) prints the exit, whether
+    //     stderr names the copy, and the unchanged-bytes check.
+    expect({
+      code: r.code,
+      namesCopy: r.err.join('\n').includes(copy),
+      untouched: hashOf(copy) === before,
+    }).toEqual({ code: 0, namesCopy: false, untouched: true });
+  });
+
+  it('migrate --detailed-exitcode: a copy is not in the damaged group and does not set the exit code', async () => {
+    const { copy } = await runAndCopy({
+      terminal_state: true,
+      run_phase: 'completed',
+      terminal_reason: 'Workflow completed.',
+      sealed_by: { arm: 'complete' },
+    });
+    const before = hashOf(copy);
+    const r = realm(['run', 'migrate', '--stamp-seals', '--detailed-exitcode']);
+    // (a) red when a copy is counted as an unreadable file (exit 2); (b) prints the exit, whether
+    //     stdout has the damaged group, and the unchanged-bytes check.
+    expect({
+      code: r.code,
+      damagedGroup: r.out.includes('could not be read and were left untouched'),
+      untouched: hashOf(copy) === before,
+    }).toEqual({ code: 0, damagedGroup: false, untouched: true });
+  });
+
+  it.each([
+    ['absent', (id: string) => rmSync(join(runs, `${id}.json`))],
+    ['damaged', (id: string) => writeFileSync(join(runs, `${id}.json`), '{not json')],
+  ] as const)(
+    'per-conjunct: a file holding a run whose own file is %s is still counted, and refuses reconcile',
+    async (_label, held) => {
+      const { id, copy } = await runAndCopy();
+      held(id);
+      const listed = realm(['run', 'list']);
+      const reconciled = realm(['run', 'reconcile']);
+      // (a) red when such a file is taken for a copy; (b) prints the exits and booleans.
+      expect({
+        counted: listed.err.some((l) => l.includes('could not be read and are not listed')),
+        reconcileExit: reconciled.code,
+        reconcileNamesIt: reconciled.err.join('\n').includes(copy),
+      }).toEqual({ counted: true, reconcileExit: 1, reconcileNamesIt: true });
+    },
+  );
 });
