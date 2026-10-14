@@ -135,8 +135,7 @@ abandon_run.`) when nothing else can run; an input-schema refusal of the caller'
   `get_run_state` and the `realm listen` log print names the value it read as JSON on one line, its
   control characters escaped (`Resolved value: "bad\nPhase: completed"`), so a value from a step's
   output cannot start a line of its own or write a terminal escape there. `execute_step`'s
-  `blocked_reason.suggestion` is unchanged, and `realm run inspect`'s `Diagnostics:` line still
-  prints a precondition's value as it is (a later release fixes this).
+  `blocked_reason.suggestion` is unchanged.
 
 ### Changed
 
