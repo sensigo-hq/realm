@@ -785,6 +785,31 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   out from the record, and `realm run abandon` leaves out its `Reason:` clause instead of printing
   `Reason: undefined.`. An error from a workflow store other than Realm's own that ends with a full
   stop is no longer doubled where Realm quotes it (#744).
+- `realm listen` now delivers its `413` (body too large) and `408` (body too slow) replies, and each
+  names its limit (`max_body_bytes`, `body_timeout_ms`). Until now it closed the connection first,
+  so the sender saw only a dropped connection. Every reply sent before the body is read in full
+  (`417`, `400` for a missing `Host`, `405`, `403`, `503`, `413`, `408`) now closes the connection
+  after reading and discarding at most 2 seconds of what the sender is still sending, counted from
+  when the reply is sent, so the sender receives it (up to `--max-concurrent` such connections at
+  once; beyond that, a refused connection is closed at once, and a sender still uploading may then
+  see a dropped connection instead). Before, a `405`, `403` or `503` let the sender go on uploading
+  its whole body. A request sent on the same connection after a refused one is no longer handled;
+  the replies to the requests before it are still sent, unless more than 32 such requests follow. A
+  request sent after one that asked to close the connection is not handled either, and the reply to
+  the earlier one is still sent; Node used to answer it with a bare `400` and lose that reply.
+  Likewise, a request that is not valid HTTP or takes too long no longer costs the replies still
+  pending before it: they are sent, in order, and the connection then closes. A body declared larger
+  than `--max-body-bytes` is refused before any of it is read, and an HTTP/1.1
+  `Expect: 100-continue` is answered only once the request passes the checks before the body. The
+  headers must now arrive within `--body-timeout-ms` (until now about 90 seconds were allowed). The
+  replies Node used to send itself, with no body, are now JSON like listen's others: for a request
+  that is not valid HTTP or takes too long (`400`, `408`, `413`, `431`; the `408` and `431` name
+  their limits), for an unknown `Expect` (`417`), and for an HTTP/1.1 request without `Host`
+  (`400`). Each refusal logs a `webhook: refused` line. `--max-body-bytes`, `--body-timeout-ms` and
+  `--max-concurrent` refuse a value that is not a whole number from 1 to 2147483647; until now such
+  a value was taken without a word (a `--max-concurrent` that was not a number applied no limit).
+  Every reply listen sends now carries its length, so a reply to an HTTP/1.0 sender that keeps its
+  connection open no longer closes it (#744).
 - **An agent step, then a handler step that takes its output through `input_map` and declares an
   `input_schema`, now runs (issue #688).** It was refused every time. Called by name, such a step's
   refusal tells an agent `report_to_user`, and when nothing else can run it carries the way out:
