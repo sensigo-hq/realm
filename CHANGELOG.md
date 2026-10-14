@@ -796,8 +796,10 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   its whole body. A request sent on the same connection after a refused one is no longer handled;
   the replies to the requests before it are still sent, unless more than 32 such requests follow. A
   request sent after one that asked to close the connection is not handled either, and the reply to
-  the earlier one is still sent; Node used to answer it with a bare `400` and lose that reply. A
-  body declared larger than `--max-body-bytes` is refused before any of it is read, and an HTTP/1.1
+  the earlier one is still sent; Node used to answer it with a bare `400` and lose that reply.
+  Likewise, a request that is not valid HTTP or takes too long no longer costs the replies still
+  pending before it: they are sent, in order, and the connection then closes. A body declared larger
+  than `--max-body-bytes` is refused before any of it is read, and an HTTP/1.1
   `Expect: 100-continue` is answered only once the request passes the checks before the body. The
   headers must now arrive within `--body-timeout-ms` (until now about 90 seconds were allowed). The
   replies Node used to send itself, with no body, are now JSON like listen's others: for a request

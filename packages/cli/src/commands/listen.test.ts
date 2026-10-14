@@ -2351,7 +2351,7 @@ describe('E2 — early replies reach the sender', () => {
    * A spawn that waits for the test to open its gate, so the order of events is fixed whatever the
    * machine's speed. The gate also opens when the test finishes, so no test hangs.
    */
-  const gatedSpawnDeps = () => {
+  const gatedSpawnDeps = (over: Partial<ListenDeps> = {}) => {
     let open: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       open = resolve;
@@ -2362,6 +2362,7 @@ describe('E2 — early replies reach the sender', () => {
         await gate;
         return { pid: 4242 };
       }),
+      ...over,
     });
     return { deps, open: () => open() };
   };
@@ -2996,15 +2997,17 @@ describe('E2 — early replies reach the sender', () => {
     });
   }, 15_000);
 
-  it('C22c — garbage after a refused request: one more line, no second reply, and the linger still bounds the close', async () => {
+  it('C22c — garbage after a refused request: no second reply, no second line, and the linger still bounds the close', async () => {
     const { lines, logger } = refusedLines();
     const { port, closedAt } = await serve({}, makeDeps({ logger }));
     const s = rawSender(port, headOf('POST', '/nope', 2) + '{}' + 'BAD\x01 / HTTP/1.1\r\n\r\n');
     const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
     await sleep(200);
-    // (a) red when the garbage gets no line, a second reply, or a reply written into the closing
-    //     connection, or when the connection is not closed within the refusal's linger; (b) prints
-    //     the statuses, the refusal lines' data, and the close time after the 403.
+    // Nothing is logged for the garbage: a request sent after a refusal is not handled, and the
+    // refusal's own line already covers the connection.
+    // (a) red when the garbage gets a line of its own, a second reply, or a reply written into the
+    //     closing connection, or when the connection is not closed within the refusal's linger;
+    //     (b) prints the statuses, the refusal lines' data, and the close time after the 403.
     expect({
       statuses: statuses(s.state.raw),
       lines,
@@ -3012,10 +3015,7 @@ describe('E2 — early replies reach the sender', () => {
       after,
     }).toEqual({
       statuses: [403],
-      lines: [
-        { path: '/nope', status: 403, error: 'forbidden' },
-        { status: 400, error: 'bad_request', code: 'HPE_INVALID_METHOD', sent: false },
-      ],
+      lines: [{ path: '/nope', status: 403, error: 'forbidden' }],
       closedInTime: true,
       after: expect.any(Number),
     });
@@ -3065,6 +3065,179 @@ describe('E2 — early replies reach the sender', () => {
       connection: 'close',
       body: { error: 'host_required' },
       lines: [{ path: '/wf', status: 400, error: 'host_required' }],
+    });
+  }, 15_000);
+
+  // ── A broken message on a connection that still carries a reply of listen's ──────────────────
+
+  it.each([
+    [
+      '403',
+      headOf('POST', '/nope', 1_000),
+      403,
+      { path: '/nope', status: 403, error: 'forbidden' },
+    ],
+    [
+      '413',
+      headOf('POST', '/wf', 5_000),
+      413,
+      { path: '/wf', status: 413, error: 'payload_too_large', max_body_bytes: 100 },
+    ],
+  ] as const)(
+    'C25 — a %s whose sender gives up on its owed body (a FIN) logs one line, its own',
+    async (_row, head, status, line) => {
+      const { lines, logger } = refusedLines();
+      const { port, closedAt } = await serve({}, makeDeps({ logger }));
+      const s = rawSender(port, head);
+      await waitFor(() => s.state.statusAt !== undefined, 3_000);
+      // The sender ends its side without the body it still owes, as curl does after a 413.
+      s.sock.end();
+      await waitFor(() => closedAt.has(s.state.localPort!), LINGER + 1_500);
+      // Counted 200 ms after the close.
+      await sleep(200);
+      // (a) red when the sender's end of input after the refusal logs a second refusal, one that
+      //     never happened; (b) prints the status, whether the server closed the socket, and the
+      //     refusal lines' data.
+      expect({
+        status: parse(s.state.raw).status,
+        closed: closedAt.has(s.state.localPort!),
+        lines,
+      }).toEqual({ status, closed: true, lines: [line] });
+    },
+    15_000,
+  );
+
+  it('C26 — garbage after an accepted request: its 202 is still sent, and the connection then closes', async () => {
+    const { lines, logger } = refusedLines();
+    const { deps, open } = gatedSpawnDeps({ logger });
+    const { port, closedAt } = await serve({}, deps);
+    const s = rawSender(port, VALID_ONE + 'BAD\x01 / HTTP/1.1\r\n\r\n');
+    await waitFor(() => deps.spawnAgent.mock.calls.length >= 1, 3_000);
+    open();
+    const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+    await sleep(200);
+    // (a) red when listen answers the garbage in place of the pending 202 (whose run has started),
+    //     when the garbage logs no line, or when the connection is not closed after the 202;
+    //     (b) prints the statuses, the refusal lines' data, and the close time after the 202.
+    expect({
+      statuses: statuses(s.state.raw),
+      lines,
+      closedInTime: typeof after === 'number' && after <= LINGER + 1_500,
+      after,
+    }).toEqual({
+      statuses: [202],
+      lines: [{ status: 400, error: 'bad_request', code: 'HPE_INVALID_METHOD', sent: false }],
+      closedInTime: true,
+      after: expect.any(Number),
+    });
+  }, 15_000);
+
+  it('C26b — garbage after a refusal that is waiting its turn: the 202 and the 405 are still sent', async () => {
+    const { lines, logger } = refusedLines();
+    const { deps, open } = gatedSpawnDeps({ logger });
+    const { port, closedAt } = await serve({}, deps);
+    const s = rawSender(
+      port,
+      VALID_ONE + `GET /wf HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n` + 'BAD\x01 / HTTP/1.1\r\n\r\n',
+    );
+    await waitFor(() => deps.spawnAgent.mock.calls.length >= 1, 3_000);
+    open();
+    await waitFor(() => s.state.statusTimes.length >= 2, 3_000);
+    await waitFor(() => closedAt.has(s.state.localPort!), LINGER + 1_500);
+    await sleep(200);
+    const at405 = s.state.statusTimes[1];
+    const closed = closedAt.get(s.state.localPort!);
+    const after405 = at405 === undefined || closed === undefined ? 'unknown' : closed - at405;
+    // (a) red when listen answers the garbage in place of the pending 202 and the queued 405, when
+    //     the garbage logs a line of its own after the refusal, or when the connection is not
+    //     closed after the 405; (b) prints the statuses, the refusal lines' data, and the close
+    //     time after the 405.
+    expect({
+      statuses: statuses(s.state.raw),
+      lines,
+      closedInTime: typeof after405 === 'number' && after405 <= LINGER + 1_500,
+      after405,
+    }).toEqual({
+      statuses: [202, 405],
+      lines: [{ path: '/wf', status: 405, error: 'method_not_allowed' }],
+      closedInTime: true,
+      after405: expect.any(Number),
+    });
+  }, 15_000);
+
+  it('C26c — headers that never end behind a slow accepted request: the 202 is still sent, and the connection then closes', async () => {
+    const { lines, logger } = refusedLines();
+    const { deps, open } = gatedSpawnDeps({ logger });
+    const { port, closedAt } = await serve({}, deps);
+    const s = rawSender(port, VALID_ONE + 'POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\n', 'X', 300);
+    await waitFor(() => deps.spawnAgent.mock.calls.length >= 1, 3_000);
+    const timedOut = (): boolean =>
+      lines.some(
+        (l) =>
+          (l as { code?: unknown }).code === 'ERR_HTTP_REQUEST_TIMEOUT' &&
+          (l as { sent?: unknown }).sent === false,
+      );
+    await waitFor(timedOut, 2_500);
+    open();
+    const after = await closedAfter(closedAt, s.state, LINGER + 1_500);
+    // (a) red when listen answers the header timeout in place of the pending 202, or when the
+    //     connection stays open after the 202 (Node reports a header timeout once, and each
+    //     trickled byte refreshes its keep-alive timer); (b) prints the statuses, the refusal
+    //     lines' data, and the close time after the 202.
+    expect({
+      statuses: statuses(s.state.raw),
+      lines,
+      closedInTime: typeof after === 'number' && after <= LINGER + 1_500,
+      after,
+    }).toEqual({
+      statuses: [202],
+      lines: [
+        {
+          status: 408,
+          error: 'request_timeout',
+          headers_timeout_ms: 400,
+          request_timeout_ms: 300_000,
+          code: 'ERR_HTTP_REQUEST_TIMEOUT',
+          sent: false,
+        },
+      ],
+      closedInTime: true,
+      after: expect.any(Number),
+    });
+  }, 15_000);
+
+  it('C26d — a later request whose body breaks while a reply is pending: the 202, then its own 408, and one line', async () => {
+    const { lines, logger } = refusedLines();
+    const { deps, open } = gatedSpawnDeps({ logger });
+    const { port, closedAt } = await serve({}, deps);
+    const s = rawSender(
+      port,
+      VALID_ONE +
+        `POST /wf HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n` +
+        `Authorization: ${SECRET}\r\nTransfer-Encoding: chunked\r\n\r\n` +
+        `5;${'a'.repeat(20_000)}\r\nhello\r\n0\r\n\r\n`,
+    );
+    await waitFor(() => deps.spawnAgent.mock.calls.length >= 1, 3_000);
+    open();
+    await waitFor(() => s.state.statusTimes.length >= 2, 3_000);
+    await waitFor(() => closedAt.has(s.state.localPort!), LINGER + 1_500);
+    await sleep(200);
+    const at408 = s.state.statusTimes[1];
+    const closed = closedAt.get(s.state.localPort!);
+    const after408 = at408 === undefined || closed === undefined ? 'unknown' : closed - at408;
+    // (a) red when listen answers the broken body in place of the pending 202, or when the broken
+    //     body logs a line of its own besides its request's 408; (b) prints the statuses, the
+    //     refusal lines' data, and the close time after the 408.
+    expect({
+      statuses: statuses(s.state.raw),
+      lines,
+      closedInTime: typeof after408 === 'number' && after408 <= LINGER + 1_500,
+      after408,
+    }).toEqual({
+      statuses: [202, 408],
+      lines: [{ path: '/wf', status: 408, error: 'request_timeout', body_timeout_ms: 400 }],
+      closedInTime: true,
+      after408: expect.any(Number),
     });
   }, 15_000);
 });

@@ -131,6 +131,12 @@ const DEFAULT_HANDLER_OPTIONS: HandlerOptions = {
 const MAX_IGNORED_AFTER_REFUSAL = 32;
 
 /**
+ * #744: every socket listen has refused on. A socket belongs to one server, so one set serves every
+ * handler; the server's 'clientError' listener reads it.
+ */
+const refusedSockets = new WeakSet<Socket>();
+
+/**
  * Normalises raw Node request headers into a Record<string,string> with lowercased keys and a null
  * prototype (prototype-pollution safe). Duplicated headers (array values) are DROPPED — a duplicated
  * security-relevant header (e.g. the shared_secret header) then resolves to undefined and fails
@@ -347,7 +353,10 @@ export function makeListenHandler(
     if (socket !== undefined && !socket.writable) return;
     // Recorded first, whether or not it lingers: the handler's guard then handles no request sent
     // on this connection after this one.
-    if (socket !== undefined) closingSockets.set(socket, { refusal: res, ignored: 0 });
+    if (socket !== undefined) {
+      closingSockets.set(socket, { refusal: res, ignored: 0 });
+      refusedSockets.add(socket);
+    }
     // #744: one line per refusal. The path is the pathname only, never the query string (which can
     // carry a token), and no header or body. The reply's own fields follow, except the 503's
     // `status: 'rejected'`, which would overwrite the status code.
@@ -1004,11 +1013,15 @@ export function startListen(
     bodyTimeoutMs: options.bodyTimeoutMs,
     lingerMs,
   });
+  // #744: the last request handed to the handler on each socket; the 'clientError' listener reads
+  // it.
+  const lastRequest = new WeakMap<Socket, IncomingMessage>();
   const onRequest = (
     req: IncomingMessage,
     res: ServerResponse,
     via: { continueExpected?: boolean; expectationFailed?: boolean } = {},
   ): void => {
+    lastRequest.set(req.socket, req);
     void handler(req, res, via).catch((err) => {
       deps.logger.error('listen: unhandled handler error', { error: String(err) });
       if (!res.headersSent) {
@@ -1052,7 +1065,8 @@ export function startListen(
 
   // #744: requests Node cannot read. With a 'clientError' listener Node sends nothing itself
   // (`_http_server.js:1007` @ v24.21.0): listen sends its own JSON refusal, naming the limit where
-  // there is one, and logs one line. The line never carries `err.message` or `err.rawPacket`, nor
+  // there is one, and logs one line; but never on a connection that still carries a reply of its
+  // own (rules 3 and 5 below). The line never carries `err.message` or `err.rawPacket`, nor
   // anything from the request, which was never read (so it has no `path`).
   const clientErrorReply = (code: string): { status: number; payload: Record<string, unknown> } => {
     switch (code) {
@@ -1099,39 +1113,67 @@ export function startListen(
         ...(sent ? {} : { sent: false }),
       });
     };
-    // 3. A request after one that asked to close the connection (HTTP/1.0 without keep-alive, or
-    //    `Connection: close`): the reply to that one is still pending. It is left to Node, which
-    //    writes it and then closes the connection; this request is not answered.
-    if (code === 'HPE_CLOSED_CONNECTION' && socket._httpMessage != null) {
-      log(false);
+    // The reply of rules 4 and 7: write it, then close once it is handed to the kernel, or after
+    // `lingerMs`.
+    const reply = (): void => {
+      const body = JSON.stringify(payload);
+      const timer = setTimeout(() => socket.destroy(), lingerMs);
+      socket.once('finish', () => {
+        clearTimeout(timer);
+        socket.destroy();
+      });
+      socket.once('close', () => clearTimeout(timer));
+      socket.end(
+        `HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nContent-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+      );
+      log(true);
+    };
+    // The reply Node has attached to the socket, if any.
+    const pending = socket._httpMessage;
+    // 3. The connection is closing after a refusal of listen's: nothing is sent, nothing is logged,
+    //    and the socket is left alone. The refusal's own line already covers the connection; a
+    //    request after a refusal is not handled, and the handler's guard logs none either; and the
+    //    refusal's linger, or Node's own close, bounds the connection.
+    if (refusedSockets.has(socket)) return;
+    // 4. The request being answered is itself broken (its body broke while the handler reads it):
+    //    reply, as Node does. `res.req` is public, and `req.complete` turns true only once that
+    //    request's body has fully arrived.
+    if (pending != null && pending.req.complete === false && !pending.headersSent) {
+      reply();
       return;
     }
-    // 4. The connection is already closing (after a refusal of listen's): the close under way, and
-    //    its linger's timer, bound it.
+    // 5. A reply of listen's is pending or being written: nothing is sent, so the replies already
+    //    owed go out in order, and the connection then closes in stages once nothing is pending.
+    //    Node's own 'finish' listener on a reply runs first, so `_httpMessage` is already the next
+    //    queued reply, or absent. Without this close, a header timeout that fired while a reply was
+    //    pending would leave the connection open with no bound: Node reports a header timeout
+    //    once, and each trickled byte refreshes its keep-alive timer (#744).
+    if (pending != null) {
+      const closeWhenDone = (): void => {
+        const next = socket._httpMessage;
+        if (next != null) {
+          next.once('finish', closeWhenDone);
+          return;
+        }
+        if (socket.writable) {
+          socket.end();
+          setTimeout(() => socket.destroy(), lingerMs);
+        }
+      };
+      pending.once('finish', closeWhenDone);
+      // One line, unless the broken message is the body of a request the handler already holds:
+      // its body timer then refuses it with 408, which logs the one line.
+      if (lastRequest.get(socket)?.complete !== false) log(false);
+      return;
+    }
+    // 6. The connection is ending: nothing can be sent.
     if (!socket.writable) {
       log(false);
       return;
     }
-    // 5. A reply is already on the wire: listen never writes into it. At least as strict as Node's
-    //    own guard (`_http_server.js:1011-1012` @ v24.21.0, which tests `_headerSent`).
-    if (socket._httpMessage?.headersSent === true) {
-      log(false);
-      socket.destroy();
-      return;
-    }
-    // 6. Reply, then close once the reply is handed to the kernel, or after `lingerMs`.
-    const body = JSON.stringify(payload);
-    const timer = setTimeout(() => socket.destroy(), lingerMs);
-    socket.once('finish', () => {
-      clearTimeout(timer);
-      socket.destroy();
-    });
-    socket.once('close', () => clearTimeout(timer));
-    socket.end(
-      `HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nContent-Type: application/json\r\n` +
-        `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
-    );
-    log(true);
+    // 7. Otherwise, reply.
+    reply();
   });
 
   // issue #291 (Deliverable 4f): the opt-in expired-gate sweeper — a coarse setInterval, started
