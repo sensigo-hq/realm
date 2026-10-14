@@ -134,7 +134,7 @@ describe('the provider on each request, stamped by realm agent (issue #600 PR 2,
     });
   });
 
-  it("a failed drive whose provider is 'unknown' stamps none", async () => {
+  it("guard: a failed drive whose provider is 'unknown' stamps none", async () => {
     const run = await drive({ throwWith: [request({})] });
     expect({
       entry: run.drive_failures?.entries[0]?.provider,

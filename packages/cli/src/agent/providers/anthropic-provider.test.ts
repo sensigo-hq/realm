@@ -1721,7 +1721,7 @@ describe('AnthropicProvider — the cache request and the request facts (issue #
   });
 
   // G3. (a) red when off still builds the block; (b) prints the two bodies.
-  it("G3 — off: the plain string, and the body deep-equals a provider's built with no setting", async () => {
+  it("guard: G3 — off: the plain string, and the body deep-equals a provider's built with no setting", async () => {
     const off = await threeRequests(at('off'));
     const today = await threeRequests(new AnthropicProvider('claude-sonnet-4-5'));
     expect(off).toEqual(today);

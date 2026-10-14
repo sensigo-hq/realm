@@ -501,7 +501,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
   }, 30_000);
 
   // (a) red when the command repeats the runner's default; (b) prints the command.
-  it('no flag: the command never repeats the default', async () => {
+  it('guard: no flag: the command never repeats the default', async () => {
     const r = await runCli(
       ['agent', ...wf('blocked'), '--model', 'claude-x'],
       ANTHROPIC(CLOSED_PORT),

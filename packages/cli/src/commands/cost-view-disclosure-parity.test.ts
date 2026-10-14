@@ -540,7 +540,7 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
   // (the mcp twin's cell) and WITHHELD here — the `driven_by` precedent: an absence word on every
   // older step would be a line of noise. (a) red when inspect prints the cause; (b) prints the two
   // step lines.
-  it("the request facts' absence by cause is WITHHELD on this surface", async () => {
+  it("guard: the request facts' absence by cause is WITHHELD on this surface", async () => {
     const run = {
       ...contextOneRun,
       evidence: [

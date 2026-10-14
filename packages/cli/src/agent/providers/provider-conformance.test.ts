@@ -177,7 +177,7 @@ describe('provider conformance — promptCache is a promise about the wire (issu
 
   // G5. (a) red when the tools path builds its system through the cache helper; (b) prints the
   // setting and the requests' bodies that carried the marker.
-  it('G5 — the tools path carries no cache_control under 5m and 1h', async () => {
+  it('guard: G5 — the tools path carries no cache_control under 5m and 1h', async () => {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
     for (const value of ['5m', '1h'] as const) {
       anthropicCreate.mockReset();
