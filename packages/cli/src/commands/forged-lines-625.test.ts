@@ -89,7 +89,7 @@ describe(
         );
         // (a) red when the CHANGELOG stops saying it; (b) prints the sentence.
         expect(changelog).toContain(
-          'names the value it read as JSON on one line, its control characters escaped (`Resolved value: "bad\\nPhase: completed"`); a newline in the value started a line of its own, and an escape character reached the terminal.',
+          'names the value it read as JSON on one line, its control characters escaped (`Resolved value: "bad\\nPhase: completed"`), so a value from a step\'s output cannot start a line of its own or write a terminal escape there.',
         );
         const r = realm(...args, runId);
         const lines = [...r.out, ...r.err];
