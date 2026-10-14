@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { parse as parseDotenv } from 'dotenv';
 import type { ManifestSecretsConfig, SecretRefSite } from '@sensigo/realm';
+import { redactWith, variantsOf } from '../agent/providers/redaction-variants.js';
 
 export type SecretMode = 'real' | 'sentinel';
 
@@ -137,16 +138,22 @@ export function resolveManifestSecrets(
 }
 
 /**
- * Replaces every resolved secret VALUE occurring in `message` with a redaction marker.
- * Longest-first plain-string replacement; values shorter than 4 characters are skipped
+ * Replaces every resolved secret VALUE occurring in `message` — and every form the listed printers
+ * write it in, each of its lines and its parts ({@link variantsOf} with `parts`: JSON at one and two
+ * levels; the quoting, shell, HTML/XML, percent-encoding, base64, base64url and hex forms the printers
+ * named in `variantsOf`'s members write; the value without its surrounding double quotes, the
+ * sections around `&`, the value with `\\`, `\'`, `\"` and `\t` read or with each `\` or `^`
+ * dropped; and, for a value holding a backslash, the value with its JSON- and JavaScript-style
+ * escapes read, with its lines, expanded the same way) — with the `[redacted]` marker, through the
+ * one matcher ({@link redactWith}), longest-first. `variantsOf` keeps each value's list in a
+ * least-recently-used map, so a builder that fails again pays nothing to build it. Every value here
+ * is a declared secret, so its parts are hidden too. Values shorter than 4 characters are skipped
  * (short values over-redact everything); over-redaction of longer values is accepted.
  */
 export function redactSecretValues(message: string, values: Iterable<string>): string {
-  const candidates = [...new Set(values)].filter((v) => v.length >= 4);
-  candidates.sort((a, b) => b.length - a.length);
-  let out = message;
-  for (const value of candidates) {
-    out = out.split(value).join('[redacted]');
-  }
-  return out;
+  const kept = [...new Set(values)].filter((v) => v.length >= 4);
+  const forms = [...new Set(kept.flatMap((value) => variantsOf(value, { parts: true })))].sort(
+    (a, b) => b.length - a.length,
+  );
+  return redactWith(message, forms, '[redacted]');
 }

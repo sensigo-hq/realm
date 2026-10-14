@@ -4,7 +4,14 @@ All notable changes to this project are documented here.
 
 ---
 
-## [Unreleased]
+## [0.47.0] — 2026-10-14
+
+Ten BREAKING changes; Realm is pre-1.0, so they ship in a minor, and each says how to upgrade
+(**Upgrading**). New is the owed call: one view of what a run owes the engine, and one call that
+runs it (`advance_run` over MCP, `realm run advance` from a shell), named by every surface that
+says what comes next. An `auto` step that uses its `input_map` has its `input_schema` checked
+against the input the map builds. `realm listen` now delivers its early replies (`413`, `408`) and
+bounds what it reads after them. The release also carries security updates (see Security).
 
 ### Added
 
@@ -39,18 +46,21 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
     the agent step.
   - A new MCP tool **`advance_run`** runs it in the receiving server's environment; its reply
     carries `continued_by`, the program that ran the steps, and empty `data` and `evidence`, as
-    every MCP reply does.
+    `execute_step`'s does.
   - A new CLI command **`realm run advance <run-id>`** runs it from a shell with no model provider
     and no key.
   - Before it runs, it prints what it will run, the folder the steps' project code is loaded from —
     the workflow's own project, whatever folder the shell is in (for a workflow made without one,
     `--project` or the shell's folder) — and that the environment is the shell's; how this program's
     project code compares with the run's last record; and the run's last recorded driver.
-    `realm run respond`'s line for owed work says the same of the `realm run advance` it names.
+    `realm run respond`'s line for owed work says what the `realm run advance` it names runs, the
+    folder its project code is loaded from, and that its environment is its shell's.
   - When an open question's time is up and it declares `on_expiry`, carrying out that default or
     abort is owed engine work too: `advance_run`, `realm run advance` and `advanceRun` carry it out
     first, with the disclosure line in the reply's `warnings`, then run what it made owed.
-    `get_run_state` says `advance_owed` and offers `advance_run` for it. `describePending` and
+    `get_run_state` says `advance_owed` and offers `advance_run` for it (`workflow_unresolved` on a
+    server that cannot read the run's workflow, as `gates.md` says; 0.46.0 said `awaiting_human` for
+    every open question). `describePending` and
     `buildNextActions` take the clock `now` for it, as a required argument (the view's
     `expiry_due`; see the BREAKING entry under Changed); core exports
     `dueExpiry`, `dueExpiryWords` and the type `DueExpiry`. A question not yet expired, or with no
@@ -69,7 +79,7 @@ advance` prints for it, with the command that drives it.
     order of the workflow, and `AGENT_PRE_CLAIM_REFUSALS` with the type `AgentPreClaimRefusal`: the
     checks an agent step is judged by before its claim (trust, precondition — never its input
     schema, whose input is the agent's answer). `checkPreClaim` takes `members` to run only some of
-    its checks. The view gains `agent_refused` and `cannot_run`.
+    its checks. The view carries `agent_refused` and `cannot_run`.
   - Core also exports `judgeProgramFit`/`PROGRAM_FITS`, `describeRunDriver` and `bareStepOutput`.
   - Core also exports `executeEngineStep`, the one way the engine runs an `auto` step it owns, with
     its own input. It runs no other kind of step: named an agent step, a guard or a finalizer, it
@@ -86,9 +96,9 @@ advance` prints for it, with the command that drives it.
     as `step`, `runnable_here: false`, `refused_by` and `refusal`. Such a step is never offered in
     `next_actions`, and every reply that says what comes next names it with
     `'<step>' cannot run (<check>): <why>.` instead of `Ready for the agent`.
-  - For a missing handler or adapter it also carries `basis`: `registry` when the server's own
-    extensions lack it, `marker` when a caller that passes no extensions judged it from the run's
-    record.
+  - For a missing handler or adapter, an `engine_runnable` entry also carries `basis`: `registry`
+    when the server's own extensions lack it, `marker` when a caller that passes no extensions
+    judged it from the run's record.
   - A `marker` refusal is said in the past tense, `could not run (capability)`.
   - An input refusal names the field and what it must be, or the property the schema does not allow
     (`'<property>' is not allowed`).
@@ -98,8 +108,9 @@ advance` prints for it, with the command that drives it.
   - `realm run advance` opens `Nothing is owed to the engine:` only when nothing is owed.
   - It opens `The engine can run nothing now:` when owed steps cannot run or are in flight
     elsewhere.
-  - It and `realm agent`'s stop line give one way out for a step refused before its claim: correct
-    the workflow, register it again, then `realm run advance`, or abandon.
+  - It and `realm agent`'s stop line give one way out when every step refused before its claim is
+    refused for its `trust` or a precondition: correct the workflow, register it again, then
+    `realm run advance`, or abandon. A step refused for its input schema gets its own way first.
   - Under the same condition, every reply that says what comes next ends with the same way out in
     the tools' words:
     `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.`
@@ -120,7 +131,8 @@ advance` prints for it, with the command that drives it.
   - `execute_step` called by name on a step refused before its claim for a failed precondition or
     an invalid `trust` — an `auto` step or an agent step — ends its `context_hint` with the way out
     (`Correct the workflow and register it again, then call advance_run; or end the run with
-abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
+abandon_run.`) when nothing else can run; an input-schema refusal of the caller's own input is
+    unchanged (for a step that uses its `input_map`, see issue #688 under Fixed).
   - `advance_run`'s reply names the step that stopped the call in `stopped_step`, as
     `execute_step` and `start_run` do.
   - When no step is refused before its claim, the last of those lines is
@@ -148,6 +160,13 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   - Two reply codes are added. `executeStep`'s reply when another process holds the step it was
     about to claim carries `error_code: 'STATE_STEP_ALREADY_CLAIMED'`; it had none.
   - `get_run_state`'s release-line refusal carries `error_code` and `error_details`.
+
+- **The precondition refusal prints the value it read safely (issue #625, PR-2a).** The precondition
+  refusal that `realm run inspect`, `realm run advance`, `realm agent`, the replies' hints,
+  `get_run_state` and the `realm listen` log print names the value it read as JSON on one line, its
+  control characters escaped (`Resolved value: "bad\nPhase: completed"`), so a value from a step's
+  output cannot start a line of its own or write a terminal escape there. `execute_step`'s
+  `blocked_reason.suggestion` is unchanged.
 
 ### Changed
 
@@ -199,12 +218,13 @@ abandon_run.`) when nothing else can run; an input-schema refusal is unchanged.
   **Upgrading:** pass the path and the fault.
 - **BREAKING — an `auto` step with a handler or a service and an `input_map` has its `input_schema`
   checked against the input the map builds, not the caller's input (issue #688).** That is the input
-  the step receives. Caller input (MCP `execute_step`, `realm workflow run`'s typed answer) is no longer what
-  such a step's schema checks, and a schema written to fit the raw input — the workaround given on
-  #688 on 2026-10-05 — is now refused. **Upgrading:** rewrite the schema for the input the map
-  builds; `realm workflow test` follows the same rule. Core exports `consumesInputMap`,
-  `refusedInputField` and `newRunCanChangeInput`, and `WayOutSteps` carries each step's `execution`,
-  `handler`, `uses_service`, `input_map` and `input_schema`.
+  the step receives. Caller input (MCP `execute_step`, `realm workflow run`'s typed answer) is no
+  longer what such a step's schema checks, and a schema written to fit the raw input — the
+  workaround given on #688 on 2026-10-05 — is now refused. **Upgrading:** rewrite the schema for
+  the input the map builds; `realm workflow test` follows the same rule. Core exports
+  `consumesInputMap`, `refusedInputField` and `newRunCanChangeInput`, and the type `InputMapStep`
+  (each step's `execution`, `handler`, `uses_service`, `input_map`, `input_schema` and
+  `depends_on`).
 
 - **`realm workflow run`'s gate prompt closes when something else settles its question (issue #625,
   PR-2a).** While the prompt waits, this process's own expiry timer, or another process (`realm run
@@ -255,41 +275,37 @@ flight, taken by <program> since <time>: waiting up to 60s for the run's record 
 - **`realm run advance` says a waiting `realm workflow run` or `realm agent` goes on by itself, and
   prints each guard where the run decided it (issue #625, PR-2a).** After its line for an agent step
   that is ready it prints the line `realm run respond` prints after its commands. A guard decided
-  before a later step is printed before that step's `→` line; it was printed after every step. The
-  library's `advanceRun` takes `onGuard`, called with each guard its reply lists in
-  `chained_auto_steps` — decided by the write of a step it ran, by the call itself, or first by
-  another call — as the call reaches it (before the next step's `onStep`).
-- **`realm run advance` never says a step failed that another program settled or took over while
-  it ran it (issue #625, PR-2a).** When another program ran the step after this one's claim was freed
+  before a later step is printed before that step's `→` line. The library's `advanceRun` takes
+  `onGuard`, called with each guard its reply lists in `chained_auto_steps` — decided by the write
+  of a step it ran, by the call itself, or first by another call — as the call reaches it (before
+  the next step's `onStep`).
+- **`realm run advance` never says a step failed that another program settled or took over while it
+  ran it (issue #625, PR-2a).** When another program ran the step after this one's claim was freed
   (`realm run reclaim --force`), or took it over, the outcome this program reached is not recorded;
-  it prints `• Step '<step>' was taken by <program>, and completed; this program's outcome for it was
-not recorded.` (`and failed`; `… at <time>; …` while the other program holds the step; `the run
-ended (<phase>) before …`; or `another process removed the claim this program held on it; …`, and
-  the step is owed again), read from the record, goes on with what is left, and exits with the code
-  for what is left. It printed `Stopped: '<step>' failed: Step '<step>' was already settled …` (or
-  `… the claim was lost …`), stopped and exited 1.
+  it prints `• Step '<step>' was taken by <program>, and completed; this program's outcome for it
+was not recorded.` (`and failed`; `… at <time>; …` while the other program holds the step;
+  `the run ended (<phase>) before …`; or
+  `another process removed the claim this program held on it; …`, and the step is owed again), read
+  from the record, goes on with what is left, and exits with the code for what is left.
 - **`realm run advance` says "failed" only when the run's record lists the step as failed (issue
-  #625, PR-2a).** When another program ends the run (`realm run abandon`) while this one runs a step,
-  it prints `• Step '<step>': the run ended (<phase>) before this program's outcome for it was
-recorded.` and exits with the code for what is left; it printed `Stopped: '<step>' failed: Run
-'<run>' is terminal; cannot settle step '<step>'.` and exited 1. A claim refused because the record
-  changed after the command read it (the run ended, a question opened on another step) prints no line
-  of its own and goes on; it printed `Stopped: '<step>' failed: Step '<step>' is not eligible …`. Every
-  other refusal names the step it is about — the step, or the guard whose settle another call had
-  already recorded — as `Stopped: '<step>' failed: <error>` only when the record lists it as failed,
-  else as `Stopped: '<step>': <error>` (a question that cannot be shown, a store that refused a read or
-  a write, a guard another call passed), or gives the engine's words alone when it names no step, and
-  exits 1; it said `'<the last step it ran>' failed: …` (`'advance' failed: …` when it ran none) for
-  all of them. The step a refusal is about is no longer also said to be in flight in another program
-  when the claim on it is this call's own.
+  #625, PR-2a).** When another program ends the run (`realm run abandon`) while this one runs a
+  step, it prints
+  `• Step '<step>': the run ended (<phase>) before this program's outcome for it was recorded.` and
+  exits with the code for what is left. A claim refused because the record changed after the command
+  read it (the run ended, a question opened on another step) prints no line of its own and goes on.
+  Every other refusal names the step it is about — the step, or the guard whose settle another call
+  had already recorded — as `Stopped: '<step>' failed: <error>` only when the record lists it as
+  failed, else as `Stopped: '<step>': <error>` (a question that cannot be shown, a store that
+  refused a read or a write, a guard another call passed), or gives the engine's words alone when it
+  names no step, and exits 1. The step a refusal is about is not said to be in flight in another
+  program when the claim on it is this call's own.
 - **`realm run advance` gives the way on from a failed step and names the engine work it left owed
   (issue #625, PR-2a).** On a run that ended with a failed step `realm run resume` takes, the
-  run-ended reason goes on `— to make '<step>' runnable again: realm run resume <run> --from
-<step>` (`a failed step` and `--from <one of: …>` for several; a cleanup step is not offered), in the
-  `Stopped:` line and in the preview's `Nothing is owed to the engine:` line; it printed `the run has
-ended (failed)` and nothing more. When a refusal stops the call with engine work still owed, it
-  prints `Stopped: the engine still owes '<step>' — to run it: realm run advance <run>`; that work was
-  named nowhere.
+  run-ended reason goes on `— to make '<step>' runnable again: realm run resume <run> --from <step>`
+  (`a failed step` and `--from <one of: …>` for several; a cleanup step is not offered), in the
+  `Stopped:` line and in the preview's `Nothing is owed to the engine:` line. When a refusal stops
+  the call with engine work still owed, it prints
+  `Stopped: the engine still owes '<step>' — to run it: realm run advance <run>`.
 - **`realm workflow run`'s detach map offers the ways on that fit the run's state (issue #625,
   PR-2a).** Leaving a prompt (or stalling) prints `Advance:   realm run advance <run> — for what the
 engine owes ('<step>'), with no model` when the engine owes work — leaving an `auto` step's prompt
@@ -303,27 +319,27 @@ once '<step>' is no longer in flight, realm run advance <run>` (no `Discard`) fo
   printed `Drive it`).
 - **One rule says which failed steps `realm run resume` takes (issue #625, PR-2a).** Core's
   `resumeWay(run, workflow)` — the run not aborted, `failed` or `abandoned`, the step listed as
-  failed, still in the workflow and not a cleanup step — is the one statement of it; `realm run
-purge`'s preview and `realm run inspect` read it, and every offer of `realm run resume` reads it
-  through `offeredResumeWay`, which offers it only for a run an engine failure ended. The refusal offered `--from <one of: s, clean>` with `clean` a cleanup step `resume --from`
-  refuses; it now offers `s` alone, and says `'realm run resume' takes none of the steps that failed
-(<steps>), so it has nothing to run again` when only such steps failed (it said `--from clean`). A
-  late answer whose run another call ended ends with the same way out (it offered `realm run resume`
-  on any run). `terminalAnswerRefusalMessage` takes `(run, workflow)`.
+  failed, still in the workflow and not a cleanup step — is the one statement of it;
+  `realm run purge`'s preview and `realm run inspect` read it, and every offer of `realm run resume`
+  reads it through `offeredResumeWay`, which offers it only for a run an engine failure ended. When
+  only steps `realm run resume` does not take failed, the refusal says `'realm run resume' takes
+none of the steps that failed (<steps>), so it has nothing to run again`. A late answer whose run
+  another call ended ends with the same way out (0.46.0 named `realm run resume` for every ended
+  run). Core exports `terminalAnswerRefusalMessage(run, workflow)`.
 - **Every stop and hand-back gives the way on that fits the run's state (issue #625, PR-2a).**
   `realm run resume` prints `Drive it with:` only when an agent step is ready (it printed it, with a
-  model to fill in, for a step only the engine runs). `realm workflow run`'s last line `Run complete.
-Phase: failed` and `realm agent`'s stop on a run that ended with a failed step `realm run resume`
-  takes are followed by `  Resume:    realm run resume <run> --from <step>`. `realm run respond` and
-  `realm run drain` (its refusal of a run that has not ended, and its lines after an enactment that
-  left the run open) name an agent step that is ready with its drive and a step in flight in another
-  program with the wait (they named neither); `realm run inspect` names an agent step that is ready
-  and, on an ended run, `Resumable: '<step>' — realm run resume <run> --from <step>`. Over MCP,
-  `advance_run`'s reply and an answer's reply on a run that ended with such a step end with
+  model to fill in, for a step only the engine runs). `realm workflow run`'s last line
+  `Run complete. Phase: failed` and `realm agent`'s stop on a run that ended with a failed step
+  `realm run resume` takes are followed by ` Resume: realm run resume <run> --from <step>`.
+  `realm run respond` and `realm run drain` (its refusal of a run that has not ended, and its lines
+  after an enactment that left the run open) name an agent step that is ready with its drive and a
+  step in flight in another program with the wait (they named neither); `realm run inspect` names an
+  agent step that is ready and, on an ended run,
+  `Resumable: '<step>' — realm run resume <run> --from <step>`. Over MCP, `advance_run`'s reply and
+  an answer's reply on a run that ended with such a step end with
   `To make the failed step runnable again: realm run resume <run> --from <step>` (the command last,
-  nothing after it), and the sentence
-  that says what comes next names a step in flight elsewhere: `No step is ready: '<step>' is in flight
-elsewhere — wait for it, then call get_run_state.` (it said `No step is ready.`).
+  nothing after it), and the sentence that says what comes next names a step in flight elsewhere:
+  `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`.
 - **One form for a choice in a printed answer command (issue #625, PR-2a).** `realm workflow run`'s
   hand-back printed `Respond:   realm run respond <run> --gate <gate> --choice ship|hold`; pasted
   into a shell, the `|` is a pipe, so `ship` was recorded unseen and the shell printed only `hold:
@@ -333,67 +349,58 @@ command not found`. It now prints `--choice <one of: ship, hold>`, which bash an
   workflow cannot be read — comes from one composer, and names the choice itself when the question
   has only one (they printed `<one of: ack>`).
 - **A printed command is safe to paste (issue #625, PR-2a).** Every command Realm prints with a
-  value in it quotes that value for a POSIX shell: as it is when it holds only `[A-Za-z0-9._/:@%+=,-]`,
-  else in single quotes, each `'` written `'\''`, and the empty value as `''` — a choice (`--choice
-'only one'`, `--choice '$(id)'`, each member of `<one of: 'yes>', no>`), a step name (`--from`,
-  `--step`, `--void`), a workflow id and a directory. Such a line pasted into a shell records exactly
-  the value it names and runs nothing the value holds; a choice with a space was split, and `$(…)` was
-  run. Core exports the quoter, `shellWord` (and `quotedCommand`, for a command set in prose quotes);
-  `realm agent`'s re-attach flags and `realm run abandon`'s `--params` use it and print as before.
-  `answerOf(action, run)` reads the choices from the run's open question (it split the act's `<a|b>`
-  text, so a choice holding `|` became two). The offer of `realm run resume` ends with its command:
-  `To make the failed step runnable again: realm run resume <id> --from <step>` (it said `'…' makes
-the failed step runnable again.`, which a quoted step name would break); in the refusal of an answer
-  to a run that ended, the purge preview comes first.
-- **`realm run advance` says a guard that failed the run, and exits 1 (issue #625, PR-2a).** A
-  guard the call decided whose path found nothing ends the run `failed`; the command now prints
-  `Stopped: '<guard>' failed: <reason>` and exits 1, as for an `auto` step that failed (it printed
-  the guard's sentence and exited 0).
+  value in it quotes that value for a POSIX shell: as it is when it holds only
+  `[A-Za-z0-9._/:@%+=,-]`, else in single quotes, each `'` written `'\''`, and the empty value as
+  `''` — a choice (`--choice 'only one'`, `--choice '$(id)'`, each member of
+  `<one of: 'yes>', no>`), a step name (`--from`, `--step`, `--void`), a workflow id and a
+  directory. Such a line pasted into a shell records exactly the value it names and runs nothing the
+  value holds; a choice with a space was split, and `$(…)` was run. Core exports the quoter,
+  `shellWord` (and `quotedCommand`, for a command set in prose quotes); `realm agent`'s re-attach
+  flags and `realm run abandon`'s `--params` use it and print as before. `answerOf(action, run)`
+  reads the choices from the run's open question. The offer of `realm run resume` ends with its
+  command: `To make the failed step runnable again: realm run resume <id> --from <step>`; in the
+  refusal of an answer to a run that ended, the purge preview comes first.
+- **`realm run advance` says a guard that failed the run, and exits 1 (issue #625, PR-2a).** A guard
+  the call decided whose path found nothing ends the run `failed`; the command prints
+  `Stopped: '<guard>' failed: <reason>` and exits 1, as for an `auto` step that failed.
 - **One rule for "another program got there first" (issue #625, PR-2a).** Core exports the stop
   kinds a loop meets on a step it picked or ran, `STOP_KINDS` (`taken`, `ran_elsewhere`,
   `run_ended`, `claim_removed`, `question_opened`, `not_eligible`, `capability`, `failed`,
   `refused`), and the one classifier every loop reads, `classifyStop(reply, step, record)`, with the
-  record re-read after the reply; `advanceRun`, `realm run advance`, `realm agent` and `realm workflow
-run` read it, and none keeps its own list of codes. On the first six kinds the loop goes on with
-  what is left, and the reply it ends on is composed from the record it re-read: `advance_run` (and
-  `execute_step`'s chain) no longer returns the version, phase and next actions it first read after
+  record re-read after the reply; `advanceRun`, `realm run advance`, `realm agent` and
+  `realm workflow run` read it, and none keeps its own list of codes. On the first six kinds the
+  loop goes on with what is left, and the reply it ends on is composed from the record it re-read:
+  `execute_step`'s chain no longer returns the version, phase and next actions it first read after
   another program ran a step to its end, never `STATE_STEP_NOT_ELIGIBLE` for a run another program
   ended or a question it opened before this call's claim, and `agent_action: "stop"` when the run
-  ended so. `advanceRun` gains `onNotRecorded(step, kind, run)`. `realm agent` and `realm workflow
-run` say a step another process settled, took over, freed or ended the run on with `realm run
-advance`'s line, never `✗ … failed`; `realm agent` says the drive's answer was not recorded also
-  when another process removed its claim, and never that a run another process ended stays open;
-  `realm workflow run`'s prompt says a step waits behind a question another process opened. `realm
-run advance` at an open question no longer calls the engine to compose its answer line, so it
-  runs nothing it does not print.
+  ended so (`advance_run` composes its reply the same way). `advanceRun` gains
+  `onNotRecorded(step, kind, run)`. `realm agent` and `realm workflow run` say a step another
+  process settled, took over, freed or ended the run on with `realm run advance`'s line, never
+  `✗ … failed`; `realm agent` says the drive's answer was not recorded also when another process
+  removed its claim, and never that a run another process ended stays open; `realm workflow run`'s
+  prompt says a step waits behind a question another process opened. `realm run advance` at an open
+  question runs nothing it does not print.
 - **Where one `realm run advance` call stops, said wherever several owed steps are named (issue
   #625, PR-2a).** One call runs the owed steps one at a time, and the steps the run owes after them,
-  and stops at the first step that opens a question, fails or ends the run. A line that named
-  several owed steps read as a promise that all of them run: `realm workflow run`'s `Advance:` line
-  and `realm run advance`'s preview now end `; it runs them until a step opens a question, fails or
-ends the run`, `realm run inspect`'s `Owed to the engine` line the same; `realm run respond` says
-  `runs them until a step opens a question, fails or ends the run` (it said `runs them`), and
-  `realm run resume`, `realm run drain` and advance's `the engine still owes` line give the same
-  words. Over MCP the sentence after `Owed to the engine: …` says `— call advance_run; it runs them
-until …`, the `advance_run` action's `human_readable` ends `… until a step opens a question, fails
-or ends the run.`, and for an expired question it says `then run what it leaves owed until a step
-opens a question, fails or ends the run` (it said `then run what it leaves owed`). One owed step:
-  unchanged.
+  and stops at the first step that opens a question, fails or ends the run. Each line that names
+  several owed steps ends with `until a step opens a question, fails or ends the run`: `realm
+workflow run`'s `Advance:` line, `realm run advance`'s preview and its `the engine still owes`
+  line, `realm run inspect`'s `Owed to the engine` line, `realm run respond`, `realm run resume` and
+  `realm run drain`; over MCP, the sentence after `Owed to the engine: …`, the `advance_run`
+  action's `human_readable`, and an expired question's `then run what it leaves owed`. A line that
+  names one owed step has no such clause.
 - **`realm run advance` prints the cleanup steps' outcomes (issue #625, PR-2a).** When the run ends
-  during the call and has cleanup steps, one line per cleanup step, `finalizer '<name>': <status>`,
-  comes just before the phase line — from the composer `realm run respond` prints them with
-  (`finalizerOutcomeLines`, exported). A cleanup step that failed was named only by `realm run
-inspect`'s `Cause:`.
-- **`realm run advance` says only the cleanup steps its ending ran (issue #625, PR-2a).** After
-  `realm run resume` and a second ending, a cleanup step that completed or failed at the earlier
-  ending is not run again, and gets no `finalizer '<name>': …` line; it was printed with its old
-  status, as if it had run in this call.
+  during the call and has cleanup steps, one line per cleanup step its ending ran,
+  `finalizer '<name>': <status>`, comes just before the phase line — from the composer `realm run
+respond` prints them with (`finalizerOutcomeLines`, exported). A cleanup step an earlier ending
+  already settled is not run again and gets no line.
 - **The protocol no longer forbids `execute_step` for an `auto` step (issue #625, PR-2a).**
-  `get_workflow_protocol`'s fifth standard rule reads `When next_actions names advance_run, call it:
-the engine owes steps it runs when you call advance_run.`, and an `auto` step's `agent_involvement`
-  reads `none — the engine runs this step; when next_actions names advance_run, call it`. They said
-  that only `advance_run` runs such a step and not to call `execute_step` for it, but `execute_step`
-  called by name runs it. A guard step and a cleanup step keep `do NOT call execute_step for it`.
+  `get_workflow_protocol` gains a fifth standard rule, `When next_actions names advance_run, call
+it: the engine owes steps it runs when you call advance_run.`, and an `auto` step's
+  `agent_involvement` reads
+  `none — the engine runs this step; when next_actions names advance_run, call it`. It said
+  `… do NOT call execute_step for it`, but `execute_step` called by name runs it. A guard step and a
+  cleanup step keep `do NOT call execute_step for it`.
 - **Two stop lines say what is true (issue #625, PR-2a).** `realm workflow run` said `No eligible
 steps in phase 'running'. Workflow stalled.` when the engine owed work the command does not run (a
   guard, for one); it now says `The engine owes '<step>', which this command does not run.`, and
@@ -402,30 +409,28 @@ steps in phase 'running'. Workflow stalled.` when the engine owed work the comma
 realm run inspect <id> — or end it: realm run abandon <id>`, its reason in `realm run advance`'s
   words. A run that ended still gets `Run ended in phase: <phase>`.
 - **The way out of a run that cannot go on is true for an input its schema refuses (issue #625,
-  PR-2a).** The engine gives an `auto` step the run's params when it has no `depends_on`, and no input
-  when it has; the way out said "correct the workflow" for every refusal before the claim. It now
-  gives each refused step's own way, in the workflow's order, then the run's once: `for '<step>',
-start a run with params that fit, or correct its input_schema and register the workflow again`
-  (no `depends_on`), `for '<step>', the engine gives it no input, so correct its input_schema and
-register the workflow again` (with `depends_on`), and `for '<step>', correct the workflow and
-register it again` beside them for a refused `trust` or precondition. Each step's own way reads the
-  same on every surface; it never names `execute_step`. When every refused step is refused
-  for its `trust` or a precondition, the one way out is unchanged. `cannotRunWayOut`,
+  PR-2a).** The engine gives an `auto` step the run's params when it has no `depends_on`, and no
+  input when it has. The way out gives each refused step's own way, in the workflow's order, then
+  the run's once: `for '<step>', start a run with params that fit, or correct its input_schema and
+register the workflow again` (no `depends_on`); `for '<step>', the engine gives it no input, so
+correct its input_schema and register the workflow again` (with `depends_on`); for a step that
+  uses its `input_map`, `for '<step>', correct its input_map or its input_schema and register the
+workflow again`, after `start a run with params that fit, or` when the refused key is built from
+  the run's params (issue #688); and `for '<step>', correct the workflow and register it again`
+  beside them for a refused `trust` or precondition. Each step's own way reads the same on every
+  surface; it never names `execute_step`. When every refused step is refused for its `trust` or a
+  precondition, it is the one way out the owed-call entry above gives. `cannotRunWayOut`,
   `cannotRunWayOutTools`, `cannotGoOnLines` and `describeNext` take the run's workflow.
-- **`get_run_state` never says `claim_unknown_age` with no claim in flight (issue #625, PR-2a).** The
-  open question's own claim is set aside as not work in flight; with nothing left, the status said
-  `claim_unknown_age`. An expired question that declares `on_expiry`, on a server that cannot read
-  the run's workflow, now reads `workflow_unresolved`, as `gates.md` says.
-- **`advance_run` names the guard that ended the run, whoever decided it (issue #625, PR-2a).** When
-  the call's own loop decides a guard that ends the run — one pending after `realm run resume --from
-<guard>`, for one — the reply carries `guards` and `ended_by`, as when a step's write decides it
-  (they were missing); `execute_step`'s chain, the same loop, too.
+- **`advanceRun` and `execute_step`'s chain name the guard that ended the run, whoever decided it
+  (issue #625, PR-2a).** When the call's own loop decides a guard that ends the run — one pending
+  after `realm run resume --from <guard>`, for one — the reply carries `guards` and `ended_by`, as
+  when a step's write decides it (0.46.0 left them out); the new `advance_run`'s reply too.
 - **A cleanup step under another drainer's lease is said as held (issue #625, PR-2a).** Every line
-  that names a pending cleanup step and the command that runs it — `realm run inspect`, `realm run
-advance`, `realm run respond`, the MCP replies and `get_run_state`'s `cleanup_pending` (now with
-  `held_until`) — says, while another drainer's lease on it has not passed, `held by another
-drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>:
-realm run drain <id> --force`; it offered the command as if it would run the step now.
+  that names a pending cleanup step and the command that runs it — `realm run inspect`,
+  `realm run advance`, `realm run respond`, the MCP replies and `get_run_state`'s `cleanup_pending`
+  (with `held_until`) — says, while another drainer's lease on it has not passed, `held by another
+drainer's lease until <time> (realm cannot tell whether it is still running) — after <time>: realm
+run drain <id> --force` (over MCP: `— after <time>, 'realm run drain <id> --force' runs it …`).
   `pendingCleanupWay` and its line and sentence take the call's `now`. A drain that halts at such a
   lease warns `⚠ finalizer '<name>' left pending — held by …`, and `realm run drain --force` prints
   the held line and exits 1 — it said `has no pending finalizers. Nothing to drain.` and exited 0.
@@ -437,37 +442,32 @@ realm run drain <id> --force`; it offered the command as if it would run the ste
   runner named recorded `{}`, so a fixture whose later step read its output (a precondition, for
   one) stalled where the run completes; it now records its dependency's output, or the run's params.
 - **`realm run respond` says only the cleanup steps its answer's ending ran (issue #625, PR-2a).**
-  The rule `realm run advance` follows now holds for every caller of the one composer: `realm run
-respond`, the reply in a Slack gate thread and `realm workflow run`'s prompt name only the cleanup
-  steps the answer's ending ran or left pending. After `realm run resume`, an answer that ended the
-  run again printed `finalizer '<name>': completed` for a cleanup step that ran at the first ending.
-  `finalizerOutcomeLines(run, before)` and `describeAnswerEnding`'s `before` (the record read before
-  the call) are required.
-- **A `realm.yaml` is named only when one is read (issue #625, PR-2a).** With `--extensions-module`,
-  `realm run advance`'s first line said `… and the realm.yaml of <folder>` for a folder with none, its
-  `--project … was not used` line said the project's code was loaded (the override replaces it), and
-  `realm run respond`'s owed line said a project with no code had some. The loader returns the
-  `realm.yaml` it read (`manifestPath`); one `ProjectLoad` feeds both commands' words.
+  The rule `realm run advance` follows now holds for every caller of the one composer:
+  `realm run respond`, the reply in a Slack gate thread and `realm workflow run`'s prompt name only
+  the cleanup steps the answer's ending ran or left pending. After `realm run resume`, an answer
+  that ended the run again printed `finalizer '<name>': completed` for a cleanup step that ran at
+  the first ending. Core exports `finalizerOutcomeLines(run, before)`; `describeAnswerEnding`
+  requires `before` (the record read before the call).
 - **`realm run purge` counts a run as resumable by resume's own rule (issue #625, PR-2a).** A run
   whose only failed step is a cleanup step (`realm run resume --from` refuses it) was counted as
   `resumable via 'realm run resume'`; the count now reads core's `resumeWay`.
 - **Every surface gives the way on for the states the record and the view can express (issue #625,
   PR-2a).** A step that waits for an open question's answer is named — `realm run advance`'s
-  `Stopped:` and preview lines (`a question is open ('<step>' waits for its answer) — …`), `realm run
-inspect` (`Question open on '<step>': …`), MCP replies at the question and `get_run_state`'s
-  `waiting_on_answer`. Cleanup steps an ending left `pending` are named with the command that runs
-  them (`realm run drain <id> --force`) by `realm run advance`, `realm run respond`, `realm run
-inspect`, `realm workflow run`, `realm agent`, and MCP replies and `get_run_state`'s
-  `cleanup_pending`. An expired question's preview says the call then runs what its default leaves
-  owed. `realm run drain` at a question says that after the answer `realm run respond` names what the
-  run owes next (it named only `realm run abandon`). `start_run`, `execute_step` and a late answer
-  whose expiry's guard failed the run end with `'realm run resume <id> --from <step>' makes the failed
-step runnable again.`, and `get_run_state` gives `resumable`.
+  `Stopped:` and preview lines (`a question is open ('<step>' waits for its answer) — …`),
+  `realm run inspect` (`Question open on '<step>': …`), MCP replies at the question and
+  `get_run_state`'s `waiting_on_answer`. Cleanup steps an ending left `pending` are named with the
+  command that runs them (`realm run drain <id> --force`) by `realm run advance`,
+  `realm run respond`, `realm run inspect`, `realm workflow run`, `realm agent`, and MCP replies and
+  `get_run_state`'s `cleanup_pending`. An expired question's preview says the call then runs what
+  its default leaves owed. `realm run drain` at a question says that after the answer
+  `realm run respond` names what the run owes next (it named only `realm run abandon`). `start_run`,
+  `execute_step` and a late answer whose expiry's guard failed the run end with
+  `To make the failed step runnable again: realm run resume <id> --from <step>`, and `get_run_state`
+  gives `resumable`.
 - **No printed command is followed by punctuation a paste would carry (issue #625, PR-2a).** A line
-  that ends with a command ends there (`--choice ok`, not `--choice ok.`, which `realm run respond`
-  refused as a choice); `realm run advance`'s preview prints several reasons one per line; `realm run
-drain` prints its way out on the line after its command; the way-out sentence reads `… then realm
-run advance <id> — or end it: realm run abandon <id>`.
+  that ends with a command ends there: `realm run drain`'s `To end the run: realm run abandon <id>`
+  carried a full stop into the id, and `realm run abandon`'s `--choice <one of: …>` one into the
+  choice. `realm run drain` prints its way out on the line after its command.
 - **`realm agent`'s stop on a step another program holds gives the way on (issue #625, PR-2a).**
   After the in-flight line it prints `  Go on:     once '<step>' is no longer in flight, realm agent
 --run-id <run> <flags>`, with the flags it was started with, as `realm workflow run`'s hand-back
@@ -483,7 +483,7 @@ on by itself; the line above is for when none is.`
   neither.
 - **`advance_run` says which guards the expiry it carried out decided (issue #625, PR-2a).** Its
   `context_hint` reads `… its expired question was carried out as declared, and that decided guard
-'<guard>' (see warnings); no other step ran. …`; it said `no step ran` beside a guard that ran.
+'<guard>' (see warnings); no other step ran. …`.
 - **`realm run respond` says a waiting `realm workflow run` or `realm agent` goes on by itself
   (issue #625, PR-2a).** After the line that names a command (`Owed to the engine: …`, `An agent step
 is ready: …`) it prints `If a realm workflow run or realm agent is still waiting on this run, it
@@ -492,16 +492,16 @@ goes on by itself; the line above is for when none is.` The run's record does no
 - **A run an operator ended is never offered `realm run resume` (issue #625, PR-2a).** Resuming an
   abandoned run erases the operator's ending and its reason and records no one and no reason for the
   undo, so no surface offers it: the refusal of an answer to the run, an answer's reply, the
-  `execute_step`, `advance_run` and `start_run` replies on the run, `realm run respond`, `realm run
-advance` and the hand-back of `realm workflow run` and `realm agent` (`  Ended:     …` in place of
-  `  Resume:    …`) say instead `An operator ended this run, with the reason "<reason>"; to run the
-work again, start a new run.` — the reason on one line, its control characters escaped. They
-  offered `realm run resume <id> --from <step>` for an abandoned run with a failed step.
-  `get_run_state` gives `resumable` only for a run an engine failure ended; it still gives the
-  ending as `terminal_reason` and `sealed_by_arm`. `realm run inspect` still prints `Resumable:` for
-  such a run, followed by `— resuming erases the operator's ending and its reason, and records no
-one and no reason for the undo`; `realm run purge` still counts it as resumable. `realm run
-resume` itself is unchanged. Core exports `offeredResumeWay` and `operatorEndingSentence`.
+  `execute_step`, `advance_run` and `start_run` replies on the run, `realm run respond`,
+  `realm run advance` and the hand-back of `realm workflow run` and `realm agent` (` Ended: …` in
+  place of ` Resume: …`) say instead `An operator ended this run, with the reason "<reason>"; to run
+the work again, start a new run.` — the reason on one line, its control characters escaped. (The
+  refusal of an answer named `'realm run resume'` for every ended run.) `get_run_state` gives
+  `resumable` only for a run an engine failure ended; it still gives the ending as `terminal_reason`
+  and `sealed_by_arm`. `realm run inspect` prints `Resumable:` for such a run, followed by `—
+resuming erases the operator's ending and its reason, and records no one and no reason for the
+undo`; `realm run purge` still counts it as resumable. `realm run resume` itself is unchanged.
+  Core exports `offeredResumeWay` and `operatorEndingSentence`.
 - **A different answer to a question whose expiry chose says so, whichever call carried the expiry
   out (issue #625, PR-2a).** `submit_human_response` (and `realm run respond`, the prompt of `realm
 workflow run`) refuses it with `Gate '<gate>' was settled by timeout with choice '<c>' — your
@@ -509,23 +509,27 @@ choice '<other>' was not recorded.` and `error_details.resolved_by: "timeout"`, 
   carried the expiry out is refused; when an earlier call had carried it out, the refusal said `was
 already resolved with choice '<c>'` and had no `resolved_by`, as for a person's answer.
 - **An answer to a run that has ended names the way out that kind of ending has (issue #625,
-  PR-2a).** `STATE_RUN_TERMINAL`'s message is `Run '<id>' is terminal (<phase>); cannot submit a gate
-response — …`: nothing for a completed run (`it completed, and nothing is owed.`), or, when its ending
-  left a cleanup step pending, that step and the command that runs it; the preview of
-  `realm run purge <id>` for an aborted one; `realm run resume <id> --from <the failed step>` or that
-  preview for a failed one in which a step failed; for an abandoned one, that an operator ended it,
-  its reason, and that a new run runs the work again, or that preview. The purge it names is the
-  preview, `'realm run purge <id>' previews what it would remove`, never `--force`. It offered `realm run resume` for every ended run,
-  which refuses completed and aborted ones and any with no failed step.
+  PR-2a).** `STATE_RUN_TERMINAL`'s message is
+  `Run '<id>' is terminal (<phase>); cannot submit a gate response — …`: nothing for a completed run
+  (`it completed, and nothing is owed.`), or, when its ending left a cleanup step pending, that step
+  and the command that runs it; the preview of `realm run purge <id>` for an aborted one; that
+  preview, then
+  `To make the failed step runnable again: realm run resume <id> --from <the failed step>` (or why
+  resume has nothing to run), for a failed one in which a step failed; for an abandoned one, that an
+  operator ended it, its reason, and that a new run runs the work again, then that preview. The
+  purge it names is the preview, `'realm run purge <id>' previews what it would remove`, never
+  `--force`. It offered `realm run resume` for every ended run, which refuses completed and aborted
+  ones and any with no failed step.
 - **Repeating the choice a question's expiry recorded says so over MCP (issue #625, PR-2a).**
   `submit_human_response` replies `the outcome matches your choice, but it was settled by timeout;
 your response was not recorded.` (`answer_recorded: false`), the sentence `realm run respond`
   prints, where it said `… was already resolved with choice '<c>' — no action was taken.`
 - **A run that cannot be read is answered alike by the library and the MCP tools (issue #625,
-  PR-2a).** `submitHumanResponse` names the cause (`Failed to load run from store: <its message>`)
-  as its siblings do. `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` answer
-  `ENGINE_STORE_FAILED` with that message where they answered `ENGINE_INTERNAL` (or, `get_run_state`,
-  no code) with the bare parse error.
+  PR-2a).** `executeStep`, `submitHumanResponse` and `advanceRun` name the cause
+  (`Failed to load run from store: <its message>`; 0.46.0 said it bare, or threw). `execute_step`,
+  `submit_human_response` and `get_run_state` answer `ENGINE_STORE_FAILED` with that message where
+  they answered `ENGINE_INTERNAL` (or, `get_run_state`, no code) with the bare parse error; the new
+  `advance_run` does the same.
 - **`realm agent` carries out a question already past its time before announcing it (issue #625,
   PR-2a).** On a run whose question's time is up and whose `on_expiry` the engine carries out,
   `realm agent` no longer prints the gate, `Waiting for approval...` and `realm run respond …
@@ -586,6 +590,8 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
     before, so `realm run list --stuck` still names it.
   - ONE line closes the drive, exit 1:
     `✗ The drive stops: nothing else can run, and '<s>' cannot run (<check>). Run <id> stays open (phase '<phase>'): correct the workflow, register it again, then realm run advance <id> — or end it: realm run abandon <id>`
+  - For a step refused for its input schema, that line gives the step's own way (see the way-out
+    entry below).
   - Before, a precondition refusal made the drive re-run the step forever.
   - A capability block keeps its own exit (`⚠ … is blocked … re-attach`).
   - Each drive that has nothing else to run attempts the step once.
@@ -594,7 +600,7 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
     (`handler '<name>' was not registered in the runner that last attempted it`), else unknown.
   - A step's or an answer's reply judges it with the call's own extensions, the fact `get_run_state`
     reads on the same server.
-  - So `realm run inspect` no longer offers `realm run advance` for a step it cannot run.
+  - So `realm run inspect` offers `realm run advance` only for a step it can run.
   - So a completed step's reply names a next step that cannot run instead of
     `Waiting for other steps to complete.`.
   - So `get_run_state` reports `blocked_on_capability` exactly when the view refuses an owed step
@@ -608,13 +614,13 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
   - `realm run advance` exits 1 when a step cannot run, whether or not anything else was owed.
   - A handler or adapter that is not registered is attempted once, after every other owed step, so
     the run records which one is missing.
-  - That reply's `next_actions` are rebuilt with the call's registry, so they no longer offer the
-    act for it.
+  - That reply's `next_actions` are rebuilt with the call's registry, so they do not offer the act
+    for it.
   - A `start_run` whose new run's first engine step is blocked that way replies `status: ok` with
     the creation reply, where it replied with the block's error.
   - Its `context_hint` names the step, and the block's message is in `warnings` in place of that
     step's pre-flight warning.
-  - A step that fails still gives the error reply, and `advance_run` still replies with the block's
+  - A step that fails still gives the error reply, and `advance_run` replies with the block's
     error.
   - `realm run advance` says `an agent step is ready: '<s>' — drive it` for one ready agent step and
     `agent steps are ready: … — drive them` for several, followed by the drive command with the
@@ -628,6 +634,10 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
   - The auto-step chain has no depth limit (each step runs at most once per call).
   - Pre-claim refusals (trust, precondition, input schema) are one function shared by `executeStep`
     and the view.
+  - **Upgrading:** a client that read `next_actions_status: auto_pending` reads `advance_owed` and
+    calls `advance_run` (or runs `realm run advance`); a fixture or workflow that relied on a bare
+    `auto` step's copied output, or on `{}` for a second step with no `depends_on`, gets its
+    dependency's output, or the run's params.
 
 - **BREAKING — `@sensigo/realm-testing`'s fixture runner (`runFixtureTests`, `realm workflow test`)
   gives an `auto` step the input the engine gives it in a real run (issue #625, PR-2a).** An `auto`
@@ -639,11 +649,11 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
 
 - **BREAKING — `advanceRun` takes the owed call's options (issue #625, PR-2a).** Version 0.46.0
   exported `advanceRun(store, definition, options: ExecuteChainOptions, state?: AdvanceRunState)`
-  and the type `AdvanceRunState` (issue #625 PR-1; see 0.46.0's notes). It is now
-  `advanceRun(store, definition, { runId, registry?, traceBufferStore?, driver?, now?, onStep?, onTaken?, onExpiry?, caller?, command? })`
-  (type `AdvanceRunOptions`): it runs what the engine owes on a run — its eligible guards, then its
-  eligible `auto` steps — from the stored record. The `state` argument and `AdvanceRunState` are
-  removed.
+  and the type `AdvanceRunState` (issue #625 PR-1; see 0.46.0's notes). It is now `advanceRun(store,
+definition, { runId, registry?, traceBufferStore?, driver?, now?, onStep?, onTaken?, onExpiry?,
+onNotRecorded?, onGuard?, caller?, command? })` (type `AdvanceRunOptions`): it runs what the
+  engine owes on a run — its eligible guards, then its eligible `auto` steps — from the stored
+  record. The `state` argument and `AdvanceRunState` are removed.
   - `onTaken` is told each step another process held when the call tried to claim it; the call
     re-reads the record and goes on. `onExpiry` is told the line that says the call carried out an
     expired question, before any step runs.
@@ -653,8 +663,8 @@ your response was not recorded.` (`answer_recorded: false`), the sentence `realm
     (`VALIDATION_CALLER_INVALID`, category `VALIDATION`, a new code) before anything is read or
     written, naming the value and the five words: a program in plain JavaScript gets no type
     error, and the word would otherwise reach the reply and the line (`this undefined call …`).
-    Core exports the types `AdvanceCaller` and `EnactedVia` (the `enacted_via` vocabulary, which
-    gains `advanceRun`), `ENTRY_CALLERS` (each function's words) and `expiryCarriedOutLine`, the
+    Core exports the types `AdvanceCaller` and `EnactedVia` (new: every `enacted_via` word; see the
+    expiry-line entry), `ENTRY_CALLERS` (each function's words) and `expiryCarriedOutLine`, the
     line's one composer.
   - **BREAKING:** a run it cannot read gets an error reply, as from `executeStep` — never a throw:
     `STATE_RUN_NOT_FOUND` for a run that does not exist (labelled with the call's `command`,
@@ -695,15 +705,19 @@ load run from store: `).
   `stop` on a run that has ended. Its `context_hint` says why:
   `Step '<s>' cannot be called now: <why>.` — it waits on the question on step '<q>' (its choices),
   a step it depends on cannot run (named; then the way out when the run cannot go on), its
-  dependencies are not settled (named), or it has already completed, failed or been skipped.
+  dependencies are not settled (named), it has already completed, failed or been skipped, it is in
+  flight (claimed by another call), it waits on a question whose time is up (call advance_run), the
+  run has ended, or it is not a step of the workflow.
   - On 0.46.0 every such reply said `resolve_precondition` and
-    `Step '<s>' is not eligible in the current run state.`, even with nothing to call, and its
-    `blocked_reason.suggestion` read `No eligible steps available. Check run_phase and
-completed_steps.` (now `No other step can be called now.`, `Answer the open question first,
-as next_actions says.`, `Call one of the steps indicated in next_actions instead.`, or, when
-    `next_actions` holds only `advance_run`, `Call advance_run, as next_actions says.`, and when it
-    holds steps and `advance_run`, `Call one of the steps indicated in next_actions, or advance_run,
-instead.` — the act is never called a step).
+    `Step '<s>' is not eligible in the current run state.`, even with nothing to call; with nothing
+    to call, its `blocked_reason.suggestion` read
+    `No eligible steps available. Check run_phase and completed_steps.` It now says
+    `No other step can be called now.`; beside 0.46.0's
+    `Call one of the steps indicated in next_actions instead.` come
+    `Answer the open question first, as next_actions says.`,
+    `Call advance_run, as next_actions says.` (when `next_actions` holds only `advance_run`) and
+    `Call one of the steps indicated in next_actions, or advance_run, instead.` (when it holds steps
+    and `advance_run`); the act is never called a step.
   - **Upgrading:** a client that matched the old hint, or followed `resolve_precondition` into an
     empty `next_actions`, follows `next_actions`; with `report_to_user`, it shows `context_hint` to
     the person.
@@ -711,7 +725,8 @@ instead.` — the act is never called a step).
   whose `next_actions` the engine composes from the run's view now holds the question's answer,
   `submit_human_response` (without a `claim_token`: only the reply that opens a question carries
   one), and its hint says `Waiting on the question on step '<q>' (choices: <a>, <b>) — answer it with
-submit_human_response.` where 0.46.0 said `No step is ready.` and offered nothing.
+submit_human_response.` (then the steps it holds, if any), where 0.46.0's replies offered nothing
+  (a step's reply said `Waiting for other steps to complete.`).
   - `get_run_state` at `awaiting_human`: `next_actions` holds that entry (0.46.0: empty).
   - The entry's text says where the question's text is: `The question's text, when its gate declares
 a message, is get_run_state's pending_gate.resolved_message.`, and who passes a token back: `The
@@ -723,10 +738,11 @@ given one.` The reply that opens a question, which carries the `gate` object, is
   - `advance_run` and `advanceRun` at an open question run nothing and reply with that entry and
     hint, with no `agent_action`; `realm run advance` prints its `a question is open — realm run
 respond …` line from that reply.
-  - `describePending` gains `open_question` (`step`, `gate_id`, `choices`), whenever the run waits
-    on a question. Core exports `answerAction` (the one composer of the answer instruction; the
-    reply that opens a question calls it with its token, unchanged), `answerOf`, `openQuestionOf`,
-    `answerableQuestion`, `openQuestionWords`, `notCallableReason` and the type `OpenQuestion`.
+  - `describePending`'s view carries `open_question` (`step`, `gate_id`, `choices`), whenever the
+    run waits on a question. Core exports `answerAction` (the one composer of the answer
+    instruction; the reply that opens a question calls it with its token, unchanged), `answerOf`,
+    `openQuestionOf`, `answerableQuestion`, `openQuestionWords`, `notCallableReason` and the type
+    `OpenQuestion`.
   - **Upgrading:** a client that read an empty `next_actions` at a question as "nothing to do" now
     gets the answer: show the question to the person and send their choice, or keep waiting.
 - **BREAKING — an answer with the wrong gate id routes by what can be called, and names the open
@@ -749,24 +765,24 @@ call advance_run.`); `next_actions` holds it, as before. `realm run respond`'s l
     `Owed to the engine: … — realm run advance <id> …` line, a ready agent step, the steps that
     cannot run).
   - **Upgrading:** a client that stopped on this refusal's `report_to_user` follows `next_actions`.
-- **BREAKING — the run's view needs the clock (issue #625, PR-2a).** `buildNextActions(definition,
-run, registry, now)` and `describePending(definition, run, registry, now)` take `now` as a required
-  argument (`registry` may be `undefined`); 0.46.0's `buildNextActions(definition, run)` took
-  neither. A view built without a clock assumed no question had expired, so a reply could offer an
-  answer that could no longer be recorded; every reply now passes its call's clock.
+- **BREAKING — the run's view needs the clock (issue #625, PR-2a).**
+  `buildNextActions(definition, run, registry, now)` takes `registry` and `now` as required
+  arguments (`registry` may be `undefined`); 0.46.0's `buildNextActions(definition, run)` took
+  neither. The new `describePending` takes the same four. A view built without a clock assumed no
+  question had expired, so a reply could offer an answer that could no longer be recorded; every
+  reply now passes its call's clock.
   - **Upgrading:** pass `registry` (or `undefined`) and `new Date()`.
 - **BREAKING — the expiry line says what this call did, and core prints nothing (issue #625,
   PR-2a).** The line a call adds to its `warnings` when it carries out an expired question's
   `on_expiry` now reads `gate '<g>' on '<s>' had expired <how long> before this call — this <call>
 call first carried out its declared settle_default: the default choice '<c>' was recorded
-(enacted_via: <via>).`, or `…
-its declared abort: the run ended …` (0.46.0: `… — enacted declared <on_expiry> before this
-<call> call (enacted_via: <call>).`). `<call>` names the call, and `enacted_via` is the same word:
-  the MCP tool (`execute_step`, `advance_run`, `start_run`, `submit_human_response` for a late
-  answer), the CLI command (`advance` for `realm run advance`, `respond` for `realm run respond`,
-  `agent` for `realm agent`, `run` for `realm workflow run`), or, for a program's own call, the
-  library function: `advanceRun`, `executeStep`, `executeChain`, `submitHumanResponse` or
-  `executeEngineStep`.
+(enacted_via: <via>).`, or `… its declared abort: the run ended …` (0.46.0: `… — enacted declared
+<on_expiry> before this execute_step call (enacted_via: execute_step).`, whichever call carried it
+  out). `<call>` names the call, and `enacted_via` is the same word: the MCP tool (`execute_step`,
+  `advance_run`, `start_run`, `submit_human_response` for a late answer), the CLI command (`advance`
+  for `realm run advance`, `respond` for `realm run respond`, `agent` for `realm agent`, `run` for
+  `realm workflow run`), or, for a program's own call, the library function: `advanceRun`,
+  `executeStep`, `executeChain`, `submitHumanResponse` or `executeEngineStep`.
   - **BREAKING:** a late answer's `enacted_via` is `submit_human_response` over MCP (0.46.0:
     `submit`), and a program's own `executeStep`, `executeChain` and `submitHumanResponse` name
     themselves (0.46.0: `execute_step`, `submit`). `executeStep`, `executeChain`,
@@ -789,12 +805,17 @@ another call had already carried out its declared …`.
 this <call> call could not carry out its declared <on_expiry> (<error>); it went on with the run
 as it was.`
   - `realm run advance` prints the expiry line when it carries the expiry out, before the steps it
-    led to, and every other line of its reply's `warnings` as `⚠ <line>` after the steps it ran
-    (0.46.0 printed only the expiry line, on stderr, from the engine, after the steps).
+    led to, and every other line of its reply's `warnings` as `⚠ <line>` after the steps it ran.
   - `realm run respond`, answering after the time is up, prints the line first when this answer
     carried the expiry out — `⚠ … this respond call first carried out its declared … (enacted_via:
 respond).` — before the refusal (stderr) or the same-choice sentence (stdout).
-  - `realm workflow run`'s prompt (`this run call …`) and a Slack reply to `realm agent` (`this agent call …`, posted in the gate's thread and printed) say it the same way, through the one composer: **BREAKING**, `describeAnswerEnding(reply, run, { gateId, via })` takes the gate and the caller's word; a late Slack reply now posts these lines and stops waiting, in place of `Couldn't record your response … Try again`.
+  - `realm workflow run`'s prompt (`this run call …`) and a Slack reply to `realm agent`
+    (`this agent call …`, posted in the gate's thread and printed) say it the same way, through the
+    one composer: **BREAKING**,
+    `describeAnswerEnding(reply, run, { gateId, via, before, now, workflow? })` (0.46.0: two
+    arguments) takes the gate, the caller's word, the record read before the answer and the call's
+    clock; a late Slack reply now posts these lines and stops waiting, in place of
+    `Couldn't record your response … Try again`.
   - **Upgrading:** a program that matched the old text, or read the line from stderr, reads the
     reply's `warnings`.
 - **A late answer is told how late it was (issue #625, PR-2a).** The expiry line says how long
@@ -880,16 +901,48 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   any agent that cannot be started, and listen keeps serving. Started inside the workflow folder
   (`realm listen`, `realm listen ./`), it no longer answers `202` and starts an agent that cannot
   run when that folder is removed; it keeps the folder's full path, so a folder created again at
-  that path is used again. The `webhook: spawn failed` line now names the workflow folder as a full
-  path (#744).
+  that path is used again. Upgrading from 0.46.0, which kept serving a folder renamed away while
+  it ran (its old contents, for every later event): a delivery that arrives while the folder is
+  missing is now answered `500`, and its retries keep getting `500` until that run is purged
+  (`realm run purge <run-id> --force`). The `webhook: spawn failed` line now names the workflow
+  folder as a full path (#744).
 - `realm agent --run-id` on a run that has ended no longer ends its refusal with two full stops
   (`… already in terminal state: Workflow completed..`), and `realm run abandon` no longer doubles
   the stop after a reason that ends with one. A reason whose last character already ends a sentence
   (`.`, `?`, `!`, `…`, or another script's sentence end such as `。`) gets no second mark. When a
-  run has no recorded end reason, as after a guard's abort, the refusal names its phase as worked
-  out from the record, and `realm run abandon` leaves out its `Reason:` clause instead of printing
-  `Reason: undefined.`. An error from a workflow store other than Realm's own that ends with a full
-  stop is no longer doubled where Realm quotes it (#744).
+  run has no recorded end reason, the refusal names its phase as worked out from the record (a run a
+  guard aborted shows `aborted.`); and when an abandoned run's record carries no reason,
+  `realm run abandon` leaves out its `Reason:` clause instead of printing `Reason: undefined.`. An
+  error from a workflow store other than Realm's own whose last character already ends a sentence
+  gets no second mark where Realm quotes it (#744).
+- `realm listen` now delivers its `413` (body too large) and `408` (body too slow) replies, and each
+  names its limit (`max_body_bytes`, `body_timeout_ms`). Until now it closed the connection first,
+  so the sender saw only a dropped connection. Every reply sent before the body is read in full
+  (`417`, `400` for a missing `Host`, `405`, `403`, `503`, `413`, `408`) now closes the connection
+  after reading and discarding at most 2 seconds of what the sender is still sending, counted from
+  when the reply is sent, so the sender receives it (up to `--max-concurrent` such connections at
+  once; beyond that, a refused connection is closed at once, and a sender still uploading may then
+  see a dropped connection instead). Before, a `405`, `403` or `503` let the sender go on uploading
+  its whole body. A request sent on the same connection after a refused one is no longer handled;
+  the replies to the requests before it are still sent, unless more than 32 such requests follow. A
+  request sent after one that asked to close the connection is not handled either, and the reply to
+  the earlier one is still sent; Node used to answer it with a bare `400` and lose that reply.
+  Likewise, a request that is not valid HTTP or takes too long no longer costs the replies still
+  pending before it: they are sent, in order, and the connection then closes. One exception remains:
+  a request whose headers arrive later than `--body-timeout-ms`, behind a reply still pending, is
+  still handled if they arrive before the connection closes, and its own reply can be lost (a later
+  release fixes this). A body declared larger
+  than `--max-body-bytes` is refused before any of it is read, and an HTTP/1.1
+  `Expect: 100-continue` is answered only once the request passes the checks before the body. The
+  headers must now arrive within `--body-timeout-ms` (until now about 90 seconds were allowed). The
+  replies Node used to send itself, with no body, are now JSON like listen's others: for a request
+  that is not valid HTTP or takes too long (`400`, `408`, `413`, `431`; the `408` and `431` name
+  their limits), for an unknown `Expect` (`417`), and for an HTTP/1.1 request without `Host`
+  (`400`). Each refusal logs a `webhook: refused` line. `--max-body-bytes`, `--body-timeout-ms` and
+  `--max-concurrent` refuse a value that is not a whole number from 1 to 2147483647; until now such
+  a value was taken without a word (a `--max-concurrent` that was not a number applied no limit).
+  Every reply listen sends now carries its length, so a reply to an HTTP/1.0 sender that keeps its
+  connection open no longer closes it (#744).
 - **An agent step, then a handler step that takes its output through `input_map` and declares an
   `input_schema`, now runs (issue #688).** It was refused every time. Called by name, such a step's
   refusal tells an agent `report_to_user`, and when nothing else can run it carries the way out:
@@ -897,14 +950,8 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
   start a run with params that fit. `realm workflow run` stops on it instead of asking for it again.
   A corrupted stored map now fails its step at dispatch, naming the defect.
 
-- **A value a step's output gave can no longer forge lines or write terminal escapes (issue #625,
-  PR-2a).** The precondition refusal that `realm run inspect`, `realm run advance`, `realm agent`, the
-  replies' hints, `get_run_state` and the `realm listen` log print names the value it read as JSON on
-  one line, its control characters escaped (`Resolved value: "bad\nPhase: completed"`); a newline in
-  the value started a line of its own, and an escape character reached the terminal.
-  `execute_step`'s `blocked_reason.suggestion` is unchanged.
 - **A reply lists each warning once (issue #625, PR-2a).** When the last step a call ran gave the
-  call's reply, that step's `warnings` were listed twice (`execute_step`, `advance_run`) — on 0.46.0,
+  call's reply, that step's `warnings` were listed twice (`execute_step`) — on 0.46.0,
   `execute_step` on the step after an expired `settle_default` question listed the expiry line
   twice. The step's entry in `chained_auto_steps` still carries them.
 - **`realm agent` no longer misreads another process's work (issue #625, PR-2a).** A step another
@@ -970,6 +1017,9 @@ loaded from there.`, or `… <folder> (no project code there).` when that folder
 
 ### Security
 
+- **`@sensigo/realm-cli` `<= 0.46.0`** — one advisory,
+  [GHSA-gxfq-7822-gwcj](https://github.com/sensigo-hq/realm/security/advisories/GHSA-gxfq-7822-gwcj).
+  Upgrade to 0.47.0; the advisory gives the details.
 - **`@modelcontextprotocol/sdk` 1.30.0 → 1.31.0** — one HIGH advisory,
   [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h) / CVE-2026-104850: the
   SDK's OAuth client could send the credentials it held (stored from an earlier sign-in, or

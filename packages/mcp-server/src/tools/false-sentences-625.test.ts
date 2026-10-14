@@ -267,7 +267,7 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
   it('F-R2: an auto step’s protocol text names advance_run and forbids nothing — execute_step called by name runs it', async () => {
     claim(
       'CHANGELOG.md',
-      "an `auto` step's `agent_involvement` reads `none — the engine runs this step; when next_actions names advance_run, call it`. They said that only `advance_run` runs such a step and not to call `execute_step` for it, but `execute_step` called by name runs it.",
+      "an `auto` step's `agent_involvement` reads `none — the engine runs this step; when next_actions names advance_run, call it`. It said `… do NOT call execute_step for it`, but `execute_step` called by name runs it.",
     );
     claim(
       'docs/reference/workflow/top-level-fields.md',

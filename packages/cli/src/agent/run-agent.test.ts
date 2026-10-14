@@ -22,6 +22,9 @@ import { InMemoryStore } from '@sensigo/realm-testing';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
 import type { McpClient, McpTool } from './mcp/mcp-extensions.js';
 import { agentCommand } from '../commands/agent.js';
+import { AnthropicProvider } from './providers/anthropic-provider.js';
+import { startAnthropicStub } from './test-support/anthropic-stub.js';
+import { leakedForms } from './test-support/redaction-oracle.js';
 
 // ---------------------------------------------------------------------------
 // MCP tools integration tests
@@ -1475,4 +1478,93 @@ describe('runAgent — schema-feedback repair loop (issue #217)', () => {
     expect(printed).not.toContain('schema-repair');
     errorSpy.mockRestore();
   });
+});
+
+// =================================================================================================
+// GHSA-gxfq cell 15: the agent step's prompt — its template filled with run params and stored step
+// results — reaches the model with every listed form of a declared secret hidden. The REAL
+// AnthropicProvider drives the real SDK against the in-process stub, which keeps every request body
+// it receives; the oracle decodes each body's JSON. Both sources × both paths (tools / no tools).
+// =================================================================================================
+describe('the agent step prompt hides declared secrets (GHSA-gxfq cell 15)', () => {
+  /** A FAKE secret written here: a `"`, a `\` and a newline. */
+  const SECRET = 'fk"1\\2\n3z';
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** The agent step: its prompt reads the secret from a run param or from the step before it. */
+  const workflowFor = (source: 'param' | 'prior', tools: boolean): WorkflowDefinition =>
+    ({
+      id: `ghsa-prompt-${source}-${tools ? 'tools' : 'bare'}`,
+      name: 'Prompt redaction',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      ...(tools ? { mcp_servers: [{ id: 'srv', transport: 'stdio', command: 'unused' }] } : {}),
+      steps: {
+        ...(source === 'prior'
+          ? { fetch: { description: 'Fetch', execution: 'auto', handler: 'ghsa_fetch' } }
+          : {}),
+        ask: {
+          description: 'Ask',
+          execution: 'agent',
+          ...(source === 'prior' ? { depends_on: ['fetch'] } : {}),
+          ...(tools ? { tools: ['srv:lookup'] } : {}),
+          prompt:
+            source === 'param'
+              ? 'Answer using the key {{ run.params.key }} now.'
+              : 'Answer using the key {{ context.resources.fetch.value }} now.',
+          input_schema: {
+            type: 'object',
+            properties: { summary: { type: 'string' } },
+            required: ['summary'],
+          },
+        },
+      },
+    }) as WorkflowDefinition;
+
+  for (const source of ['param', 'prior'] as const) {
+    for (const tools of [true, false]) {
+      it(`a secret from a ${source === 'param' ? 'run param' : "prior step's stored output"}, ${tools ? 'tools' : 'no-tools'} path`, async () => {
+        const stub = await startAnthropicStub({ finalContent: { summary: 'done' } });
+        vi.stubEnv('ANTHROPIC_API_KEY', 'fake-anthropic-key-ghsa-0000');
+        vi.stubEnv('ANTHROPIC_BASE_URL', stub.baseUrl);
+        try {
+          const definition = workflowFor(source, tools);
+          const registry = createDefaultRegistry();
+          registry.register('handler', 'ghsa_fetch', {
+            id: 'ghsa_fetch',
+            execute: async () => ({ data: { value: SECRET } }),
+          });
+          const result = await runAgent(
+            {
+              store: new InMemoryStore(),
+              workflowStore: makeWorkflowStore(definition),
+              provider: new AnthropicProvider('claude-sonnet-4-5'),
+              registry,
+              mcpClientFactory: () => makeMockMcpClient(),
+              redactionValues: [SECRET],
+            },
+            { definition, params: source === 'param' ? { key: SECRET } : {} },
+          );
+          const bodies = stub.requests.map((body) => JSON.stringify(body));
+          // (a) red when the wrap at the `promptForAttempt` assignment is removed: the rendered
+          //     prompt carries the secret to the model. (b) prints the run's result, how many
+          //     requests arrived, whether they carried the step's prompt (a witness that the step
+          //     ran), and the oracle's `{ path, decoders }` pairs per request — never the secret.
+          expect({
+            result,
+            requests: bodies.length > 0,
+            promptSent: bodies.some((b) => b.includes('Answer using the key')),
+            found: bodies.flatMap((b, i) =>
+              leakedForms(b, SECRET).map((hit) => ({ request: i, ...hit })),
+            ),
+          }).toEqual({ result: 'completed', requests: true, promptSent: true, found: [] });
+        } finally {
+          await stub.close();
+        }
+      });
+    }
+  }
 });

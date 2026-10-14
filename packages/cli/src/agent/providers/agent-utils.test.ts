@@ -1,14 +1,19 @@
 // agent-utils.test.ts — Tests for shared agent utility functions.
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import {
   classBError,
   CLASS_B_NO_TEXT_MARKER,
   buildSystemPrompt,
+  redactionSet,
   sanitizeError,
+  sanitizeText,
   serializeToolResult,
   setAdditionalRedactionValues,
   extractJsonObject,
 } from './agent-utils.js';
+import { createHash } from 'node:crypto';
+import * as variants from './redaction-variants.js';
+import { leakedForms, type LeakedForm } from '../test-support/redaction-oracle.js';
 
 describe('buildSystemPrompt', () => {
   it('returns base prompt when no schema given', () => {
@@ -467,4 +472,719 @@ describe('classBError (issue #345)', () => {
       classBError({ content: [{ type: 'text', text: '  real failure  ' }], isError: true }),
     ).toBe('  real failure  ');
   });
+});
+
+// =================================================================================================
+// hide before encoding (GHSA-gxfq): every listed form of a declared or environment value is hidden
+// from a tool result before it is encoded, and from the result's encoded text after.
+//
+// Every value here is a FAKE written in this file. The oracle (`leakedForms`) never reads the
+// production forms: it decodes the output (JSON at every level, URL, base64) and searches for the
+// raw secret and the lines listed by hand. A failure prints only the oracle's `{ path, decoders }`
+// pairs, booleans or counts — never a secret, never the redaction set, never an environment.
+//
+// Each cell names (a) its break — the one change that turns it red — and (b) what it prints.
+// =================================================================================================
+/**
+ * Stubs every environment key except HOME to `undefined` (restored by `vi.unstubAllEnvs()`), so a
+ * host's environment cannot change a cell's redaction set, and a failure cannot show which of a
+ * cell's fixed words the host holds.
+ */
+function isolateEnv(): void {
+  for (const key of Object.keys(process.env)) if (key !== 'HOME') vi.stubEnv(key, undefined);
+}
+
+describe('hide before encoding (GHSA-gxfq)', () => {
+  /** The standard fake secret: a `"`, a `\`, a newline; every line shorter than 8 characters. */
+  const STD = 'fk"1\\2\n3z';
+  /** Body lines that begin with no DER header, so no secret scanner reads them as a key. */
+  const PEM_BODY = [
+    'FAKEbodyLineOne0123456789abcdefFAKEbodyLineOne0123456789abcd',
+    'Zm9vYmFyYmF6cXV4ZmFrZWZha2VmYWtlZmFrZWZha2VmYWtlZmFrZWZha2VmYWtl',
+  ];
+  /** A fake PEM-shaped secret: multi-line, no `"` or `\`, a FAKE armour. */
+  const PEM = ['-----BEGIN FAKE KEY-----', ...PEM_BODY, '-----END FAKE KEY-----'].join('\n');
+
+  afterEach(() => {
+    setAdditionalRedactionValues([]);
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  /** Declares the fake secrets, as `runAgent` does with the manifest's values. */
+  const declare = (...values: string[]): void => setAdditionalRedactionValues(values);
+
+  /** The oracle's findings over each output, labelled by case — what a failing cell prints. */
+  const findings = (
+    cases: Array<[label: string, output: string]>,
+    secret: string,
+    lines: readonly string[] = [],
+  ): Array<{ case: string; found: LeakedForm[] }> =>
+    cases
+      .map(([label, output]) => ({ case: label, found: leakedForms(output, secret, lines) }))
+      .filter((f) => f.found.length > 0);
+
+  it('1. a PEM-shaped secret inside an object result is hidden', () => {
+    declare(PEM);
+    const out = serializeToolResult({ content: [{ type: 'text', text: 'x' }], data: PEM });
+    // (a) red when the walk is skipped (stringify, then the last pass only): the PEM is escaped in
+    //     the JSON text, so the plain value never matches. (b) prints the oracle's findings.
+    expect(findings([['object', out]], PEM, PEM_BODY)).toEqual([]);
+  });
+
+  it('1b. one PEM body line alone, and the PEM with CRLF line endings, are hidden', () => {
+    declare(PEM);
+    const out = serializeToolResult([
+      { t: `unrelated ${PEM_BODY[0]!} tail` },
+      { t: PEM.replace(/\n/g, '\r\n') },
+    ]);
+    // (a) red when LINES is removed: a body line on its own matches no other form.
+    //     (b) prints the oracle's findings.
+    expect(findings([['lines', out]], PEM, PEM_BODY)).toEqual([]);
+  });
+
+  it('2. the standard secret in a top-level field is hidden', () => {
+    declare(STD);
+    // (a) red when the walk is skipped. (b) prints the oracle's findings.
+    expect(findings([['field', serializeToolResult({ a: STD })]], STD)).toEqual([]);
+  });
+
+  it('3. the standard secret nested in an array is hidden', () => {
+    declare(STD);
+    // (a) red when arrays are left unmapped. (b) prints the oracle's findings.
+    expect(findings([['array', serializeToolResult({ a: [1, [STD]] })]], STD)).toEqual([]);
+  });
+
+  it('4. the standard secret as an object key is hidden', () => {
+    declare(STD);
+    // (a) red when keys are left unredacted. (b) prints the oracle's findings.
+    expect(findings([['key', serializeToolResult({ [STD]: 1 })]], STD)).toEqual([]);
+  });
+
+  it('5. a "__proto__" key keeps its place and its subtree, with the secret hidden inside', () => {
+    declare(STD);
+    const result = JSON.parse(`{"__proto__":{"k":${JSON.stringify(STD)}}}`) as unknown;
+    const parsed = JSON.parse(serializeToolResult(result)) as Record<string, unknown>;
+    const own = Object.hasOwn(parsed, '__proto__');
+    const k = own ? (parsed['__proto__'] as Record<string, unknown>)['k'] : undefined;
+    // (a) red when the walk copies by assignment (it drops the key and its subtree), and today,
+    //     when the escaped secret stays in the subtree. (b) prints whether the key is own and
+    //     whether `k` is the marker.
+    expect({ own, kIsMarker: k === '[REDACTED]' }).toEqual({ own: true, kIsMarker: true });
+  });
+
+  it('6a. JSON text holding the secret (one level), as a leaf and as a string result, is hidden', () => {
+    declare(STD);
+    const text = JSON.stringify({ k: STD });
+    // (a) preservation guard since the correction; each member's own discrimination is its P2 row:
+    //     E1, J3, J4a, J5–J9, J11, Q6, Q7, Q7b, Q8, Q8L, Q9, Q9b, Q10, Q11, R1. (b) prints the
+    //     oracle's findings per case.
+    expect(
+      findings(
+        [
+          ['leaf', serializeToolResult({ text })],
+          ['string result', serializeToolResult(text)],
+        ],
+        STD,
+      ),
+    ).toEqual([]);
+  });
+
+  it('6b. JSON text holding JSON text holding the secret (two levels) is hidden', () => {
+    declare(STD);
+    const text = JSON.stringify({ t: JSON.stringify({ k: STD }) });
+    // (a) preservation guard since the correction; each member's own discrimination is its P2 row:
+    //     E2, and E1 over each of 6a's members. Red when E1 and E2 are removed together. (b) prints
+    //     the oracle's findings.
+    expect(
+      findings(
+        [
+          ['leaf', serializeToolResult({ text })],
+          ['string result', serializeToolResult(text)],
+        ],
+        STD,
+      ),
+    ).toEqual([]);
+  });
+
+  it("7. Go's HTML-safe JSON of the secret is hidden", () => {
+    const secret = `${STD}&<>\u2028`;
+    declare(secret);
+    // What Go's encoding/json Marshal writes for {"k": secret}, by hand, lowercase hex.
+    const goText = '{"k":"fk\\"1\\\\2\\n3z\\u0026\\u003c\\u003e\\u2028"}';
+    // Witness: the hand-written text decodes to the secret. (b) prints a boolean.
+    expect((JSON.parse(goText) as { k: string }).k === secret).toBe(true);
+    // (a) preservation guard since the correction; each member's own discrimination is its P2 row:
+    //     J3, J9. (b) prints the oracle's findings per case.
+    expect(
+      findings(
+        [
+          ['text result', serializeToolResult(goText)],
+          ['object leaf', serializeToolResult({ text: goText })],
+        ],
+        secret,
+      ),
+    ).toEqual([]);
+  });
+
+  it("8. PHP's escaped slash, alone and with non-ASCII, is hidden", () => {
+    // Captured: python3 -c 'import json,sys; print(json.dumps(sys.argv[1]).replace("/", "\\/"))' "$(printf 'fk"1\\2\n3z/')"
+    const PHP_A = '"fk\\"1\\\\2\\n3z\\/"';
+    // Captured: python3 -c 'import json,sys; print(json.dumps(sys.argv[1]).replace("/", "\\/"))' "$(printf 'fk"1\\2\n3z/\xc3\xa9')"
+    const PHP_B = '"fk\\"1\\\\2\\n3z\\/\\u00e9"';
+    const cases: Array<[string, string, string]> = [
+      ['8a', `${STD}/`, PHP_A],
+      ['8b', `${STD}/\u00e9`, PHP_B],
+    ];
+    const found: Array<{ case: string; found: LeakedForm[] }> = [];
+    for (const [label, secret, literal] of cases) {
+      declare(secret);
+      // Witness: the captured literal decodes to the secret. (b) prints which case is wrong.
+      expect(JSON.parse(literal) === secret, `${label}: the literal decodes to its secret`).toBe(
+        true,
+      );
+      const text = `{"k":${literal}}`;
+      found.push(
+        ...findings(
+          [
+            [`${label} text result`, serializeToolResult(text)],
+            [`${label} object leaf`, serializeToolResult({ text })],
+          ],
+          secret,
+        ),
+      );
+    }
+    // (a) red when J4a and J5 are removed together (J5 alone turns 8b red). (b) prints the
+    //     oracle's findings per case.
+    expect(found).toEqual([]);
+  });
+
+  it("9. Python's ASCII-only JSON (lowercase hex, surrogate pairs) is hidden", () => {
+    const secret = `${STD}\u00e9\u{1f600}`;
+    declare(secret);
+    // Captured: python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(printf 'fk"1\\2\n3z\xc3\xa9\xf0\x9f\x98\x80')"
+    const PY = '"fk\\"1\\\\2\\n3z\\u00e9\\ud83d\\ude00"';
+    // Witness: the captured literal decodes to the secret. (b) prints a boolean.
+    expect(JSON.parse(PY) === secret).toBe(true);
+    const text = `{"k":${PY}}`;
+    // (a) preservation guard since the correction; each member's own discrimination is its P2 row:
+    //     E1, J5, J6. (b) prints the oracle's findings per case.
+    expect(
+      findings(
+        [
+          ['text result', serializeToolResult(text)],
+          ['object leaf', serializeToolResult({ text })],
+        ],
+        secret,
+      ),
+    ).toEqual([]);
+  });
+
+  it('10. base64 of a 10- and an 11-byte secret is hidden alone and after 1, 2 and 3 bytes', () => {
+    const secrets: Array<[string, string]> = [
+      ['10-byte', 'Ab1"x\\9Qz#'],
+      ['11-byte', 'Ab1"x\\9Qz#k'],
+    ];
+    const found: Array<{ case: string; found: LeakedForm[] }> = [];
+    for (const [name, secret] of secrets) {
+      declare(secret);
+      const encodings: Array<[string, string]> = [
+        [`${name} alone`, Buffer.from(secret).toString('base64')],
+        ...['a', 'ab', 'abc'].map((prefix): [string, string] => [
+          `${name} after ${prefix.length} byte(s)`,
+          Buffer.from(`${prefix}${secret}}`).toString('base64'),
+        ]),
+      ];
+      found.push(
+        ...findings(
+          encodings.map(([label, encoded]): [string, string] => [
+            label,
+            serializeToolResult({ text: `payload ${encoded} end` }),
+          ]),
+          secret,
+        ),
+      );
+    }
+    // (a) red when: B1 and B2 are removed together → every case; the shift-1 forms (trimmed and
+    //     untrimmed) are dropped from B1 and B2 → the 2-byte-prefix cases; the shift-2 forms →
+    //     the 1-byte-prefix cases; the trim is dropped from B1 and B2 → the 10-byte secret after 1
+    //     and 3 bytes and the 11-byte one after 2 and 3 bytes. The `}` after each secret keeps the
+    //     trim's cases able to fail: after `\n` the padding-free form already matches. (b) prints
+    //     the cases found.
+    expect(found).toEqual([]);
+  });
+
+  it('11. the URL-encoded secret in a query string is hidden', () => {
+    declare(STD);
+    const url = `https://x.test/?q=${encodeURIComponent(STD)}`;
+    // (a) preservation guard since the correction; each member's own discrimination is its P2 row:
+    //     U1–U10. (b) prints the oracle's findings per case.
+    expect(
+      findings(
+        [
+          ['text result', serializeToolResult(url)],
+          ['text block', serializeToolResult({ content: [{ type: 'text', text: url }] })],
+        ],
+        STD,
+      ),
+    ).toEqual([]);
+  });
+
+  it('12. (regression guard) a Bearer token and a token= value inside an object result are hidden', () => {
+    declare();
+    const out = serializeToolResult({
+      content: [
+        { type: 'text', text: 'Authorization: Bearer fakeTok.abc-123 and ?token=fakeQ1 end' },
+      ],
+    });
+    // (a) red when the walk's `Bearer` / `token=` rules (its strings through `sanitizeText`) AND the
+    //     last `sanitizeText` pass are both removed from the object branch: either one alone hides
+    //     both tokens. (b) prints which of the four facts fails.
+    expect({
+      bearerMarked: out.includes('Bearer [REDACTED]'),
+      tokenMarked: out.includes('token=[REDACTED]'),
+      bearerGone: !out.includes('fakeTok.abc-123'),
+      tokenGone: !out.includes('fakeQ1'),
+    }).toEqual({ bearerMarked: true, tokenMarked: true, bearerGone: true, tokenGone: true });
+  });
+
+  it('13. a declared secret returned as a number becomes the string marker, and the output parses', () => {
+    declare('48213977');
+    const out = serializeToolResult({ pin: 48213977 });
+    let parses = true;
+    let pin: unknown;
+    try {
+      pin = (JSON.parse(out) as { pin?: unknown }).pin;
+    } catch {
+      parses = false;
+    }
+    // (a) red when the scalar rule is deleted (the last pass still hides the PIN, but the output
+    //     no longer parses), and today. (b) prints whether it parses and whether `pin` is the marker.
+    expect({ parses, pinIsMarker: pin === '[REDACTED]' }).toEqual({
+      parses: true,
+      pinIsMarker: true,
+    });
+  });
+
+  it('14. (regression guard) an undefined result reads "undefined", as before', () => {
+    // (a) red when the `undefined` guard is removed (`JSON.parse` throws). (b) prints the output
+    //     or the error.
+    expect(serializeToolResult(undefined)).toBe('undefined');
+  });
+
+  it('18. the set is built once per call: a 1-row and a 1,000-row result cost the same', () => {
+    declare(STD);
+    const spy = vi.spyOn(variants, 'variantsOf');
+    const rows = (n: number) => ({
+      rows: Array.from({ length: n }, (_, i) => ({ id: i, s: `v${i}` })),
+    });
+    serializeToolResult(rows(1));
+    const one = spy.mock.calls.length;
+    spy.mockClear();
+    serializeToolResult(rows(1000));
+    const thousand = spy.mock.calls.length;
+    // (a) red when the set is built per leaf inside the walk. (b) prints the two counts.
+    expect({ one, thousand }).toEqual({ one, thousand: one });
+  });
+
+  it('20. (preservation) a result with no secrets is byte-identical to its JSON', () => {
+    isolateEnv();
+    declare(STD);
+    const result = { a: 'hello', n: [1, 2.5, true, null], o: { 'k-y': 'v/w&x' } };
+    // (a) red when anything but a listed form is changed. (b) prints the output.
+    expect(serializeToolResult(result)).toBe(JSON.stringify(result));
+  });
+
+  it('21. (preservation) a kubeconfig-shaped secret leaves config lines and a PEM boundary line alone', () => {
+    isolateEnv();
+    declare(
+      'apiVersion: v1\nkind: Config\nusers:\n- name: default\n  user:\n    token: fakeKubeTokenABCDEFGH\n    insecure: false,',
+    );
+    const other = {
+      t: 'apiVersion: v1 name: default false, -----BEGIN FAKE KEY----- users:',
+    };
+    // (a) red when a line shorter than 8 characters, or one holding a space, is hidden on its own.
+    //     (b) prints the output.
+    expect(serializeToolResult(other)).toBe(JSON.stringify(other));
+  });
+
+  it('22. (preservation) a 4-character secret leaves 200 SHA-1 strings and 200 UUIDs byte-identical', () => {
+    declare('pass');
+    const shas = Array.from({ length: 200 }, (_, i) =>
+      createHash('sha1').update(String(i)).digest('hex'),
+    );
+    const uuids = shas.map(
+      (h) =>
+        `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`,
+    );
+    const out = JSON.parse(serializeToolResult({ shas, uuids })) as {
+      shas: string[];
+      uuids: string[];
+    };
+    const changed =
+      out.shas.filter((s, i) => s !== shas[i]).length +
+      out.uuids.filter((u, i) => u !== uuids[i]).length;
+    // (a) red when the 8-character floor on base64 forms is removed. (b) prints the count changed.
+    expect(changed).toBe(0);
+  });
+
+  it('23. (preservation) true, false and version-shaped environment values are not redacted', () => {
+    isolateEnv();
+    declare();
+    vi.stubEnv('AGENT_UTILS_GHSA_FALSE', 'false');
+    vi.stubEnv('AGENT_UTILS_GHSA_TRUE', 'true');
+    vi.stubEnv('AGENT_UTILS_GHSA_VERSION', '11.8.0');
+    const result = { text: 'received false, true and 11.8.0', ok: false, done: true };
+    // (a) red when public-shaped environment values enter the set. (b) prints the output.
+    expect(serializeToolResult(result)).toBe(JSON.stringify(result));
+  });
+});
+
+describe('the release correction (GHSA-gxfq): one cell per fix', () => {
+  const BS = '\\';
+  beforeEach(() => isolateEnv());
+  afterEach(() => {
+    setAdditionalRedactionValues([]);
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('A1. a 1,000-row tool result with 80 environment values is hidden in under 480 ms', () => {
+    // The bound is the geometric mean of the two medians measured on this machine: about 82 ms with
+    // `redactWith` skipping a form the text does not hold, about 2,835 ms without (1,678 forms).
+    const fake = (i: number): string =>
+      i % 4 === 0
+        ? `/opt/fake/proj${i}/sub dir/file.txt`
+        : i % 4 === 1
+          ? 'fK' + 'q7Zp2LmN9xR4vT1nB8cL3wE6yH0pS5dG2aJ9uK4'.slice(i % 7) + i
+          : i % 4 === 2
+            ? `https://fake.example/api?k=${i}&t=fake token`
+            : `fakeword${i}`;
+    for (let i = 0; i < 80; i++) vi.stubEnv(`GHSA_A1_FAKE_${i}`, fake(i));
+    const result = {
+      rows: Array.from({ length: 1000 }, (_, i) => ({
+        id: i,
+        name: `item-${i}`,
+        path: `/srv/data/item-${i}.json`,
+        note: `ordinary text ${i}`,
+        tag: 'plain',
+      })),
+    };
+    serializeToolResult(result);
+    const times: number[] = [];
+    for (let run = 0; run < 3; run++) {
+      const t0 = performance.now();
+      serializeToolResult(result);
+      times.push(performance.now() - t0);
+    }
+    const median = times.sort((a, b) => a - b)[1]!;
+    // (a) red when `redactWith` splits and joins every form whatever the text holds (the `includes`
+    //     test removed). (b) prints whether the median is under the bound.
+    expect({ medianUnder480ms: median < 480 }).toEqual({ medianUnder480ms: true });
+  });
+
+  it('A2. a value holding token= and a Bearer token carrying a value are hidden whole', () => {
+    // Fakes built from parts, so no secret scanner reads a connection string or a token here.
+    const DSN =
+      ['postgres', '://', 'fakeuser:FAKEpass9xyz', '@db.fake.example/app'].join('') +
+      '?token=abc123&sslmode=require';
+    const CLIENT = 'fakeclient0042';
+    const seg = (s: string): string => Buffer.from(s, 'utf8').toString('base64url');
+    const JWT = [
+      seg('{"alg":"none"}'),
+      seg(`{"client_id":"${CLIENT}","iat":1}`),
+      'FAKEsig' + 'TAILzz9',
+    ].join('.');
+    const AUTH = 'Authorization: ' + 'Bearer ' + JWT;
+    const text = `connect failed: ${DSN}; ${AUTH} end`;
+    const whole = (out: string) => ({
+      dsnGone:
+        !out.includes('FAKEpass9xyz') && !out.includes('sslmode') && !out.includes('fakeuser'),
+      tokenGone: !out.includes('TAILzz9') && !out.includes(JWT.split('.')[1]!.slice(-8)),
+    });
+    const surfaces = () => ({
+      error: whole(sanitizeError(new Error(text))),
+      stringResult: whole(serializeToolResult(text)),
+      // The prompt is hidden by this call, once (run-agent.ts, `promptForAttempt`).
+      prompt: whole(sanitizeText(text, redactionSet().forms)),
+      objectResult: whole(serializeToolResult({ dsn: DSN, auth: AUTH })),
+    });
+    vi.stubEnv('GHSA_A2_DSN', DSN);
+    vi.stubEnv('GHSA_A2_CLIENT', CLIENT);
+    const envOnly = surfaces();
+    vi.unstubAllEnvs();
+    isolateEnv();
+    setAdditionalRedactionValues([DSN, CLIENT]);
+    const declared = surfaces();
+    const all = { dsnGone: true, tokenGone: true };
+    const each = { error: all, stringResult: all, prompt: all, objectResult: all };
+    // (a) red when the `Bearer`/`token=` patterns run before the forms (the DSN's password and the
+    //     rest after `token=` shown), or when the patterns stop at a marker (the token's tail after
+    //     the form of `CLIENT` shown). (b) prints, per source and surface, the two facts.
+    expect({ envOnly, declared }).toEqual({ envOnly: each, declared: each });
+  });
+
+  it('A3. base64 of a value after a prefix of 1 or 2 bytes (mod 3) leaves no character of the value alone', () => {
+    const V = 'FAKEpw12xyz9';
+    setAdditionalRedactionValues([V]);
+    /** How many characters left in `out` carry bits of the value's bytes alone. */
+    const valueOnlyLeft = (prefix: string, suffix: string, url: boolean): number => {
+      const bytes = Buffer.from(prefix + V + suffix, 'utf8');
+      const encoded = bytes.toString(url ? 'base64url' : 'base64');
+      const out = sanitizeError(new Error(encoded));
+      if (!out.includes('[REDACTED]')) return -1;
+      const head = out.slice(0, out.indexOf('[REDACTED]'));
+      const tail = out.slice(out.lastIndexOf('[REDACTED]') + '[REDACTED]'.length);
+      const start = Buffer.byteLength(prefix);
+      const end = start + Buffer.byteLength(V);
+      const valueOnly = (i: number): boolean => {
+        const lo = Math.floor((6 * i) / 8);
+        const hi = Math.floor((6 * i + 5) / 8);
+        return lo >= start && hi < end;
+      };
+      let left = 0;
+      for (let i = 0; i < head.length; i++) if (valueOnly(i)) left++;
+      for (let j = 0; j < tail.length; j++) if (valueOnly(encoded.length - tail.length + j)) left++;
+      return left;
+    };
+    const cells: Record<string, number> = {};
+    for (const prefix of ['u', 'user', 'us']) {
+      for (const suffix of ['', '}', '@host']) {
+        for (const url of [false, true]) {
+          cells[`${prefix}|${suffix}|${url ? 'url' : 'b64'}`] = valueOnlyLeft(prefix, suffix, url);
+        }
+      }
+    }
+    // (a) red when Jenkins' `a` form is removed (the 1-mod-3 prefixes `u`, `user` leave a character),
+    //     or the `aa` form (the 2-mod-3 prefix `us`). (b) prints, per prefix, suffix and alphabet,
+    //     how many characters of the value alone are left (-1: no marker at all).
+    expect(cells).toEqual(Object.fromEntries(Object.keys(cells).map((k) => [k, 0])));
+  });
+
+  it('A4. base64url of a 4- and a 5-byte declared value encoded alone is hidden', () => {
+    setAdditionalRedactionValues(['q7z2', 'q7z2x']);
+    const out = serializeToolResult({ a: 'cTd6Mg', b: 'cTd6Mng' });
+    // (a) red when the floor is applied after the padding is stripped (the base64url form of the
+    //     value alone is 6 or 7 characters). (b) prints the output (fixed fake text).
+    expect(out).toBe(JSON.stringify({ a: '[REDACTED]', b: '[REDACTED]' }));
+  });
+
+  it('A5. a line holding a NEL keeps its whole text: the union of both splits', () => {
+    const NEL = String.fromCharCode(0x85);
+    setAdditionalRedactionValues(['AAAAAAAA' + NEL + 'BBB' + '\n' + 'CCCCCCCC']);
+    const out = sanitizeError(new Error(`line: AAAAAAAA${NEL}BBB end`));
+    // (a) red when the split at CR LF, CR and LF alone is dropped (the line is cut at the NEL, and
+    //     `BBB` is left). (b) prints the output (fixed fake text).
+    expect(out).toBe('line: [REDACTED] end');
+  });
+
+  it('A7. a key written on one line with \\n is hidden after a program reads it, whole and per line', () => {
+    const BODY = ['FAKEbodyLineOne0123456789abcdef', 'FAKEbodyLineTwo0123456789abcdef'];
+    const ONE_LINE = ['-----BEGIN FAKE KEY-----', ...BODY, '-----END FAKE KEY-----'].join(BS + 'n');
+    const READ = ONE_LINE.split(BS + 'n').join('\n');
+    // PHP's `json_encode` writes each `/` as `\/`; the program reads it back as `/`.
+    const SLASHED = ONE_LINE.replace('Two', 'T' + BS + '/wo');
+    const SLASHED_READ = READ.replace('Two', 'T/wo');
+    // An escape JSON does not have (`\d`) is kept as written beside the `\n` that is read.
+    const UNKNOWN = ONE_LINE.replace('One', 'O' + BS + 'dne');
+    const UNKNOWN_READ = READ.replace('One', 'O' + BS + 'dne');
+    // Each key is an ENVIRONMENT value (no parts): D is then the only reader of its escapes (with
+    // parts, I3 dropping each backslash would also read `\\/` as `/`).
+    const hidden = (key: string, printed: string): boolean => {
+      vi.unstubAllEnvs();
+      isolateEnv();
+      vi.stubEnv('GHSA_A7_KEY', key);
+      const out = sanitizeError(new Error(`key: ${printed}`));
+      // Each body line ends with this run, whichever spelling of the line was printed.
+      return !out.includes('0123456789abcdef') && out.includes('[REDACTED]');
+    };
+    const facts = {
+      wholeHidden: hidden(ONE_LINE, READ),
+      lineHidden: hidden(ONE_LINE, `x ${BODY[1]!} y`),
+      slashHidden: hidden(SLASHED, SLASHED_READ),
+      unknownKeptHidden: hidden(UNKNOWN, UNKNOWN_READ),
+    };
+    // Two escaped spaces in an environment value read as two spaces: under the floor, no form.
+    vi.unstubAllEnvs();
+    isolateEnv();
+    vi.stubEnv('GHSA_A7_SPACES', BS + 'u' + '0020' + BS + 'u' + '0020');
+    const spaces = serializeToolResult({ t: 'a  b %20%20 ++' });
+    // (a) red when the D layer is removed (all four), when `\/` is not read (`slashHidden`), when an
+    //     unknown escape gives no reading (`unknownKeptHidden`), or when the 8-character floor is
+    //     removed (`spacesKept`). (b) prints the facts.
+    expect({ ...facts, spacesKept: spaces === JSON.stringify({ t: 'a  b %20%20 ++' }) }).toEqual({
+      wholeHidden: true,
+      lineHidden: true,
+      slashHidden: true,
+      unknownKeptHidden: true,
+      spacesKept: true,
+    });
+  });
+});
+
+describe("the release build's correction (GHSA-gxfq): read the token rules off the original text", () => {
+  const BS = '\\';
+  beforeEach(() => isolateEnv());
+  afterEach(() => {
+    setAdditionalRedactionValues([]);
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The anchor-word cases: a value that IS the anchor word (or covers it and the token's head), and
+   * a text where a fake token follows that anchor. `tail` is what must never show.
+   */
+  const ANCHOR_CASES: Array<[name: string, value: string, text: string, tail: string[]]> = [
+    [
+      'Bearer',
+      'Bearer',
+      'Authorization: ' + 'Bearer ' + 'FAKEtokAbc123xyz.FAKEpayload9QZ.FAKEsigTAIL77',
+      ['FAKEpayload9QZ', 'TAIL77'],
+    ],
+    ['token', 'token', 'GET /x?' + 'token=' + 'FAKEq9tokVAL&x=1', ['FAKEq9tokVAL']],
+    [
+      'refresh_token',
+      'refresh_token',
+      'grant_type=refresh_token&' + 'refresh_token=' + 'FAKErtVAL9abc',
+      ['FAKErtVAL9abc'],
+    ],
+    [
+      'Bearer FAKEtok',
+      'Bearer ' + 'FAKEtok',
+      'auth: ' + 'Bearer ' + 'FAKEtokAbc123xyzTAIL77',
+      ['Abc123xyzTAIL77'],
+    ],
+  ];
+  /** Runs `check` once with the value only in the environment and once declared only. */
+  const bothSources = <T>(value: string, check: () => T): { env: T; declared: T } => {
+    vi.unstubAllEnvs();
+    isolateEnv();
+    setAdditionalRedactionValues([]);
+    vi.stubEnv('GHSA_IR2_ANCHOR', value);
+    const env = check();
+    vi.unstubAllEnvs();
+    isolateEnv();
+    setAdditionalRedactionValues([value]);
+    const declared = check();
+    return { env, declared };
+  };
+  const shows = (out: string, tail: string[]): boolean => tail.some((t) => out.includes(t));
+
+  it('A1. a value equal to the anchor word leaves no token shown on the error, string, prompt and Class-B surfaces', () => {
+    const cases = ANCHOR_CASES.map(([name, value, text, tail]) => ({
+      name,
+      ...bothSources(value, () => ({
+        error: shows(sanitizeError(new Error(text)), tail),
+        stringResult: shows(serializeToolResult(text), tail),
+        prompt: shows(sanitizeText(text, redactionSet().forms), tail),
+        classB: shows(classBError({ isError: true, content: [{ type: 'text', text }] })!, tail),
+      })),
+    }));
+    const none = { error: false, stringResult: false, prompt: false, classB: false };
+    // (a) red when the `Bearer` / `token=` rules read the text AFTER the forms replaced it (the
+    //     anchor word is gone, so the token after it is shown); (b) prints, per value, source and
+    //     surface, whether the token shows.
+    expect(cases).toEqual(ANCHOR_CASES.map(([name]) => ({ name, env: none, declared: none })));
+  });
+
+  it('A1. a value equal to the anchor word leaves no token shown in an object result, as a value or as a key', () => {
+    const cases = ANCHOR_CASES.map(([name, value, text, tail]) => ({
+      name,
+      ...bothSources(value, () => ({
+        objectValue: shows(serializeToolResult({ content: [{ type: 'text', text }] }), tail),
+        objectKey: shows(serializeToolResult({ [text]: 1 }), tail),
+      })),
+    }));
+    const none = { objectValue: false, objectKey: false };
+    // (a) red when the walk hides its strings and keys with the forms alone (no `Bearer` /
+    //     `token=` rules there): the anchor word is replaced before the last pass can find it;
+    //     (b) prints, per value, source and surface, whether the token shows.
+    expect(cases).toEqual(ANCHOR_CASES.map(([name]) => ({ name, env: none, declared: none })));
+  });
+
+  it('A1. a form with + or / inside a token leaves no part of the token shown', () => {
+    const FORM = 'q+w/e=';
+    // (a) red when the run after `Bearer ` takes only `[A-Za-z0-9._-]` and not positions a member
+    //     already covers (the rest of the token after the form is shown); (b) prints the output.
+    expect(sanitizeText('Bearer abc' + FORM + 'xyz', [FORM])).toBe('Bearer [REDACTED]');
+  });
+
+  it('A1. a value holding token= (a connection string) is hidden whole', () => {
+    const DSN =
+      ['postgres', '://', 'u:p', '@h/app'].join('') + '?' + 'token=' + 'abc123&sslmode=require';
+    // (a) red when the `Bearer` / `token=` rules run before the members (an earlier build's
+    //     order: the value's `token=` part is cut first, and the rest of it is shown); (b) prints
+    //     the output.
+    expect(sanitizeText(`connect ${DSN} failed`, [DSN])).toBe('connect [REDACTED] failed');
+  });
+
+  it('A1. a plain Bearer token keeps its anchor word: Bearer [REDACTED]', () => {
+    // (a) red when the anchor word is marked together with its run (`[REDACTED]` alone); (b)
+    //     prints the output.
+    expect(sanitizeText('auth: ' + 'Bearer ' + 'abc.def', [])).toBe('auth: Bearer [REDACTED]');
+  });
+
+  it('A1. (preservation) a JWT carrying a value in base64url is hidden whole after Bearer', () => {
+    const seg = (s: string): string => Buffer.from(s, 'utf8').toString('base64url');
+    const carried = seg('{"sub":"' + 'FAKEval9QZ' + '"}');
+    const jwt = [seg('{"alg":"none"}'), carried, 'FAKE' + 'sig'].join('.');
+    // A preservation pin: its base64url segment is made only of run characters, so no single
+    // break turns it red (the run covers it with or without the member). (b) prints the output.
+    expect(sanitizeText('Bearer ' + jwt, [carried])).toBe('Bearer [REDACTED]');
+  });
+
+  it('A1. the last pass over the encoded object still hides a value only the encoded text spells', () => {
+    // A value written with a literal `\n` that ends in a lone `\`: it has no escapes-read form, so
+    // the walk cannot read it; printed with its `\n` read, inside an object result.
+    const VALUE = 'FAKEtb' + BS + 'n' + 'line2x9' + BS;
+    const PRINTED = 'FAKEtb' + '\n' + 'line2x9' + BS;
+    const result = bothSources(VALUE, () =>
+      serializeToolResult({ content: [{ type: 'text', text: PRINTED }] }).includes('line2x9'),
+    );
+    // (a) red when the last `sanitizeText` pass over the encoded output is removed; (b) prints,
+    //     per source, whether the value shows.
+    expect(result).toEqual({ env: false, declared: false });
+  });
+
+  it('A2. a declared value with 54 two-meaning \\xHH escapes, printed after reading as bytes, is hidden', () => {
+    const ESCAPES = (BS + 'x' + 'e4' + BS + 'x' + 'b8' + BS + 'x' + 'ad').repeat(18);
+    const VALUE = 'FAKEzh' + ESCAPES + 'END';
+    const READ = 'FAKEzh' + String.fromCodePoint(0x4e2d).repeat(18) + 'END';
+    setAdditionalRedactionValues([VALUE]);
+    // (a) red when the two whole readings of more than 3 such escapes come from a `2 ** n - 1` mask
+    //     read with `>>` (at 54 it is 0, so the all-bytes reading is lost); (b) prints the escape
+    //     count and whether the value is hidden.
+    expect({
+      escapes: ESCAPES.split(BS + 'x').length - 1,
+      hidden: sanitizeError(new Error(`see ${READ} here`)) === 'see [REDACTED] here',
+    }).toEqual({ escapes: 54, hidden: true });
+  });
+
+  it('C3. a value of 200,000 characters holding a backslash escape builds its forms: no call throws, and the value and its escapes-read form are hidden', () => {
+    const FILL = Array.from({ length: 40_000 }, (_, i) => i.toString(36).padStart(5, '0')).join('');
+    const VALUE = 'FAKEbig' + BS + 'n' + FILL; // as configured: a literal backslash-n
+    const READ = 'FAKEbig' + '\n' + FILL; // with its escape read
+    const TEXT = `see ${VALUE} and ${READ} here`;
+    const HIDDEN = 'see [REDACTED] and [REDACTED] here';
+    const attempt = (fn: () => boolean): boolean | string => {
+      try {
+        return fn();
+      } catch (e) {
+        return 'THROW ' + (e instanceof Error ? e.constructor.name : typeof e);
+      }
+    };
+    const result = bothSources(VALUE, () => ({
+      error: attempt(() => sanitizeError(new Error(TEXT)) === HIDDEN),
+      prompt: attempt(() => sanitizeText(TEXT, redactionSet().forms) === HIDDEN),
+      object: attempt(() => serializeToolResult({ a: TEXT }) === JSON.stringify({ a: HIDDEN })),
+    }));
+    // (a) red when `decodedReadings` spreads a segment's bytes into `push` (each result
+    //     `THROW RangeError`); (b) prints, per source and surface, `true`, `false` or the thrown
+    //     class.
+    expect(result).toEqual({
+      env: { error: true, prompt: true, object: true },
+      declared: { error: true, prompt: true, object: true },
+    });
+  }, 60_000);
 });

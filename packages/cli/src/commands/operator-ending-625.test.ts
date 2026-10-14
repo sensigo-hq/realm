@@ -98,7 +98,7 @@ describe('#625 PR-2a, F2 — the CLI on a run an operator ended', { timeout: 60_
     );
     claim(
       'CHANGELOG.md',
-      'for a failed one in which a step failed; for an abandoned one, that an operator ended it, its reason, and that a new run runs the work again, or that preview.',
+      'for a failed one in which a step failed; for an abandoned one, that an operator ended it, its reason, and that a new run runs the work again, then that preview.',
     );
     const run = await abandoned();
     const r = realm('run', 'respond', run.id, '--gate', 'g-old', '--choice', 'yes');

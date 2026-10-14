@@ -626,7 +626,12 @@ async function applyDeploymentManifest(
           sentinelWarnings.push(`${redacted} (sentinel mode — entry skipped)`);
           continue;
         }
-        throw new Error(redacted, { cause: err });
+        // The cause carries the same redacted message (Node's `util.inspect` prints `[cause]`),
+        // with the original's name; never the raw error.
+        const cause = new Error(redactSecretValues(errMsg(err), secretValues));
+        cause.name = err instanceof Error ? err.name : 'Error';
+        // eslint-disable-next-line preserve-caught-error -- the caught error, redacted: a raw cause prints the secret
+        throw new Error(redacted, { cause });
       }
 
       probeShape(instance, section.type, PROBE_MEMBERS[section.type], name, {

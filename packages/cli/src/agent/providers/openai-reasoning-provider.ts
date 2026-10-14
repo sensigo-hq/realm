@@ -196,7 +196,9 @@ export class OpenAIReasoningProvider extends LlmProvider {
     if (retryParsed !== null) return { output: retryParsed, usage: requests };
     // issue #600 PR 1a (D9): two billed, completed requests preceded this throw.
     const err = new Error(
-      sanitizeError(`OpenAI returned non-JSON content after retry: ${retry.slice(0, 200)}`),
+      sanitizeError(
+        `OpenAI returned non-JSON content after retry: ${sanitizeError(retry).slice(0, 200)}`,
+      ),
     );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (err as any).driveCall = { usage: requests };

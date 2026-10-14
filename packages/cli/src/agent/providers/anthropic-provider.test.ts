@@ -1,9 +1,10 @@
 // anthropic-provider.test.ts — Tests for AnthropicProvider callStep and callStepWithTools.
 // All tests mock the @anthropic-ai/sdk package — no real API calls are made.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnthropicProvider } from './anthropic-provider.js';
 import { WorkflowError } from '@sensigo/realm';
-import { CLASS_B_NO_TEXT_MARKER } from './agent-utils.js';
+import { CLASS_B_NO_TEXT_MARKER, setAdditionalRedactionValues } from './agent-utils.js';
+import { leakedForms } from '../test-support/redaction-oracle.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -1592,5 +1593,65 @@ describe('the agent test tree: no hook may hand vitest a mock as its teardown ca
     expect(offenders).toEqual([]);
     // Non-vacuity, leg 2 of 2: the shape this guard polices is present in the tree it read.
     expect(bracedFound).toBeGreaterThan(0);
+  });
+});
+
+// =================================================================================================
+// GHSA-gxfq cell 17: model text is hidden BEFORE it is cut to 200 characters. A FAKE secret starts
+// 5 characters before the cut; cut first, its first 5 characters reach the thrown message, where no
+// pass can recognise them. Each case asserts the message is the site's own (a witness), that the
+// oracle finds no form of the secret, and that no 4-character prefix of it is left.
+// =================================================================================================
+describe('cut after hiding (GHSA-gxfq cell 17)', () => {
+  /** A FAKE secret written here: a `"`, a `\` and a newline. */
+  const SECRET = 'fk"1\\2\n3z';
+  /** Model text whose secret starts 5 characters before the 200-character cut. */
+  const STRADDLING = `${'x'.repeat(195)}${SECRET} tail`;
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+    setAdditionalRedactionValues([SECRET]);
+  });
+  afterEach(() => {
+    setAdditionalRedactionValues([]);
+  });
+
+  /**
+   * (b) What a failing case prints: whether the message is the site's own, the oracle's
+   * `{ path, decoders }` pairs, and whether a 4-character prefix of the secret is left — never the
+   * message or the secret.
+   */
+  const facts = (err: unknown, site: string) => {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      site: message.includes(site),
+      found: leakedForms(message, SECRET),
+      prefixLeft: message.includes(SECRET.slice(0, 4)),
+    };
+  };
+  const HIDDEN = { site: true, found: [], prefixLeft: false };
+
+  it('anthropic-provider.ts — non-JSON content after retry', async () => {
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('not JSON'))
+      .mockResolvedValueOnce(makeTextResponse(STRADDLING));
+    const err = await new AnthropicProvider('claude-sonnet-4-5')
+      .callStep('prompt')
+      .catch((e: unknown) => e);
+    // (a) red when this site cuts the model text before hiding it.
+    expect(facts(err, 'Anthropic returned non-JSON content after retry: ')).toEqual(HIDDEN);
+  });
+
+  it('anthropic-provider.ts — final extraction failed after max_tool_calls', async () => {
+    mockCreate
+      .mockResolvedValueOnce(makeToolUseResponse([{ id: 'c1', name: 'op' }]))
+      .mockResolvedValueOnce(makeTextResponse(STRADDLING));
+    const err = await new AnthropicProvider('claude-sonnet-4-5')
+      .callStepWithTools('prompt', [oneTool()], vi.fn().mockResolvedValue('data'), {
+        maxToolCalls: 1,
+      })
+      .catch((e: unknown) => e);
+    // (a) red when this site cuts the model text before hiding it.
+    expect(facts(err, 'max_tool_calls reached; final extraction failed: ')).toEqual(HIDDEN);
   });
 });
