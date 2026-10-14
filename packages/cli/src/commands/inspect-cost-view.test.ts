@@ -5,7 +5,10 @@
 import { declared } from '../test-support/declared.js';
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { inspectRun } from './inspect.js';
+import { inspectRun, inspectPriceSource } from './inspect.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { handleGetRunState } from '@sensigo/realm-mcp/dist/tools/get-run-state.js';
 import type {
   RunStore,
@@ -16,6 +19,7 @@ import type {
   StepDiagnostics,
   UsageRecord,
   DriveFailureRecord,
+  PriceSource,
 } from '@sensigo/realm';
 
 function makeSnapshot(stepId: string, overrides: Partial<EvidenceSnapshot> = {}): EvidenceSnapshot {
@@ -1090,5 +1094,428 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
       "attempt 1/2: 111 prompt tokens (measured, first request) | output not reported | model model-a | cache: not reported by the provider (1 request); asked for 1h (sent as 1h; realm listen's default)",
       "Diagnostics (attempt 2/2): ~1 tokens (estimate, step input) | 222 prompt tokens (measured, first request) | output not reported | model model-b | no preconditions | cache: not reported by the provider (1 request); asked for 5m (the provider's default lifetime; stated on realm agent)",
     ]);
+  });
+});
+
+// =========================================================================================
+// issue #600 caching PR P (G10, G11, G14): the money on the cost lines, the run's cost line, and
+// the ride-along. The injected source reads its answer from the model's name — `kind|total|cf` —
+// so each form is set by its fixture: `e-dated`/`e-current` price from the economics file at the
+// call's date / at the current price, `list` from genai-prices 0.1.12 (with its note on a custom
+// endpoint), `list-as` as anthropic's claude-x, `unknown` is not priced. On a failing CI host each
+// cell prints the rendered line: test values only.
+// =========================================================================================
+const NAMED: PriceSource = {
+  price(input) {
+    const [kind, total, cf] = input.model.split('|');
+    if (kind === 'unknown') return { not_priced: 'model_unknown' };
+    const priced = { total: Number(total), uncached_counterfactual: Number(cf ?? total) };
+    if (kind === 'e-dated' || kind === 'e-current') {
+      return {
+        priced,
+        priced_by: {
+          source_class: 'economics',
+          source_ref: '/srv/prices.yaml',
+          matched_model: input.model,
+          date_basis: kind === 'e-dated' ? 'dated' : 'current',
+        },
+      };
+    }
+    return {
+      priced,
+      priced_by: {
+        source_class: 'price_list',
+        source_ref: '@pydantic/genai-prices',
+        version: '0.1.12',
+        matched_model: kind === 'list-as' ? 'claude-x' : input.model,
+        matched_provider: 'anthropic',
+        ...(kind === 'list-as' ? { equals_ids: [input.model] } : {}),
+        date_basis: 'current',
+        ...(input.endpoint === 'custom'
+          ? { endpoint_note: 'list price, your endpoint may bill differently' }
+          : {}),
+      },
+    };
+  },
+};
+const fixedSource = (result: ReturnType<PriceSource['price']>): PriceSource => ({
+  price: () => result,
+});
+const m = (model: string, extra: Partial<UsageRecord> = {}, index = 0): UsageRecord =>
+  req({ model, prompt_tokens: 10, output_tokens: 1, ...extra }, index);
+const pricedRender = async (
+  requests: UsageRecord[],
+  source: PriceSource = NAMED,
+): Promise<string> => {
+  const run = makeRun([
+    makeSnapshot('step_one', {
+      diagnostics: {
+        input_token_estimate: 1,
+        precondition_trace: [],
+        cache: { state: 'engaged', basis: 'provider_reported', requests },
+      },
+    }),
+  ]);
+  return inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+    priceSource: source,
+  });
+};
+const stepMoney = (out: string): string => {
+  const line = out.split('\n').find((l) => l.includes('Diagnostics: ')) ?? '';
+  const at =
+    line.indexOf(' | $') >= 0
+      ? line.indexOf(' | $')
+      : line.indexOf(' | ≥ $') >= 0
+        ? line.indexOf(' | ≥ $')
+        : line.indexOf(' | not priced');
+  return at >= 0 ? line.slice(at) : '(no money segment)';
+};
+
+describe('#600 caching PR P — the money on the step line (G10)', () => {
+  // One cell per form. (a) red when the form changes; (b) prints the segment.
+  it('the forms: economics at the call’s date; the list with its note on a custom endpoint; partial; not priced (×3)', async () => {
+    expect([
+      stepMoney(await pricedRender([m('e-dated|0.0412|0.0412')])),
+      stepMoney(await pricedRender([m('list|0.0412|0.0412', { endpoint: 'custom' })])),
+      stepMoney(
+        await pricedRender([
+          m('e-dated|0.02|0.02', {}, 0),
+          m('e-dated|0.02129|0.02129', {}, 1),
+          req({ prompt_tokens: 1, output_tokens: 1 }, 2),
+        ]),
+      ),
+      stepMoney(await pricedRender([m('x')], fixedSource({ not_priced: 'no_price_source' }))),
+      stepMoney(
+        await pricedRender(
+          [m('x')],
+          fixedSource({
+            not_priced: 'economics_unreachable',
+            detail: "the run's workflow copy records no deployment root",
+          }),
+        ),
+      ),
+      stepMoney(
+        await pricedRender(
+          [m('x')],
+          fixedSource({
+            not_priced: 'economics_unreadable',
+            detail: "'/srv/p.yaml': economics/version: must be equal to constant",
+          }),
+        ),
+      ),
+    ]).toEqual([
+      " | $0.0412 (your economics file; at the call's date)",
+      ' | $0.0412 (genai-prices 0.1.12; current price; list price, your endpoint may bill differently)',
+      " | ≥ $0.0412 (your economics file; at the call's date; 2 of 3 requests priced; 1 not priced: model not recorded)",
+      ' | not priced (no price source: add prices in runner.cache.economics, or install @pydantic/genai-prices beside realm)',
+      " | not priced (economics unreachable: the run's workflow copy records no deployment root)",
+      " | not priced (your economics file: '/srv/p.yaml': economics/version: must be equal to constant)",
+    ]);
+  });
+
+  // (a) red when the net's sign is flipped, or the clause is printed for a zero net; (b) prints it.
+  it('caching saved, caching cost more, nothing for a zero net', async () => {
+    expect([
+      stepMoney(await pricedRender([m('e-current|0.0307|0.0412')])),
+      stepMoney(await pricedRender([m('e-current|0.0412|0.0381')])),
+      stepMoney(await pricedRender([m('e-current|0.0412|0.0412')])),
+    ]).toEqual([
+      ' | $0.0307 (your economics file; current price); caching saved $0.0105',
+      ' | $0.0412 (your economics file; current price); caching cost $0.0031 more',
+      ' | $0.0412 (your economics file; current price)',
+    ]);
+  });
+
+  // (a) red when a lower bound is rounded up, trailing zeros are kept, or $1 and above loses its
+  // two decimals; (b) prints the segments.
+  it('precision: three significant figures below $1, trailing zeros dropped; two decimals above; ≥ floored; $0', async () => {
+    expect([
+      stepMoney(await pricedRender([m('e-current|0.0031')])),
+      stepMoney(await pricedRender([m('e-current|0.041')])),
+      stepMoney(await pricedRender([m('e-current|1.2345')])),
+      stepMoney(await pricedRender([m('e-current|0')])),
+      stepMoney(await pricedRender([m('e-current|0.04129', {}, 0), m('unknown', {}, 1)])),
+    ]).toEqual([
+      ' | $0.0031 (your economics file; current price)',
+      ' | $0.041 (your economics file; current price)',
+      ' | $1.23 (your economics file; current price)',
+      ' | $0 (your economics file; current price)',
+      ' | ≥ $0.0412 (your economics file; current price; 1 of 2 requests priced; 1 not priced: no price for this model: add it to your economics file)',
+    ]);
+  });
+
+  // (a) red when the date basis is a constant; (b) prints the three renders.
+  it("the three date bases: at the call's date, current price, N at the call's date, M current", async () => {
+    const two = await pricedRender([m('e-dated|0.01', {}, 0), m('e-dated|0.01', {}, 1)], {
+      price(input) {
+        const r = NAMED.price(input);
+        return 'priced' in r && input.at === 'mixed'
+          ? { ...r, priced_by: { ...r.priced_by, date_basis: 'current' } }
+          : r;
+      },
+    });
+    const mixed = await pricedRender(
+      [
+        m('e-dated|0.01', {}, 0),
+        m('e-dated|0.01', { request_start: '2024-01-01T00:00:01.000Z' }, 1),
+      ],
+      {
+        price(input) {
+          const r = NAMED.price(input);
+          return 'priced' in r && input.at.endsWith(':01.000Z')
+            ? { ...r, priced_by: { ...r.priced_by, date_basis: 'current' } }
+            : r;
+        },
+      },
+    );
+    expect([
+      stepMoney(two),
+      stepMoney(await pricedRender([m('e-current|0.01')])),
+      stepMoney(mixed),
+    ]).toEqual([
+      " | $0.02 (your economics file; at the call's date)",
+      ' | $0.01 (your economics file; current price)',
+      " | $0.02 (your economics file; 1 at the call's date, 1 current)",
+    ]);
+  });
+
+  it('priced as the list matched: the provider and the model, when the model differs from the recorded one', async () => {
+    expect(stepMoney(await pricedRender([m('list-as|0.01')]))).toBe(
+      " | $0.01 (genai-prices 0.1.12; current price; priced as anthropic's claude-x)",
+    );
+  });
+
+  // (a) red when a record with no model prints a segment; (b) prints the line.
+  it('a record from 0.47.0 or earlier (no model): no money segment, the line as before', async () => {
+    expect(stepMoney(await pricedRender([req({ prompt_tokens: 10, output_tokens: 1 })]))).toBe(
+      '(no money segment)',
+    );
+  });
+
+  // (a) red when the gateway reason is printed on a default endpoint; (b) prints both lines' tails.
+  it('the gateway reason of the nothing-cached clause only when a request went to a custom endpoint', async () => {
+    const asked = (endpoint: 'default' | 'custom'): UsageRecord =>
+      req({
+        model: 'e-current|0.01',
+        prompt_tokens: 10,
+        output_tokens: 1,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_requested: 'lifetime',
+        cache_lifetime_s: 300,
+        cache_ttl_sent: false,
+        endpoint,
+      });
+    const line = async (endpoint: 'default' | 'custom'): Promise<boolean> =>
+      (await pricedRender([asked(endpoint)])).includes(
+        "the cached part may be shorter than the model's minimum, or the endpoint dropped the request to cache",
+      );
+    expect([await line('custom'), await line('default')]).toEqual([true, false]);
+  });
+
+  // One cell per producing branch. (a) red when the shared helper is not called on that line;
+  // (b) prints the line.
+  it('the earlier-attempt line and the failed-drive line carry the same money segment', async () => {
+    const attempt = (status: 'error' | 'success', model: string): EvidenceSnapshot =>
+      makeSnapshot('step_one', {
+        status,
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: { state: 'engaged', basis: 'provider_reported', requests: [m(model)] },
+        },
+      });
+    const run = makeRun(
+      [attempt('error', 'e-current|0.05'), attempt('success', 'e-current|0.073')],
+      {
+        terminal_state: false,
+        run_phase: 'running',
+        drive_failures: {
+          first_failed_at: 'a',
+          total: 1,
+          entries: [
+            {
+              at: '2024-01-01T00:04:00.000Z',
+              step: 'step_one',
+              provider: 'anthropic',
+              error_class: 'other',
+              message: 'boom',
+              elapsed_ms: 1,
+              usage: [m('e-current|0.002')],
+            },
+          ],
+        },
+      },
+    );
+    const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+      priceSource: NAMED,
+    });
+    const lines = out.split('\n');
+    expect([
+      lines
+        .find((l) => l.includes('attempt 1/2: '))
+        ?.endsWith(' | $0.05 (your economics file; current price)'),
+      lines
+        .find((l) => l.startsWith('    usage: '))
+        ?.endsWith(' | $0.002 (your economics file; current price)'),
+      lines
+        .find((l) => l.includes('1. step_one'))
+        ?.includes(' — $0.123 across 2 attempts (your economics file)'),
+    ]).toEqual([true, true, true]);
+  });
+});
+
+describe("#600 caching PR P — the run's cost line (G10)", () => {
+  const costLine = async (
+    run: RunRecord,
+    source: PriceSource = NAMED,
+  ): Promise<string | undefined> =>
+    (
+      await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+        priceSource: source,
+      })
+    )
+      .split('\n')
+      .find((l) => l.startsWith('Cost: '));
+  const entry = (
+    model: string,
+    index: number,
+    overrides: Partial<EvidenceSnapshot> = {},
+  ): EvidenceSnapshot =>
+    makeSnapshot(`s${index}`, {
+      diagnostics: {
+        input_token_estimate: 1,
+        precondition_trace: [],
+        cache: { state: 'engaged', basis: 'provider_reported', requests: [m(model)] },
+      },
+      ...overrides,
+    });
+
+  // (a) red when the figure is not floored as a lower bound, a left-out part is not named, or the
+  // mixed sources are not counted; (b) prints the line.
+  it('every request priced; a lower bound naming what it leaves out; mixed sources', async () => {
+    const full = makeRun([entry('e-current|1', 0), entry('e-current|0.23', 1)]);
+    const leftOut = makeRun(
+      [
+        entry('e-current|1.239', 0),
+        makeSnapshot('t', {
+          tool_calls: [],
+          diagnostics: { input_token_estimate: 1, precondition_trace: [] },
+        }),
+        makeSnapshot('t2', {
+          tool_calls: [],
+          diagnostics: { input_token_estimate: 1, precondition_trace: [] },
+        }),
+      ],
+      {
+        drive_failures: {
+          first_failed_at: 'a',
+          total: 2,
+          entries: [
+            {
+              at: 'a',
+              step: 's0',
+              provider: 'p',
+              error_class: 'other',
+              message: 'm',
+              elapsed_ms: 1,
+            },
+          ],
+        },
+      },
+    );
+    const mixed = makeRun([entry('e-current|1', 0), entry('list|0.5', 1), entry('list|0.5', 2)]);
+    expect([await costLine(full), await costLine(leftOut), await costLine(mixed)]).toEqual([
+      'Cost: $1.23 (your economics file; 2 of 2 requests priced)',
+      'Cost: ≥ $1.23 (your economics file; 1 of 1 requests priced; 2 tool-calling attempts not measured; 1 failed drive not on the record)',
+      'Cost: $2.00 (prices from: your economics file (1), genai-prices 0.1.12 (2); 3 of 3 requests priced)',
+    ]);
+  });
+
+  it('a run from 0.47.0 or earlier (no model anywhere): no cost line', async () => {
+    const old = makeRun([
+      makeSnapshot('s', {
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: {
+            state: 'engaged',
+            basis: 'provider_reported',
+            requests: [req({ prompt_tokens: 1, output_tokens: 1 })],
+          },
+        },
+      }),
+    ]);
+    expect(await costLine(old)).toBeUndefined();
+  });
+});
+
+describe('#600 caching PR P — the ride-along: stored words escaped (G11)', () => {
+  // (a) red when quotedForTerminal is removed at that site; (b) prints the cache segment.
+  it.each([
+    ['basis', { state: 'engaged', basis: 'x\u001by' }, 'unrecognized basis "x\\u001by"'],
+    ['state', { state: 'x\u001by', basis: 'provider_reported' }, 'unrecognized state "x\\u001by"'],
+  ])('unrecognized %s: a control byte is escaped', async (_label, cache, expected) => {
+    const out = await render({
+      input_token_estimate: 1,
+      precondition_trace: [],
+      cache: {
+        ...cache,
+        requests: [req({ cache_read_input_tokens: 1, cache_creation_input_tokens: 0 })],
+      } as never,
+    });
+    expect([out.includes(expected), out.includes('\u001b')]).toEqual([true, false]);
+  });
+});
+
+describe('#600 caching PR P — the prices realm run inspect builds (G14)', () => {
+  // (a) red when the reason strings are swapped, or a missing realm.yaml is taken as unreadable;
+  // (b) prints the money segments.
+  it('no deployment root, an invalid realm.yaml, and an absent realm.yaml (the installed list only)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-inspect-prices-'));
+    try {
+      const render = async (definition: WorkflowDefinition): Promise<string> =>
+        stepMoney(
+          await inspectRun(
+            'run_test1',
+            makeRunStore(
+              makeRun([
+                makeSnapshot('step_one', {
+                  diagnostics: {
+                    input_token_estimate: 1,
+                    precondition_trace: [],
+                    cache: {
+                      state: 'engaged',
+                      basis: 'provider_reported',
+                      requests: [
+                        req({
+                          model: 'claude-sonnet-5-5',
+                          prompt_tokens: 10000,
+                          output_tokens: 0,
+                          cache_split_offered: true,
+                        }),
+                      ],
+                    },
+                  },
+                }),
+              ]),
+            ),
+            makeWorkflowStore(definition),
+            { priceSourceFor: inspectPriceSource },
+          ),
+        );
+      const noRoot = await render(basicDef);
+      writeFileSync(join(dir, 'realm.yaml'), 'version: 1\nfoo: 1\n', 'utf8');
+      const invalid = await render({ ...basicDef, trust_root: dir });
+      rmSync(join(dir, 'realm.yaml'));
+      const absent = await render({ ...basicDef, trust_root: dir });
+      expect([noRoot, invalid, absent]).toEqual([
+        " | not priced (economics unreachable: the run's workflow copy records no deployment root)",
+        ` | not priced (economics unreachable: '${join(dir, 'realm.yaml')}' is invalid: manifest: unknown key 'foo')`,
+        ' | $0.02 (genai-prices 0.1.12; current price)',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

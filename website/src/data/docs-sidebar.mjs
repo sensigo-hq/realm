@@ -85,6 +85,7 @@ export const DOCS_SIDEBAR = [
       'docs/reference/adapters',
       'docs/reference/handlers',
       'docs/reference/deployment-manifest',
+      'docs/reference/cache-economics',
       'docs/reference/project-extensions',
       'docs/reference/testing-package',
       'docs/reference/core-library',

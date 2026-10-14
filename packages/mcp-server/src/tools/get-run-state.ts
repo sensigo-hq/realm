@@ -19,6 +19,7 @@ import {
   describeClaimHolder,
   composeStepViews,
   composeDriveFailureCosts,
+  composeRunCost,
   describePending,
   composeNextActionsStatusWord,
   dueExpiry,
@@ -40,6 +41,8 @@ import {
   type RunHealthFinding,
   type StepView,
   type DriveFailureCost,
+  type PriceSource,
+  type RunCost,
   type Attributed,
   type ActorAbsent,
   runReadError,
@@ -89,6 +92,43 @@ export interface HandleRunStateStores {
   registry?: ExtensionRegistry;
   /** Per-definition registry resolution; wins over `registry`. A failure falls back to none. */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+  /**
+   * Issue #600 caching PR P: per-definition price resolution (the run's deployment root names its
+   * economics file). Absent ⇒ every request is `no_price_source`: this function defaults nothing
+   * (`createRealmMcpServer` does). A failure prices nothing: `economics_unreachable`, with its reason.
+   */
+  priceSourceProvider?: (definition: WorkflowDefinition) => Promise<PriceSource>;
+}
+
+/** Issue #600 caching PR P: every answer the same not-priced cause, with its reason. */
+function notPriced(
+  cause: 'economics_unreachable' | 'no_price_source',
+  detail?: string,
+): PriceSource {
+  return {
+    price: () => ({ not_priced: cause, ...(detail !== undefined ? { detail } : {}) }),
+  };
+}
+
+/** Issue #600 caching PR P: the price source for this run's view. Never throws. */
+async function priceSourceFor(
+  stores: HandleRunStateStores | undefined,
+  definition: WorkflowDefinition | undefined,
+): Promise<PriceSource> {
+  const provider = stores?.priceSourceProvider;
+  if (provider === undefined) return notPriced('no_price_source');
+  if (definition === undefined) {
+    return notPriced(
+      'economics_unreachable',
+      "the run's workflow copy could not be read, so its deployment root is unknown",
+    );
+  }
+  try {
+    return await provider(definition);
+  } catch (err) {
+    if (isReleaseLineRefusal(err)) throw err;
+    return notPriced('economics_unreachable', err instanceof Error ? err.message : String(err));
+  }
 }
 
 /**
@@ -308,6 +348,11 @@ export interface RunStateSummary {
    * `drive_failures.entries` — see `composeDriveFailureCosts`'s own doc.
    */
   drive_failure_costs?: DriveFailureCost[];
+  /**
+   * Issue #600 caching PR P — what the run cost, priced at read (`composeRunCost`): present iff
+   * `include_steps` was asked. Unrounded USD; never stored.
+   */
+  run_cost?: RunCost;
   /** issue #625 PR-2a: guards the engine owes (a call to `advance_run` settles them); absent when none. */
   pending_guards?: string[];
   /**
@@ -584,6 +629,10 @@ export async function handleGetRunState(
     });
   }
 
+  // issue #600 caching PR P: the run's prices, resolved only when the view is asked for.
+  const priceSource =
+    args.include_steps === true ? await priceSourceFor(stores, viewDefinition) : undefined;
+
   // issue #221: the SAME shared classifyRunHealth predicate the three READ surfaces (get_run_state,
   // list --stuck, inspect) derive from — computed definition-aware when the workflow resolved
   // above (adds eligible_steps evidence to any never_claimed_idle finding), definition-free
@@ -690,15 +739,29 @@ export async function handleGetRunState(
     // is what "asked and there IS a drive_failures" means).
     ...(args.include_steps === true
       ? (() => {
-          const steps = composeStepViews(
-            run,
-            viewDefinition !== undefined ? { definition: viewDefinition } : {},
-          );
+          const steps = composeStepViews(run, {
+            ...(viewDefinition !== undefined ? { definition: viewDefinition } : {}),
+            ...(priceSource !== undefined ? { priceSource } : {}),
+          });
           return Object.keys(steps).length > 0 ? { steps } : {};
         })()
       : {}),
     ...(args.include_steps === true && run.drive_failures !== undefined
-      ? { drive_failure_costs: composeDriveFailureCosts(run) }
+      ? {
+          drive_failure_costs: composeDriveFailureCosts(
+            run,
+            priceSource !== undefined ? { priceSource } : undefined,
+          ),
+        }
+      : {}),
+    ...(args.include_steps === true && priceSource !== undefined
+      ? (() => {
+          const runCost = composeRunCost(run, {
+            ...(viewDefinition !== undefined ? { definition: viewDefinition } : {}),
+            priceSource,
+          });
+          return runCost !== undefined ? { run_cost: runCost } : {};
+        })()
       : {}),
     ...(pending !== undefined && pending.pending_guards.length > 0
       ? { pending_guards: pending.pending_guards }

@@ -44,6 +44,8 @@ Step 'fetch' is blocked: its handler 'fetch_record' is not registered in this ru
 
 The same run started through `realm mcp` ran the step.
 
+`realm-mcp` reads no `realm.yaml`, so `get_run_state` prices model calls from the installed price list only, and every figure says `no economics file is configured on this server`. `realm mcp` and `realm serve` price from the project's [economics file](../cache-economics.md) first. Added after version 0.47.0.
+
 ## `realm serve`
 
 ```text

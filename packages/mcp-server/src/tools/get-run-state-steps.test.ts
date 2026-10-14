@@ -3,7 +3,12 @@
 // (a live run, a terminal run) that reach the view through different definition sources.
 import { declared } from '../test-support/declared.js';
 import { describe, it, expect } from 'vitest';
-import { WorkflowError } from '@sensigo/realm';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { JsonFileStore, WorkflowError } from '@sensigo/realm';
 import type {
   RunRecord,
   RunStore,
@@ -12,6 +17,8 @@ import type {
   JsonWorkflowStore,
 } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
+import { loadPriceSource } from '../price-source.js';
+import { createRealmMcpServer } from '../server.js';
 
 function makeStore(run: RunRecord): RunStore {
   return declared({
@@ -270,5 +277,186 @@ describe('#600 PR 1b (D7) — get_run_state include_steps', () => {
     // The view's own failure is silent — no steps key at all (no evidence in this fixture, so
     // composeStepViews returns {} regardless; the isolation is what this cell actually pins).
     expect('steps' in withView).toBe(false);
+  });
+});
+
+// issue #600 caching PR P (G12): `get_run_state` carries what `realm run inspect` prints — the money
+// per attempt, the endpoints, a step's total across its attempts and the run's cost — unrounded.
+// On a failing CI host each cell prints the reply's money: causes, source names and test figures.
+describe('#600 caching PR P (G12) — get_run_state money', () => {
+  const definition: WorkflowDefinition = {
+    id: 'wf',
+    name: 'wf',
+    version: 1,
+    steps: { auto_step: { description: 'x', execution: 'auto' } },
+  } as WorkflowDefinition;
+  const workflowStore = (): JsonWorkflowStore =>
+    declared({
+      register: async () => {},
+      list: async () => [definition],
+      get: async () => definition,
+    } as unknown as JsonWorkflowStore);
+  const attempt = (
+    status: 'error' | 'success',
+    request: Record<string, unknown>,
+  ): Record<string, unknown> => ({
+    step_id: 'auto_step',
+    status,
+    started_at: '2026-10-01T00:00:00.000Z',
+    completed_at: '2026-10-01T00:00:01.000Z',
+    duration_ms: 1,
+    input_summary: {},
+    output_summary: {},
+    evidence_hash: 'h',
+    diagnostics: {
+      input_token_estimate: 1,
+      precondition_trace: [],
+      cache: {
+        state: 'engaged',
+        basis: 'provider_reported',
+        requests: [{ request_index: 0, request_start: '2026-10-01T00:00:00.000Z', ...request }],
+      },
+    },
+  });
+  // Two attempts of one step on a custom endpoint: 12,345 prompt / 678 out, then 1,000 / 10.
+  const run = (model = 'claude-x', extra: Record<string, unknown> = {}): RunRecord =>
+    makeBase({
+      evidence: [
+        attempt('error', {
+          model,
+          prompt_tokens: 12345,
+          output_tokens: 678,
+          endpoint: 'custom',
+          ...extra,
+        }),
+        attempt('success', { model, prompt_tokens: 1000, output_tokens: 10, ...extra }),
+      ] as never,
+    });
+  const ECONOMICS = [
+    'version: 1',
+    'currency: USD',
+    'models:',
+    '  claude-x:',
+    '    prices:',
+    '      - per_million_tokens: { input: 3, output: 15 }',
+    '',
+  ].join('\n');
+  const notInstalled = (): Promise<unknown> =>
+    Promise.reject(Object.assign(new Error('not installed'), { code: 'ERR_MODULE_NOT_FOUND' }));
+
+  // (a) red when the provider's source is not passed to the composers (no money, no total, no
+  // run_cost); red when a figure is rounded (0.047205 would read 0.0472); (b) prints the figures.
+  it('money, endpoints, a step total and run_cost through a real priceSourceProvider, unrounded', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-g12-'));
+    try {
+      const economicsPath = join(dir, 'economics.yaml');
+      writeFileSync(economicsPath, ECONOMICS, 'utf8');
+      const summary = await handleGetRunState(
+        { run_id: 'r1', include_steps: true },
+        {
+          runStore: makeStore(run()),
+          workflowStore: workflowStore(),
+          priceSourceProvider: () => loadPriceSource({ economicsPath, importList: notInstalled }),
+        },
+      );
+      const view = summary.steps!['auto_step']!;
+      const first = view.attempts[0]!.cost!;
+      expect([
+        first.money?.total,
+        first.money?.uncached_counterfactual,
+        first.money?.sources.map((s) => [s.source_class, s.source_ref, s.matched_model]),
+        first.endpoints,
+        view.total?.total,
+        view.total?.priced,
+        summary.run_cost?.total.total,
+        summary.run_cost?.total.of,
+        summary.run_cost?.unmeasured,
+        summary.run_cost?.failed_drives_not_on_record,
+      ]).toEqual([
+        (12345 * 3 + 678 * 15) / 1e6,
+        (12345 * 3 + 678 * 15) / 1e6,
+        [['economics', economicsPath, 'claude-x']],
+        { custom: 1, of: 1 },
+        (12345 * 3 + 678 * 15) / 1e6 + (1000 * 3 + 10 * 15) / 1e6,
+        2,
+        (12345 * 3 + 678 * 15) / 1e6 + (1000 * 3 + 10 * 15) / 1e6,
+        2,
+        { tool_calling_step: 0, not_measured_by_realm: 0, cost_unreadable: 0 },
+        0,
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // (a) red when handleGetRunState defaults a source itself (the request is then priced); (b) prints
+  // the money.
+  it('handleGetRunState with no priceSourceProvider defaults nothing: every request is no_price_source', async () => {
+    const summary = await handleGetRunState(
+      { run_id: 'r1', include_steps: true },
+      { runStore: makeStore(run()), workflowStore: workflowStore() },
+    );
+    const money = summary.steps!['auto_step']!.attempts[0]!.cost!.money;
+    expect([money?.priced, money?.not_priced]).toEqual([
+      0,
+      [{ cause: 'no_price_source', count: 1 }],
+    ]);
+  });
+
+  // (a) red when createRealmMcpServer passes no default (no_price_source), or the default carries
+  // no note; (b) prints the reply's sources. The installed list (a devDependency here) prices
+  // claude-sonnet-5-5.
+  it("createRealmMcpServer with no provider: the installed list only, every figure saying 'no economics file is configured on this server'", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'realm-g12-server-'));
+    const record = run('claude-sonnet-5-5', { provider: 'anthropic' });
+    writeFileSync(join(dir, `${record.id}.json`), JSON.stringify(record), 'utf8');
+    const server = createRealmMcpServer({
+      runStore: new JsonFileStore(dir),
+      workflowStore: workflowStore(),
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'g12', version: '0' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    try {
+      const raw = (await client.callTool({
+        name: 'get_run_state',
+        arguments: { run_id: 'r1', include_steps: true },
+      })) as { content: Array<{ text: string }> };
+      const reply = JSON.parse(raw.content[0]!.text) as {
+        run_cost?: {
+          total: {
+            priced: number;
+            of: number;
+            sources: Array<Record<string, unknown>>;
+            source_totals: Array<Record<string, unknown>>;
+          };
+        };
+      };
+      // The custom-endpoint attempt's figure also carries the list's endpoint note, so the one list
+      // version reads as two sources and one source total.
+      const note = 'no economics file is configured on this server';
+      expect([
+        reply.run_cost?.total.priced,
+        reply.run_cost?.total.of,
+        reply.run_cost?.total.sources.map((s) => [
+          s['source_class'],
+          s['version'],
+          s['source_note'],
+          s['endpoint_note'] ?? 'none',
+        ]),
+        reply.run_cost?.total.source_totals.map((t) => [t['version'], t['count']]),
+      ]).toEqual([
+        2,
+        2,
+        [
+          ['price_list', '0.1.12', note, 'list price, your endpoint may bill differently'],
+          ['price_list', '0.1.12', note, 'none'],
+        ],
+        [['0.1.12', 2]],
+      ]);
+    } finally {
+      await client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

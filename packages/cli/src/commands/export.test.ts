@@ -18,7 +18,7 @@ import {
   FsIoError,
   WorkflowError,
 } from '@sensigo/realm';
-import type { RunRecord } from '@sensigo/realm';
+import { composeRunCost, type PriceSource, type RunRecord } from '@sensigo/realm';
 import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
 
 async function makeStores(): Promise<{
@@ -906,6 +906,79 @@ describe('export — rerun_of rides the record (issue #558 PR-C)', () => {
 
       expect(bundle.run.rerun_of).toBe('11111111-2222-3333-4444-555555555555');
       expect(bundle.run).toEqual(run);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// issue #600 caching PR P (G12's export cell): money is derived at read and never stored, so an
+// export of a run that prices carries none of it. On a failing CI host it prints the money keys
+// found in the bundle (names only).
+describe('the export carries no money (issue #600 caching PR P)', () => {
+  // (a) red when the bundle carries a composed money figure (a `money` or `run_cost` key);
+  // (b) prints the keys found.
+  it('a run that prices exports with no money, run_cost or source_totals key', async () => {
+    const { dir, runStore, failedAttemptStore, traceBufferStore } = await makeStores();
+    try {
+      const run = makeRun({
+        completed_steps: ['step-a'],
+        evidence: [
+          {
+            step_id: 'step-a',
+            status: 'success',
+            started_at: '2026-10-01T00:00:00.000Z',
+            completed_at: '2026-10-01T00:00:01.000Z',
+            duration_ms: 1,
+            input_summary: {},
+            output_summary: {},
+            evidence_hash: 'h',
+            diagnostics: {
+              input_token_estimate: 1,
+              precondition_trace: [],
+              cache: {
+                state: 'engaged',
+                basis: 'provider_reported',
+                requests: [
+                  {
+                    request_index: 0,
+                    request_start: '2026-10-01T00:00:00.000Z',
+                    model: 'claude-x',
+                    provider: 'anthropic',
+                    endpoint: 'default',
+                    prompt_tokens: 1000,
+                    output_tokens: 10,
+                  },
+                ],
+              },
+            },
+          },
+        ] as never,
+      });
+      await injectRun(dir, run);
+      const source: PriceSource = {
+        price: () => ({
+          priced: { total: 1, uncached_counterfactual: 1 },
+          priced_by: {
+            source_class: 'economics',
+            source_ref: 'x',
+            matched_model: 'claude-x',
+            date_basis: 'current',
+          },
+        }),
+      };
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore,
+        traceBufferStore,
+      });
+      const keys = [
+        ...JSON.stringify(bundle).matchAll(
+          /"(money|run_cost|source_totals|uncached_counterfactual)":/g,
+        ),
+      ].map((m) => m[1]);
+      // The same run prices at read: the export's silence is about storage, not an unpriceable run.
+      expect([composeRunCost(run, { priceSource: source })?.total.priced, keys]).toEqual([1, []]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -19,14 +19,13 @@
 // the operator's deployment root, or operator-typed flags — never from request data.
 import { createRequire } from 'node:module';
 import { readFileSync, realpathSync, existsSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { load as loadYaml } from 'js-yaml';
 import {
   createDefaultRegistry,
   ExtensionRegistry,
   WorkflowError,
-  validateDeploymentManifest,
+  parseDeploymentManifest,
   collectManifestSecretRefs,
   interpolateConfigTree,
   findSecretRefSites,
@@ -48,6 +47,7 @@ import {
 } from '@sensigo/realm';
 import type {
   LoaderWarning,
+  PriceSource,
   DeploymentManifest,
   ExtensionFactory,
   ExtensionManifest,
@@ -117,6 +117,13 @@ export interface LoadedProjectExtensions {
    * `realm run advance` and `realm run respond` name a `realm.yaml` only when one was read.
    */
   manifestPath?: string;
+  /**
+   * Issue #600 caching PR P: the runner's economics file that `realm.yaml` names
+   * (`runner.cache.economics`), resolved against the manifest's folder (an absolute path stays as
+   * given). Absent when the manifest names none, or there is no manifest. The file is not read
+   * here: a price-source host reads it.
+   */
+  cacheEconomicsPath?: string;
 }
 
 /** Registration surfaces of a declarative extension module, keyed by export map name. */
@@ -319,19 +326,21 @@ function loadManifestContext(
   } catch {
     return undefined; // absent manifest = defaults only, valid for config-free projects
   }
-  let raw: unknown;
-  try {
-    raw = loadYaml(bytes.toString('utf8'));
-  } catch (err) {
-    throw new Error(`Deployment manifest '${manifestPath}' is not valid YAML: ${errMsg(err)}`, {
-      cause: err,
-    });
+  // issue #600 caching PR P: `realm.yaml` is parsed in one place, core's `parseDeploymentManifest`;
+  // its two kinds of failure keep their two throws.
+  const parsed = parseDeploymentManifest(bytes.toString('utf8'));
+  if ('error' in parsed) {
+    if (parsed.error.kind === 'yaml') {
+      throw new Error(
+        `Deployment manifest '${manifestPath}' is not valid YAML: ${errMsg(parsed.error.cause)}`,
+        { cause: parsed.error.cause },
+      );
+    }
+    throw new Error(
+      `Deployment manifest '${manifestPath}' is invalid:\n  ${parsed.error.errors.join('\n  ')}`,
+    );
   }
-  const errors = validateDeploymentManifest(raw);
-  if (errors.length > 0) {
-    throw new Error(`Deployment manifest '${manifestPath}' is invalid:\n  ${errors.join('\n  ')}`);
-  }
-  const document = raw as DeploymentManifest;
+  const document: DeploymentManifest = parsed.document;
 
   // dotenv bytes participate in the freshness hash ONLY (rotation detection) — never in
   // drift evidence.
@@ -520,10 +529,21 @@ export async function loadProjectExtensions(
     ...(releaseLineWarnings.length > 0 ? { releaseLineWarnings } : {}),
     ...(secretValues !== undefined && secretValues.length > 0 ? { secretValues } : {}),
     ...(manifestCtx !== undefined ? { manifestPath: manifestCtx.path } : {}),
+    ...cacheEconomicsPathOf(manifestCtx),
   };
   cache.set(cacheKey, { result, ...(freshness !== undefined ? { freshness } : {}) });
   emitReleaseLineWarnings(result, opts);
   return result;
+}
+
+/**
+ * Issue #600 caching PR P: `runner.cache.economics`, resolved against the manifest's folder (the
+ * `secrets.dotenv` precedent); an absolute path stays as given.
+ */
+function cacheEconomicsPathOf(ctx: ManifestContext | undefined): { cacheEconomicsPath?: string } {
+  const named = ctx?.document.runner?.cache?.economics;
+  if (ctx === undefined || named === undefined) return {};
+  return { cacheEconomicsPath: isAbsolute(named) ? named : join(ctx.dir, named) };
 }
 
 /** Resolves every manifest `use:` module ref (realpathed + containment-checked). */
@@ -1093,14 +1113,67 @@ export function makeRegistryProvider(
   projectDir?: string,
   onReleaseLineWarning?: (warning: LoaderWarning) => void,
 ): (definition: WorkflowDefinition) => Promise<ExtensionRegistry> {
-  return async (definition: WorkflowDefinition): Promise<ExtensionRegistry> =>
-    (
-      await loadProjectExtensions(definition, {
-        ...(overrideModule !== undefined ? { overrideModule } : {}),
-        ...(projectDir !== undefined ? { projectDir } : {}),
-        ...(onReleaseLineWarning !== undefined ? { onReleaseLineWarning } : {}),
-      })
-    ).registry;
+  return makeProjectProviders(overrideModule, projectDir, onReleaseLineWarning).registryProvider;
+}
+
+/**
+ * Issue #600 caching PR P: the two per-definition providers a server passes its tools — the
+ * registry, and the prices (`loadPriceSource` with the economics file the deployment's
+ * `realm.yaml` names). Both read ONE `loadProjectExtensions` promise per definition call: whichever
+ * provider is called first starts the load and leaves it for the other, which takes it once, so a
+ * `get_run_state` that asks both reads and hashes `realm.yaml` once. A provider called again on its
+ * own loads again (the loader's own cache and freshness check decide what is rebuilt). A load that
+ * fails rejects the registry (as before) and prices nothing: every request is
+ * `economics_unreachable`, with the loader's message. `deps.load` is a test seam.
+ */
+export function makeProjectProviders(
+  overrideModule?: string,
+  projectDir?: string,
+  onReleaseLineWarning?: (warning: LoaderWarning) => void,
+  deps?: { load?: typeof loadProjectExtensions },
+): {
+  registryProvider: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+  priceSourceProvider: (definition: WorkflowDefinition) => Promise<PriceSource>;
+} {
+  const load = deps?.load ?? loadProjectExtensions;
+  const opts: LoadProjectExtensionsOptions = {
+    ...(overrideModule !== undefined ? { overrideModule } : {}),
+    ...(projectDir !== undefined ? { projectDir } : {}),
+    ...(onReleaseLineWarning !== undefined ? { onReleaseLineWarning } : {}),
+  };
+  const pending = new WeakMap<
+    WorkflowDefinition,
+    { from: 'registry' | 'prices'; promise: Promise<LoadedProjectExtensions> }
+  >();
+  const shared = (
+    definition: WorkflowDefinition,
+    from: 'registry' | 'prices',
+  ): Promise<LoadedProjectExtensions> => {
+    const left = pending.get(definition);
+    if (left !== undefined && left.from !== from) {
+      pending.delete(definition);
+      return left.promise;
+    }
+    const promise = load(definition, opts);
+    pending.set(definition, { from, promise });
+    return promise;
+  };
+  return {
+    registryProvider: async (definition) => (await shared(definition, 'registry')).registry,
+    priceSourceProvider: async (definition) => {
+      let loaded: LoadedProjectExtensions;
+      try {
+        loaded = await shared(definition, 'prices');
+      } catch (err) {
+        const result = { not_priced: 'economics_unreachable' as const, detail: errMsg(err) };
+        return { price: () => result };
+      }
+      const { loadPriceSource } = await import('@sensigo/realm-mcp');
+      return loadPriceSource(
+        loaded.cacheEconomicsPath !== undefined ? { economicsPath: loaded.cacheEconomicsPath } : {},
+      );
+    },
+  };
 }
 
 // --- issue #620 PR-C: which @sensigo/realm the project's code imports ---------------------------

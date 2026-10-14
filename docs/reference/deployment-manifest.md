@@ -2,7 +2,7 @@
 
 <!-- description: Reference for realm.yaml, a project's settings file: its top-level keys and their rules, where Realm looks for the file, and what a run records about it. -->
 
-`realm.yaml` holds a project's settings: how each adapter, handler and processor is built, where secrets come from, and how gates are posted to Slack. This page lists its 6 top-level keys, the rules for each, where Realm looks for the file, and what a run records about it. Every message shown came from a run of `realm` against a project at `/srv/shop`.
+`realm.yaml` holds a project's settings: how each adapter, handler and processor is built, where secrets come from, and how gates are posted to Slack. This page lists its 7 top-level keys, the rules for each, where Realm looks for the file, and what a run records about it. Every message shown came from a run of `realm` against a project at `/srv/shop`.
 
 For a walk through a first `realm.yaml`, see [Deploy a project](../guides/deploy.md).
 
@@ -55,6 +55,10 @@ notifiers:
       bot_token: '${secret:SLACK_BOT_TOKEN}'
       channel_id: '${secret:SLACK_CHANNEL_ID}'
       app_token: '${secret:SLACK_APP_TOKEN}'
+
+runner:
+  cache:
+    economics: config/economics.yaml
 ```
 
 | Key          | Required | Holds                                                   |
@@ -65,6 +69,7 @@ notifiers:
 | `handlers`   | No       | The handlers to build, by name.                         |
 | `processors` | No       | The processors to build, by name.                       |
 | `notifiers`  | No       | One notifier, `slack_gate`, which posts gates to Slack. |
+| `runner`     | No       | The prices the runner pays. Added after version 0.47.0. |
 
 Any other key is refused, at every level except inside a `config` block:
 
@@ -166,12 +171,13 @@ With `SHOP_TOKEN=tok_from_dotenv` in `.env`:
 
 A reference is allowed only in a string under `config`: in an adapter, handler or processor entry, or in `notifiers.slack_gate.config`.
 
-| The reference               | Message                                                                                                                           |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Is in `use`                 | `handlers.show.use: '${secret:FILE}' is not allowed here — secret references are legal only inside string values under 'config'.` |
-| Is in `secrets.dotenv`      | `secrets.dotenv: '${secret:WHERE}' is not allowed here — secret references are legal only inside string values under 'config'.`   |
-| Has a name in small letters | `handlers.show.config.a: malformed secret reference '${secret:lower}' — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`       |
-| Is not closed               | `handlers.show.config.b: malformed secret reference '${secret:OPEN' — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`         |
+| The reference                  | Message                                                                                                                             |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Is in `use`                    | `handlers.show.use: '${secret:FILE}' is not allowed here — secret references are legal only inside string values under 'config'.`   |
+| Is in `secrets.dotenv`         | `secrets.dotenv: '${secret:WHERE}' is not allowed here — secret references are legal only inside string values under 'config'.`     |
+| Is in `runner.cache.economics` | `runner.cache.economics: '${secret:X}' is not allowed here — secret references are legal only inside string values under 'config'.` |
+| Has a name in small letters    | `handlers.show.config.a: malformed secret reference '${secret:lower}' — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`         |
+| Is not closed                  | `handlers.show.config.b: malformed secret reference '${secret:OPEN' — the form is ${secret:NAME} with NAME = [A-Z0-9_]+.`           |
 
 ## `secrets`
 
@@ -280,6 +286,18 @@ Error loading extensions: Deployment manifest '/srv/shop/realm.yaml': constructi
 
 A block with `bot_token` and no `channel_id`, and a block with an empty `config`, are accepted.
 
+## `runner`
+
+`runner` has one key, `cache`, which has one key, `economics`: the file of prices the runner pays. Realm reads it to put a figure in US dollars on each model call a run made, when the run is read. The path is from the folder of `realm.yaml`, or a full path. See [Cache economics file](cache-economics.md) for its format. Added after version 0.47.0.
+
+| The block                  | Message                                                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Has another key in `cache` | `manifest/runner/cache: unknown key 'foo'`                                                                                          |
+| Has another key            | `manifest/runner: unknown key 'concurrency'`                                                                                        |
+| Holds a secret reference   | `runner.cache.economics: '${secret:X}' is not allowed here — secret references are legal only inside string values under 'config'.` |
+
+Upgrade every realm that reads this folder before adding `runner:`. Older realms refuse the key.
+
 ## When changes take effect
 
 Realm reads `realm.yaml` and the `dotenv` file each time a run starts. In one `realm mcp` process, with 3 runs of one workflow:
@@ -297,6 +315,7 @@ Realm reads `realm.yaml` and the `dotenv` file each time a run starts. In one `r
 | The `dotenv` file, given as a full path                                                   | No, until `realm.yaml` changes or the process is restarted. |
 | A variable read through `env`                                                             | No. Restart the process.                                    |
 | A code file named by `use`                                                                | No. Restart the process.                                    |
+| The economics file named by `runner.cache.economics`                                      | No. Restart the process. Added after version 0.47.0.        |
 
 The full-path case was run: after `/var/abs.env` changed, the next run still received `tok_first`.
 

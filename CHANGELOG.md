@@ -65,6 +65,36 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 - **A store law for the request record.** `@sensigo/realm-testing`'s store fidelity contract gains
   `USAGE_RECORD_ROUNDTRIP`: a store must read back each of the nine fields, in a step's evidence and
   in a failed drive's usage.
+- **What the model calls cost, worked out when a run is read (issue #600 caching PR P).**
+  `realm run inspect` ends each cost line with what its requests cost in US dollars: the
+  `Diagnostics` line, each `attempt i/n` line and the `usage` line under a drive failure. A step with
+  more than one attempt adds its total across them to its first line, and the run has a `Cost:`
+  line after `Phase:`. `get_run_state` with `include_steps` carries the same figures, unrounded:
+  `cost.money`, `cost.endpoints`, the step's `total` and the run's `run_cost`. A figure says where
+  its prices came from, whether they are the prices at the call's date or the current price, and
+  what caching saved or cost. A `≥` says the figure leaves something out: a request that could not
+  be priced, with the reason, an attempt with no usage figures, or a failed drive no longer on the
+  record. No money is stored: a run's record and `realm run export` hold none. A run recorded by
+  0.47.0 or earlier names no model, so it prints no figure.
+- **`runner.cache.economics` in `realm.yaml`: the prices the runner pays.** It names an economics
+  file, format v1: `version`, `currency: USD`, and for each model one or more prices, dated from
+  the second on, each with its rates per million tokens and optional tiers for a long prompt. A
+  model the file does not name is priced from the price list `@pydantic/genai-prices`, when it is
+  installed beside Realm; it is an optional peer dependency of `@sensigo/realm-mcp`. Realm ships no
+  prices. The `realm-mcp` program reads no `realm.yaml`, so it prices from the list only, and says
+  so on every figure. Older realms refuse the `runner` key. See the new page
+  `docs/reference/cache-economics.md`.
+- **For programs.** Core exports `parseCacheEconomics`, `priceFromEconomics` and
+  `CACHE_ECONOMICS_JSON_SCHEMA` (the format), the port `PriceSource` with `priceRequest` (the checks
+  around every price: a request whose usage is incomplete, or a price whose model is not the one
+  recorded, is not priced) and `NOT_PRICED_CAUSES`, `composeRunCost`, `parseDeploymentManifest`,
+  and the types `Money`, `MoneySource`, `MoneySourceTotal`, `RunCost`, `CostEndpoints`,
+  `PriceInput`, `PriceResult`, `PricedBy`, `PriceUsage`, `NotPricedCause` and the `CacheEconomics`
+  types. `CostView` gains `money` and `endpoints`, and `StepView` gains `total`; `composeCostView`,
+  `composeStepViews` and `composeDriveFailureCosts` take an optional price source, and add no money
+  without one. `@sensigo/realm-mcp` exports `loadPriceSource`, and `createRealmMcpServer` takes a
+  `priceSourceProvider`; `handleGetRunState` called on its own has no default, so every request
+  reads `no_price_source`.
 
 ### Changed
 
@@ -135,7 +165,14 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   both `--provider openai` and `--prompt-cache` is refused at startup. `--provider-module` cannot be
   combined with `--prompt-cache`.
 - The total across a step's attempts, which the 0.46.0 notes called issue #600 PR 2's job, moves to
-  the later change that prices model calls.
+  the later change that prices model calls. That change is issue #600 caching PR P, above: the total
+  is the step's money across its attempts.
+- **`realm run inspect` shows the request's `provider` and `endpoint` (issue #600 caching PR P).**
+  They appear inside the money figure: `priced as anthropic's claude-sonnet-5-5`, and
+  `list price, your endpoint may bill differently` on a figure from the price list for a request
+  that went to an endpoint other than the provider's own. When a lifetime was asked and nothing was
+  written or read, the clause that says so adds `, or the endpoint dropped the request to cache` for
+  such a request only.
 
 ### Fixed
 
@@ -182,6 +219,9 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   … will still catch it".
 - **`realm run reconcile`'s exit code is documented as it is (issue #719):** 1 on a failure; the
   page said 0.
+- **`realm run inspect` escapes a cache basis or state word it does not recognise (issue #600
+  caching PR P).** A stored word holding a control character was printed to the terminal as it was;
+  it is now escaped (`unrecognized state "x\u001by"`).
 - **Docs:** `@sensigo/realm-testing`'s law table says `EVIDENCE_KEEPS_DRIVER_AND_PROOF` checks the
   evidence entry's `output_source`, and the cli README lists `--strict-base-url` among the flags
   `--provider-module` cannot be combined with.
