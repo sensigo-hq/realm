@@ -20,6 +20,7 @@ import {
   cannotRunWayOutApplies,
   CACHE_BASES,
   CACHE_STATES,
+  PROMPT_CACHE_LIFETIMES,
   SEAL_ARMS,
   WorkflowError,
   classifyRunHealth,
@@ -53,6 +54,7 @@ import type {
   CostFigure,
   CostUnrecordedCause,
   AttemptView,
+  CacheRequestedEntry,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
 import {
@@ -381,6 +383,119 @@ function formatCache(cost: CostView): string {
 }
 
 /**
+ * Issue #600 PR 2 (D3) — a stored name (a model, a runner) as the terminal shows it: as written, or
+ * quoted through `quotedForTerminal` when it needs it, that is when escaping would change it (a `"`
+ * or a `\`). `readStoredName` has already refused a name with a control character.
+ */
+function nameForTerminal(name: string): string {
+  const quoted = quotedForTerminal(name);
+  return quoted.slice(1, -1) !== name ? quoted : name;
+}
+
+/** The longest lifetime the record's render accepts as stated: 7 days, in seconds. */
+const MAX_LIFETIME_S = 604_800;
+
+/**
+ * Issue #600 PR 2 (D3) — a stored lifetime as the operator reads it, or `undefined` when it is not a
+ * whole number of seconds from 1 to 7 days. The flag's word (`5m`, `1h`) when it is one of its
+ * lifetimes, else the exact seconds (`90s`): core's `formatDuration` would round 90 s to `1m`.
+ */
+function lifetimeWord(seconds: number | undefined): string | undefined {
+  if (seconds === undefined || !Number.isInteger(seconds)) return undefined;
+  if (seconds < 1 || seconds > MAX_LIFETIME_S) return undefined;
+  for (const [word, value] of Object.entries(PROMPT_CACHE_LIFETIMES)) {
+    if (value === seconds) return word;
+  }
+  return `${seconds}s`;
+}
+
+/** Issue #600 PR 2 (D3) — where an ask's setting came from, and which runner chose it. */
+function askSourceText(entry: CacheRequestedEntry): string {
+  const by = entry.by !== undefined ? nameForTerminal(entry.by) : undefined;
+  if (entry.source === undefined) return 'source not recorded';
+  if (entry.source === 'stated') return by !== undefined ? `stated on ${by}` : 'stated';
+  if (entry.source === 'runner_default') {
+    return by !== undefined ? `${by}'s default` : "a runner's default";
+  }
+  return `unrecognized source ${quotedForTerminal(entry.source)}`;
+}
+
+/** Issue #600 PR 2 (D3) — one distinct ask, in words. */
+function askEntryText(entry: CacheRequestedEntry): string {
+  if (entry.value === 'off') return `asked for no caching (${askSourceText(entry)})`;
+  if (entry.value === 'provider_rules') {
+    return "asked for nothing (the provider's own caching, if any, applies)";
+  }
+  if (entry.value !== 'lifetime') return `asked: unrecognized ${quotedForTerminal(entry.value)}`;
+  if (entry.lifetime_s === undefined) return 'asked for a lifetime the record does not state';
+  const lifetime = lifetimeWord(entry.lifetime_s);
+  if (lifetime === undefined) return 'asked for a lifetime: unrecognized lifetime';
+  const sent =
+    entry.ttl_sent === undefined
+      ? 'whether Realm sent it is not recorded'
+      : entry.ttl_sent
+        ? `sent as ${lifetime}`
+        : "the provider's default lifetime";
+  return `asked for ${lifetime} (${sent}; ${askSourceText(entry)})`;
+}
+
+/**
+ * Issue #600 PR 2 (D3) — THE one composer of a cost line's request facts, shared by the step line,
+ * each earlier attempt's line and the failed-drive line, so the three print the same words.
+ * `model`: the model the responses named. `ask`: what realm asked the provider to cache, then —
+ * when the record shows it — a write kept for another lifetime than the one asked, or a lifetime
+ * asked with nothing written or read. A fact the record holds no readable value for (`absent_cause`,
+ * A5) prints nothing: a record without the request facts prints exactly what it printed before.
+ */
+function requestFactsText(cost: CostView): { model?: string; ask?: string } {
+  const out: { model?: string; ask?: string } = {};
+  const models = cost.models;
+  if (models !== undefined && !('absent_cause' in models)) {
+    const names = models.names.map(nameForTerminal);
+    const base =
+      names.length === 1
+        ? `model ${names[0]}`
+        : `models ${names.join(', ')} (the requests used different models)`;
+    out.model =
+      models.reported < models.of
+        ? `${base} (named by ${models.reported} of ${models.of} requests)`
+        : base;
+  }
+  const asked = cost.cache_requested;
+  if (asked !== undefined && !('absent_cause' in asked)) {
+    const clauses = [
+      asked.entries.map(askEntryText).join(', then ') +
+        (asked.reported < asked.of
+          ? ` (recorded by ${asked.reported} of ${asked.of} requests)`
+          : ''),
+    ];
+    const only = asked.entries.length === 1 ? asked.entries[0] : undefined;
+    if (only?.value === 'lifetime') {
+      const kept5m = cost.cache_write_5m?.value ?? 0;
+      const kept1h = cost.cache_write_1h?.value ?? 0;
+      if (only.lifetime_s === 3600 && kept5m > 0) {
+        clauses.push(`${kept5m} of the tokens written were kept for 5m, not the 1h asked`);
+      } else if (only.lifetime_s === 300 && kept1h > 0) {
+        clauses.push(`${kept1h} of the tokens written were kept for 1h, not the 5m asked`);
+      }
+    }
+    const zeroFromEvery = (fig: CostFigure | undefined): boolean =>
+      fig !== undefined && fig.reported === fig.of && fig.value === 0;
+    if (
+      asked.entries.some((e) => e.value === 'lifetime') &&
+      zeroFromEvery(cost.cache_read) &&
+      zeroFromEvery(cost.cache_write)
+    ) {
+      clauses.push(
+        "nothing was written or read: the cached part may be shorter than the model's minimum",
+      );
+    }
+    out.ask = clauses.join('; ');
+  }
+  return out;
+}
+
+/**
  * Issue #600 PR 1b (D9/#611) — what a failed drive already cost, on the one surface an operator
  * reads first for a stuck or errored run. Sourced from `composeDriveFailureCosts`'s per-entry
  * `CostView`, which carries no `basis`/`state` (a drive failure's usage carries no classification)
@@ -424,7 +539,11 @@ function formatDriveFailureUsage(cost: CostView, errorClass?: string): string {
       : `cache ${readStr}, ${wroteStr}${includedInPrompt(cost) ? ' (included in the prompt)' : ''}`;
   const ended =
     errorClass === 'validation_rejected' ? 'before the output was rejected' : 'before the throw';
-  return `    usage: ${scope} billed ${ended} — ${promptStr}, ${outputStr}, ${cacheStr}`;
+  // issue #600 PR 2 (D3): the model, then the ask, through the shared composer.
+  const facts = requestFactsText(cost);
+  const model = facts.model !== undefined ? `; ${facts.model}` : '';
+  const ask = facts.ask !== undefined ? `; ${facts.ask}` : '';
+  return `    usage: ${scope} billed ${ended} — ${promptStr}, ${outputStr}, ${cacheStr}${model}${ask}`;
 }
 
 /**
@@ -487,14 +606,18 @@ function formatDiagnostics(
   const tokens = `~${diag.input_token_estimate} tokens (estimate, step input)`;
   const prompt = formatPromptSegment(cost);
   const output = formatOutputSegment(cost);
-  const cache = cost !== undefined ? ` | ${formatCache(cost)}` : '';
+  // issue #600 PR 2 (D3): the model after output, the ask after the cache segment.
+  const facts = cost !== undefined ? requestFactsText(cost) : {};
+  const model = facts.model !== undefined ? ` | ${facts.model}` : '';
+  const ask = facts.ask !== undefined ? `; ${facts.ask}` : '';
+  const cache = cost !== undefined ? ` | ${formatCache(cost)}${ask}` : '';
   if (diag.precondition_trace.length === 0) {
-    return `${tokens}${prompt}${output} | no preconditions${cache}`;
+    return `${tokens}${prompt}${output}${model} | no preconditions${cache}`;
   }
   const traceStr = diag.precondition_trace
     .map((t) => `${t.expression} → ${t.passed ? 'true' : 'false'} (${String(t.resolved_value)})`)
     .join(', ');
-  return `${tokens}${prompt}${output} | preconditions: ${traceStr}${cache}`;
+  return `${tokens}${prompt}${output}${model} | preconditions: ${traceStr}${cache}`;
 }
 /**
  * issue #625 (holder slice): the line naming the program whose code did an attempt's work. The
@@ -1065,8 +1188,11 @@ export async function inspectRun(
         if (attempt.cost !== undefined) {
           const prompt = formatPromptSegment(attempt.cost).replace(/^ \| /, '');
           const output = formatOutputSegment(attempt.cost).replace(/^ \| /, '');
-          const cache = formatCache(attempt.cost);
-          const segs = [prompt, output, cache].filter((s) => s !== '');
+          // issue #600 PR 2 (D3): this attempt's own model and ask, through the shared composer.
+          const facts = requestFactsText(attempt.cost);
+          const cache =
+            formatCache(attempt.cost) + (facts.ask !== undefined ? `; ${facts.ask}` : '');
+          const segs = [prompt, output, facts.model ?? '', cache].filter((s) => s !== '');
           lines.push(chalk.dim(`     ${label}: ${segs.join(' | ')}`));
         } else {
           const sentence = costAbsenceSentence(attempt.cost_unrecorded, attempt.cost_unreadable);

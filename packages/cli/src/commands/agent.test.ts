@@ -23,6 +23,9 @@ import {
   setAdditionalRedactionValues,
 } from '../agent/providers/agent-utils.js';
 
+// issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
+const TEST_PROMPT_CACHE = { value: '5m', source: 'runner_default', by: 'realm agent' } as const;
+
 // ---------------------------------------------------------------------------
 // MockLlmProvider — queue-based: returns responses in order of callStep() calls.
 // ---------------------------------------------------------------------------
@@ -269,9 +272,9 @@ describe('resolveProvider', () => {
     delete process.env['OPENAI_API_KEY'];
     delete process.env['ANTHROPIC_API_KEY'];
 
-    await expect(resolveProvider(undefined, undefined)).rejects.toThrow(
-      'realm agent requires an LLM API key',
-    );
+    await expect(
+      resolveProvider({ provider: undefined, model: undefined, promptCache: TEST_PROMPT_CACHE }),
+    ).rejects.toThrow('realm agent requires an LLM API key');
   });
 
   it('throws when --base-url is set and provider resolves to anthropic (explicit flag)', async () => {
@@ -279,7 +282,12 @@ describe('resolveProvider', () => {
     delete process.env['OPENAI_API_KEY'];
 
     await expect(
-      resolveProvider('anthropic', undefined, 'https://api.example.com'),
+      resolveProvider({
+        provider: 'anthropic',
+        model: undefined,
+        baseUrl: 'https://api.example.com',
+        promptCache: TEST_PROMPT_CACHE,
+      }),
     ).rejects.toThrow('--base-url is only supported with --provider openai');
   });
 
@@ -287,9 +295,14 @@ describe('resolveProvider', () => {
     process.env['ANTHROPIC_API_KEY'] = 'test-key';
     delete process.env['OPENAI_API_KEY'];
 
-    await expect(resolveProvider(undefined, undefined, 'https://api.example.com')).rejects.toThrow(
-      '--base-url is only supported with --provider openai',
-    );
+    await expect(
+      resolveProvider({
+        provider: undefined,
+        model: undefined,
+        baseUrl: 'https://api.example.com',
+        promptCache: TEST_PROMPT_CACHE,
+      }),
+    ).rejects.toThrow('--base-url is only supported with --provider openai');
   });
 
   it('does not throw when --base-url is set with --provider openai', async () => {
@@ -297,7 +310,12 @@ describe('resolveProvider', () => {
     delete process.env['ANTHROPIC_API_KEY'];
 
     // The guard must not fire — resolveProvider returns successfully for openai + base-url.
-    const provider = await resolveProvider('openai', 'test-model', 'https://api.deepseek.com');
+    const provider = await resolveProvider({
+      provider: 'openai',
+      model: 'test-model',
+      baseUrl: 'https://api.deepseek.com',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(provider).toBeDefined();
   });
 });
@@ -327,7 +345,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   // A direct-ctor cell cannot substitute: it bypasses the seam under test.
   // -------------------------------------------------------------------------------------------
   it('flag-travel (i): --strict-base-url ARRIVES at the provider — an attested compat endpoint carries NO strictGate', async () => {
-    const p = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com', true);
+    const p = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-4o',
+      baseUrl: 'https://compat.example.com',
+      strictBaseUrl: true,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     // Deep-equal, so a strictGate surviving the attestation reds here.
     expect(p.capabilities()).toEqual({
       jsonMode: false,
@@ -337,12 +361,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('flag-travel (ii): the discriminating counterpart — the SAME call without the attestation IS gated', async () => {
-    const explicitFalse = await resolveProvider(
-      'openai',
-      'gpt-4o',
-      'https://compat.example.com',
-      false,
-    );
+    const explicitFalse = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-4o',
+      baseUrl: 'https://compat.example.com',
+      strictBaseUrl: false,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(explicitFalse.capabilities()).toEqual({
       jsonMode: false,
       providerId: 'openai',
@@ -350,7 +375,12 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
       strictGate: 'compat_endpoint',
     });
     // …and omitted entirely (the CLI passes nothing when the flag is absent).
-    const omitted = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com');
+    const omitted = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-4o',
+      baseUrl: 'https://compat.example.com',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(omitted.capabilities()).toEqual({
       jsonMode: false,
       providerId: 'openai',
@@ -364,11 +394,23 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
     try {
       // The pre-existing hard refusal still governs the combination that CAN be expressed.
       await expect(
-        resolveProvider('anthropic', 'claude-sonnet-4-5', 'https://x.example.com', true),
+        resolveProvider({
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-5',
+          baseUrl: 'https://x.example.com',
+          strictBaseUrl: true,
+          promptCache: TEST_PROMPT_CACHE,
+        }),
       ).rejects.toThrow('--base-url is only supported with --provider openai');
       // Flag alone: no --base-url to attest about, so the Anthropic provider is built normally
       // and the attestation is inert (the CLI layer is what warns — cell 1).
-      const p = await resolveProvider('anthropic', 'claude-sonnet-4-5', undefined, true);
+      const p = await resolveProvider({
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        baseUrl: undefined,
+        strictBaseUrl: true,
+        promptCache: TEST_PROMPT_CACHE,
+      });
       expect(p.capabilities().providerId).toBe('anthropic');
       expect(p.capabilities().strictGate).toBeUndefined();
     } finally {
@@ -377,7 +419,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('dead-config 4: the o1 branch DROPS --base-url/--strict-base-url and now says so (it silently ignored them before)', async () => {
-    const p = await resolveProvider('openai', 'o1-mini', 'https://compat.example.com', true);
+    const p = await resolveProvider({
+      provider: 'openai',
+      model: 'o1-mini',
+      baseUrl: 'https://compat.example.com',
+      strictBaseUrl: true,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(p.capabilities().providerId).toBe('openai-reasoning');
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('ignored for the o1 model family'),
@@ -390,7 +438,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('the o1 branch stays SILENT when neither flag was supplied', async () => {
-    await resolveProvider('openai', 'o1-mini', undefined, false);
+    await resolveProvider({
+      provider: 'openai',
+      model: 'o1-mini',
+      baseUrl: undefined,
+      strictBaseUrl: false,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(console.error).not.toHaveBeenCalled();
   });
 });

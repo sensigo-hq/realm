@@ -335,7 +335,7 @@ describe(
       expect(ra.out.filter((l) => l !== '')).toEqual([
         `Resumed run '${askId}': step 'ask' re-enabled and run reset to 'running'.`,
         `Drive it with: realm agent --run-id ${askId} --provider <provider> --model <model>`,
-        `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${askId} shows the extension module the run loaded).`,
+        `Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect ${askId} shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).`,
       ]);
     });
 

@@ -164,3 +164,89 @@ describe('provider conformance — toolArgsStrict is a promise about the wire (i
     void join; // (path helper retained for readability of the dir resolution above)
   });
 });
+
+// =========================================================================
+// issue #600 PR 2 — `ProviderCapabilities.promptCache` is a promise about the wire too: a provider
+// declaring a lifetime places `cache_control` on its single-shot request, and one declaring `off`
+// or nothing places none. On a failing CI host each cell prints the setting and whether the
+// request carried the marker: no environment, header or key.
+// =========================================================================
+describe('provider conformance — promptCache is a promise about the wire (issue #600 PR 2)', () => {
+  const SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' } } };
+  const settings = ['off', '5m', '1h'] as const;
+
+  // G5. (a) red when the tools path builds its system through the cache helper; (b) prints the
+  // setting and the requests' bodies that carried the marker.
+  it('guard: G5 — the tools path carries no cache_control under 5m and 1h', async () => {
+    const { AnthropicProvider } = await import('./anthropic-provider.js');
+    for (const value of ['5m', '1h'] as const) {
+      anthropicCreate.mockReset();
+      anthropicCreate.mockResolvedValue({ content: [{ type: 'text', text: '{"ok":true}' }] });
+      const p = new AnthropicProvider('claude-sonnet-4-5', {
+        promptCache: { value, source: 'stated', by: 'realm agent' },
+      });
+      await p.callStepWithTools('prompt', [tool('a')], async () => ({}), { inputSchema: SCHEMA });
+      const marked = anthropicCreate.mock.calls
+        .map((c) => JSON.stringify(c[0]))
+        .filter((body) => body.includes('cache_control'));
+      expect({ value, calls: anthropicCreate.mock.calls.length, marked }).toEqual({
+        value,
+        calls: anthropicCreate.mock.calls.length,
+        marked: [],
+      });
+      expect(anthropicCreate.mock.calls.length).toBeGreaterThan(0);
+    }
+  });
+
+  // G6. (a) red when the capability declares a lifetime while the request is built without it
+  // (the constructor's value ignored); (b) prints, per provider and setting, the declaration and
+  // whether the single-shot request carried the marker.
+  it("G6 — capabilities().promptCache !== 'off' iff the single-shot request carries cache_control", async () => {
+    const { AnthropicProvider } = await import('./anthropic-provider.js');
+    const { OpenAIProvider } = await import('./openai-provider.js');
+    const { OpenAIReasoningProvider } = await import('./openai-reasoning-provider.js');
+    const cells: Array<{ name: string; make: () => LlmProvider; sent: () => unknown }> = [
+      ...settings.map((value) => ({
+        name: `anthropic ${value}`,
+        make: () =>
+          new AnthropicProvider('claude-sonnet-4-5', {
+            promptCache: { value, source: 'stated' as const, by: 'realm agent' },
+          }),
+        sent: () => anthropicCreate.mock.calls[0]![0],
+      })),
+      {
+        name: 'openai',
+        make: () => new OpenAIProvider('gpt-4o'),
+        sent: () => openaiCreate.mock.calls[0]![0],
+      },
+      {
+        name: 'openai-reasoning',
+        make: () => new OpenAIReasoningProvider('o1-mini'),
+        sent: () => openaiCreate.mock.calls[0]![0],
+      },
+    ];
+    const seen: Array<{ name: string; declared: boolean; onWire: boolean }> = [];
+    for (const cell of cells) {
+      anthropicCreate.mockReset();
+      anthropicCreate.mockResolvedValue({ content: [{ type: 'text', text: '{"ok":true}' }] });
+      openaiCreate.mockReset();
+      openaiCreate.mockResolvedValue({ choices: [{ message: { content: '{"ok":true}' } }] });
+      const p = cell.make();
+      await p.callStepWithMeta('prompt', SCHEMA);
+      const asked = p.capabilities().promptCache;
+      seen.push({
+        name: cell.name,
+        declared: asked !== undefined && asked !== 'off',
+        onWire: JSON.stringify(cell.sent()).includes('cache_control'),
+      });
+    }
+    expect(seen.map((c) => [c.name, c.declared === c.onWire])).toEqual(
+      seen.map((c) => [c.name, true]),
+    );
+    // Non-vacuity: the cells include a declarer that does place the marker.
+    expect(seen.filter((c) => c.declared && c.onWire).map((c) => c.name)).toEqual([
+      'anthropic 5m',
+      'anthropic 1h',
+    ]);
+  });
+});

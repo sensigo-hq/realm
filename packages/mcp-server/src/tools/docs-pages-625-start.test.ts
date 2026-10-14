@@ -676,7 +676,8 @@ describe(
       //     capability_blocks, does not judge with its own extensions, or does not end with the
       //     block's re-attach line; (b) prints the screens and the record.
       expect({
-        screen: [first.code, first.out.slice(2), first.err],
+        // issue #600 PR 2: the header is the title, `Run ID:` and the cache line (blank lines filtered).
+        screen: [first.code, first.out.slice(3), first.err],
         blocks: [once.capability_blocks?.['h']?.requirement, attempts(once), attempts(twice)],
         recordedAgain: twice.capability_blocks?.['h']?.at !== once.capability_blocks?.['h']?.at,
         secondExit: second.code,

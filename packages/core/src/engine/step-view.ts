@@ -12,7 +12,7 @@
 // these functions — a non-array, `null` entries, non-object entries, `evidence` or
 // `drive_failures` shaped wrong — makes any of them throw. A malformed record degrades to an
 // absence or an `'unknown'` field, never an exception that takes the whole render down with it.
-import type { RunRecord } from '../types/run-record.js';
+import type { RequestFactAbsentCause, RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import {
   readDrivenBy,
@@ -61,7 +61,51 @@ export interface CostView {
   cache_write?: CostFigure;
   /** `UsageRecord.output_tokens`. */
   output?: CostFigure;
+  /**
+   * Issue #600 PR 2 — the models the provider's responses named (`UsageRecord.model`), or why none
+   * is readable. Present iff `requests > 0`.
+   */
+  models?: CostModels;
+  /**
+   * Issue #600 PR 2 — what realm asked the provider to cache, per distinct ask, or why none is
+   * readable. Present iff `requests > 0`.
+   */
+  cache_requested?: CostCacheRequested;
+  /** Issue #600 PR 2 — `cache_creation.ephemeral_5m_input_tokens`: cache writes kept for 5 minutes. */
+  cache_write_5m?: CostFigure;
+  /** Issue #600 PR 2 — `cache_creation.ephemeral_1h_input_tokens`: cache writes kept for 1 hour. */
+  cache_write_1h?: CostFigure;
 }
+
+/**
+ * Issue #600 PR 2 — the models a step's requests named: the distinct readable names in request
+ * order, with how many requests named a readable one (`reported`, at least 1) out of all (`of`).
+ * When no request names a readable one, the typed absence by cause (framework §5 E1) instead.
+ */
+export type CostModels =
+  { names: string[]; reported: number; of: number } | { absent_cause: RequestFactAbsentCause };
+
+/**
+ * Issue #600 PR 2 — one distinct ask: `value` (a `CACHE_REQUESTS` word, verbatim when a string),
+ * `lifetime_s` (kept when a number, of any value — the render judges it), `ttl_sent` (kept when a
+ * boolean), `source` (verbatim when a string) and `by` (read through `readStoredName`).
+ */
+export interface CacheRequestedEntry {
+  value: string;
+  lifetime_s?: number;
+  ttl_sent?: boolean;
+  source?: string;
+  by?: string;
+}
+
+/**
+ * Issue #600 PR 2 — the asks a step's requests made: the distinct entries in request order, with how
+ * many requests recorded one (`reported`, at least 1) out of all (`of`); else the typed absence by
+ * cause.
+ */
+export type CostCacheRequested =
+  | { entries: CacheRequestedEntry[]; reported: number; of: number }
+  | { absent_cause: RequestFactAbsentCause };
 
 /**
  * The closed set of reasons a step's evidence entry carries no `cache` at all. Classification only
@@ -121,6 +165,79 @@ function numField(entry: unknown, key: string): number | undefined {
   return typeof v === 'number' ? v : undefined;
 }
 
+/** Reads a numeric field one level down (`cache_creation.ephemeral_5m_input_tokens`), the same way. */
+function nestedNumField(entry: unknown, outer: string, inner: string): number | undefined {
+  if (typeof entry !== 'object' || entry === null) return undefined;
+  return numField((entry as Record<string, unknown>)[outer], inner);
+}
+
+/** A field of an unknown entry, or `undefined` when the entry is not an object. */
+function fieldOf(entry: unknown, key: string): unknown {
+  if (typeof entry !== 'object' || entry === null) return undefined;
+  return (entry as Record<string, unknown>)[key];
+}
+
+/**
+ * Issue #600 PR 2 (A5) — why a request fact has no readable value: `none_readable` when realm drove
+ * the requests (at least one carries `provider`, which only realm's own drive stamps), else
+ * `predates_request_facts` (Realm 0.47.0 or earlier, or a host that does not record it).
+ */
+function requestFactAbsence(requests: readonly unknown[]): {
+  absent_cause: RequestFactAbsentCause;
+} {
+  const drivenByRealm = requests.some((r) => typeof fieldOf(r, 'provider') === 'string');
+  return { absent_cause: drivenByRealm ? 'none_readable' : 'predates_request_facts' };
+}
+
+/** Issue #600 PR 2 — the models the requests named, each read through `readStoredName`. */
+function composeModels(requests: readonly unknown[]): CostModels {
+  const names: string[] = [];
+  let reported = 0;
+  for (const r of requests) {
+    const name = readStoredName(fieldOf(r, 'model'));
+    if (name === undefined) continue;
+    reported += 1;
+    if (!names.includes(name)) names.push(name);
+  }
+  if (reported === 0) return requestFactAbsence(requests);
+  return { names, reported, of: requests.length };
+}
+
+/** Issue #600 PR 2 — the distinct asks the requests recorded. */
+function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested {
+  const entries: CacheRequestedEntry[] = [];
+  const seen = new Set<string>();
+  let reported = 0;
+  for (const r of requests) {
+    const value = fieldOf(r, 'cache_requested');
+    if (typeof value !== 'string') continue;
+    reported += 1;
+    const lifetime = fieldOf(r, 'cache_lifetime_s');
+    const ttlSent = fieldOf(r, 'cache_ttl_sent');
+    const source = fieldOf(r, 'cache_requested_source');
+    const by = readStoredName(fieldOf(r, 'cache_requested_by'));
+    const entry: CacheRequestedEntry = {
+      value,
+      ...(typeof lifetime === 'number' ? { lifetime_s: lifetime } : {}),
+      ...(typeof ttlSent === 'boolean' ? { ttl_sent: ttlSent } : {}),
+      ...(typeof source === 'string' ? { source } : {}),
+      ...(by !== undefined ? { by } : {}),
+    };
+    const key = JSON.stringify([
+      entry.value,
+      entry.lifetime_s,
+      entry.ttl_sent,
+      entry.source,
+      entry.by,
+    ]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push(entry);
+  }
+  if (reported === 0) return requestFactAbsence(requests);
+  return { entries, reported, of: requests.length };
+}
+
 /** `cache_creation_input_tokens`, else `cache_write_tokens` — first present, never summed. */
 function cacheWriteField(entry: unknown): number | undefined {
   const a = numField(entry, 'cache_creation_input_tokens');
@@ -176,6 +293,19 @@ export function composeCostView(
   if (cacheWrite !== undefined) view.cache_write = cacheWrite;
   const output = sumFigure(requests, (r) => numField(r, 'output_tokens'));
   if (output !== undefined) view.output = output;
+  // issue #600 PR 2 (A4): the request facts, from every request, never guessed.
+  if (requests.length > 0) {
+    view.models = composeModels(requests);
+    view.cache_requested = composeCacheRequested(requests);
+  }
+  const write5m = sumFigure(requests, (r) =>
+    nestedNumField(r, 'cache_creation', 'ephemeral_5m_input_tokens'),
+  );
+  if (write5m !== undefined) view.cache_write_5m = write5m;
+  const write1h = sumFigure(requests, (r) =>
+    nestedNumField(r, 'cache_creation', 'ephemeral_1h_input_tokens'),
+  );
+  if (write1h !== undefined) view.cache_write_1h = write1h;
   return view;
 }
 

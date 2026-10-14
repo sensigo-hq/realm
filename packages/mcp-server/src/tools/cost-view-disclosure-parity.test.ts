@@ -11,6 +11,10 @@
 // `steps[].answers` carry them as data, and a field added to any of them stops BOTH surface
 // packages compiling until it is routed or waived with a reason.
 //
+// Issue #600 PR 2 adds four `CostView` rows (`models`, `cache_requested`, `cache_write_5m`,
+// `cache_write_1h`) and the `CacheRequestedEntry` registry on both contexts, with no waiver, and one
+// cell for the typed absence by cause, which this surface carries as data (inspect withholds it).
+//
 // Waivers are allowed only for `basis`/`state` on context 4 (`drive_failure_costs`) — a drive
 // failure's usage carries no classification, `composeDriveFailureCosts` never sets either. Every
 // other row here renders; `only_request_index` is NOT waived on this context (unlike the CLI's
@@ -30,6 +34,7 @@ import type {
   ClaimRecord,
   Attributed,
   AnswerView,
+  CacheRequestedEntry,
 } from '@sensigo/realm';
 import { handleGetRunState } from './get-run-state.js';
 
@@ -205,6 +210,43 @@ const oldGateAnswer = {
   evidence_hash: 'g4',
 };
 
+// issue #600 PR 2: one request carrying every request fact, asked for 1h with part of the write
+// kept for 5m (the mismatch fixture, where both splits are non-zero).
+const askedStep = {
+  step_id: 'asked_step',
+  kind: 'execution' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:00.000Z',
+  completed_at: '2026-01-01T00:00:01.000Z',
+  duration_ms: 1,
+  input_summary: {},
+  output_summary: {},
+  evidence_hash: 'h-asked',
+  diagnostics: {
+    input_token_estimate: 1,
+    precondition_trace: [],
+    cache: {
+      state: 'write_only' as const,
+      basis: 'provider_reported' as const,
+      requests: [
+        {
+          request_index: 0,
+          request_start: 't0',
+          model: 'claude-x-20260101',
+          cache_requested: 'lifetime',
+          cache_lifetime_s: 3600,
+          cache_ttl_sent: true,
+          cache_requested_source: 'stated',
+          cache_requested_by: 'realm agent',
+          provider: 'anthropic',
+          cache_creation_input_tokens: 75,
+          cache_creation: { ephemeral_5m_input_tokens: 70, ephemeral_1h_input_tokens: 5 },
+        },
+      ],
+    },
+  },
+};
+
 const contextThreeRun = {
   id: 'r3',
   workflow_id: 'wf',
@@ -226,6 +268,7 @@ const contextThreeRun = {
     gateStepAnswer,
     oldGateExecution,
     oldGateAnswer,
+    askedStep,
   ],
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:01.000Z',
@@ -240,6 +283,7 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
     );
     const money = summary.steps!['money_step']!;
     const last = money.attempts[1]!.cost!;
+    const asked = summary.steps!['asked_step']!.attempts[0]!.cost!;
 
     const COST_VIEW = {
       requests: { surface: 'rendered', probe: () => expect(last.requests).toBe(2) },
@@ -285,7 +329,60 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
         probe: () =>
           expect(last.output).toEqual({ value: 10, reported: 1, of: 2, only_request_index: 0 }),
       },
+      // issue #600 PR 2.
+      models: {
+        surface: 'rendered',
+        probe: () =>
+          expect(asked.models).toEqual({ names: ['claude-x-20260101'], reported: 1, of: 1 }),
+      },
+      cache_requested: {
+        surface: 'rendered',
+        probe: () =>
+          expect(asked.cache_requested).toEqual({
+            entries: [
+              {
+                value: 'lifetime',
+                lifetime_s: 3600,
+                ttl_sent: true,
+                source: 'stated',
+                by: 'realm agent',
+              },
+            ],
+            reported: 1,
+            of: 1,
+          }),
+      },
+      cache_write_5m: {
+        surface: 'rendered',
+        probe: () =>
+          expect(asked.cache_write_5m).toEqual({
+            value: 70,
+            reported: 1,
+            of: 1,
+            only_request_index: 0,
+          }),
+      },
+      cache_write_1h: {
+        surface: 'rendered',
+        probe: () =>
+          expect(asked.cache_write_1h).toEqual({
+            value: 5,
+            reported: 1,
+            of: 1,
+            only_request_index: 0,
+          }),
+      },
     } satisfies Record<keyof CostView, DisclosureRoute>;
+
+    // issue #600 PR 2: each field of one ask, as data.
+    const entry = (asked.cache_requested as { entries: CacheRequestedEntry[] }).entries[0]!;
+    const CACHE_REQUESTED_ENTRY = {
+      value: { surface: 'rendered', probe: () => expect(entry.value).toBe('lifetime') },
+      lifetime_s: { surface: 'rendered', probe: () => expect(entry.lifetime_s).toBe(3600) },
+      ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
+      source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
+      by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm agent') },
+    } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
     const COST_FIGURE = {
       value: { surface: 'rendered', probe: () => expect(last.prompt!.value).toBe(500) },
@@ -360,12 +457,54 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
       },
     } satisfies Record<CostUnrecordedCause, DisclosureRoute>;
 
-    for (const registry of [COST_VIEW, COST_FIGURE, ATTEMPT_VIEW, STEP_VIEW, UNRECORDED_CAUSE]) {
+    for (const registry of [
+      COST_VIEW,
+      CACHE_REQUESTED_ENTRY,
+      COST_FIGURE,
+      ATTEMPT_VIEW,
+      STEP_VIEW,
+      UNRECORDED_CAUSE,
+    ]) {
       for (const [field, route] of Object.entries(registry)) {
         if (route.surface === 'rendered') route.probe();
         else throw new Error(`unexpected waiver for '${field}'`);
       }
     }
+  });
+
+  // issue #600 PR 2 (A5, G26): a fact with no readable value is carried as DATA, by cause: a request
+  // realm drove (it carries `provider`) whose model was refused at read is `none_readable`; a request
+  // written before PR 2 is `predates_request_facts`. (a) red when the two causes are swapped, or the
+  // absence is not carried; (b) prints the two `models`.
+  it('carries the typed absence by cause (inspect withholds it)', async () => {
+    const summary = await handleGetRunState(
+      { run_id: 'r3', include_steps: true },
+      { runStore: makeStore(contextThreeRun) },
+    );
+    const refused = {
+      ...askedStep,
+      step_id: 'refused_step',
+      diagnostics: {
+        ...askedStep.diagnostics,
+        cache: {
+          ...askedStep.diagnostics.cache,
+          requests: [
+            { request_index: 0, request_start: 't0', provider: 'anthropic', model: 'x\u001by' },
+          ],
+        },
+      },
+    };
+    const withRefused = await handleGetRunState(
+      { run_id: 'r3', include_steps: true },
+      { runStore: makeStore({ ...contextThreeRun, evidence: [refused] } as unknown as RunRecord) },
+    );
+    expect({
+      old: summary.steps!['money_step']!.attempts[1]!.cost!.models,
+      refused: withRefused.steps!['refused_step']!.attempts[0]!.cost!.models,
+    }).toEqual({
+      old: { absent_cause: 'predates_request_facts' },
+      refused: { absent_cause: 'none_readable' },
+    });
   });
 
   it('default response has no steps key', async () => {
@@ -541,7 +680,22 @@ const ENTRY_B = {
   error_class: 'other' as const,
   message: 'connection reset',
   elapsed_ms: 300,
-  usage: [{ request_index: 0, request_start: 't0', uncached_input_tokens: 60 }],
+  usage: [
+    {
+      request_index: 0,
+      request_start: 't0',
+      uncached_input_tokens: 60,
+      // issue #600 PR 2: the request facts, asked for 1h, part of the write kept for 5m.
+      model: 'claude-x-20260101',
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 3600,
+      cache_ttl_sent: true,
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      provider: 'anthropic',
+      cache_creation: { ephemeral_5m_input_tokens: 70, ephemeral_1h_input_tokens: 5 },
+    },
+  ],
 };
 
 const contextFourRun = {
@@ -623,7 +777,60 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
         surface: 'rendered',
         probe: () => expect(a.cost!.output).toEqual({ value: 40, reported: 2, of: 2 }),
       },
+      // issue #600 PR 2.
+      models: {
+        surface: 'rendered',
+        probe: () =>
+          expect(b.cost!.models).toEqual({ names: ['claude-x-20260101'], reported: 1, of: 1 }),
+      },
+      cache_requested: {
+        surface: 'rendered',
+        probe: () =>
+          expect(b.cost!.cache_requested).toEqual({
+            entries: [
+              {
+                value: 'lifetime',
+                lifetime_s: 3600,
+                ttl_sent: true,
+                source: 'stated',
+                by: 'realm agent',
+              },
+            ],
+            reported: 1,
+            of: 1,
+          }),
+      },
+      cache_write_5m: {
+        surface: 'rendered',
+        probe: () =>
+          expect(b.cost!.cache_write_5m).toEqual({
+            value: 70,
+            reported: 1,
+            of: 1,
+            only_request_index: 0,
+          }),
+      },
+      cache_write_1h: {
+        surface: 'rendered',
+        probe: () =>
+          expect(b.cost!.cache_write_1h).toEqual({
+            value: 5,
+            reported: 1,
+            of: 1,
+            only_request_index: 0,
+          }),
+      },
     } satisfies Record<keyof CostView, DisclosureRoute>;
+
+    // issue #600 PR 2: each field of one ask, as data.
+    const entry = (b.cost!.cache_requested as { entries: CacheRequestedEntry[] }).entries[0]!;
+    const CACHE_REQUESTED_ENTRY = {
+      value: { surface: 'rendered', probe: () => expect(entry.value).toBe('lifetime') },
+      lifetime_s: { surface: 'rendered', probe: () => expect(entry.lifetime_s).toBe(3600) },
+      ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
+      source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
+      by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm agent') },
+    } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
     const COST_FIGURE = {
       value: { surface: 'rendered', probe: () => expect(a.cost!.prompt!.value).toBe(900) },
@@ -635,7 +842,7 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
       },
     } satisfies Record<keyof CostFigure, DisclosureRoute>;
 
-    for (const registry of [ELEMENT, COST_VIEW, COST_FIGURE]) {
+    for (const registry of [ELEMENT, COST_VIEW, CACHE_REQUESTED_ENTRY, COST_FIGURE]) {
       for (const [field, route] of Object.entries(registry)) {
         if (route.surface === 'rendered') route.probe();
         else

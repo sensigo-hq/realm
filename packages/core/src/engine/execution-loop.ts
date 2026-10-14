@@ -18,6 +18,7 @@ import type {
   OutputSource,
 } from '../types/run-record.js';
 import { isBareAutoStep as isBareAutoStepDef } from './output-source.js';
+import { boundRequestFacts } from './request-facts.js';
 import { classifyStop, isRaceStop, type NotRecordedKind, type RaceStop } from './stop-kind.js';
 import type { ToolCallRecord } from '../types/mcp-types.js';
 import { extensionIdentityDiffers } from '../types/extension-identity.js';
@@ -1894,7 +1895,11 @@ function buildStepDiagnostics(
  * `cache_creation_input_tokens` already says. A future reader tempted to "fix" this omission
  * should read that citation first.
  */
-export function deriveCacheDetail(requests: UsageRecord[]): StepCacheDetail {
+export function deriveCacheDetail(input: UsageRecord[]): StepCacheDetail {
+  // issue #600 PR 2 (A3): the requests this returns — the ones the step's evidence stores — carry
+  // their free text (`model`, `cache_requested`, `cache_requested_source`, `cache_requested_by`,
+  // `provider`) bounded.
+  const requests = boundRequestFacts(input) as UsageRecord[];
   let readObserved = false;
   let writeObserved = false;
   let read = false;

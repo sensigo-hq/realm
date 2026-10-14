@@ -3,9 +3,13 @@
 import type { UsageRecord } from '@sensigo/realm';
 import {
   LlmProvider,
+  endpointOf,
+  responseModel,
   type ProviderCapabilities,
   type CallStepWithMetaResult,
 } from './llm-provider.js';
+// issue #600 PR 2 (B4): the OpenAI SDK's default address, OpenAI's one copy.
+import { OPENAI_DEFAULT_BASE_URL } from './openai-provider.js';
 import {
   buildSystemPrompt,
   extractJsonObject,
@@ -33,6 +37,8 @@ function toUsageRecord(
   index: number,
   requestStart: string,
   u: OpenAiReasoningUsage | undefined,
+  // issue #600 PR 2 (B3): what realm asked for and where it sent the request; spread in as given.
+  facts: Partial<UsageRecord> = {},
 ): UsageRecord {
   const num = (v: number | undefined): number | undefined =>
     typeof v === 'number' ? v : undefined;
@@ -49,6 +55,23 @@ function toUsageRecord(
     ...(cachedTokens !== undefined ? { cache_read_input_tokens: cachedTokens } : {}),
     ...(cacheWriteTokens !== undefined ? { cache_write_tokens: cacheWriteTokens } : {}),
     ...(num(u?.completion_tokens) !== undefined ? { output_tokens: u!.completion_tokens! } : {}),
+    ...facts,
+  };
+}
+
+/**
+ * Issue #600 PR 2 (B3) — what realm asked for on an o1 request, and where it sent it: the
+ * response's `model`, `provider_rules` (realm sends no cache field), the endpoint, and that OpenAI
+ * reports no lifetime split. Never `provider`: `realm agent` stamps that.
+ */
+function reasoningRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
+  const model = responseModel(response);
+  const endpoint = endpointOf(client, OPENAI_DEFAULT_BASE_URL);
+  return {
+    ...(model !== undefined ? { model } : {}),
+    cache_requested: 'provider_rules',
+    ...(endpoint !== undefined ? { endpoint } : {}),
+    cache_split_offered: false,
   };
 }
 
@@ -174,7 +197,12 @@ export class OpenAIReasoningProvider extends LlmProvider {
         messages: msgs,
       });
       requests.push(
-        toUsageRecord(requests.length, requestStart, readOpenAiReasoningUsage(response)),
+        toUsageRecord(
+          requests.length,
+          requestStart,
+          readOpenAiReasoningUsage(response),
+          reasoningRequestFacts(response, client),
+        ),
       );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };

@@ -68,6 +68,12 @@ export interface StubOptions {
     // of inventing one.
     prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
   };
+  /**
+   * Issue #600 PR 2 — the `model` the response names, as a real `ChatCompletion` does. Absent
+   * echoes the requested model; a real API answers with a dated id (`gpt-x` → `gpt-x-2026-01-01`),
+   * which this lets a cell script. `null` sends a response with no `model` field at all.
+   */
+  answeredModel?: string | null;
 }
 
 export interface OpenAiStub {
@@ -125,15 +131,20 @@ export async function startOpenAiStub(options: StubOptions): Promise<OpenAiStub>
           : {}),
       };
 
+      // Issue #600 PR 2: a real `ChatCompletion` names the model that answered.
+      const model =
+        options.answeredModel === null ? {} : { model: options.answeredModel ?? body.model };
       const payload =
         singleShot || alreadyToolAnswered
           ? {
+              ...model,
               choices: [
                 { message: { role: 'assistant', content: JSON.stringify(options.finalContent) } },
               ],
               usage: usagePayload,
             }
           : {
+              ...model,
               choices: [
                 {
                   message: {

@@ -7,7 +7,12 @@ import {
   type StructuredOutputMeta,
   type UsageRecord,
 } from '@sensigo/realm';
-import { ToolCapableLlmProvider, type ProviderCapabilities } from './llm-provider.js';
+import {
+  ToolCapableLlmProvider,
+  endpointOf,
+  responseModel,
+  type ProviderCapabilities,
+} from './llm-provider.js';
 import type {
   ToolCallRecord,
   ToolDefinition,
@@ -49,6 +54,30 @@ type Rec = Record<string, unknown>;
 const JSON_SCHEMA_NAME = 'realm_step_output';
 
 /**
+ * Issue #600 PR 2 (B4) — the OpenAI SDK's own default address (`openai` 6.48.0, `client.js:151`):
+ * a request through a client whose `baseURL` is anything else went to a custom endpoint. The o1
+ * provider imports this one; there is no second copy.
+ */
+export const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+
+/**
+ * Issue #600 PR 2 (B3) — what realm asked for on an OpenAI request, and where it sent it: the
+ * response's `model`, `provider_rules` (realm sends no cache field; OpenAI's own caching, if any,
+ * applies), the endpoint, and that OpenAI reports no lifetime split. Never `provider`: `realm
+ * agent` stamps that.
+ */
+function openAiRequestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
+  const model = responseModel(response);
+  const endpoint = endpointOf(client, OPENAI_DEFAULT_BASE_URL);
+  return {
+    ...(model !== undefined ? { model } : {}),
+    cache_requested: 'provider_rules',
+    ...(endpoint !== undefined ? { endpoint } : {}),
+    cache_split_offered: false,
+  };
+}
+
+/**
  * issue #600 PR 1a — the response's `usage` block, typed LOCALLY (the same reachable-but-untyped
  * discipline as the Anthropic sibling — `bounded` is `Promise<any>` at every create site here too).
  * Mirrors the installed SDK's `CompletionUsage` (`openai/resources/completions.d.ts:91-110/:140-154`):
@@ -78,6 +107,8 @@ function toUsageRecord(
   index: number,
   requestStart: string,
   u: OpenAiUsage | undefined,
+  // issue #600 PR 2 (B3): what realm asked for and where it sent the request; spread in as given.
+  facts: Partial<UsageRecord> = {},
 ): UsageRecord {
   const num = (v: number | undefined): number | undefined =>
     typeof v === 'number' ? v : undefined;
@@ -94,6 +125,7 @@ function toUsageRecord(
     ...(cachedTokens !== undefined ? { cache_read_input_tokens: cachedTokens } : {}),
     ...(cacheWriteTokens !== undefined ? { cache_write_tokens: cacheWriteTokens } : {}),
     ...(num(u?.completion_tokens) !== undefined ? { output_tokens: u!.completion_tokens! } : {}),
+    ...facts,
   };
 }
 
@@ -241,7 +273,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       }
       const requestStart = new Date().toISOString();
       const response = await bounded(opts);
-      requests.push(toUsageRecord(requests.length, requestStart, readOpenAiUsage(response)));
+      requests.push(
+        toUsageRecord(
+          requests.length,
+          requestStart,
+          readOpenAiUsage(response),
+          openAiRequestFacts(response, client),
+        ),
+      );
       return (response.choices[0]?.message?.content as string | undefined) ?? '';
     };
 
@@ -411,7 +450,14 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
       const timedCreate = async (o: Rec): Promise<Record<string, unknown>> => {
         const requestStart = new Date().toISOString();
         const response = await create(o);
-        requests.push(toUsageRecord(requests.length, requestStart, readOpenAiUsage(response)));
+        requests.push(
+          toUsageRecord(
+            requests.length,
+            requestStart,
+            readOpenAiUsage(response),
+            openAiRequestFacts(response, client),
+          ),
+        );
         return response as Record<string, unknown>;
       };
 

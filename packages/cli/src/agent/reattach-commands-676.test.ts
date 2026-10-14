@@ -82,7 +82,7 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
       // (a) red when that line is dropped or reworded; (b) prints the line after "Drive it with:".
       const lines = printed.join('\n').split('\n');
       expect(lines[lines.indexOf(line!) + 1]).toBe(
-        `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${run.id} shows the extension module the run loaded).`,
+        `Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect ${run.id} shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).`,
       );
     } finally {
       if (savedHome === undefined) delete process.env['HOME'];
@@ -284,6 +284,75 @@ describe('buildReattachFlags (issue #676)', () => {
   it('a value with a space is single-quoted', () => {
     expect(buildReattachFlags({ providerModule: './my providers/p.mjs' })).toBe(
       "--provider-module './my providers/p.mjs'",
+    );
+  });
+
+  // issue #600 PR 2 (C6, G22). (a) red when a given value is not repeated, or lands before
+  // --mint-writer-nonce; (b) prints the flags.
+  it('--prompt-cache, when given, is repeated after --mint-writer-nonce; never when not given', () => {
+    expect(buildReattachFlags({ model: 'm', mintWriterNonce: true, promptCache: '1h' })).toBe(
+      '--model m --mint-writer-nonce --prompt-cache 1h',
+    );
+    expect(buildReattachFlags({ model: 'm' })).toBe('--model m');
+    // The hidden flags are never printed, whatever the options carry.
+    const opts = {
+      model: 'm',
+      spawnedByListen: true,
+      releaseLineAdvisory: false,
+    } as unknown as Parameters<typeof buildReattachFlags>[0];
+    expect(buildReattachFlags(opts)).toBe('--model m');
+  });
+});
+
+// issue #600 PR 2 (C6, G22): the in-flight `Go on:` line (run-agent's goOnLine) carries the flags
+// built by buildReattachFlags, a stated --prompt-cache included. (a) red when the line drops it;
+// (b) prints the line.
+describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', () => {
+  it("a step another program holds: the line ends with the drive's own flags", async () => {
+    const def: WorkflowDefinition = {
+      id: 'go-on-600',
+      name: 'Go on 600',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { write: { description: 'Write', execution: 'agent' } },
+    };
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await store.claimStep(run.id, 'write', def, {
+      by: 'someone-else',
+      by_source: 'stated',
+      channel: 'run',
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      lines.push(a.join(' '));
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const flags = buildReattachFlags({ model: 'claude-x', promptCache: '1h' });
+    await runAgent(
+      {
+        store,
+        workflowStore: { register: async () => {}, get: async () => def, list: async () => [def] },
+        provider: new (class extends LlmProvider {
+          async callStep(): Promise<Record<string, unknown>> {
+            throw new Error('not called');
+          }
+        })(),
+        registry: new ExtensionRegistry(),
+        reattachFlags: flags,
+      } as unknown as AgentDeps,
+      {
+        definition: def,
+        params: {},
+        existingRunId: run.id,
+        inFlightPollMs: 5,
+        inFlightWatchMs: 20,
+      },
+    );
+    vi.restoreAllMocks();
+    expect(lines.find((l) => l.includes('Go on:'))).toBe(
+      `  Go on:     once 'write' is no longer in flight, realm agent --run-id ${run.id} --model claude-x --prompt-cache 1h`,
     );
   });
 });

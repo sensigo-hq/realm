@@ -13,6 +13,11 @@
 // `StepView.answers` — probed against the real `inspect` output, so a field added to any of them
 // fails to COMPILE here until it is routed to a screen or waived with a reason.
 //
+// Issue #600 PR 2 adds four `CostView` rows (`models`, `cache_requested`, `cache_write_5m`,
+// `cache_write_1h`) and the `CacheRequestedEntry` registry, rendered on both contexts with no waiver;
+// the two lifetime splits are probed on a fixture where the written lifetime differs from the one
+// asked, the only place their text appears.
+//
 // Waivers are allowed only here and on the mcp `drive_failure_costs` twin (context 4), for
 // `basis`/`state` (a drive failure's usage carries no classification — `composeDriveFailureCosts`
 // never sets either) and, on THIS context only, `CostFigure.only_request_index` (the failure line
@@ -32,6 +37,7 @@ import type {
   ClaimRecord,
   Attributed,
   AnswerView,
+  CacheRequestedEntry,
 } from '@sensigo/realm';
 
 type DisclosureRoute =
@@ -250,6 +256,58 @@ const oldGateAnswer = {
   evidence_hash: 'g4',
 };
 
+// issue #600 PR 2: three steps whose one request carries the request facts. `asked_1h_step` asked
+// for 1h and its write was kept for 5m; `asked_5m_step` asked for 5m and its write was kept for 1h —
+// the two mismatch fixtures, where the splits' text appears. `asked_off_step` asked for nothing.
+const askedStep = (stepId: string, request: Record<string, unknown>) => ({
+  step_id: stepId,
+  kind: 'execution' as const,
+  status: 'success' as const,
+  started_at: '2026-01-01T00:00:00.000Z',
+  completed_at: '2026-01-01T00:00:01.000Z',
+  duration_ms: 10,
+  input_summary: {},
+  output_summary: {},
+  evidence_hash: `h-${stepId}`,
+  diagnostics: {
+    input_token_estimate: 1,
+    precondition_trace: [],
+    cache: {
+      state: 'write_only' as const,
+      basis: 'provider_reported' as const,
+      requests: [{ request_index: 0, request_start: '2026-01-01T00:00:00.000Z', ...request }],
+    },
+  },
+});
+const asked1hStep = askedStep('asked_1h_step', {
+  model: 'claude-x-20260101',
+  cache_requested: 'lifetime',
+  cache_lifetime_s: 3600,
+  cache_ttl_sent: true,
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  provider: 'anthropic',
+  cache_creation_input_tokens: 70,
+  cache_creation: { ephemeral_5m_input_tokens: 70 },
+});
+const asked5mStep = askedStep('asked_5m_step', {
+  model: 'claude-y-20260101',
+  cache_requested: 'lifetime',
+  cache_lifetime_s: 300,
+  cache_ttl_sent: false,
+  cache_requested_source: 'runner_default',
+  cache_requested_by: 'realm listen',
+  provider: 'anthropic',
+  cache_creation_input_tokens: 30,
+  cache_creation: { ephemeral_1h_input_tokens: 30 },
+});
+const askedOffStep = askedStep('asked_off_step', {
+  cache_requested: 'off',
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  provider: 'anthropic',
+});
+
 const contextOneRun = {
   id: 'run_ctx1',
   workflow_id: 'wf',
@@ -281,6 +339,9 @@ const contextOneRun = {
     gateStepAnswer,
     oldGateExecution,
     oldGateAnswer,
+    asked1hStep,
+    asked5mStep,
+    askedOffStep,
   ],
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:01.000Z',
@@ -321,7 +382,47 @@ const STEP_LINE_COST_VIEW = {
     probe: (out) =>
       expect(out).toContain('at least 42 output tokens (1 of 2 requests reported output)'),
   },
+  // issue #600 PR 2.
+  models: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('| model claude-x-20260101 |'),
+  },
+  cache_requested: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain('request); asked for 1h (sent as 1h; stated on realm agent)'),
+  },
+  cache_write_5m: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain('; 70 of the tokens written were kept for 5m, not the 1h asked'),
+  },
+  cache_write_1h: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain('; 30 of the tokens written were kept for 1h, not the 5m asked'),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
+
+// issue #600 PR 2: each field of one ask, on the step line.
+const STEP_LINE_CACHE_REQUESTED_ENTRY = {
+  value: {
+    surface: 'rendered',
+    // `off` reads as its own words; `lifetime` and `provider_rules` read otherwise.
+    probe: (out) => expect(out).toContain('; asked for no caching (stated on realm agent)'),
+  },
+  lifetime_s: { surface: 'rendered', probe: (out) => expect(out).toContain('; asked for 5m (') },
+  ttl_sent: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain("(the provider's default lifetime; realm listen's default)"),
+  },
+  source: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain("; realm listen's default)"),
+  },
+  by: { surface: 'rendered', probe: (out) => expect(out).toContain('stated on realm agent') },
+} satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
 const STEP_LINE_COST_FIGURE = {
   value: { surface: 'rendered', probe: (out) => expect(out).toContain('700 prompt tokens') },
@@ -407,6 +508,7 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
   it('every registry waives nothing', () => {
     const registries: Record<string, DisclosureRoute>[] = [
       STEP_LINE_COST_VIEW,
+      STEP_LINE_CACHE_REQUESTED_ENTRY,
       STEP_LINE_COST_FIGURE,
       STEP_LINE_ATTEMPT_VIEW,
       STEP_LINE_STEP_VIEW,
@@ -421,6 +523,7 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
     const out = await inspectRun('run_ctx1', makeStore(contextOneRun), workflowStore);
     for (const registry of [
       STEP_LINE_COST_VIEW,
+      STEP_LINE_CACHE_REQUESTED_ENTRY,
       STEP_LINE_COST_FIGURE,
       STEP_LINE_ATTEMPT_VIEW,
       STEP_LINE_STEP_VIEW,
@@ -430,6 +533,29 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
         if (route.surface === 'rendered') route.probe(out);
         else throw new Error(`unexpected waiver for '${field}'`);
       }
+    }
+  });
+
+  // issue #600 PR 2 (A5, G26): a fact with no readable value is carried as data by get_run_state
+  // (the mcp twin's cell) and WITHHELD here — the `driven_by` precedent: an absence word on every
+  // older step would be a line of noise. (a) red when inspect prints the cause; (b) prints the two
+  // step lines.
+  it("guard: the request facts' absence by cause is WITHHELD on this surface", async () => {
+    const run = {
+      ...contextOneRun,
+      evidence: [
+        // Written by 0.47.0: no provider, so the cause is predates_request_facts.
+        askedStep('old_step', { prompt_tokens: 5 }),
+        // Driven by realm, the model refused at read: none_readable.
+        askedStep('refused_step', { prompt_tokens: 5, provider: 'anthropic', model: 'x\u001by' }),
+      ],
+    } as unknown as RunRecord;
+    const out = await inspectRun('run_ctx1', makeStore(run), workflowStore);
+    const lines = out.split('\n').filter((l) => l.includes('Diagnostics: '));
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line).toMatch(/\| cache: [^;|]*\)$/);
+      expect(line).not.toMatch(/predates|none_readable|model|asked/);
     }
   });
 });
@@ -584,9 +710,57 @@ const ENTRY_B = {
   message: 'connection reset',
   elapsed_ms: 300,
   usage: [
-    { request_index: 0, request_start: '2026-01-01T00:04:59.000Z', uncached_input_tokens: 60 },
+    {
+      request_index: 0,
+      request_start: '2026-01-01T00:04:59.000Z',
+      uncached_input_tokens: 60,
+      // issue #600 PR 2: the request facts; asked for 1h, the write kept for 5m (a mismatch).
+      model: 'claude-x-20260101',
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 3600,
+      cache_ttl_sent: true,
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      provider: 'anthropic',
+      cache_creation: { ephemeral_5m_input_tokens: 70 },
+    },
   ],
 };
+// issue #600 PR 2: asked for 5m by listen's default, the write kept for 1h (the other mismatch).
+const ENTRY_C = {
+  at: '2026-01-01T00:06:00.000Z',
+  step: 'classify',
+  provider: 'anthropic',
+  error_class: 'other' as const,
+  message: 'connection reset',
+  elapsed_ms: 300,
+  usage: [
+    {
+      request_index: 0,
+      request_start: '2026-01-01T00:05:59.000Z',
+      prompt_tokens: 12,
+      model: 'claude-y-20260101',
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 300,
+      cache_ttl_sent: false,
+      cache_requested_source: 'runner_default',
+      cache_requested_by: 'realm listen',
+      provider: 'anthropic',
+      cache_creation: { ephemeral_1h_input_tokens: 30 },
+    },
+    {
+      request_index: 1,
+      request_start: '2026-01-01T00:05:59.500Z',
+      cache_requested: 'off',
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      provider: 'anthropic',
+    },
+  ],
+};
+// The second entry of ENTRY_C asks for no caching, so ENTRY_C has two asks and no mismatch clause;
+// ENTRY_D asks once, the mismatch fixture for the 1h split.
+const ENTRY_D = { ...ENTRY_C, at: '2026-01-01T00:07:00.000Z', usage: [ENTRY_C.usage[0]] };
 
 const contextTwoRun = {
   id: 'run_ctx2',
@@ -603,7 +777,11 @@ const contextTwoRun = {
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
   terminal_state: false,
-  drive_failures: { first_failed_at: ENTRY_A.at, total: 2, entries: [ENTRY_A, ENTRY_B] },
+  drive_failures: {
+    first_failed_at: ENTRY_A.at,
+    total: 4,
+    entries: [ENTRY_A, ENTRY_B, ENTRY_C, ENTRY_D],
+  },
 } as unknown as RunRecord;
 
 const FAILURE_COST_VIEW = {
@@ -637,7 +815,51 @@ const FAILURE_COST_VIEW = {
     surface: 'rendered',
     probe: (out) => expect(out).toContain('40 output tokens (totals across 2 requests)'),
   },
+  // issue #600 PR 2.
+  models: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('cache not reported; model claude-x-20260101; asked'),
+  },
+  cache_requested: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain(
+        '; model claude-x-20260101; asked for 1h (sent as 1h; stated on realm agent)',
+      ),
+  },
+  cache_write_5m: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain('; 70 of the tokens written were kept for 5m, not the 1h asked'),
+  },
+  cache_write_1h: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain('; 30 of the tokens written were kept for 1h, not the 5m asked'),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
+
+// issue #600 PR 2: each field of one ask, on the failure line.
+const FAILURE_CACHE_REQUESTED_ENTRY = {
+  value: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain(', then asked for no caching (stated on realm agent)'),
+  },
+  lifetime_s: { surface: 'rendered', probe: (out) => expect(out).toContain('; asked for 5m (') },
+  ttl_sent: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain("(the provider's default lifetime; realm listen's default)"),
+  },
+  source: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain("; realm listen's default)"),
+  },
+  by: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('(sent as 1h; stated on realm agent)'),
+  },
+} satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
 const FAILURE_COST_FIGURE = {
   value: { surface: 'rendered', probe: (out) => expect(out).toContain('900 prompt tokens') },
@@ -669,11 +891,20 @@ describe('#600 PR 1b (D4) — context 2, the failure block', () => {
       .map(([f]) => f)
       .sort();
     expect(waivedFigure).toEqual(['only_request_index']);
+    expect(
+      Object.values(FAILURE_CACHE_REQUESTED_ENTRY as Record<string, DisclosureRoute>).filter(
+        (r) => r.surface === 'waived',
+      ),
+    ).toEqual([]);
   });
 
   it('runs every field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_ctx2', makeStore(contextTwoRun), workflowStore);
-    for (const registry of [FAILURE_COST_VIEW, FAILURE_COST_FIGURE]) {
+    for (const registry of [
+      FAILURE_COST_VIEW,
+      FAILURE_CACHE_REQUESTED_ENTRY,
+      FAILURE_COST_FIGURE,
+    ]) {
       for (const [field, route] of Object.entries(registry)) {
         if (route.surface === 'rendered') route.probe(out);
         else

@@ -292,6 +292,9 @@ describe('composeDriveFailureCosts', () => {
     expect(composeDriveFailureCosts(run)[0]!.cost).toEqual({
       requests: 1,
       prompt: { value: 5, reported: 1, of: 1, only_request_index: 0 },
+      // issue #600 PR 2 (A5): the request carries no `provider`, so both facts predate PR 2.
+      models: { absent_cause: 'predates_request_facts' },
+      cache_requested: { absent_cause: 'predates_request_facts' },
     });
   });
 });
@@ -512,6 +515,149 @@ describe('composeStepViews — issue #625: answers', () => {
     expect(composeStepViews(run)['gate_step']!.answers![0]!.answered_by).toEqual({
       by: 'timeout',
       by_source: 'stated',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// issue #600 PR 2 (A4, A5): the request facts on the composed `CostView`. On a failing CI host each
+// cell prints the composed fields: test values only.
+// ---------------------------------------------------------------------------------------------
+describe('composeCostView — the request facts (issue #600 PR 2)', () => {
+  const ESC_MODEL = 'claude-\u001b[31mx';
+
+  // G13. (a) red when composeCostView reads `model` without `readStoredName`; (b) prints `models`.
+  it('a stored model that readStoredName refuses is not named, and not counted as reported', () => {
+    const view = composeCostView([
+      req({ model: 'claude-x-20260101' }, 0),
+      req({ model: ESC_MODEL }, 1),
+      req({ model: 'claude-x-20260101\n' }, 2),
+    ]);
+    expect(view!.models).toEqual({ names: ['claude-x-20260101'], reported: 2, of: 3 });
+  });
+
+  // G13, through the run record: a record written by hand (or an older build) is read the same way.
+  it('a run record written directly with a bad model renders none through composeStepViews', () => {
+    const run = makeRun([
+      {
+        step_id: 's',
+        status: 'success',
+        attempt: 1,
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: {
+            state: 'unobservable',
+            basis: 'unobservable',
+            requests: [req({ model: ESC_MODEL, provider: 'anthropic', cache_requested: 'off' })],
+          },
+        },
+      },
+    ]);
+    const cost = composeStepViews(run)['s']?.attempts[0]?.cost;
+    expect({ models: cost?.models, asked: cost?.cache_requested }).toEqual({
+      models: { absent_cause: 'none_readable' },
+      asked: { entries: [{ value: 'off' }], reported: 1, of: 1 },
+    });
+  });
+
+  // G26. (a) red when the two causes are swapped; (b) prints the two absences.
+  it("A5: 'predates_request_facts' without provider, 'none_readable' with it (a refused model included)", () => {
+    const old = composeCostView([req({ prompt_tokens: 5 })]);
+    const driven = composeCostView([req({ prompt_tokens: 5, provider: 'module:p.mjs' })]);
+    const refused = composeCostView([req({ model: ESC_MODEL, provider: 'anthropic' })]);
+    expect({
+      old: [old!.models, old!.cache_requested],
+      driven: [driven!.models, driven!.cache_requested],
+      refused: refused!.models,
+    }).toEqual({
+      old: [{ absent_cause: 'predates_request_facts' }, { absent_cause: 'predates_request_facts' }],
+      driven: [{ absent_cause: 'none_readable' }, { absent_cause: 'none_readable' }],
+      refused: { absent_cause: 'none_readable' },
+    });
+    // No requests: no request facts at all.
+    expect(composeCostView([])).toEqual({ requests: 0 });
+  });
+
+  // A4. (a) red when entries are not distinct, lose their order, or keep a refused `by`; (b) prints
+  // `cache_requested`.
+  it('cache_requested: the distinct asks in request order, each field kept by its own rule', () => {
+    const view = composeCostView([
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: 3600,
+          cache_ttl_sent: true,
+          cache_requested_source: 'runner_default',
+          cache_requested_by: 'realm listen',
+        },
+        0,
+      ),
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: 300,
+          cache_ttl_sent: false,
+          cache_requested_source: 'stated',
+          cache_requested_by: 'realm agent',
+        },
+        1,
+      ),
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: 3600,
+          cache_ttl_sent: true,
+          cache_requested_source: 'runner_default',
+          cache_requested_by: 'realm listen',
+        },
+        2,
+      ),
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: -5,
+          cache_ttl_sent: 'yes',
+          cache_requested_source: 7,
+          cache_requested_by: 'x\u001by',
+        },
+        3,
+      ),
+      req({ prompt_tokens: 1 }, 4),
+    ]);
+    expect(view!.cache_requested).toEqual({
+      entries: [
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+        },
+        {
+          value: 'lifetime',
+          lifetime_s: 300,
+          ttl_sent: false,
+          source: 'stated',
+          by: 'realm agent',
+        },
+        { value: 'lifetime', lifetime_s: -5 },
+      ],
+      reported: 4,
+      of: 5,
+    });
+  });
+
+  // A4. (a) red when the split is not summed from `cache_creation`; (b) prints the two figures.
+  it('cache_write_5m and cache_write_1h are summed from the cache_creation split, as CostFigures', () => {
+    const view = composeCostView([
+      req({ cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 0 } }, 0),
+      req({ cache_creation: { ephemeral_5m_input_tokens: 2 } }, 1),
+      req({ prompt_tokens: 1 }, 2),
+    ]);
+    expect({ m5: view!.cache_write_5m, h1: view!.cache_write_1h }).toEqual({
+      m5: { value: 42, reported: 2, of: 3 },
+      h1: { value: 0, reported: 1, of: 3, only_request_index: 0 },
     });
   });
 });

@@ -111,6 +111,8 @@ export type {
  * whole cli suite green.
  */
 export { deriveCacheDetail } from './engine/execution-loop.js';
+// issue #600 PR 2 (A3): the names a request record carries, bounded where the record is written.
+export { boundRequestFacts } from './engine/request-facts.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,
@@ -366,6 +368,9 @@ export {
 export type {
   CostFigure,
   CostView,
+  CostModels,
+  CostCacheRequested,
+  CacheRequestedEntry,
   CostUnrecordedCause,
   AttemptView,
   AnswerView,
@@ -389,7 +394,10 @@ export type { PreconditionResult } from './engine/precondition.js';
 export type { StepDiagnostics } from './types/run-record.js';
 // issue #600 PR 1a (D4): CACHE_STATES/CACHE_BASES/CacheState/CacheBasis/UsageRecord/StepCacheDetail
 // are already re-exported here via the top-of-file `export * from './types/run-record.js'` — the
-// wildcard is the export; this comment exists so a reader checking D4's requirement finds it.
+// wildcard is the export; this comment exists so a reader checking D4's requirement finds it. Issue
+// #600 PR 2's vocabularies — PROMPT_CACHE_SETTINGS, PROMPT_CACHE_LIFETIMES, CACHE_REQUESTS,
+// CACHE_REQUEST_SOURCES, REQUEST_ENDPOINTS, REQUEST_FACT_ABSENT_CAUSES and their types — are
+// re-exported the same way, beside CACHE_STATES.
 export { VERSION } from './version.js';
 // The release mark (issue #620 PR-B): every class a realm package exports carries one, so copies of
 // the same release recognise each other's objects.

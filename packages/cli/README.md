@@ -103,7 +103,7 @@ both exported from `@sensigo/realm-cli/agent`.
 Custom provider modules are user-supplied code executed in the same process as `realm agent`.
 Only use modules you trust.
 
-`--provider-module` cannot be combined with `--provider`, `--model`, or `--base-url`.
+`--provider-module` cannot be combined with `--provider`, `--model`, `--base-url`, `--strict-base-url` or `--prompt-cache`.
 
 ## Programmatic extension
 

@@ -18,10 +18,17 @@ import {
   describeForeignProvider,
   unbrandedClause,
   shellWord,
+  getWorkflowForRun,
 } from '@sensigo/realm';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
-import type { RunStore, WorkflowDefinition, ExtensionRegistry, Attributed } from '@sensigo/realm';
+import type {
+  RunStore,
+  WorkflowDefinition,
+  ExtensionRegistry,
+  Attributed,
+  PromptCacheSetting,
+} from '@sensigo/realm';
 import {
   LlmProvider,
   checkProviderFlags,
@@ -30,6 +37,12 @@ import {
 } from '../agent/providers/llm-provider.js';
 import type { ProviderName } from '../agent/providers/llm-provider.js';
 import { runAgent } from '../agent/run-agent.js';
+import {
+  cacheableStepCounts,
+  parsePromptCache,
+  providerName,
+  resolvePromptCache,
+} from '../agent/prompt-cache.js';
 import { resolveRunAttach } from '../agent/run-attach.js';
 import {
   loadProjectExtensions,
@@ -130,9 +143,11 @@ const SCHEMA_RETRIES_DEFAULT = 2;
  * blocked again. Repeated, each when given: `--provider-module <path>`, or `--provider`, `--model`,
  * `--base-url`, `--strict-base-url`; then `--extensions-module`, `--project`, `--schema-retries`
  * (only when it differs from its default, so the command never shows a value nobody typed),
- * `--llm-timeout` and `--mint-writer-nonce`. Left out: `--workflow`, `--params` and `--register`
- * (they apply only when a run is created) and the hidden `--no-release-line-advisory` (listen's
- * own). A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
+ * `--llm-timeout`, `--mint-writer-nonce` and `--prompt-cache` (issue #600 PR 2: only when it was
+ * stated and the provider can apply it — there is no Commander default, so a default is never
+ * repeated). Left out: `--workflow`, `--params` and `--register` (they apply only when a run is
+ * created) and the hidden `--no-release-line-advisory` and `--spawned-by-listen` (listen's own).
+ * A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
  *
  * @internal Exported for testing only.
  */
@@ -147,6 +162,7 @@ export function buildReattachFlags(opts: {
   schemaRetries?: number;
   llmTimeout?: number;
   mintWriterNonce?: boolean;
+  promptCache?: string;
 }): string {
   const words: string[] = [];
   if (opts.providerModule !== undefined) {
@@ -166,6 +182,7 @@ export function buildReattachFlags(opts: {
   }
   if (opts.llmTimeout !== undefined) words.push('--llm-timeout', String(opts.llmTimeout));
   if (opts.mintWriterNonce === true) words.push('--mint-writer-nonce');
+  if (opts.promptCache !== undefined) words.push('--prompt-cache', shellWord(opts.promptCache));
   return words.join(' ');
 }
 
@@ -237,10 +254,21 @@ export const agentCommand = new Command('agent')
     // `declared_per_attempt_ms: 600000` for a value nobody chose. Unset means unset, which is
     // what lets the recorded provenance tell a declaration from a fallback.
   )
+  // issue #600 PR 2: no Commander default — an unstated flag must stay unstated, so the drive can
+  // record `runner_default` and the re-attach command never repeats a value nobody typed.
+  .option(
+    '--prompt-cache <setting>',
+    'What Anthropic is asked to cache: off, 5m or 1h. Default 5m (1h when realm listen starts the agent). Other providers are asked for no caching.',
+    parsePromptCache,
+  )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
   // spawns (buildAgentArgv): listen tells the operator once at startup, so a child per webhook
   // must not repeat the release-line advisory. Hidden because it is listen's, not an operator's.
   .addOption(new Option('--no-release-line-advisory').hideHelp())
+  // issue #600 PR 2: listen's own, never an operator's. `realm listen` appends it to every child it
+  // spawns (buildAgentArgv), so the child's default caching lifetime is listen's (1h), its runner is
+  // recorded as `realm listen`, and a setting it cannot apply is disclosed, not refused.
+  .addOption(new Option('--spawned-by-listen').hideHelp())
   .action(
     async (opts: {
       workflow?: string;
@@ -257,6 +285,8 @@ export const agentCommand = new Command('agent')
       mintWriterNonce?: boolean;
       schemaRetries: number;
       llmTimeout: number;
+      promptCache?: PromptCacheSetting;
+      spawnedByListen?: boolean;
       releaseLineAdvisory: boolean;
     }) => {
       // issue #625 (holder slice): this program's name, made once, before any other output. A name
@@ -276,6 +306,29 @@ export const agentCommand = new Command('agent')
         );
         process.exit(1);
       }
+      // The closing sentence of every refusal below: what happened to the run, which only this
+      // command knows.
+      const tail =
+        opts.runId !== undefined
+          ? `If run ${opts.runId} exists, it was not changed.`
+          : 'Nothing was started.';
+      // issue #600 PR 2 (C1): the caching setting, resolved once — the provider is built with it
+      // and the drive's start line names it.
+      const promptCache = resolvePromptCache({
+        flag: opts.promptCache,
+        spawnedByListen: opts.spawnedByListen === true,
+      });
+      // issue #600 PR 2 (C3e): a stated setting the workflow has no step to apply to is refused
+      // (an operator's `realm agent` only: listen's flag is fleet-wide and cannot be judged per
+      // workflow, so its child discloses instead).
+      const refuseInertPromptCache = (definition: WorkflowDefinition): void => {
+        if (opts.promptCache === undefined || opts.spawnedByListen === true) return;
+        if (cacheableStepCounts(definition).singleShot > 0) return;
+        console.error(
+          `Error: --prompt-cache has nothing to apply to: workflow '${definition.id}' has no agent step that sends its instructions in one request (steps that call tools are not cached yet), so the flag would change nothing. Remove --prompt-cache; it applies once the workflow has an agent step without tools. ${tail}`,
+        );
+        process.exit(1);
+      };
       try {
         const workflowStore = new JsonWorkflowStore();
         const store = new JsonFileStore();
@@ -296,10 +349,11 @@ export const agentCommand = new Command('agent')
             opts.provider !== undefined ||
             opts.model !== undefined ||
             opts.baseUrl !== undefined ||
-            opts.strictBaseUrl === true
+            opts.strictBaseUrl === true ||
+            opts.promptCache !== undefined
           ) {
             console.error(
-              'Error: --provider-module cannot be combined with --provider, --model, --base-url, or --strict-base-url',
+              'Error: --provider-module cannot be combined with --provider, --model, --base-url, --strict-base-url, or --prompt-cache',
             );
             process.exit(1);
           }
@@ -346,10 +400,6 @@ export const agentCommand = new Command('agent')
             env: readProviderKeys(),
           });
           if (!flags.ok) {
-            const tail =
-              opts.runId !== undefined
-                ? `If run ${opts.runId} exists, it was not changed.`
-                : 'Nothing was started.';
             console.error(`Error: ${flags.message} ${tail}`);
             process.exit(1);
           }
@@ -362,13 +412,41 @@ export const agentCommand = new Command('agent')
                 'COMPAT endpoint enforces strict, and native OpenAI endpoints already do.',
             );
           }
-          provider = await resolveProvider(
-            opts.provider,
-            opts.model,
-            opts.baseUrl,
-            opts.strictBaseUrl === true,
-          );
+          provider = await resolveProvider({
+            provider: opts.provider,
+            model: opts.model,
+            baseUrl: opts.baseUrl,
+            strictBaseUrl: opts.strictBaseUrl === true,
+            promptCache,
+          });
+          // issue #600 PR 2 (C3b): a stated setting for a provider that cannot apply it is refused,
+          // keyed on the capability, never on a provider's name. A child `realm listen` started is
+          // never refused: listen's flag is fleet-wide, so the child's start line discloses it.
+          const caps = provider.capabilities();
+          if (
+            opts.promptCache !== undefined &&
+            opts.spawnedByListen !== true &&
+            caps.promptCache === undefined
+          ) {
+            console.error(
+              `Error: --prompt-cache sets caching only for Anthropic; Realm asks ${providerName(caps, 'this provider')} for no caching, so the flag would change nothing. Remove --prompt-cache, or use --provider anthropic with an Anthropic model. ${tail}`,
+            );
+            process.exit(1);
+          }
         }
+        // issue #600 PR 2 (C6): the re-attach command repeats a stated setting only when this
+        // provider applies it — a listen child that picked OpenAI was given the flag, and repeating
+        // it would print a command C3b refuses.
+        const { promptCache: statedPromptCache, ...otherFlags } = opts;
+        const reattachFlags = buildReattachFlags({
+          ...otherFlags,
+          ...(statedPromptCache !== undefined && provider.capabilities().promptCache !== undefined
+            ? { promptCache: statedPromptCache }
+            : {}),
+        });
+        // issue #600 PR 2: the setting the provider was built with, for the start line. A
+        // `--provider-module` run has none: the module asks for what it asks.
+        const promptCacheForDrive = moduleProviderId === undefined ? { promptCache } : {};
         // `realm agent` is operator-launched: cwd is a legitimate deployment-root default.
         const projectDir = resolve(opts.project ?? process.cwd());
         const extensionOpts = {
@@ -382,6 +460,22 @@ export const agentCommand = new Command('agent')
         let result: import('../agent/run-agent.js').AgentRunResult;
 
         if (opts.runId !== undefined) {
+          // issue #600 PR 2 (C3e), BEFORE resolveRunAttach, which can write (it re-opens a run that
+          // ended with extensions_load_failed). Reads only, and only when the flag was stated. A read
+          // that fails leaves the judgement to resolveRunAttach, which raises its own error, so an
+          // unreadable run or definition fails exactly as it does without the flag.
+          if (opts.promptCache !== undefined && opts.spawnedByListen !== true) {
+            const stated = await store
+              .get(opts.runId)
+              .then((run) =>
+                getWorkflowForRun(workflowStore, run, {
+                  retryVerb: 're-attach',
+                  verb: 're-attach',
+                }),
+              )
+              .catch(() => undefined);
+            if (stated !== undefined) refuseInertPromptCache(stated);
+          }
           // --run-id path: attach to existing run, load definition from store.
           // resolveRunAttach loads project extensions + manifest BEFORE the run is claimed
           // and carries the extensions_load_failed write / re-attach semantics.
@@ -415,7 +509,8 @@ export const agentCommand = new Command('agent')
               // always supplies a value (the option's own default), so this is never undefined.
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
-              reattachFlags: buildReattachFlags(opts),
+              reattachFlags,
+              ...promptCacheForDrive,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
@@ -437,6 +532,8 @@ export const agentCommand = new Command('agent')
               ? inputPath
               : join(inputPath, 'workflow.yaml');
           const definition = loadWorkflowFromFile(filePath);
+          // issue #600 PR 2 (C3e): before params, extensions and the run.
+          refuseInertPromptCache(definition);
 
           // issue #586: apply a declared `params_schema` BEFORE the run is created (the run is
           // minted inside `runAgent` below). No local catch: the outer catch already renders a
@@ -486,7 +583,8 @@ export const agentCommand = new Command('agent')
               // always supplies a value (the option's own default), so this is never undefined.
               schemaRetries: opts.schemaRetries,
               llmTimeoutSeconds: opts.llmTimeout,
-              reattachFlags: buildReattachFlags(opts),
+              reattachFlags,
+              ...promptCacheForDrive,
               ...(gateHandler ? { gateHandler } : {}),
               ...(loaded.secretValues !== undefined
                 ? { redactionValues: loaded.secretValues }
