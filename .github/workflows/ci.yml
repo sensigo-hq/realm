@@ -77,3 +77,22 @@ jobs:
       # dist it reds on a wall of TS2307 even with every fix in place. (`lint` survives beside it
       # only because typescript-eslint doesn't surface TS2307.) ~9-11s.
       - run: npm run typecheck:tests
+
+  # Every package says it runs on Node 22 or later (`engines`), but the job above tests Node 24
+  # only, so a break on Node 22 would ship unseen. This job runs the whole test suite on Node 22.
+  # 22.22.3 is the oldest Node 22 that the SQLite store of issue #616 will run on. It is a job of
+  # its own, not a matrix entry on the job above: the main branch's rules require a check named
+  # exactly `ci`, and a matrix would rename it.
+  node22:
+    runs-on: ubuntu-latest
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.3'
+          cache: 'npm'
+      - run: npm ci
+      # `npm run test` builds the four packages first (turbo.json), so no separate build step.
+      - run: npm run test
