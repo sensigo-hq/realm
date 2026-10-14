@@ -185,6 +185,8 @@ A reference is allowed only in a string under `config`: in an adapter, handler o
 | `dotenv` | The file, which holds one `NAME=value` a line. |
 | `env`    | The environment of the Realm process.          |
 
+In the `dotenv` file, a value in quotes (`'…'`, `"…"` or `` `…` ``) may span lines. A carriage return written in the file is read as a line break. Inside `"…"`, `\n` and `\r` are read as a line break and a carriage return, also after another backslash: `\\n` is a backslash and a line break. In a quoted value, every other character is kept as written: `\"` stays two characters, and so does `\\` unless `n` or `r` follows it.
+
 The first source that has the name gives the value. With `SHOP_TOKEN=tok_from_dotenv` in `.env`:
 
 | `sources`       | `SHOP_TOKEN` in the environment | Value used        |
@@ -233,7 +235,16 @@ Valid: show v1 (1 step)
 
 ### Secret values in messages
 
-When a function that builds an entry throws, Realm replaces every secret value of 4 or more characters in the message with `[redacted]`. With `SHOP_TOKEN=secret-value-123` and a function that throws `bad token ${config.token}`:
+When a function that builds an entry throws, Realm replaces every secret value of 4 or more characters in the message with `[redacted]`, and also the forms these programs print it in:
+
+- JSON-escaped, as JavaScript's `JSON.stringify`, Python's `json.dumps` (every non-ASCII character as `\uXXXX`), Go's `json.Marshal`, PHP's `json_encode` (without its `JSON_HEX_…` flags), Perl's `JSON::PP`, jq's `tojson`, Newtonsoft.Json, Gson, System.Text.Json and Jackson write it, and inside another JSON string;
+- in quotes with backslash escapes, as Python's `repr()`, `ascii()`, `unicode_escape` and `repr()` of bytes, Node's `util.inspect` (`console.log` of an object), PHP's `var_export` and `addslashes`, Perl's `Data::Dumper`, Go's `%q`, `%#v` and `%+q`, Rust's `{:?}` and `escape_default()`, Ruby's `inspect`, PyYAML's and js-yaml's double-quoted strings, Windows argument quoting (Python's `subprocess.list2cmdline`) and bash's `declare -p` write it, and with each `"` written `\"`;
+- shell-quoted, as bash's xtrace, `${v@Q}` and `printf %q`, jq's `@sh`, Python's `shlex.quote` and BusyBox ash's xtrace write it; and with each `'` doubled (YAML single-quoted strings, SQL quoting), each `"` doubled (CSV quoting) or each `$` doubled (Makefiles, Compose files);
+- with HTML or XML escaping, as Python's `html.escape` and `xml.sax.saxutils`, .NET's `SecurityElement.Escape`, jq's `@html`, lodash's `_.escape`, Ruby's `CGI.escapeHTML`, Go's `html.EscapeString` and PHP's `htmlspecialchars` write it;
+- percent-encoded with upper-case hex, as JavaScript's `encodeURIComponent` and `encodeURI`, Node's `querystring.escape`, `URLSearchParams` and `URL`, Python's `quote`, `quote_plus` and `urlencode`, Java's `URLEncoder`, jq's `@uri`, PHP's `urlencode` and Go's `url.QueryEscape`, `url.PathEscape` and `url.UserPassword` write it;
+- in base64 and base64url, also when other text was encoded with it (the forms GitHub's runner and Jenkins mask, and, when its base64 ends in `=` padding, each without its last character), and in lower- or upper-case hex.
+
+It also replaces each line of a multi-line value that has 8 or more characters and no spaces or other blank characters. For every value, it also hides, in the same forms, the value with these escapes read, when that has 8 or more characters: `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, `\\`, `\"`, `\uXXXX` and `\xHH` (a value that ends in a lone `\` has no such reading); and each line of that which has 8 or more characters and no spaces or other blank characters. It also hides a secret's parts, as [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded) lists them. In base64 and base64url, a value of 6 bytes or fewer that was encoded together with other text is hidden at some positions and not at others. It leaves alone what that page lists as left alone. With `SHOP_TOKEN=secret-value-123` and a function that throws `bad token ${config.token}`:
 
 ```text
 Error loading extensions: Deployment manifest '/srv/shop/realm.yaml': constructing handlers.show (use: ./handlers.mjs#makeStrict) failed: bad token [redacted]
@@ -291,7 +302,7 @@ The full-path case was run: after `/var/abs.env` changed, the next run still rec
 
 ## What a run records
 
-Each run records the path of the `realm.yaml` it used, a hash of the file's bytes, and the names of the secrets it referred to. Values are not recorded.
+Each run records the path of the `realm.yaml` it used, a hash of the file's bytes, and the names of the secrets it referred to. Values are not recorded there (a value passed as a run's param is kept: see [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded)).
 
 ```json
 {

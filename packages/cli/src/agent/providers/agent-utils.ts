@@ -1,5 +1,6 @@
 // agent-utils.ts — Shared utility functions for LLM provider agentic loops.
 import type { ValidationErrorSummaryEntry, RawValidationError, UsageRecord } from '@sensigo/realm';
+import { redactWith, variantsOf } from './redaction-variants.js';
 
 const SYSTEM_PROMPT_BASE =
   'You are an AI agent executing a step in a structured workflow.\n' +
@@ -88,11 +89,13 @@ const EXCLUDED_LAUNCHER_METADATA = new Set([
 const PUBLIC_VALUE_SHAPE = /^(true|false|\d+\.\d+(\.\d+)?)$/;
 
 /**
- * Converts an error value to a string and strips sensitive patterns: Bearer tokens,
- * query-string tokens, process.env values longer than 4 characters, and the additional
- * (manifest-secret) values. All literal values are redacted in ONE combined pass,
- * deduped and applied LONGEST-FIRST — a short value contained in a longer one can no
- * longer leave fragments of the longer value behind.
+ * Converts an error value to a string and strips sensitive values ({@link sanitizeText}): every
+ * form in {@link redactionSet} — process.env values longer than 4 characters and the additional
+ * (manifest-secret) values, each with its listed encoded forms and lines ({@link variantsOf}) — and
+ * every `Bearer` token and query-string `token=` value. All of them are marked on the ORIGINAL
+ * text, and each run of marked characters is replaced once, so a short value inside a longer one,
+ * two values side by side, or a value that is itself the word `Bearer` or `token` leaves no
+ * fragment of the other behind.
  *
  * THE BOUNDARY (issue #407). The default is fail-closed — every env value over four characters
  * is redacted — with three bounded exceptions, and everything else swept. Where the field bounds
@@ -127,10 +130,14 @@ const PUBLIC_VALUE_SHAPE = /^(true|false|\d+\.\d+(\.\d+)?)$/;
  *
  * THE EXEMPTION, load-bearing: rules 2 and 3 filter the ENV sweep only. `additionalRedactionValues`
  * — values an author DECLARED secret — are never filtered, however public-shaped they look or
- * wherever they live.
+ * wherever they live; each is expanded through {@link variantsOf} like every swept value.
  *
- * BLAST RADIUS: {@link serializeToolResult} runs this same pass, so persisted tool results heal
- * with it — going forward. Records written by earlier releases keep the mangled form.
+ * BLAST RADIUS: the same set, built by {@link redactionSet}, also hides tool results
+ * ({@link serializeToolResult}) and the agent step's prompt (`run-agent.ts`), so persisted tool
+ * results heal with it — going forward. Records written by earlier releases keep the mangled form.
+ * A swept value's encoded forms and lines are hidden too. Every form encodes the whole value,
+ * except a shifted or trimmed base64 form and a line, which are at least 8 characters — so an
+ * ordinary hash, UUID or config line is not mangled by a fragment of a short value.
  */
 export function sanitizeError(err: unknown): string {
   let text: string;
@@ -141,8 +148,80 @@ export function sanitizeError(err: unknown): string {
   } else {
     text = String(err);
   }
-  text = text.replace(/Bearer [A-Za-z0-9._-]+/g, 'Bearer [REDACTED]');
-  text = text.replace(/token=[A-Za-z0-9._-]+/g, 'token=[REDACTED]');
+  return sanitizeText(text, redactionSet().forms);
+}
+
+/** The characters a `Bearer` or `token=` run takes, beside positions a member already covers. */
+const TOKEN_RUN_CHAR = /[A-Za-z0-9._-]/;
+/** The anchors whose following run is hidden whatever its value. */
+const TOKEN_ANCHORS = ['Bearer ', 'token='] as const;
+
+/**
+ * Strips sensitive values from `text`, reading everything off the ORIGINAL text, then replacing:
+ *  1. every position covered by any occurrence of any member of `set` is marked;
+ *  2. after each `Bearer ` and each `token=` (case as written), the run that follows is marked:
+ *     each next character that is in `[A-Za-z0-9._-]` or already marked by step 1;
+ *  3. each maximal run of marked characters is written as ONE `[REDACTED]`.
+ * So a value holding `token=` (a connection string) is hidden whole; a listed form inside a token
+ * does not leave the rest of the token shown; and a value equal to the anchor word itself (an OAuth
+ * `token_type` of `Bearer`, a parameter named `token`) cannot hide the anchor before the token
+ * after it is found. `Bearer abc` reads `Bearer [REDACTED]`, as before.
+ */
+export function sanitizeText(text: string, set: readonly string[]): string {
+  const marked = new Uint8Array(text.length);
+  let any = false;
+  for (const member of set) {
+    if (member === '') continue;
+    for (let i = text.indexOf(member); i !== -1; i = text.indexOf(member, i + 1)) {
+      marked.fill(1, i, i + member.length);
+      any = true;
+    }
+  }
+  for (const anchor of TOKEN_ANCHORS) {
+    for (let i = text.indexOf(anchor); i !== -1; i = text.indexOf(anchor, i + 1)) {
+      const start = i + anchor.length;
+      let end = start;
+      while (end < text.length && (marked[end] === 1 || TOKEN_RUN_CHAR.test(text.charAt(end)))) {
+        end++;
+      }
+      if (end > start) {
+        marked.fill(1, start, end);
+        any = true;
+      }
+    }
+  }
+  if (!any) return text;
+  let out = '';
+  let k = 0;
+  while (k < text.length) {
+    const from = k;
+    if (marked[k] === 1) {
+      while (k < text.length && marked[k] === 1) k++;
+      out += '[REDACTED]';
+    } else {
+      while (k < text.length && marked[k] !== 1) k++;
+      out += text.slice(from, k);
+    }
+  }
+  return out;
+}
+
+/**
+ * The redaction set, built PER CALL. `values` is the value list: every `process.env` value the
+ * sweep keeps (issue #407's boundary at {@link sanitizeError}: longer than four characters, minus
+ * its three exceptions) plus the declared {@link additionalRedactionValues}, deduplicated. `forms`
+ * is each of those values expanded through {@link variantsOf} — the value, every form the listed
+ * printers write it in (JSON at one and two levels, quoted and escaped, shell-quoted, as entities,
+ * URL-encoded, base64, base64url and hex) and each of its lines — deduplicated. A DECLARED secret is
+ * expanded with `parts`, so the parts GitHub's runner masks of a registered secret (the value
+ * without its surrounding double quotes, the sections around `&`, the value with its escapes read)
+ * are hidden too; an environment value is expanded without them, because a part is hidden on its
+ * own, everywhere (on the sweep it would hide the last query parameter of every URL in the
+ * environment). A value that is both is expanded with `parts`. Both lists are sorted LONGEST-FIRST.
+ *
+ * It stays in the CLI: it reads the environment, and core stays I/O-free.
+ */
+export function redactionSet(): { values: string[]; forms: string[] } {
   // Read PER CALL, never captured at module scope: a module-scope read is the issue-#285 class
   // and would make every `vi.stubEnv('HOME', …)` cell test the process's real home instead.
   //
@@ -167,22 +246,57 @@ export function sanitizeError(err: unknown): string {
     .filter((val): val is string => val !== undefined && val.length > 4)
     .filter((val) => !PUBLIC_VALUE_SHAPE.test(val))
     .filter((val) => homePrefix === undefined || !val.startsWith(homePrefix));
-  const combined = [...new Set([...envValues, ...additionalRedactionValues])].sort(
-    (a, b) => b.length - a.length,
-  );
-  for (const val of combined) {
-    text = text.split(val).join('[REDACTED]');
-  }
-  return text;
+  const longestFirst = (a: string, b: string): number => b.length - a.length;
+  const values = [...new Set([...envValues, ...additionalRedactionValues])].sort(longestFirst);
+  const declared = new Set(additionalRedactionValues);
+  const forms = [
+    ...new Set(values.flatMap((value) => variantsOf(value, { parts: declared.has(value) }))),
+  ].sort(longestFirst);
+  return { values, forms };
 }
 
 /**
- * Serializes an MCP tool result to a string and applies the same sanitization pass
- * as sanitizeError to strip any tokens that upstream services may have echoed.
+ * Serializes an MCP tool result to a string, with every listed form of every value in
+ * {@link redactionSet} hidden, and the `Bearer` / `token=` rules applied — the set built ONCE per
+ * call.
+ *
+ * HIDE BEFORE ENCODING. A string result is sanitized as it is ({@link sanitizeText}). Any other
+ * result is normalised through JSON and walked BEFORE it is encoded: every key and every string
+ * goes through {@link sanitizeText} with the forms (so the `Bearer` / `token=` rules apply there
+ * too), arrays element by element, and a number, boolean or null whose JSON text holds a form
+ * becomes the string `"[REDACTED]"` (so the output still parses). The walk exists because it reads
+ * each string DECODED: there a value JSON-escaped by the result's encoding is raw again, and Go's,
+ * PHP's and Python's escapes and nested JSON text appear one level down, where the forms match
+ * them; the encoded output would need one more level of escaping for each. New objects are built
+ * with `Object.fromEntries`, which keeps a `"__proto__"` key and its subtree (an assignment copy
+ * drops both). Two keys that redact to the same text collapse into one, the later winning — two
+ * keys that differ only in the value after `token=` or `Bearer ` included.
+ *
+ * Then a last pass runs over the whole encoded output ({@link sanitizeText}), with the plain values
+ * (never the forms): it hides a value only the encoded text spells (a value that ends in a lone
+ * `\`, for one, which the walk cannot read), applies the `Bearer` / `token=` rules once more over
+ * the whole JSON text, and keeps every hiding the single pass before the fix did.
+ *
+ * A result `JSON.stringify` cannot encode (`undefined`, a function, a symbol) reads `undefined`,
+ * as before; one it throws on (a cycle, a BigInt) throws, as before.
  */
 export function serializeToolResult(result: unknown): string {
-  const raw = typeof result === 'string' ? result : JSON.stringify(result);
-  return sanitizeError(raw);
+  const { values, forms } = redactionSet();
+  if (typeof result === 'string') return sanitizeText(result, forms);
+  const encoded = JSON.stringify(result) as string | undefined;
+  if (encoded === undefined) return sanitizeText('undefined', forms);
+  const hide = (node: unknown): unknown => {
+    if (typeof node === 'string') return sanitizeText(node, forms);
+    if (Array.isArray(node)) return node.map(hide);
+    if (node !== null && typeof node === 'object') {
+      return Object.fromEntries(
+        Object.entries(node).map(([key, child]) => [sanitizeText(key, forms), hide(child)]),
+      );
+    }
+    const text = JSON.stringify(node);
+    return redactWith(text, forms) !== text ? '[REDACTED]' : node;
+  };
+  return sanitizeText(JSON.stringify(hide(JSON.parse(encoded) as unknown)), values);
 }
 
 /** The `error` text for a Class-B result whose content carries no readable text at all. */

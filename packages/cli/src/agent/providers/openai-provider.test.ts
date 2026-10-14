@@ -1,9 +1,10 @@
 // openai-provider.test.ts — Tests for OpenAIProvider callStep and callStepWithTools.
 // All tests mock the openai package — no real API calls are made.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpenAIProvider } from './openai-provider.js';
 import { WorkflowError } from '@sensigo/realm';
-import { CLASS_B_NO_TEXT_MARKER } from './agent-utils.js';
+import { CLASS_B_NO_TEXT_MARKER, setAdditionalRedactionValues } from './agent-utils.js';
+import { leakedForms } from '../test-support/redaction-oracle.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 
 // ---------- shared mock for the openai package ----------------------------
@@ -1196,5 +1197,72 @@ describe('OpenAIProvider — issue #600 PR 1a (D9): every entry point carries wh
     );
     expect(usage).toBeDefined();
     expect((usage as unknown[]).length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// =================================================================================================
+// GHSA-gxfq cell 17: model text is hidden BEFORE it is cut to 200 characters. A FAKE secret starts
+// 5 characters before the cut; cut first, its first 5 characters reach the thrown message, where no
+// pass can recognise them. Each case asserts the message is the site's own (a witness), that the
+// oracle finds no form of the secret, and that no 4-character prefix of it is left.
+// =================================================================================================
+describe('cut after hiding (GHSA-gxfq cell 17)', () => {
+  /** A FAKE secret written here: a `"`, a `\` and a newline. */
+  const SECRET = 'fk"1\\2\n3z';
+  /** Model text whose secret starts 5 characters before the 200-character cut. */
+  const STRADDLING = `${'x'.repeat(195)}${SECRET} tail`;
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+    setAdditionalRedactionValues([SECRET]);
+  });
+  afterEach(() => {
+    setAdditionalRedactionValues([]);
+  });
+
+  /**
+   * (b) What a failing case prints: whether the message is the site's own, the oracle's
+   * `{ path, decoders }` pairs, and whether a 4-character prefix of the secret is left — never the
+   * message or the secret.
+   */
+  const facts = (err: unknown, site: string) => {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      site: message.includes(site),
+      found: leakedForms(message, SECRET),
+      prefixLeft: message.includes(SECRET.slice(0, 4)),
+    };
+  };
+  const HIDDEN = { site: true, found: [], prefixLeft: false };
+
+  const STRICT_SCHEMA = { type: 'object', properties: {}, additionalProperties: false };
+
+  it('openai-provider.ts — non-JSON content after retry', async () => {
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('not JSON'))
+      .mockResolvedValueOnce(makeTextResponse(STRADDLING));
+    const err = await new OpenAIProvider('gpt-4o').callStep('prompt').catch((e: unknown) => e);
+    // (a) red when this site cuts the model text before hiding it.
+    expect(facts(err, 'OpenAI returned non-JSON content after retry: ')).toEqual(HIDDEN);
+  });
+
+  it('openai-provider.ts — a refusal under strict decoding', async () => {
+    mockCreate.mockResolvedValueOnce({
+      choices: [{ message: { role: 'assistant', content: null, refusal: STRADDLING } }],
+    });
+    const err = await new OpenAIProvider('gpt-4o')
+      .callStepWithMeta('prompt', STRICT_SCHEMA, undefined, { structuredOutputStrict: true })
+      .catch((e: unknown) => e);
+    // (a) red when this site cuts the refusal before hiding it.
+    expect(facts(err, 'OpenAI refused the request: ')).toEqual(HIDDEN);
+  });
+
+  it('openai-provider.ts — non-JSON content under strict decoding', async () => {
+    mockCreate.mockResolvedValueOnce(makeTextResponse(STRADDLING));
+    const err = await new OpenAIProvider('gpt-4o')
+      .callStepWithMeta('prompt', STRICT_SCHEMA, undefined, { structuredOutputStrict: true })
+      .catch((e: unknown) => e);
+    // (a) red when this site cuts the model text before hiding it.
+    expect(facts(err, 'OpenAI returned non-JSON content under strict decoding: ')).toEqual(HIDDEN);
   });
 });

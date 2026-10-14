@@ -136,14 +136,36 @@ A call that fails is recorded too, with its error, and the model is told about t
        [notes:list_directory]  7ms  error: ENOENT: no such file or directory, scandir '[REDACTED]/notes/notes'
 ```
 
-`realm agent` replaces the values of its environment variables with `[REDACTED]` in tool results and in error messages, in what it records and in what it shows the model. Here it replaced the path of the working folder.
+`realm agent` replaces the values of its environment variables, and the secrets the manifest declares, with `[REDACTED]`: in tool results and in error messages, both in what it records and in what it shows the model, and in the prompt the agent step sends the model. Here it replaced the path of the working folder. A run's params are kept as given, in the run's file and in `realm run export`. It also replaces each value in the forms these programs print it in:
+
+- JSON-escaped, as JavaScript's `JSON.stringify`, Python's `json.dumps` (every non-ASCII character as `\uXXXX`), Go's `json.Marshal`, PHP's `json_encode` (without its `JSON_HEX_…` flags), Perl's `JSON::PP`, jq's `tojson`, Newtonsoft.Json, Gson, System.Text.Json and Jackson write it, and inside another JSON string;
+- in quotes with backslash escapes, as Python's `repr()`, `ascii()`, `unicode_escape` and `repr()` of bytes, Node's `util.inspect` (`console.log` of an object), PHP's `var_export` and `addslashes`, Perl's `Data::Dumper`, Go's `%q`, `%#v` and `%+q`, Rust's `{:?}` and `escape_default()`, Ruby's `inspect`, PyYAML's and js-yaml's double-quoted strings, Windows argument quoting (Python's `subprocess.list2cmdline`) and bash's `declare -p` write it, and with each `"` written `\"`;
+- shell-quoted, as bash's xtrace, `${v@Q}` and `printf %q`, jq's `@sh`, Python's `shlex.quote` and BusyBox ash's xtrace write it; and with each `'` doubled (YAML single-quoted strings, SQL quoting), each `"` doubled (CSV quoting) or each `$` doubled (Makefiles, Compose files);
+- with HTML or XML escaping, as Python's `html.escape` and `xml.sax.saxutils`, .NET's `SecurityElement.Escape`, jq's `@html`, lodash's `_.escape`, Ruby's `CGI.escapeHTML`, Go's `html.EscapeString` and PHP's `htmlspecialchars` write it;
+- percent-encoded with upper-case hex, as JavaScript's `encodeURIComponent` and `encodeURI`, Node's `querystring.escape`, `URLSearchParams` and `URL`, Python's `quote`, `quote_plus` and `urlencode`, Java's `URLEncoder`, jq's `@uri`, PHP's `urlencode` and Go's `url.QueryEscape`, `url.PathEscape` and `url.UserPassword` write it;
+- in base64 and base64url, also when other text was encoded with it (the forms GitHub's runner and Jenkins mask, and, when its base64 ends in `=` padding, each without its last character), and in lower- or upper-case hex.
+
+Each line of a multi-line value that has 8 or more characters and no spaces or other blank characters is hidden on its own, everywhere. So a declared credentials file also hides lines such as `region=us-east-1`. A line with blanks, such as `key = value`, is not hidden on its own. For every value, it also hides, in the same forms, the value with these escapes read, when that has 8 or more characters: `\n`, `\r`, `\t`, `\b`, `\f`, `\/`, `\\`, `\"`, `\uXXXX` and `\xHH` (a value that ends in a lone `\` has no such reading); and each line of that which has 8 or more characters and no spaces or other blank characters. For a declared secret, some parts of it are also hidden on their own, everywhere: the value without the double quotes around it, when the quoted value has more than 8 characters; the part up to and including its last `&` (or its first `&+`, when it has one), and the part after it, when that part has 6 or more characters (after `&+`, the part starts at the second character after the `+`, and it is hidden when it has 6 or more characters from there); and the value with `\\`, `\'`, `\"` and `\t` read, or with each `\` dropped, or with each `^` dropped (a doubled one kept once; not both at once), when that has 8 or more characters.
 
 This does not catch everything, so do not rely on it to keep a secret out of a record. It leaves alone:
 
-- a value of four characters or fewer;
-- the word `false`, and a version number such as `11.8.0`;
+- an environment value of four characters or fewer, and a declared secret of three or fewer;
+- an environment value that is the word `false`, or two or three numbers joined by dots, such as the version number `11.8.0` (a declared secret with that value is hidden);
 - the values of three variables that npm sets: `npm_package_name`, `npm_package_version` and `npm_lifecycle_event`;
-- the rest of a path under your home folder: only the home folder's part is replaced;
+- in an environment value, the rest of a path under your home folder: only the home folder's part is replaced;
+- in base64 and base64url, a value of 6 bytes or fewer that was encoded together with other text (it is hidden at some positions and not at others);
+- a value split across lines by the program that printed it, for example base64 wrapped at 76 characters, or a long YAML string folded at its spaces or after an escaped character; a multi-line value written one line at a time keeps its lines that hold blanks;
+- a value that a template filter changed in the agent step's prompt (for example `| truncate` or `| upper`), except that a whole line of a multi-line value, and a part of a declared secret, are still hidden there;
+- HTML references the named escapers do not write, such as Mustache.js's `&#x2F;` and `&#x3D;`, Handlebars' `&#x3D;` and `&#x60;`, a hex `&#x22;`, decimal `&#47;`, or PHP `htmlentities`' `&eacute;` and `&nbsp;`;
+- percent-encoding with lower-case hex, such as `%2f`;
+- bash's `$'…'` quoting in a C or POSIX locale, which writes non-ASCII bytes as `\NNN`, and bash 5.2's `\~`;
+- PyYAML double-quoted output with `allow_unicode`;
+- colour codes (ANSI escape sequences) between a value's characters;
+- PHP's `var_export` of a value holding a NUL character, which it writes as `'…' . "\0" . '…'`, and Perl's `Data::Dumper` of a value that holds both a control character (a tab, ESC or DEL, for example) and a non-ASCII character, which it writes with the control character as it is and the non-ASCII character as `\x{…}`;
+- a character newer than the Unicode tables of the program that printed it, or of the Node.js that runs Realm, in a value that also holds another non-ASCII character (Python 3.12 to 3.14, older Go, Ruby and Rust; Node 22's tables are older than Node 24's);
+- in a URL, its password, `user:password` or token on its own, its Basic-auth base64, and the URL without its query string: the whole URL is hidden, and for a declared secret the parts around `&`;
+- other parts of a value than those named above, such as the password in a connection string written `Password=…` or the token in a value written `Bearer …`;
+- other escapings than those named above, or a value mixing several;
 - the model's own answers, and the arguments of its tool calls. Neither is checked.
 
 The record does not yet include what the model's requests cost for a step that uses tools. `realm run inspect` says so on the step's `cost` line. That line was added in 0.46.0.

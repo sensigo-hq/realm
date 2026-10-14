@@ -27,7 +27,7 @@ Realm reads other variables by names that you give it:
 | `${secret:NAME}` in `realm.yaml`, when `secrets.sources` has `env`                                      | Every command that runs steps | The secret's value. See [Deployment manifest](deployment-manifest.md#secrets). |
 | `'${NAME}'` in the `env` of an agent profile's [tool server](workflow/services-profiles-and-context.md) | `realm agent`                 | A value handed to the tool server it starts.                                   |
 
-`realm agent` also reads the values of the variables in its environment, so that it can replace them with `[REDACTED]` in tool results and error messages. It leaves some values alone: see [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded).
+`realm agent` also reads the values of the variables in its environment, so that it can replace them, and the forms [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded) lists, with `[REDACTED]` in tool results, in error messages and in the prompt the agent step sends the model. It leaves some values alone: see [Give an agent step tools](../guides/agent-tools.md#4-read-what-was-recorded).
 
 These are read by libraries that Realm uses, and change what Realm does (the `.env` loader reads a few more `DOTENV_CONFIG_*` variables; see [its documentation for the version Realm uses](https://github.com/motdotla/dotenv/blob/v17.4.2/README.md)):
 

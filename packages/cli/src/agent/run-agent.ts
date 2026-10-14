@@ -50,6 +50,8 @@ import type {
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
   sanitizeError,
+  sanitizeText,
+  redactionSet,
   setAdditionalRedactionValues,
   renderValidationSummaryEntry,
   deriveLlmClock,
@@ -991,10 +993,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // sent to the provider (`promptForAttempt` below) is always derived FRESH from this,
             // plus at most the LATEST rejection's feedback — never accumulated, never stale.
             const prompt = nextAction?.prompt ?? stepDef.description;
-            const promptForAttempt =
+            // The prompt is the step's template filled with run params and stored step results,
+            // plus any rejection feedback: every listed form of every redacted value is hidden here,
+            // once, before any of the three provider calls below sends it.
+            const promptForAttempt = sanitizeText(
               lastRejection !== undefined
                 ? `${prompt}\n\nYour previous output was rejected by the ${lastRejection.kind} schema validator:\n${lastRejection.summary}\nEmit corrected JSON only, matching the schema exactly.`
-                : prompt;
+                : prompt,
+              redactionSet().forms,
+            );
             // #robust-anthropic-provider Part 1: route the schema the ENGINE validates output against
             // (output_schema, execution-loop.ts validateOutputSchema) ahead of the execute_step-param
             // schema (input_schema / nextAction.input_schema) the provider was fed until now. Both-

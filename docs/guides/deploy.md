@@ -104,7 +104,7 @@ The message names the setting that needs the secret and the file Realm looked in
 GET /levels?sku=A-100 auth=Bearer the-real-token
 ```
 
-The token is not in the run's record. The record keeps the path of the `realm.yaml` that was used, a hash of that file, and the names of the secrets it referred to.
+The token is not in the manifest block of the run's record (a value passed as a run's param is kept: see [Give an agent step tools](agent-tools.md#4-read-what-was-recorded)). The record keeps the path of the `realm.yaml` that was used, a hash of that file, and the names of the secrets it referred to.
 
 ## Take secrets from the environment
 

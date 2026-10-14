@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { leakedForms } from '../agent/test-support/redaction-oracle.js';
 import {
   resolveManifestSecrets,
   redactSecretValues,
@@ -110,6 +111,44 @@ describe('sentinel mode', () => {
     expect(result.values['GITHUB_TOKEN']).toBe('<sentinel:GITHUB_TOKEN>');
     expect(sentinelValue('X')).toBe('<sentinel:X>');
   });
+});
+
+describe('redactSecretValues — a value in its encoded form (GHSA-gxfq cell 16)', () => {
+  it("hides a declared value written JSON-escaped in a manifest error line, with the marker '[redacted]'", () => {
+    // A FAKE secret written here: a `"`, a `\` and a newline, so its JSON text differs from it.
+    const secret = 'fk"1\\2\n3z';
+    const line = `Deployment manifest '/srv/app/realm.yaml': constructing handlers.notify (use: ./notify.js) failed: bad config ${JSON.stringify({ token: secret })}`;
+    const out = redactSecretValues(line, [secret]);
+    // The oracle decodes JSON only when a whole string parses, and this line is prose with JSON in
+    // it: so the escaped text is also checked on its own, as `JSON.stringify` writes it.
+    const escaped = JSON.stringify(secret).slice(1, -1);
+    // (a) red when matching returns to the raw value only (the escaped form passes); (b) prints the
+    //     oracle's `{ path, decoders }` pairs, whether the escaped text is gone and whether the
+    //     marker is there — never the secret.
+    expect({
+      found: leakedForms(out, secret),
+      escapedGone: !out.includes(escaped),
+      marked: out.includes('[redacted]'),
+    }).toEqual({ found: [], escapedGone: true, marked: true });
+  });
+
+  it('C3. a declared value of 200,000 characters holding a backslash escape: redactSecretValues does not throw, and hides the value and its escapes-read form', () => {
+    for (const key of Object.keys(process.env)) if (key !== 'HOME') vi.stubEnv(key, undefined);
+    const BS = '\\';
+    const FILL = Array.from({ length: 40_000 }, (_, i) => i.toString(36).padStart(5, '0')).join('');
+    const VALUE = 'FAKEbig' + BS + 'n' + FILL; // as configured: a literal backslash-n
+    const READ = 'FAKEbig' + '\n' + FILL; // with its escape read
+    const TEXT = `see ${VALUE} and ${READ} here`;
+    let result: boolean | string;
+    try {
+      result = redactSecretValues(TEXT, [VALUE]) === 'see [redacted] and [redacted] here';
+    } catch (e) {
+      result = 'THROW ' + (e instanceof Error ? e.constructor.name : typeof e);
+    }
+    // (a) red when `decodedReadings` spreads a segment's bytes into `push` (the result
+    //     `THROW RangeError`); (b) prints `true`, `false` or the thrown class.
+    expect(result).toBe(true);
+  }, 20_000);
 });
 
 describe('redactSecretValues', () => {
