@@ -51,7 +51,8 @@ describe('the preconditions, one per member (G3)', () => {
     ['a counter that is not a number', { cache_read_input_tokens: '5' }, 'usage_incomplete'],
     [
       'reads and writes above the prompt',
-      { cache_read_input_tokens: 60, cache_creation_input_tokens: 50 },
+      // An unsplit write from a provider that never splits, so only the sum check refuses it.
+      { cache_read_input_tokens: 60, cache_creation_input_tokens: 50, cache_split_offered: false },
       'usage_incomplete',
     ],
     [
