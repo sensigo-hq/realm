@@ -713,7 +713,7 @@ const RUN_LINE_RUN_COST = {
     probe: () =>
       expect(PRICED.stepLine).toContain(
         '; 1 tool-calling attempt not measured; 1 attempt with unreadable usage; ' +
-          '1 attempt realm made no model call for;',
+          '1 attempt realm has no usage figures for;',
       ),
   },
 } satisfies Record<keyof RunCost, DisclosureRoute>;

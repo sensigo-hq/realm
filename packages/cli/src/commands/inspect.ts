@@ -604,14 +604,16 @@ function notPricedList(money: Money, withCounts: boolean): string[] {
 }
 
 /**
- * Issue #600 caching PR P — the sources part of a money figure. Sources with one name (the runner's
- * file, or one list version) read as that name, the date basis over all their figures, what they
- * priced a request as when that differs from the recorded model, and their notes; sources with
- * several names read `prices from: <name> (N), <name> (M)`.
+ * Issue #600 caching PR P — the sources part of a money figure: the source's name (the runner's
+ * file, or one list version), the date basis over all the figures, what they priced a request as
+ * when that differs from the recorded model, and their notes. Sources with several names read
+ * `prices from: <name> (N), <name> (M)` in place of the one name, then the same parts.
  */
 function sourcesText(money: Money, recordedModels: readonly string[]): string {
-  if (money.source_totals.length > 1) return sourceTotalsText(money);
-  const parts = [sourceLabel(money.source_totals[0]!), dateBasisText(money.dated, money.priced)];
+  const parts = [
+    money.source_totals.length > 1 ? sourceTotalsText(money) : sourceLabel(money.source_totals[0]!),
+    dateBasisText(money.dated, money.priced),
+  ];
   const pricedAs = money.sources
     .filter((s) => !recordedModels.includes(s.matched_model))
     .map(
@@ -664,12 +666,16 @@ function moneyText(cost: CostView): string | undefined {
 
 /**
  * Issue #600 caching PR P — a step's money across its attempts, for its header:
- * ` — $0.123 across 3 attempts (your economics file)`. Empty when nothing was priced.
+ * ` — $0.123 across 3 attempts (your economics file)`. A lower bound (`≥`, floored) when a request
+ * was not priced, or when `leavesOut`: one of its attempts has no usage figures, so its cost is not
+ * in the figure. Empty when nothing was priced.
  */
-function stepTotalText(total: Money | undefined, attempts: number): string {
+function stepTotalText(total: Money | undefined, attempts: number, leavesOut: boolean): string {
   if (total === undefined || total.priced === 0) return '';
   const figure =
-    total.priced < total.of ? `≥ ${formatUsd(total.total, true)}` : formatUsd(total.total);
+    total.priced < total.of || leavesOut
+      ? `≥ ${formatUsd(total.total, true)}`
+      : formatUsd(total.total);
   const names = total.source_totals.map((t) => sourceLabel(t)).join(', ');
   return ` — ${figure} across ${attempts} attempts (${names})`;
 }
@@ -703,7 +709,7 @@ function runCostLine(cost: RunCost | undefined): string | undefined {
   }
   if (cost.unmeasured.not_measured_by_realm > 0) {
     leftOut.push(
-      `${plural(cost.unmeasured.not_measured_by_realm, 'attempt', 'attempts')} realm made no model call for`,
+      `${plural(cost.unmeasured.not_measured_by_realm, 'attempt', 'attempts')} realm has no usage figures for`,
     );
   }
   if (cost.failed_drives_not_on_record > 0) {
@@ -715,6 +721,7 @@ function runCostLine(cost: RunCost | undefined): string | undefined {
     money.priced < money.of ||
     cost.unmeasured.tool_calling_step > 0 ||
     cost.unmeasured.cost_unreadable > 0 ||
+    cost.unmeasured.not_measured_by_realm > 0 ||
     cost.failed_drives_not_on_record > 0;
   const figure = lowerBound ? `≥ ${formatUsd(money.total, true)}` : formatUsd(money.total);
   const parts = [
@@ -1388,9 +1395,13 @@ export async function inspectRun(
         lastSnap.agent_profile !== undefined
           ? chalk.cyan(` [profile: ${lastSnap.agent_profile}]`)
           : '';
-      // issue #600 caching PR P: the step's money across its attempts, beside its name.
+      // issue #600 caching PR P: the step's money across its attempts, beside its name; a lower
+      // bound when an attempt has no usage figures (the composer's own attempt facts, never a sum).
+      const leavesOut =
+        view?.attempts.some((a) => a.cost_unrecorded !== undefined || a.cost_unreadable === true) ??
+        false;
       lines.push(
-        `  ${idx + 1}. ${stepId}${profileLabel}${stepTotalText(view?.total, totalAttempts)}`,
+        `  ${idx + 1}. ${stepId}${profileLabel}${stepTotalText(view?.total, totalAttempts, leavesOut)}`,
       );
       executionSnaps.forEach((snap, ai) => {
         const statusColored = colorStatus(snap.status);

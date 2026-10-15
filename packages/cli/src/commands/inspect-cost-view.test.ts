@@ -1363,6 +1363,50 @@ describe('#600 caching PR P — the money on the step line (G10)', () => {
         ?.includes(' — $0.123 across 2 attempts (your economics file)'),
     ]).toEqual([true, true, true]);
   });
+
+  // issue #600 caching PR P correction (C3): a figure two sources priced keeps every part a
+  // one-source figure carries. (a) red when the mixed form returns before the date basis and the
+  // notes; (b) prints the segment.
+  it('mixed sources: the counts per source, then the date basis, priced as and the notes', async () => {
+    expect(
+      stepMoney(
+        await pricedRender([
+          m('e-dated|0.01', {}, 0),
+          m('list-as|0.01', { endpoint: 'custom' }, 1),
+        ]),
+      ),
+    ).toBe(
+      " | $0.02 (prices from: your economics file (1), genai-prices 0.1.12 (1); 1 at the call's date, 1 current; priced as anthropic's claude-x; list price, your endpoint may bill differently)",
+    );
+  });
+
+  // issue #600 caching PR P correction (C4): a step whose earlier attempt has no usage figures — its
+  // total leaves that attempt out. (a) red when the header's `≥` ignores such an attempt; (b) prints
+  // the header's total.
+  it("the step header's total is a lower bound when one of its attempts has no usage figures", async () => {
+    const run = makeRun([
+      makeSnapshot('step_one', { status: 'error', agent_profile: 'p' }),
+      makeSnapshot('step_one', {
+        status: 'success',
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: {
+            state: 'engaged',
+            basis: 'provider_reported',
+            requests: [m('e-current|0.25')],
+          },
+        },
+      }),
+    ]);
+    const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(basicDef), {
+      priceSource: NAMED,
+    });
+    const header = out.split('\n').find((l) => l.includes('1. step_one')) ?? '';
+    expect(header.slice(header.indexOf(' — '))).toBe(
+      ' — ≥ $0.25 across 2 attempts (your economics file)',
+    );
+  });
 });
 
 describe("#600 caching PR P — the run's cost line (G10)", () => {
@@ -1430,6 +1474,18 @@ describe("#600 caching PR P — the run's cost line (G10)", () => {
       'Cost: ≥ $1.23 (your economics file; 1 of 1 requests priced; 2 tool-calling attempts not measured; 1 failed drive not on the record)',
       'Cost: $2.00 (prices from: your economics file (1), genai-prices 0.1.12 (2); 3 of 3 requests priced)',
     ]);
+  });
+
+  // issue #600 caching PR P correction (C1): an attempt realm has no usage figures for is a part the
+  // figure leaves out, named in the attempt line's own words. The only left-out part here, with a
+  // total whose fourth significant figure is not zero, so the floor is asserted. (a) red when
+  // `not_measured_by_realm` is not in the lower bound, or is named in other words; (b) prints the
+  // line.
+  it('one attempt realm has no usage figures for, alone: a lower bound, floored, naming it', async () => {
+    const run = makeRun([entry('e-current|1.239', 0), makeSnapshot('c', { agent_profile: 'p' })]);
+    expect(await costLine(run)).toBe(
+      'Cost: ≥ $1.23 (your economics file; 1 of 1 requests priced; 1 attempt realm has no usage figures for)',
+    );
   });
 
   it('a run from 0.47.0 or earlier (no model anywhere): no cost line', async () => {
