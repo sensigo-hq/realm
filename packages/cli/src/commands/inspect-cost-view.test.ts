@@ -1470,9 +1470,9 @@ describe("#600 caching PR P — the run's cost line (G10)", () => {
     );
     const mixed = makeRun([entry('e-current|1', 0), entry('list|0.5', 1), entry('list|0.5', 2)]);
     expect([await costLine(full), await costLine(leftOut), await costLine(mixed)]).toEqual([
-      'Cost: $1.23 (your economics file; 2 of 2 requests priced)',
-      'Cost: ≥ $1.23 (your economics file; 1 of 1 requests priced; 2 tool-calling attempts not measured; 1 failed drive not on the record)',
-      'Cost: $2.00 (prices from: your economics file (1), genai-prices 0.1.12 (2); 3 of 3 requests priced)',
+      'Cost: $1.23 (your economics file; current price; 2 of 2 requests priced)',
+      'Cost: ≥ $1.23 (your economics file; current price; 1 of 1 requests priced; 2 tool-calling attempts not measured; 1 failed drive without usage figures; 1 failed drive not on the record)',
+      'Cost: $2.00 (prices from: your economics file (1), genai-prices 0.1.12 (2); current price; 3 of 3 requests priced)',
     ]);
   });
 
@@ -1484,7 +1484,60 @@ describe("#600 caching PR P — the run's cost line (G10)", () => {
   it('one attempt realm has no usage figures for, alone: a lower bound, floored, naming it', async () => {
     const run = makeRun([entry('e-current|1.239', 0), makeSnapshot('c', { agent_profile: 'p' })]);
     expect(await costLine(run)).toBe(
-      'Cost: ≥ $1.23 (your economics file; 1 of 1 requests priced; 1 attempt realm has no usage figures for)',
+      'Cost: ≥ $1.23 (your economics file; current price; 1 of 1 requests priced; 1 attempt realm has no usage figures for)',
+    );
+  });
+
+  // issue #600 caching PR P, the last correction (L3): the run line is a full figure — its date
+  // basis and its signed net, both arms. (a) red when the run line drops the date basis, or does
+  // not print what caching saved or cost; (b) prints both lines.
+  it('the date basis and the net on the run line: caching saved, and caching cost more', async () => {
+    const saved = makeRun([entry('e-dated|0.0307|0.0412', 0)]);
+    const costMore = makeRun([entry('e-dated|0.0412|0.0307', 0)]);
+    expect([await costLine(saved), await costLine(costMore)]).toEqual([
+      "Cost: $0.0307 (your economics file; at the call's date; 1 of 1 requests priced); caching saved $0.0105",
+      "Cost: $0.0412 (your economics file; at the call's date; 1 of 1 requests priced); caching cost $0.0105 more",
+    ]);
+  });
+
+  // issue #600 caching PR P, the last correction (L3): a list figure from a custom endpoint carries
+  // its note on the run line too. (a) red when the run line drops the date basis or the endpoint
+  // note; (b) prints the line.
+  it('a list figure through a custom endpoint: the run line names its basis and its note', async () => {
+    const run = makeRun([
+      makeSnapshot('s0', {
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: {
+            state: 'engaged',
+            basis: 'provider_reported',
+            requests: [m('list|0.0412|0.0412', { endpoint: 'custom' })],
+          },
+        },
+      }),
+    ]);
+    expect(await costLine(run)).toBe(
+      'Cost: $0.0412 (genai-prices 0.1.12; current price; list price, your endpoint may bill differently; 1 of 1 requests priced)',
+    );
+  });
+
+  // issue #600 caching PR P, the last correction (L5): a failed drive on the record with no usage
+  // figures may have billed (a request that failed on the wire, a tools-step drive), and realm has
+  // nothing to price for it — a part the run figure leaves out. (a) red when it does not make the
+  // figure a lower bound, or is not named; (b) prints the line.
+  it('a failed drive on the record with no usage figures: a lower bound, naming it', async () => {
+    const run = makeRun([entry('e-current|1', 0)], {
+      drive_failures: {
+        first_failed_at: 'a',
+        total: 1,
+        entries: [
+          { at: 'a', step: 's0', provider: 'p', error_class: 'other', message: 'm', elapsed_ms: 1 },
+        ],
+      },
+    });
+    expect(await costLine(run)).toBe(
+      'Cost: ≥ $1.00 (your economics file; current price; 1 of 1 requests priced; 1 failed drive without usage figures)',
     );
   });
 

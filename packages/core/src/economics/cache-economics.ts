@@ -215,10 +215,16 @@ export function parseCacheEconomics(
   return { economics };
 }
 
-/** A model id's date suffix (`-YYYYMMDD` or `-YYYY-MM-DD`), removed; `undefined` when it has none. */
+/**
+ * A model id's date suffix (`-YYYYMMDD` or `-YYYY-MM-DD`, a day on the calendar), removed;
+ * `undefined` when it has none, or when its tail is digits that are not a day (`-12345678`,
+ * `-2026-02-30`).
+ */
 export function withoutDateSuffix(model: string): string | undefined {
-  const match = /^(.+)-(?:\d{8}|\d{4}-\d{2}-\d{2})$/.exec(model);
-  return match?.[1];
+  const match = /^(.+)-(?:(\d{4})(\d{2})(\d{2})|(\d{4}-\d{2}-\d{2}))$/.exec(model);
+  if (match === null) return undefined;
+  const day = match[5] ?? `${match[2]}-${match[3]}-${match[4]}`;
+  return onCalendar(day) ? match[1] : undefined;
 }
 
 /**

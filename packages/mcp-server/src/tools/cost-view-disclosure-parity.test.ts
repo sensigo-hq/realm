@@ -191,16 +191,28 @@ async function pricedSummary(): Promise<RunStateSummary> {
     ],
     drive_failures: {
       first_failed_at: '2026-01-01T00:04:00.000Z',
-      total: 4,
-      entries: [GATEWAY_REQUEST, MIXED_REQUESTS, [MIXED_REQUESTS[0]]].map((usage, i) => ({
-        at: `2026-01-01T00:0${4 + i}:00.000Z`,
-        step: 'mixed_step',
-        provider: 'anthropic',
-        error_class: 'other',
-        message: 'connection reset',
-        elapsed_ms: 1,
-        usage: Array.isArray(usage) ? usage : [usage],
-      })),
+      total: 5,
+      entries: [
+        ...[GATEWAY_REQUEST, MIXED_REQUESTS, [MIXED_REQUESTS[0]]].map((usage, i) => ({
+          at: `2026-01-01T00:0${4 + i}:00.000Z`,
+          step: 'mixed_step',
+          provider: 'anthropic',
+          error_class: 'other',
+          message: 'connection reset',
+          elapsed_ms: 1,
+          usage: Array.isArray(usage) ? usage : [usage],
+        })),
+        // A failed drive with no usage figures (a request that failed on the wire): it may have
+        // billed, and realm has nothing to price for it.
+        {
+          at: '2026-01-01T00:07:00.000Z',
+          step: 'mixed_step',
+          provider: 'anthropic',
+          error_class: 'other',
+          message: 'connection reset',
+          elapsed_ms: 1,
+        },
+      ],
     },
   } as unknown as RunRecord;
   const workflowStore = declared({
@@ -623,6 +635,10 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
       failed_drives_not_on_record: {
         surface: 'rendered',
         probe: () => expect(priced.run_cost!.failed_drives_not_on_record).toBe(1),
+      },
+      failed_drives_without_usage: {
+        surface: 'rendered',
+        probe: () => expect(priced.run_cost!.failed_drives_without_usage).toBe(1),
       },
       unmeasured: {
         surface: 'rendered',

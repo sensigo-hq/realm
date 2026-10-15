@@ -4,8 +4,8 @@
 // answers the port's shape. Core runs its checks around every answer (`priceRequest`); this file
 // never decides on its own that a model id is the one the request named.
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import type { PriceInput, PriceResult, PriceSource } from '@sensigo/realm';
 
 /** The list's package name, the `source_ref` of every list figure. */
@@ -40,29 +40,26 @@ export function isPriceList(value: unknown): value is PriceList {
 }
 
 /**
- * The installed list's version: its entry resolved (`import.meta.resolve`), then the nearest
- * `package.json` above it read. (Resolving `<package>/package.json` directly is refused: the package
- * does not export it.) `version unknown` when either step fails.
+ * The installed list's version: its `package.json` found in the first `node_modules` folder Node
+ * would search from this file (`createRequire(import.meta.url).resolve.paths`); never
+ * `import.meta.resolve`, which a bundler cannot evaluate; `version unknown` when none is found.
  */
 export function readPriceListVersion(): string {
   try {
-    let dir = dirname(fileURLToPath(import.meta.resolve(PRICE_LIST_PACKAGE)));
-    for (let i = 0; i < 6; i += 1) {
+    const paths = createRequire(import.meta.url).resolve.paths(PRICE_LIST_PACKAGE) ?? [];
+    for (const p of paths) {
+      let pkg: { name?: unknown; version?: unknown };
       try {
-        const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
-          name?: unknown;
-          version?: unknown;
-        };
-        if (pkg.name === PRICE_LIST_PACKAGE && typeof pkg.version === 'string') return pkg.version;
+        pkg = JSON.parse(
+          readFileSync(join(p, '@pydantic', 'genai-prices', 'package.json'), 'utf8'),
+        );
       } catch {
-        // no package.json here; go up
+        continue; // no list in this folder
       }
-      const up = dirname(dir);
-      if (up === dir) break;
-      dir = up;
+      if (pkg.name === PRICE_LIST_PACKAGE && typeof pkg.version === 'string') return pkg.version;
     }
   } catch {
-    // not resolvable
+    // nothing to search
   }
   return 'version unknown';
 }

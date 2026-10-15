@@ -152,11 +152,17 @@ export interface MoneySourceTotal {
 /**
  * Issue #600 caching PR P — what a run cost: every step's total and every failed drive's billed
  * requests on the record; how many failed drives are not on the record any more (the record keeps
- * the last 5); and how many attempts realm has no usage for, by cause.
+ * the last 5); how many on the record carry no usage figures; and how many attempts realm has no
+ * usage for, by cause.
  */
 export interface RunCost {
   total: Money;
   failed_drives_not_on_record: number;
+  /**
+   * Failed drives on the record whose `usage` is not an array or is empty: realm has nothing to
+   * price for them, and a request may have billed (one that failed on the wire, a tools-step drive).
+   */
+  failed_drives_without_usage: number;
   unmeasured: { tool_calling_step: number; not_measured_by_realm: number; cost_unreadable: number };
 }
 
@@ -748,7 +754,8 @@ export function composeDriveFailureCosts(
 /**
  * Issue #600 caching PR P — what a run cost, priced at read: every step's `total` and every failed
  * drive's billed requests on the record, how many failed drives are no longer on the record
- * (`drive_failures.total` − the entries kept), and the attempts realm has no usage for, by cause.
+ * (`drive_failures.total` − the entries kept), how many on the record carry no usage figures, and
+ * the attempts realm has no usage for, by cause.
  * `undefined` with no price source. Total: a malformed record degrades, never throws.
  */
 export function composeRunCost(
@@ -775,12 +782,27 @@ export function composeRunCost(
   }
   const driveFailures: unknown = run.drive_failures;
   let notOnRecord = 0;
+  let withoutUsage = 0;
   if (typeof driveFailures === 'object' && driveFailures !== null) {
     const recorded = (driveFailures as Record<string, unknown>)['total'];
     const entries = (driveFailures as Record<string, unknown>)['entries'];
     if (typeof recorded === 'number' && Number.isFinite(recorded)) {
       notOnRecord = Math.max(0, recorded - (Array.isArray(entries) ? entries.length : 0));
     }
+    if (Array.isArray(entries)) {
+      for (const entry of entries as unknown[]) {
+        const usage =
+          typeof entry === 'object' && entry !== null
+            ? (entry as Record<string, unknown>)['usage']
+            : undefined;
+        if (!Array.isArray(usage) || usage.length === 0) withoutUsage += 1;
+      }
+    }
   }
-  return { total, failed_drives_not_on_record: notOnRecord, unmeasured };
+  return {
+    total,
+    failed_drives_not_on_record: notOnRecord,
+    failed_drives_without_usage: withoutUsage,
+    unmeasured,
+  };
 }

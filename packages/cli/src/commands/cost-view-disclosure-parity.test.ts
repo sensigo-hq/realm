@@ -635,7 +635,7 @@ const pricedStepRun = {
   ],
   drive_failures: {
     first_failed_at: '2026-01-01T00:04:00.000Z',
-    total: 2,
+    total: 3,
     entries: [
       {
         at: '2026-01-01T00:04:00.000Z',
@@ -645,6 +645,15 @@ const pricedStepRun = {
         message: 'connection reset',
         elapsed_ms: 300,
         usage: [MIXED_REQUESTS[0]],
+      },
+      // A failed drive with no usage figures (a request that failed on the wire): it may have billed.
+      {
+        at: '2026-01-01T00:05:00.000Z',
+        step: 'mixed_step',
+        provider: 'anthropic',
+        error_class: 'other' as const,
+        message: 'connection reset',
+        elapsed_ms: 300,
       },
     ],
   },
@@ -701,12 +710,16 @@ const RUN_LINE_RUN_COST = {
     probe: () =>
       expect(PRICED.stepLine).toContain(
         'Cost: ≥ $1.12 (prices from: your economics file (4), genai-prices 0.1.12 (1); ' +
-          '5 of 6 requests priced; 1 not priced: model not recorded;',
+          "1 at the call's date, 4 current; 5 of 6 requests priced; 1 not priced: model not recorded;",
       ),
   },
   failed_drives_not_on_record: {
     surface: 'rendered',
     probe: () => expect(PRICED.stepLine).toContain('; 1 failed drive not on the record)'),
+  },
+  failed_drives_without_usage: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.stepLine).toContain('; 1 failed drive without usage figures'),
   },
   unmeasured: {
     surface: 'rendered',

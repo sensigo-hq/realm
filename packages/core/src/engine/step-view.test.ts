@@ -800,8 +800,12 @@ describe('composeRunCost and StepView.total (issue #600 caching PR P, G5)', () =
     {
       drive_failures: {
         first_failed_at: '2026-01-01T00:00:00.000Z',
-        total: 7,
-        entries: [{ at: 'x', step: 'a', usage: [priced(4)] }],
+        total: 8,
+        entries: [
+          { at: 'x', step: 'a', usage: [priced(4)] },
+          // No usage figures: a request that failed on the wire may have billed.
+          { at: 'y', step: 'a' },
+        ],
       },
     } as never,
   );
@@ -815,7 +819,8 @@ describe('composeRunCost and StepView.total (issue #600 caching PR P, G5)', () =
   });
 
   // (a) red when a drive failure's billed requests are dropped, `total − entries` is not computed,
-  // or an unmeasured cause is not counted; (b) prints the run cost.
+  // a failed drive with no usage figures is not counted, or an unmeasured cause is not counted;
+  // (b) prints the run cost.
   it('the run: every step plus the failed drives on the record; failed drives not on the record; the three unmeasured counts', () => {
     const cost = composeRunCost(run, { priceSource: FAKE })!;
     expect({
@@ -823,12 +828,14 @@ describe('composeRunCost and StepView.total (issue #600 caching PR P, G5)', () =
       priced: cost.total.priced,
       of: cost.total.of,
       failed_drives_not_on_record: cost.failed_drives_not_on_record,
+      failed_drives_without_usage: cost.failed_drives_without_usage,
       unmeasured: cost.unmeasured,
     }).toEqual({
       total: 7,
       priced: 3,
       of: 3,
       failed_drives_not_on_record: 6,
+      failed_drives_without_usage: 1,
       unmeasured: { tool_calling_step: 1, not_measured_by_realm: 1, cost_unreadable: 1 },
     });
     expect(composeRunCost(run)).toBeUndefined();

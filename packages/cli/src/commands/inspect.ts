@@ -607,20 +607,24 @@ function notPricedList(money: Money, withCounts: boolean): string[] {
  * Issue #600 caching PR P — the sources part of a money figure: the source's name (the runner's
  * file, or one list version), the date basis over all the figures, what they priced a request as
  * when that differs from the recorded model, and their notes. Sources with several names read
- * `prices from: <name> (N), <name> (M)` in place of the one name, then the same parts.
+ * `prices from: <name> (N), <name> (M)` in place of the one name, then the same parts. With
+ * `recordedModels` `undefined` (the run's line: a run records many names), the `priced as` part is
+ * left to the step and attempt lines.
  */
-function sourcesText(money: Money, recordedModels: readonly string[]): string {
+function sourcesText(money: Money, recordedModels: readonly string[] | undefined): string {
   const parts = [
     money.source_totals.length > 1 ? sourceTotalsText(money) : sourceLabel(money.source_totals[0]!),
     dateBasisText(money.dated, money.priced),
   ];
-  const pricedAs = money.sources
-    .filter((s) => !recordedModels.includes(s.matched_model))
-    .map(
-      (s) =>
-        `priced as ${s.matched_provider !== undefined ? `${safeText(s.matched_provider)}'s ` : ''}${safeText(s.matched_model)}`,
-    );
-  parts.push(...new Set(pricedAs));
+  if (recordedModels !== undefined) {
+    const pricedAs = money.sources
+      .filter((s) => !recordedModels.includes(s.matched_model))
+      .map(
+        (s) =>
+          `priced as ${s.matched_provider !== undefined ? `${safeText(s.matched_provider)}'s ` : ''}${safeText(s.matched_model)}`,
+      );
+    parts.push(...new Set(pricedAs));
+  }
   parts.push(
     ...new Set(
       money.sources.flatMap((s) => (s.endpoint_note !== undefined ? [s.endpoint_note] : [])),
@@ -655,13 +659,19 @@ function moneyText(cost: CostView): string | undefined {
     parts.push(`${money.priced} of ${money.of} requests priced`, ...notPricedList(money, true));
   }
   const figure = partial ? `≥ ${formatUsd(money.total, true)}` : formatUsd(money.total);
-  const net =
-    money.net > 0
-      ? `; caching saved ${formatUsd(money.net)}`
-      : money.net < 0
-        ? `; caching cost ${formatUsd(-money.net)} more`
-        : '';
-  return `${figure} (${parts.join('; ')})${net}`;
+  return `${figure} (${parts.join('; ')})${netText(money)}`;
+}
+
+/**
+ * Issue #600 caching PR P — what caching saved or cost, after a money figure: `; caching saved $X`,
+ * `; caching cost $X more`, or nothing when the net is 0. Shared by `moneyText` and the run's line.
+ */
+function netText(money: Money): string {
+  return money.net > 0
+    ? `; caching saved ${formatUsd(money.net)}`
+    : money.net < 0
+      ? `; caching cost ${formatUsd(-money.net)} more`
+      : '';
 }
 
 /**
@@ -683,8 +693,10 @@ function stepTotalText(total: Money | undefined, attempts: number, leavesOut: bo
 /**
  * Issue #600 caching PR P — the run's cost line, after `Phase:`. Every request of every step and of
  * every failed drive on the record, with what the figure leaves out: attempts realm has no usage
- * for, and failed drives no longer on the record. `undefined` when there is nothing to price, or
- * when every request names no model.
+ * for, failed drives on the record with no usage figures, and failed drives no longer on the
+ * record. A full figure, as the step's: its sources, its date basis, its notes and what caching
+ * saved or cost (the `priced as` part is left to the step lines). `undefined` when there is nothing
+ * to price, or when every request names no model.
  */
 function runCostLine(cost: RunCost | undefined): string | undefined {
   if (cost === undefined) return undefined;
@@ -712,6 +724,12 @@ function runCostLine(cost: RunCost | undefined): string | undefined {
       `${plural(cost.unmeasured.not_measured_by_realm, 'attempt', 'attempts')} realm has no usage figures for`,
     );
   }
+  // The drives on the record first, then the ones off it.
+  if (cost.failed_drives_without_usage > 0) {
+    leftOut.push(
+      `${plural(cost.failed_drives_without_usage, 'failed drive', 'failed drives')} without usage figures`,
+    );
+  }
   if (cost.failed_drives_not_on_record > 0) {
     leftOut.push(
       `${plural(cost.failed_drives_not_on_record, 'failed drive', 'failed drives')} not on the record`,
@@ -722,15 +740,16 @@ function runCostLine(cost: RunCost | undefined): string | undefined {
     cost.unmeasured.tool_calling_step > 0 ||
     cost.unmeasured.cost_unreadable > 0 ||
     cost.unmeasured.not_measured_by_realm > 0 ||
+    cost.failed_drives_without_usage > 0 ||
     cost.failed_drives_not_on_record > 0;
   const figure = lowerBound ? `≥ ${formatUsd(money.total, true)}` : formatUsd(money.total);
   const parts = [
-    money.source_totals.length > 1 ? sourceTotalsText(money) : sourceLabel(money.source_totals[0]!),
+    sourcesText(money, undefined),
     `${money.priced} of ${money.of} requests priced`,
     ...(money.priced < money.of ? notPricedList(money, true) : []),
     ...leftOut,
   ];
-  return `Cost: ${figure} (${parts.join('; ')})`;
+  return `Cost: ${figure} (${parts.join('; ')})${netText(money)}`;
 }
 
 /**

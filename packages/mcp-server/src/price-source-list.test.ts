@@ -109,7 +109,7 @@ describe('the price list adapter on genai-prices 0.1.12 (issue #600 caching PR P
     ).toEqual(['gpt-5.6-sol', true, 0.046]);
   });
 
-  it('the version read from the installed package (its entry resolved, then the package.json above it)', () => {
+  it('the version read from the installed package (its package.json in the first node_modules folder Node would search from the adapter)', () => {
     expect(readPriceListVersion()).toBe('0.1.12');
   });
 

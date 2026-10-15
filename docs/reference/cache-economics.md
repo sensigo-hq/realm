@@ -122,7 +122,7 @@ A request with a prompt of 100,000 tokens is priced at the first rates. One with
 
 Each request is priced on its own, so a tier depends on that request's own prompt.
 
-1. The model: the price whose name is the model the provider's answer named. When there is none, the name without a date at its end (`-20260101` or `-2026-01-01`): `claude-sonnet-5-5-20260101` is priced as `claude-sonnet-5-5`.
+1. The model: the price whose name is the model the provider's answer named. When there is none, the name without a date at its end (`-20260101` or `-2026-01-01`, a day on the calendar): `claude-sonnet-5-5-20260101` is priced as `claude-sonnet-5-5`.
 2. The price: the last one whose `start_date` is on or before the day the request started. When none is, the first.
 3. The tokens: the prompt, less what was read from the cache, less what was written to it, at `input`; what was read at `cache_read`; what was written at `cache_write_5m` and `cache_write_1h` when the provider split it, or at `cache_write`; the output at `output`.
 
@@ -141,13 +141,13 @@ From `realm run inspect`, at the end of the step's `Diagnostics` line:
 And after the run's `Phase:` line:
 
 ```text
-Cost: $0.00575 (your economics file; 2 of 2 requests priced)
+Cost: $0.00575 (your economics file; current price; 2 of 2 requests priced); caching saved $0.00252
 ```
 
 Without the key, with the list installed:
 
 ```text
-Cost: $0.00575 (genai-prices 0.1.12; 2 of 2 requests priced)
+Cost: $0.00575 (genai-prices 0.1.12; current price; 2 of 2 requests priced); caching saved $0.00252
 ```
 
 When a request cannot be priced, the figure says why, and a `≥` says the figure leaves something out:

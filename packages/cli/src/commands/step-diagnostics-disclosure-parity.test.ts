@@ -391,10 +391,11 @@ const USAGE_DISCLOSURE = {
   },
   endpoint: {
     surface: 'rendered',
-    // The absent arm on run_diag1 (no endpoint recorded): no gateway reason.
-    probe: (out, _partial, mismatch) => {
+    // The absent arm — a default endpoint, the clause printed without the gateway reason — is
+    // `inspect-cost-view.test.ts`'s cell 'the gateway reason of the nothing-cached clause only when a
+    // request went to a custom endpoint'.
+    probe: (_out, _partial, mismatch) => {
       expect(mismatch).toContain('; list price, your endpoint may bill differently)');
-      expect(out).not.toContain('the endpoint dropped the request to cache');
     },
   },
   cache_split_offered: {

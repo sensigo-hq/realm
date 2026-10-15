@@ -3,7 +3,12 @@
 // price list 0.1.12): production carries no price. On a failing CI host each cell prints the refusal
 // reason or the computed figure: test values only.
 import { describe, expect, it } from 'vitest';
-import { parseCacheEconomics, priceFromEconomics, type CacheEconomics } from './cache-economics.js';
+import {
+  parseCacheEconomics,
+  priceFromEconomics,
+  withoutDateSuffix,
+  type CacheEconomics,
+} from './cache-economics.js';
 import type { PriceUsage } from './price-source.js';
 
 const usage = (u: Partial<PriceUsage>): PriceUsage => ({
@@ -348,5 +353,40 @@ describe('priceFromEconomics (G2)', () => {
       'priced' in dated && [dated.priced_by.matched_model, total(dated)],
       priceFromEconomics(file, 'gpt-5', at, usage({ prompt_tokens: 1 })),
     ]).toEqual([['gpt-4o-2024-05-13', 0.065], ['gpt-4o', 0.035], { not_priced: 'model_unknown' }]);
+  });
+
+  // issue #600 caching PR P, the last correction (L2): a date suffix is a day on the calendar, not
+  // eight digits. A leap day is accepted, a non-leap 29 February refused: a calendar check, not a
+  // digit-range check. (a) red when a tail that is not a day is stripped; (b) prints each answer.
+  it('a date suffix is a day on the calendar', () => {
+    expect(
+      [
+        'm-20260101',
+        'm-2026-01-01',
+        'claude-3-opus-20240229',
+        'm-12345678',
+        'm-2026-02-30',
+        'm-2025-02-29',
+        'm-2026-1-1',
+        'm',
+      ].map(withoutDateSuffix),
+    ).toEqual(['m', 'm', 'claude-3-opus', undefined, undefined, undefined, undefined, undefined]);
+  });
+
+  // (a) red when a model id ending in eight digits that are not a day is priced as its stem;
+  // (b) prints both answers (the matched model, or the reason).
+  it('a model id whose tail is not a day is not priced as its stem', () => {
+    const file: CacheEconomics = {
+      version: 1,
+      currency: 'USD',
+      models: { m: { prices: [{ per_million_tokens: { input: 1, output: 1 } }] } },
+    };
+    const at = '2026-10-01T00:00:00Z';
+    const notADay = priceFromEconomics(file, 'm-12345678', at, usage({ prompt_tokens: 1 }));
+    const aDay = priceFromEconomics(file, 'm-20260101', at, usage({ prompt_tokens: 1 }));
+    expect([notADay, 'priced' in aDay ? aDay.priced_by.matched_model : aDay]).toEqual([
+      { not_priced: 'model_unknown' },
+      'm',
+    ]);
   });
 });
