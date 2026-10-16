@@ -128,7 +128,9 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   refused before its claim (its `trust`, a precondition, its `input_schema`) still returns that
   refusal first, judged on the input the engine builds — never the assistant's `params` — and routed
   like every refusal before the claim; a step this server cannot run is refused without a claim or a
-  capability block. The library, the CLI and the engine's own chain are unchanged.
+  capability block. The library, the CLI and the engine's own chain are unchanged. Such a refusal no
+  longer writes a failed-attempt record — the MCP server's `agent_step_attempt_failed` stderr line or
+  the run's attempts file: those record an agent step's own refused answers.
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
   file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,
   or holding another run is `RESOURCE_FORMAT_INVALID` (`stop`); one in the format of an earlier
