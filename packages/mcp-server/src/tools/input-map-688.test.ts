@@ -369,8 +369,8 @@ describe('#688 correction — the docs say what a mapped step called by name is 
 
   // pre-Q3c1 title: 'item 3: tools.md, the execute_step outcome row for a mapped auto step'
   it('item 3: tools.md, the execute_step outcome row for an auto step (#729 Q3 correction 1)', () => {
-    // Executed by cells 4 (b) (status, code, action, `error_details` = `errors` only, the way out),
-    // 5 (the way out only when nothing else can run) and 6 (a `uses_service` step), and by
+    // Executed by cells 4 (b) (status, code, action, `error_details` = `errors` and `error_count`, the
+    // way out), 5 (the way out only when nothing else can run) and 6 (a `uses_service` step), and by
     // q3-729.test.ts F1-a…F1-f for a step with no map.
     claim(
       'docs/reference/mcp/tools.md',
