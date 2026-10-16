@@ -156,11 +156,12 @@ async function connect() {
 async function answeredRun(
   c: Awaited<ReturnType<typeof connect>>,
   d: WorkflowDefinition,
+  runParams: Record<string, unknown> = { x: 'from-params' },
 ): Promise<string> {
   const { run } = await c.runStore.create({
     workflowId: d.id,
     workflowVersion: 1,
-    params: { x: 'from-params' },
+    params: runParams,
   });
   await executeStep(c.runStore, d, {
     runId: run.id,
@@ -384,9 +385,14 @@ describe('#729 Q3, Part C — the dispatch-time capability block names no door w
 
 describe('#729 Q3 correction 1 — at the agent’s door an engine step’s input is the engine’s', () => {
   /** The record's facts the call must leave as they were, and whether the agent's params got in. */
-  async function call(d: WorkflowDefinition, step: string, params: Record<string, unknown>) {
+  async function call(
+    d: WorkflowDefinition,
+    step: string,
+    params: Record<string, unknown>,
+    runParams?: Record<string, unknown>,
+  ) {
     const c = await connect();
-    const runId = await answeredRun(c, d);
+    const runId = await answeredRun(c, d, runParams);
     const before = await c.runStore.get(runId);
     const r = await c.call('execute_step', { run_id: runId, command: step, params });
     const after = await c.runStore.get(runId);
@@ -438,10 +444,27 @@ describe('#729 Q3 correction 1 — at the agent’s door an engine step’s inpu
     });
   });
 
+  it('F1-h: params that fit AND carry `_debug` are refused the same way — the `_debug` strip never replaces the engine’s input', async () => {
+    const { r, record } = await call(F1_HANDLER, 'pub', { ...FITS, _debug: 'n' });
+    // (a) red when the `_debug` strip runs at the agent's door on an engine step (the
+    //     `!engineInputAtAgentDoor` conjunct dropped: the caller's params minus `_debug` replace the
+    //     engine's input, fit, and the step runs on them); (b) prints code, action, rules, record.
+    expect([r['error_code'], r['agent_action'], rules(r), record]).toEqual([
+      'VALIDATION_INPUT_SCHEMA',
+      'report_to_user',
+      ['required:text'],
+      UNTOUCHED,
+    ]);
+  });
+
   it('F1-b: a bare step, and a handler step WITH depends_on (its engine input is empty), named with params that fit → the same refusal', async () => {
     const bare = await call(F1_BARE, 'pub', FITS);
-    const dep = await call(F1_DEP, 'pub', FITS);
-    // (a) red when either is judged on the caller's params; (b) prints code, action, rules, record.
+    // The dependent step's run holds params that WOULD fit, so its half tells `{}` (its engine
+    // input) from the run's params.
+    const dep = await call(F1_DEP, 'pub', FITS, { text: 'from-run-params' });
+    // (a) red when either is judged on the caller's params, or when the dependent step is given the
+    //     run's params instead of `{}` (they fit: no input refusal); (b) prints code, action, rules,
+    //     record.
     expect({
       bare: [bare.r['error_code'], bare.r['agent_action'], rules(bare.r), bare.record],
       dep: [dep.r['error_code'], dep.r['agent_action'], rules(dep.r), dep.record],
@@ -457,13 +480,16 @@ describe('#729 Q3 correction 1 — at the agent’s door an engine step’s inpu
 
   it('F1-c: params that do NOT fit → the same refusal (the engine input’s rules), never provide_input', async () => {
     const { r, record } = await call(F1_HANDLER, 'pub', { nope: 1 });
+    // These params never fit, so no change can run the step on them: the "nothing of the agent's
+    // recorded" half is F1-a's and F1-h's, where the params fit. This cell checks the routing.
+    const { params: _unused, ...facts } = record;
     // (a) red when the caller's params are judged (`provide_input` — before the correction); (b)
     //     prints code, action, rules and the record's facts.
-    expect([r['error_code'], r['agent_action'], rules(r), record]).toEqual([
+    expect([r['error_code'], r['agent_action'], rules(r), facts]).toEqual([
       'VALIDATION_INPUT_SCHEMA',
       'report_to_user',
       ['required:text'],
-      { ...UNTOUCHED, params: false },
+      { version: true, claims: [], evidence: true, completed: false },
     ]);
   });
 

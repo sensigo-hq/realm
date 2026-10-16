@@ -230,11 +230,13 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     expect({
       fork: [forked['status'], await done(fork)],
       fail: [failed['status'], await done(failId), (await runStore.get(failId)).failed_steps],
-      called: [refused['status'], await done(called)],
+      called: [refused['status'], await done(called), refused['agent_action']],
     }).toEqual({
       fork: ['ok', ['a', 'c']],
       fail: ['error', [], ['d']],
-      called: ['error', []],
+      // #729 Q3 correction 1: the named engine step is refused on the engine's input, routed like
+      // every refusal before the claim — beside the owed `c`, the way on is the engine's.
+      called: ['error', [], 'resolve_precondition'],
     });
   });
 
