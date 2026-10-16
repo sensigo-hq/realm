@@ -17,6 +17,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
   advanceRun,
+  createDefaultRegistry,
   executeChain,
   executeStep,
   loadWorkflowFromString,
@@ -830,3 +831,89 @@ describe(
     });
   },
 );
+
+// issue #729 (correction 1, C3) — operate-runs.md's `--stuck` sentence, quoted and executed: a run
+// that cannot go on until its workflow is corrected is listed the moment it cannot (age 0), and a
+// healthy fresh run beside it is not. The crown's W2, driven to stuck through the library with
+// handler `h` registered (without it the chain records a capability block, never `cannot_go_on`).
+// What a failing cell prints: the page's sentence, or the run ids and what follows `idle:`.
+describe('issue #729 — operate-runs.md: `--stuck` lists the runs that need someone', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-729-sweep-cli-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it(
+    'the sentence, and the built realm: a run that cannot go on listed at age 0, a healthy fresh run not',
+    { timeout: 60_000 },
+    async () => {
+      claim(
+        'docs/guides/operate-runs.md',
+        'To see only the runs that need someone — such as a run that cannot go on until its workflow is corrected (listed the moment it cannot), or an open run that has not moved for a while — use `--stuck`:',
+      );
+      const W2 = wf(
+        [
+          'id: w2-crown',
+          'name: w2 crown',
+          'version: 1',
+          'steps:',
+          '  summarize:',
+          '    description: Summarize the text.',
+          '    execution: agent',
+          '    depends_on: []',
+          '  publish:',
+          '    description: Publish.',
+          '    execution: auto',
+          '    depends_on: [summarize]',
+          '    handler: h',
+          '    input_map:',
+          '      text: context.resources.summarize.summary',
+          '    input_schema:',
+          '      type: object',
+          '      required: [text]',
+          '      properties:',
+          '        text: { type: string }',
+          '',
+        ].join('\n'),
+      );
+      const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
+      const create = async () =>
+        (await runStore.create({ workflowId: 'w2-crown', workflowVersion: 1, params: {} })).run.id;
+      const stuck = await create();
+      const healthy = await create();
+      const registry = createDefaultRegistry();
+      registry.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
+      // summarize returns no `summary`, so publish's input cannot be built: the run cannot go on.
+      await executeChain(runStore, W2, {
+        runId: stuck,
+        command: 'summarize',
+        input: { other: 'x' },
+        dispatcher: async (_step, input) => input,
+        registry,
+      });
+      const r = spawnSync(process.execPath, [CLI, 'run', 'list', '--stuck'], {
+        cwd: home,
+        env: { PATH: process.env['PATH'] ?? '', HOME: home, NO_COLOR: '1' },
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      const lines = r.stdout.split('\n').filter((l) => l !== '');
+      // (a) red when the stuck run is not listed at age 0 with its label (the definition not
+      //     passed), or the healthy run is listed; (b) prints the exit code and what follows
+      //     `idle:` on each run's line.
+      expect({
+        code: r.status,
+        stuck: lines.find((l) => l.startsWith(stuck))?.replace(/^.* idle: /, ''),
+        healthyListed: lines.some((l) => l.startsWith(healthy)),
+      }).toEqual({
+        code: 0,
+        stuck: `0m  publish=cannot_go_on(input_schema) (realm run inspect ${stuck})`,
+        healthyListed: false,
+      });
+    },
+  );
+});
