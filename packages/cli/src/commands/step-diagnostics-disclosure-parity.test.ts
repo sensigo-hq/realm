@@ -18,7 +18,7 @@
 // BOTH `realm run inspect` and `get_run_state`'s `include_steps` — this file's `cache` row proves
 // the segment reaches the screen at all; the composed view's own fields are that guard's job.
 import { describe, it, expect } from 'vitest';
-import type { RunRecord, StepDiagnostics, UsageRecord } from '@sensigo/realm';
+import type { PriceSource, RunRecord, StepDiagnostics, UsageRecord } from '@sensigo/realm';
 import { inspectRun } from './inspect.js';
 
 type DisclosureRoute =
@@ -207,6 +207,8 @@ const mismatchRun = {
               provider: 'anthropic',
               endpoint: 'custom',
               cache_split_offered: true,
+              // issue #600 caching PR P: a priced request needs its output count.
+              output_tokens: 3,
             },
           ],
         },
@@ -226,11 +228,34 @@ const workflowStore = {
   list: async () => [],
 } as never;
 
+// issue #600 caching PR P: a fake shaped like the list adapter — it names the provider it was asked
+// for and notes a custom endpoint — so the recorded `provider` and `endpoint` reach the screen
+// through the money's source part (`priced as anthropic's claude-x`; the endpoint note).
+const ECHO_PRICES: PriceSource = {
+  price: (input) => ({
+    priced: { total: 0.5, uncached_counterfactual: 0.5 },
+    priced_by: {
+      source_class: 'price_list',
+      source_ref: '@pydantic/genai-prices',
+      version: '0.1.12',
+      matched_model: input.model.replace(/-\d{8}$/, ''),
+      ...(input.provider !== undefined ? { matched_provider: input.provider } : {}),
+      date_basis: 'current',
+      ...(input.endpoint === 'custom'
+        ? { endpoint_note: 'list price, your endpoint may bill differently' }
+        : {}),
+    },
+  }),
+};
+
 describe('#600 PR 1a (D7) — every StepDiagnostics field reaches an inspect reader, or says why not', () => {
   it('runs each field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_diag1', store, workflowStore, { verbose: true });
     const partial = await inspectRun('run_diag2', partialStore, workflowStore, { verbose: true });
-    const mismatch = await inspectRun('run_diag3', mismatchStore, workflowStore, { verbose: true });
+    const mismatch = await inspectRun('run_diag3', mismatchStore, workflowStore, {
+      verbose: true,
+      priceSource: ECHO_PRICES,
+    });
     for (const [field, route] of Object.entries(STEP_DIAGNOSTICS_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
@@ -356,17 +381,22 @@ const USAGE_DISCLOSURE = {
     surface: 'rendered',
     probe: (_out, _partial, mismatch) => expect(mismatch).toContain('stated on realm agent)'),
   },
+  // issue #600 caching PR P: both move to rendered, inside the money's source part.
   provider: {
-    surface: 'waived',
-    reason:
-      'The change that prices model calls (#600 PR P) reads it to price the request at the ' +
-      'provider that served it. Until then the step line names the model, which says more.',
+    surface: 'rendered',
+    probe: (out, _partial, mismatch) => {
+      expect(mismatch).toContain("; priced as anthropic's claude-x;");
+      expect(out).not.toContain('priced as');
+    },
   },
   endpoint: {
-    surface: 'waived',
-    reason:
-      'The change that prices model calls (#600 PR P) renders the custom-endpoint note from it ' +
-      "(a price list prices a provider's own endpoint).",
+    surface: 'rendered',
+    // The absent arm — a default endpoint, the clause printed without the gateway reason — is
+    // `inspect-cost-view.test.ts`'s cell 'the gateway reason of the nothing-cached clause only when a
+    // request went to a custom endpoint'.
+    probe: (_out, _partial, mismatch) => {
+      expect(mismatch).toContain('; list price, your endpoint may bill differently)');
+    },
   },
   cache_split_offered: {
     surface: 'waived',
@@ -391,7 +421,10 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
   it('runs each field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_diag1', store, workflowStore, { verbose: true });
     const partial = await inspectRun('run_diag2', partialStore, workflowStore, { verbose: true });
-    const mismatch = await inspectRun('run_diag3', mismatchStore, workflowStore, { verbose: true });
+    const mismatch = await inspectRun('run_diag3', mismatchStore, workflowStore, {
+      verbose: true,
+      priceSource: ECHO_PRICES,
+    });
     for (const [field, route] of Object.entries(USAGE_DISCLOSURE) as Array<
       [string, DisclosureRoute]
     >) {
@@ -404,7 +437,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     }
   });
 
-  it('the registry covers every UsageRecord field, and the waiver set is exactly the five named above', () => {
+  it('the registry covers every UsageRecord field, and the waiver set is exactly the three named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
       'cache_creation',
       'cache_creation_input_tokens',
@@ -434,14 +467,9 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
     // the probe loop only runs probes for `rendered` entries, so the guard would fall silent about
     // exactly the numbers it exists to guard. A fourth waiver is a decision someone makes in this
     // file. `output_tokens` moved OUT of this set (issue #600 PR 1b / #611) — it renders now, and
-    // `cache_creation` (issue #600 PR 2: the mismatch clause). PR 2 adds three waivers, each naming
-    // the change that will render it.
-    expect(waived).toEqual([
-      'cache_split_offered',
-      'endpoint',
-      'provider',
-      'request_index',
-      'request_start',
-    ]);
+    // `cache_creation` (issue #600 PR 2: the mismatch clause). PR 2 added three waivers, each naming
+    // the change that would render it; caching PR P renders `provider` and `endpoint`, and leaves
+    // three: `cache_split_offered` (a precondition only) and the two per-request ordinals.
+    expect(waived).toEqual(['cache_split_offered', 'request_index', 'request_start']);
   });
 });

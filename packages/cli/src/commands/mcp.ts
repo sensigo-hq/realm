@@ -7,7 +7,7 @@ import { Command } from 'commander';
 import { JsonWorkflowStore } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
+import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
 
@@ -41,9 +41,15 @@ export const mcpCommand = new Command('mcp')
     // refusal here means this command's own install is split: `hostRefusalLine` says so.
     let server: ReturnType<typeof createRealmMcpServer>;
     try {
+      // issue #600 caching PR P: the registry and the prices share one load per definition call.
+      const { registryProvider, priceSourceProvider } = makeProjectProviders(
+        options.extensionsModule,
+        options.project,
+      );
       server = createRealmMcpServer({
         workflowStore,
-        registryProvider: makeRegistryProvider(options.extensionsModule, options.project),
+        registryProvider,
+        priceSourceProvider,
         ...(driver !== undefined ? { driver } : {}),
       });
     } catch (err) {

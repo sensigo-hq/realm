@@ -362,6 +362,7 @@ export {
   composeCostView,
   composeStepViews,
   composeDriveFailureCosts,
+  composeRunCost,
   COST_UNRECORDED_CAUSES,
   isAnswerEntry,
 } from './engine/step-view.js';
@@ -371,12 +372,39 @@ export type {
   CostModels,
   CostCacheRequested,
   CacheRequestedEntry,
+  CostEndpoints,
   CostUnrecordedCause,
   AttemptView,
   AnswerView,
   StepView,
   DriveFailureCost,
+  Money,
+  MoneySource,
+  MoneySourceTotal,
+  RunCost,
 } from './engine/step-view.js';
+// issue #600 caching PR P: the runner's economics file (format v1), its evaluator, and the port a
+// host prices through — money is derived at read, never stored.
+export {
+  CACHE_ECONOMICS_JSON_SCHEMA,
+  parseCacheEconomics,
+  priceFromEconomics,
+} from './economics/cache-economics.js';
+export type {
+  CacheEconomics,
+  CacheEconomicsPrice,
+  CacheEconomicsRates,
+  CacheEconomicsTier,
+} from './economics/cache-economics.js';
+export { NOT_PRICED_CAUSES, priceRequest } from './economics/price-source.js';
+export type {
+  NotPricedCause,
+  PriceInput,
+  PriceResult,
+  PriceSource,
+  PriceUsage,
+  PricedBy,
+} from './economics/price-source.js';
 export type { GateDueState } from './engine/gate-timing.js';
 export {
   requirementForStep,
@@ -436,6 +464,7 @@ export { createDefaultRegistry } from './extensions/default-registry.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
 export {
   validateDeploymentManifest,
+  parseDeploymentManifest,
   collectManifestSecretRefs,
   DEPLOYMENT_MANIFEST_JSON_SCHEMA,
 } from './manifest/deployment-manifest.js';

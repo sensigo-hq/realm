@@ -73,6 +73,7 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm as
 - [Adapters](reference/adapters.md)
 - [Handlers](reference/handlers.md)
 - [Deployment manifest (`realm.yaml`)](reference/deployment-manifest.md)
+- [Cache economics file](reference/cache-economics.md)
 - [Project extensions](reference/project-extensions.md)
 - [Testing package](reference/testing-package.md)
 - [Core library: stores and the store contract](reference/core-library.md)

@@ -18,6 +18,12 @@
 // the two lifetime splits are probed on a fixture where the written lifetime differs from the one
 // asked, the only place their text appears.
 //
+// Issue #600 caching PR P adds two `CostView` rows (`money`, `endpoints`), `StepView.total`, and the
+// `Money` and `RunCost` registries, rendered with no waiver. Money exists only when a price source is
+// given, so its rows probe a second render (`PRICED`) of a priced fixture through `inspectRun`'s
+// `priceSource`; `endpoints` reads only as the nothing-cached clause's gateway reason, so its fixture
+// asks for a lifetime on a custom endpoint and caches nothing.
+//
 // Waivers are allowed only here and on the mcp `drive_failure_costs` twin (context 4), for
 // `basis`/`state` (a drive failure's usage carries no classification — `composeDriveFailureCosts`
 // never sets either) and, on THIS context only, `CostFigure.only_request_index` (the failure line
@@ -38,6 +44,9 @@ import type {
   Attributed,
   AnswerView,
   CacheRequestedEntry,
+  Money,
+  PriceSource,
+  RunCost,
 } from '@sensigo/realm';
 
 type DisclosureRoute =
@@ -50,6 +59,78 @@ const workflowStore: WorkflowRegistrar = {
   },
   list: async () => [],
 };
+
+// issue #600 caching PR P: a named fake — `gpt-*` from the list, every other model from the runner's
+// file ('dated' for `claude-x*`, matched without its date suffix and the provider named). Exact
+// binary fractions, so every sum and every floor prints its own figure.
+const PRICES: PriceSource = {
+  price(input) {
+    if (input.model.startsWith('gpt-')) {
+      return {
+        priced: { total: 0.125, uncached_counterfactual: 0.125 },
+        priced_by: {
+          source_class: 'price_list',
+          source_ref: '@pydantic/genai-prices',
+          version: '0.1.12',
+          matched_model: input.model,
+          date_basis: 'current',
+        },
+      };
+    }
+    const dated = input.model.startsWith('claude-x');
+    return {
+      priced: { total: 0.25, uncached_counterfactual: 0.5 },
+      priced_by: {
+        source_class: 'economics',
+        source_ref: '/srv/economics.yaml',
+        matched_model: dated ? 'claude-x' : input.model,
+        ...(dated ? { matched_provider: 'anthropic' } : {}),
+        date_basis: dated ? 'dated' : 'current',
+      },
+    };
+  },
+};
+
+// issue #600 caching PR P: the priced fixtures' requests. `GATEWAY` asked for 1h on a custom endpoint
+// and nothing was written or read; `MIXED` holds one request per source and one with no model.
+const GATEWAY_REQUEST = {
+  request_index: 0,
+  request_start: '2026-01-01T00:00:00.000Z',
+  model: 'claude-x-20260101',
+  provider: 'anthropic',
+  endpoint: 'custom',
+  cache_requested: 'lifetime',
+  cache_lifetime_s: 3600,
+  cache_ttl_sent: true,
+  cache_requested_source: 'stated',
+  cache_requested_by: 'realm agent',
+  prompt_tokens: 5000,
+  output_tokens: 10,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+};
+const MIXED_REQUESTS = [
+  {
+    request_index: 0,
+    request_start: '2026-01-01T00:00:00.000Z',
+    model: 'claude-y-20260101',
+    prompt_tokens: 100,
+    output_tokens: 1,
+  },
+  {
+    request_index: 1,
+    request_start: '2026-01-01T00:00:00.100Z',
+    model: 'gpt-5',
+    prompt_tokens: 100,
+    output_tokens: 1,
+  },
+  {
+    request_index: 2,
+    request_start: '2026-01-01T00:00:00.200Z',
+    prompt_tokens: 100,
+    output_tokens: 1,
+  },
+];
 
 function makeStore(run: RunRecord): RunStore {
   return {
@@ -402,6 +483,22 @@ const STEP_LINE_COST_VIEW = {
     probe: (out) =>
       expect(out).toContain('; 30 of the tokens written were kept for 1h, not the 5m asked'),
   },
+  // issue #600 caching PR P: on the priced render.
+  money: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.stepLine).toContain(
+        "| $0.25 (your economics file; at the call's date; priced as anthropic's claude-x)",
+      ),
+  },
+  endpoints: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.stepLine).toContain(
+        "nothing was written or read: the cached part may be shorter than the model's minimum, " +
+          'or the endpoint dropped the request to cache',
+      ),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
 
 // issue #600 PR 2: each field of one ask, on the step line.
@@ -485,7 +582,154 @@ const STEP_LINE_STEP_VIEW = {
     // The common gate step has ONE execution entry then ONE answer — its answer used to be dropped.
     probe: (out) => expect(out).toContain('Answer: approve · answered by alice'),
   },
+  // issue #600 caching PR P: the step's money across its attempts, in its header.
+  total: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.stepLine).toContain(
+        ' — ≥ $0.625 across 2 attempts (your economics file, genai-prices 0.1.12)',
+      ),
+  },
 } satisfies Record<keyof StepView, DisclosureRoute>;
+
+/** issue #600 caching PR P: the priced renders, filled by each context's runner before its probes. */
+const PRICED = { stepLine: '', failureLine: '' };
+
+// issue #600 caching PR P: a second run, rendered with `PRICES`. `gateway_step` is the gateway
+// fixture; `mixed_step` has two attempts (the second with a request per source and one with no
+// model); the three unmeasured attempts and a failed drive no longer on the record feed the run's
+// `Cost:` line.
+const pricedAttempt = (
+  stepId: string,
+  status: 'error' | 'success',
+  state: 'engaged' | 'never_engaged',
+  requests: readonly Record<string, unknown>[],
+) => ({
+  step_id: stepId,
+  kind: 'execution' as const,
+  status,
+  started_at: '2026-01-01T00:00:00.000Z',
+  completed_at: '2026-01-01T00:00:01.000Z',
+  duration_ms: 10,
+  input_summary: {},
+  output_summary: {},
+  evidence_hash: `p-${stepId}-${status}`,
+  diagnostics: {
+    input_token_estimate: 1,
+    precondition_trace: [],
+    cache: { state, basis: 'provider_reported' as const, requests },
+  },
+});
+const pricedStepRun = {
+  ...contextOneRun,
+  id: 'run_ctx1p',
+  in_progress_steps: [],
+  claims: undefined,
+  evidence: [
+    pricedAttempt('gateway_step', 'success', 'never_engaged', [GATEWAY_REQUEST]),
+    pricedAttempt('mixed_step', 'error', 'engaged', [MIXED_REQUESTS[0]!]),
+    pricedAttempt('mixed_step', 'success', 'engaged', MIXED_REQUESTS),
+    toolsStep,
+    externalStep,
+    corruptStep,
+  ],
+  drive_failures: {
+    first_failed_at: '2026-01-01T00:04:00.000Z',
+    total: 3,
+    entries: [
+      {
+        at: '2026-01-01T00:04:00.000Z',
+        step: 'mixed_step',
+        provider: 'anthropic',
+        error_class: 'other' as const,
+        message: 'connection reset',
+        elapsed_ms: 300,
+        usage: [MIXED_REQUESTS[0]],
+      },
+      // A failed drive with no usage figures (a request that failed on the wire): it may have billed.
+      {
+        at: '2026-01-01T00:05:00.000Z',
+        step: 'mixed_step',
+        provider: 'anthropic',
+        error_class: 'other' as const,
+        message: 'connection reset',
+        elapsed_ms: 300,
+      },
+    ],
+  },
+} as unknown as RunRecord;
+
+const STEP_LINE_MONEY = {
+  total: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.stepLine).toContain('| $0.25 (your economics file; current price)'),
+  },
+  uncached_counterfactual: {
+    surface: 'rendered',
+    // Read through net: the counterfactual is what the saving is measured against.
+    probe: () =>
+      expect(PRICED.stepLine).toContain("priced as anthropic's claude-x); caching saved $0.25"),
+  },
+  net: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.stepLine).toContain(
+        '(your economics file; current price); caching saved $0.25',
+      ),
+  },
+  priced: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.stepLine).toContain('; 2 of 3 requests priced;'),
+  },
+  of: { surface: 'rendered', probe: () => expect(PRICED.stepLine).toContain('2 of 3 requests') },
+  dated: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.stepLine).toContain("(your economics file; at the call's date;"),
+  },
+  sources: {
+    surface: 'rendered',
+    // What priced the request, when it differs from the recorded model.
+    probe: () => expect(PRICED.stepLine).toContain("; priced as anthropic's claude-x)"),
+  },
+  source_totals: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.stepLine).toContain(
+        '| ≥ $0.375 (prices from: your economics file (1), genai-prices 0.1.12 (1);',
+      ),
+  },
+  not_priced: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.stepLine).toContain('; 1 not priced: model not recorded)'),
+  },
+} satisfies Record<keyof Money, DisclosureRoute>;
+
+const RUN_LINE_RUN_COST = {
+  total: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.stepLine).toContain(
+        'Cost: ≥ $1.12 (prices from: your economics file (4), genai-prices 0.1.12 (1); ' +
+          "1 at the call's date, 4 current; 5 of 6 requests priced; 1 not priced: model not recorded;",
+      ),
+  },
+  failed_drives_not_on_record: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.stepLine).toContain('; 1 failed drive not on the record)'),
+  },
+  failed_drives_without_usage: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.stepLine).toContain('; 1 failed drive without usage figures'),
+  },
+  unmeasured: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.stepLine).toContain(
+        '; 1 tool-calling attempt not measured; 1 attempt with unreadable usage; ' +
+          '1 attempt realm has no usage figures for;',
+      ),
+  },
+} satisfies Record<keyof RunCost, DisclosureRoute>;
 
 const STEP_LINE_UNRECORDED_CAUSE = {
   tool_calling_step: {
@@ -513,6 +757,8 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
       STEP_LINE_ATTEMPT_VIEW,
       STEP_LINE_STEP_VIEW,
       STEP_LINE_UNRECORDED_CAUSE,
+      STEP_LINE_MONEY,
+      RUN_LINE_RUN_COST,
     ];
     for (const registry of registries) {
       expect(Object.values(registry).filter((r) => r.surface === 'waived')).toEqual([]);
@@ -521,6 +767,9 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
 
   it('runs every registry against the real rendered output', async () => {
     const out = await inspectRun('run_ctx1', makeStore(contextOneRun), workflowStore);
+    PRICED.stepLine = await inspectRun('run_ctx1p', makeStore(pricedStepRun), workflowStore, {
+      priceSource: PRICES,
+    });
     for (const registry of [
       STEP_LINE_COST_VIEW,
       STEP_LINE_CACHE_REQUESTED_ENTRY,
@@ -528,6 +777,8 @@ describe('#600 PR 1b (D4) — context 1, the step line', () => {
       STEP_LINE_ATTEMPT_VIEW,
       STEP_LINE_STEP_VIEW,
       STEP_LINE_UNRECORDED_CAUSE,
+      STEP_LINE_MONEY,
+      RUN_LINE_RUN_COST,
     ]) {
       for (const [field, route] of Object.entries(registry)) {
         if (route.surface === 'rendered') route.probe(out);
@@ -837,7 +1088,83 @@ const FAILURE_COST_VIEW = {
     probe: (out) =>
       expect(out).toContain('; 30 of the tokens written were kept for 1h, not the 5m asked'),
   },
+  // issue #600 caching PR P: on the priced render.
+  money: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.failureLine).toContain(
+        "| $0.25 (your economics file; at the call's date; priced as anthropic's claude-x)",
+      ),
+  },
+  endpoints: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.failureLine).toContain(
+        "nothing was written or read: the cached part may be shorter than the model's minimum, " +
+          'or the endpoint dropped the request to cache',
+      ),
+  },
 } satisfies Record<keyof CostView, DisclosureRoute>;
+
+// issue #600 caching PR P: three failed drives, rendered with `PRICES` — the gateway fixture, the
+// mixed requests, and one request from the runner's file at its current price.
+const pricedFailureRun = {
+  ...contextTwoRun,
+  id: 'run_ctx2p',
+  drive_failures: {
+    first_failed_at: ENTRY_A.at,
+    total: 3,
+    entries: [
+      { ...ENTRY_A, usage: [GATEWAY_REQUEST] },
+      { ...ENTRY_B, usage: MIXED_REQUESTS },
+      { ...ENTRY_C, usage: [MIXED_REQUESTS[0]] },
+    ],
+  },
+} as unknown as RunRecord;
+
+const FAILURE_MONEY = {
+  total: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.failureLine).toContain('| $0.25 (your economics file; current price)'),
+  },
+  uncached_counterfactual: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.failureLine).toContain("priced as anthropic's claude-x); caching saved $0.25"),
+  },
+  net: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.failureLine).toContain(
+        '(your economics file; current price); caching saved $0.25',
+      ),
+  },
+  priced: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.failureLine).toContain('; 2 of 3 requests priced;'),
+  },
+  of: { surface: 'rendered', probe: () => expect(PRICED.failureLine).toContain('2 of 3 requests') },
+  dated: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.failureLine).toContain("(your economics file; at the call's date;"),
+  },
+  sources: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.failureLine).toContain("; priced as anthropic's claude-x)"),
+  },
+  source_totals: {
+    surface: 'rendered',
+    probe: () =>
+      expect(PRICED.failureLine).toContain(
+        '| ≥ $0.375 (prices from: your economics file (1), genai-prices 0.1.12 (1);',
+      ),
+  },
+  not_priced: {
+    surface: 'rendered',
+    probe: () => expect(PRICED.failureLine).toContain('; 1 not priced: model not recorded)'),
+  },
+} satisfies Record<keyof Money, DisclosureRoute>;
 
 // issue #600 PR 2: each field of one ask, on the failure line.
 const FAILURE_CACHE_REQUESTED_ENTRY = {
@@ -892,18 +1219,22 @@ describe('#600 PR 1b (D4) — context 2, the failure block', () => {
       .sort();
     expect(waivedFigure).toEqual(['only_request_index']);
     expect(
-      Object.values(FAILURE_CACHE_REQUESTED_ENTRY as Record<string, DisclosureRoute>).filter(
-        (r) => r.surface === 'waived',
+      [FAILURE_CACHE_REQUESTED_ENTRY, FAILURE_MONEY].flatMap((r) =>
+        Object.values(r as Record<string, DisclosureRoute>).filter((x) => x.surface === 'waived'),
       ),
     ).toEqual([]);
   });
 
   it('runs every field OWN probe against the real rendered output', async () => {
     const out = await inspectRun('run_ctx2', makeStore(contextTwoRun), workflowStore);
+    PRICED.failureLine = await inspectRun('run_ctx2p', makeStore(pricedFailureRun), workflowStore, {
+      priceSource: PRICES,
+    });
     for (const registry of [
       FAILURE_COST_VIEW,
       FAILURE_CACHE_REQUESTED_ENTRY,
       FAILURE_COST_FIGURE,
+      FAILURE_MONEY,
     ]) {
       for (const [field, route] of Object.entries(registry)) {
         if (route.surface === 'rendered') route.probe(out);
