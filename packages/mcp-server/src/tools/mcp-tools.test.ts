@@ -13,6 +13,7 @@ import { handleStartRun, registerStartRun } from './start-run.js';
 import { handleExecuteStep, handleExecuteStepTool } from './execute-step.js';
 import { handleSubmitHumanResponse, registerSubmitHumanResponse } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
+import { handleAdvanceRun } from './advance-run.js';
 import { createDefaultRegistry } from '../server.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -583,12 +584,12 @@ describe('mcp tool handlers', () => {
       params: {},
     });
 
-    const result = await handleExecuteStepTool(
-      { run_id: run.id, command: 'call_api' },
+    // #729 (the Q3 unit, E2 (a)): `call_api` is the engine's step — `advance_run` runs it (an agent's
+    // execute_step naming it is refused, q3-729.test.ts); the dispatch failure's reply is the same.
+    const parsed = (await handleAdvanceRun(
+      { run_id: run.id },
       { runStore, workflowStore, registry },
-    );
-
-    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    )) as unknown as Record<string, unknown>;
     expect(parsed['status']).toBe('error');
     // Terminal run: resolvePostDispatchAgentAction always returns 'stop'.
     expect(parsed['agent_action']).toBe('stop');
@@ -615,12 +616,12 @@ describe('mcp tool handlers', () => {
       params: {},
     });
 
-    const result = await handleExecuteStepTool(
-      { run_id: run.id, command: 'call_api' },
+    // #729 (the Q3 unit, E2 (a)): `call_api` is the engine's step — `advance_run` runs it (an agent's
+    // execute_step naming it is refused, q3-729.test.ts); the dispatch failure's reply is the same.
+    const parsed = (await handleAdvanceRun(
+      { run_id: run.id },
       { runStore, workflowStore, registry },
-    );
-
-    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    )) as unknown as Record<string, unknown>;
     expect(parsed['status']).toBe('error');
     // Non-terminal run, report_to_user passes through.
     expect(parsed['agent_action']).toBe('report_to_user');
@@ -648,12 +649,12 @@ describe('mcp tool handlers', () => {
       params: {},
     });
 
-    const result = await handleExecuteStepTool(
-      { run_id: run.id, command: 'call_api' },
+    // #729 (the Q3 unit, E2 (a)): `call_api` is the engine's step — `advance_run` runs it (an agent's
+    // execute_step naming it is refused, q3-729.test.ts); the dispatch failure's reply is the same.
+    const parsed = (await handleAdvanceRun(
+      { run_id: run.id },
       { runStore, workflowStore, registry },
-    );
-
-    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    )) as unknown as Record<string, unknown>;
     expect(parsed['status']).toBe('error');
     // Non-terminal run, wait_for_service passes through.
     expect(parsed['agent_action']).toBe('wait_for_service');
@@ -679,12 +680,12 @@ describe('mcp tool handlers', () => {
       params: {},
     });
 
-    const result = await handleExecuteStepTool(
-      { run_id: run.id, command: 'call_api' },
+    // #729 (the Q3 unit, E2 (a)): `call_api` is the engine's step — `advance_run` runs it (an agent's
+    // execute_step naming it is refused, q3-729.test.ts); the dispatch failure's reply is the same.
+    const parsed = (await handleAdvanceRun(
+      { run_id: run.id },
       { runStore, workflowStore, registry },
-    );
-
-    const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
+    )) as unknown as Record<string, unknown>;
     expect(parsed['status']).toBe('error');
     expect(parsed['agent_action']).toBe('wait_and_proceed');
     expect(parsed['retry_after']).toBe(30);

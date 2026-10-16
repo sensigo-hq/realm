@@ -120,6 +120,15 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 ### Changed
 
+- **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
+  an `auto` step the engine could run is refused before anything is claimed: `blocked`,
+  `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.`
+  followed by what the engine owes and the call to make, `next_actions` = `advance_run`,
+  `agent_action: resolve_precondition`; `advance_run` runs the step with the engine's input. A step
+  refused before its claim (its `trust`, a precondition, its `input_schema`) still returns that
+  refusal first, judged on the input the engine builds — never the assistant's `params` — and routed
+  like every refusal before the claim; a step this server cannot run is refused without a claim or a
+  capability block. The library, the CLI and the engine's own chain are unchanged.
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
   file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,
   or holding another run is `RESOURCE_FORMAT_INVALID` (`stop`); one in the format of an earlier
@@ -241,6 +250,9 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
 
 ### Fixed
 
+- **The capability block's `context_hint` no longer says `then follow next_actions` beside an empty
+  list (issue #729).** The MCP reply ends with the step's own words (`'<step>' cannot run here
+(capability): …`).
 - **A dispatcher's call no longer leaves its step's timer running (issue #719).** A dispatcher that
   threw synchronously, or was not a function, left a `STEP_TIMEOUT` timer that rejected unhandled up
   to an hour later and could end the host's process; one that returned a plain value failed with

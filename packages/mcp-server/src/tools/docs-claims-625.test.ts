@@ -55,11 +55,15 @@ function claim(
 
 type Reply = Record<string, unknown> & { _isError?: boolean; _text?: string };
 
-async function connect() {
+async function connect(registry?: ExtensionRegistry) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({
+    runStore,
+    workflowStore,
+    ...(registry !== undefined ? { registry } : {}),
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'docs-claims-625', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
@@ -647,11 +651,11 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
     },
   );
 
-  it('C163 blocked: the suggestion for steps only', async () => {
+  it('C163 blocked: the suggestion for steps only; eligible_steps names the ready engine steps too, which are run by advance_run, never by name (#729 Q3 correction 1, C3)', async () => {
     claim('mcp/tools.md', '`Call one of the steps indicated in next_actions instead.` for steps');
     claim(
       'mcp/tools.md',
-      '`eligible_steps`, the steps that can be called by name, and a `suggestion`.',
+      "`eligible_steps`, the steps that are ready and can run here (agent steps and the engine's — an engine step is run by `advance_run`, never by name), and a `suggestion`.",
     );
     claim('mcp/tools.md', 'On a run that has ended, each tool replies as follows:');
     const { call, runId } = await atB();
@@ -659,6 +663,46 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
     expect((r['blocked_reason'] as { suggestion: string }).suggestion).toBe(
       'Call one of the steps indicated in next_actions instead.',
     );
+    // The engine-step case: `first` answered through the library (no chain), so the engine owes `u`.
+    const c = await connect();
+    const withEngine: WorkflowDefinition = {
+      id: 'docs-c3',
+      name: 'docs-c3',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        first: { description: 'First.', execution: 'agent', depends_on: [] },
+        u: { description: 'U.', execution: 'auto', depends_on: ['first'] },
+      },
+    } as WorkflowDefinition;
+    await c.workflowStore.register(withEngine);
+    const { run } = await c.runStore.create({
+      workflowId: withEngine.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(c.runStore, withEngine, {
+      runId: run.id,
+      command: 'first',
+      input: {},
+      dispatcher: async () => ({ done: true }),
+    });
+    const again = await c.call('execute_step', { run_id: run.id, command: 'first', params: {} });
+    const byName = await c.call('execute_step', { run_id: run.id, command: 'u', params: {} });
+    // (a) red when eligible_steps leaves out the ready engine step, or naming it runs it; (b)
+    //     prints the statuses, the listed steps and the calls offered.
+    expect({
+      again: [
+        again['status'],
+        (again['blocked_reason'] as { eligible_steps: string[] }).eligible_steps,
+      ],
+      byName: [byName['status'], next(byName)],
+      ran: (await c.runStore.get(run.id)).completed_steps.includes('u'),
+    }).toEqual({
+      again: ['blocked', ['u']],
+      byName: ['blocked', ['advance_run:']],
+      ran: false,
+    });
   });
 
   it('C163 blocked: the suggestion for the answer to an open question', async () => {
@@ -1023,7 +1067,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     );
     claim(
       'mcp/tools.md',
-      '`blocked_reason.eligible_steps` lists the steps that can be called by name, and may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.',
+      "`blocked_reason.eligible_steps` lists the steps that are ready — agent steps and the engine's alike; an engine step is run by `advance_run`, never by name. It may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-owed'));
@@ -1037,6 +1081,19 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       (r['blocked_reason'] as { eligible_steps: string[] }).eligible_steps,
     ]).toEqual(['blocked', ['advance_run:'], ['after']]);
     expect(String(r['context_hint'])).toMatch(/^Step 'confirm' cannot be called now: /);
+    // #729 (the Q3 unit, D3): the engine step `eligible_steps` names is never run by name — the
+    // agent's execute_step naming it is refused and told advance_run, which runs it.
+    const byName = await call('execute_step', { run_id: runId, command: 'after', params: {} });
+    const notRun = (await runStore.get(runId)).completed_steps.includes('after');
+    await call('advance_run', { run_id: runId });
+    // (a) red when execute_step naming the engine step runs it, or advance_run does not;
+    //     (b) prints the status, the calls offered and whether the step ran.
+    expect([
+      byName['status'],
+      next(byName),
+      notRun,
+      (await runStore.get(runId)).completed_steps.includes('after'),
+    ]).toEqual(['blocked', ['advance_run:'], false, true]);
   });
 
   it('C163 blocked: the suggestion for steps and advance_run together', async () => {
@@ -1181,8 +1238,10 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163: a step refused before its claim with nothing else to run — report_to_user and the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply routes as that refusal: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`), and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
+      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input for an agent step, and that reply is unchanged. For an `auto` step the schema checks the input the engine builds — what its `input_map` builds; else the run's params (no `depends_on`) or an empty input (with `depends_on`) — never your `params`, so the reply routes as that refusal: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which said `report_to_user` for a step with an `input_map` and, for any other `auto` step, `provide_input` — or ran the step on params that fit), and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
     );
+    // #729 Q3 correction 1 (C6): the auto-step half is executed by q3-729.test.ts F1-a…F1-f; the
+    // agent step's own input (`ask` below) keeps `provide_input`.
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
     const runId = (await call('start_run', { workflow_id: STUCK.id }))['run_id'] as string;
@@ -1407,23 +1466,44 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     expect([opened['status'], opened['stopped_step']]).toEqual(['confirm_required', 'confirm']);
   });
 
-  it("C163 chained_auto_steps: an auto step's entry carries the expiry line of the execute_step call that carried out an expired question first; the reply's warnings list it too", async () => {
+  // pre-Q3 title: C163 chained_auto_steps: an auto step's entry carries the expiry line of the execute_step call that carried out an expired question first; the reply's warnings list it too
+  it("C163 chained_auto_steps: an auto step's entry carries its own call's warnings — a cleanup step left pending when that step ended the run; the reply's warnings list them too", async () => {
+    // #729 (the Q3 unit): the former example (an execute_step call naming an auto step that carried
+    // out an expired question first) is no longer reachable over MCP — an agent's execute_step naming
+    // an engine step is refused (its blocked reply carries the expiry line in its own `warnings`).
     claim(
       'mcp/tools.md',
-      "An `auto` step's entry also has `warnings` when that step's own call gave any (such as the expiry line of an `execute_step` call that carried out an expired question first); the reply's `warnings` lists them too.",
+      "An `auto` step's entry also has `warnings` when that step's own call gave any (such as `finalizer '<name>' left pending — handler not available on this surface`, when that step ended the run and this server lacks a cleanup step's handler); the reply's `warnings` lists them too.",
     );
-    const { call, workflowStore, runStore } = await connect();
-    await workflowStore.register(gated('docs-chained', 'settle_default'));
+    const { call, workflowStore } = await connect();
+    await workflowStore.register({
+      id: 'docs-chained',
+      name: 'docs-chained',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        a: { description: 'A.', execution: 'agent', depends_on: [] },
+        last: { description: 'Last.', execution: 'auto', depends_on: ['a'] },
+        tidy: {
+          description: 'Tidy.',
+          execution: 'finalizer',
+          on_outcome: 'complete',
+          handler: 'not_on_this_server',
+        },
+      },
+    } as WorkflowDefinition);
     const runId = (await call('start_run', { workflow_id: 'docs-chained' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    const r = await call('execute_step', { run_id: runId, command: 'after', params: {} });
-    const line = `gate '${gateId}' on 'confirm' had expired <lag> before this call — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`;
+    const r = await call('execute_step', { run_id: runId, command: 'a', params: {} });
+    const line = "finalizer 'tidy' left pending — handler not available on this surface";
     const entry = (r['chained_auto_steps'] as Array<{ step: string; warnings?: string[] }>).find(
-      (e) => e.step === 'after',
+      (e) => e.step === 'last',
     );
-    expect(lagless(entry?.warnings)).toContain(line);
-    expect(lagless(r['warnings'])).toContain(line);
+    // (a) red when the entry of the step that ended the run drops its own call's warning, or the
+    //     reply's warnings do not list it; (b) prints the entry's and the reply's warnings.
+    expect({ entry: entry?.warnings, reply: r['warnings'] }).toEqual({
+      entry: [line],
+      reply: [line],
+    });
   });
 
   it('C163 submit_human_response: a gate ID that is not the open one — STATE_BLOCKED, the open question named and its answer offered, report_to_user (A-2 row 6)', async () => {
@@ -3194,7 +3274,9 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
       workflowVersion: 1,
       params: {},
     });
-    const viaOwn = await call('execute_step', { run_id: own.id, command: 's', params: {} });
+    // #729 (the Q3 unit, E2 (a)): `s` is the engine's step — the call whose own step fails is the one
+    // that runs it, `advance_run` (an agent's execute_step naming it is refused, q3-729.test.ts).
+    const viaOwn = await call('advance_run', { run_id: own.id });
     // (a) red when a reply on the ended run lacks the way back in; (b) prints the hints.
     expect([
       started['context_hint'],
@@ -3373,6 +3455,243 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
       cleanup: { steps: ['tidy'], command: `realm run drain ${failed.id} --force` },
       waiting: ['z'],
       hint: `Run '${w.id}': nothing ran. Waiting on the question on step 'q' (choices: yes, no) — answer it with submit_human_response; 'z' waits for its answer.`,
+    });
+  });
+});
+
+// issue #729 (the Q3 unit, D1, D4, D8): tools.md's sentences about an `auto` step called by name —
+// each quoted, and the behaviour it states run over a real MCP client.
+describe('#729 Q3 — tools.md: an automatic step called by name is the engine’s', () => {
+  const q3 = (id: string, extra: WorkflowDefinition['steps']): WorkflowDefinition =>
+    ({
+      id,
+      name: id,
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { a: { description: 'A.', execution: 'agent', depends_on: [] }, ...extra },
+    }) as WorkflowDefinition;
+  /** A run with the agent step `a` answered through the library (no chain): what follows waits. */
+  async function answered(
+    c: Awaited<ReturnType<typeof connect>>,
+    d: WorkflowDefinition,
+  ): Promise<string> {
+    await c.workflowStore.register(d);
+    const { run } = await c.runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    await executeStep(c.runStore, d, {
+      runId: run.id,
+      command: 'a',
+      input: {},
+      dispatcher: async () => ({ fromA: 1 }),
+    });
+    return run.id;
+  }
+
+  it('D1: an auto step the engine could run, called by name — blocked, the engine’s sentence, what it owes and advance_run; advance_run runs it with the engine’s input', async () => {
+    claim(
+      'mcp/tools.md',
+      "An `auto` step called by name that the engine could run — nothing refuses it before its claim — is not run on your call: the reply is `blocked`, `context_hint` begins `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.` and goes on to what the engine owes and the call to make (`Owed to the engine: … — call advance_run; …`), `next_actions` holds `advance_run` and `agent_action` is `resolve_precondition`.",
+    );
+    claim(
+      'mcp/tools.md',
+      "`advance_run` runs the step with the engine's input — what its `input_map` builds; else the run's params (a step with no `depends_on`) or an empty input (a step with `depends_on`) — never with your `params`. Added after version 0.47.0, which ran the step with your `params` as its input.",
+    );
+    const c = await connect();
+    const runId = await answered(
+      c,
+      q3('q3-d1', { b: { description: 'B.', execution: 'auto', depends_on: ['a'] } }),
+    );
+    const r = await c.call('execute_step', {
+      run_id: runId,
+      command: 'b',
+      params: { mine: 'AGENT' },
+    });
+    await c.call('advance_run', { run_id: runId });
+    const after = await c.runStore.get(runId);
+    const b = after.evidence.find((e) => e.step_id === 'b');
+    // (a) red when the step runs on the call, the hint or routing differ, or advance_run runs it on
+    //     the caller's params; (b) prints the fields and whether the params reached the record.
+    expect({
+      status: r['status'],
+      hint: r['context_hint'],
+      next: next(r),
+      action: r['agent_action'],
+      ran: after.completed_steps.includes('b'),
+      source: b?.output_source,
+      params: JSON.stringify(after.evidence).includes('AGENT'),
+    }).toEqual({
+      status: 'blocked',
+      hint: "Step 'b' cannot be called now: it is an automatic step: the engine runs it when it is owed. Owed to the engine: 'b' — call advance_run.",
+      next: ['advance_run:'],
+      action: 'resolve_precondition',
+      ran: true,
+      source: 'dependency',
+      params: false,
+    });
+    // A handler step WITH `depends_on` (#729 Q3 correction 1, C6): the engine gives it an EMPTY
+    // input — not its dependency's output, never the caller's params.
+    const seen: Array<Record<string, unknown>> = [];
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'h', {
+      id: 'h',
+      execute: async (input: { params: Record<string, unknown> }) => {
+        seen.push(input.params);
+        return { data: { ok: true } };
+      },
+    } as never);
+    const ch = await connect(registry);
+    const handlerRun = await answered(
+      ch,
+      q3('q3-d1-u', {
+        u: { description: 'U.', execution: 'auto', depends_on: ['a'], handler: 'h' },
+      }),
+    );
+    await ch.call('execute_step', { run_id: handlerRun, command: 'u', params: { mine: 'AGENT' } });
+    await ch.call('advance_run', { run_id: handlerRun });
+    // (a) red when the handler receives its dependency's output or the caller's params; (b) prints
+    //     the input's key names and whether the step completed.
+    expect({
+      inputKeys: seen.map((p) => Object.keys(p)),
+      ran: (await ch.runStore.get(handlerRun)).completed_steps.includes('u'),
+    }).toEqual({ inputKeys: [[]], ran: true });
+  });
+
+  // pre-Q3c1 title: 'D1: an auto step this server cannot run, called by name — nothing to call,
+  // report_to_user, the capability words; nothing claimed, no capability block recorded'
+  it('D1: an auto step this server cannot run, called by name — the capability words, nothing claimed, no capability block; next_actions names what else can be called (an agent step, advance_run), else nothing and report_to_user', async () => {
+    claim(
+      'mcp/tools.md',
+      "When this server cannot run the step (its handler or adapter is not loaded here), the hint ends with `'<step>' cannot run here (capability): …`, nothing is claimed and no capability block is recorded by your call; `next_actions` names what else can be called — an agent step that is ready, or `advance_run` when the engine owes a step it can run — and is empty, with `agent_action: report_to_user`, when nothing can be.",
+    );
+    const c = await connect();
+    const runId = await answered(
+      c,
+      q3('q3-d1-k', {
+        k: { description: 'K.', execution: 'auto', depends_on: ['a'], handler: 'missing' },
+      }),
+    );
+    const before = await c.runStore.get(runId);
+    const r = await c.call('execute_step', { run_id: runId, command: 'k', params: {} });
+    const after = await c.runStore.get(runId);
+    // (a) red when the call claims the step or records the block, or names a call; (b) prints them.
+    expect({
+      next: next(r),
+      action: r['agent_action'],
+      ends: String(r['context_hint']).includes("'k' cannot run here (capability): "),
+      written: [after.version === before.version, Object.keys(after.capability_blocks ?? {})],
+    }).toEqual({ next: [], action: 'report_to_user', ends: true, written: [true, []] });
+    // Beside a ready agent step, and beside an owed step the engine can run (#729 Q3 correction 1,
+    // C4; the audit's probe2): next_actions names the call, the routing leads on, and the hint still
+    // ends with the capability words.
+    const besideAgent = await answered(
+      c,
+      q3('q3-d1-k-agent', {
+        k: { description: 'K.', execution: 'auto', depends_on: ['a'], handler: 'missing' },
+        second: { description: 'Second.', execution: 'agent', depends_on: ['a'] },
+      }),
+    );
+    const ra = await c.call('execute_step', { run_id: besideAgent, command: 'k', params: {} });
+    const besideOwed = await answered(
+      c,
+      q3('q3-d1-k-owed', {
+        k: { description: 'K.', execution: 'auto', depends_on: ['a'], handler: 'missing' },
+        u: { description: 'U.', execution: 'auto', depends_on: ['a'] },
+      }),
+    );
+    const ro = await c.call('execute_step', { run_id: besideOwed, command: 'k', params: {} });
+    // (a) red when either reply names nothing to call or routes to report_to_user, or its hint drops
+    //     the step it can call or the capability words; (b) prints the calls, actions and hints.
+    expect({
+      agent: [
+        next(ra),
+        ra['agent_action'],
+        String(ra['context_hint']).includes("'second'"),
+        String(ra['context_hint']).includes("'k' cannot run here (capability): "),
+      ],
+      owed: [
+        next(ro),
+        ro['agent_action'],
+        String(ro['context_hint']).includes(
+          "Owed to the engine: 'u' — call advance_run. 'k' cannot run here (capability): ",
+        ),
+      ],
+    }).toEqual({
+      agent: [['execute_step:second'], 'resolve_precondition', true, true],
+      owed: [['advance_run:'], 'resolve_precondition', true],
+    });
+  });
+
+  it("D4: execute_step submits the assistant's answer to an agent step", async () => {
+    claim(
+      'mcp/tools.md',
+      "| [`execute_step`](#execute_step)                   | Submits the assistant's answer to an agent step.",
+    );
+    const c = await connect();
+    const d = q3('q3-d4', { b: { description: 'B.', execution: 'auto', depends_on: [] } });
+    await c.workflowStore.register(d);
+    const batch = await c.call('start_run_batch', { workflow_id: d.id, items: [{ params: {} }] });
+    const runId = (batch['started'] as Array<{ run_id: string }>)[0]!.run_id;
+    const answer = await c.call('execute_step', {
+      run_id: runId,
+      command: 'a',
+      params: { said: 1 },
+    });
+    const fresh = (await c.call('start_run_batch', { workflow_id: d.id, items: [{ params: {} }] }))[
+      'started'
+    ] as Array<{ run_id: string }>;
+    const engineStep = await c.call('execute_step', {
+      run_id: fresh[0]!.run_id,
+      command: 'b',
+      params: {},
+    });
+    // (a) red when an agent step's answer is not recorded, or an engine step is run by it; (b)
+    //     prints the statuses and what completed.
+    expect({
+      answer: [answer['status'], (await c.runStore.get(runId)).completed_steps.includes('a')],
+      engineStep: engineStep['status'],
+    }).toEqual({ answer: ['ok', true], engineStep: 'blocked' });
+  });
+
+  it('D8: a batch run waits for its first call — execute_step on an agent step, advance_run on an auto step that is ready', async () => {
+    claim(
+      'mcp/tools.md',
+      'each run waits for its first call — `execute_step` on an agent step, `advance_run` on an `auto` step that is ready — or for a driver.',
+    );
+    const c = await connect();
+    const autoFirst: WorkflowDefinition = {
+      id: 'q3-d8',
+      name: 'q3-d8',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { s: { description: 'S.', execution: 'auto', depends_on: [] } },
+    } as WorkflowDefinition;
+    await c.workflowStore.register(autoFirst);
+    const agentFirst = q3('q3-d8-agent', {});
+    await c.workflowStore.register(agentFirst);
+    const batch = await c.call('start_run_batch', {
+      workflow_id: autoFirst.id,
+      items: [{ params: {} }],
+    });
+    const entry = (batch['started'] as Reply[])[0]!;
+    const runId = entry['run_id'] as string;
+    const named = await c.call('execute_step', { run_id: runId, command: 's', params: {} });
+    await c.call('advance_run', { run_id: runId });
+    const agentBatch = await c.call('start_run_batch', {
+      workflow_id: agentFirst.id,
+      items: [{ params: {} }],
+    });
+    // (a) red when the batch run's first call is not advance_run for a ready auto step (or
+    //     execute_step for an agent step), execute_step runs the auto step, or advance_run does not;
+    //     (b) prints the calls named, the status and what ran.
+    expect({
+      first: next(entry),
+      named: named['status'],
+      ran: (await c.runStore.get(runId)).completed_steps,
+      agentFirst: next((agentBatch['started'] as Reply[])[0]!),
+    }).toEqual({
+      first: ['advance_run:'],
+      named: 'blocked',
+      ran: ['s'],
+      agentFirst: ['execute_step:a'],
     });
   });
 });

@@ -290,7 +290,7 @@ export interface FactsByCode {
     requirement: { kind: 'handler' | 'adapter'; name: string };
     basis: 'registry' | 'marker';
   };
-  step_engine_decided: { step: string; execution: 'guard' | 'finalizer' };
+  step_engine_decided: { step: string; execution: 'guard' | 'finalizer' | 'auto' };
   /** Amendment 16 (Q19): the loader's code, or `uncoded` for a throw that carries none. */
   enactor_load_failed: { error_code: LoadErrorCode };
   definition_absent: { workflow_id: string; cause: DefinitionAbsence; path?: string };
@@ -819,6 +819,12 @@ export interface WaysContext {
   store: { persistsClaims?: boolean };
   opening_token?: string;
   presented?: 'with_gate' | 'alone';
+  /**
+   * issue #729 (the Q3 unit): the party whose call this is, when the DOOR knows it (the MCP
+   * `execute_step` handler: `'agent'`); absent = the program itself — an embedder, the CLI, the
+   * engine — and that absence IS their identity on this axis: no judge treats absence as a party.
+   */
+  party?: Party;
 }
 
 /** The ways on, the ways not available, and what they were judged on. */
@@ -1849,6 +1855,41 @@ function judgeAdmission(
   const refused = composed.unavailable.find(
     (u) => u.verb === 'run_step' && u.step === step && u.code !== 'door_cannot_enact',
   );
+  // issue #729 (the Q3 unit; R26, T-13, PR-2a's "advance is the act"): an AGENT's by-name call on an
+  // eligible engine step is the engine's — refused and told to advance, before T-17's lever (the
+  // lever is never the agent's). Only the agent party: an absent party is the program itself.
+  if (ctx.party === 'agent' && definition.steps[step]?.execution === 'auto') {
+    // the step's own fault first: a pre-claim refusal names why the workflow is wrong (tools.md:306)
+    if (refused?.code === 'refused_before_claim') return refused;
+    const advance = composed.ways.filter((w) => w.verb === 'advance');
+    if (advance.length > 0) {
+      return {
+        verb: 'run_step',
+        step,
+        code: 'step_engine_decided',
+        facts: { step, execution: 'auto' },
+        remedy: advance,
+      };
+    }
+    // Amendment 16's chain: `advance` not offered — its LISTED entry says what leads on (a capability
+    // this program lacks: `no_remedy: requires_other_program`); only with no listed entry is the
+    // cause the engine's own.
+    const entry = listed(composed, 'advance');
+    return {
+      verb: 'run_step',
+      step,
+      code: 'step_engine_decided',
+      facts: { step, execution: 'auto' },
+      remedy: entry?.remedy ?? [],
+      // the listed entry's own why when it has one (a remedy that leads on needs none);
+      // the engine's cause only with no listed entry at all
+      ...(entry === undefined
+        ? { no_remedy: { cause: 'engine_runs_it_when_owed' as const } }
+        : entry.no_remedy !== undefined
+          ? { no_remedy: entry.no_remedy }
+          : {}),
+    };
+  }
   // T-17's lever (INPUT_IN_CONTRACT_ADMITTED, D4 P-5): an engine step refused for its input, whose
   // lever is offered, is admitted with input that fits its input_schema — judged by the same
   // pre-claim checks the dispatch runs (`checkPreClaim`; a capability stays the dispatch's, C4).
