@@ -245,11 +245,14 @@ describe('#627 W — the separation check (cell 26)', () => {
     ]);
   });
 
-  it('run as the store’s owner, the check says so: it measured the wrong login if that is Realm’s service user', async () => {
+  it('run as the store’s owner, the check says so: it measured the wrong login if that is Realm’s service user; the same-login header', async () => {
     const lines = renderSeparation(await measure(machine({ ownerOf: () => 1000 })));
-    // (a) red when the owner's run is not flagged; (b) prints the login line.
-    expect(lines[1]).toBe(
-      `Measured for the login 'agent', against the store at ${STORE}. This login owns the store: if it is Realm's service user, run the check from the agent's own shell instead.`,
-    );
+    // (a) red when the owner's run is not flagged, or the same-login mode's header (W-x1 with
+    //     W-x3's same-account form) changes; (b) prints the header and the login line.
+    expect({ header: lines[0], login: lines[1] }).toEqual({
+      header:
+        "Separation: same login — An agent running as this login could answer a gate through the terminal or by editing Realm's files; Realm records how each answer arrived but cannot stop it.",
+      login: `Measured for the login 'agent', against the store at ${STORE}. This login owns the store: if it is Realm's service user, run the check from the agent's own shell instead.`,
+    });
   });
 });

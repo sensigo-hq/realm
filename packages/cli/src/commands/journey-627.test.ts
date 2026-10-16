@@ -3,8 +3,9 @@
 // with a test client that declares forms (it declines each form); `asked` without forms (the
 // fallback) — then a fixed probe script on the run at its gate. Every string of every reply, and of
 // the protocol, outside the author's own fields, is held to a CLOSED forbidden list; in the fallback
-// session only the answer tool's name and its `call_with` are allowed. Every probe asserts its reply
-// class (never ENGINE_INTERNAL) and the server's stderr holds ZERO W-e2 lines.
+// session only the answer tool's name and the answer entry (its `call_with`, and its words naming the
+// claim_token it passes back) are allowed — the rest of that entry's words are scanned. Every probe
+// asserts its reply class (never ENGINE_INTERNAL) and the server's stderr holds ZERO W-e2 lines.
 //
 // 07/08/09 run against realm-testing's GitHub mock (09's Slack post against a local stand-in);
 // nothing reaches a network. Every assertion carries (a) the change that turns it red and (b) what
@@ -134,25 +135,27 @@ function withoutAuthorText(value: unknown, key?: string): unknown {
 function forbidden(session: Session, reply: Reply, person: string): string[] {
   const found: string[] = [];
   const scanned = withoutAuthorText(reply) as Reply;
-  // The fallback's one allowance: the answer instruction itself (its tool name, its call_with).
-  const allowed = (
-    scanned['next_actions'] as Array<{ instruction?: { tool?: string } }> | undefined
-  )?.filter((a) => session === 'fallback' && a.instruction?.tool === 'submit_human_response');
-  const rest = JSON.stringify({
-    ...scanned,
-    next_actions: (scanned['next_actions'] as unknown[] | undefined)?.filter(
-      (a) => !(allowed ?? []).includes(a as never),
-    ),
-  });
+  // The fallback's one allowance: the answer entry — its instruction (the tool's name, its
+  // call_with and the token in it) and its own words about them, which name the tool and the
+  // claim_token it passes back. Every other forbidden string is still looked for in those words.
+  type Entry = { instruction?: { tool?: string } | null };
+  const isAnswer = (a: Entry): boolean =>
+    session === 'fallback' && a.instruction?.tool === 'submit_human_response';
+  const entries = (scanned['next_actions'] as Entry[] | undefined) ?? [];
+  const answerWords = JSON.stringify(
+    entries.filter(isAnswer).map(({ instruction: _instruction, ...words }) => words),
+  );
+  const rest = JSON.stringify({ ...scanned, next_actions: entries.filter((a) => !isAnswer(a)) });
   const text = `${rest}\n${person}`;
+  const all = `${text}\n${answerWords}`;
   const list: [string, boolean][] = [
-    // The fallback's allowance: the answer tool's NAME may be said anywhere (its own texts tell the
-    // agent to call it); its `call_with`, and the token in it, only inside the answer instruction.
-    ['submit_human_response', session !== 'fallback' && text.includes('submit_human_response')],
+    // The answer tool's NAME may be said anywhere in the fallback (its own texts tell the agent to
+    // call it); a claim_token only inside the answer entry.
+    ['submit_human_response', session !== 'fallback' && all.includes('submit_human_response')],
     ['claim_token', text.includes('claim_token')],
-    ['Available choices', text.includes('Available choices')],
-    ['run respond', text.includes('run respond')],
-    ['present_question (not row 2)', session !== 'forms' && text.includes('present_question')],
+    ['Available choices', all.includes('Available choices')],
+    ['run respond', all.includes('run respond')],
+    ['present_question (not row 2)', session !== 'forms' && all.includes('present_question')],
   ];
   for (const [name, hit] of list) if (hit) found.push(name);
   const elsewhere =

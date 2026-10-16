@@ -18,6 +18,8 @@ import {
   advanceRun,
   loadWorkflowFromString,
   submitHumanResponse,
+  judgeFormWait,
+  judgeGateAnswers,
   type Outcome,
   type RunStore,
 } from '@sensigo/realm';
@@ -26,7 +28,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createRealmMcpServer, type RealmMcpServerOptions } from './server.js';
-import { renderOutcome } from './form-path.js';
+import { renderOutcome, sendQuestionForm, type ElicitFn, type FormDeps } from './form-path.js';
+import { McpDoor } from './door.js';
 
 type Reply = Record<string, unknown>;
 type ElicitReply = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> };
@@ -365,8 +368,18 @@ describe('#627 W — present_question', () => {
       items: [{ params: {} }, { params: {} }],
     });
     await s.call('abandon_run', { run_id: String(keyed['run_id']) });
-    // (a) red when a deduped start_run, the batch or abandon's refusal sends a form, or one call
-    //     sends two; (b) prints the forms sent at each step.
+    // A run keyed ELSEWHERE, at its question, never sent here: the first-send rule would send it, so
+    // only the dedupe guard keeps the matching start_run from sending a form.
+    const elsewhere = await s.runStore.create({
+      workflowId: s.workflowId,
+      workflowVersion: 1,
+      params: {},
+      idempotencyKey: 'k2',
+    });
+    await advanceRun(s.runStore, loadWorkflowFromString(WORKFLOW()), { runId: elsewhere.run.id });
+    await s.call('start_run', { workflow_id: s.workflowId, params: {}, idempotency_key: 'k2' });
+    // (a) red when a deduped start_run (of a run this session sent, or of one keyed elsewhere), the
+    //     batch or abandon's refusal sends a form, or one call sends two; (b) prints the forms sent.
     expect({ create: sentAfterCreate, after: s.elicited() }).toEqual({ create: 1, after: 1 });
   });
 
@@ -522,6 +535,109 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
       dueSent: due.elicited(),
     }).toEqual({ waited: true, said: true, dueSent: 0 });
   }, 20_000);
+});
+
+// ─── the form path's own guards, called directly ────────────────────────────────────────────────
+// Through the MCP tools, three of `sendQuestionForm`'s guards are masked by another mechanism that
+// gives the same green: admission refuses a due question before the form path runs; SDK 1.31's
+// `elicitInput` rejects an accepted choice that fails the schema; and a cancelled call's reply never
+// reaches its client. Each is pinned here on the function, with an injected send.
+
+/** A door on `asked` with forms, and a run opened at its question in a store of its own. */
+async function direct(timeout?: number) {
+  const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-direct-'));
+  const runStore = new JsonFileStore(join(dir, 'runs'));
+  const definition = loadWorkflowFromString(WORKFLOW(timeout));
+  const { run } = await runStore.create({
+    workflowId: definition.id,
+    workflowVersion: 1,
+    params: {},
+  });
+  await advanceRun(runStore, definition, { runId: run.id });
+  const gateId = (await runStore.get(run.id)).pending_gate!.gate_id;
+  const answersSet = judgeGateAnswers({});
+  const waitSet = judgeFormWait({});
+  if (!answersSet.ok || !waitSet.ok) throw new Error('fixture: the defaults judge');
+  const door = new McpDoor({
+    gateAnswers: answersSet.setting,
+    formWait: waitSet.setting,
+    sendsForms: true,
+  });
+  door.forms = { ...door.forms, shown: true };
+  const deps = (elicit: ElicitFn): FormDeps => ({
+    door,
+    elicit,
+    runStore,
+    definition,
+    principal: { absent: 'door_authenticates_no_principal' },
+  });
+  return { runStore, runId: run.id, gateId, door, deps };
+}
+
+describe('#627 W — the form path’s own guards, on the function', () => {
+  it('a due question sends no form (the due check at the fresh read)', async () => {
+    const d = await direct(1);
+    await new Promise((r) => setTimeout(r, 1_200));
+    let sent = 0;
+    const result = await sendQuestionForm(
+      d.deps(async () => {
+        sent++;
+        return { action: 'decline' };
+      }),
+      d.runId,
+      d.gateId,
+      { started: d.door.monotonicNow() },
+      false,
+    );
+    // (a) red when a due question opens a form; (b) prints the result and the forms sent.
+    expect({ result, sent }).toEqual({ result: { kind: 'not_sent', why: 'due' }, sent: 0 });
+  });
+
+  it('an accepted choice not on the list comes back as a non-answer, and nothing is recorded', async () => {
+    const d = await direct();
+    const result = await sendQuestionForm(
+      d.deps(async () => ({ action: 'accept', content: { choice: 'maybe' } })),
+      d.runId,
+      d.gateId,
+      { started: d.door.monotonicNow() },
+      false,
+    );
+    const recorded = (await d.runStore.get(d.runId)).evidence.filter(
+      (e) => e.kind === 'gate_response',
+    ).length;
+    // (a) red when the form path submits a choice outside the gate's choices; (b) prints the
+    //     result's kind and the answers recorded.
+    expect({ kind: result.kind, recorded }).toEqual({ kind: 'came_back', recorded: 0 });
+  });
+
+  it('the call cancelled during the wait withdraws the form, and the withdrawal is not Realm’s timeout', async () => {
+    const d = await direct();
+    const cancel = new AbortController();
+    let withdrawn = false;
+    const result = await sendQuestionForm(
+      d.deps(
+        (_params, options) =>
+          new Promise((_resolve, reject) => {
+            // As SDK 1.31 does: an aborted request rejects with RequestTimeout (-32001).
+            options.signal.addEventListener('abort', () => {
+              withdrawn = true;
+              reject(Object.assign(new Error('Request timed out'), { code: -32001 }));
+            });
+            setTimeout(() => cancel.abort(), 20);
+          }),
+      ),
+      d.runId,
+      d.gateId,
+      { started: d.door.monotonicNow(), signal: cancel.signal },
+      false,
+    );
+    // (a) red when the call's cancel does not reach the form, or a withdrawn form is reported as
+    //     Realm's own timeout (`waited_s`, W-f2's "Realm stopped waiting"); (b) prints the result.
+    expect({ withdrawn, result }).toEqual({
+      withdrawn: true,
+      result: { kind: 'came_back', step: 'q', gate_id: d.gateId },
+    });
+  });
 });
 
 // ─── renderOutcome: one phrase per branch (W-f3) ────────────────────────────────────────────────

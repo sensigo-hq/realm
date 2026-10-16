@@ -245,12 +245,18 @@ describe('#627 W — narrowForDoor applies §5.2’s four-row table', () => {
     const entry = n.unavailable.find((u) => u.code === 'door_withholds_answers');
     const remedy = n.unavailable.find((u) => u.code === 'question_open')?.remedy[0] as
       (WayOn & { for: readonly string[] }) | undefined;
-    // (a) red when a respond that appears only in a remedy is not listed, or keeps the agent;
-    //     (b) prints the listing and the nested remedy's parties.
+    // (a) red when a respond that appears only in a remedy is not listed, keeps the agent, or its
+    //     listing loses its act (the person's respond, narrowed); (b) prints the listing, its
+    //     remedy's parties and the nested remedy's parties.
     expect({
       listed: entry === undefined ? undefined : [entry.verb, entry.step, entry.facts],
+      listedRemedy: entry?.remedy.map((w) => [w.verb, (w as { for?: readonly string[] }).for]),
       nestedFor: remedy?.for,
-    }).toEqual({ listed: ['respond', 'q', { party: 'agent' }], nestedFor: ['asked_person'] });
+    }).toEqual({
+      listed: ['respond', 'q', { party: 'agent' }],
+      listedRemedy: [['respond', ['asked_person']]],
+      nestedFor: ['asked_person'],
+    });
   });
 });
 
@@ -482,7 +488,7 @@ describe('#627 W — each answer records how it arrived', () => {
 
   it('answerViaOf / principalOf / answerArrivalOf read every shape totally', () => {
     // (a) red when an expiry's entry, an entry with no answer, or a malformed field is read as a
-    //     route or a principal; (b) prints each reading.
+    //     route, a principal or a client prompt; (b) prints each reading.
     expect({
       expiry: answerViaOf({ resolution: 'timeout_default' } as never),
       noAnswer: answerViaOf({} as never),
@@ -493,6 +499,8 @@ describe('#627 W — each answer records how it arrived', () => {
       badKey: principalOf({ principal: { kind: 'api_key', id: '' } } as never),
       badAbsence: principalOf({ principal: { absent: 'made_up' } } as never),
       arrivalOfNothing: answerArrivalOf(undefined),
+      promptRequested: answerArrivalOf({ client_prompt_requested: true }).client_prompt_requested,
+      promptMalformed: answerArrivalOf({ client_prompt_requested: 'yes' }).client_prompt_requested,
     }).toEqual({
       expiry: { absent: 'settled_by_expiry' },
       noAnswer: { absent: 'recorded_without_route' },
@@ -507,6 +515,8 @@ describe('#627 W — each answer records how it arrived', () => {
         recorded_by: { by: null, absent_cause: 'driver_not_recorded' },
         client_prompt_requested: false,
       },
+      promptRequested: true,
+      promptMalformed: false,
     });
   });
 
