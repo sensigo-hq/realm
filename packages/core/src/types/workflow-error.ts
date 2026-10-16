@@ -1,16 +1,36 @@
 // Structured, categorized error class used throughout the engine.
 import type { LoaderWarning } from '../workflow/diagnostics.js';
+import type { UnreadableFileFacts, UnreadableRunFilesFacts } from '../store/run-file.js';
+import type { WayOn } from '../engine/ways.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
+/**
+ * What an agent does next (engine-owned, R3). `wait_for_service`: an outside service is unavailable —
+ * wait, then try again (issue #729 PR-0, D4 P-2: renamed from `wait_for_human`, every vocabulary read
+ * uses "human" for a person). `await`: the run waits on someone else — a person's answer or another
+ * program's step (D3 A-2); its replies carry `poll_after_ms` and, when the record states one, `until`.
+ */
 export type AgentAction =
   | 'report_to_user'
   | 'provide_input'
   | 'resolve_precondition'
   | 'stop'
-  | 'wait_for_human'
-  | 'wait_and_proceed';
+  | 'wait_for_service'
+  | 'wait_and_proceed'
+  | 'await';
+
+/** Every {@link AgentAction}, in declaration order — the closed list a renderer's table is checked against. */
+export const AGENT_ACTIONS = [
+  'report_to_user',
+  'provide_input',
+  'resolve_precondition',
+  'stop',
+  'wait_for_service',
+  'wait_and_proceed',
+  'await',
+] as const satisfies readonly AgentAction[];
 
 export type ErrorCode =
   // NETWORK
@@ -196,12 +216,57 @@ export type ErrorCode =
   | 'MCP_TOOL_NOT_FOUND'
   | 'MCP_TOOL_NAME_COLLISION';
 
+/**
+ * The typed facts of a damaged stored file's error (issue #729 PR-0, PR0-CONTRACT Amendments 7, 7b,
+ * 7e): one file (`scope: 'file'`, #719's {@link UnreadableFileFacts}) or a decision over every run
+ * that failed closed (`scope: 'files'`, {@link UnreadableRunFilesFacts}). The aggregate shares both of
+ * its codes with the single-file error, so the facts carry the discriminant — never a shape told
+ * apart by which keys are present.
+ */
+export type StoredFileErrorFacts =
+  ({ scope: 'file' } & UnreadableFileFacts) | ({ scope: 'files' } & UnreadableRunFilesFacts);
+
+/**
+ * The error codes whose facts are typed (PR0-CONTRACT Amendments 7, 11): ONE facts type per code,
+ * entering with the unit that types it. Every other code keeps its untyped `details` until its owning
+ * unit types it (#759 types the two validation codes next).
+ */
+export interface ErrorFactsByCode {
+  RESOURCE_FORMAT_INVALID: StoredFileErrorFacts;
+  ENGINE_STORE_FAILED: StoredFileErrorFacts;
+  STATE_LEGACY_FORMAT: Extract<StoredFileErrorFacts, { scope: 'file' }>;
+}
+
+/** The typed facts of one error code (`never` for a code with none yet). */
+export type ErrorFactsOf<C extends ErrorCode> = C extends keyof ErrorFactsByCode
+  ? ErrorFactsByCode[C]
+  : never;
+
+/** Any typed error facts. */
+export type ErrorFacts = ErrorFactsByCode[keyof ErrorFactsByCode];
+
 export interface WorkflowErrorOptions {
   code: ErrorCode;
   category: ErrorCategory;
   agentAction: AgentAction;
   retryable: boolean;
   details?: Record<string, unknown>;
+  /**
+   * issue #729 PR-0 (PR0-CONTRACT Amendment 7): the typed facts of the codes that have them
+   * ({@link ErrorFactsByCode}), present exactly where their producer writes them.
+   */
+  facts?: ErrorFacts;
+  /**
+   * issue #729 PR-0 (T-1, Amendment 11): the step a stop is about when the error names no step of its
+   * own call — a guard of the chain whose settle was refused. Read through `stopAbout`.
+   */
+  about?: string;
+  /**
+   * issue #729 PR-0 (PR0-CONTRACT §2): the ways that lead on from this error, as data — every one a
+   * judged way; a reply built from the error carries them as `error.remedy`, and each door renders
+   * them (they replace the remedy clause a message or untyped `details` carried).
+   */
+  remedy?: readonly WayOn[];
   stepId?: string;
   attempt?: number;
   retry_after?: number; // seconds; set only for SERVICE_RATE_LIMITED errors
@@ -230,6 +295,12 @@ export class WorkflowError extends Error {
   readonly agentAction: AgentAction;
   readonly retryable: boolean;
   readonly details: Record<string, unknown>;
+  /** issue #729 PR-0: the typed facts of this error's code, where its producer writes them. */
+  readonly facts?: ErrorFacts;
+  /** issue #729 PR-0 (T-1): the step a stop is about, when not this call's own. */
+  readonly about?: string;
+  /** issue #729 PR-0: the ways that lead on from this error (a reply's `error.remedy`). */
+  readonly remedy?: readonly WayOn[];
   readonly stepId?: string;
   readonly timestamp: string;
   readonly attempt: number;
@@ -269,6 +340,9 @@ export class WorkflowError extends Error {
     this.agentAction = options.agentAction;
     this.retryable = options.retryable;
     this.details = options.details ?? {};
+    if (options.facts !== undefined) this.facts = options.facts;
+    if (options.about !== undefined) this.about = options.about;
+    if (options.remedy !== undefined) this.remedy = options.remedy;
     if (options.stepId !== undefined) this.stepId = options.stepId;
     this.timestamp = new Date().toISOString();
     this.attempt = options.attempt ?? 1;

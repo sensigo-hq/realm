@@ -306,6 +306,42 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     expect(tools(r)).toEqual(['submit_human_response']);
   });
 
+  it('#729 PR-0 correction (C2): human-gates.md — at the gate the driver is told the pause only; the choices are the gate’s', async () => {
+    const page = 'docs/guides/human-gates.md';
+    claim(
+      page,
+      "The choices are the gate's (`send`, `discard`); the line named them up to version 0.47.0.",
+    );
+    const text = readFileSync(join(ROOT, page), 'utf8');
+    const yaml = text.slice(
+      text.indexOf('```yaml\n') + 8,
+      text.indexOf('\n```', text.indexOf('```yaml\n')),
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(loadWorkflowFromString(yaml));
+    const runId = (await call('start_run', { workflow_id: 'announce' }))['run_id'] as string;
+    const r = await call('execute_step', {
+      run_id: runId,
+      command: 'draft',
+      params: { subject: 'Office closed Friday', body: 'The office is closed this Friday.' },
+    });
+    const gate = r['gate'] as { gate_id: string; choices: string[] };
+    // (a) red when what the driver is told is not the page's three lines (the hint naming the
+    //     choices again, as up to 0.47.0), or the gate's choices are not the page's; (b) prints both,
+    //     the gate's id put as the page's.
+    expect({
+      told: [
+        `status: ${String(r['status'])}`,
+        `run_phase: ${String(r['run_phase'])}`,
+        String(r['context_hint']).split(gate.gate_id).join('39792a3a-f9c3-470a-b94c-c314fb254234'),
+      ],
+      choices: gate.choices,
+    }).toEqual({
+      told: block(page, 'run_phase: gate_waiting'),
+      choices: ['send', 'discard'],
+    });
+  });
+
   it('idempotency-and-batches.md: a repeat with the same key returns the run and says what comes next, as the first reply did', async () => {
     const page = 'docs/guides/idempotency-and-batches.md';
     claim(
@@ -461,11 +497,11 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('top-level-fields.md: the opening instruction without protocol, and the five standard rules', async () => {
+  it('top-level-fields.md: the opening instruction without protocol, and the six standard rules', async () => {
     const page = 'docs/reference/workflow/top-level-fields.md';
-    claim(page, 'and the five standard rules are:');
+    claim(page, 'and the six standard rules are:');
     const opening = block(page, "Call start_run with workflow_id 'review-note'.")[0]!;
-    const rules = block(page, 'Follow the next_action instruction');
+    const rules = block(page, 'Follow the instruction in each next_actions entry');
     const { call, workflowStore } = await connect();
     await workflowStore.register(
       wf([
@@ -479,18 +515,18 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       ]),
     );
     const p = await call('get_workflow_protocol', { workflow_id: 'review-note' });
-    // (a) red when the opening instruction or the five rules are not the page's; (b) prints both.
-    expect([p['quick_start'], (p['rules'] as string[]).slice(0, 5)]).toEqual([opening, rules]);
-    expect(rules).toHaveLength(5);
+    // (a) red when the opening instruction or the six rules are not the page's; (b) prints both.
+    expect([p['quick_start'], (p['rules'] as string[]).slice(0, 6)]).toEqual([opening, rules]);
+    expect(rules).toHaveLength(6);
   });
 
-  it('top-level-fields.md: rules replaces the five standard rules; two rules about concurrent attempts follow yours', async () => {
+  it('top-level-fields.md: rules replaces the six standard rules; two rules about concurrent attempts follow yours', async () => {
     const page = 'docs/reference/workflow/top-level-fields.md';
     claim(
       page,
-      '| `rules` | list of strings | Replaces the five standard rules. Two rules about concurrent attempts are always added after yours. |',
+      '| `rules` | list of strings | Replaces the six standard rules. Two rules about concurrent attempts are always added after yours. |',
     );
-    const standard = block(page, 'Follow the next_action instruction');
+    const standard = block(page, 'Follow the instruction in each next_actions entry');
     const { call, workflowStore } = await connect();
     await workflowStore.register(
       wf([
@@ -758,11 +794,11 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('packages/core/README.md: next_actions[0] names the next step; when it names advance_run, call advanceRun — repeat until next_actions is empty', async () => {
+  it('packages/core/README.md: a run_step way names the next step; when an advance way is offered, call advanceRun — repeat until neither is offered (#729 PR-0: the library reply’s ways)', async () => {
     claim(
       'packages/core/README.md',
       // decision C192: the comment gives the call.
-      '// response.next_actions[0] carries the next step to execute; when it names advance_run, call\n// advanceRun(store, definition, { runId: run.id }) (import it beside executeStep) —\n// repeat until next_actions is empty',
+      '// response.ways says what can be done next: a run_step way names a step to execute; when an\n// advance way is offered, call advanceRun(store, definition, { runId: run.id }) (import it beside\n// executeStep). Repeat until neither is offered: the run has ended, or response.unavailable says\n// why nothing can run.',
     );
     const dir = await mkdtemp(join(tmpdir(), 'realm-pages-625-e2-readme-'));
     const store = new JsonFileStore(dir);
@@ -790,32 +826,34 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       params: { input: 'hello' },
     });
     const seen: string[] = [];
-    let response = (await executeStep(store, def, {
+    let response = await executeStep(store, def, {
       runId: run.id,
       command: 'my_step',
       input: { answer: 'done' },
       dispatcher: async (_stepName, stepInput) => stepInput,
-    })) as { next_actions: Array<{ instruction?: { tool?: string; params?: Reply } }> };
-    for (let i = 0; i < 5 && response.next_actions.length > 0; i++) {
-      const next = response.next_actions[0]!.instruction!;
-      seen.push(next.tool === 'advance_run' ? 'advance_run' : String(next.params?.['command']));
-      response = (
-        next.tool === 'advance_run'
-          ? await advanceRun(store, def, { runId: run.id })
-          : await executeStep(store, def, {
+    });
+    const nextWay = () =>
+      response.ways.find((w) => w.verb === 'advance') ??
+      response.ways.find((w) => w.verb === 'run_step');
+    for (let i = 0; i < 5 && nextWay() !== undefined; i++) {
+      const next = nextWay()!;
+      seen.push(next.verb === 'run_step' ? next.step : 'advance');
+      response =
+        next.verb === 'run_step'
+          ? await executeStep(store, def, {
               runId: run.id,
-              command: String(next.params?.['command']),
+              command: next.step,
               input: {},
               dispatcher: async (_stepName, stepInput) => stepInput,
             })
-      ) as typeof response;
+          : await advanceRun(store, def, { runId: run.id });
     }
-    // (a) red when next_actions[0] does not name advance_run while the engine owes `publish`, or
-    //     the loop does not end the run with next_actions empty; (b) prints the calls made.
-    expect([seen, (await store.get(run.id)).run_phase, response.next_actions]).toEqual([
-      ['advance_run', 'last'],
+    // (a) red when no advance way is offered while the engine owes `publish`, or the loop does not
+    //     end the run with neither offered; (b) prints the calls made.
+    expect([seen, (await store.get(run.id)).run_phase, nextWay()]).toEqual([
+      ['advance', 'last'],
       'completed',
-      [],
+      undefined,
     ]);
   });
 });

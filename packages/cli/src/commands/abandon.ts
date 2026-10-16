@@ -1,5 +1,6 @@
 // abandon command — explicitly abandons a non-terminal run via the shared core primitive.
 import { Command } from 'commander';
+import { cliCommandOf } from './ways-renderer.js';
 
 export const abandonCommand = new Command('abandon')
   .description('Abandon a non-terminal run (marks it terminal with phase "abandoned")')
@@ -68,24 +69,17 @@ export const abandonCommand = new Command('abandon')
           ABANDON_KILL_ADVISORY,
       );
     } catch (err) {
-      // issue #558 PR-C: core's gate refusal is surface-neutral and carries the gate in `details`;
-      // THIS surface appends the command a CLI operator can run. `instanceof` narrowing, never a
-      // duck-typed cast.
-      if (
-        err instanceof WorkflowError &&
-        err.code === 'STATE_TRANSITION_DENIED' &&
-        typeof err.details['gate_id'] === 'string'
-      ) {
-        const gateId = err.details['gate_id'];
-        const rawChoices = err.details['choices'];
-        const choices = Array.isArray(rawChoices)
-          ? rawChoices.filter((c): c is string => typeof c === 'string')
-          : [];
-        console.error(
-          `${err.message} Answer it: realm run respond ${runId} --gate ${gateId} --choice <one of: ${choices.map(shellWord).join(', ')}>.`,
-        );
-        process.exit(1);
-        return;
+      // issue #558 PR-C: core's gate refusal is surface-neutral. #729 PR-0 (Table row 39): its way
+      // on is the error's typed remedy (the open question's `respond` way), which THIS surface renders
+      // through the CLI's one renderer — no command is read out of `details`. C212: the command ends
+      // the line, with no stop after it.
+      if (err instanceof WorkflowError && err.code === 'STATE_TRANSITION_DENIED') {
+        const answer = (err.remedy ?? []).find((w) => w.verb === 'respond');
+        if (answer !== undefined) {
+          console.error(`${err.message} Answer it: ${cliCommandOf(answer)}`);
+          process.exit(1);
+          return;
+        }
       }
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);

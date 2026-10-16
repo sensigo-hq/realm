@@ -291,7 +291,7 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
   it('MR-14: two steps that cannot run — the drive stops on the FIRST in definition order', async () => {
     claimDoc625(
       'docs/reference/cli/realm-agent.md',
-      "| `✗ Step '<step>' …`, `✗ The drive stops: …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
+      "| `✗ Step '<step>' …`, `✗ The drive stops: …` or `✗ The drive stops — …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
     );
     // `zeta` comes first in the definition and last by name, so neither the name order nor the
     // order the checks run in can pass for definition order.

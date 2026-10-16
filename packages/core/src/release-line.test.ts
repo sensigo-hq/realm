@@ -181,7 +181,7 @@ describe('releaseLineError', () => {
       foreignCode: 'SERVICE_RATE_LIMITED',
     });
     expect(err.message).toBe(
-      `Handler 'lookup' threw a WorkflowError from realm 9.9.9 (/tmp/other-realm); this engine runs realm ${REALM_BRAND.version} (${LOCAL_PATH}). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. Install @sensigo/realm@${REALM_BRAND.version} (and every other @sensigo package the project has, at ${REALM_BRAND.version}) in the project your code imports it from, or, when you run the realm command, run version 9.9.9 there: npm install --save-dev @sensigo/realm-cli@9.9.9, then npx realm.`,
+      `Handler 'lookup' threw a WorkflowError from realm 9.9.9 (/tmp/other-realm); this engine runs realm ${REALM_BRAND.version} (${LOCAL_PATH}). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. Install @sensigo/realm@${REALM_BRAND.version} (and every other @sensigo package the project has, at ${REALM_BRAND.version}) in the project your code imports it from, or, when you run the realm command, run version 9.9.9 there: 'npm install --save-dev @sensigo/realm-cli@9.9.9', then 'npx realm'.`,
     );
   });
   it('cuts the foreign code at 500 characters and replaces control characters', () => {
@@ -231,7 +231,7 @@ describe('releaseLineError', () => {
     });
     expect(err.code).toBe('ENGINE_HANDLER_FAILED');
     expect(err.message).toBe(
-      `Handler 'lookup' threw: rate limited — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code 'SERVICE_RATE_LIMITED' and its retry setting were not used: install @sensigo/realm@${REALM_BRAND.version} (and every other @sensigo package the project has, at ${REALM_BRAND.version}) in the project your code imports it from, or, when you run the realm command, run the version the project has: npm install --save-dev @sensigo/realm-cli@<that version>, then npx realm (npm ls @sensigo/realm shows that version).`,
+      `Handler 'lookup' threw: rate limited — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code 'SERVICE_RATE_LIMITED' and its retry setting were not used: install @sensigo/realm@${REALM_BRAND.version} (and every other @sensigo package the project has, at ${REALM_BRAND.version}) in the project your code imports it from, or, when you run the realm command, run the version the project has: 'npm install --save-dev @sensigo/realm-cli@<that version>', then 'npx realm' (npm ls @sensigo/realm shows that version).`,
     );
     expect(err.details['unrecognised']).toEqual({
       class: 'WorkflowError',
@@ -252,7 +252,7 @@ describe('releaseLineError', () => {
       foreignCode: undefined,
     });
     expect(err.message).toBe(
-      `Handler 'lookup' threw: boom — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code and its retry setting were not used: install @sensigo/realm@${REALM_BRAND.version} (and every other @sensigo package the project has, at ${REALM_BRAND.version}) in the project your code imports it from, or, when you run the realm command, run the version the project has: npm install --save-dev @sensigo/realm-cli@<that version>, then npx realm (npm ls @sensigo/realm shows that version).`,
+      `Handler 'lookup' threw: boom — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code and its retry setting were not used: install @sensigo/realm@${REALM_BRAND.version} (and every other @sensigo package the project has, at ${REALM_BRAND.version}) in the project your code imports it from, or, when you run the realm command, run the version the project has: 'npm install --save-dev @sensigo/realm-cli@<that version>', then 'npx realm' (npm ls @sensigo/realm shows that version).`,
     );
     expect(err.details['unrecognised']).not.toHaveProperty('foreign_code');
   });
@@ -395,7 +395,7 @@ describe('the remaining minted texts, whole', () => {
     const d = describeUnrecognised(value, WorkflowError);
     if (d.kind !== 'foreign_line') throw new Error('setup');
     expect(describeForeignProvider(d)).toEqual([
-      `Error: the provider module's WorkflowError comes from (unknown package) 9.9.9 (/tmp/other-realm); this realm command is @sensigo/realm ${REALM_BRAND.version} (${LOCAL_PATH}). Realm objects do not cross versions. Run realm 9.9.9 in the project: npm install --save-dev @sensigo/realm-cli@9.9.9, then npx realm; or install @sensigo/realm-cli@${REALM_BRAND.version} and @sensigo/realm@${REALM_BRAND.version} in the project.`,
+      `Error: the provider module's WorkflowError comes from (unknown package) 9.9.9 (/tmp/other-realm); this realm command is @sensigo/realm ${REALM_BRAND.version} (${LOCAL_PATH}). Realm objects do not cross versions. Run realm 9.9.9 in the project: 'npm install --save-dev @sensigo/realm-cli@9.9.9', then 'npx realm'; or install @sensigo/realm-cli@${REALM_BRAND.version} and @sensigo/realm@${REALM_BRAND.version} in the project.`,
     ]);
   });
 });

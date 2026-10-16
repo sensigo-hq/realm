@@ -172,13 +172,20 @@ describe('abandon_run MCP tool', () => {
     // surface's own answer call with the real gate id and choices (an MCP call, never a CLI verb).
     // Executed: with only the code pinned, restoring core's old `submit_human_response` sentence
     // left this file green while the core and CLI cells reddened.
+    // #729 PR-0 (Table rows 39–42): core's refusal states the fact; its way on is the error's typed
+    // remedy (`respond`), which the one renderer words after the hint — the same call, with the
+    // real gate id and choices.
     expect(env['errors']).toEqual([
-      `Run '${run.id}' is waiting on human gate 'review' (gate 'g1'); answer it before abandoning. ` +
-        `Answer it: submit_human_response {run_id: '${run.id}', gate_id: 'g1', choice: <one of: approve>}.`,
+      `Run '${run.id}' is waiting on human gate 'review' (gate 'g1'); it cannot be abandoned while its question is open.`,
     ]);
     expect(env['context_hint']).toBe(
-      'The run is waiting on a human gate; submit_human_response answers it, then abandon_run is possible.',
+      'The run is waiting on a human gate, so it cannot be abandoned yet. ' +
+        `Answer it: submit_human_response {run_id: '${run.id}', gate_id: 'g1', choice: <one of: approve>}.`,
     );
+    // #729 PR-0 correction (C3): the gate refusal's `details` are untyped, and abandon_run keeps
+    // not publishing them (only a code's typed facts are). (a) red when abandon_run publishes the
+    // untyped details; (b) prints whether the field is there.
+    expect('error_details' in env).toBe(false);
   });
 
   it('the #432-class divergent record (persisted gate_waiting, NO pending_gate) is abandoned, not refused', async () => {

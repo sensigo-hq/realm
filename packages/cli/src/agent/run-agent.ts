@@ -12,9 +12,10 @@ import {
   stepsThatCannotRun,
   cannotGoOnHere,
   describeClaimHolder,
-  cannotRunClause,
-  cannotRunWayOut,
-  buildNextActions,
+  composeWaysAt,
+  respondWayOfGate,
+  sentenceEnd,
+  deriveRunPhase as derivePhaseOf,
   findCapabilityBlockedSteps,
   unmetCapabilities,
   capabilityWarning,
@@ -36,7 +37,6 @@ import {
   type ToolCallRecord,
   type TraceBufferStore,
   type StructuredOutputMeta,
-  shellWord,
 } from '@sensigo/realm';
 import type {
   RunRecord,
@@ -45,7 +45,7 @@ import type {
   Attributed,
   DriveFailureRecord,
   ErrorCategory,
-  ResponseEnvelope,
+  EngineReply,
 } from '@sensigo/realm';
 import type { LlmProvider } from './providers/llm-provider.js';
 import {
@@ -64,7 +64,14 @@ import { isToolCapable } from './providers/llm-provider.js';
 import type { McpClient, ToolDefinition, ToolExecutor } from './mcp/mcp-extensions.js';
 import { McpClient as McpClientImpl } from './mcp/mcp-client.js';
 import { scheduleGateExpiryTimer } from './gate/gate-expiry-timer.js';
-import { stoppedReasons } from '../commands/run-advance.js';
+import {
+  cannotRunClause,
+  cannotRunEntries,
+  cannotRunWayOut,
+  cliCommandOf,
+  respondLines,
+  stopReasons,
+} from '../commands/ways-renderer.js';
 import {
   recordDriveFailure,
   buildEntry,
@@ -233,7 +240,7 @@ function shouldMintWriterNonce(deps: Pick<AgentDeps, 'mintWriterNonce'>): boolea
  * @internal Exported for testing only.
  */
 export function answerRecordedByCall(
-  reply: Pick<ResponseEnvelope, 'status' | 'evidence' | 'stopped_step'>,
+  reply: Pick<EngineReply, 'status' | 'evidence' | 'stopped_step'>,
   step: string,
 ): boolean {
   if (reply.stopped_step !== undefined && reply.stopped_step !== step) return true;
@@ -621,12 +628,11 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           if (deps.gateHandler !== undefined) {
             await deps.gateHandler(runId, gate);
           } else {
-            // Terminal fallback: print each choice as a command and poll.
-            for (const choice of gate.choices) {
+            // Terminal fallback: print each choice as a command and poll. #729 PR-0 (Part C): the
+            // answer commands are the CLI renderer's, from the gate's `respond` way.
+            for (const { choice, command } of respondLines(respondWayOfGate(runId, gate))) {
               const label = choice.charAt(0).toUpperCase() + choice.slice(1);
-              console.log(
-                `   ${label}: realm run respond ${runId} --gate ${gate.gate_id} --choice ${shellWord(choice)}`,
-              );
+              console.log(`   ${label}: ${command}`);
             }
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer —
             // this IS "the non-Slack agent poll loop" the design names as its own timer host. A
@@ -711,7 +717,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           }
           // F7: core's classifier names the stop (a race never reaches here — core's loop goes on).
           const advancedStop = classifyStop(advanced, engineStep, await deps.store.get(runId));
-          if (advancedStop?.kind === 'capability') {
+          if (advancedStop?.kind === 'capability_missing') {
             // decision C23: a capability block is an engine step that cannot run HERE, the same class
             // as a refusal before the claim. Held, not sent to the dispositions at once: the attempt
             // wrote its marker, so the view below names the step, and the loop goes on with the
@@ -732,11 +738,16 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // or capability-blocked, or an agent step refused before its claim — is named once per
           // drive, and the loop goes on with the ready agent steps. The words are core's
           // (decision C36).
-          for (const e of stepsThatCannotRun(
-            describePending(definition, currentRun, deps.registry, new Date()),
+          for (const e of cannotRunEntries(
+            composeWaysAt(currentRun, new Date(), {
+              definition,
+              registry: deps.registry,
+              persistsClaims: keepsClaims,
+            }),
           )) {
-            if (!reportedRefusals.has(e.step)) {
-              reportedRefusals.add(e.step);
+            const step = e.step ?? '';
+            if (!reportedRefusals.has(step)) {
+              reportedRefusals.add(step);
               console.log(`• Step ${cannotRunClause(e)}`);
             }
           }
@@ -767,7 +778,15 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               // still open, so the way out is said of an open run — F7 (e).)
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
-                  cannotRunWayOut(currentRun, definition, view),
+                  cannotRunWayOut(
+                    composeWaysAt(currentRun, new Date(), {
+                      definition,
+                      registry: deps.registry,
+                      persistsClaims: keepsClaims,
+                    }),
+                    runId,
+                    derivePhaseOf(currentRun),
+                  ),
               );
               return 'failed';
             }
@@ -801,7 +820,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             currentRun = await deps.store.get(runId);
             const exitStop = classifyStop(exitReply, first, currentRun);
             if (isRaceStop(exitStop)) {
-              if (exitStop.kind === 'taken' && !exitStop.ran_here) {
+              if (exitStop.kind === 'held_elsewhere' && !exitStop.ran_here) {
                 console.log(
                   takenLine(first, describeClaimHolder(currentRun.claims?.[first], keepsClaims)),
                 );
@@ -848,9 +867,13 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               console.error(
                 `\n✗ The drive stops: nothing else can run, and '${first}' cannot run (${stop.refused_by}). ` +
                   cannotRunWayOut(
-                    currentRun,
-                    definition,
-                    describePending(definition, currentRun, deps.registry, new Date()),
+                    composeWaysAt(currentRun, new Date(), {
+                      definition,
+                      registry: deps.registry,
+                      persistsClaims: keepsClaims,
+                    }),
+                    runId,
+                    derivePhaseOf(currentRun),
                   ),
               );
               return 'failed';
@@ -1005,13 +1028,14 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             // are still safe to recompute per iteration here regardless, since neither is read from
             // again until the NEXT step (this step's own next_actions/prompt derivation never
             // consults `validation_rejections`).
-            const nextActions = buildNextActions(definition, currentRun, undefined, new Date());
-            const nextAction =
-              nextActions.find(
-                (a) =>
-                  a.instruction !== null &&
-                  (a.instruction.call_with['command'] as string | undefined) === stepName,
-              ) ?? nextActions[0];
+            // #729 PR-0: the step's brief (its template-filled prompt) from the run's ways — core's one
+            // composer, no registry read (an observer), as before.
+            const stepWays = composeWaysAt(currentRun, new Date(), { definition }).ways.filter(
+              (w) => w.verb === 'run_step',
+            );
+            const nextAction = (
+              stepWays.find((w) => w.verb === 'run_step' && w.step === stepName) ?? stepWays[0]
+            )?.brief;
 
             // PRISTINE original prompt — never mutated across repair attempts. The prompt actually
             // sent to the provider (`promptForAttempt` below) is always derived FRESH from this,
@@ -1676,7 +1700,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             throw new WorkflowError(result.errors.join(', '), {
               code: result.error_code,
               category: result.error_code.split('_')[0] as ErrorCategory,
-              agentAction: result.agent_action ?? 'stop',
+              agentAction: result.intrinsic_action ?? 'stop',
               retryable: false,
               stepId: stepName,
             });
@@ -1766,7 +1790,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           errorRecord === undefined ? undefined : classifyStop(result, stepName, errorRecord);
         // #134: a NOT-REGISTERED handler or adapter, detected structurally (core's classifier, never
         // the message text) — the dispositions below, or the hold just after.
-        const isCapabilityBlock = resultStop?.kind === 'capability';
+        const isCapabilityBlock = resultStop?.kind === 'capability_missing';
 
         // decision C64 (the census): the chain after an agent step can reach an engine step that
         // cannot run here (capability). The agent step completed and the reply is the chained step's
@@ -1913,7 +1937,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         if (
           engineReply === undefined &&
           result.status === 'ok' &&
-          result.agent_action === 'stop' &&
+          // #729 PR-0 (D-8 row 2): `stop` on an `ok` reply only where the run has ended.
+          result.intrinsic_action === 'stop' &&
           result.evidence.length === 0
         ) {
           const line = answerNotRecordedLine(currentRun, stepName, keepsClaims);
@@ -1926,7 +1951,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           const blockedStep = result.stopped_step ?? stepName;
           // F7: core's classifier reads the reply against the record re-read above.
           const blockedStop = classifyStop(result, blockedStep, currentRun);
-          if (blockedStop?.kind === 'taken') {
+          if (blockedStop?.kind === 'held_elsewhere') {
             // issue #625 PR-2a (D6.1, D3.2): another process took the step — on the claim, or between
             // this drive's read and the engine's (the step is then "not eligible", but in flight,
             // done or failed on the record) — say who and when, as past-tense facts read off its
@@ -1950,7 +1975,7 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           // decision C85: the step stopped being eligible because, in the same moment, another
           // process opened a gate or ended the run. The loop top handles both — it waits at the gate,
           // or prints the run-ended line — as it did before C82 (5).
-          if (blockedStop?.kind === 'run_ended' || blockedStop?.kind === 'question_opened') {
+          if (blockedStop?.kind === 'run_ended' || blockedStop?.kind === 'question_open') {
             // decision C179: a run that ended in that moment did not record this drive's answer —
             // said, as when `executeChain` finds the run ended.
             if (
@@ -2056,13 +2081,21 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
   // nothing ready — said in the view's words (`realm run advance`'s stop reasons), with the ways on
   // that hold: inspect, or end it.
   if (!currentRun.terminal_state) {
-    const reasons = stoppedReasons(
-      runId,
-      currentRun,
-      describePending(definition, currentRun, deps.registry, new Date()),
-    );
+    // #729 PR-0 (A-10, T-14): the stop reasons are the CLI renderer's, from the run's ways; E1 (a):
+    // a reason that ends with a command is never followed by punctuation — each reason a line.
+    const stopWays = composeWaysAt(currentRun, new Date(), {
+      definition,
+      registry: deps.registry,
+      persistsClaims: deps.store.persistsClaims === true,
+    });
+    const reasons = stopReasons(stopWays, runId, derivePhaseOf(currentRun));
+    const inspectWay = stopWays.ways.find((w) => w.verb === 'inspect');
+    const abandonWay = stopWays.ways.find((w) => w.verb === 'abandon');
     console.error(
-      `\n✗ The drive stops: ${reasons.join('; ')}. Run ${runId} stays open (phase '${currentRun.run_phase}'): see realm run inspect ${runId} — or end it: realm run abandon ${runId}`,
+      `\n✗ The drive stops — run ${runId} stays open (phase '${currentRun.run_phase}'):\n` +
+        reasons.map((reason) => `  ${sentenceEnd(reason)}`).join('\n') +
+        (inspectWay !== undefined ? `\n  To read it: ${cliCommandOf(inspectWay)}` : '') +
+        (abandonWay !== undefined ? `\n  To end it: ${cliCommandOf(abandonWay)}` : ''),
     );
     return 'failed';
   }

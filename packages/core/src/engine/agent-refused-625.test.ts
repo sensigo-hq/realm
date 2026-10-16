@@ -1,10 +1,11 @@
 // agent-refused-625.test.ts — issue #625 PR-2a, decision C82: the agent member of C13's class. The
 // run's view judges an eligible AGENT step by `checkPreClaim`'s members that read no input (trust,
 // precondition — never the input schema: an agent step's input is the agent's own answer). A refused
-// agent step leaves `agent_steps` / `agent_actions` and is listed in `agent_refused`; ONE accessor,
-// `stepsThatCannotRun`, returns every step that cannot run (agent and engine, definition order), and
-// every consumer reads it — so no surface says "Ready for the agent" of a step the engine refuses,
-// and no driver picks it.
+// agent step leaves `agent_steps` (and the ways: no `run_step` is offered for it) and is listed in
+// `agent_refused`; ONE accessor, `stepsThatCannotRun`, returns every step that cannot run (agent and
+// engine, definition order), and every consumer reads it — so no surface says "Ready for the agent"
+// of a step the engine refuses, and no driver picks it. #729 PR-0: the ways and the predicates are
+// pinned here; the doors' words for them in their renderer tests.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 // Whole-message pins (the per-member rule).
@@ -13,21 +14,18 @@ import { mkdtemp as mkdtempP, rm as rmP } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
-import { buildNextActions, executeChain, executeStep } from './execution-loop.js';
+import { executeChain, executeStep } from './execution-loop.js';
+import { AGENT_PRE_CLAIM_REFUSALS, describePending, stepsThatCannotRun } from './pending.js';
 import {
-  AGENT_PRE_CLAIM_REFUSALS,
-  cannotGoOnHere,
-  cannotGoOnLines,
-  cannotRunWayOut,
-  cannotRunWayOutApplies,
-  cannotRunWayOutTools,
-  describeNext,
-  describePending,
-  stepsThatCannotRun,
-} from './pending.js';
+  cannotGoOnFrom,
+  cannotGoOnUntilCorrected,
+  composeWaysAt,
+  type ComposedWays,
+} from './ways.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
+import { nextCalls } from '../test-support/ways-view.js';
 
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
 
@@ -64,10 +62,19 @@ async function freshRun(store: JsonFileStore, d: WorkflowDefinition) {
   return run;
 }
 
-const commandsOf = (actions: ReturnType<typeof buildNextActions>): unknown[] =>
-  actions.map((a) =>
-    a.instruction === null ? null : [a.instruction.tool, a.instruction.call_with['command']],
-  );
+/** The ways composed from the record (buildNextActions' successor). */
+const waysOf = (d: WorkflowDefinition, run: RunRecord): ComposedWays =>
+  composeWaysAt(run, new Date(), { definition: d });
+
+/** The refused-before-claim entries of a composition: step, check, refusal, remedies' verbs. */
+const refusedOf = (composed: Pick<ComposedWays, 'unavailable'>): unknown[] =>
+  composed.unavailable
+    .filter((u) => u.verb === 'run_step' && u.code === 'refused_before_claim')
+    .map((u) =>
+      u.code === 'refused_before_claim'
+        ? [u.facts.step, u.facts.check, u.facts.refusal, u.remedy.map((w) => w.verb)]
+        : [],
+    );
 
 describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim checks', () => {
   it('head: a failing precondition and a refused trust are in agent_refused, never in agent_steps or agent_actions; a passing agent step is offered (control)', async () => {
@@ -78,17 +85,19 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
       // (a) red when the view drops its agent check, or either member; (b) prints the three lists.
       expect({
         agent_steps: view.agent_steps,
-        offered: commandsOf(view.agent_actions),
+        offered: nextCalls(waysOf(d, run)),
         agent_refused: view.agent_refused,
       }).toEqual({
         agent_steps: ['ok'],
-        offered: [['execute_step', 'ok']],
+        offered: ['run_step:ok'],
         agent_refused: [
           {
             step: 'pre',
             runnable_here: false,
             refused_by: 'precondition',
             refusal: PRE_REFUSAL('pre'),
+            // #729 PR-0 (D-L, E1 (b)): the precondition's facts, the value through the one renderer.
+            precondition: { expression: 'run.params.ok == true', value: 'undefined' },
           },
           { step: 'tru', runnable_here: false, refused_by: 'trust', refusal: TRUST_REFUSAL },
         ],
@@ -204,20 +213,20 @@ describe('#625 PR-2a, C82 — the view judges an agent step by its pre-claim che
 });
 
 describe('#625 PR-2a, C82 — what every consumer reads', () => {
-  it('buildNextActions offers no execute_step for a refused agent step; a passing one is offered (control)', async () => {
+  it('the ways offer no run_step for a refused agent step — it is listed, with its remedy; a passing one is offered (control)', async () => {
     await withStore(async (store) => {
       const d = def({ pre: agent(PRE), ok: agent() });
-      // (a) red when buildNextActions offers the eligible agent steps unchecked; (b) prints the actions.
-      expect(
-        commandsOf(buildNextActions(d, await freshRun(store, d), undefined, new Date())),
-      ).toEqual([['execute_step', 'ok']]);
+      const composed = waysOf(d, await freshRun(store, d));
+      // (a) red when the ways offer the eligible agent steps unchecked; (b) prints the ways.
+      expect(nextCalls(composed)).toEqual(['run_step:ok']);
+      expect(refusedOf(composed)).toEqual([
+        ['pre', 'precondition', PRE_REFUSAL('pre'), ['register']],
+      ]);
       // Control: the same steps without the precondition are both offered.
       const open = def({ pre: agent(), ok: agent() });
-      expect(
-        commandsOf(buildNextActions(open, await freshRun(store, open), undefined, new Date())),
-      ).toEqual([
-        ['execute_step', 'pre'],
-        ['execute_step', 'ok'],
+      expect(nextCalls(waysOf(open, await freshRun(store, open)))).toEqual([
+        'run_step:pre',
+        'run_step:ok',
       ]);
     });
   });
@@ -227,21 +236,21 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
       const d = def({ ask: agent(PRE) });
       const run = await freshRun(store, d);
       const view = describePending(d, run, undefined, new Date());
+      const composed = waysOf(d, run);
       // (a) red when any consumer reads the engine steps alone (the agent member falls out) or the
-      // sentence says "Ready for the agent"; (b) prints the sentence, both predicates and the lines.
+      // ways offer the step; (b) prints the ways, both predicates and the entry.
       expect({
-        next: describeNext(view, run, d),
-        here: cannotGoOnHere(run, view),
-        wayOut: cannotRunWayOutApplies(run, view),
-        lines: cannotGoOnLines(run, view, d),
+        next: nextCalls(composed),
+        here: cannotGoOnFrom(composed),
+        corrected: cannotGoOnUntilCorrected(composed),
+        refused: refusedOf(composed),
+        view: stepsThatCannotRun(view).map((e) => e.step),
       }).toEqual({
-        next: ` 'ask' cannot run (precondition): ${PRE_REFUSAL('ask')} ${cannotRunWayOutTools(run, d, view)}`,
+        next: [],
         here: true,
-        wayOut: true,
-        lines: [
-          `'ask' cannot run (precondition): ${PRE_REFUSAL('ask')}`,
-          cannotRunWayOut(run, d, view),
-        ],
+        corrected: true,
+        refused: [['ask', 'precondition', PRE_REFUSAL('ask'), ['register']]],
+        view: ['ask'],
       });
     });
   });
@@ -253,11 +262,12 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
       const d = def({ ask: agent() });
       const run = await freshRun(store, d);
       const view = describePending(d, run, undefined, new Date());
+      const composed = waysOf(d, run);
       expect({
-        next: describeNext(view, run, d),
-        here: cannotGoOnHere(run, view),
-        lines: cannotGoOnLines(run, view, d),
-      }).toEqual({ next: " Ready for the agent: 'ask'.", here: false, lines: [] });
+        next: nextCalls(composed),
+        here: cannotGoOnFrom(composed),
+        view: view.agent_steps,
+      }).toEqual({ next: ['run_step:ask'], here: false, view: ['ask'] });
     });
   });
 
@@ -267,7 +277,7 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
         first: agent(),
         ask: agent({ preconditions: ['first.ok == true'] }, ['first']),
       });
-      const replies: Record<string, string> = {};
+      const replies: Record<string, unknown> = {};
       for (const ok of [false, true]) {
         const run = await freshRun(store, d);
         const r = await executeChain(store, d, {
@@ -276,16 +286,38 @@ describe('#625 PR-2a, C82 — what every consumer reads', () => {
           input: { ok },
           dispatcher: echo,
         });
-        replies[String(ok)] = `${r.context_hint} | ${JSON.stringify(commandsOf(r.next_actions))}`;
+        replies[String(ok)] = {
+          hint: r.context_hint,
+          names_next: r.names_next,
+          next: nextCalls(r),
+          refused: refusedOf(r),
+          here: cannotGoOnFrom(r),
+        };
       }
-      // (a) red when the reply's "something cannot run" test reads engine steps only (it would then
-      // say "Waiting for other steps") or the view offers the step; (b) prints both replies.
+      // (a) red when the reply's "something cannot run" test reads engine steps only or the ways
+      // offer the step; (b) prints both replies. (The doors' words: their renderer tests.)
       expect(replies).toEqual({
-        false:
-          "Step 'first' completed. 'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'first.ok == true'. Resolved value: false. " +
-          // F15: a precondition refusal — the one way out, its words unchanged
-          'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run. | []',
-        true: `Step 'first' completed. Ready for the agent: 'ask'. | [["execute_step","ask"]]`,
+        false: {
+          hint: "Step 'first' completed.",
+          names_next: true,
+          next: [],
+          refused: [
+            [
+              'ask',
+              'precondition',
+              "Precondition failed for step 'ask'. Precondition failed: 'first.ok == true'. Resolved value: false.",
+              ['register'],
+            ],
+          ],
+          here: true,
+        },
+        true: {
+          hint: "Step 'first' completed.",
+          names_next: true,
+          next: ['run_step:ask'],
+          refused: [],
+          here: false,
+        },
       });
     });
   });

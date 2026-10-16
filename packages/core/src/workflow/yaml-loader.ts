@@ -6,6 +6,7 @@ import { load } from 'js-yaml';
 import { Ajv } from 'ajv';
 import type {
   WorkflowDefinition,
+  StepDefinition,
   TemplateDefinition,
   TriggerRule,
   JsonSchema,
@@ -327,6 +328,23 @@ function validateWhenReference(
 }
 
 /** Bumped on every breaking change to WorkflowDefinition's serialized format. */
+
+/**
+ * issue #729 PR-0 (D4 T-10, PR0-CONTRACT Amendment 1): the choices a gate step takes when it declares
+ * none — the engine's ONE default, read by the gate's mint, this loader's check of `default_choice`
+ * and the MCP protocol's `possible_gate.choices`.
+ */
+export const DEFAULT_GATE_CHOICES: readonly string[] = ['approve', 'reject'];
+
+/**
+ * The choices a gate step takes: its declared `gate.choices`, else its input schema's `choice` enum,
+ * else {@link DEFAULT_GATE_CHOICES}.
+ */
+export function gateChoicesOf(step: Pick<StepDefinition, 'gate' | 'input_schema'>): string[] {
+  const declared = step.gate?.choices ?? step.input_schema?.properties?.['choice']?.enum;
+  return Array.isArray(declared) ? (declared as string[]) : [...DEFAULT_GATE_CHOICES];
+}
+
 export const CURRENT_WORKFLOW_SCHEMA_VERSION = 1;
 
 /**
@@ -2095,7 +2113,7 @@ function parseWorkflowString(
       // the third executed wedge shape, and presence-keying would let it escape this check), a
       // DECLARED-and-empty `input_schema.properties.choice.enum` is the effective choice source
       // and the same class of error, under its own key. `choices: null` with no `enum` at all
-      // stays legal — the mint defaults to ['approve', 'reject'].
+      // stays legal — the mint defaults to DEFAULT_GATE_CHOICES.
       if (
         isGateTrust(step['trust']) &&
         declaredGateChoices == null &&
@@ -2218,7 +2236,7 @@ function parseWorkflowString(
               const choicesRaw = declaredGateChoices ?? declaredChoiceEnum;
               const effectiveChoices = Array.isArray(choicesRaw)
                 ? (choicesRaw as string[])
-                : ['approve', 'reject'];
+                : [...DEFAULT_GATE_CHOICES];
               if (!effectiveChoices.includes(gate['default_choice'] as string)) {
                 errors.push(
                   withStepLine(

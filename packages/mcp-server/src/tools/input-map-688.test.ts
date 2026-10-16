@@ -137,7 +137,7 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
   it('cell 4 (b): execute_step on the mapped step whose built input lacks `text` — report_to_user, and the way out in the hint', async () => {
     claim(
       'docs/reference/mcp/tools.md',
-      "A step that builds its input with an `input_map` (one with a `handler` or a `uses_service`) has its schema check what the map builds, and its way is `For '<step>', correct its input_map or its input_schema and register the workflow again; …`, with `start a run with params that fit, or ` before `correct` when the key its schema refuses is built from `run.params`.",
+      "A step that builds its input with an `input_map` (one with a `handler` or a `uses_service`) has its schema check what the map builds, and its way is `For '<step>', correct its input_map or its input_schema and register the workflow again; …`, with `start a run with params that fit (its param '<param>'), or ` before `correct` when the key its schema refuses is built from `run.params` — and then `this run stays open — after a fix, call advance_run on it; or end it with abandon_run.`",
     );
     claim(
       'docs/reference/mcp/run-state-and-health.md',
@@ -193,7 +193,7 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
     //     reply's action and whole hint.
     expect({ action: r['agent_action'], hint: r['context_hint'] }).toEqual({
       action: 'report_to_user',
-      hint: "Error during 'x'. Run phase: 'running'. For 'x', start a run with params that fit, or correct its input_map or its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.",
+      hint: "Error during 'x'. Run phase: 'running'. For 'x', start a run with params that fit (its param 'num'), or correct its input_map or its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.",
     });
   });
 
@@ -218,7 +218,9 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
       hint: first['context_hint'],
       tools: tools(first),
     }).toEqual({
-      action: 'report_to_user',
+      // #729 PR-0 (T-13 (a)): a mapped step's refusal routes like every refusal before the claim —
+      // `resolve_precondition` while `review` can be called (it was `report_to_user`).
+      action: 'resolve_precondition',
       hint: "Error during 'publish'. Run phase: 'running'.",
       tools: ['execute_step'],
     });
@@ -284,7 +286,7 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
       status: 'error',
       code: 'VALIDATION_INPUT_SCHEMA',
       action: 'report_to_user',
-      hint: "Error during 'read_note'. Run phase: 'running'. For 'read_note', start a run with params that fit, or correct its input_map or its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.",
+      hint: "Error during 'read_note'. Run phase: 'running'. For 'read_note', start a run with params that fit (its param 'path'), or correct its input_map or its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.",
       details: ['errors'],
     });
   });
@@ -334,7 +336,7 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
     //     (`p2`'s new run with params that fit); (b) prints the action and the whole hint.
     expect({ action: r['agent_action'], hint: r['context_hint'] }).toEqual({
       action: 'report_to_user',
-      hint: "Error during 'p1'. Run phase: 'running'. For 'p1', correct its input_map or its input_schema and register the workflow again; for 'p2', start a run with params that fit, or correct its input_map or its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.",
+      hint: "Error during 'p1'. Run phase: 'running'. For 'p1', correct its input_map or its input_schema and register the workflow again; for 'p2', start a run with params that fit (its param 't'), or correct its input_map or its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.",
     });
   });
 });
@@ -345,7 +347,7 @@ describe('#688 correction — the docs say what a mapped step called by name is 
     // Executed by cells 4 (b) and 6: the refusal says `report_to_user`, not `provide_input`.
     claim(
       'docs/reference/error-codes.md',
-      "An `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`) is the exception: its schema checks what the map builds, not the caller's input, so the reply says `report_to_user`.",
+      "An `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`) is the exception: its schema checks what the map builds, not the caller's input, so the reply routes as every refusal before the claim: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`).",
     );
   });
 
@@ -362,7 +364,7 @@ describe('#688 correction — the docs say what a mapped step called by name is 
     // 5 (the way out only when nothing else can run) and 6 (a `uses_service` step).
     claim(
       'docs/reference/mcp/tools.md',
-      '| You called an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`), and what the map builds does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "report_to_user"`, and in `error_details` the rules broken, without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
+      '| You called an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`), and what the map builds does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "resolve_precondition"` when another step can be called, else `"report_to_user"` (added after version 0.47.0, which always said `report_to_user`), and in `error_details` the rules broken, without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
     );
   });
 
@@ -370,7 +372,7 @@ describe('#688 correction — the docs say what a mapped step called by name is 
     // Executed by cells 4 (b), 5 and 6: `report_to_user`, and the way out when nothing else can run.
     claim(
       'docs/reference/mcp/tools.md',
-      "An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply says `report_to_user`, and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
+      "An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply routes as that refusal: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`), and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
     );
   });
 });

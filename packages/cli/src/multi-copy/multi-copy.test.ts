@@ -326,7 +326,9 @@ async function runRetryingStep(handlerSource: 'own' | { dir: string }): Promise<
   return {
     attempts: attempts(),
     errorCode: envelope.error_code,
-    agentAction: envelope.agent_action,
+    // #729 PR-0 (D-8): a library reply carries the error's own action word as `intrinsic_action`;
+    // `agent_action` is a door's rendering of it.
+    agentAction: envelope.intrinsic_action,
     status: envelope.status,
   };
 }
@@ -834,7 +836,7 @@ describe('10 — control: a copy of another release is not recognised (issue #62
       // The whole message (issue #620 PR-C, amendment 19): versions and folders from the layout.
       const line = run.text.split('\n').find((l) => l.startsWith('Error: the provider module'));
       expect(line).toBe(
-        `Error: the provider module's LlmProvider comes from @sensigo/realm-cli ${layout.otherVersion} (${layout.other.cli.dir}); this realm command is @sensigo/realm-cli ${layout.version} (${layout.cli.cli.dir}). Realm objects do not cross versions. Run realm ${layout.otherVersion} in the project: npm install --save-dev @sensigo/realm-cli@${layout.otherVersion}, then npx realm; or install @sensigo/realm-cli@${layout.version} and @sensigo/realm@${layout.version} in the project.`,
+        `Error: the provider module's LlmProvider comes from @sensigo/realm-cli ${layout.otherVersion} (${layout.other.cli.dir}); this realm command is @sensigo/realm-cli ${layout.version} (${layout.cli.cli.dir}). Realm objects do not cross versions. Run realm ${layout.otherVersion} in the project: 'npm install --save-dev @sensigo/realm-cli@${layout.otherVersion}', then 'npx realm'; or install @sensigo/realm-cli@${layout.version} and @sensigo/realm@${layout.version} in the project.`,
       );
       const llm = await layout.load<LlmProviderModule>(
         layout.cli.cli,
@@ -969,7 +971,7 @@ describe('12 — the advisory: the project’s @sensigo/realm is another version
         .split('\n')
         .find((l) => l.startsWith("⚠ Your project's @sensigo/realm"));
       expect(line).toBe(
-        `⚠ Your project's @sensigo/realm is ${layout.otherVersion} (${layout.other.core.dir}, installed by the project); this realm command runs @sensigo/realm ${layout.version}. Realm objects do not cross versions: a WorkflowError your handlers or adapters throw is not recognised — its step fails after one attempt, without that error's own code and retry setting. Install @sensigo/realm@${layout.version} (and every other @sensigo package the project has, at ${layout.version}) in the project your code imports it from, or, when you run the realm command, run version ${layout.otherVersion} there: npm install --save-dev @sensigo/realm-cli@${layout.otherVersion}, then npx realm.`,
+        `⚠ Your project's @sensigo/realm is ${layout.otherVersion} (${layout.other.core.dir}, installed by the project); this realm command runs @sensigo/realm ${layout.version}. Realm objects do not cross versions: a WorkflowError your handlers or adapters throw is not recognised — its step fails after one attempt, without that error's own code and retry setting. Install @sensigo/realm@${layout.version} (and every other @sensigo package the project has, at ${layout.version}) in the project your code imports it from, or, when you run the realm command, run version ${layout.otherVersion} there: 'npm install --save-dev @sensigo/realm-cli@${layout.otherVersion}', then 'npx realm'.`,
       );
     },
     TEST_TIMEOUT,

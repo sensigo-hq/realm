@@ -122,8 +122,14 @@ describe('executeStep blocks when precondition fails', () => {
     });
 
     expect(envelope.status).toBe('blocked');
-    expect(envelope.blocked_reason?.suggestion).toContain('Precondition failed');
-    expect(envelope.blocked_reason?.suggestion).toContain('step-a.result.count > 0');
+    // #729 PR-0 (D-L, E1 (b)): the failed precondition is the refusal's facts — the doors word it
+    // ("Precondition failed: '<expression>'. Resolved value: <value>.").
+    expect(envelope.context_hint).toContain('Precondition failed');
+    const failed =
+      envelope.refusal?.code === 'refused_before_claim'
+        ? envelope.refusal.facts.precondition
+        : undefined;
+    expect(failed?.expression).toBe('step-a.result.count > 0');
   });
 
   // issue #154: the suggestion string (execution-loop.ts, String(failed.resolved_value)) now
@@ -171,8 +177,14 @@ describe('executeStep blocks when precondition fails', () => {
     });
 
     expect(envelope.status).toBe('blocked');
-    expect(envelope.blocked_reason?.suggestion).toContain('[REDACTED_EMAIL]');
-    expect(envelope.blocked_reason?.suggestion).not.toContain('jane.doe@example.com');
+    // #729 PR-0: the value the refusal carries is the bounded, scrubbed one — and nothing on the
+    // reply carries the address.
+    const failed =
+      envelope.refusal?.code === 'refused_before_claim'
+        ? envelope.refusal.facts.precondition
+        : undefined;
+    expect(failed?.value).toContain('[REDACTED_EMAIL]');
+    expect(JSON.stringify(envelope)).not.toContain('jane.doe@example.com');
   });
 });
 

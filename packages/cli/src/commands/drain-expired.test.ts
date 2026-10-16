@@ -287,8 +287,10 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       ).rejects.toThrow('process.exit');
 
       const errored = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-      expect(errored).toContain(`Workflow not found: ${run.workflow_id}`);
-      expect(errored).toContain('most often');
+      // #729 PR-0 (T-21): what is so, by cause (was "Workflow not found: … — most often …").
+      expect(errored).toContain(
+        `Workflow '${run.workflow_id}' is not registered in this workflow store`,
+      );
       expect(errored).toContain('drain again');
       expect(errored).not.toContain('Error loading extensions');
       expect(exitSpy).toHaveBeenCalledWith(1);
@@ -309,8 +311,9 @@ describe('runDrainAction --expired (issue #291, [F5])', () => {
       expect(
         calls.some(
           (line: string) =>
-            line.includes(`  ✗ ${run.id}: Workflow not found: ${run.workflow_id}`) &&
-            line.includes('most often') &&
+            line.includes(
+              `  ✗ ${run.id}: Workflow '${run.workflow_id}' is not registered in this workflow store`,
+            ) &&
             line.includes('drain again') &&
             !line.includes('Error loading extensions'),
         ),

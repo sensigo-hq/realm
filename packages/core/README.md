@@ -10,7 +10,7 @@ npm install @sensigo/realm
 
 ## Usage — Execute a Workflow
 
-Load a workflow definition and drive it step by step. Each `executeStep` call advances the run and returns a `ResponseEnvelope` with the current state and what comes next.
+Load a workflow definition and drive it step by step. Each `executeStep` call advances the run and returns an `EngineReply`: the run's state, and in `ways` what can be done next (in `unavailable`, what cannot, and why).
 
 ```ts
 import { loadWorkflowFromFile, JsonFileStore, executeStep } from '@sensigo/realm';
@@ -36,9 +36,10 @@ const response = await executeStep(store, definition, {
 });
 
 console.log(response.status);
-// response.next_actions[0] carries the next step to execute; when it names advance_run, call
-// advanceRun(store, definition, { runId: run.id }) (import it beside executeStep) —
-// repeat until next_actions is empty
+// response.ways says what can be done next: a run_step way names a step to execute; when an
+// advance way is offered, call advanceRun(store, definition, { runId: run.id }) (import it beside
+// executeStep). Repeat until neither is offered: the run has ended, or response.unavailable says
+// why nothing can run.
 ```
 
 ## Usage — Custom Service Adapter
@@ -79,15 +80,14 @@ registry.register('adapter', 'my-adapter', myAdapter);
 
 ### Engine
 
-| Symbol                | Notes                                                                                                                                                                        |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `executeStep`         | Advance a run by one step. Returns `ResponseEnvelope`.                                                                                                                       |
-| `executeChain`        | Auto-chain through auto steps until an agent step is reached.                                                                                                                |
-| `submitHumanResponse` | Resolve an open human gate.                                                                                                                                                  |
-| `advanceRun`          | Run what a run owes the engine — an expired question's declared `on_expiry`, then its guards and `auto` steps. Returns `ResponseEnvelope`.                                   |
-| `buildNextActions`    | Build `NextAction[]` for what the run waits on: the agent steps that can be called, `advance_run` when the engine owes work, or the open question's `submit_human_response`. |
-| `findEligibleSteps`   | Return names of steps ready to execute given current run state.                                                                                                              |
-| `propagateSkips`      | Propagate skip flags through dependent steps.                                                                                                                                |
+| Symbol                | Notes                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `executeStep`         | Advance a run by one step. Returns `EngineReply`.                                                                                     |
+| `executeChain`        | Auto-chain through auto steps until an agent step is reached.                                                                         |
+| `submitHumanResponse` | Resolve an open human gate.                                                                                                           |
+| `advanceRun`          | Run what a run owes the engine — an expired question's declared `on_expiry`, then its guards and `auto` steps. Returns `EngineReply`. |
+| `findEligibleSteps`   | Return names of steps ready to execute given current run state.                                                                       |
+| `propagateSkips`      | Propagate skip flags through dependent steps.                                                                                         |
 
 ### Store
 
@@ -126,7 +126,7 @@ registry.register('adapter', 'my-adapter', myAdapter);
 | -------------------- |
 | `WorkflowDefinition` |
 | `RunRecord`          |
-| `ResponseEnvelope`   |
+| `EngineReply`        |
 | `ServiceAdapter`     |
 | `ServiceResponse`    |
 | `RunStore`           |

@@ -273,10 +273,10 @@ createGateResponder(
   runId: string,
   gateResponses: Record<string, string>,
   registry?: ExtensionRegistry,
-): Promise<ResponseEnvelope>
+): Promise<EngineReply>
 ```
 
-Answers the run's open gate with the choice in `gateResponses` for the gate's step, or `approve` if there is none, and returns the engine's reply. Pass `registry` if the answer can complete the run and the workflow has cleanup steps. If the run has no open gate, it throws `createGateResponder: run has no pending gate`.
+Answers the run's open gate with the choice in `gateResponses` for the gate's step, or `approve` if there is none, and returns the engine's reply, an `EngineReply` (added after version 0.47.0, which returned a `ResponseEnvelope`). Pass `registry` if the answer can complete the run and the workflow has cleanup steps. If the run has no open gate, it throws `createGateResponder: run has no pending gate`.
 
 ## Assertions
 

@@ -1,11 +1,11 @@
 // gate-expiry-timer.test.ts — issue #291, Deliverable 4e: the attending-process enactment timer.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
-import { JsonFileStore, WorkflowError, renderUnreadableStoredFile } from '@sensigo/realm';
+import { JsonFileStore, unreadableRunFileError } from '@sensigo/realm';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { WorkflowDefinition, PendingGate, UnreadableFileFacts } from '@sensigo/realm';
+import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 
 const def: WorkflowDefinition = {
@@ -241,36 +241,28 @@ describe('issue #719 — the expiry timer on a run file that cannot be read', ()
 
 // issue #719 (F6.4): the timer's tail per branch. A retryable read error may pass, so another
 // enactment point may still catch the gate; a read error that will not pass, or damaged bytes,
-// stops every enactment point until the file can be read (or is repaired) or is moved out. The
-// error is core's `unreadableRunFileError` (not a public export), built here from the public
-// composer with core's own retry rule (EBUSY retryable; EACCES and damaged bytes not).
+// stops every enactment point until the file can be read (or is repaired) or is moved out. #729
+// PR-0 (A10, Amendment 7d): the error is core's own builder `unreadableRunFileError`, now exported —
+// its facts typed (`scope: 'file'`), its retryability core's own rule (EBUSY retryable; EACCES and
+// damaged bytes not), never restated here.
 describe('issue #719 F6.4 — the expiry timer’s tail says what the error allows', () => {
   const path = '/srv/realm/runs/r-719.json';
-  function storeError(facts: UnreadableFileFacts, retryable: boolean): WorkflowError {
-    return new WorkflowError(renderUnreadableStoredFile(facts), {
-      code: facts.class === 'unreadable' ? 'ENGINE_STORE_FAILED' : 'RESOURCE_FORMAT_INVALID',
-      category: facts.class === 'unreadable' ? 'ENGINE' : 'RESOURCE',
-      agentAction: 'stop',
-      retryable,
-      details: { ...facts } as unknown as Record<string, unknown>,
-    });
-  }
   const ANOTHER =
     ' — another enactment point (submit/execute_step/reclaim/drain --expired/listen) will still catch it.';
   it.each([
     [
       'a retryable read error (EBUSY)',
-      storeError({ resource: 'run_file', class: 'unreadable', path, errno: 'EBUSY' }, true),
+      unreadableRunFileError({ resource: 'run_file', class: 'unreadable', path, errno: 'EBUSY' }),
       ANOTHER,
     ],
     [
       'a read error that will not pass (EACCES)',
-      storeError({ resource: 'run_file', class: 'unreadable', path, errno: 'EACCES' }, false),
+      unreadableRunFileError({ resource: 'run_file', class: 'unreadable', path, errno: 'EACCES' }),
       ' — no enactment point can read this run until its file can be read or is moved out.',
     ],
     [
       'damaged bytes (parse)',
-      storeError({ resource: 'run_file', class: 'parse', path }, false),
+      unreadableRunFileError({ resource: 'run_file', class: 'parse', path }),
       ' — no enactment point can read this run until its file is repaired or moved out.',
     ],
   ])('%s', async (_name, error, tail) => {

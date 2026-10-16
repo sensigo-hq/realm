@@ -10,6 +10,9 @@ import {
   applySettlement,
   describeGuardLines,
   drainFinalizers,
+  expiryCarriedOutLine,
+  expiryReceiptLine,
+  expiryReceiptOf,
   unreadableFactsOf,
   WorkflowError,
 } from '@sensigo/realm';
@@ -83,11 +86,12 @@ export function scheduleGateExpiryTimer(
     try {
       const delta = { kind: 'expire_gate' as const, gateId: gate.gate_id };
       let outcome: SettlementResult;
+      const firedAt = new Date();
       if (deps.store.settleStep !== undefined) {
-        outcome = await deps.store.settleStep(runId, delta, deps.definition, { now: new Date() });
+        outcome = await deps.store.settleStep(runId, delta, deps.definition, { now: firedAt });
       } else {
         const fresh = await deps.store.get(runId);
-        const pure = applySettlement(fresh, delta, deps.definition, { now: new Date() });
+        const pure = applySettlement(fresh, delta, deps.definition, { now: firedAt });
         outcome = pure.applied ? { ...pure, run: await deps.store.update(pure.run) } : pure;
       }
       if (outcome.applied) {
@@ -97,8 +101,25 @@ export function scheduleGateExpiryTimer(
         // otherwise a passed line per guard. (The legacy branch above never sets the option, so
         // it reports none.)
         const guardLines = describeGuardLines(outcome);
+        // #729 PR-0 (T-2, G7-18): the timer's line is the expiry receipt's — core's ONE line
+        // composer, the same words every enactor's line carries (no second composer here).
+        const settledEntry = outcome.run.settled?.[gate.step_name];
+        const carried =
+          settledEntry?.resolved_by === 'timeout'
+            ? {
+                on_expiry: 'settle_default' as const,
+                choice: settledEntry.choice ?? gate.default_choice ?? '',
+              }
+            : { on_expiry: 'abort' as const };
+        const receipt = expiryReceiptOf(
+          { gate_id: gate.gate_id, step: gate.step_name, expires_at: gate.expires_at },
+          carried,
+          TIMER_VIA,
+          firedAt,
+          true,
+        );
         console.log(
-          `⏰ gate '${gate.gate_id}' on run '${runId}' expired — enacted via the attending-process timer (enacted_via: ${TIMER_VIA}).` +
+          `⏰ ${receipt !== undefined ? expiryReceiptLine(receipt) : expiryCarriedOutLine(gate.gate_id, gate.step_name, carried, TIMER_VIA, undefined)}` +
             (guardLines.length > 0 ? ` ${guardLines.join(' ')}` : ''),
         );
         if (outcome.transitioned) {

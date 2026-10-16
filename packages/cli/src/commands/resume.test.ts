@@ -74,7 +74,7 @@ describe('resumeRun', () => {
     expect(updated.failed_steps).not.toContain('step-one');
   });
 
-  it('C4 (issue #456) a workflow-absent run carries the remedy — "most often" and "resume again"', async () => {
+  it('C4 (issue #456) a workflow-absent run carries the remedy — the T-21 words (#729 PR-0; was "most often") and "resume again"', async () => {
     // A plain failed/terminal record — the fixture reaches :95 past the aborted/phase checks.
     const { run } = await runStore.create({
       workflowId: 'resume-missing-wf',
@@ -91,7 +91,7 @@ describe('resumeRun', () => {
     });
 
     await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
-      /most often/,
+      /is not registered in this workflow store/,
     );
     await expect(resumeRun(run.id, 'step-one', runStore, workflowStore)).rejects.toThrow(
       /resume again/,

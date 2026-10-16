@@ -11,6 +11,7 @@ import type {
   PriceSource,
 } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
+import { cliOperatorRoute } from './ways-renderer.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -89,6 +90,9 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     ...(registryProvider !== undefined ? { registryProvider } : {}),
     ...(priceSourceProvider !== undefined ? { priceSourceProvider } : {}),
     ...(driver !== undefined ? { driver } : {}),
+    // #729 PR-0 (P-6): the CLI's renderer as the operator route — an operator's command reaches
+    // only the block addressed to the person.
+    operatorRoute: cliOperatorRoute('realm serve'),
   };
   // The startup construction: a throw here rejects this async function's promise.
   createRealmMcpServer(serverOptions);

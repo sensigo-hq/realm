@@ -32,8 +32,8 @@ describe('resolvePreExecutionAgentAction', () => {
     expect(resolvePreExecutionAgentAction(makeErr('report_to_user'))).toBe('report_to_user');
   });
 
-  it('passes wait_for_human through unchanged', () => {
-    expect(resolvePreExecutionAgentAction(makeErr('wait_for_human'))).toBe('wait_for_human');
+  it('passes wait_for_service through unchanged', () => {
+    expect(resolvePreExecutionAgentAction(makeErr('wait_for_service'))).toBe('wait_for_service');
   });
 });
 
@@ -46,8 +46,8 @@ describe('resolvePostDispatchAgentAction', () => {
     expect(resolvePostDispatchAgentAction(makeErr('report_to_user'), true)).toBe('stop');
   });
 
-  it('returns stop when isTerminalRun is true, regardless of agentAction (wait_for_human)', () => {
-    expect(resolvePostDispatchAgentAction(makeErr('wait_for_human'), true)).toBe('stop');
+  it('returns stop when isTerminalRun is true, regardless of agentAction (wait_for_service)', () => {
+    expect(resolvePostDispatchAgentAction(makeErr('wait_for_service'), true)).toBe('stop');
   });
 
   it('returns stop when isTerminalRun is true, regardless of agentAction (provide_input)', () => {
@@ -76,8 +76,10 @@ describe('resolvePostDispatchAgentAction', () => {
     expect(resolvePostDispatchAgentAction(makeErr('report_to_user'), false)).toBe('report_to_user');
   });
 
-  it('passes wait_for_human through when non-terminal', () => {
-    expect(resolvePostDispatchAgentAction(makeErr('wait_for_human'), false)).toBe('wait_for_human');
+  it('passes wait_for_service through when non-terminal', () => {
+    expect(resolvePostDispatchAgentAction(makeErr('wait_for_service'), false)).toBe(
+      'wait_for_service',
+    );
   });
 
   it('passes wait_and_proceed through when non-terminal', () => {

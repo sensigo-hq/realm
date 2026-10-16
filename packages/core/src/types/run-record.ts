@@ -513,6 +513,19 @@ export interface StepCacheDetail {
 }
 
 /**
+ * issue #729 PR-0 (T-17 (ii)): the parties that supply a step's input or output, as an evidence
+ * entry records them (`supplied_by`). PR-0's producer is the agent's answer to an agent step; a door
+ * through which an operator supplies an engine step's input adds `operator` with it (the membership
+ * rule — no member is reserved).
+ */
+export const SUPPLIER_ROLES = ['agent'] as const;
+export type SupplierRole = (typeof SUPPLIER_ROLES)[number];
+
+/** Why an entry names no supplier (#729 PR-0, §5 E1 (ii)). */
+export const SUPPLIER_ABSENT_CAUSES = ['engine_input', 'not_recorded'] as const;
+export type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
+
+/**
  * Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's
  * recorded output came from — the one closed vocabulary of {@link EvidenceSnapshot.output_source}.
  * A bare `auto` step has no handler and no service.
@@ -572,11 +585,24 @@ export interface EvidenceSnapshot {
    */
   output_source?: OutputSource;
   /**
+   * issue #729 PR-0 (T-17 (ii); §5 E1): who supplied this entry's input or output — the PARTY of
+   * the door the call came through, beside `driven_by` (the program). `agent`: an agent step's answer.
+   * (i) Written only at its mint, on the entry of an agent step's own attempt; (ii) absent on every
+   * entry whose input the engine built and on entries written before this field — read through
+   * `readSupplier`, which names why (`engine_input`, `not_recorded`); (iii) said on `realm run
+   * inspect`'s attribution line BY RULE — only when the role differs from the party the step is
+   * designed for (an engine step given an operator's input); the expected case (an agent's answer to
+   * an agent step) and every absence print nothing, and in PR-0 no path writes a differing role;
+   * (iv) the run-store fidelity contract's SUPPLIER_ROUND_TRIPS law. A
+   * role, never a name: realm never claims who was on the other end.
+   */
+  supplied_by?: SupplierRole;
+  /**
    * Holder slice (PR-H): present only on a `gate_response` entry the ANSWER wrote, and only when the
    * answer was recorded (verdict rows 1–5; a settled question has no entry to carry `spent`).
-   * Whether the caller passed back the `claim_token` of the reply that opened the question, judged
-   * inside the answer's own write. It decides nothing: the answer is recorded the same with any
-   * token or none.
+   * Whether the caller passed back the claim token the reply that opened the question carried (#729
+   * PR-0: its `respond` way's `proof`), as `claim_token`, judged inside the answer's own write. It
+   * decides nothing: the answer is recorded the same with any token or none.
    */
   claim_proof?: GateClaimVerdict;
   /**
@@ -768,7 +794,8 @@ export interface ClaimRecord {
    * pass back (`claim_token`) to show it comes from the conversation that opened the question. It is
    * not a secret — it guards against accidents and races, not malice; anyone who can read the store
    * can read it, and realm has no authentication. It leaves the engine on ONE reply only: the reply
-   * of the call whose `claimStep` minted it.
+   * of the call whose `claimStep` minted it, inside that reply's `respond` way as `proof` (#729 PR-0,
+   * A-17).
    */
   token?: string;
   /**

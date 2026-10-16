@@ -6,6 +6,7 @@
 // default, `--force` to act — ONLY claims that are provably safe: author-declared `idempotent`,
 // carrying a concrete past-deadline (`claim_stale`), non-gated. Everything else stays per-step-only.
 import { Command } from 'commander';
+import { cliCommandOf } from './ways-renderer.js';
 import type { RunRecord, StepDefinition, InProgressClaimInfo, ReclaimResult } from '@sensigo/realm';
 import { parseDuration } from '../lib/parse-duration.js';
 import { listRunsDiagnosed, unreadableRunLines } from './list.js';
@@ -299,8 +300,13 @@ export const reclaimCommand = new Command('reclaim')
           const gated = run.pending_gate?.step_name === c.step;
           const deadline = c.deadline ?? 'none (unknown age)';
           console.log(`  • ${c.step}: ${c.state}  (deadline: ${deadline})`);
-          if (gated) {
-            console.log(`      open gate — resolve via 'realm run respond ${runId}', not reclaim.`);
+          if (gated && run.pending_gate !== undefined) {
+            const { respondWayOfGate } = await import('@sensigo/realm');
+            // #729 PR-0 (Table row 43): the respond-path text — the answer command is the CLI
+            // renderer's, from the open gate's `respond` way.
+            console.log(
+              `      open gate — answer it, not reclaim: ${cliCommandOf(respondWayOfGate(runId, run.pending_gate))}`,
+            );
           } else if (c.state !== 'healthy') {
             console.log(
               `      reclaim: realm run reclaim ${runId} --step ${shellWord(c.step)} --force`,

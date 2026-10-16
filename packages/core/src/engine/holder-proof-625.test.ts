@@ -11,19 +11,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { declareReleaseLine } from '../release-line.js';
-import {
-  buildNextActions,
-  executeChain,
-  executeStep,
-  submitHumanResponse,
-} from './execution-loop.js';
+import { executeChain, executeStep, submitHumanResponse } from './execution-loop.js';
+import { composeWaysAt } from './ways.js';
+import { proofOf } from '../test-support/ways-view.js';
 import type { StepDispatcher } from './execution-loop.js';
 import { applySettlement } from './settlement.js';
 import { classifyRunHealth } from './run-health.js';
 import type { Attributed } from './holder.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
-import type { ResponseEnvelope } from '../types/response-envelope.js';
+import type { EngineReply } from '../types/response-envelope.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
@@ -74,7 +71,7 @@ interface Opened {
   runId: string;
   gateId: string;
   token: string;
-  reply: ResponseEnvelope;
+  reply: EngineReply;
   afterExpiry: Date;
 }
 
@@ -98,7 +95,7 @@ async function open(
   return {
     runId: run.id,
     gateId: gate.gate_id,
-    token: reply.gate!.claim_token ?? '',
+    token: proofOf(reply) ?? '',
     reply,
     afterExpiry:
       gate.expires_at !== undefined
@@ -167,24 +164,21 @@ function storeKeepingNoClaims(): JsonFileStore {
 // ---------------------------------------------------------------------------------------------
 
 describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening reply and nowhere else', () => {
-  it('the fresh gate-opening reply carries it in EXACTLY three places: gate.claim_token and both instruction renderings', async () => {
+  it("the fresh gate-opening reply carries it in EXACTLY one place: the respond way's proof (#729 PR-0, A-17)", async () => {
     const opened = await open(store, gateWorkflow());
     const claimToken = (await store.get(opened.runId)).claims!['confirm']!.token!;
-    // (a) red when the token is not handed out, or is not the claim's own; (b) prints both.
-    expect(opened.reply.gate!.claim_token).toBe(claimToken);
-    const instruction = opened.reply.next_actions[0]!.instruction!;
-    expect(instruction.params['claim_token']).toBe(claimToken);
-    expect(instruction.call_with!['claim_token']).toBe(claimToken);
-    // (a) red when a fourth place (a hint, a context sentence, the orientation) repeats it.
-    expect(occurrences(opened.reply, claimToken)).toBe(3);
+    // (a) red when the token is not handed out, or is not the claim's own; (b) prints true/false,
+    //     never the token.
+    expect(proofOf(opened.reply) === claimToken).toBe(true);
+    // (a) red when a second place (gate.claim_token, a hint, a context sentence) repeats it.
+    expect(occurrences(opened.reply, claimToken)).toBe(1);
+    expect(opened.reply.gate).not.toHaveProperty('claim_token');
   });
 
-  it('the human_readable sentence tells the caller to pass it back — only when the reply carries a token', async () => {
+  it('the respond way carries a proof only when the store minted a token (the MCP sentence is pinned in mcp-server holder-625)', async () => {
     const opened = await open(store, gateWorkflow());
-    expect(opened.reply.next_actions[0]!.human_readable).toContain(
-      'then call submit_human_response with call_with, passing claim_token back unchanged — it shows that this answer comes from the conversation that opened the question.',
-    );
-    // A store that minted no token: no key, no sentence — never a promise the reply cannot keep.
+    expect(proofOf(opened.reply) !== undefined).toBe(true);
+    // A store that minted no token: no proof — never a promise the reply cannot keep.
     const bare = new LegacyStore(
       new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-bare-'))),
       {
@@ -192,10 +186,10 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
       },
     );
     const reply = (await open(bare, gateWorkflow())).reply;
-    // (a) red when the sentence is unconditional; (b) prints the sentence.
-    expect(reply.next_actions[0]!.human_readable).not.toContain('claim_token');
+    // (a) red when the proof is unconditional; (b) prints true/false.
+    expect(proofOf(reply) === undefined).toBe(true);
     expect(reply.gate).not.toHaveProperty('claim_token');
-    expect(reply.next_actions[0]!.instruction!.call_with).not.toHaveProperty('claim_token');
+    expect(JSON.stringify(reply).includes('claim_token')).toBe(false);
   });
 
   it('the legacy (no settleStep) opening reply hands it out too', async () => {
@@ -203,8 +197,9 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
       new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-holder-legacy-'))),
     );
     const opened = await open(legacy, gateWorkflow());
-    expect(opened.token).not.toBe('');
-    expect(opened.reply.next_actions[0]!.instruction!.call_with!['claim_token']).toBe(opened.token);
+    expect(opened.token !== '').toBe(true);
+    const claimToken = (await legacy.get(opened.runId)).claims!['confirm']!.token!;
+    expect(opened.token === claimToken).toBe(true);
   });
 
   it("executeChain / start_run's chained reply passes the same block through (not re-minted)", async () => {
@@ -233,8 +228,8 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
     expect(reply.status).toBe('confirm_required');
     const claimToken = (await store.get(run.id)).claims!['confirm']!.token!;
     // (a) red when the chain re-mints, drops or doubles it; (b) prints the count.
-    expect(reply.gate!.claim_token).toBe(claimToken);
-    expect(occurrences(reply, claimToken)).toBe(3);
+    expect(proofOf(reply) === claimToken).toBe(true);
+    expect(occurrences(reply, claimToken)).toBe(1);
   });
 
   it("NEGATIVE: a sibling's refused gate open (the already_open reply) names the LIVE gate and carries NO token", async () => {
@@ -266,7 +261,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
       input: {},
       dispatcher: echo,
     });
-    const g1Token = first.gate!.claim_token!;
+    const g1Token = proofOf(first)!;
     const second = await executeStep(store, def, {
       runId: run.id,
       command: 'g2',
@@ -284,7 +279,7 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
 
   it('NEGATIVE: the refused answers (gate_mismatch, choice_not_eligible, conflict, replay) and the not-eligible reply carry no token', async () => {
     const opened = await open(store, gateWorkflow());
-    const replies: ResponseEnvelope[] = [];
+    const replies: EngineReply[] = [];
     replies.push(
       await submitHumanResponse(store, gateWorkflow(), {
         runId: opened.runId,
@@ -337,7 +332,8 @@ describe('CLAIM_TOKEN_ONE_DOOR — the token leaves the engine on the opening re
     const def = gateWorkflow();
     const opened = await open(store, def);
     const run = await store.get(opened.runId);
-    expect(occurrences(buildNextActions(def, run, undefined, new Date()), opened.token)).toBe(0);
+    // #729 PR-0: the ways composed from the record (buildNextActions' successor) carry no proof.
+    expect(occurrences(composeWaysAt(run, new Date(), { definition: def }), opened.token)).toBe(0);
     expect(occurrences(classifyRunHealth(run), opened.token)).toBe(0);
     // The settlement result of the answer itself: its `gateClaim` copies holder and since — never
     // the token (the transform's own output, observed through the store).

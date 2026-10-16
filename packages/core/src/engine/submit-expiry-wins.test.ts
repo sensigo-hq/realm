@@ -17,6 +17,7 @@ import type {
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 /** Non-declaring store double — settleStep genuinely absent (own-property masking), forcing
  *  submitHumanResponse's LEGACY CAS path. Mirrors dormancy-suite-279.test.ts's own precedent. */
@@ -378,7 +379,7 @@ describe('submitHumanResponse — composeExpiredGateEnvelope gate_id discriminat
       // issue #332 item 7: positive agent_action pin for the #319 fallback cell — errorEnvelope
       // maps it verbatim (execution-loop.ts:885, no translation on this path), so this is the
       // exact `agentAction: 'report_to_user'` set at the fallback's mint site.
-      expect(envelope.agent_action).toBe('report_to_user');
+      expect(agentActionFor(envelope)).toBe('report_to_user');
       expect(envelope.errors.join(' ')).toContain(
         'the run reached a terminal outcome concurrently',
       );

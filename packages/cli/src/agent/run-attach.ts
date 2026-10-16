@@ -10,7 +10,12 @@
 //    spawn_failed mechanics) so listen-spawned children fail their runs visibly; if it HAS
 //    begun executing, propagate the error with NO run mutation — a failed bystander attach
 //    can never kill a healthy in-flight run.
-import { sealRunLevel, getWorkflowForRun, withFullStop, deriveRunPhase } from '@sensigo/realm';
+import {
+  sealRunLevel,
+  getWorkflowForRun,
+  deriveRunPhase,
+  escapedBoundedValue,
+} from '@sensigo/realm';
 import type {
   LoaderWarning,
   RunRecord,
@@ -28,29 +33,52 @@ import { identityDiffers, errorExtensionIdentityEntry } from '../extensions/exte
 export const EXTENSIONS_LOAD_FAILED = 'extensions_load_failed';
 
 /**
+ * Who ended a run, from its record (#729 PR-0, E1 (d)): an operator (`abandoned`), a guard (its seal
+ * arm names the guard step), a step that failed, a declared expiry, or nothing to name (a run that
+ * completed). A clause after the run's phase, or empty.
+ */
+function endedBy(run: RunRecord): string {
+  const arm = run.sealed_by?.arm;
+  const step = run.sealed_by?.step;
+  if (deriveRunPhase(run) === 'abandoned') return ': an operator ended it';
+  if ((arm === 'guard_abort' || arm === 'guard_resolution_error') && step !== undefined) {
+    return `: guard '${step}' ended it`;
+  }
+  if (arm === 'handler_abort' && step !== undefined) return `: step '${step}' ended it`;
+  if (arm === 'gate_expiry_abort')
+    return ': its question expired, and its declared on_expiry ended it';
+  if (arm === 'step_failure' && step !== undefined) return `: step '${step}' failed`;
+  return '';
+}
+
+/**
  * The refusal `realm agent --run-id` gives a run that has ended — ONE mint, thrown by both
  * carriers: the pre-attach check ({@link resolveRunAttach}) and the agent loop (`runAgent`), so the
- * two can never word it differently (framework rule 3). It names the run's recorded end reason
- * (`terminal_reason`), ended with one mark (decision C37: a reason whose last character already
- * ends a sentence, such as the engine's `'Workflow completed.'`, keeps its own), or, with no
- * recorded reason, its phase as worked out from the record, never the stored `run_phase`
- * (PHASE_IS_GENERATED, `eligibility.ts`). A guard's abort writes no end reason, so its message is
- * not named here yet (#729).
+ * two can never word it differently (framework rule 3). #729 PR-0 (E1 (d), (e), (j); Table row 55):
+ * the run-a-step family's `run_ended`, rendered with who ended the run and why from the record —
+ * Realm's own sentence ends with Realm's stop; the recorded reason is stored text, printed after a
+ * label as written through the one escaped, bounded value renderer, with no stop added; and the
+ * command that delivers cleanup steps left pending ends its own line (C212). The phase is worked out
+ * from the record, never the stored `run_phase` (PHASE_IS_GENERATED, `eligibility.ts`).
  *
  * issue #279 (increment 1, PR-B), design record §6: a run that still carries an undelivered
  * finalizer is pointed at the recovery verb.
  */
 export function terminalRunRefusal(runId: string, run: RunRecord): Error {
+  const phase = deriveRunPhase(run);
+  const lines = [`Run ${runId} has already ended (${phase})${endedBy(run)}.`];
+  if (run.terminal_reason !== undefined && phase !== 'completed') {
+    lines.push(`Reason: ${escapedBoundedValue(run.terminal_reason)}`);
+  }
   const pendingFinalizerCount = Object.values(run.finalizer_ledger ?? {}).filter(
     (e) => e.status === 'pending',
   ).length;
-  const drainHint =
-    pendingFinalizerCount > 0
-      ? ` ${pendingFinalizerCount} finalizer(s) not yet delivered — realm run drain ${runId}.`
-      : '';
-  return new Error(
-    `Run ${runId} is already in terminal state: ${withFullStop(run.terminal_reason ?? deriveRunPhase(run))}${drainHint}`,
-  );
+  if (pendingFinalizerCount > 0) {
+    lines.push(
+      `${pendingFinalizerCount} cleanup ${pendingFinalizerCount === 1 ? 'step is' : 'steps are'} not yet delivered — to deliver ${pendingFinalizerCount === 1 ? 'it' : 'them'}: realm run drain ${runId}`,
+    );
+  }
+  return new Error(lines.join('\n'));
 }
 
 export interface ResolveRunAttachDeps {

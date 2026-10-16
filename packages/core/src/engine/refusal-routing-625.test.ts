@@ -1,9 +1,11 @@
 // refusal-routing-625.test.ts — issue #625 PR-2a, decision C94: a step `executeStep` refuses before
 // its claim — a failed precondition or an invalid `trust`, an agent step or an `auto` step — tells
-// its caller what it can call instead, from the run's view: `next_actions` are the view's (which
+// its caller what it can call instead, from the run's view: its ways are the view's (which
 // never offers a step refused before its claim, decisions C13/C82), `blocked_reason.eligible_steps`
-// names the steps that can be called now (never the refused one), and `agent_action` is
+// names the steps that can be called now (never the refused one), and the agent's word (D-8) is
 // `resolve_precondition` when there is something to call, `report_to_user` when there is not.
+// #729 PR-0: the reply's DATA is pinned here (its ways, read for the agent's door; its refusal's
+// facts); the words the MCP door prints for it are pinned in mcp-server's render-reply.test.ts.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -13,7 +15,8 @@ import { join } from 'node:path';
 import { executeStep, type StepDispatcher } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
-import type { ResponseEnvelope } from '../types/response-envelope.js';
+import type { EngineReply } from '../types/response-envelope.js';
+import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
 
 const echo: StepDispatcher = async (_step, input) => ({ ...input });
 
@@ -45,13 +48,11 @@ function def(
 }
 
 /** The reply's routing, in one object: what to do, what to call, what can be called. */
-function routing(reply: ResponseEnvelope) {
+function routing(reply: EngineReply) {
   return {
     status: reply.status,
-    agent_action: reply.agent_action,
-    next: reply.next_actions.map(
-      (a) => `${a.instruction?.tool}:${a.instruction?.params['command'] ?? ''}`,
-    ),
+    agent_action: agentActionFor(reply),
+    next: nextCalls(reply),
     eligible_steps: reply.blocked_reason?.eligible_steps,
   };
 }
@@ -62,7 +63,7 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
     store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-rr-625-')));
   });
 
-  async function callRefused(d: WorkflowDefinition): Promise<ResponseEnvelope> {
+  async function callRefused(d: WorkflowDefinition): Promise<EngineReply> {
     const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
     return executeStep(store, d, {
       runId: run.id,
@@ -80,14 +81,15 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
       expect(routing(reply)).toEqual({
         status: 'blocked',
         agent_action: 'resolve_precondition',
-        next: ['execute_step:ready'],
+        next: ['run_step:ready'],
         eligible_steps: ['ready'],
       });
       // (a) red when the refusal's own hint or detail moves; (b) prints them.
       expect(reply.context_hint).toBe("Precondition failed for step 'refused'.");
-      expect(reply.blocked_reason?.suggestion).toBe(
-        "Precondition failed: 'run.params.ok == true'. Resolved value: undefined.",
-      );
+      expect(reply.refusal?.code).toBe('refused_before_claim');
+      expect(
+        reply.refusal?.code === 'refused_before_claim' ? reply.refusal.facts.precondition : null,
+      ).toEqual({ expression: 'run.params.ok == true', value: 'undefined' });
     });
 
     it(`trust, ${kind} step beside a ready agent step: resolve_precondition, the ready step; the refusal stays an error with its code`, async () => {
@@ -96,14 +98,11 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
       expect(routing(reply)).toEqual({
         status: 'error',
         agent_action: 'resolve_precondition',
-        next: ['execute_step:ready'],
+        next: ['run_step:ready'],
         eligible_steps: ['ready'],
       });
-      // (a) red when the code or the suggestion changes; (b) prints them.
+      // (a) red when the code changes; (b) prints it.
       expect(reply.error_code).toBe('VALIDATION_TRUST_VALUE');
-      expect(reply.blocked_reason?.suggestion).toBe(
-        'Call one of the steps indicated in next_actions instead.',
-      );
     });
 
     it(`precondition, ${kind} step, nothing else can run: report_to_user, nothing to call`, async () => {
@@ -126,8 +125,6 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
         next: [],
         eligible_steps: [],
       });
-      // (a) red when the empty-case suggestion moves; (b) prints it.
-      expect(reply.blocked_reason?.suggestion).toBe('No other step can be called now.');
     });
   }
 
@@ -137,7 +134,7 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
     expect(routing(reply)).toEqual({
       status: 'blocked',
       agent_action: 'resolve_precondition',
-      next: ['advance_run:'],
+      next: ['advance'],
       eligible_steps: ['ready'],
     });
   });
@@ -170,7 +167,7 @@ describe('#625 PR-2a, C94 — a refusal before the claim says what can be called
     expect(routing(reply)).toEqual({
       status: 'blocked',
       agent_action: 'resolve_precondition',
-      next: ['execute_step:b'],
+      next: ['run_step:b'],
       eligible_steps: ['b'],
     });
   });

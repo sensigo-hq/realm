@@ -31,19 +31,20 @@ A `WorkflowError` has these fields besides its message:
 | ------------- | --------------------------------------------------------------------- |
 | `code`        | One of the codes on this page.                                        |
 | `category`    | `NETWORK`, `SERVICE`, `STATE`, `VALIDATION`, `ENGINE` or `RESOURCE`.  |
-| `agentAction` | What the caller should do. One of the 6 values below.                 |
+| `agentAction` | What the caller should do. One of the 7 values below.                 |
 | `retryable`   | Whether a step with a `retry` block is tried again after this error.  |
 | `details`     | An object with more about the failure. `{}` if there is nothing more. |
 | `retry_after` | For `SERVICE_RATE_LIMITED`, the seconds to wait.                      |
 
-| `agentAction`          | Means                                                               |
-| ---------------------- | ------------------------------------------------------------------- |
-| `provide_input`        | Send the call again with a corrected answer or value.               |
-| `resolve_precondition` | Something else has to happen first. Read the run's state, then act. |
-| `wait_and_proceed`     | Wait, then try again.                                               |
-| `wait_for_human`       | A person has to act before the run can go on.                       |
-| `report_to_user`       | Tell the user. The caller cannot fix this itself.                   |
-| `stop`                 | Stop working on this run.                                           |
+| `agentAction`          | Means                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `provide_input`        | Send the call again with a corrected answer or value.                                                                  |
+| `resolve_precondition` | Something else has to happen first. Read the run's state, then act.                                                    |
+| `wait_and_proceed`     | Wait, then try again.                                                                                                  |
+| `wait_for_service`     | A service outside Realm has to come back before the run can go on. Renamed from `wait_for_human` after version 0.47.0. |
+| `report_to_user`       | Tell the user. The caller cannot fix this itself.                                                                      |
+| `stop`                 | Stop working on this run.                                                                                              |
+| `await`                | The run waits on someone else, such as another program's step: read it again later. Added after version 0.47.0.        |
 
 ### The `agent_action` in a reply
 
@@ -55,7 +56,7 @@ The `agent_action` in a tool's reply is the error's `agentAction`, changed in th
 | A step started and failed, and the run has ended                               | `stop`, whatever the error said.                                            |
 | A step started and failed, and the run is still open                           | `stop`, `provide_input` and `resolve_precondition` become `report_to_user`. |
 
-An answer that the step's schema refuses is not one of these cases: the run is read and no step starts, so the reply keeps the error's `provide_input`. An `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`) is the exception: its schema checks what the map builds, not the caller's input, so the reply says `report_to_user`. A handler that threw an error with `agentAction: 'report_to_user'` on a step that ended its run gave a reply with `agent_action: "stop"`.
+An answer that the step's schema refuses is not one of these cases: the run is read and no step starts, so the reply keeps the error's `provide_input`. An `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`) is the exception: its schema checks what the map builds, not the caller's input, so the reply routes as every refusal before the claim: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`). A handler that threw an error with `agentAction: 'report_to_user'` on a step that ended its run gave a reply with `agent_action: "stop"`.
 
 ## The codes Realm raises
 
@@ -63,16 +64,16 @@ The last two columns are what the error carries where it is raised. Where a code
 
 ### `NETWORK`
 
-| Code                  | Raised when                                                                    | `agentAction`    | `retryable` |
-| --------------------- | ------------------------------------------------------------------------------ | ---------------- | ----------- |
-| `NETWORK_UNREACHABLE` | A built-in adapter could not send its request: the network call itself failed. | `wait_for_human` | Yes         |
+| Code                  | Raised when                                                                    | `agentAction`      | `retryable` |
+| --------------------- | ------------------------------------------------------------------------------ | ------------------ | ----------- |
+| `NETWORK_UNREACHABLE` | A built-in adapter could not send its request: the network call itself failed. | `wait_for_service` | Yes         |
 
 ### `SERVICE`
 
 | Code                          | Raised when                                                                                                                                       | `agentAction`                        | `retryable` |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------- |
 | `SERVICE_HTTP_4XX`            | A service replied with a 4xx status that has no code of its own.                                                                                  | `stop`                               | No          |
-| `SERVICE_HTTP_5XX`            | A service replied with a 5xx status.                                                                                                              | `report_to_user`, `wait_for_human`   | Yes         |
+| `SERVICE_HTTP_5XX`            | A service replied with a 5xx status.                                                                                                              | `report_to_user`, `wait_for_service` | Yes         |
 | `SERVICE_RATE_LIMITED`        | A service replied 429. `retry_after` holds the seconds to wait. It is not retried when the wait is longer than the service's `max_retry_seconds`. | `report_to_user`, `wait_and_proceed` | Varies      |
 | `SERVICE_AUTH_FAILED`         | A service refused the credentials.                                                                                                                | `stop`                               | No          |
 | `SERVICE_NOT_FOUND`           | A service replied that the record asked for does not exist.                                                                                       | `provide_input`                      | No          |

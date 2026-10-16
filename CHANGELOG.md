@@ -96,6 +96,21 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   `priceSourceProvider`; `handleGetRunState` called on its own has no default, so every request
   reads `no_price_source`.
 
+- **A program reads what it can do next on a run, and why not (issue #729).** Every reply of the
+  engine's functions carries `ways` and `unavailable` (see `EngineReply` below). Core exports
+  `composeWaysAt` (the ways of a run record a program holds), `LIBRARY_WORDS` (each way in the words
+  of the library function that takes it), `agentActionOf` and `agentRenderedList` (the action word a
+  surface derives from them), `cannotGoOnFrom` and `cannotGoOnUntilCorrected` (whether the run can go
+  on from here), `raceClausesOf`, and `readSupplier`, which says who supplied an evidence entry's
+  answer: an agent step's entry records `supplied_by: "agent"`, and an older entry, or one whose input
+  the engine built, says why it names none.
+- **MCP replies carry the reply's facts as data (issue #729).** Beside `next_actions`, a reply now
+  has `basis` (what its calls were judged on), `also` (reading the run and ending it, never a next
+  step), `elsewhere` (a way only an operator can take, with no instruction), `outcome` (what decided
+  a question an answer did not), `races`, `expiry`, and `poll_after_ms` and `until` with
+  `agent_action: "await"`. `get_run_state` gains `agent_action` when nothing can be called on an open
+  run, and `basis`, `also` and `elsewhere`.
+
 ### Changed
 
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
@@ -173,6 +188,46 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   that went to an endpoint other than the provider's own. When a lifetime was asked and nothing was
   written or read, the clause that says so adds `, or the endpoint dropped the request to cache` for
   such a request only.
+- **BREAKING — the engine's reply is `EngineReply`, and what can be done next is data (issue #729).**
+  `ResponseEnvelope` is renamed `EngineReply`. It no longer carries `next_actions`, `agent_action`,
+  `blocked_reason.suggestion` or the sentence that named the next call. It carries `ways` (what can
+  be done next: `respond`, `run_step`, `advance`, `inspect`, `abandon` and `register`, each with what
+  it needs), `unavailable` (what cannot be done now, each with a code, its facts and the ways that
+  lead on, `remedy`) and `basis` (the record and the moment they were judged on). An error reply
+  carries `intrinsic_action` (the error's own action word) and `error.remedy`. Each surface words
+  the ways: the MCP tools' replies keep `next_actions`, `agent_action` and
+  `blocked_reason.suggestion`, made from them; the CLI prints the commands; a program reads them.
+- **BREAKING — `agent_action` gains `await`, and `wait_for_human` is renamed `wait_for_service`
+  (issue #729).** `await`: nothing can be called now because another process holds the step; the
+  MCP reply then carries `poll_after_ms`. An adapter's reply when its service fails says
+  `wait_for_service`. An `ok` reply on a run that has not ended and offers nothing to call now says
+  `report_to_user`, or `await`.
+- **BREAKING — the claim token rides the answer, not the gate (issue #729).** `gate.claim_token` is
+  removed. The reply that opened a question carries the token in its `respond` way's `proof`; the
+  MCP reply carries it in the answer's `claim_token` parameter, as before.
+- **BREAKING — a late answer's expiry moves to a receipt (issue #729).** A late answer's expiry is the reply's `expiry` receipt (`ExpiryReceipt`: `gate_id`, `step`, `on_expiry`, `choice`, `enacted_via`, `by_this_call`, `expired_at`, `overdue`); `error_details` no longer carries `expired_at` or `overdue_ms`.
+- **BREAKING — core no longer exports the next-step composers (issue #729).** `answerAction`,
+  `answerOf`, `buildNextActions`, `cannotGoOnLines`, `cannotRunClause`, `cannotRunWayOut`,
+  `cannotRunWayOutApplies`, `cannotRunWayOutTools`, `cannotRunWords`, `capabilityMarkerWayOut`,
+  `describeNext`, `notCallableReason`, `owedCallWords`, `owedRunsClause`, `respondCommand` and
+  `waitingWords` are removed. A program reads the reply's `ways` and `unavailable`; `LIBRARY_WORDS`
+  says each way in the library's own functions.
+- **BREAKING — `@sensigo/realm-testing`'s `createGateResponder` returns `EngineReply` (issue #729).**
+- **The CLI says what is so, and keeps commands apart from sentences (issue #729).** A run whose
+  workflow is not registered is refused with `Workflow '<id>' is not registered in this workflow
+store, …`, never "most often". `realm agent --run-id` on a run that has ended says `Run <id> has
+already ended (<phase>)`, who ended it when the record says, and the recorded reason on its own line
+  (`Reason: "…"`). A drive that stops with nothing ready prints each reason on its own line, then
+  `To read it:` and `To end it:` with their commands. A printed command is quoted or on its own line,
+  never followed by a full stop. For a step refused for its input that builds no input from an
+  `input_map`, the lines about a run that cannot go on add that an operator supplies its input, and
+  that no `realm` command does. The attending timer's line about an expired question is the same line
+  every surface prints.
+- **Agent routing (issue #729).** An answer whose gate ID is not the open one says
+  `agent_action: "report_to_user"` (it said `resolve_precondition` when something could be called).
+  An `auto` step that builds its input with `input_map`, refused for it when called by name, says
+  `resolve_precondition` when another step can be called. The protocol's standard rules are six: the
+  first says what to do when `next_actions` is empty, the sixth what `also` and `elsewhere` are.
 
 ### Fixed
 

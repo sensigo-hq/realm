@@ -33,10 +33,9 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
   executeStep,
-  answerAction,
   type WorkflowDefinition,
-  type ResponseEnvelope,
 } from '@sensigo/realm';
+import type { McpEnvelope } from '../render-reply.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -45,6 +44,23 @@ import { handleAdvanceRun, registerAdvanceRun } from './advance-run.js';
 import { handleSubmitHumanResponse } from './submit-human-response.js';
 import { handleGetRunState } from './get-run-state.js';
 import { handleStartRun } from './start-run.js';
+
+/**
+ * The answer as the MCP door renders it on a reply that did not open the question (#729 PR-0, Table
+ * rows 1–4: the respond way; its orientation no longer repeats the choices — W-CENSUS-06; no token).
+ * Written out, never built by the renderer under test.
+ */
+function answerEntry(runId: string, gateId: string, step: string, choices: string[]) {
+  return {
+    instruction: {
+      tool: 'submit_human_response',
+      params: { run_id: runId, gate_id: gateId },
+      call_with: { run_id: runId, gate_id: gateId, choice: `<${choices.join('|')}>` },
+    },
+    human_readable: `Human review required for step '${step}'. Ask the user to choose one of: ${choices.join(', ')}, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one.`,
+    orientation: `Run is paused at gate '${gateId}'.`,
+  };
+}
 
 const WAY_OUT =
   'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
@@ -97,7 +113,7 @@ function gated(id: string, onExpiry: 'settle_default' | 'abort' | undefined): Wo
   };
 }
 
-function routing(reply: ResponseEnvelope) {
+function routing(reply: McpEnvelope) {
   return {
     status: reply.status,
     agent_action: reply.agent_action,
@@ -228,13 +244,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       // the answer carries a claim token; (b) prints status and act.
       expect({ status: state.next_actions_status, next: state.next_actions }).toEqual({
         status: 'awaiting_human',
-        next: [
-          answerAction(runId, {
-            step: 'confirm',
-            gate_id: gateId,
-            choices: ['approve', 'reject'],
-          }),
-        ],
+        next: [answerEntry(runId, gateId, 'confirm', ['approve', 'reject'])],
       });
       // The key, not the word: since C134 the act's text names claim_token (who passes one back).
       expect(JSON.stringify(state.next_actions)).not.toContain('"claim_token"');
@@ -259,9 +269,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       status: 'ok',
       agent_action: undefined,
       hint: `Run '${runId}': nothing ran. Waiting on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.`,
-      next: [
-        answerAction(runId, { step: 'confirm', gate_id: gateId, choices: ['approve', 'reject'] }),
-      ],
+      next: [answerEntry(runId, gateId, 'confirm', ['approve', 'reject'])],
     });
   });
 
@@ -283,13 +291,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
     expect({ deduped: again.deduped, hint: again.context_hint, next: again.next_actions }).toEqual({
       deduped: true,
       hint: `Matched existing run '${first.run_id}' (idempotent) in phase 'gate_waiting'; no new run created. Waiting on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.`,
-      next: [
-        answerAction(first.run_id, {
-          step: 'confirm',
-          gate_id: gateId,
-          choices: ['approve', 'reject'],
-        }),
-      ],
+      next: [answerEntry(first.run_id, gateId, 'confirm', ['approve', 'reject'])],
     });
   });
 
@@ -361,7 +363,8 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       stateNext: state.next_actions.map((a) => a.instruction?.tool),
     }).toEqual({
       status: 'error',
-      agent_action: 'resolve_precondition',
+      // #729 PR-0 (A-2 row 6, DESIGN-D3 §6): a gate-mismatch error's action word is fixed.
+      agent_action: 'report_to_user',
       next: ['advance_run'],
       hint: `Gate 'not-the-gate' is not the open gate and matches no committed resolution. The question on step 'confirm' (gate '${gateId}') can no longer be answered: its time is up — call advance_run to carry out its declared settle_default.`,
       state: 'advance_owed',
@@ -373,7 +376,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
     expect((await runStore.get(runId)).pending_gate?.gate_id).toBe(gateId);
   });
 
-  it('C117 CONTROL: the same wrong gate id on an open question whose time is not up offers the answer — resolve_precondition, the question named', async () => {
+  it('C117 CONTROL: the same wrong gate id on an open question whose time is not up offers the answer — report_to_user (A-2 row 6), the question named', async () => {
     const d = gated('rae-w3r1-ctl', 'settle_default');
     const { runId, gateId } = await expiredGate(d, false);
     const reply = await handleSubmitHumanResponse(
@@ -386,10 +389,9 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       next: reply.next_actions,
       hint: reply.context_hint,
     }).toEqual({
-      agent_action: 'resolve_precondition',
-      next: [
-        answerAction(runId, { step: 'confirm', gate_id: gateId, choices: ['approve', 'reject'] }),
-      ],
+      // #729 PR-0 (A-2 row 6, DESIGN-D3 §6): a gate-mismatch error's action word is fixed.
+      agent_action: 'report_to_user',
+      next: [answerEntry(runId, gateId, 'confirm', ['approve', 'reject'])],
       hint: `Gate 'not-the-gate' is not the open gate and matches no committed resolution. The open question is on step 'confirm' (gate '${gateId}') — answer it as next_actions says.`,
     });
   });
@@ -417,7 +419,7 @@ describe('#625 PR-2a, C94 and C95 — over the MCP tools', () => {
       const result = await client.callTool({ name: 'advance_run', arguments: { run_id: runId } });
       const reply = JSON.parse(
         (result.content as Array<{ type: string; text: string }>)[0]!.text,
-      ) as ResponseEnvelope;
+      ) as McpEnvelope;
       // (a) red when the tool passes the core reply's evidence (the step it ran) through; (b) prints
       // the fields — and that a step did run, so the evidence would not have been empty.
       expect({

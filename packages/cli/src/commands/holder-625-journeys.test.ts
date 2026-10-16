@@ -64,7 +64,9 @@ const runs = (): JsonFileStore => new JsonFileStore(join(home, '.realm', 'runs')
 type Reply = Record<string, unknown> & {
   status: string;
   run_id: string;
-  gate?: { gate_id: string; claim_token?: string };
+  gate?: { gate_id: string };
+  // #729 PR-0 (A-17): the token's one carrier on the wire is the opening reply's answer instruction.
+  next_actions?: Array<{ instruction: { params: Record<string, unknown> } | null }>;
   gate_claim?: { proof: string; cause?: string; opened_by: unknown };
   warnings?: string[];
   errors?: string[];
@@ -139,7 +141,7 @@ async function startGate(
   return {
     runId: started.run_id,
     gateId: started.gate.gate_id,
-    token: started.gate.claim_token ?? '',
+    token: String(started.next_actions?.[0]?.instruction?.params['claim_token'] ?? ''),
   };
 }
 

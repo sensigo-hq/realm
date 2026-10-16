@@ -5,6 +5,7 @@
 // PendingGate fields — never the workflow definition (F2's doctrine, generalized to every
 // read-time consumer).
 import type { PendingGate } from '../types/run-record.js';
+import { isPastDeadline, overdueOf } from './instants.js';
 
 /**
  * Read-time due/overdue state for a live gate. `overdue_ms` is present iff `expired`.
@@ -23,9 +24,9 @@ export interface GateDueState {
 
 export function computeGateDueState(gate: PendingGate, now: Date): GateDueState {
   const nowMs = now.getTime();
-  const expiresAtMs =
-    gate.expires_at !== undefined ? new Date(gate.expires_at).getTime() : undefined;
-  const expired = expiresAtMs !== undefined && nowMs >= expiresAtMs;
+  // #729 PR-0 (A2): the one due test and the one parser of a stored deadline.
+  const overdue = gate.expires_at !== undefined ? overdueOf(gate.expires_at, now) : undefined;
+  const expired = gate.expires_at !== undefined && isPastDeadline(gate.expires_at, now);
 
   let nextReminderDueAt: string | undefined;
   if (gate.reminder_seconds !== undefined) {
@@ -38,7 +39,7 @@ export function computeGateDueState(gate: PendingGate, now: Date): GateDueState 
 
   return {
     expired,
-    ...(expired ? { overdue_ms: nowMs - expiresAtMs! } : {}),
+    ...(expired && overdue !== undefined && 'ms' in overdue ? { overdue_ms: overdue.ms } : {}),
     ...(nextReminderDueAt !== undefined ? { next_reminder_due_at: nextReminderDueAt } : {}),
   };
 }

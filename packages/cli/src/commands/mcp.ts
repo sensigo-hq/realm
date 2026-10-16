@@ -10,6 +10,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
+import { cliOperatorRoute } from './ways-renderer.js';
 
 /**
  * Starts the Realm MCP server using the global workflow store (~/.realm/workflows/).
@@ -51,6 +52,9 @@ export const mcpCommand = new Command('mcp')
         registryProvider,
         priceSourceProvider,
         ...(driver !== undefined ? { driver } : {}),
+        // #729 PR-0 (P-6): the CLI's renderer as the operator route — an operator's command reaches
+        // only the block addressed to the person.
+        operatorRoute: cliOperatorRoute('realm mcp'),
       });
     } catch (err) {
       console.error(hostRefusalLine('mcp', err));

@@ -190,6 +190,9 @@ const EL = 'packages/core/src/engine/execution-loop.ts';
 // issue #625 PR-2a: the pre-claim checks (trust, precondition, input schema) are ONE function,
 // `checkPreClaim`, which `executeStep` and the run's view (`describePending`) both call.
 const PEND = 'packages/core/src/engine/pending.ts';
+// issue #729 PR-0: a `run_step` way's brief (`stepBrief`) is where a step's description, prompt,
+// input schema and handler are read for the ways; each door renders the brief.
+const WAYS = 'packages/core/src/engine/ways.ts';
 const ELIG = 'packages/core/src/engine/eligibility.ts';
 const SETTLE = 'packages/core/src/engine/settlement.ts';
 const CL = 'packages/core/src/engine/claim-liveness.ts';
@@ -304,9 +307,11 @@ const W_TRUST_VALUE_REFUSAL: StepKeyWitness = {
   file: PEND,
   pattern: "classifyStepTrust(stepDef?.execution, stepDef?.trust) === 'refuse'",
 };
+// #729 PR-0 (A9): the one gate-choice default — the execution loop reads a gate's choices through
+// the loader's `gateChoicesOf` (its declared list, else `DEFAULT_GATE_CHOICES`).
 const W_GATE_CHOICES: StepKeyWitness = {
   file: EL,
-  pattern: "stepDef!.gate?.choices ?? stepDef!.input_schema?.properties?.['choice']?.enum;",
+  pattern: 'const choices = gateChoicesOf(stepDef!);',
 };
 const W_INPUT_SCHEMA_2B: StepKeyWitness = {
   file: PEND,
@@ -322,9 +327,10 @@ const W_TOOLS_PATH: StepKeyWitness = {
   file: RA,
   pattern: 'if (stepDef.tools && stepDef.tools.length > 0 && mcpClient) {',
 };
-const W_PROMPT_NEXTACTION: StepKeyWitness = {
-  file: EL,
-  pattern: 'step.prompt !== undefined ? renderTemplate(step.prompt, context) : undefined;',
+// #729 PR-0: `stepToNextAction` is deleted; a `run_step` way's brief (`stepBrief`) renders the prompt.
+const W_PROMPT_BRIEF: StepKeyWitness = {
+  file: WAYS,
+  pattern: 'def?.prompt !== undefined',
 };
 const W_ADAPTER_DISPATCH: StepKeyWitness = {
   file: EL,
@@ -382,6 +388,8 @@ export const SURFACE_NAME: Record<string, string> = {
   // issue #625 PR-2a: the pre-claim checks the execution loop calls (`checkPreClaim`) — the same
   // surface to an author, so every minted message citing them reads exactly as before.
   [PEND]: "the engine's execution loop",
+  // #729 PR-0: the ways the execution loop composes (a step's brief) — the same surface to an author.
+  [WAYS]: "the engine's execution loop",
   [ELIG]: 'step eligibility',
   [SETTLE]: 'finalizer selection',
   [CL]: 'claim liveness',
@@ -736,9 +744,7 @@ export const STEP_KEY_REGISTRY = {
   description: {
     auto: {
       c: 'consumed',
-      where: [
-        { file: EL, pattern: "human_readable: `Execute step '${stepName}': ${step.description}`," },
-      ],
+      where: [{ file: WAYS, pattern: "description: def?.description ?? ''," }],
     },
     agent: {
       c: 'consumed',
@@ -768,9 +774,10 @@ export const STEP_KEY_REGISTRY = {
     },
     agent: {
       c: 'consumed',
+      // #729 PR-0: `buildAgentActions` is deleted; the run's view offers the agent steps.
       where: [
         {
-          file: EL,
+          file: PEND,
           pattern: "eligible.filter((name) => definition.steps[name]?.execution === 'agent')",
         },
       ],
@@ -993,15 +1000,15 @@ export const STEP_KEY_REGISTRY = {
       c: 'consumed',
       where: [
         {
-          file: EL,
-          pattern: 'step.handler !== undefined ? { tool: step.handler, params: {}, call_with: {} }',
+          file: WAYS,
+          pattern: '...(def?.handler !== undefined ? { handler: def.handler } : {}),',
         },
       ],
       when: {
-        desc: 'handler-bearing agent step: the NextAction names the handler as the tool to call, and this arm OUTRANKS the plain execute_step instruction — semantics are under #516, but the read itself is real (D4-2)',
+        desc: "handler-bearing agent step: the run_step way's brief carries the handler (#729 PR-0), and MCP's renderer names it as the tool to call, OUTRANKING the plain answer instruction — semantics are under #516, but the read itself is real (D4-2)",
         witness: {
-          file: EL,
-          pattern: 'step.handler !== undefined ? { tool: step.handler, params: {}, call_with: {} }',
+          file: WAYS,
+          pattern: '...(def?.handler !== undefined ? { handler: def.handler } : {}),',
         },
       },
     },
@@ -1205,10 +1212,10 @@ export const STEP_KEY_REGISTRY = {
   prompt: {
     auto: {
       c: 'consumed',
-      where: [W_PROMPT_NEXTACTION],
+      where: [W_PROMPT_BRIEF],
       when: {
         desc: 'handler-bearing or gated autos only — a gateless, handler-less auto never reads it',
-        witness: W_PROMPT_NEXTACTION,
+        witness: W_PROMPT_BRIEF,
       },
       inert_subpop: [
         {
@@ -1221,7 +1228,7 @@ export const STEP_KEY_REGISTRY = {
         },
       ],
     },
-    agent: { c: 'consumed', where: [W_PROMPT_NEXTACTION] },
+    agent: { c: 'consumed', where: [W_PROMPT_BRIEF] },
     guard: { c: 'inert', via: { kind: 'tracked', issue: '#513' } },
     finalizer: { c: 'inert', via: { kind: 'tracked', issue: '#513' } },
   },

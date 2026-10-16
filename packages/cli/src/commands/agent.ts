@@ -149,6 +149,12 @@ const SCHEMA_RETRIES_DEFAULT = 2;
  * created) and the hidden `--no-release-line-advisory` and `--spawned-by-listen` (listen's own).
  * A value outside `[A-Za-z0-9._/:@%+=,-]` is single-quoted, `'` written `'\''`.
  *
+ * #729 PR-0 (RE-CUT; caching PR 2's R6-1): this is the ONE builder of `CliHost.driveFlags`, and the
+ * prompt-cache rule lives here, never at a caller — the caller says where the setting came from
+ * (`promptCacheSource`: `stated` by the operator, or a `default`) and whether the provider can apply
+ * it (`providerAppliesPromptCache`); the flag is repeated only for a stated setting the provider
+ * applies. Absent, both read as a stated setting a provider applies (the value was typed).
+ *
  * @internal Exported for testing only.
  */
 export function buildReattachFlags(opts: {
@@ -163,6 +169,8 @@ export function buildReattachFlags(opts: {
   llmTimeout?: number;
   mintWriterNonce?: boolean;
   promptCache?: string;
+  promptCacheSource?: 'stated' | 'default';
+  providerAppliesPromptCache?: boolean;
 }): string {
   const words: string[] = [];
   if (opts.providerModule !== undefined) {
@@ -182,7 +190,13 @@ export function buildReattachFlags(opts: {
   }
   if (opts.llmTimeout !== undefined) words.push('--llm-timeout', String(opts.llmTimeout));
   if (opts.mintWriterNonce === true) words.push('--mint-writer-nonce');
-  if (opts.promptCache !== undefined) words.push('--prompt-cache', shellWord(opts.promptCache));
+  if (
+    opts.promptCache !== undefined &&
+    opts.promptCacheSource !== 'default' &&
+    opts.providerAppliesPromptCache !== false
+  ) {
+    words.push('--prompt-cache', shellWord(opts.promptCache));
+  }
   return words.join(' ');
 }
 
@@ -436,13 +450,12 @@ export const agentCommand = new Command('agent')
         }
         // issue #600 PR 2 (C6): the re-attach command repeats a stated setting only when this
         // provider applies it — a listen child that picked OpenAI was given the flag, and repeating
-        // it would print a command C3b refuses.
-        const { promptCache: statedPromptCache, ...otherFlags } = opts;
+        // it would print a command C3b refuses. #729 PR-0: the rule is the builder's; this caller
+        // says only where the setting came from and whether the provider applies it.
         const reattachFlags = buildReattachFlags({
-          ...otherFlags,
-          ...(statedPromptCache !== undefined && provider.capabilities().promptCache !== undefined
-            ? { promptCache: statedPromptCache }
-            : {}),
+          ...opts,
+          promptCacheSource: 'stated',
+          providerAppliesPromptCache: provider.capabilities().promptCache !== undefined,
         });
         // issue #600 PR 2: the setting the provider was built with, for the start line. A
         // `--provider-module` run has none: the module asks for what it asks.

@@ -16,7 +16,14 @@
  *    once, and a missing container (the options, the definition) is reported alone, without its
  *    members.
  * 2. CALLER INPUT — what this call's caller sent; a defect comes back as the entry's normal error
- *    reply. No row yet: #604's bounded reason and PR-V's required actor are the first.
+ *    reply, its way on as the reply's `error.remedy` (#729 PR-0). No row yet: #604's bounded reason
+ *    and PR-V's required actor are the first.
+ *
+ * issue #729 PR-0 (D3 A-6; the framework's admission note): the way a call asks for is admitted at a
+ * SECOND declared check-point — `admitWay(verb, snap, ctx, input)` (`engine/ways.ts`), the first
+ * judgement after the entry's load, by the same judges that compose the ways it offers (R26: offer =
+ * admission over the snapshot codes); the store's own write repeats the write-time checks on the
+ * locked copy (`claim_removed`, `question_past_deadline`). D2's "tier (3)" is superseded by it.
  *
  * Order within the host tier: each check runs after the checks its answer depends on, and a likely
  * cause is named before its symptom — a store or registry from another realm release comes first,

@@ -54,6 +54,7 @@ import { captureEvidence } from '../evidence/snapshot.js';
 import { omitClaim } from './claim-liveness.js';
 import { judgeGateProof, type GateClaimVerdict } from './holder.js';
 import { DRAIN_LEASE_MAX } from './lifecycle.js';
+import { isPastDeadline } from './instants.js';
 import { evaluateGuardConditions } from './precondition.js';
 
 /** Projects the per-step settled-map entry shape directly off `RunRecord` — avoids a second,
@@ -860,7 +861,7 @@ function applySettleGate(
     if (
       fresh.pending_gate.expires_at !== undefined &&
       fresh.pending_gate.on_expiry !== undefined &&
-      now.getTime() >= new Date(fresh.pending_gate.expires_at).getTime()
+      isPastDeadline(fresh.pending_gate.expires_at, now)
     ) {
       return { applied: false, reason: 'gate_expired_pending', run: fresh, gateClaim };
     }
@@ -985,7 +986,7 @@ function applyExpireGate(
   // premature enactment attempt. Absent expires_at (a grandfathered/old-binary-minted gate, R-d)
   // falls into this same refusal — it can never legitimately expire, so no in-contract caller
   // should ever construct this delta for one; defensive rather than a crash either way.
-  if (gate.expires_at === undefined || now.getTime() < new Date(gate.expires_at).getTime()) {
+  if (gate.expires_at === undefined || !isPastDeadline(gate.expires_at, now)) {
     return { applied: false, reason: 'not_expired', run: fresh };
   }
 

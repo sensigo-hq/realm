@@ -36,7 +36,9 @@ import {
  * on an answer's entry survive a round trip), `STORE_RELEASE_LINE_TRUE` (issue #620 PR-C — the
  * store's declared release line is its errors' line) and `USAGE_RECORD_ROUNDTRIP` (issue #600 PR 2 —
  * a request record's facts, the model and what realm asked to cache among them, survive a round trip
- * in a step's evidence and in a failed drive's usage).
+ * in a step's evidence and in a failed drive's usage) and `SUPPLIER_ROUND_TRIPS` (issue #729 PR-0,
+ * T-17 (iv), §5 E1 (iv) — the supplier's role an evidence entry records survives a round trip, and
+ * an entry written without one reads back without one, never a role the store made up).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -46,6 +48,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
   'STORE_RELEASE_LINE_TRUE',
   'USAGE_RECORD_ROUNDTRIP',
+  'SUPPLIER_ROUND_TRIPS',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -439,6 +442,50 @@ export function runStoreFidelityContract(
         throw new Error(
           `a store must round-trip a bare step's entry's output_source (issue #625): wrote ` +
             `"dependency", read back ${JSON.stringify(readSource)}`,
+        );
+      }
+    },
+  });
+
+  // issue #729 PR-0 (T-17 (iv), §5 E1 (iv)) — SUPPLIER_ROUND_TRIPS. Always active: every store
+  // round-trips evidence. The role is a closed word (`SUPPLIER_ROLES`); an entry with none keeps none —
+  // a store never fills the absence (its readers name why: `readSupplier`).
+  cases.push({
+    law: 'SUPPLIER_ROUND_TRIPS',
+    name: 'an entry written with supplied_by reads back with it, and one written without reads back without',
+    run: async () => {
+      const { run } = await adapter.store.create({
+        workflowId: `tck-supplier-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base: EvidenceSnapshot = {
+        step_id: adapter.stepName,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'tck-supplier',
+      };
+      await adapter.store.update({
+        ...run,
+        evidence: [{ ...base, supplied_by: 'agent' }, { ...base }],
+      });
+      const reread = await adapter.store.get(run.id);
+      const read = reread.evidence[0]?.supplied_by;
+      if (read !== 'agent') {
+        throw new Error(
+          `a store must round-trip an evidence entry's supplied_by (issue #729 PR-0): wrote "agent", ` +
+            `read back ${JSON.stringify(read)}`,
+        );
+      }
+      const second = reread.evidence[1];
+      if (second === undefined || 'supplied_by' in second) {
+        throw new Error(
+          `an evidence entry written without supplied_by must read back without it (issue #729 ` +
+            `PR-0): read back ${JSON.stringify(second?.supplied_by)}`,
         );
       }
     },

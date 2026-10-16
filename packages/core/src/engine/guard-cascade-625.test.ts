@@ -48,7 +48,8 @@ import type {
 import type { RunRecord } from '../types/run-record.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
-import type { ResponseEnvelope } from '../types/response-envelope.js';
+import type { EngineReply } from '../types/response-envelope.js';
+import { nextCalls, owedOf } from '../test-support/ways-view.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -178,8 +179,11 @@ function membershipOf(run: RunRecord, step: string): string {
 }
 
 /** The step names a reply's next actions offer. */
-const offeredSteps = (reply: ResponseEnvelope): unknown[] =>
-  reply.next_actions.map((a) => a.instruction?.params['command']);
+/** The steps a reply offers the agent (#729 PR-0: its run_step ways, read for the agent's door). */
+const offeredSteps = (reply: EngineReply): string[] =>
+  nextCalls(reply)
+    .filter((c) => c.startsWith('run_step:'))
+    .map((c) => c.slice('run_step:'.length));
 
 /** The guard's own evidence entries on a record. */
 const guardEntries = (run: RunRecord, step = 'check') =>
@@ -249,7 +253,7 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       // (a) red when the reply keeps the gate's preview/choice as data, or keeps next actions on
       //     an ended run; (b) prints the two values.
       expect(reply.data).toEqual({});
-      expect(reply.next_actions).toEqual([]);
+      expect(nextCalls(reply)).toEqual([]);
       // (a) red when the reply's evidence is not the guard's own entry; (b) prints step ids.
       expect(reply.evidence.map((e) => e.step_id)).toEqual(['check']);
       // (a) red when the reply reports the pre-guard phase; (b) prints the phase.
@@ -355,9 +359,11 @@ describe('issue #625 — an answer settles the guard it makes eligible, in its o
       expect(reply.ended_by).toBeUndefined();
       // (a) red when the guard's sentence replaces the answer's own on a run that goes on;
       //     (b) prints the sentence.
-      expect(reply.context_hint).toBe(
-        "Gate 'confirm' resolved with choice 'approve'. Ready for the agent: 'finish'.",
-      );
+      // #729 PR-0 (D-B): core says what happened; the door appends what comes next (names_next).
+      expect([reply.context_hint, reply.names_next]).toEqual([
+        "Gate 'confirm' resolved with choice 'approve'.",
+        true,
+      ]);
       // (a) red when the reply's data is emptied on a run that goes on; (b) prints the choice.
       expect(reply.data['choice']).toBe('approve');
       // The step the guard unlocked is offered by the SAME reply — no further call names the guard.
@@ -467,7 +473,7 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       expect(reply.status).toBe('ok');
       expect(reply.data).toEqual({});
       expect(reply.evidence.map((e) => e.step_id)).toEqual(['check']);
-      expect(reply.next_actions).toEqual([]);
+      expect(nextCalls(reply)).toEqual([]);
       expect(reply.run_phase).toBe('aborted');
       // The published field keeps listing every step the engine ran on its own.
       // (a) red when the cascaded guard is not appended, or carries a phase other than the one
@@ -533,7 +539,7 @@ describe("issue #625 — a finished step's own write settles the guard it makes 
       expect(reply.ended_by).toBeUndefined();
       // (a) red when a non-ending guard empties the step's own reply; (b) prints the values.
       expect(reply.data).toEqual({ ok: true });
-      expect(reply.context_hint).toBe("Step 'work' completed. Ready for the agent: 'finish'.");
+      expect([reply.context_hint, reply.names_next]).toEqual(["Step 'work' completed.", true]);
       expect(offeredSteps(reply)).toEqual(['finish']);
       // (a) red when a guard that let the run go on is listed with a phase other than 'running';
       //     (b) prints the list.
@@ -858,7 +864,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', { ms: 60_000 })}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -904,7 +910,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', 60_000)}`,
+        `⚠ ${expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'reject' }, 'submitHumanResponse', { ms: 60_000 })}`,
         refusal,
         "Guard step 'check' aborted the run.",
         'Reason: Not approved (timed out to reject).',
@@ -929,7 +935,12 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
       expect(sameReply.guards).toEqual([{ step: 'check', outcome: 'pass' }]);
       expect(sameReply.ended_by).toBeUndefined();
       // decision C185: what the run owes follows the sentence while the run goes on.
-      expect(sameReply.context_hint).toBe(`${LATE_SAME_CHOICE} Ready for the agent: 'finish'.`);
+      // #729 PR-0 (D-B): the door appends it (names_next); core carries the ways.
+      expect([sameReply.context_hint, sameReply.names_next, offeredSteps(sameReply)]).toEqual([
+        LATE_SAME_CHOICE,
+        true,
+        ['finish'],
+      ]);
       const sameRecord = await store.get(same.runId);
       expect(lateAnswerOutcome(sameReply, sameRecord)).toEqual({
         choice: 'approve',
@@ -943,7 +954,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
+        `⚠ ${expiryCarriedOutLine(same.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', { ms: 60_000 })}`,
         LATE_SAME_CHOICE,
         "Guard step 'check' passed.",
       ]);
@@ -974,7 +985,7 @@ describe('issue #625 — a late answer on an expired gate: both facts on the rep
           now: new Date(),
         }),
       ).toEqual([
-        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', 60_000)}`,
+        `⚠ ${expiryCarriedOutLine(other.gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'submitHumanResponse', { ms: 60_000 })}`,
         `Gate '${other.gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
         "Guard step 'check' passed.",
       ]);
@@ -1175,9 +1186,13 @@ describe('issue #625 — a store WITHOUT settleStep settles no guard in the writ
       // (a) red when the guard's sentence is appended on a store that settled no guard;
       //     (b) prints the sentence.
       // decision C185: what the run owes follows (the guard, owed: this store settled none).
-      expect(reply.context_hint).toBe(
-        `${LATE_SAME_CHOICE} Owed to the engine: 'check' — call advance_run.`,
-      );
+      // #729 PR-0 (D-B): the door appends it (names_next); core carries the advance way's owed.
+      expect([reply.context_hint, reply.names_next, nextCalls(reply), owedOf(reply)]).toEqual([
+        LATE_SAME_CHOICE,
+        true,
+        ['advance'],
+        ['check'],
+      ]);
       const record = await store.get(runId);
       expect(record.settled?.['confirm']).toMatchObject({
         choice: 'reject',
@@ -1266,7 +1281,11 @@ describe("issue #625 — advanceRun (the chain's tail) called without the chain'
       // (a) red when a direct call runs or claims the agent step, or invents a list;
       //     (b) prints the values.
       expect(reply.status).toBe('ok');
-      expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran. Ready for the agent: 'work'.`);
+      expect([reply.context_hint, reply.names_next, offeredSteps(reply)]).toEqual([
+        `Run '${run.id}': nothing ran.`,
+        true,
+        ['work'],
+      ]);
       expect(reply.chained_auto_steps).toBeUndefined();
       expect((await store.get(run.id)).version).toBe(run.version);
     });
@@ -1375,7 +1394,7 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
   });
 
   it('describeEndedBy reads the same two lines off a reply that carries ended_by, and nothing off one that does not', () => {
-    const base: ResponseEnvelope = {
+    const base: EngineReply = {
       command: 'confirm',
       run_id: 'r',
       run_version: 3,
@@ -1385,7 +1404,9 @@ describe('issue #625 — guardEndingOf and the printed lines, from a settlement 
       warnings: [],
       errors: ['refused'],
       context_hint: 'refused',
-      next_actions: [],
+      reply_kind: 'error',
+      ways: [],
+      unavailable: [],
     };
     // (a) red when the reply reader mints a different sentence than the result reader, or drops
     //     the reason; (b) prints the lines.

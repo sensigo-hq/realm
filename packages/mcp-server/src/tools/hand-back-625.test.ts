@@ -21,7 +21,8 @@ import { handleStartRunBatch } from './start-run-batch.js';
 // F15: `compute` is refused for its input and has no `depends_on` (the engine gives it the run's
 // params): its own way out, never "correct the workflow" alone.
 const WAY_OUT =
-  "For 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.";
+  // #729 PR-0 (T-20 (i)): a new run is a way out, so the run's way says THIS run stays open.
+  "For 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.";
 const CANNOT =
   "'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.";
 

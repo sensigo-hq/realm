@@ -51,11 +51,13 @@ describe('#625 PR-2a, C89 — every printed `realm agent --run-id` carries the m
     expect(bare).toEqual([]);
     // (a) the match pattern drifts and finds fewer printers → the witness would check nothing. (b)
     // prints the printers found.
+    // #729 PR-0: `realm run advance`'s ready line is the CLI renderer's (`agentReadyLine`), and the
+    // renderer's `run_step` command prints the drive too — run-advance.ts prints neither itself.
     for (const known of [
       'agent/run-agent.ts',
       'commands/resume.ts',
       'commands/run.ts',
-      'commands/run-advance.ts',
+      'commands/ways-renderer.ts',
     ]) {
       expect(printers).toContain(known);
     }

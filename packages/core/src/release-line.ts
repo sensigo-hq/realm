@@ -260,9 +260,13 @@ function handOffRemedy(role: string, engineVersion: string): string {
   return `Hand realm a ${noun} from @sensigo/realm ${engineVersion}, or ${ONE_VERSION_REMEDY}`;
 }
 
-/** `npm install --save-dev @sensigo/realm-cli<which>, then npx realm` — the command route. */
+/**
+ * `'npm install --save-dev @sensigo/realm-cli<which>', then 'npx realm'` — the command route. #729
+ * PR-0 (E1 (j), C212's command rule): each command is delimited, so the sentence's stop never reads
+ * as part of one.
+ */
 function commandRoute(which: string): string {
-  return `npm install --save-dev @sensigo/realm-cli${which}, then npx realm`;
+  return `'npm install --save-dev @sensigo/realm-cli${which}', then 'npx realm'`;
 }
 
 /**
@@ -416,6 +420,12 @@ export function releaseLineError(
   context: {
     role: string;
     message: string;
+    /**
+     * #729 PR-0 (E1 (j)): the thrown value's own text, when the caller has it apart from `message` —
+     * printed last, after a label, as written, with no stop added (stored text is never ended by
+     * Realm's punctuation).
+     */
+    thrown?: string;
     code: ErrorCode;
     category?: ErrorCategory;
     agentAction?: AgentAction;
@@ -457,9 +467,13 @@ export function releaseLineError(
     foreignCode !== undefined
       ? `its code '${foreignCode}' and its retry setting were not used`
       : 'its code and its retry setting were not used';
+  const head =
+    context.thrown !== undefined
+      ? `${context.role} threw a ${d.className}${unbrandedClause(d.className)}`
+      : `${context.message}${unbrandedClause(d.className)}`;
+  const tail = context.thrown !== undefined ? ` Its message: ${context.thrown}` : '';
   return new WorkflowError(
-    `${context.message}${unbrandedClause(d.className)} If it is realm's, ${lost}: ` +
-      `${codeRoutes(d.local.version, undefined)}.`,
+    `${head} If it is realm's, ${lost}: ${codeRoutes(d.local.version, undefined)}.${tail}`,
     {
       code: context.code,
       category: context.category ?? 'ENGINE',

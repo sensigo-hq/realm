@@ -213,14 +213,14 @@ describe('NotionAdapter get_page', () => {
     expect(err.details['retryAfterSeconds']).toBeUndefined();
   });
 
-  it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_human', async () => {
+  it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_service', async () => {
     respond(503, { message: 'unavailable' });
     const adapter = makeAdapter();
     const err = (await adapter
       .fetch('get_page', { page_id: 'p1' }, {})
       .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_HTTP_5XX');
-    expect(err.agentAction).toBe('wait_for_human');
+    expect(err.agentAction).toBe('wait_for_service');
   });
 
   it('HTTP 503 with additional_data → additionalData in details', async () => {
@@ -390,14 +390,14 @@ describe('NotionAdapter query_data_source', () => {
     ).rejects.toMatchObject({ code: 'SERVICE_HTTP_4XX' });
   });
 
-  it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_human', async () => {
+  it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_service', async () => {
     respond(503, { message: 'Backend timeout' });
     const adapter = makeAdapter();
     const err = (await adapter
       .fetch('query_data_source', { data_source_id: 'ds-1' }, {})
       .catch((e: unknown) => e)) as WorkflowError;
     expect(err.code).toBe('SERVICE_HTTP_5XX');
-    expect(err.agentAction).toBe('wait_for_human');
+    expect(err.agentAction).toBe('wait_for_service');
   });
 
   it('returns results array', async () => {
@@ -846,12 +846,12 @@ describe('NotionAdapter update_page', () => {
     });
   });
 
-  it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_human', async () => {
+  it('HTTP 503 → SERVICE_HTTP_5XX, agentAction: wait_for_service', async () => {
     respond(503, { message: 'Service unavailable' });
     const adapter = makeAdapter();
     await expect(adapter.update('update_page', { page_id: 'p1' }, {})).rejects.toMatchObject({
       code: 'SERVICE_HTTP_5XX',
-      agentAction: 'wait_for_human',
+      agentAction: 'wait_for_service',
     });
   });
 

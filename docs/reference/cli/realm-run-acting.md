@@ -68,11 +68,12 @@ If a realm workflow run or realm agent is still waiting on this run, it goes on 
 
 After the lines that name a command — `Owed to the engine: …`, `An agent step is ready: …` — one more line says that a `realm workflow run` or `realm agent` still waiting on the run goes on by itself (`the lines above are` when there are two): the run's record does not show whether one is waiting, so the line holds either way. Added after version 0.46.0.
 
-When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0:
+When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0. A step refused for its input that builds no input from an `input_map`, like `compute` here, gets one more line: an operator supplies its input, checked against its `input_schema`, and no `realm` command does (added after version 0.47.0):
 
 ```text
 Responded: 77772f0c-a80d-49d3-b665-4ac186186fd1 | choice 'approve' | new state 'running'
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+'compute' takes its input from an operator, checked against its input_schema; no realm command supplies it.
 Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1 — or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1
 ```
 
@@ -246,6 +247,7 @@ When the step that is ready again cannot run — the workflow was registered aga
 ```text
 Resumed run '729eaab3-6203-46cb-9c5c-3714070723a8': step 'a' re-enabled and run reset to 'running'.
 'a' cannot run (input_schema): Invalid input for step 'a': the input must have required property 'n'.
+'a' takes its input from an operator, checked against its input_schema; no realm command supplies it.
 Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): for 'a', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8 — or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8
 ```
 
@@ -291,10 +293,10 @@ Abandoning a run that is already abandoned changes nothing, and the first line s
 
 **Exit code:** 0 if the run is abandoned, otherwise 1:
 
-| Case                         | Message                                                                                                                                                                                              |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The run is waiting at a gate | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); answer it before abandoning. Answer it: realm run respond 4233aa3c-… --gate 70d76b3b-… --choice <one of: approve, reject>.` |
-| The run ended in another way | `Run '08c61d5d-…' is already terminal (failed); cannot abandon a finished run.`                                                                                                                      |
+| Case                         | Message                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The run is waiting at a gate | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Answer it: realm run respond 4233aa3c-… --gate 70d76b3b-… --choice <one of: approve, reject>` |
+| The run ended in another way | `Run '08c61d5d-…' is already terminal (failed); cannot abandon a finished run.`                                                                                                                                           |
 
 ## `cleanup`
 
@@ -513,6 +515,7 @@ When it leaves nothing that can run from here, the steps that cannot run and the
 ✓ gate enacted (settle_default 'approve').
 Run '1d703406-777f-4bc6-a6bc-6058b4d8f490' is not terminal (phase: 'running') — nothing further to drain.
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+'compute' takes its input from an operator, checked against its input_schema; no realm command supplies it.
 Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490 — or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490
 ```
 
@@ -550,7 +553,7 @@ Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to
 Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f
 Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
 To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd
-Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
+Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. 'compute' takes its input from an operator, checked against its input_schema; no realm command supplies it. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
 Run 'e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'write' — drive it with realm agent --run-id e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68 --provider <provider> --model <model>
 To end the run instead: realm run abandon e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68
 Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') — nothing to drain. 'fetch' is in flight in another program — wait for it, or see realm run inspect 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25

@@ -1,6 +1,7 @@
 // late-lag-625.test.ts — issue #625 PR-2a, the last prompt's F1, over a real MCP client: the tool that
 // carries out an expired question says how long before it the question's time was up (seconds under a
-// minute), and a late answer's reply carries the fact typed (`error_details.expired_at`, `overdue_ms`).
+// minute), and a late answer's reply carries the fact typed (#729 PR-0, T-2: its `expiry` receipt —
+// `expired_at`, `overdue` — no longer `error_details`).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
@@ -89,7 +90,7 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
     ['settle_default', 'reject'],
     ['abort', 'approve'],
   ] as const)(
-    'submit_human_response, %s, the answer %s: the line names the tool and the lag in seconds; error_details carries expired_at and overdue_ms',
+    'submit_human_response, %s, the answer %s: the line names the tool and the lag in seconds; the expiry receipt carries expired_at and the lag',
     async (onExpiry, choice) => {
       const q = await late(onExpiry, `lag-submit-${onExpiry}-${choice}`);
       const t0 = Date.now();
@@ -99,11 +100,12 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
         choice,
       });
       const window = [t0, Date.now()] as const;
+      const expiry = r['expiry'] as { expired_at?: string; overdue?: { ms?: number } } | undefined;
       const details = r['error_details'] as Reply | undefined;
       const line =
         ((r['warnings'] as string[]) ?? []).find((w) => w.includes('had expired')) ?? '<no line>';
       const lag = /had expired (\S+) before this call/.exec(line)?.[1] ?? '<no lag>';
-      const overdue = details?.['overdue_ms'];
+      const overdue = expiry?.overdue?.ms;
       const did =
         onExpiry === 'settle_default'
           ? "settle_default: the default choice 'approve' was recorded"
@@ -114,7 +116,8 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
       expect({
         line,
         lagFits: seconds(q.at, window).includes(lag),
-        expired_at: details?.['expired_at'],
+        expired_at: expiry?.expired_at,
+        details: [details?.['expired_at'], details?.['overdue_ms']],
         overdueFits:
           typeof overdue === 'number' &&
           overdue >= window[0] - q.at - 1 &&
@@ -123,6 +126,7 @@ describe('#625 PR-2a, F1 — over MCP the expiry line says how late; the late an
         line: `gate '${q.gateId}' on 'confirm' had expired ${lag} before this call — this submit_human_response call first carried out its declared ${did} (enacted_via: submit_human_response).`,
         lagFits: true,
         expired_at: q.expiresAt,
+        details: [undefined, undefined],
         overdueFits: true,
       });
     },

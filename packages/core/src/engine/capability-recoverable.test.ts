@@ -18,6 +18,7 @@ import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { StepHandler } from '../extensions/step-handler.js';
 import type { ServiceAdapter } from '../extensions/service-adapter.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 const echo: StepDispatcher = async (_s, input) => ({ ...input });
 
@@ -85,7 +86,7 @@ describe('recoverable incapability (#134) — Part A', () => {
 
     expect(env.status).toBe('error');
     expect(env.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
-    expect(env.agent_action).toBe('report_to_user'); // non-terminal mapping, not 'stop'
+    expect(agentActionFor(env)).toBe('report_to_user'); // non-terminal mapping, not 'stop'
 
     const after = await store.get(run.id);
     expect(after.failed_steps).not.toContain('validate'); // NOT terminal-burned

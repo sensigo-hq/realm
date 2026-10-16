@@ -7,6 +7,7 @@ import type {
   WorkflowRegistrar,
   ExtensionRegistry,
   Attributed,
+  WayOf,
 } from '@sensigo/realm';
 import {
   advanceRun,
@@ -14,10 +15,6 @@ import {
   stepsThatCannotRun,
   describeRunDriver,
   judgeProgramFit,
-  owedList,
-  owedWords,
-  owedRunsClause,
-  respondCommand,
   finalizerOutcomeLines,
   resumeWay,
   offeredResumeWay,
@@ -28,19 +25,13 @@ import {
   describeClaimHolder,
   guardPassedLine,
   guardEndingOfRun,
-  cannotRunClause,
-  cannotRunWayOut,
-  cannotRunWayOutApplies,
   withFullStop,
   sentenceEnd,
-  waitingWords,
   pendingCleanupLine,
-  answerOf,
-  answerAction,
-  answerableQuestion,
   classifyStop,
+  composeWaysAt,
   stopAbout,
-  type NextAction,
+  type ComposedWays,
   type PendingView,
   type ProgramFit,
   type WorkflowDefinition,
@@ -57,6 +48,15 @@ import {
   takenLine,
   takenPhrase,
 } from '../lib/holder-render.js';
+import {
+  agentReadyLine,
+  cannotGoOnWithRefusal,
+  cannotRunWayOut,
+  inFlightLine,
+  owedItems,
+  owedRunsWords,
+  stopReasons,
+} from './ways-renderer.js';
 
 /** How the project code of this program compares with the run's last record, in words. */
 export const FIT_WORDS: Record<ProgramFit, string> = {
@@ -123,64 +123,14 @@ export function inFlightItems(run: RunForReasons, keepsClaims: boolean): string[
 }
 
 /**
- * Every reason that holds for the run to stop where it is, in D4.4's order (a failed step is the
- * caller's to add, first): the run ended · a question is open · each step that cannot run · engine
- * work still owed (decision C202) · agent steps ready · each step in flight elsewhere, with what to
- * do (decision C43; the holder and the time are on the preview's `In flight:` line) · and, when none
- * of these holds, `nothing is ready to run now`. The open question's line is rendered from an answer
- * act core composes (`answerAction`, decision C103): after a call, the reply's (`nextActions`); at
- * the preview, the act composed from the record the command read (F7 (a): the preview never calls
- * the writer `advanceRun` to get it).
- */
-export function stoppedReasons(
-  runId: string,
-  run: RunForReasons,
-  pending: PendingView,
-  nextActions: readonly NextAction[] = [],
-): string[] {
-  if (run.terminal_state) return [`the run has ended (${deriveRunPhase(run)})`];
-  if (run.pending_gate !== undefined) {
-    // F6: the choices from the record's open question (structured), never split off the act's text.
-    const answer = nextActions.map((a) => answerOf(a, run)).find((a) => a !== undefined);
-    // decision C211 (walk c14 W2-2): the steps the question holds are named — the engine owes them
-    // nothing until it is answered, and they go on after it.
-    const waiting = waitingWords(pending);
-    const open = waiting === undefined ? 'a question is open' : `a question is open (${waiting})`;
-    return [
-      answer !== undefined
-        ? // decision C206: the one answer command (`--choice <one of: a, b>`, or the one choice).
-          `${open} — ${respondCommand(runId, answer.gate_id, answer.choices)}`
-        : `${open} — see realm run inspect ${runId}`,
-    ];
-  }
-  const reasons = stepsThatCannotRun(pending).map((e) => cannotRunClause(e));
-  // decision C202: engine work owed when the call stops — a refusal ended the loop before it ran, or
-  // another program made it owed after the loop's last read — is named with the call that runs it.
-  // (The preview never gets here with work owed: it runs it.)
-  if (pending.act !== undefined) {
-    // decision C207: with several owed, where the call stops.
-    const { them, until } = owedWords(pending);
-    reasons.push(
-      `the engine still owes ${owedList(pending)} — to run ${them}${until}: realm run advance ${runId}`,
-    );
-  }
-  const ready = agentReadyReason(runId, pending.agent_steps);
-  if (ready !== undefined) reasons.push(ready);
-  reasons.push(...inFlightReasons(runId, run));
-  return reasons.length > 0 ? reasons : ['nothing is ready to run now'];
-}
-
-/**
  * The reason for each step in flight in another program (decisions C37, C205): `'<s>' is in flight
  * in another program — wait for it, or see realm run inspect <id>`. `realm run advance` prints it as
  * a `Stopped:` reason; `realm run respond` and `realm run drain` as their own line — the same words
  * from here. A step whose question is open is not in flight (it waits on the answer).
  */
 export function inFlightReasons(runId: string, run: RunForReasons): string[] {
-  return inFlightSteps(run).map(
-    (step) =>
-      `'${step}' is in flight in another program — wait for it, or see realm run inspect ${runId}`,
-  );
+  // #729 PR-0: the words are the CLI renderer's one line.
+  return inFlightSteps(run).map((step) => inFlightLine(runId, step));
 }
 
 /**
@@ -190,16 +140,8 @@ export function inFlightReasons(runId: string, run: RunForReasons): string[] {
  * `realm run respond` as its own line — the same words from here.
  */
 export function agentReadyReason(runId: string, agentSteps: readonly string[]): string | undefined {
-  if (agentSteps.length === 0) return undefined;
-  // decisions C55, C59: the subject and the count word agree with how many agent steps are ready.
-  const ready =
-    agentSteps.length === 1
-      ? `an agent step is ready: '${agentSteps[0]}' — drive it`
-      : `agent steps are ready: ${agentSteps.map((s) => `'${s}'`).join(', ')} — drive them`;
-  // decision C89: the drive command a person can run as printed — since #676 `realm agent` refuses
-  // to start without a model, so the line carries the placeholders the other printers use
-  // (run-agent.ts's re-attach line, resume.ts, run.ts's detach map).
-  return `${ready} with realm agent --run-id ${runId} --provider <provider> --model <model>`;
+  // #729 PR-0: the words are the CLI renderer's one line.
+  return agentReadyLine(runId, agentSteps);
 }
 
 /**
@@ -444,6 +386,12 @@ export async function advanceRunFromShell(
 
   const pending = describePending(workflow, run, registry, now);
   const keepsClaims = runStore.persistsClaims === true;
+  // #729 PR-0 (A-10): the run's ways, composed by core and rendered here.
+  const ways: ComposedWays = composeWaysAt(run, now, {
+    definition: workflow,
+    registry,
+    persistsClaims: keepsClaims,
+  });
   // decision C98: what comes from where — the folder the step's project code is loaded from (not
   // the shell's, unless it is), and the environment, which is the shell's. Decision C107: a
   // workflow with no project code is said to have none (the registry loaded no realm.yaml and no
@@ -467,26 +415,16 @@ export async function advanceRunFromShell(
   // is told why it may find nothing to run.
   const inFlight = run.terminal_state ? [] : inFlightItems(run, keepsClaims);
   if (inFlight.length > 0) print(`In flight: ${withFullStop(inFlight.join('; '))}`);
-  if (pending.act === undefined) {
+  if (pending.owed.length === 0) {
     // decision C43: "Nothing is owed" only when nothing is; owed work none of which can run now
     // opens with what the engine can do.
     const opening = engineWorkOwed(run, pending, workflow)
       ? 'The engine can run nothing now'
       : 'Nothing is owed to the engine';
-    // decision C103, F7 (a): at an open question the line renders the question's act, composed by
-    // core's read-only `answerAction` from the record this command read — never by a call of the
-    // writer `advanceRun`, which would run any step that became ready since that read.
-    const question = answerableQuestion(pending);
-    const reasons = withResumeWay(
-      stoppedReasons(
-        runId,
-        run,
-        pending,
-        question !== undefined ? [answerAction(runId, question)] : undefined,
-      ),
-      run,
-      workflow,
-    );
+    // decision C103, F7 (a): at an open question the line renders the question's `respond` way,
+    // composed by core from the record this command read — never by a call of the writer
+    // `advanceRun`, which would run any step that became ready since that read.
+    const reasons = withResumeWay(stopReasons(ways, runId, deriveRunPhase(run)), run, workflow);
     // decision C212: a reason that ends with a command ends without a full stop; several reasons
     // are each a line of their own, so none is joined to a command.
     if (reasons.length === 1) print(`${opening}: ${sentenceEnd(reasons[0]!)}`);
@@ -503,14 +441,22 @@ export async function advanceRunFromShell(
     // by itself.
     const readyPreview = agentReadyReason(runId, pending.agent_steps);
     if (readyPreview !== undefined && reasons.includes(readyPreview)) print(attendingLine(1));
-    if (cannotRunWayOutApplies(run, pending)) print(cannotRunWayOut(run, workflow, pending));
+    if (cannotGoOnWithRefusal(ways)) print(cannotRunWayOut(ways, runId, deriveRunPhase(run)));
     // decision C23 with D4.4: a step that cannot run here (refused before its claim, or
     // capability-blocked) exits 1 whether or not anything else was owed — the same code as after a
     // call that ran other steps.
     return !run.terminal_state && stepsThatCannotRun(pending).length > 0 ? 1 : 0;
   }
   // decision C207: with several owed, where this call stops — never a promise that all of them run.
-  print(`Owed to the engine: ${owedList(pending)}${owedRunsClause(pending)}.`);
+  // #729 PR-0 (Part B): the owed work as the `advance` way carries it, in the CLI renderer's words.
+  const owedWay: WayOf<'advance'> = (ways.ways.find((w) => w.verb === 'advance') as
+    WayOf<'advance'> | undefined) ?? {
+    verb: 'advance',
+    conditions: [],
+    run_id: runId,
+    owed: pending.owed,
+  };
+  print(`Owed to the engine: ${owedItems(owedWay).join(', ')}${owedRunsWords(owedWay)}.`);
 
   let lastStep: string | undefined;
   // decision C123: the line that says this call carried out an expired question is printed when it
@@ -652,16 +598,25 @@ export async function advanceRunFromShell(
           : `'${about}': ${words}`,
     );
   }
-  const heldHere =
+  // #729 PR-0 (A-10): the stop reasons from the ways of the record as this call left it — what is
+  // owed read from that record as it is; the step this call's refusal names is said once, by that
+  // line, so it is never also listed as in flight in another program (its claim is this call's).
+  const composedAfter = composeWaysAt(after, new Date(), {
+    definition: workflow,
+    registry,
+    persistsClaims: runStore.persistsClaims === true,
+  });
+  const afterWays: ComposedWays =
     refusal && about !== undefined
-      ? { ...after, in_progress_steps: after.in_progress_steps.filter((s) => s !== about) }
-      : after;
+      ? {
+          ...composedAfter,
+          unavailable: composedAfter.unavailable.filter(
+            (u) => !(u.code === 'held_elsewhere' && u.facts.step === about),
+          ),
+        }
+      : composedAfter;
   reasons.push(
-    ...withResumeWay(
-      stoppedReasons(runId, heldHere, afterView, result.next_actions),
-      after,
-      workflow,
-    ),
+    ...withResumeWay(stopReasons(afterWays, runId, deriveRunPhase(after)), after, workflow),
   );
   if (reasons.length > 1) {
     const none = reasons.indexOf('nothing is ready to run now');
@@ -691,8 +646,8 @@ export async function advanceRunFromShell(
   // decision C44: when the run stops on a step refused before its claim with nothing else ready, the
   // last line is the way out (it carries the phase); otherwise the phase line.
   print(
-    cannotRunWayOutApplies(after, afterView)
-      ? cannotRunWayOut(after, workflow, afterView)
+    cannotGoOnWithRefusal(afterWays)
+      ? cannotRunWayOut(afterWays, runId, deriveRunPhase(after))
       : `Run ${runId}: phase '${deriveRunPhase(after)}'`,
   );
   const refused = !after.terminal_state && stepsThatCannotRun(afterView).length > 0;

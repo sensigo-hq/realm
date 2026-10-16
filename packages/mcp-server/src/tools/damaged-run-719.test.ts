@@ -102,6 +102,32 @@ describe('issue #719 — the MCP tools on a run file that cannot be read', () =>
     },
   );
 
+  // #729 PR-0 correction (C3; Amendments 9, 11): `error_details` is ONE carrier — a code's typed
+  // facts where it has them — on every MCP door, abandon_run included (it published none before).
+  it.each(CLASSES.map(([cls, bytes, mode]) => [cls, bytes, mode] as const))(
+    'abandon_run on a %s file: error_details carries the file’s typed facts, the same execute_step publishes',
+    async (_cls, bytes, mode) => {
+      const { call } = await connect(bytes, mode);
+      const abandon = JSON.parse(await call('abandon_run', { run_id: 'bad' })) as Record<
+        string,
+        unknown
+      >;
+      const execute = JSON.parse(
+        await call('execute_step', { run_id: 'bad', command: 'a', params: {} }),
+      ) as Record<string, unknown>;
+      const scopeOf = (r: Record<string, unknown>) =>
+        (r['error_details'] as { scope?: unknown } | undefined)?.scope;
+      // (a) red when abandon_run drops the typed facts (as before this correction) or publishes
+      //     other facts than execute_step on the same file; (b) prints each door's scope and
+      //     whether the two carry the same facts — never a fact's value.
+      expect({
+        abandon: scopeOf(abandon),
+        execute: scopeOf(execute),
+        same: JSON.stringify(abandon['error_details']) === JSON.stringify(execute['error_details']),
+      }).toEqual({ abandon: 'file', execute: 'file', same: true });
+    },
+  );
+
   it('start_run_batch: the failed item carries the file’s code and names the file', async () => {
     const { call, path } = await connect('{ not json');
     const reply = JSON.parse(
