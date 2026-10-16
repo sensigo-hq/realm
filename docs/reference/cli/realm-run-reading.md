@@ -370,7 +370,7 @@ An answer the gate's expiry wrote with its default choice reads `Answer: hold ·
 realm run attempts <run-id> [--json]
 ```
 
-Lists the answers to agent steps that Realm refused because they did not fit the step's schema. Realm keeps the shape of each refused answer and not its values.
+Lists the answers to agent steps that Realm refused because they did not fit the step's schema. A run recorded by an earlier version may also list a refused call that named an engine step. Realm keeps the shape of each refused answer and not its values.
 
 | Flag     | What it does                              |
 | -------- | ----------------------------------------- |
