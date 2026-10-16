@@ -14,6 +14,8 @@
 // Issue #600 PR 2 adds four `CostView` rows (`models`, `cache_requested`, `cache_write_5m`,
 // `cache_write_1h`) and the `CacheRequestedEntry` registry on both contexts, with no waiver, and one
 // cell for the typed absence by cause, which this surface carries as data (inspect withholds it).
+// Issue #600's lifetime unit adds the entry's `auto` (the evidence `--prompt-cache auto` chose by):
+// the asked fixtures are a drive `realm listen --prompt-cache auto` started, whose gaps chose 1 hour.
 //
 // Issue #600 caching PR P adds two `CostView` rows (`money`, `endpoints`), `StepView.total`, and the
 // `Money` and `RunCost` registries, as data with no waiver. Money exists only when a price source is
@@ -103,7 +105,7 @@ const PRICES: PriceSource = {
     };
   },
 };
-// The gateway fixture (asked for 1h on a custom endpoint, nothing written or read), and one request
+// The gateway fixture (asked for 1 hour on a custom endpoint, nothing written or read), and one request
 // per source plus one with no model.
 const GATEWAY_REQUEST = {
   request_index: 0,
@@ -372,8 +374,8 @@ const oldGateAnswer = {
   evidence_hash: 'g4',
 };
 
-// issue #600 PR 2: one request carrying every request fact, asked for 1h with part of the write
-// kept for 5m (the mismatch fixture, where both splits are non-zero).
+// issue #600 PR 2: one request carrying every request fact, asked for 1 hour with part of the write
+// kept for 5 minutes (the mismatch fixture, where both splits are non-zero).
 const askedStep = {
   step_id: 'asked_step',
   kind: 'execution' as const,
@@ -399,7 +401,8 @@ const askedStep = {
           cache_lifetime_s: 3600,
           cache_ttl_sent: true,
           cache_requested_source: 'stated',
-          cache_requested_by: 'realm agent',
+          cache_requested_by: 'realm listen',
+          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
           provider: 'anthropic',
           cache_creation_input_tokens: 75,
           cache_creation: { ephemeral_5m_input_tokens: 70, ephemeral_1h_input_tokens: 5 },
@@ -512,7 +515,8 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
                 lifetime_s: 3600,
                 ttl_sent: true,
                 source: 'stated',
-                by: 'realm agent',
+                by: 'realm listen',
+                auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
               },
             ],
             reported: 1,
@@ -658,7 +662,13 @@ describe('#600 PR 1b (D4) — context 3, get_run_state.steps', () => {
       lifetime_s: { surface: 'rendered', probe: () => expect(entry.lifetime_s).toBe(3600) },
       ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
       source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
-      by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm agent') },
+      by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm listen') },
+      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data.
+      auto: {
+        surface: 'rendered',
+        probe: () =>
+          expect(entry.auto).toEqual({ basis: 'listen_trigger_gaps', gaps_s: [420, 720] }),
+      },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
     const COST_FIGURE = {
@@ -970,13 +980,14 @@ const ENTRY_B = {
       request_index: 0,
       request_start: 't0',
       uncached_input_tokens: 60,
-      // issue #600 PR 2: the request facts, asked for 1h, part of the write kept for 5m.
+      // issue #600 PR 2: the request facts, asked for 1 hour, part of the write kept for 5 minutes.
       model: 'claude-x-20260101',
       cache_requested: 'lifetime',
       cache_lifetime_s: 3600,
       cache_ttl_sent: true,
       cache_requested_source: 'stated',
-      cache_requested_by: 'realm agent',
+      cache_requested_by: 'realm listen',
+      cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
       provider: 'anthropic',
       cache_creation: { ephemeral_5m_input_tokens: 70, ephemeral_1h_input_tokens: 5 },
     },
@@ -1082,7 +1093,8 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
                 lifetime_s: 3600,
                 ttl_sent: true,
                 source: 'stated',
-                by: 'realm agent',
+                by: 'realm listen',
+                auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
               },
             ],
             reported: 1,
@@ -1175,7 +1187,13 @@ describe('#600 PR 1b (D4) — context 4, get_run_state.drive_failure_costs', () 
       lifetime_s: { surface: 'rendered', probe: () => expect(entry.lifetime_s).toBe(3600) },
       ttl_sent: { surface: 'rendered', probe: () => expect(entry.ttl_sent).toBe(true) },
       source: { surface: 'rendered', probe: () => expect(entry.source).toBe('stated') },
-      by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm agent') },
+      by: { surface: 'rendered', probe: () => expect(entry.by).toBe('realm listen') },
+      // issue #600 (the lifetime unit): the evidence `auto` chose by, as data.
+      auto: {
+        surface: 'rendered',
+        probe: () =>
+          expect(entry.auto).toEqual({ basis: 'listen_trigger_gaps', gaps_s: [420, 720] }),
+      },
     } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
     const COST_FIGURE = {

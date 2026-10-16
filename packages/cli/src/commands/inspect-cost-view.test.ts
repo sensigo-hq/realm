@@ -879,9 +879,9 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
       stepLine([req({ cache_requested: 'provider_rules' })]),
     ]);
     expect(asks.map((l) => l.slice(l.indexOf('(1 request)') + '(1 request)'.length))).toEqual([
-      "; asked for 5m (the provider's default lifetime; realm agent's default)",
-      '; asked for 1h (sent as 1h; stated on realm listen)',
-      '; asked for 90s (sent as 90s; stated)',
+      "; asked for 5 minutes (the provider's default lifetime; realm agent's default)",
+      '; asked for 1 hour (sent as 1 hour; stated on realm listen)',
+      '; asked for 90 seconds (sent as 90 seconds; stated)',
       '; asked for no caching (stated on realm agent)',
       "; asked for nothing (the provider's own caching, if any, applies)",
     ]);
@@ -901,7 +901,7 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
     const asks = lines.map((l) => l.slice(l.indexOf('; asked') + 2));
     expect(asks).toEqual([
       'asked: unrecognized "weird\\u0007"',
-      'asked for 5m (the provider\'s default lifetime; unrecognized source "x\\u001b")',
+      'asked for 5 minutes (the provider\'s default lifetime; unrecognized source "x\\u001b")',
       'asked for a lifetime: unrecognized lifetime',
       'asked for a lifetime: unrecognized lifetime',
       'asked for a lifetime: unrecognized lifetime',
@@ -932,7 +932,81 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
       'source not recorded',
     ]);
     const unsent = await stepLine([req(lifetime(300, { cache_requested_source: 'stated' }))]);
-    expect(unsent).toContain('; asked for 5m (whether Realm sent it is not recorded; stated)');
+    expect(unsent).toContain(
+      '; asked for 5 minutes (whether Realm sent it is not recorded; stated)',
+    );
+  });
+
+  // Cell 11 (the lifetime unit): the auto clause, one row per basis, then the `off` an auto chose,
+  // then a record whose `cache_auto` is not one the record keeps (no clause). (a) red when inspect
+  // drops the auto clause, renders it outside the parentheses, or prints a malformed one; (b)
+  // prints each line's ask (test values only).
+  it('the auto clause per basis, and the off auto chose; a malformed cache_auto adds nothing', async () => {
+    const ask = async (extra: Partial<UsageRecord>) => {
+      const l = await stepLine([req(extra)]);
+      return l.slice(l.indexOf('(1 request)') + '(1 request)'.length);
+    };
+    const byListen = {
+      cache_requested_source: 'runner_default',
+      cache_requested_by: 'realm listen',
+    } as const;
+    expect([
+      await ask(
+        lifetime(3600, {
+          cache_ttl_sent: true,
+          ...byListen,
+          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+        }),
+      ),
+      await ask(
+        lifetime(3600, {
+          cache_ttl_sent: true,
+          ...byListen,
+          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+        }),
+      ),
+      await ask(
+        lifetime(3600, {
+          cache_ttl_sent: true,
+          ...byListen,
+          cache_auto: { basis: 'listen_gaps_unreadable' },
+        }),
+      ),
+      await ask(
+        lifetime(300, {
+          cache_ttl_sent: false,
+          cache_requested_source: 'runner_default',
+          cache_requested_by: 'realm agent',
+          cache_auto: { basis: 'no_measurement' },
+        }),
+      ),
+      await ask({
+        cache_requested: 'off',
+        ...byListen,
+        cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [7200] },
+      }),
+      await ask({
+        cache_requested: 'off',
+        ...byListen,
+        cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] },
+      }),
+      await ask(
+        lifetime(300, {
+          cache_ttl_sent: false,
+          cache_requested_source: 'runner_default',
+          cache_requested_by: 'realm agent',
+          cache_auto: { basis: 'guessed' } as never,
+        }),
+      ),
+    ]).toEqual([
+      "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes)",
+      "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: no earlier trigger of this workflow since realm listen started)",
+      "; asked for 1 hour (sent as 1 hour; realm listen's default; auto: realm listen's measurement could not be read)",
+      "; asked for 5 minutes (the provider's default lifetime; realm agent's default; auto: a drive realm agent starts on its own has no trigger history)",
+      "; asked for no caching (realm listen's default; auto: the last gap between this workflow's triggers was about 2 hours)",
+      "; asked for no caching (realm listen's default; auto: the last 3 gaps between this workflow's triggers were about 2 hours, 2 hours and 2 hours)",
+      "; asked for 5 minutes (the provider's default lifetime; realm agent's default)",
+    ]);
   });
 
   it('several asks are joined by ", then"; recorded by some of the requests', async () => {
@@ -956,7 +1030,7 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
       req({}, 2),
     ]);
     expect(l).toContain(
-      "; asked for 1h (sent as 1h; realm listen's default), then asked for no caching (stated on realm agent) (recorded by 2 of 3 requests)",
+      "; asked for 1 hour (sent as 1 hour; realm listen's default), then asked for no caching (stated on realm agent) (recorded by 2 of 3 requests)",
     );
   });
 
@@ -994,8 +1068,8 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
         (l) => /; (\d+ of the tokens written[^;]*)$/.exec(l)?.[1] ?? 'none',
       ),
     ).toEqual([
-      '70 of the tokens written were kept for 5m, not the 1h asked',
-      '30 of the tokens written were kept for 1h, not the 5m asked',
+      '70 of the tokens written were kept for 5 minutes, not the 1 hour asked',
+      '30 of the tokens written were kept for 1 hour, not the 5 minutes asked',
       'none',
     ]);
   });
@@ -1046,7 +1120,7 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
         }),
       ]),
     ).toBe(
-      "    usage: 1 request billed before the throw — 5 prompt tokens, output not reported, cache not reported; model claude-x-20260101; asked for 5m (the provider's default lifetime; realm agent's default)",
+      "    usage: 1 request billed before the throw — 5 prompt tokens, output not reported, cache not reported; model claude-x-20260101; asked for 5 minutes (the provider's default lifetime; realm agent's default)",
     );
   });
 
@@ -1091,8 +1165,8 @@ describe('#600 PR 2 — the model and the ask on the cost lines', () => {
     const first = out.split('\n').find((l) => l.includes('attempt 1/2: '));
     const last = out.split('\n').find((l) => l.includes('Diagnostics (attempt 2/2): '));
     expect([first?.trim(), last?.trim()]).toEqual([
-      "attempt 1/2: 111 prompt tokens (measured, first request) | output not reported | model model-a | cache: not reported by the provider (1 request); asked for 1h (sent as 1h; realm listen's default)",
-      "Diagnostics (attempt 2/2): ~1 tokens (estimate, step input) | 222 prompt tokens (measured, first request) | output not reported | model model-b | no preconditions | cache: not reported by the provider (1 request); asked for 5m (the provider's default lifetime; stated on realm agent)",
+      "attempt 1/2: 111 prompt tokens (measured, first request) | output not reported | model model-a | cache: not reported by the provider (1 request); asked for 1 hour (sent as 1 hour; realm listen's default)",
+      "Diagnostics (attempt 2/2): ~1 tokens (estimate, step input) | 222 prompt tokens (measured, first request) | output not reported | model model-b | no preconditions | cache: not reported by the provider (1 request); asked for 5 minutes (the provider's default lifetime; stated on realm agent)",
     ]);
   });
 });

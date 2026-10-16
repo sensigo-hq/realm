@@ -45,35 +45,43 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   `StoredFileClass` and `WorkflowCopyParseFault` types. The facts are an error's `details` for now;
   a later version moves them to `facts`.
 - **`--prompt-cache` on `realm agent` and `realm listen` (issue #600 PR 2).** It sets what Anthropic
-  is asked to cache: `off`, `5m` or `1h`. `realm agent` defaults to `5m`; each agent `realm listen`
-  starts defaults to `1h`; `realm listen --prompt-cache` passes its value on to every agent it
-  starts. Other providers are asked for no caching. `ProviderCapabilities.promptCache` says what a
-  provider instance asks for on its single-shot request; absent, Realm asks that provider for no
-  caching.
+  is asked to cache: `auto`, `short` (Anthropic's 5 minutes), `long` (its 1 hour) or `off`. `auto`,
+  the default on both commands, asks for 5 minutes on a drive `realm agent` starts on its own. On a
+  drive `realm listen` starts, it asks for 1 hour on the workflow's first trigger, then for
+  whichever of off, 5 minutes and 1 hour costs least over the gaps between that workflow's last five
+  triggers (a gap counts as read under a lifetime when it is under 90% of it).
+  `realm listen --prompt-cache` passes its value on to every agent it starts. Other providers are
+  asked for no caching.
+  `ProviderCapabilities.promptCache` (`'off'` or `{ lifetime_s }`) says what a provider instance
+  asks for on its single-shot request; absent, Realm asks that provider for no caching.
 - **The drive says what it asks to cache.** `realm agent` prints one `Caching:` line after
-  `Run ID:`: what the drive asks the provider to cache, where the setting came from, and, when it
-  applies to no step, why. `realm listen` logs `listen: caching` at startup with each provider's
-  setting.
-- **Every model request records what was asked and what answered.** `UsageRecord` gains nine
+  `Run ID:`: what the drive asks the provider to cache, where the setting came from, for `auto` what
+  it chose by, and, when it applies to no step, why. `realm listen` logs `listen: caching` at
+  startup with each provider's setting.
+- **Every model request records what was asked and what answered.** `UsageRecord` gains ten
   optional fields: `model` (the model the response named), `cache_requested` (`off`, `lifetime` or
   `provider_rules`), `cache_lifetime_s` and `cache_ttl_sent` (the lifetime asked, and whether Realm
   sent it), `cache_requested_source` (`stated` or `runner_default`) and `cache_requested_by` (the
   runner that chose it), `provider`, `endpoint` (`default` or `custom`; the address itself is never
-  stored) and `cache_split_offered` (whether the provider reports a lifetime split).
-  `realm run inspect` shows the model and the ask on each cost line, and says when a write was kept
-  for another lifetime than the one asked, or when a lifetime was asked and nothing was written or
-  read. A record written by 0.47.0 or earlier prints as it did.
+  stored), `cache_split_offered` (whether the provider reports a lifetime split) and `cache_auto`
+  (what `auto` chose by: `no_measurement`, `listen_trigger_gaps` with the gaps in seconds, or
+  `listen_gaps_unreadable`). `realm run inspect` shows the model and the ask on each cost line, and
+  says when a write was kept for another lifetime than the one asked, or when a lifetime was asked
+  and nothing was written or read. A record written by 0.47.0 or earlier prints as it did.
 - **The composed cost view carries them.** `CostView` gains `models`, `cache_requested`,
   `cache_write_5m` and `cache_write_1h`; `models` and `cache_requested` carry a typed absence by
   cause (`predates_request_facts`, `none_readable`) when no request holds a readable value, which
   `get_run_state` returns and `realm run inspect` does not print. Core exports the type
-  `CacheRequestedEntry` (one ask) and the vocabularies `PROMPT_CACHE_SETTINGS`,
-  `PROMPT_CACHE_LIFETIMES`, `CACHE_REQUESTS`, `CACHE_REQUEST_SOURCES`, `REQUEST_ENDPOINTS` and
-  `REQUEST_FACT_ABSENT_CAUSES`, and `boundRequestFacts`, which bounds the free text a request record
-  carries (`model`, `cache_requested`, `cache_requested_source`, `cache_requested_by`, `provider`)
-  by the rule every stored name obeys.
+  `CacheRequestedEntry` (one ask, with what `auto` chose by) and the vocabularies
+  `PROMPT_CACHE_SETTINGS`, `CACHE_REQUESTS`, `CACHE_REQUEST_SOURCES`, `CACHE_AUTO_BASES`,
+  `REQUEST_ENDPOINTS` and `REQUEST_FACT_ABSENT_CAUSES`; `chooseCacheLifetime`, which lifetime `auto`
+  asks for, from the gaps and a provider's own prices and lifetimes (`CacheTiers`), and
+  `normalizeCacheAuto`, a `cache_auto` in the shape the record keeps; and `boundRequestFacts`, which
+  bounds the free text a request record carries (`model`, `cache_requested`,
+  `cache_requested_source`, `cache_requested_by`, `provider`) by the rule every stored name obeys
+  and keeps `cache_auto` only in its shape.
 - **A store law for the request record.** `@sensigo/realm-testing`'s store fidelity contract gains
-  `USAGE_RECORD_ROUNDTRIP`: a store must read back each of the nine fields, in a step's evidence and
+  `USAGE_RECORD_ROUNDTRIP`: a store must read back each of the ten fields, in a step's evidence and
   in a failed drive's usage.
 - **What the model calls cost, worked out when a run is read (issue #600 caching PR P).**
   `realm run inspect` ends each cost line with what its requests cost in US dollars: the
@@ -205,14 +213,17 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   `parse` with `shape`); a copy holding only blanks is `empty`, as a run file is.
   **Upgrading:** pass the path and the fault.
 - **BREAKING — Realm now asks Anthropic to cache each step's fixed instructions (issue #600
-  PR 2).** A drive `realm agent` starts asks for 5 minutes; a drive `realm listen` starts asks for 1
-  hour. What is cached is the fixed part of a single-shot agent step's request: the step's profile,
-  Realm's instructions and its schema. The step's prompt is not cached, and nothing is cached on a
+  PR 2).** A drive `realm agent` starts on its own asks for 5 minutes; a drive `realm listen` starts
+  asks for 1 hour on its workflow's first trigger, then for off, 5 minutes or 1 hour by the gaps
+  between that workflow's recent triggers (`--prompt-cache auto`, above). What is cached is the
+  fixed part of a single-shot agent step's request: the step's profile, Realm's instructions and its
+  schema. The step's prompt is not cached, and nothing is cached on a
   step that calls tools. Anthropic charges more than ordinary input for a cache write and much less
   for a cache read, and a 1-hour write costs more than a 5-minute one
   ([Anthropic's prompt-caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing);
   prices differ by model). So caching costs more for a step that runs less often than its lifetime:
-  each call writes and none reads. A repair pass within the lifetime reads what its step wrote,
+  each call writes and none reads; under `realm listen`, `auto` turns caching off for a workflow
+  whose triggers are that far apart. A repair pass within the lifetime reads what its step wrote,
   unless the step's submit tool changed between them (the strict-output fallback) or the cached part
   is shorter than the model's minimum. Realm asks OpenAI for no caching: OpenAI's own automatic
   caching is unchanged, and `--prompt-cache off` does not turn it off. **Upgrading:** a gateway

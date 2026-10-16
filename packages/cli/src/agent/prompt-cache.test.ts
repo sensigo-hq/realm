@@ -5,56 +5,109 @@
 import { describe, expect, it } from 'vitest';
 import { InvalidArgumentError } from 'commander';
 import type { StepDefinition, WorkflowDefinition } from '@sensigo/realm';
-import { cacheableStepCounts, parsePromptCache, resolvePromptCache } from './prompt-cache.js';
+import {
+  cacheableStepCounts,
+  parsePromptCache,
+  resolvePromptCache,
+  type ResolvedPromptCache,
+} from './prompt-cache.js';
 import { agentCommand } from '../commands/agent.js';
 import { listenCommand } from '../commands/listen.js';
 
-describe('resolvePromptCache (issue #600 PR 2, C1)', () => {
-  // One cell per row of C1's table. (a) red when the listen child's default is 5m, or a stated
-  // flag loses to a default; (b) prints the resolved setting.
-  it.each([
+describe('resolvePromptCache (issue #600, the lifetime unit — B2)', () => {
+  // One cell per branch of B2. (a) red when a stated word loses to a default, the default is not
+  // `auto`, a branch reads the wrong basis, or listen's value is read past the pattern or the bound;
+  // (b) prints the input and the resolved setting (test values only).
+  it.each<[Parameters<typeof resolvePromptCache>[0], ResolvedPromptCache]>([
     [
-      { flag: '1h' as const, spawnedByListen: false },
-      { value: '1h', source: 'stated', by: 'realm agent' },
+      { flag: 'long' as const, spawnedByListen: false, cacheGaps: undefined },
+      { value: 'long', source: 'stated', by: 'realm agent' },
     ],
     [
-      { flag: undefined, spawnedByListen: false },
-      { value: '5m', source: 'runner_default', by: 'realm agent' },
-    ],
-    [
-      { flag: 'off' as const, spawnedByListen: true },
+      { flag: 'off' as const, spawnedByListen: true, cacheGaps: '420' },
       { value: 'off', source: 'stated', by: 'realm listen' },
     ],
     [
-      { flag: undefined, spawnedByListen: true },
-      { value: '1h', source: 'runner_default', by: 'realm listen' },
+      { flag: undefined, spawnedByListen: false, cacheGaps: undefined },
+      {
+        value: 'auto',
+        source: 'runner_default',
+        by: 'realm agent',
+        auto: { basis: 'no_measurement' },
+      },
     ],
+    [
+      { flag: 'auto' as const, spawnedByListen: false, cacheGaps: undefined },
+      { value: 'auto', source: 'stated', by: 'realm agent', auto: { basis: 'no_measurement' } },
+    ],
+    [
+      { flag: undefined, spawnedByListen: true, cacheGaps: undefined },
+      {
+        value: 'auto',
+        source: 'runner_default',
+        by: 'realm listen',
+        auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+      },
+    ],
+    [
+      { flag: undefined, spawnedByListen: true, cacheGaps: '420,720' },
+      {
+        value: 'auto',
+        source: 'runner_default',
+        by: 'realm listen',
+        auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+      },
+    ],
+    [
+      { flag: 'auto' as const, spawnedByListen: true, cacheGaps: '604800' },
+      {
+        value: 'auto',
+        source: 'stated',
+        by: 'realm listen',
+        auto: { basis: 'listen_trigger_gaps', gaps_s: [604800] },
+      },
+    ],
+    ...['7,abc', '1,2,3,4,5,6', '604801', '', '1.5', '-1'].map(
+      (gaps): [Parameters<typeof resolvePromptCache>[0], ResolvedPromptCache] => [
+        { flag: undefined, spawnedByListen: true, cacheGaps: gaps },
+        {
+          value: 'auto',
+          source: 'runner_default',
+          by: 'realm listen',
+          auto: { basis: 'listen_gaps_unreadable' },
+        },
+      ],
+    ),
   ])('%j resolves to %j', (input, expected) => {
     expect(resolvePromptCache(input)).toEqual(expected);
   });
 });
 
-describe('parsePromptCache (issue #600 PR 2, C1)', () => {
-  // (a) red when the parser accepts any string; (b) prints the value and what the parser did.
-  it.each(['5', '2h', 'OFF', ''])('refuses %j with the flag message', (value) => {
-    let thrown: unknown;
-    try {
-      parsePromptCache(value);
-    } catch (err) {
-      thrown = err;
-    }
-    expect({
-      value,
-      refused: thrown instanceof InvalidArgumentError,
-      message: (thrown as Error)?.message,
-    }).toEqual({
-      value,
-      refused: true,
-      message: '--prompt-cache must be off, 5m or 1h.',
-    });
-  });
+describe('parsePromptCache (issue #600, the lifetime unit — B1)', () => {
+  // (a) red when the parser accepts any string, or still accepts the old words; (b) prints the value
+  // and what the parser did.
+  it.each(['5m', '1h', '5', '2h', 'OFF', 'Auto', ''])(
+    'refuses %j with the flag message',
+    (value) => {
+      let thrown: unknown;
+      try {
+        parsePromptCache(value);
+      } catch (err) {
+        thrown = err;
+      }
+      expect({
+        value,
+        refused: thrown instanceof InvalidArgumentError,
+        message: (thrown as Error)?.message,
+      }).toEqual({
+        value,
+        refused: true,
+        message: '--prompt-cache must be auto, short, long or off.',
+      });
+    },
+  );
 
-  it.each(['off', '5m', '1h'])('accepts %j', (value) => {
+  it.each(['auto', 'short', 'long', 'off'])('accepts %j', (value) => {
     expect(parsePromptCache(value)).toBe(value);
   });
 

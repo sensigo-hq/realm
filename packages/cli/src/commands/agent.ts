@@ -272,7 +272,7 @@ export const agentCommand = new Command('agent')
   // record `runner_default` and the re-attach command never repeats a value nobody typed.
   .option(
     '--prompt-cache <setting>',
-    'What Anthropic is asked to cache: off, 5m or 1h. Default 5m (1h when realm listen starts the agent). Other providers are asked for no caching.',
+    "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.",
     parsePromptCache,
   )
   // issue #620 PR-C: the repo's first hidden option. `realm listen` appends it to every child it
@@ -280,9 +280,15 @@ export const agentCommand = new Command('agent')
   // must not repeat the release-line advisory. Hidden because it is listen's, not an operator's.
   .addOption(new Option('--no-release-line-advisory').hideHelp())
   // issue #600 PR 2: listen's own, never an operator's. `realm listen` appends it to every child it
-  // spawns (buildAgentArgv), so the child's default caching lifetime is listen's (1h), its runner is
-  // recorded as `realm listen`, and a setting it cannot apply is disclosed, not refused.
+  // spawns (buildAgentArgv), so the child's `auto` reads listen's measurement (its prior is the long
+  // lifetime), its runner is recorded as `realm listen`, and a setting it cannot apply is disclosed,
+  // not refused.
   .addOption(new Option('--spawned-by-listen').hideHelp())
+  // issue #600 (the lifetime unit): listen's own too — the gaps between the recent triggers of the
+  // child's workflow, in whole seconds. No argParser: a refusal there would exit a listen child after
+  // listen already answered `202`, leaving the run undriven; `resolvePromptCache` reads it and never
+  // throws.
+  .addOption(new Option('--cache-gaps <seconds>').hideHelp())
   .action(
     async (opts: {
       workflow?: string;
@@ -301,6 +307,7 @@ export const agentCommand = new Command('agent')
       llmTimeout: number;
       promptCache?: PromptCacheSetting;
       spawnedByListen?: boolean;
+      cacheGaps?: string;
       releaseLineAdvisory: boolean;
     }) => {
       // issue #625 (holder slice): this program's name, made once, before any other output. A name
@@ -326,11 +333,20 @@ export const agentCommand = new Command('agent')
         opts.runId !== undefined
           ? `If run ${opts.runId} exists, it was not changed.`
           : 'Nothing was started.';
+      // issue #600 (the lifetime unit): `--cache-gaps` is listen's measurement, passed only to the
+      // agents it starts; refused here, before anything is loaded, when an operator types it.
+      if (opts.cacheGaps !== undefined && opts.spawnedByListen !== true) {
+        console.error(
+          `Error: --cache-gaps is realm listen's own option, passed to the agents it starts; remove it. ${tail}`,
+        );
+        process.exit(1);
+      }
       // issue #600 PR 2 (C1): the caching setting, resolved once — the provider is built with it
       // and the drive's start line names it.
       const promptCache = resolvePromptCache({
         flag: opts.promptCache,
         spawnedByListen: opts.spawnedByListen === true,
+        cacheGaps: opts.cacheGaps,
       });
       // issue #600 PR 2 (C3e): a stated setting the workflow has no step to apply to is refused
       // (an operator's `realm agent` only: listen's flag is fleet-wide and cannot be judged per

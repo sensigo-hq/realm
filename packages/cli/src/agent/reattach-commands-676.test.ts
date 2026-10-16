@@ -291,8 +291,8 @@ describe('buildReattachFlags (issue #676)', () => {
   // issue #600 PR 2 (C6, G22). (a) red when a given value is not repeated, or lands before
   // --mint-writer-nonce; (b) prints the flags.
   it('--prompt-cache, when given, is repeated after --mint-writer-nonce; never when not given', () => {
-    expect(buildReattachFlags({ model: 'm', mintWriterNonce: true, promptCache: '1h' })).toBe(
-      '--model m --mint-writer-nonce --prompt-cache 1h',
+    expect(buildReattachFlags({ model: 'm', mintWriterNonce: true, promptCache: 'long' })).toBe(
+      '--model m --mint-writer-nonce --prompt-cache long',
     );
     expect(buildReattachFlags({ model: 'm' })).toBe('--model m');
     // The hidden flags are never printed, whatever the options carry.
@@ -314,23 +314,49 @@ describe('#729 PR-0 — buildReattachFlags owns the prompt-cache rule', () => {
     expect([
       buildReattachFlags({
         model: 'm',
-        promptCache: '1h',
+        promptCache: 'long',
         promptCacheSource: 'stated',
         providerAppliesPromptCache: true,
       }),
       buildReattachFlags({
         model: 'm',
-        promptCache: '1h',
+        promptCache: 'long',
         promptCacheSource: 'default',
         providerAppliesPromptCache: true,
       }),
       buildReattachFlags({
         model: 'm',
-        promptCache: '1h',
+        promptCache: 'long',
         promptCacheSource: 'stated',
         providerAppliesPromptCache: false,
       }),
-    ]).toEqual(['--model m --prompt-cache 1h', '--model m', '--model m']);
+    ]).toEqual(['--model m --prompt-cache long', '--model m', '--model m']);
+  });
+
+  // Cell 9 (the lifetime unit), called as the command calls it — its parsed options spread, a
+  // listen child's `--cache-gaps` among them. (a) red when the builder repeats `--cache-gaps`, or
+  // drops a stated `auto`; (b) prints the flag strings.
+  it('a stated auto is repeated like any word; --cache-gaps never is', () => {
+    const parsed = {
+      model: 'm',
+      promptCache: 'auto',
+      spawnedByListen: true,
+      cacheGaps: '420,720',
+    } as unknown as Parameters<typeof buildReattachFlags>[0];
+    // The default: the command's options carry no `promptCache` at all.
+    const { promptCache: _stated, ...unstated } = parsed;
+    expect([
+      buildReattachFlags({
+        ...parsed,
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: true,
+      }),
+      buildReattachFlags({
+        ...unstated,
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: true,
+      }),
+    ]).toEqual(['--model m --prompt-cache auto', '--model m']);
   });
 });
 
@@ -359,7 +385,7 @@ describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', ()
     });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const flags = buildReattachFlags({ model: 'claude-x', promptCache: '1h' });
+    const flags = buildReattachFlags({ model: 'claude-x', promptCache: 'long' });
     await runAgent(
       {
         store,
@@ -382,7 +408,7 @@ describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', ()
     );
     vi.restoreAllMocks();
     expect(lines.find((l) => l.includes('Go on:'))).toBe(
-      `  Go on:     once 'write' is no longer in flight, realm agent --run-id ${run.id} --model claude-x --prompt-cache 1h`,
+      `  Go on:     once 'write' is no longer in flight, realm agent --run-id ${run.id} --model claude-x --prompt-cache long`,
     );
   });
 });

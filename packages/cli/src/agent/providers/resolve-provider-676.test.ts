@@ -14,7 +14,7 @@ import {
 } from './llm-provider.js';
 
 // issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
-const TEST_PROMPT_CACHE = { value: '5m', source: 'runner_default', by: 'realm agent' } as const;
+const TEST_PROMPT_CACHE = { value: 'short', source: 'runner_default', by: 'realm agent' } as const;
 
 const ANTHROPIC_LIST = 'https://platform.claude.com/docs/en/models/overview';
 const OPENAI_LIST = 'https://developers.openai.com/api/docs/models';

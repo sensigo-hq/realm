@@ -1,6 +1,7 @@
 // llm-provider.ts — LLM provider interface and factory function for realm agent.
 import { brandClass } from '@sensigo/realm';
 import type {
+  CacheAutoBasis,
   CacheRequestSource,
   PromptCacheSetting,
   RequestEndpoint,
@@ -60,22 +61,26 @@ export interface ProviderCapabilities {
    */
   strictGate?: 'compat_endpoint';
   /**
-   * Issue #600 PR 2 — what this provider instance asks for on its single-shot request: `off`, `5m`
-   * or `1h`. Absent means Realm asks this provider for no caching, and any caching it does is its
-   * own. The Anthropic provider declares it (`off` included); the OpenAI providers and provider
-   * modules declare nothing.
+   * Issue #600 — what this provider instance asks its service to cache on its single-shot request:
+   * `'off'` (nothing), or `{ lifetime_s }` (the cache lifetime asked for, in whole seconds — the
+   * lifetime unit: the one choice the provider resolved, `auto` included). Absent means Realm asks
+   * this provider for no caching, and any caching it does is its own. The Anthropic provider declares
+   * it (`'off'` included); the OpenAI providers declare nothing; a provider module may declare either
+   * shape (the start line says what it reads, and that `--prompt-cache` does not reach a module).
    */
-  promptCache?: PromptCacheSetting;
+  promptCache?: 'off' | { lifetime_s: number };
 }
 
 /**
  * Issue #600 PR 2 — the cache setting a runner hands the Anthropic provider: the value, where it came
- * from, and which runner chose it (`realm agent`, `realm listen`).
+ * from, which runner chose it (`realm agent`, `realm listen`) and — the lifetime unit — when the value
+ * is `auto`, on what basis the provider chooses (the gaps `realm listen` measured, when it did).
  */
 export interface PromptCacheRequest {
   value: PromptCacheSetting;
   source: CacheRequestSource;
   by: string;
+  auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
 }
 
 /**
