@@ -12,6 +12,7 @@
 // back, so a store that DECLARES `persistedRunRecordFields` dishonestly (claims a field, drops it
 // on write) fails conformance here, before it ever ships. A store that declares NOTHING passes
 // this law vacuously (zero cases generated) — see `runStoreFidelityContract`'s own doc.
+import { isDeepStrictEqual } from 'node:util';
 import { crossCopyNote } from './cross-copy-note.js';
 import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
@@ -91,6 +92,7 @@ const TCK_REQUEST_FACTS: Required<
     | 'cache_ttl_sent'
     | 'cache_requested_source'
     | 'cache_requested_by'
+    | 'cache_auto'
     | 'provider'
     | 'endpoint'
     | 'cache_split_offered'
@@ -102,6 +104,8 @@ const TCK_REQUEST_FACTS: Required<
   cache_ttl_sent: true,
   cache_requested_source: 'stated',
   cache_requested_by: 'tck-runner',
+  // issue #600 (the lifetime unit): an object no store default produces
+  cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [61, 3599] },
   provider: 'tck-provider',
   endpoint: 'custom',
   cache_split_offered: true,
@@ -591,7 +595,9 @@ export function runStoreFidelityContract(
             typeof read === 'object' && read !== null
               ? (read as Record<string, unknown>)[field]
               : undefined;
-          if (JSON.stringify(got) !== JSON.stringify(wrote)) {
+          // deep equality: the same answer as before for the scalars, and an object's key order no
+          // longer matters (`cache_auto`)
+          if (!isDeepStrictEqual(got, wrote)) {
             throw new Error(
               `a store must round-trip a request record's ${field} (issue #600 PR 2): at ${where}, ` +
                 `wrote ${JSON.stringify(wrote)}, read back ${JSON.stringify(got)}`,

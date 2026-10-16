@@ -3,7 +3,9 @@
 // transport; core keeps the vocabularies and stores classes, never the flag's words.
 import { InvalidArgumentError } from 'commander';
 import {
+  CACHE_GAP_MAX_S,
   PROMPT_CACHE_SETTINGS,
+  type CacheAutoBasis,
   type CacheRequestSource,
   type PromptCacheSetting,
   type WorkflowDefinition,
@@ -12,14 +14,14 @@ import type { ProviderCapabilities } from './providers/llm-provider.js';
 
 /**
  * Commander argParser for `--prompt-cache`, used by `realm agent` and `realm listen` (the
- * `parseProvider` idiom). Exactly the three words; anything else, `OFF` and the empty string
- * included, is refused.
+ * `parseProvider` idiom). Exactly the four words; anything else, `OFF`, the empty string and the old
+ * `5m` / `1h` included, is refused.
  */
 export function parsePromptCache(value: string): PromptCacheSetting {
   if ((PROMPT_CACHE_SETTINGS as readonly string[]).includes(value)) {
     return value as PromptCacheSetting;
   }
-  throw new InvalidArgumentError('--prompt-cache must be off, 5m or 1h.');
+  throw new InvalidArgumentError('--prompt-cache must be auto, short, long or off.');
 }
 
 /**
@@ -42,44 +44,136 @@ export function cacheableStepCounts(definition: Pick<WorkflowDefinition, 'steps'
   return { singleShot, withTools };
 }
 
-/** The setting a drive asks Anthropic for, where it came from, and which runner chose it. */
+/**
+ * The setting a drive asks Anthropic for, where it came from, which runner chose it and — when the
+ * setting is `auto` — on what basis the adapter chooses (`UsageRecord.cache_auto`).
+ */
 export interface ResolvedPromptCache {
   value: PromptCacheSetting;
   source: CacheRequestSource;
   by: 'realm agent' | 'realm listen';
+  auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
 }
 
+/** `--cache-gaps`' words: one to five whole numbers of at most six digits, comma-separated. */
+const CACHE_GAPS_PATTERN = /^\d{1,6}(,\d{1,6}){0,4}$/;
+
 /**
- * The setting a `realm agent` drive asks for. A stated flag wins; otherwise the runner's default:
- * 5 minutes for a drive an operator starts, 1 hour for one `realm listen` starts (its child is
- * marked `--spawned-by-listen`). Pure.
+ * The setting a `realm agent` drive asks for (issue #600, the lifetime unit). `value` is the stated
+ * flag, else `auto`; `source` says which (`stated`, `runner_default`); `by` is the runner (a drive
+ * marked `--spawned-by-listen` is `realm listen`'s). Under `auto`:
+ * - a drive `realm agent` starts on its own has no measurement: `{ basis: 'no_measurement' }`;
+ * - a drive listen starts with no `--cache-gaps` (its workflow's first trigger):
+ *   `{ basis: 'listen_trigger_gaps', gaps_s: [] }`;
+ * - with a readable `--cache-gaps` (one to five whole seconds, each at most 604 800):
+ *   `{ basis: 'listen_trigger_gaps', gaps_s }`;
+ * - anything else: `{ basis: 'listen_gaps_unreadable' }`.
+ * Pure. Never throws: a value listen passes can never stop a run.
  */
 export function resolvePromptCache(input: {
   flag: PromptCacheSetting | undefined;
   spawnedByListen: boolean;
+  cacheGaps: string | undefined;
 }): ResolvedPromptCache {
   const by = input.spawnedByListen ? 'realm listen' : 'realm agent';
-  if (input.flag !== undefined) return { value: input.flag, source: 'stated', by };
-  return { value: input.spawnedByListen ? '1h' : '5m', source: 'runner_default', by };
+  const value = input.flag ?? 'auto';
+  const source: CacheRequestSource = input.flag !== undefined ? 'stated' : 'runner_default';
+  if (value !== 'auto') return { value, source, by };
+  return { value, source, by, auto: autoBasis(input.spawnedByListen, input.cacheGaps) };
 }
 
-/** The `<source>` text of the start line: where the setting came from. */
-function sourceText(promptCache: ResolvedPromptCache): string {
-  const v = promptCache.value;
-  if (promptCache.source === 'stated') {
-    return promptCache.by === 'realm listen'
-      ? `set by realm listen --prompt-cache ${v}`
-      : `set by --prompt-cache ${v}`;
+/** What `auto` reads, from the drive's start (B2). */
+function autoBasis(
+  spawnedByListen: boolean,
+  cacheGaps: string | undefined,
+): { basis: CacheAutoBasis; gaps_s?: number[] } {
+  if (!spawnedByListen) return { basis: 'no_measurement' };
+  if (cacheGaps === undefined) return { basis: 'listen_trigger_gaps', gaps_s: [] };
+  if (CACHE_GAPS_PATTERN.test(cacheGaps)) {
+    const gaps = cacheGaps.split(',').map(Number);
+    if (gaps.every((g) => g <= CACHE_GAP_MAX_S)) {
+      return { basis: 'listen_trigger_gaps', gaps_s: gaps };
+    }
   }
-  return promptCache.by === 'realm listen'
-    ? "realm listen's default; change it with realm listen --prompt-cache"
-    : "realm agent's default; turn it off with --prompt-cache off";
+  return { basis: 'listen_gaps_unreadable' };
+}
+
+/** `1 hour`, `N hours`; else `1 minute`, `N minutes`; else `1 second`, `N seconds` — exact. */
+export function lifetimeText(s: number): string {
+  const unit = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (s > 0 && s % 3600 === 0) return unit(s / 3600, 'hour');
+  if (s > 0 && s % 60 === 0) return unit(s / 60, 'minute');
+  return unit(s, 'second');
+}
+
+/** The measured gaps in words, rounded: `about 7 minutes and 12 minutes`. */
+export function gapsText(gaps: readonly number[]): string {
+  const unit = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const words = gaps.map((s) =>
+    s < 90
+      ? unit(s, 'second')
+      : s < 5_400
+        ? unit(Math.round(s / 60), 'minute')
+        : unit(Math.round(s / 3600), 'hour'),
+  );
+  const joined =
+    words.length <= 1
+      ? (words[0] ?? '')
+      : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+  return `about ${joined}`;
+}
+
+/** What `auto` chose on, in words (the start line, `realm run inspect`). */
+export function autoEvidence(auto: { basis: CacheAutoBasis; gaps_s?: number[] }): string {
+  switch (auto.basis) {
+    case 'no_measurement':
+      return 'a drive realm agent starts on its own has no trigger history';
+    case 'listen_gaps_unreadable':
+      return "realm listen's measurement could not be read";
+    case 'listen_trigger_gaps': {
+      const gaps = auto.gaps_s ?? [];
+      if (gaps.length === 0)
+        return 'no earlier trigger of this workflow since realm listen started';
+      const n = gaps.length;
+      return `the last ${n === 1 ? 'gap' : `${n} gaps`} between this workflow's triggers ${n === 1 ? 'was' : 'were'} ${gapsText(gaps)}`;
+    }
+  }
+}
+
+/** The reason clause of the start line (`R`): where the setting came from, and what `auto` read. */
+function reasonText(promptCache: ResolvedPromptCache): string {
+  const v = promptCache.value;
+  const listen = promptCache.by === 'realm listen';
+  if (v !== 'auto') {
+    return listen ? `set by realm listen --prompt-cache ${v}` : `set by --prompt-cache ${v}`;
+  }
+  const evidence = `auto: ${autoEvidence(promptCache.auto ?? { basis: 'no_measurement' })}; `;
+  if (promptCache.source === 'stated') {
+    return (
+      evidence + (listen ? 'set by realm listen --prompt-cache auto' : 'set by --prompt-cache auto')
+    );
+  }
+  return (
+    evidence +
+    (listen
+      ? "realm listen's default; change it with realm listen --prompt-cache"
+      : "realm agent's default; turn it off with --prompt-cache off")
+  );
+}
+
+/** A module's declared lifetime the start line can read: a whole number of seconds, 1 to 7 days. */
+function readableLifetime(asked: unknown): asked is { lifetime_s: number } {
+  if (asked === null || typeof asked !== 'object') return false;
+  const s = (asked as { lifetime_s?: unknown }).lifetime_s;
+  return Number.isInteger(s) && (s as number) >= 1 && (s as number) <= CACHE_GAP_MAX_S;
 }
 
 /**
  * Issue #600 PR 2 (D1) — the drive's start line, printed after `Run ID:`: what this drive asks the
- * provider to cache, and why. The first form that matches wins:
- * - F1, a provider module that declares `promptCache`: its own setting, which the flag does not reach;
+ * provider to cache, and why (the lifetime unit: the duration in words, and what `auto` read). The
+ * first form that matches wins:
+ * - F1, a provider module that declares `promptCache`: its own setting, which the flag does not reach
+ *   (`'off'`, a readable `{ lifetime_s }`, or a value Realm cannot read);
  * - F2, a provider without the capability: Realm asks it for no caching (and a `realm listen` child
  *   given the flag says that listen's flag applies only to Anthropic);
  * - F3, `off`;
@@ -97,8 +191,13 @@ export function promptCacheStartLine(input: {
   const { caps, promptCache } = input;
   const asked = caps.promptCache;
   if (input.moduleProviderId !== undefined && asked !== undefined) {
-    const what = asked === 'off' ? 'no caching' : asked;
-    return `Caching: your provider module asks for ${what} by its own setting; --prompt-cache does not apply to provider modules.`;
+    const tail = '; --prompt-cache does not apply to provider modules.';
+    if (asked === 'off')
+      return `Caching: your provider module asks for no caching by its own setting${tail}`;
+    if (readableLifetime(asked)) {
+      return `Caching: your provider module asks for ${lifetimeText(asked.lifetime_s)} by its own setting${tail}`;
+    }
+    return `Caching: your provider module declares a caching setting Realm cannot read${tail}`;
   }
   if (asked === undefined) {
     const notice =
@@ -107,7 +206,7 @@ export function promptCacheStartLine(input: {
         : '';
     return `Caching: Realm asks ${providerName(caps, 'this provider')} for no caching; any caching it does is its own.${notice}`;
   }
-  const source = promptCache === undefined ? '' : ` (${sourceText(promptCache)})`;
+  const source = promptCache === undefined ? '' : ` (${reasonText(promptCache)})`;
   if (asked === 'off') return `Caching: off; Anthropic is asked to cache nothing${source}.`;
   const counts = cacheableStepCounts(input.definition);
   if (counts.singleShot === 0) {
@@ -116,7 +215,7 @@ export function promptCacheStartLine(input: {
       : 'Caching: no step is cached; this workflow has no agent step.';
   }
   const tools = counts.withTools > 0 ? ' Steps that call tools are not cached yet.' : '';
-  return `Caching: Anthropic is asked to cache each step's fixed instructions for ${asked}${source}.${tools}`;
+  return `Caching: Anthropic is asked to cache each step's fixed instructions for ${lifetimeText(asked.lifetime_s)}${source}.${tools}`;
 }
 
 /**

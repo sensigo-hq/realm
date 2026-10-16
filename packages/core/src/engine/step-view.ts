@@ -12,7 +12,8 @@
 // these functions — a non-array, `null` entries, non-object entries, `evidence` or
 // `drive_failures` shaped wrong — makes any of them throw. A malformed record degrades to an
 // absence or an `'unknown'` field, never an exception that takes the whole render down with it.
-import type { RequestFactAbsentCause, RunRecord } from '../types/run-record.js';
+import type { CacheAutoBasis, RequestFactAbsentCause, RunRecord } from '../types/run-record.js';
+import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import {
   priceRequest,
@@ -177,7 +178,8 @@ export type CostModels =
 /**
  * Issue #600 PR 2 — one distinct ask: `value` (a `CACHE_REQUESTS` word, verbatim when a string),
  * `lifetime_s` (kept when a number, of any value — the render judges it), `ttl_sent` (kept when a
- * boolean), `source` (verbatim when a string) and `by` (read through `readStoredName`).
+ * boolean), `source` (verbatim when a string), `by` (read through `readStoredName`) and — the
+ * lifetime unit — `auto` (what `--prompt-cache auto` chose on, read through `normalizeCacheAuto`).
  */
 export interface CacheRequestedEntry {
   value: string;
@@ -185,6 +187,7 @@ export interface CacheRequestedEntry {
   ttl_sent?: boolean;
   source?: string;
   by?: string;
+  auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
 }
 
 /**
@@ -310,19 +313,24 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
     const ttlSent = fieldOf(r, 'cache_ttl_sent');
     const source = fieldOf(r, 'cache_requested_source');
     const by = readStoredName(fieldOf(r, 'cache_requested_by'));
+    const auto = normalizeCacheAuto(fieldOf(r, 'cache_auto'));
     const entry: CacheRequestedEntry = {
       value,
       ...(typeof lifetime === 'number' ? { lifetime_s: lifetime } : {}),
       ...(typeof ttlSent === 'boolean' ? { ttl_sent: ttlSent } : {}),
       ...(typeof source === 'string' ? { source } : {}),
       ...(by !== undefined ? { by } : {}),
+      ...(auto !== undefined ? { auto } : {}),
     };
+    // `auto` is normalised (its keys in one order), so two requests with the same basis and gaps
+    // make one entry whatever key order the store returned.
     const key = JSON.stringify([
       entry.value,
       entry.lifetime_s,
       entry.ttl_sent,
       entry.source,
       entry.by,
+      entry.auto,
     ]);
     if (seen.has(key)) continue;
     seen.add(key);

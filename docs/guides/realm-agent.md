@@ -48,7 +48,7 @@ It prints:
 ```text
 Realm Agent — Triage a ticket v1
 Run ID: 4950eb94-37c0-41a0-8632-0b6f59cc999a
-Caching: Anthropic is asked to cache each step's fixed instructions for 5m (realm agent's default; turn it off with --prompt-cache off).
+Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).
 
 
 → [agent] classify
@@ -90,13 +90,13 @@ I was charged twice this month.
 
 The request also offers the model one tool, `__realm_submit__`, whose input is the step's schema; the model can answer by calling it.
 
-The system prompt is the fixed part of the request: it is the same for every request of the step. Realm sends it as one block that asks Anthropic to cache it, and keep it for 5 minutes:
+The system prompt is the fixed part of the request: it is the same for every request of the step. Realm sends it as one block that asks Anthropic to cache it, and keep it for 5 minutes (`--prompt-cache auto`, the default, on a drive you start):
 
 ```json
 "system": [{ "type": "text", "text": "You are a support lead. …", "cache_control": { "type": "ephemeral" } }]
 ```
 
-A later request of the step within those 5 minutes, a repair pass for one, can then read it from the cache. Anthropic charges more than ordinary input for writing it to the cache and much less for reading it back, so caching costs more for a step that runs less often than the lifetime ([Anthropic's prompt-caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing)). `--prompt-cache 1h` asks for 1 hour (`"ttl": "1h"`); a drive that `realm listen` starts asks for 1 hour unless `realm listen` was given `--prompt-cache`. `--prompt-cache off` sends the system prompt as plain text, as before. The step's prompt is not cached, and a step that calls tools sends no cache request. Realm asks OpenAI for no caching: OpenAI's own automatic caching is unchanged, and `--prompt-cache off` does not turn it off. This was added after version 0.47.0.
+A later request of the step within those 5 minutes, a repair pass for one, can then read it from the cache. Anthropic charges more than ordinary input for writing it to the cache and much less for reading it back, so caching costs more for a step that runs less often than the lifetime ([Anthropic's prompt-caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing)). `--prompt-cache long` asks for 1 hour (`"ttl": "1h"`), and `--prompt-cache short` for 5 minutes. On a drive that `realm listen` starts, `auto` asks for off, 5 minutes or 1 hour, whichever costs least over the gaps between the workflow's recent triggers (see [`realm listen`](../reference/cli/realm-listen.md#what-it-does-for-a-request)). `--prompt-cache off` sends the system prompt as plain text, as before. The step's prompt is not cached, and a step that calls tools sends no cache request. Realm asks OpenAI for no caching: OpenAI's own automatic caching is unchanged, and `--prompt-cache off` does not turn it off. This was added after version 0.47.0.
 
 ## When the model answers wrongly
 
@@ -133,7 +133,7 @@ The command exits with code 1. The run itself is not ended: its phase is still `
 ```text
 Drive failures:
   2026-10-14T18:17:12.578Z  classify  anthropic  validation_rejected after 21ms: Invalid input for step 'classify'
-    usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache read 0, wrote 0 (included in the prompt); model claude-sonnet-5-5; asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum
+    usage: 3 requests billed before the output was rejected — 1236 prompt tokens (totals across 3 requests), 114 output tokens (totals across 3 requests), cache read 0, wrote 0 (included in the prompt); model claude-sonnet-5-5; asked for 5 minutes (the provider's default lifetime; realm agent's default; auto: a drive realm agent starts on its own has no trigger history); nothing was written or read: the cached part may be shorter than the model's minimum
 ```
 
 The `usage` line was added in 0.46.0. Version 0.45.0 prints the line above it and nothing about cost. The model and what was asked to be cached, after the cache figures, were added after version 0.47.0; see [What a run costs](#what-a-run-costs).
@@ -151,7 +151,7 @@ It prints:
 ```text
 Realm Agent — Triage a ticket v1
 Run ID: a9fd51c7-b84d-49c9-afe5-07156edf8c27
-Caching: Anthropic is asked to cache each step's fixed instructions for 5m (realm agent's default; turn it off with --prompt-cache off).
+Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).
 
 
 → [agent] classify
@@ -174,18 +174,18 @@ The measured figures in this section were added in 0.46.0. On 0.45.0 the line re
 `realm run inspect` shows, for each step the model answered, how many tokens the provider counted:
 
 ```text
-     Diagnostics: ~23 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, 1 request); asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum
+     Diagnostics: ~23 tokens (estimate, step input) | 412 prompt tokens (measured, first request) | 38 output tokens | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, 1 request); asked for 5 minutes (the provider's default lifetime; realm agent's default; auto: a drive realm agent starts on its own has no trigger history); nothing was written or read: the cached part may be shorter than the model's minimum
 ```
 
 For the run in which the first answer was refused, the same line shows two requests:
 
 ```text
-     Diagnostics: ~23 tokens (estimate, step input) | 824 prompt tokens (measured, totals across 2 requests) | 76 output tokens (totals across 2 requests) | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, totals across 2 requests); asked for 5m (the provider's default lifetime; realm agent's default); nothing was written or read: the cached part may be shorter than the model's minimum
+     Diagnostics: ~23 tokens (estimate, step input) | 824 prompt tokens (measured, totals across 2 requests) | 76 output tokens (totals across 2 requests) | model claude-sonnet-5-5 | no preconditions | cache: not engaged — read 0, wrote 0 (provider-reported, totals across 2 requests); asked for 5 minutes (the provider's default lifetime; realm agent's default; auto: a drive realm agent starts on its own has no trigger history); nothing was written or read: the cached part may be shorter than the model's minimum
 ```
 
 A refused answer still costs a request. `measured` figures come from the provider's own count. `cache: not engaged` means the provider reported that no part of the prompt was read from its cache or written to it. The `estimate` is Realm's rough size of the step's input only, and is much smaller than what was sent.
 
-`model` is the model the provider's answer named. `asked for 5m (the provider's default lifetime; realm agent's default)` is what Realm asked Anthropic to cache: 5 minutes, sent without a lifetime because 5 minutes is Anthropic's own default, and chosen by `realm agent`'s default rather than by `--prompt-cache`. When a lifetime was asked and every request reports nothing written or read, the line ends with what can cause it. A step whose fixed part is long enough writes it on its first request and reads it on the next one within the lifetime: its line reads `cache: read …, wrote …`. When part of a write was kept for another lifetime than the one asked, the line says so (`70 of the tokens written were kept for 5m, not the 1h asked`). A step recorded by version 0.47.0 or earlier shows none of these. They were added after version 0.47.0.
+`model` is the model the provider's answer named. `asked for 5 minutes (the provider's default lifetime; realm agent's default; auto: a drive realm agent starts on its own has no trigger history)` is what Realm asked Anthropic to cache: 5 minutes, sent without a lifetime because 5 minutes is Anthropic's own default, chosen by `realm agent`'s default (`auto`) rather than by `--prompt-cache`, and what `auto` chose by. When a lifetime was asked and every request reports nothing written or read, the line ends with what can cause it. A step whose fixed part is long enough writes it on its first request and reads it on the next one within the lifetime: its line reads `cache: read …, wrote …`. When part of a write was kept for another lifetime than the one asked, the line says so (`70 of the tokens written were kept for 5 minutes, not the 1 hour asked`). A step recorded by version 0.47.0 or earlier shows none of these. They were added after version 0.47.0.
 
 ## Human gates
 

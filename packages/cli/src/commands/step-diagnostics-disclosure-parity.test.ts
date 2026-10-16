@@ -29,8 +29,9 @@ type DisclosureRoute =
       // non-conforming one a third-party `--provider-module` can produce — no total, one write
       // spelling. A field whose only render arm needs the second shape asserts against `partial`,
       // so its probe cannot be satisfied by a clause another field produced. Issue #600 PR 2 adds
-      // `mismatch`: a request that asked for 1h, part of whose write was kept for 5m, carrying every
-      // request fact — the only shape on which the lifetime split has text of its own.
+      // `mismatch`: a request that asked for 1 hour, part of whose write was kept for 5 minutes,
+      // carrying every request fact — the only shape on which the lifetime split has text of its
+      // own.
       probe: (out: string, partial: string, mismatch: string) => void;
     }
   | { surface: 'waived'; reason: string };
@@ -175,8 +176,10 @@ const partialStore = {
   list: async () => [partialRun],
 } as never;
 
-// issue #600 PR 2 — the MISMATCH shape: one request that asked for 1h (sent as 1h, stated on realm
-// agent) and whose write was kept for 5m: a 5-minute split above 0, matching
+// issue #600 PR 2 — the MISMATCH shape: one request that asked for 1 hour (sent as `ttl`, stated on
+// realm listen — a drive `realm listen --prompt-cache auto` started, whose gaps chose 1 hour: the
+// lifetime unit's `cache_auto`) and whose write was kept for 5 minutes: a 5-minute split above 0,
+// matching
 // `cache_creation_input_tokens`, and every request fact set. `DIAG` cannot show the split: its only
 // write figure is 0, and its `wrote 0` probe above is the discriminating one.
 const mismatchRun = {
@@ -203,7 +206,8 @@ const mismatchRun = {
               cache_lifetime_s: 3600,
               cache_ttl_sent: true,
               cache_requested_source: 'stated',
-              cache_requested_by: 'realm agent',
+              cache_requested_by: 'realm listen',
+              cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
               provider: 'anthropic',
               endpoint: 'custom',
               cache_split_offered: true,
@@ -345,7 +349,9 @@ const USAGE_DISCLOSURE = {
   cache_creation: {
     surface: 'rendered',
     probe: (out, _partial, mismatch) => {
-      expect(mismatch).toContain('; 64 of the tokens written were kept for 5m, not the 1h asked');
+      expect(mismatch).toContain(
+        '; 64 of the tokens written were kept for 5 minutes, not the 1 hour asked',
+      );
       expect(out).not.toContain('of the tokens written were kept for');
     },
   },
@@ -361,17 +367,17 @@ const USAGE_DISCLOSURE = {
   cache_requested: {
     surface: 'rendered',
     probe: (out, _partial, mismatch) => {
-      expect(mismatch).toContain('; asked for 1h');
+      expect(mismatch).toContain('; asked for 1 hour');
       expect(out).not.toContain('asked for');
     },
   },
   cache_lifetime_s: {
     surface: 'rendered',
-    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('asked for 1h ('),
+    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('asked for 1 hour ('),
   },
   cache_ttl_sent: {
     surface: 'rendered',
-    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('(sent as 1h; '),
+    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('(sent as 1 hour; '),
   },
   cache_requested_source: {
     surface: 'rendered',
@@ -379,7 +385,19 @@ const USAGE_DISCLOSURE = {
   },
   cache_requested_by: {
     surface: 'rendered',
-    probe: (_out, _partial, mismatch) => expect(mismatch).toContain('stated on realm agent)'),
+    probe: (_out, _partial, mismatch) =>
+      expect(mismatch).toContain('stated on realm listen; auto: '),
+  },
+  // issue #600 (the lifetime unit): the evidence `auto` chose by, inside the ask's parentheses; the
+  // conforming shape (no ask) shows none of it.
+  cache_auto: {
+    surface: 'rendered',
+    probe: (out, _partial, mismatch) => {
+      expect(mismatch).toContain(
+        "; auto: the last 2 gaps between this workflow's triggers were about 7 minutes and 12 minutes)",
+      );
+      expect(out).not.toContain('auto: ');
+    },
   },
   // issue #600 caching PR P: both move to rendered, inside the money's source part.
   provider: {
@@ -439,6 +457,7 @@ describe('#600 PR 1a (D7) — every UsageRecord field reaches an inspect reader,
 
   it('the registry covers every UsageRecord field, and the waiver set is exactly the three named above', () => {
     expect(Object.keys(USAGE_DISCLOSURE).sort()).toEqual([
+      'cache_auto',
       'cache_creation',
       'cache_creation_input_tokens',
       'cache_lifetime_s',

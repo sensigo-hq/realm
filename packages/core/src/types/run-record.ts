@@ -360,28 +360,20 @@ export const CACHE_BASES = ['provider_reported', 'unobservable'] as const;
 export type CacheBasis = (typeof CACHE_BASES)[number];
 
 /**
- * Issue #600 PR 2 — the words `--prompt-cache` takes (`realm agent`, `realm listen`). Produced by the
- * CLI's `parsePromptCache`; never stored — the record stores the class it maps to
- * ({@link CACHE_REQUESTS}).
+ * Issue #600 — the words `--prompt-cache` takes (`realm agent`, `realm listen`): `auto` (the default:
+ * realm chooses per drive — {@link CACHE_AUTO_BASES}), `short` and `long` (the provider's own
+ * shortest and longest lifetimes), `off`. Produced by the CLI's `parsePromptCache`; never stored —
+ * the record stores the class it resolves to ({@link CACHE_REQUESTS}) and the seconds asked for
+ * (`UsageRecord.cache_lifetime_s`).
  */
-export const PROMPT_CACHE_SETTINGS = ['off', '5m', '1h'] as const;
+export const PROMPT_CACHE_SETTINGS = ['auto', 'short', 'long', 'off'] as const;
 export type PromptCacheSetting = (typeof PROMPT_CACHE_SETTINGS)[number];
-
-/**
- * Issue #600 PR 2 — the lifetime, in seconds, each setting other than `off` asks for. Produced by
- * the Anthropic adapter, which writes it as `UsageRecord.cache_lifetime_s`. Its keys are exactly the
- * settings that ask for a lifetime.
- */
-export const PROMPT_CACHE_LIFETIMES = { '5m': 300, '1h': 3600 } as const satisfies Record<
-  Exclude<PromptCacheSetting, 'off'>,
-  number
->;
 
 /**
  * Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored
  * (`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with
- * `--prompt-cache off`), `lifetime` (asked for a cache lifetime; the Anthropic adapter with `5m` or
- * `1h`), `provider_rules` (realm sends no cache field and the provider's own caching rules apply;
+ * `--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic
+ * adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm sends no cache field and the provider's own caching rules apply;
  * the OpenAI and o1 adapters).
  */
 export const CACHE_REQUESTS = ['off', 'lifetime', 'provider_rules'] as const;
@@ -394,6 +386,24 @@ export type CacheRequest = (typeof CACHE_REQUESTS)[number];
  */
 export const CACHE_REQUEST_SOURCES = ['stated', 'runner_default'] as const;
 export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
+
+/**
+ * Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime
+ * (`UsageRecord.cache_auto.basis`). Each member's producer is the CLI's `resolvePromptCache`, and the
+ * Anthropic adapter writes it:
+ * - `no_measurement` — the setting was `auto` and the drive was not started by `realm listen`: no
+ *   gaps exist, so the short lifetime (the runner's prior) is asked for;
+ * - `listen_trigger_gaps` — `realm listen` started the drive and passed the gaps it measured between
+ *   that workflow's recent triggers (possibly none yet — the long lifetime is then the prior);
+ * - `listen_gaps_unreadable` — `realm listen` started the drive and passed a value the agent could
+ *   not read; the long lifetime (the prior) is asked for and the drive goes on.
+ */
+export const CACHE_AUTO_BASES = [
+  'no_measurement',
+  'listen_trigger_gaps',
+  'listen_gaps_unreadable',
+] as const;
+export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
 
 /**
  * Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the
@@ -490,6 +500,13 @@ export interface UsageRecord {
    * Bounded where it enters the record (`boundRequestFacts`).
    */
   cache_requested_by?: string;
+  /**
+   * Issue #600 (the lifetime unit) — present iff the setting was `auto`: the basis of the choice,
+   * and the gaps it read. `gaps_s` is present iff `basis` is `listen_trigger_gaps`: 0 to 5 whole
+   * seconds, each from 0 to 604 800, oldest first. Normalised where it enters the record
+   * (`boundRequestFacts` → `normalizeCacheAuto`).
+   */
+  cache_auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
   /**
    * Issue #600 PR 2 — the provider that served the request. Stamped by `realm agent` from its one
    * provider fact (`anthropic`, `openai`, `openai-reasoning`, `module:<file>`), never by an adapter.

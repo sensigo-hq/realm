@@ -38,6 +38,8 @@ import { hasText, listenModelRefusal, type ProviderName } from '../agent/provide
 // issue #600 PR 2: the SAME parser `realm agent --prompt-cache` uses.
 import { parsePromptCache } from '../agent/prompt-cache.js';
 import {
+  AUTO_GAPS_KEPT,
+  CACHE_GAP_MAX_S,
   type PromptCacheSetting,
   loadWorkflowFromFile,
   JsonFileStore,
@@ -110,7 +112,9 @@ export interface ListenDeps {
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
   // (`'error'`, which for a missing or unenterable folder comes on the next tick, not as a throw).
-  spawnAgent: (runId: string, cwd: string) => Promise<SpawnResult>;
+  // issue #600 (the lifetime unit): the workflow id keys the spawner's trigger gaps; optional, so a
+  // double that ignores it still fits.
+  spawnAgent: (runId: string, cwd: string, workflowId?: string) => Promise<SpawnResult>;
   clock: () => number;
   logger: Logger;
 }
@@ -707,7 +711,7 @@ export function makeListenHandler(
       // `try`, so a start Node refuses later, or a rejection, takes the same path.
       let spawnResult: SpawnResult;
       try {
-        spawnResult = await deps.spawnAgent(run.id, entry.workflowDir);
+        spawnResult = await deps.spawnAgent(run.id, entry.workflowDir, entry.definition.id);
       } catch (err) {
         spawnResult = { error: err instanceof Error ? err : new Error(String(err)) };
       }
@@ -1313,6 +1317,11 @@ export type AgentArgvOptions = {
   llmTimeoutSeconds?: number;
   /** Issue #600 PR 2: listen's `--prompt-cache`, only when the operator stated it. */
   promptCache?: PromptCacheSetting;
+  /**
+   * Issue #600 (the lifetime unit): the gaps, in whole seconds, between the recent triggers of the
+   * child's workflow, when `auto` measures and at least one exists.
+   */
+  cacheGaps?: readonly number[];
 };
 
 /**
@@ -1330,9 +1339,11 @@ export type AgentArgvOptions = {
  * the run record carries is the CONSEQUENCE: `declared_per_attempt_ms` present, and a fired
  * ceiling naming `--llm-timeout` as the lever.
  *
- * CACHING (issue #600 PR 2): a stated `--prompt-cache` is passed on as given; unstated, nothing is
- * passed and the child uses listen's default (1h). `--spawned-by-listen` is always passed, so the
- * child knows listen started it: its default is listen's, its runner is recorded as `realm
+ * CACHING (issue #600): a stated `--prompt-cache` is passed on as given; unstated, nothing is
+ * passed and the child uses `auto`. `--cache-gaps` (the lifetime unit) follows it when listen
+ * measured at least one gap between the workflow's recent triggers — `auto` reads them; never when
+ * empty. `--spawned-by-listen` is always passed, so the child knows listen started it: its `auto`
+ * reads listen's measurement (its prior is the long lifetime), its runner is recorded as `realm
  * listen`, and a setting its provider cannot apply is disclosed on its start line, never refused.
  */
 export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] {
@@ -1343,6 +1354,9 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
     argv.push('--llm-timeout', String(opts.llmTimeoutSeconds));
   }
   if (opts.promptCache !== undefined) argv.push('--prompt-cache', opts.promptCache);
+  if (opts.cacheGaps !== undefined && opts.cacheGaps.length > 0) {
+    argv.push('--cache-gaps', opts.cacheGaps.join(','));
+  }
   argv.push('--spawned-by-listen');
   // issue #620 PR-C: listen tells the operator once at startup; a child per webhook would repeat it.
   argv.push('--no-release-line-advisory');
@@ -1414,6 +1428,12 @@ export function defaultSpawnAgent(
  * issue #676: and the model (always) and the provider (when given), the same way.
  * issue #744: an error the agent process reports after it started is logged, never fatal.
  * issue #600 PR 2: and a stated `--prompt-cache`, the same way.
+ * issue #600 (the lifetime unit): under `auto` (unstated or stated), the spawner measures. It keeps,
+ * per workflow id (else per folder), the start times of its last `AUTO_GAPS_KEPT + 1` spawns on a
+ * monotonic clock (`monotonicMs`; listen's own clock is the wall clock); synchronously on entry it
+ * computes the gaps between them and now (whole seconds, clamped to `[0, CACHE_GAP_MAX_S]`, the last
+ * `AUTO_GAPS_KEPT`), records now, and passes the gaps as `--cache-gaps`; a spawn that fails removes
+ * the start it recorded. Under any other setting it keeps nothing and passes no gaps.
  */
 export function makeAgentSpawner(
   listenOpts: {
@@ -1424,27 +1444,52 @@ export function makeAgentSpawner(
   },
   logger: Logger,
   spawnFn: typeof nodeSpawn = nodeSpawn,
-): (runId: string, cwd: string) => Promise<SpawnResult> {
+  monotonicMs: () => number = () => performance.now(),
+): (runId: string, cwd: string, workflowId?: string) => Promise<SpawnResult> {
   const agentOpts: AgentArgvOptions = {
     model: listenOpts.model,
     ...(listenOpts.provider !== undefined ? { provider: listenOpts.provider } : {}),
     ...(listenOpts.llmTimeout !== undefined ? { llmTimeoutSeconds: listenOpts.llmTimeout } : {}),
     ...(listenOpts.promptCache !== undefined ? { promptCache: listenOpts.promptCache } : {}),
   };
-  return (runId, cwd) =>
+  const measures = listenOpts.promptCache === undefined || listenOpts.promptCache === 'auto';
+  const starts = new Map<string, number[]>();
+  const spawn = (runId: string, cwd: string, opts: AgentArgvOptions): Promise<SpawnResult> =>
     defaultSpawnAgent(
       runId,
       cwd,
-      agentOpts,
+      opts,
       (err) =>
         logger.error('webhook: agent process error', { run_id: runId, cwd, error: String(err) }),
       spawnFn,
     );
+  return (runId, cwd, workflowId) => {
+    if (!measures) return spawn(runId, cwd, agentOpts);
+    const key = workflowId ?? cwd;
+    const now = monotonicMs();
+    const times = [...(starts.get(key) ?? []), now];
+    const gaps = times
+      .slice(1)
+      .map((t, i) => Math.min(CACHE_GAP_MAX_S, Math.max(0, Math.round((t - times[i]!) / 1000))))
+      .slice(-AUTO_GAPS_KEPT);
+    starts.set(key, times.slice(-(AUTO_GAPS_KEPT + 1)));
+    return spawn(runId, cwd, gaps.length > 0 ? { ...agentOpts, cacheGaps: gaps } : agentOpts).then(
+      (result) => {
+        if ('error' in result) {
+          const kept = starts.get(key) ?? [];
+          const at = kept.lastIndexOf(now);
+          if (at !== -1) kept.splice(at, 1);
+        }
+        return result;
+      },
+    );
+  };
 }
 
 /**
- * Issue #600 PR 2 (D2) — what listen's startup line says each provider is asked to cache. A child
- * that uses Anthropic asks for the stated setting, or listen's default (1h); Realm asks OpenAI for
+ * Issue #600 (D2; the lifetime unit) — what listen's startup line says each provider is asked to
+ * cache. A child that uses Anthropic asks for the stated setting, or listen's default, `auto` (off,
+ * 5 minutes or 1 hour per workflow, by the gaps between its recent triggers); Realm asks OpenAI for
  * no caching. With `--provider`, only that provider's agents are started, so the other is named
  * only as `not used` (OpenAI) or not at all (Anthropic).
  */
@@ -1453,8 +1498,14 @@ export function listenCachingFacts(
   promptCache: PromptCacheSetting | undefined,
 ): Record<string, string> {
   if (provider === 'openai') return { openai: 'asked for no caching', anthropic: 'not used' };
+  const words: Record<PromptCacheSetting, string> = {
+    auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers',
+    short: '5 minutes',
+    long: '1 hour',
+    off: 'off',
+  };
   const anthropic = {
-    anthropic: promptCache ?? '1h',
+    anthropic: words[promptCache ?? 'auto'],
     set_by: promptCache === undefined ? "realm listen's default" : `--prompt-cache ${promptCache}`,
   };
   return provider === 'anthropic' ? anthropic : { ...anthropic, openai: 'asked for no caching' };
@@ -1539,10 +1590,10 @@ export const listenCommand = new Command('listen')
     parseLlmTimeout,
   )
   // issue #600 PR 2: no Commander default. Unstated, nothing is passed and each child uses
-  // listen's default (1h), recorded as `runner_default`.
+  // listen's default (`auto`), recorded as `runner_default`.
   .option(
     '--prompt-cache <setting>',
-    'Passed to each realm agent it starts: off, 5m or 1h. Default: each agent asks Anthropic for 1h. Other providers are asked for no caching.',
+    'Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow. short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.',
     parsePromptCache,
   )
   .option(

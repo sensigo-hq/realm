@@ -494,9 +494,10 @@ describe('realm listen requires --model and checks no API key (issue #676)', () 
           aliveAtHit,
           declaredPerAttemptMs: record?.drive_failures?.entries?.[0]?.declared_per_attempt_ms,
           agentExited: pid !== undefined && !isAlive(pid),
-          // issue #600 PR 2 (G20 leg 1): listen's default reaches the child — 1h, sent as `ttl`.
-          // (a) red when listen does not mark its child --spawned-by-listen (the child then asks
-          // for 5m, with no ttl).
+          // issue #600 PR 2 (G20 leg 1): listen's default `auto` reaches the child — its first
+          // trigger, so the listen prior: 1 hour, sent as `ttl`. (a) red when listen does not mark
+          // its child --spawned-by-listen (the child then has no measurement and asks for 5
+          // minutes, with no ttl).
           cacheControl: (stub.systems[0] as Array<{ cache_control?: unknown }> | undefined)?.[0]
             ?.cache_control,
         },
@@ -565,8 +566,8 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
     }
   }
 
-  // Leg 2. (a) red when listen does not forward the stated value (the child asks for its 1h
-  // default, a block); (b) prints the `system` field sent.
+  // Leg 2. (a) red when listen does not forward the stated value (the child's `auto` asks for 1
+  // hour on its first trigger, a block); (b) prints the `system` field sent.
   it('G20 leg 2: listen --prompt-cache off → the child sends the plain string', async () => {
     const stub = await notFoundStub();
     let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
@@ -602,7 +603,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
   // Leg 3, on the 200 stand-in. (a) red when listen does not forward the stated value, or does not
   // mark its child (the record then says `realm agent`); (b) prints the stored facts, the `system`
   // field sent and listen's output.
-  it("G20 leg 3: listen --prompt-cache 5m → the child's request asks for 5m, recorded as stated on realm listen; its start line says so", async () => {
+  it("G20 leg 3: listen --prompt-cache short → the child's request asks for 5 minutes, recorded as stated on realm listen; its start line says so", async () => {
     const stub = await startAnthropicStub({ finalContent: { summary: 'ok' } });
     let listen: { child: ChildProcess; port: number; output: () => string } | undefined;
     try {
@@ -616,7 +617,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
           '--model',
           'm-600',
           '--prompt-cache',
-          '5m',
+          'short',
           '--dedup-store',
           'memory',
         ],
@@ -641,6 +642,7 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
           cache_ttl_sent: request['cache_ttl_sent'],
           cache_requested_source: request['cache_requested_source'],
           cache_requested_by: request['cache_requested_by'],
+          cache_auto: request['cache_auto'],
           cacheControl: (stub.requests[0]!['system'] as Array<{ cache_control?: unknown }>)[0]!
             .cache_control,
         },
@@ -651,10 +653,11 @@ describe('realm listen --prompt-cache reaches the agent it starts (issue #600 PR
         cache_ttl_sent: false,
         cache_requested_source: 'stated',
         cache_requested_by: 'realm listen',
+        cache_auto: undefined,
         cacheControl: { type: 'ephemeral' },
       });
       expect(listen.output()).toContain(
-        "Caching: Anthropic is asked to cache each step's fixed instructions for 5m (set by realm listen --prompt-cache 5m).",
+        "Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (set by realm listen --prompt-cache short).",
       );
     } finally {
       listen?.child.kill('SIGKILL');
@@ -745,7 +748,7 @@ describe('the re-attach command repeats the flags the CLI was given (issue #676 
       'm-600',
       '--mint-writer-nonce',
       '--prompt-cache',
-      '1h',
+      'long',
     ];
     const r = await runCli(
       ['agent', '--workflow', join('blocked-600', 'workflow.yaml'), ...flags],

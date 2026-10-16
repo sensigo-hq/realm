@@ -1,8 +1,10 @@
 // usage-record-law-600.test.ts — issue #600 PR 2 (A6, G27): the store TCK's USAGE_RECORD_ROUNDTRIP
 // law requires a store to round-trip each request fact PR 2 adds, in a step's evidence and in a
 // failed drive's usage. Green against the two stores Realm ships (InMemoryStore, JsonFileStore); red,
-// for EACH of the nine fields, against a store written here that drops that one field (the
-// `output-source-law-625.test.ts` pattern).
+// for EACH of the ten fields, against a store written here that drops that one field (the
+// `output-source-law-625.test.ts` pattern). The lifetime unit adds the tenth, `cache_auto`, an
+// object: the law compares it by deep equality, so a store that keeps its keys in another order
+// passes.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // law's message, which names the field, where it was, and the test values written and read back.
@@ -22,7 +24,7 @@ const agentWf: WorkflowDefinition = {
   steps: { s: { description: 'S.', execution: 'agent', depends_on: [] } },
 };
 
-/** The nine request facts issue #600 PR 2 adds to `UsageRecord`. */
+/** The ten request facts issue #600 adds to `UsageRecord` (PR 2's nine, the lifetime unit's `cache_auto`). */
 const FIELDS = [
   'model',
   'cache_requested',
@@ -33,6 +35,7 @@ const FIELDS = [
   'provider',
   'endpoint',
   'cache_split_offered',
+  'cache_auto',
 ] as const;
 
 /** The USAGE_RECORD_ROUNDTRIP case of the TCK, against `store`. */
@@ -46,13 +49,28 @@ function lawOf(store: RunStore) {
 
 /** Drops `field` from every request record the store is handed, in both places. */
 function dropping(field: string) {
+  return changing((r) => {
+    const { [field]: _gone, ...rest } = r;
+    return rest;
+  });
+}
+
+/** Keeps `cache_auto` with its keys in reverse order, in both places — every value unchanged. */
+function reordering() {
+  return changing((r) => {
+    const auto = r['cache_auto'];
+    if (auto === null || typeof auto !== 'object') return r;
+    return {
+      ...r,
+      cache_auto: Object.fromEntries(Object.entries(auto as object).reverse()),
+    };
+  });
+}
+
+/** A store that applies `change` to every request record it is handed, in both places. */
+function changing(change: (r: Record<string, unknown>) => Record<string, unknown>) {
   const strip = (requests: unknown): unknown =>
-    Array.isArray(requests)
-      ? requests.map((r: Record<string, unknown>) => {
-          const { [field]: _gone, ...rest } = r;
-          return rest;
-        })
-      : requests;
+    Array.isArray(requests) ? requests.map((r: Record<string, unknown>) => change(r)) : requests;
   return class extends InMemoryStore {
     override update(record: RunRecord): Promise<RunRecord> {
       return super.update({
@@ -102,4 +120,19 @@ describe('issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP', () => {
       );
     });
   }
+
+  it("passes for a store that keeps cache_auto's keys in another order (deep equality)", async () => {
+    const Reordered = reordering();
+    const store = new Reordered();
+    // (a) red when the law compares `cache_auto` by its serialised text (key order); (b) prints
+    // the law's message.
+    await lawOf(store).run();
+    // The double did reverse the keys: the law ran against a reordered `cache_auto`.
+    const runs = await store.list();
+    const stored = runs
+      .flatMap((r) => r.evidence)
+      .flatMap((e) => e.diagnostics?.cache?.requests ?? [])
+      .map((r) => Object.keys(r.cache_auto ?? {}));
+    expect(stored).toContainEqual(['gaps_s', 'basis']);
+  });
 });
