@@ -11,6 +11,7 @@ import {
   loadProjectExtensions,
   clearProjectExtensionsCache,
   makeRegistryProvider,
+  makeProjectProviders,
 } from './load-project-extensions.js';
 
 /** A declarative module contributing one adapter, one handler, one processor. */
@@ -430,5 +431,95 @@ describe('loadProjectExtensions — drift-evidence identity capture', () => {
     const definition = makeDefinition({ source_dir: undefined, trust_root: undefined });
     const { registry } = await loadProjectExtensions(definition);
     expect(registry.identity).toBeUndefined();
+  });
+});
+
+// issue #600 caching PR P (G7): realm.yaml is parsed through core's `parseDeploymentManifest`; the
+// loader keeps its two throws, surfaces the economics file's path, and shares one load per
+// definition call between the registry and the prices. Each cell prints the thrown message or the
+// path or the load count: test values only.
+describe('loadProjectExtensions — the economics file (issue #600 caching PR P, G7)', () => {
+  // (a) red when the two error kinds are merged, or the YAML throw loses its cause; (b) prints the
+  // messages.
+  it('the YAML error and the schema error each throw as before, the YAML one with its cause', async () => {
+    writeFileSync(join(root, 'realm.yaml'), 'version: [1\n', 'utf8');
+    const yaml = (await loadProjectExtensions(makeDefinition()).catch(
+      (err: unknown) => err,
+    )) as Error;
+    writeFileSync(join(root, 'realm.yaml'), 'version: 1\nrunner:\n  cache:\n    foo: x\n', 'utf8');
+    clearProjectExtensionsCache();
+    const schema = (await loadProjectExtensions(makeDefinition()).catch(
+      (err: unknown) => err,
+    )) as Error;
+    expect([
+      yaml.message.startsWith(
+        `Deployment manifest '${join(root, 'realm.yaml')}' is not valid YAML: `,
+      ),
+      yaml.cause instanceof Error,
+      schema.message,
+    ]).toEqual([
+      true,
+      true,
+      `Deployment manifest '${join(root, 'realm.yaml')}' is invalid:\n  manifest/runner/cache: unknown key 'foo'`,
+    ]);
+  });
+
+  // (a) red when the path is resolved against the working folder instead of the manifest's folder,
+  // or an absolute path is joined; (b) prints the paths.
+  it("cacheEconomicsPath: relative to realm.yaml's folder; an absolute path as given; absent without the key", async () => {
+    writeFileSync(
+      join(root, 'realm.yaml'),
+      'version: 1\nrunner:\n  cache:\n    economics: prices/economics.yaml\n',
+      'utf8',
+    );
+    const relative = (await loadProjectExtensions(makeDefinition())).cacheEconomicsPath;
+    writeFileSync(
+      join(root, 'realm.yaml'),
+      'version: 1\nrunner:\n  cache:\n    economics: /etc/realm/prices.yaml\n',
+      'utf8',
+    );
+    const absolute = (await loadProjectExtensions(makeDefinition())).cacheEconomicsPath;
+    writeFileSync(join(root, 'realm.yaml'), 'version: 1\n', 'utf8');
+    const none = (await loadProjectExtensions(makeDefinition())).cacheEconomicsPath;
+    expect([relative, absolute, none]).toEqual([
+      join(root, 'prices', 'economics.yaml'),
+      '/etc/realm/prices.yaml',
+      undefined,
+    ]);
+  });
+
+  // (a) red when each provider loads on its own (two loads per call); (b) prints the load count.
+  it('makeProjectProviders: one load per definition call for both providers; a provider called again loads again', async () => {
+    let loads = 0;
+    const load: typeof loadProjectExtensions = async (definition, opts) => {
+      loads += 1;
+      return loadProjectExtensions(definition, opts);
+    };
+    const { registryProvider, priceSourceProvider } = makeProjectProviders(
+      undefined,
+      undefined,
+      undefined,
+      { load },
+    );
+    const definition = makeDefinition();
+    await registryProvider(definition);
+    await priceSourceProvider(definition);
+    const oneCall = loads;
+    await registryProvider(definition);
+    expect([oneCall, loads]).toEqual([1, 2]);
+  });
+
+  it("a load that fails prices nothing: economics_unreachable with the loader's message", async () => {
+    writeFileSync(join(root, 'realm.yaml'), 'version: [1\n', 'utf8');
+    const { priceSourceProvider } = makeProjectProviders();
+    const source = await priceSourceProvider(makeDefinition());
+    const result = source.price({
+      model: 'm',
+      at: '2026-10-01T00:00:00Z',
+      usage: { prompt_tokens: 1, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 },
+    });
+    expect(
+      'not_priced' in result && [result.not_priced, result.detail?.includes('is not valid YAML')],
+    ).toEqual(['economics_unreachable', true]);
   });
 });

@@ -4,11 +4,16 @@ import { createServer, type Server } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Command } from 'commander';
 import { JsonWorkflowStore } from '@sensigo/realm';
-import type { ExtensionRegistry, WorkflowDefinition, Attributed } from '@sensigo/realm';
+import type {
+  ExtensionRegistry,
+  WorkflowDefinition,
+  Attributed,
+  PriceSource,
+} from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
 import { cliOperatorRoute } from './ways-renderer.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
+import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
 
@@ -40,6 +45,8 @@ export interface StartServerOptions {
    * loader cache — module content changes require a server restart.
    */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+  /** Issue #600 caching PR P: per-definition prices for `get_run_state` (`makeProjectProviders`). */
+  priceSourceProvider?: (definition: WorkflowDefinition) => Promise<PriceSource>;
   /**
    * Issue #625 (holder slice): the program this server runs as (channel `mcp-http`) — made ONCE at
    * startup and handed to every per-request MCP server. One shared bearer secret authenticates a
@@ -62,7 +69,16 @@ export interface StartServerOptions {
  * is discarded, never connected.
  */
 export async function startHttpMcpServer(options: StartServerOptions): Promise<Server> {
-  const { port, host, devMode, token, workflowStore, registryProvider, driver } = options;
+  const {
+    port,
+    host,
+    devMode,
+    token,
+    workflowStore,
+    registryProvider,
+    priceSourceProvider,
+    driver,
+  } = options;
 
   // ONE workflow store per process (constructed at startup when none is injected).
   // JsonWorkflowStore.get() is readFileSync-per-call, so reusing the instance across
@@ -72,6 +88,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
   const serverOptions = {
     workflowStore: store,
     ...(registryProvider !== undefined ? { registryProvider } : {}),
+    ...(priceSourceProvider !== undefined ? { priceSourceProvider } : {}),
     ...(driver !== undefined ? { driver } : {}),
     // #729 PR-0 (P-6): the CLI's renderer as the operator route — an operator's command reaches
     // only the block addressed to the person.
@@ -201,7 +218,8 @@ export const serveCommand = new Command('serve')
     const host = options.host as string;
     const devMode = options.dev === true || process.env.REALM_DEV === '1';
     const token = process.env.REALM_SERVE_TOKEN;
-    const registryProvider = makeRegistryProvider(
+    // issue #600 caching PR P: the registry and the prices share one load per definition call.
+    const { registryProvider, priceSourceProvider } = makeProjectProviders(
       options.extensionsModule as string | undefined,
       (options.project as string | undefined) ?? process.cwd(),
     );
@@ -233,6 +251,7 @@ export const serveCommand = new Command('serve')
         devMode,
         token,
         registryProvider,
+        priceSourceProvider,
         ...(driver !== undefined ? { driver } : {}),
       });
     } catch (err) {

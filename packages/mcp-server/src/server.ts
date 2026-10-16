@@ -18,7 +18,8 @@ import {
   type RunStore,
   type TraceBufferStore,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { PriceSource, WorkflowDefinition } from '@sensigo/realm';
+import { loadPriceSource, withSourceNote } from './price-source.js';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { VERSION } from './version.js';
 import { composeBinIdentity } from './bin-identity.js';
@@ -46,6 +47,12 @@ export interface RealmMcpServerOptions {
    * provider wins. Additive — absent provider preserves existing behavior.
    */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+  /**
+   * Issue #600 caching PR P: per-definition prices for `get_run_state`'s money (`loadPriceSource`
+   * with the economics file the run's deployment root names). Absent ⇒ the installed price list
+   * only, and every figure says no economics file is configured on this server.
+   */
+  priceSourceProvider?: (definition: WorkflowDefinition) => Promise<PriceSource>;
   /** Pre-populated workflow store. When provided, tools use this instead of creating
    *  a new JsonWorkflowStore() pointing at ~/.realm/workflows/. */
   workflowStore?: JsonWorkflowStore;
@@ -242,7 +249,12 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // issue #625 PR-2a: the one call that runs what the engine owes — beside execute_step, with its stores.
   registerAdvanceRun(server, { ...effectiveOptions, traceBufferStore });
   registerSubmitHumanResponse(server, effectiveOptions);
-  registerGetRunState(server, effectiveOptions);
+  // issue #600 caching PR P: with no provider, the installed list only (loaded once per process).
+  const priceSourceProvider =
+    options?.priceSourceProvider ??
+    (async (): Promise<PriceSource> =>
+      withSourceNote(await loadPriceSource({}), 'no economics file is configured on this server'));
+  registerGetRunState(server, { ...effectiveOptions, priceSourceProvider });
   registerAbandonRun(server, effectiveOptions);
   registerCreateWorkflow(server, effectiveOptions);
   registerAppendTrace(server, {

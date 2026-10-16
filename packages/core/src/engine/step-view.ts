@@ -15,6 +15,13 @@
 import type { RequestFactAbsentCause, RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import {
+  priceRequest,
+  type NotPricedCause,
+  type PricedBy,
+  type PriceResult,
+  type PriceSource,
+} from '../economics/price-source.js';
+import {
   readDrivenBy,
   readGateClaimVerdict,
   readStoredName,
@@ -75,6 +82,88 @@ export interface CostView {
   cache_write_5m?: CostFigure;
   /** Issue #600 PR 2 — `cache_creation.ephemeral_1h_input_tokens`: cache writes kept for 1 hour. */
   cache_write_1h?: CostFigure;
+  /**
+   * Issue #600 caching PR P — how many requests went to a custom endpoint (`custom`) out of all
+   * (`of`), from each request's `endpoint`; when no request records one, the typed absence by cause
+   * (PR 2's rule). Present iff `requests > 0`.
+   */
+  endpoints?: CostEndpoints;
+  /**
+   * Issue #600 caching PR P — what the requests cost, priced at read by the host's price source.
+   * Present only when a price source was given and `requests > 0`; never stored.
+   */
+  money?: Money;
+}
+
+/** Issue #600 caching PR P — the requests sent to a custom endpoint, or why none records one. */
+export type CostEndpoints =
+  { custom: number; of: number } | { absent_cause: RequestFactAbsentCause };
+
+/**
+ * Issue #600 caching PR P — one source of the priced requests: what priced them (`PricedBy`'s
+ * fields), how many it priced (`count`) and how many of those at the call's date (`dated`).
+ */
+export interface MoneySource {
+  source_class: PricedBy['source_class'];
+  source_ref: string;
+  version?: string;
+  matched_provider?: string;
+  matched_model: string;
+  count: number;
+  dated: number;
+  endpoint_note?: string;
+  source_note?: string;
+}
+
+/**
+ * Issue #600 caching PR P — money, derived at read and never stored, in USD and unrounded. `total`
+ * and `uncached_counterfactual` (what the same requests would cost with no caching) are sums over
+ * the PRICED requests only; `net` = counterfactual − total (what caching saved; negative when it
+ * cost more). `priced` of `of` requests were priced; every other request is counted under the
+ * cause it was not priced for.
+ */
+export interface Money {
+  total: number;
+  uncached_counterfactual: number;
+  net: number;
+  priced: number;
+  of: number;
+  /** How many of the priced requests were priced at the call's date (a dated price). */
+  dated: number;
+  /** One per source and model priced: what priced them, how many, how many at the call's date. */
+  sources: MoneySource[];
+  /**
+   * The same counts per source alone (the economics file, or one price list version), whatever
+   * model each priced: what a surface names when several sources priced the requests.
+   */
+  source_totals: MoneySourceTotal[];
+  not_priced?: Array<{ cause: NotPricedCause; count: number; detail?: string }>;
+}
+
+/** Issue #600 caching PR P — one source's counts over every model it priced. */
+export interface MoneySourceTotal {
+  source_class: PricedBy['source_class'];
+  source_ref: string;
+  version?: string;
+  count: number;
+  dated: number;
+}
+
+/**
+ * Issue #600 caching PR P — what a run cost: every step's total and every failed drive's billed
+ * requests on the record; how many failed drives are not on the record any more (the record keeps
+ * the last 5); how many on the record carry no usage figures; and how many attempts realm has no
+ * usage for, by cause.
+ */
+export interface RunCost {
+  total: Money;
+  failed_drives_not_on_record: number;
+  /**
+   * Failed drives on the record whose `usage` is not an array or is empty: realm has nothing to
+   * price for them, and a request may have billed (one that failed on the wire, a tools-step drive).
+   */
+  failed_drives_without_usage: number;
+  unmeasured: { tool_calling_step: number; not_measured_by_realm: number; cost_unreadable: number };
 }
 
 /**
@@ -155,6 +244,11 @@ export interface StepView {
   attempts: AttemptView[];
   /** One per answer entry (`isAnswerEntry`), in entry order. Absent when the step has no answer. */
   answers?: AnswerView[];
+  /**
+   * Issue #600 caching PR P — the money across the step's attempts. Present only when a price
+   * source was given and at least one attempt has priced or unpriced requests.
+   */
+  total?: Money;
 }
 
 /** Reads a numeric field off an unknown entry, returning `undefined` for anything but a real number
@@ -238,6 +332,138 @@ function composeCacheRequested(requests: readonly unknown[]): CostCacheRequested
   return { entries, reported, of: requests.length };
 }
 
+/** Issue #600 caching PR P — the custom-endpoint count, or the typed absence by PR 2's rule. */
+function composeEndpoints(requests: readonly unknown[]): CostEndpoints {
+  let custom = 0;
+  let recorded = 0;
+  for (const r of requests) {
+    const endpoint = fieldOf(r, 'endpoint');
+    if (endpoint !== 'default' && endpoint !== 'custom') continue;
+    recorded += 1;
+    if (endpoint === 'custom') custom += 1;
+  }
+  if (recorded === 0) return requestFactAbsence(requests);
+  return { custom, of: requests.length };
+}
+
+/** Issue #600 caching PR P — money with nothing in it. */
+function emptyMoney(): Money {
+  return {
+    total: 0,
+    uncached_counterfactual: 0,
+    net: 0,
+    priced: 0,
+    of: 0,
+    dated: 0,
+    sources: [],
+    source_totals: [],
+  };
+}
+
+/** Issue #600 caching PR P — the money of each request's price result, summed over the priced ones. */
+function moneyOf(results: readonly PriceResult[]): Money {
+  const money = emptyMoney();
+  for (const result of results) {
+    money.of += 1;
+    if ('not_priced' in result) {
+      const entry = {
+        cause: result.not_priced,
+        count: 1,
+        ...(result.detail !== undefined ? { detail: result.detail } : {}),
+      };
+      mergeNotPriced(money, [entry]);
+      continue;
+    }
+    money.priced += 1;
+    if (result.priced_by.date_basis === 'dated') money.dated += 1;
+    money.total += result.priced.total;
+    money.uncached_counterfactual += result.priced.uncached_counterfactual;
+    const by = result.priced_by;
+    mergeSources(money, [
+      {
+        source_class: by.source_class,
+        source_ref: by.source_ref,
+        ...(by.version !== undefined ? { version: by.version } : {}),
+        ...(by.matched_provider !== undefined ? { matched_provider: by.matched_provider } : {}),
+        matched_model: by.matched_model,
+        count: 1,
+        dated: by.date_basis === 'dated' ? 1 : 0,
+        ...(by.endpoint_note !== undefined ? { endpoint_note: by.endpoint_note } : {}),
+        ...(by.source_note !== undefined ? { source_note: by.source_note } : {}),
+      },
+    ]);
+  }
+  money.net = money.uncached_counterfactual - money.total;
+  return money;
+}
+
+/** One source's identity: what priced it, and the notes its figure carries. */
+function sourceKey(s: MoneySource): string {
+  return JSON.stringify([
+    s.source_class,
+    s.source_ref,
+    s.version,
+    s.matched_provider,
+    s.matched_model,
+    s.endpoint_note,
+    s.source_note,
+  ]);
+}
+
+function mergeSources(into: Money, sources: readonly MoneySource[]): void {
+  for (const source of sources) {
+    const same = into.sources.find((s) => sourceKey(s) === sourceKey(source));
+    if (same !== undefined) {
+      same.count += source.count;
+      same.dated += source.dated;
+    } else {
+      into.sources.push({ ...source });
+    }
+    const totals = into.source_totals.find(
+      (t) =>
+        t.source_class === source.source_class &&
+        t.source_ref === source.source_ref &&
+        t.version === source.version,
+    );
+    if (totals !== undefined) {
+      totals.count += source.count;
+      totals.dated += source.dated;
+    } else {
+      into.source_totals.push({
+        source_class: source.source_class,
+        source_ref: source.source_ref,
+        ...(source.version !== undefined ? { version: source.version } : {}),
+        count: source.count,
+        dated: source.dated,
+      });
+    }
+  }
+}
+
+function mergeNotPriced(
+  into: Money,
+  entries: ReadonlyArray<{ cause: NotPricedCause; count: number; detail?: string }>,
+): void {
+  for (const entry of entries) {
+    const list = (into.not_priced ??= []);
+    const same = list.find((e) => e.cause === entry.cause && e.detail === entry.detail);
+    if (same !== undefined) same.count += entry.count;
+    else list.push({ ...entry });
+  }
+}
+
+/** Issue #600 caching PR P — two moneys summed (the net re-derived from the sums). */
+function addMoney(into: Money, more: Money): void {
+  into.total += more.total;
+  into.uncached_counterfactual += more.uncached_counterfactual;
+  into.priced += more.priced;
+  into.of += more.of;
+  into.dated += more.dated;
+  mergeSources(into, more.sources);
+  if (more.not_priced !== undefined) mergeNotPriced(into, more.not_priced);
+  into.net = into.uncached_counterfactual - into.total;
+}
+
 /** `cache_creation_input_tokens`, else `cache_write_tokens` — first present, never summed. */
 function cacheWriteField(entry: unknown): number | undefined {
   const a = numField(entry, 'cache_creation_input_tokens');
@@ -274,10 +500,13 @@ function sumFigure(
 /**
  * The per-request detail, composed into one roll-up. Returns `undefined` only for a non-array
  * `requests` — an empty array yields `{ requests: 0 }`, a fact distinct from absence (D1 rule 6).
+ * With `deps.priceSource` (issue #600 caching PR P), each request is priced through core's checks
+ * (`priceRequest`) and the view carries `money`; with none, no `money` key is written.
  */
 export function composeCostView(
   requests: unknown,
   extra?: { basis?: unknown; state?: unknown },
+  deps?: { priceSource?: PriceSource },
 ): CostView | undefined {
   if (!Array.isArray(requests)) return undefined;
   const view: CostView = { requests: requests.length };
@@ -306,6 +535,12 @@ export function composeCostView(
     nestedNumField(r, 'cache_creation', 'ephemeral_1h_input_tokens'),
   );
   if (write1h !== undefined) view.cache_write_1h = write1h;
+  // issue #600 caching PR P: where the requests went, and what they cost.
+  if (requests.length > 0) {
+    view.endpoints = composeEndpoints(requests);
+    const source = deps?.priceSource;
+    if (source !== undefined) view.money = moneyOf(requests.map((r) => priceRequest(r, source)));
+  }
   return view;
 }
 
@@ -398,7 +633,7 @@ function definitionSaysAgent(
  */
 export function composeStepViews(
   run: RunRecord,
-  deps?: { definition?: WorkflowDefinition },
+  deps?: { definition?: WorkflowDefinition; priceSource?: PriceSource },
 ): Record<string, StepView> {
   const evidence: unknown = run.evidence;
   const list: readonly unknown[] = Array.isArray(evidence) ? evidence : [];
@@ -436,10 +671,11 @@ export function composeStepViews(
       const cacheObj = cache as Record<string, unknown>;
       const requestsField = cacheObj['requests'];
       if (Array.isArray(requestsField)) {
-        const cv = composeCostView(requestsField, {
-          basis: cacheObj['basis'],
-          state: cacheObj['state'],
-        });
+        const cv = composeCostView(
+          requestsField,
+          { basis: cacheObj['basis'], state: cacheObj['state'] },
+          deps?.priceSource !== undefined ? { priceSource: deps.priceSource } : undefined,
+        );
         if (cv !== undefined) attempt.cost = cv;
       } else {
         attempt.cost_unreadable = true;
@@ -456,6 +692,16 @@ export function composeStepViews(
       }
     }
     view.attempts.push(attempt);
+  }
+  // issue #600 caching PR P: the money across each step's attempts, when a price source was given.
+  if (deps?.priceSource !== undefined) {
+    for (const view of Object.values(result)) {
+      const priced = view.attempts.filter((a) => a.cost?.money !== undefined);
+      if (priced.length === 0) continue;
+      const total = emptyMoney();
+      for (const attempt of priced) addMoney(total, attempt.cost!.money!);
+      view.total = total;
+    }
   }
   return result;
 }
@@ -474,7 +720,10 @@ export interface DriveFailureCost {
  * `undefined`. `cost` is present iff the entry's `usage` is an array; a `composeCostView` built from
  * a bare `usage` carries no `basis`/`state` (a drive failure's usage carries no classification).
  */
-export function composeDriveFailureCosts(run: RunRecord): DriveFailureCost[] {
+export function composeDriveFailureCosts(
+  run: RunRecord,
+  deps?: { priceSource?: PriceSource },
+): DriveFailureCost[] {
   const driveFailures: unknown = run.drive_failures;
   if (typeof driveFailures !== 'object' || driveFailures === null) return [];
   const entriesField = (driveFailures as Record<string, unknown>)['entries'];
@@ -489,11 +738,71 @@ export function composeDriveFailureCosts(run: RunRecord): DriveFailureCost[] {
       if (typeof rec['error_class'] === 'string') out.error_class = rec['error_class'];
       const usage = rec['usage'];
       if (Array.isArray(usage)) {
-        const cv = composeCostView(usage);
+        const cv = composeCostView(
+          usage,
+          undefined,
+          deps?.priceSource !== undefined ? { priceSource: deps.priceSource } : undefined,
+        );
         if (cv !== undefined) out.cost = cv;
       }
     }
     result.push(out);
   }
   return result;
+}
+
+/**
+ * Issue #600 caching PR P — what a run cost, priced at read: every step's `total` and every failed
+ * drive's billed requests on the record, how many failed drives are no longer on the record
+ * (`drive_failures.total` − the entries kept), how many on the record carry no usage figures, and
+ * the attempts realm has no usage for, by cause.
+ * `undefined` with no price source. Total: a malformed record degrades, never throws.
+ */
+export function composeRunCost(
+  run: RunRecord,
+  deps?: { definition?: WorkflowDefinition; priceSource?: PriceSource },
+): RunCost | undefined {
+  const source = deps?.priceSource;
+  if (source === undefined) return undefined;
+  const total = emptyMoney();
+  const unmeasured = { tool_calling_step: 0, not_measured_by_realm: 0, cost_unreadable: 0 };
+  const steps = composeStepViews(run, {
+    ...(deps?.definition !== undefined ? { definition: deps.definition } : {}),
+    priceSource: source,
+  });
+  for (const view of Object.values(steps)) {
+    if (view.total !== undefined) addMoney(total, view.total);
+    for (const attempt of view.attempts) {
+      if (attempt.cost_unreadable === true) unmeasured.cost_unreadable += 1;
+      else if (attempt.cost_unrecorded !== undefined) unmeasured[attempt.cost_unrecorded] += 1;
+    }
+  }
+  for (const failure of composeDriveFailureCosts(run, { priceSource: source })) {
+    if (failure.cost?.money !== undefined) addMoney(total, failure.cost.money);
+  }
+  const driveFailures: unknown = run.drive_failures;
+  let notOnRecord = 0;
+  let withoutUsage = 0;
+  if (typeof driveFailures === 'object' && driveFailures !== null) {
+    const recorded = (driveFailures as Record<string, unknown>)['total'];
+    const entries = (driveFailures as Record<string, unknown>)['entries'];
+    if (typeof recorded === 'number' && Number.isFinite(recorded)) {
+      notOnRecord = Math.max(0, recorded - (Array.isArray(entries) ? entries.length : 0));
+    }
+    if (Array.isArray(entries)) {
+      for (const entry of entries as unknown[]) {
+        const usage =
+          typeof entry === 'object' && entry !== null
+            ? (entry as Record<string, unknown>)['usage']
+            : undefined;
+        if (!Array.isArray(usage) || usage.length === 0) withoutUsage += 1;
+      }
+    }
+  }
+  return {
+    total,
+    failed_drives_not_on_record: notOnRecord,
+    failed_drives_without_usage: withoutUsage,
+    unmeasured,
+  };
 }

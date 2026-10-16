@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
   validateDeploymentManifest,
   collectManifestSecretRefs,
+  parseDeploymentManifest,
   type DeploymentManifest,
 } from './deployment-manifest.js';
 import {
@@ -185,5 +186,50 @@ describe('collectManifestSecretRefs', () => {
   it('collects across adapters/handlers/processors/notifiers config trees', () => {
     const refs = collectManifestSecretRefs(VALID);
     expect(refs.map((r) => r.name).sort()).toEqual(['GITHUB_TOKEN', 'SLACK_WEBHOOK_URL']);
+  });
+});
+
+// issue #600 caching PR P (G6): `runner.cache.economics` names the runner's price file. Each cell
+// prints the validation errors: test values only.
+describe('runner.cache.economics (issue #600 caching PR P, G6)', () => {
+  it('the key is accepted', () => {
+    expect(
+      validateDeploymentManifest({ version: 1, runner: { cache: { economics: './prices.yaml' } } }),
+    ).toEqual([]);
+  });
+
+  // (a) red when `additionalProperties: false` is removed at either level; (b) prints the errors.
+  it('a misspelt key is refused with the unknown-key line, at both levels', () => {
+    expect([
+      validateDeploymentManifest({ version: 1, runner: { cache: { foo: 'x' } } }),
+      validateDeploymentManifest({ version: 1, runner: { concurrency: 2 } }),
+    ]).toEqual([
+      ["manifest/runner/cache: unknown key 'foo'"],
+      ["manifest/runner: unknown key 'concurrency'"],
+    ]);
+  });
+
+  // (a) red when the placement check skips the key; (b) prints the errors.
+  it('a ${secret:…} in the key is refused: "is not allowed here"', () => {
+    expect(
+      validateDeploymentManifest({ version: 1, runner: { cache: { economics: '${secret:X}' } } }),
+    ).toEqual([
+      "runner.cache.economics: '${secret:X}' is not allowed here — secret references are legal only inside string values under 'config'.",
+    ]);
+  });
+});
+
+// issue #600 caching PR P (G7, core half): realm.yaml parsed in one place, the two failures distinct.
+describe('parseDeploymentManifest (issue #600 caching PR P)', () => {
+  it('a YAML error and a schema error stay two kinds; a valid document is returned', () => {
+    const yaml = parseDeploymentManifest('version: [1\n');
+    const schema = parseDeploymentManifest('version: 1\nfoo: 1\n');
+    const ok = parseDeploymentManifest('version: 1\nrunner:\n  cache:\n    economics: p.yaml\n');
+    expect([
+      'error' in yaml && yaml.error.kind,
+      'error' in yaml && yaml.error.kind === 'yaml' && yaml.error.cause instanceof Error,
+      'error' in schema && schema.error.kind === 'schema' && schema.error.errors,
+      'document' in ok && ok.document.runner?.cache?.economics,
+    ]).toEqual(['yaml', true, ["manifest: unknown key 'foo'"], 'p.yaml']);
   });
 });

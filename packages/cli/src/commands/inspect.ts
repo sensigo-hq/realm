@@ -6,6 +6,8 @@
 // import, no createRequire), never the extensions loader.
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import {
   describePending,
   pendingCleanupLine,
@@ -24,10 +26,12 @@ import {
   getWorkflowForRun,
   composeStepViews,
   composeDriveFailureCosts,
+  composeRunCost,
   describeClaimHolder,
   isAnswerEntry,
   outputSourceOf,
   readSupplier,
+  parseDeploymentManifest,
 } from '@sensigo/realm';
 import {
   CLI_COMMANDS,
@@ -62,6 +66,11 @@ import type {
   CostUnrecordedCause,
   AttemptView,
   CacheRequestedEntry,
+  Money,
+  MoneySource,
+  NotPricedCause,
+  PriceSource,
+  RunCost,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
 import {
@@ -339,6 +348,16 @@ function includedInPrompt(cost: CostView): boolean {
 }
 
 /**
+ * Issue #600 caching PR P (ride-along) — a stored word in quotes: `'word'` as before when it needs
+ * no escaping, else through `quotedForTerminal` (double quotes, every control character escaped), so
+ * no control byte a record carries reaches the terminal.
+ */
+function quotedWord(word: string): string {
+  const quoted = quotedForTerminal(word);
+  return quoted.slice(1, -1) === word ? `'${word}'` : quoted;
+}
+
+/**
  * Issue #600 PR 1b — the provenance word, READ from the field rather than hardcoded beside it. A
  * word this build does not know is NAMED as unrecognised rather than printed as though it were a
  * fact — this slot is where an operator learns whether a number was measured.
@@ -350,7 +369,8 @@ function basisWord(basis: string | undefined): string {
   // `not recorded` would be false for a corrupt value, and quoting a token the record lacks is worse.
   if (basis === undefined) return 'no readable basis';
   if ((CACHE_BASES as readonly string[]).includes(basis)) return basis;
-  return `unrecognized basis '${basis}'`;
+  // issue #600 caching PR P (ride-along): a stored word reaches the terminal escaped.
+  return `unrecognized basis ${quotedWord(basis)}`;
 }
 
 /**
@@ -381,7 +401,7 @@ function formatCache(cost: CostView): string {
     return `cache: no readable state — ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
   }
   if (!(CACHE_STATES as readonly string[]).includes(cost.state)) {
-    return `cache: unrecognized state '${cost.state}' — ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
+    return `cache: unrecognized state ${quotedWord(cost.state)} — ${read}, ${wrote} (${includedClause}${prov}, ${scope})`;
   }
   if (cost.state === 'never_engaged') {
     return `cache: not engaged — ${read}, ${wrote} (${prov}, ${scope})`;
@@ -493,13 +513,250 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
       zeroFromEvery(cost.cache_read) &&
       zeroFromEvery(cost.cache_write)
     ) {
+      // issue #600 caching PR P: the gateway reason, only where a request went to a custom endpoint.
+      const gateway =
+        cost.endpoints !== undefined && 'custom' in cost.endpoints && cost.endpoints.custom > 0;
       clauses.push(
-        "nothing was written or read: the cached part may be shorter than the model's minimum",
+        "nothing was written or read: the cached part may be shorter than the model's minimum" +
+          (gateway ? ', or the endpoint dropped the request to cache' : ''),
       );
     }
     out.ask = clauses.join('; ');
   }
   return out;
+}
+
+/**
+ * Issue #600 caching PR P — a USD figure as the operator reads it: three significant figures below
+ * $1 (trailing zeros dropped), two decimals from $1; an exact zero is `$0`. `floor` floors instead
+ * of rounding, for a figure that is a lower bound (rounding a "≥" up would make it false).
+ */
+export function formatUsd(value: number, floor = false): string {
+  if (value === 0) return '$0';
+  const round = (x: number): number => (floor ? Math.floor(x + 1e-9) : Math.round(x));
+  if (value < 1) {
+    const exponent = Math.floor(Math.log10(value));
+    const places = 2 - exponent;
+    const scaled = round(value * 10 ** places) / 10 ** places;
+    if (scaled < 1) return `$${scaled.toFixed(places).replace(/\.?0+$/, '')}`;
+    return `$${scaled.toFixed(2)}`;
+  }
+  return `$${(round(value * 100) / 100).toFixed(2)}`;
+}
+
+/** Issue #600 caching PR P — a source's name: the runner's file, or the list and its version. */
+function sourceLabel(source: Pick<MoneySource, 'source_class' | 'version'>): string {
+  if (source.source_class === 'economics') return 'your economics file';
+  return source.version === undefined || source.version === 'version unknown'
+    ? 'genai-prices, version unknown'
+    : `genai-prices ${source.version}`;
+}
+
+/** Issue #600 caching PR P — the date basis of figures: how many of `count` were priced at the call's date. */
+function dateBasisText(dated: number, count: number): string {
+  if (dated === count) return "at the call's date";
+  if (dated === 0) return 'current price';
+  return `${dated} at the call's date, ${count - dated} current`;
+}
+
+/** Issue #600 caching PR P — `prices from: <name> (N), <name> (M)`, from core's per-source counts. */
+function sourceTotalsText(money: Money): string {
+  return `prices from: ${money.source_totals.map((t) => `${sourceLabel(t)} (${t.count})`).join(', ')}`;
+}
+
+/** A host's or a list's free text, escaped when it needs it. */
+function safeText(text: string): string {
+  const quoted = quotedForTerminal(text);
+  return quoted.slice(1, -1) === text ? text : quoted;
+}
+
+/** Issue #600 caching PR P — why a request has no price, in the operator's words. */
+function notPricedWords(cause: NotPricedCause, detail: string | undefined): string {
+  const d = detail !== undefined ? safeText(detail) : undefined;
+  switch (cause) {
+    case 'no_price_source':
+      return (
+        'no price source: add prices in runner.cache.economics, or install @pydantic/genai-prices beside realm' +
+        (d !== undefined ? ` (${d})` : '')
+      );
+    case 'economics_unreachable':
+      return `economics unreachable: ${d ?? 'no reason given'}`;
+    case 'economics_unreadable':
+      return `your economics file: ${d ?? 'it does not parse'}`;
+    case 'model_not_recorded':
+      return 'model not recorded';
+    case 'model_unknown':
+      return (
+        'no price for this model: add it to your economics file' +
+        (d !== undefined ? ` (${d})` : '')
+      );
+    case 'usage_incomplete':
+      return 'the recorded usage is incomplete';
+    case 'date_unreadable':
+      return "the call's date is unreadable";
+    case 'price_list_error':
+      return `price list error${d !== undefined ? `: ${d}` : ''}`;
+    case 'rate_missing':
+      return `your economics file ${d ?? 'lacks a rate'}`;
+  }
+}
+
+/** The not-priced groups, each with its count when the figure also prices something. */
+function notPricedList(money: Money, withCounts: boolean): string[] {
+  return (money.not_priced ?? []).map((n) =>
+    withCounts || (money.not_priced ?? []).length > 1
+      ? `${n.count} not priced: ${notPricedWords(n.cause, n.detail)}`
+      : notPricedWords(n.cause, n.detail),
+  );
+}
+
+/**
+ * Issue #600 caching PR P — the sources part of a money figure: the source's name (the runner's
+ * file, or one list version), the date basis over all the figures, what they priced a request as
+ * when that differs from the recorded model, and their notes. Sources with several names read
+ * `prices from: <name> (N), <name> (M)` in place of the one name, then the same parts. With
+ * `recordedModels` `undefined` (the run's line: a run records many names), the `priced as` part is
+ * left to the step and attempt lines.
+ */
+function sourcesText(money: Money, recordedModels: readonly string[] | undefined): string {
+  const parts = [
+    money.source_totals.length > 1 ? sourceTotalsText(money) : sourceLabel(money.source_totals[0]!),
+    dateBasisText(money.dated, money.priced),
+  ];
+  if (recordedModels !== undefined) {
+    const pricedAs = money.sources
+      .filter((s) => !recordedModels.includes(s.matched_model))
+      .map(
+        (s) =>
+          `priced as ${s.matched_provider !== undefined ? `${safeText(s.matched_provider)}'s ` : ''}${safeText(s.matched_model)}`,
+      );
+    parts.push(...new Set(pricedAs));
+  }
+  parts.push(
+    ...new Set(
+      money.sources.flatMap((s) => (s.endpoint_note !== undefined ? [s.endpoint_note] : [])),
+    ),
+  );
+  parts.push(
+    ...new Set(
+      money.sources.flatMap((s) => (s.source_note !== undefined ? [safeText(s.source_note)] : [])),
+    ),
+  );
+  return parts.join('; ');
+}
+
+/**
+ * Issue #600 caching PR P — THE one composer of a cost line's money, shared by the step line, each
+ * earlier attempt's line and the failed-drive line. `undefined` when there is nothing to say: no
+ * price source was given, no request, or every request names no model (a record from 0.47.0 or
+ * earlier prints exactly what it printed before).
+ */
+function moneyText(cost: CostView): string | undefined {
+  const money = cost.money;
+  if (money === undefined || money.of === 0) return undefined;
+  const notPriced = money.not_priced ?? [];
+  if (money.priced === 0) {
+    if (notPriced.every((n) => n.cause === 'model_not_recorded')) return undefined;
+    return `not priced (${notPricedList(money, false).join('; ')})`;
+  }
+  const recorded = cost.models !== undefined && 'names' in cost.models ? cost.models.names : [];
+  const partial = money.priced < money.of;
+  const parts = [sourcesText(money, recorded)];
+  if (partial) {
+    parts.push(`${money.priced} of ${money.of} requests priced`, ...notPricedList(money, true));
+  }
+  const figure = partial ? `≥ ${formatUsd(money.total, true)}` : formatUsd(money.total);
+  return `${figure} (${parts.join('; ')})${netText(money)}`;
+}
+
+/**
+ * Issue #600 caching PR P — what caching saved or cost, after a money figure: `; caching saved $X`,
+ * `; caching cost $X more`, or nothing when the net is 0. Shared by `moneyText` and the run's line.
+ */
+function netText(money: Money): string {
+  return money.net > 0
+    ? `; caching saved ${formatUsd(money.net)}`
+    : money.net < 0
+      ? `; caching cost ${formatUsd(-money.net)} more`
+      : '';
+}
+
+/**
+ * Issue #600 caching PR P — a step's money across its attempts, for its header:
+ * ` — $0.123 across 3 attempts (your economics file)`. A lower bound (`≥`, floored) when a request
+ * was not priced, or when `leavesOut`: one of its attempts has no usage figures, so its cost is not
+ * in the figure. Empty when nothing was priced.
+ */
+function stepTotalText(total: Money | undefined, attempts: number, leavesOut: boolean): string {
+  if (total === undefined || total.priced === 0) return '';
+  const figure =
+    total.priced < total.of || leavesOut
+      ? `≥ ${formatUsd(total.total, true)}`
+      : formatUsd(total.total);
+  const names = total.source_totals.map((t) => sourceLabel(t)).join(', ');
+  return ` — ${figure} across ${attempts} attempts (${names})`;
+}
+
+/**
+ * Issue #600 caching PR P — the run's cost line, after `Phase:`. Every request of every step and of
+ * every failed drive on the record, with what the figure leaves out: attempts realm has no usage
+ * for, failed drives on the record with no usage figures, and failed drives no longer on the
+ * record. A full figure, as the step's: its sources, its date basis, its notes and what caching
+ * saved or cost (the `priced as` part is left to the step lines). `undefined` when there is nothing
+ * to price, or when every request names no model.
+ */
+function runCostLine(cost: RunCost | undefined): string | undefined {
+  if (cost === undefined) return undefined;
+  const money = cost.total;
+  if (money.of === 0) return undefined;
+  const notPriced = money.not_priced ?? [];
+  if (money.priced === 0) {
+    if (notPriced.every((n) => n.cause === 'model_not_recorded')) return undefined;
+    return `Cost: not priced (${notPricedList(money, false).join('; ')})`;
+  }
+  const leftOut: string[] = [];
+  const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+  if (cost.unmeasured.tool_calling_step > 0) {
+    leftOut.push(
+      `${plural(cost.unmeasured.tool_calling_step, 'tool-calling attempt', 'tool-calling attempts')} not measured`,
+    );
+  }
+  if (cost.unmeasured.cost_unreadable > 0) {
+    leftOut.push(
+      `${plural(cost.unmeasured.cost_unreadable, 'attempt', 'attempts')} with unreadable usage`,
+    );
+  }
+  if (cost.unmeasured.not_measured_by_realm > 0) {
+    leftOut.push(
+      `${plural(cost.unmeasured.not_measured_by_realm, 'attempt', 'attempts')} realm has no usage figures for`,
+    );
+  }
+  // The drives on the record first, then the ones off it.
+  if (cost.failed_drives_without_usage > 0) {
+    leftOut.push(
+      `${plural(cost.failed_drives_without_usage, 'failed drive', 'failed drives')} without usage figures`,
+    );
+  }
+  if (cost.failed_drives_not_on_record > 0) {
+    leftOut.push(
+      `${plural(cost.failed_drives_not_on_record, 'failed drive', 'failed drives')} not on the record`,
+    );
+  }
+  const lowerBound =
+    money.priced < money.of ||
+    cost.unmeasured.tool_calling_step > 0 ||
+    cost.unmeasured.cost_unreadable > 0 ||
+    cost.unmeasured.not_measured_by_realm > 0 ||
+    cost.failed_drives_without_usage > 0 ||
+    cost.failed_drives_not_on_record > 0;
+  const figure = lowerBound ? `≥ ${formatUsd(money.total, true)}` : formatUsd(money.total);
+  const parts = [
+    sourcesText(money, undefined),
+    `${money.priced} of ${money.of} requests priced`,
+    ...(money.priced < money.of ? notPricedList(money, true) : []),
+    ...leftOut,
+  ];
+  return `Cost: ${figure} (${parts.join('; ')})${netText(money)}`;
 }
 
 /**
@@ -550,7 +807,9 @@ function formatDriveFailureUsage(cost: CostView, errorClass?: string): string {
   const facts = requestFactsText(cost);
   const model = facts.model !== undefined ? `; ${facts.model}` : '';
   const ask = facts.ask !== undefined ? `; ${facts.ask}` : '';
-  return `    usage: ${scope} billed ${ended} — ${promptStr}, ${outputStr}, ${cacheStr}${model}${ask}`;
+  // issue #600 caching PR P: the money, through the shared composer.
+  const money = moneyText(cost);
+  return `    usage: ${scope} billed ${ended} — ${promptStr}, ${outputStr}, ${cacheStr}${model}${ask}${money !== undefined ? ` | ${money}` : ''}`;
 }
 
 /**
@@ -617,7 +876,12 @@ function formatDiagnostics(
   const facts = cost !== undefined ? requestFactsText(cost) : {};
   const model = facts.model !== undefined ? ` | ${facts.model}` : '';
   const ask = facts.ask !== undefined ? `; ${facts.ask}` : '';
-  const cache = cost !== undefined ? ` | ${formatCache(cost)}${ask}` : '';
+  // issue #600 caching PR P: the money after the cache segment, through the shared composer.
+  const money = cost !== undefined ? moneyText(cost) : undefined;
+  const cache =
+    cost !== undefined
+      ? ` | ${formatCache(cost)}${ask}${money !== undefined ? ` | ${money}` : ''}`
+      : '';
   if (diag.precondition_trace.length === 0) {
     return `${tokens}${prompt}${output}${model} | no preconditions${cache}`;
   }
@@ -686,7 +950,14 @@ export async function inspectRun(
   runId: string,
   store: RunStore,
   workflowStore: WorkflowRegistrar,
-  options?: { verbose?: boolean; checkDrift?: boolean },
+  options?: {
+    verbose?: boolean;
+    checkDrift?: boolean;
+    /** Issue #600 caching PR P: the prices to show money with (tests inject one). */
+    priceSource?: PriceSource;
+    /** Issue #600 caching PR P: builds the prices from the run's definition (the command's own). */
+    priceSourceFor?: (definition: WorkflowDefinition | undefined) => Promise<PriceSource>;
+  },
 ): Promise<string> {
   const run: RunRecord = await store.get(runId);
 
@@ -732,7 +1003,16 @@ export async function inspectRun(
 
   // issue #600 PR 1b: the one composed cost view, derived ONCE from `run` \u2014 every render below
   // reads it rather than re-summing `StepDiagnostics.cache` at each call site.
-  const stepViews = composeStepViews(run, definition !== undefined ? { definition } : {});
+  // issue #600 caching PR P: money only with a price source — injected, or built from the run's
+  // deployment root by the command.
+  const priceSource =
+    options?.priceSource ??
+    (options?.priceSourceFor !== undefined ? await options.priceSourceFor(definition) : undefined);
+  const viewDeps = {
+    ...(definition !== undefined ? { definition } : {}),
+    ...(priceSource !== undefined ? { priceSource } : {}),
+  };
+  const stepViews = composeStepViews(run, viewDeps);
   // issue #625 (holder slice): a step is a QUESTION step while its question is open and once it has
   // been answered or has expired — the word on its claim and attempt lines changes with it. Keyed on
   // the step's `gate_response` entries, not on its answers: an `on_expiry: abort` expiry leaves an
@@ -765,6 +1045,9 @@ export async function inspectRun(
   lines.push(`Run: ${run.id}`);
   lines.push(`Workflow: ${workflowLabel}`);
   lines.push(`Phase: ${phaseLabel}`);
+  // issue #600 caching PR P: what the run cost, priced at read.
+  const costLine = runCostLine(composeRunCost(run, viewDeps));
+  if (costLine !== undefined) lines.push(costLine);
   // issue #558 PR-C: the supersede link, beside the phase. Absent for a first run and a `reuse`.
   if (run.rerun_of !== undefined) lines.push(`Rerun of: ${run.rerun_of}`);
   // issue #367: the recorded seal fact, beside the phase it derives. An unrecognised arm is shown
@@ -905,7 +1188,10 @@ export async function inspectRun(
   if (driveFailures !== undefined && driveFailures.entries.length > 0) {
     lines.push('');
     lines.push('Drive failures:');
-    const driveFailureCosts = composeDriveFailureCosts(run);
+    const driveFailureCosts = composeDriveFailureCosts(
+      run,
+      priceSource !== undefined ? { priceSource } : undefined,
+    );
     driveFailures.entries.forEach((entry, i) => {
       // Each discriminator renders only when present: an operator debugging a 429 storm needs the
       // status and the Retry-After; padding every line with absent fields buries what matters.
@@ -1170,7 +1456,14 @@ export async function inspectRun(
         lastSnap.agent_profile !== undefined
           ? chalk.cyan(` [profile: ${lastSnap.agent_profile}]`)
           : '';
-      lines.push(`  ${idx + 1}. ${stepId}${profileLabel}`);
+      // issue #600 caching PR P: the step's money across its attempts, beside its name; a lower
+      // bound when an attempt has no usage figures (the composer's own attempt facts, never a sum).
+      const leavesOut =
+        view?.attempts.some((a) => a.cost_unrecorded !== undefined || a.cost_unreadable === true) ??
+        false;
+      lines.push(
+        `  ${idx + 1}. ${stepId}${profileLabel}${stepTotalText(view?.total, totalAttempts, leavesOut)}`,
+      );
       executionSnaps.forEach((snap, ai) => {
         const statusColored = colorStatus(snap.status);
         const hashShort = chalk.dim(`hash: ${snap.evidence_hash.slice(0, 8)}`);
@@ -1235,7 +1528,9 @@ export async function inspectRun(
           const facts = requestFactsText(attempt.cost);
           const cache =
             formatCache(attempt.cost) + (facts.ask !== undefined ? `; ${facts.ask}` : '');
-          const segs = [prompt, output, facts.model ?? '', cache].filter((s) => s !== '');
+          // issue #600 caching PR P: this attempt's own money, through the shared composer.
+          const money = moneyText(attempt.cost) ?? '';
+          const segs = [prompt, output, facts.model ?? '', cache, money].filter((s) => s !== '');
           lines.push(chalk.dim(`     ${label}: ${segs.join(' | ')}`));
         } else {
           const sentence = costAbsenceSentence(attempt.cost_unrecorded, attempt.cost_unreadable);
@@ -1362,6 +1657,50 @@ export async function inspectRun(
   return lines.join('\n');
 }
 
+/**
+ * Issue #600 caching PR P — the prices `realm run inspect` shows money with, built from the run's
+ * own deployment root WITHOUT the extensions loader (this file's read-only invariant): it reads
+ * `<trust_root>/realm.yaml` through core's `parseDeploymentManifest`, and loads realm-mcp's
+ * `loadPriceSource` with the economics file it names (no project code runs). A run whose workflow
+ * copy is unreadable, or records no deployment root, prices nothing (`economics_unreachable`, with
+ * that reason); no `realm.yaml` there, or one without the key, means the installed price list only;
+ * a `realm.yaml` that cannot be read or is invalid prices nothing, naming the file.
+ */
+export async function inspectPriceSource(
+  definition: WorkflowDefinition | undefined,
+): Promise<PriceSource> {
+  const unreachable = (detail: string): PriceSource => {
+    const result = { not_priced: 'economics_unreachable' as const, detail };
+    return { price: () => result };
+  };
+  if (definition === undefined) return unreachable("the run's workflow copy could not be read");
+  const root = definition.trust_root;
+  if (root === undefined) return unreachable("the run's workflow copy records no deployment root");
+  const manifestPath = join(root, 'realm.yaml');
+  const { loadPriceSource } = await import('@sensigo/realm-mcp');
+  let text: string;
+  try {
+    text = await readFile(manifestPath, 'utf8');
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (code === 'ENOENT') return loadPriceSource({});
+    return unreachable(
+      `cannot read '${manifestPath}': ${typeof code === 'string' ? code : String(err)}`,
+    );
+  }
+  const parsed = parseDeploymentManifest(text);
+  if ('error' in parsed) {
+    return unreachable(
+      parsed.error.kind === 'yaml'
+        ? `'${manifestPath}' is not valid YAML`
+        : `'${manifestPath}' is invalid: ${parsed.error.errors[0] ?? 'invalid'}`,
+    );
+  }
+  const named = parsed.document.runner?.cache?.economics;
+  if (named === undefined) return loadPriceSource({});
+  return loadPriceSource({ economicsPath: isAbsolute(named) ? named : join(root, named) });
+}
+
 export const inspectCommand = new Command('inspect')
   .argument('<run-id>', 'ID of the run to inspect')
   .description('Display the full evidence chain and diagnostics for a run')
@@ -1378,6 +1717,7 @@ export const inspectCommand = new Command('inspect')
       const output = await inspectRun(runId, store, workflowStore, {
         ...(cmdOpts.verbose === true ? { verbose: true } : {}),
         ...(cmdOpts.checkDrift === true ? { checkDrift: true } : {}),
+        priceSourceFor: inspectPriceSource,
       });
       console.log(output);
     } catch (err) {
