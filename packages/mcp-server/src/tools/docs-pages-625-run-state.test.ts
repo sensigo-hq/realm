@@ -419,7 +419,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        "| `capability_blocks` | The run is open and records that the program which last attempted a step lacked its code, and the step has not run since | Each such step, what it needs, and the error code: the record's marker, shown whenever the run carries one, whatever this server has. The `capability_block` finding is narrower: `get_run_state` reports it only when this server lacks the code too (see [The 14 findings](#the-14-findings)). Added after version 0.46.0. |",
+        "| `capability_blocks` | The run is open and records that the program which last attempted a step lacked its code, and the step has not run since | Each such step, what it needs, and the error code: the record's marker, shown whenever the run carries one, whatever this server has. The `capability_block` finding is narrower: `get_run_state` reports it only when this server lacks the code too (see [The 15 findings](#the-15-findings)). Added after version 0.46.0. |",
       );
       claim(
         PAGE,
@@ -1125,6 +1125,130 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
         failedBefore: ['failed', ['check']],
         resume: [0, ['guard_awaiting_settlement']],
         twoWrites: ['guard_awaiting_settlement'],
+      });
+    },
+  );
+});
+
+// issue #729 — the operator-side stuck marker on this page: the heading's count, the new row and its
+// example, the surface row and the two rows that no longer say "Not found by `list`", each quoted;
+// and the row's runtime claim — found the moment it is so, at any age, by `get_run_state`,
+// `realm run inspect` and `realm run list --stuck` — driven on the crown's W2 over a real client
+// and the built CLI (fresh HOME). What a failing cell prints: kinds, steps, checks, line counts.
+describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
+  it('the page: 15 findings, the cannot_go_on row and example, the list --stuck surface row, the guard and trust rows', () => {
+    claim(PAGE, '### The 15 findings');
+    claim(
+      PAGE,
+      "| `cannot_go_on` | The run is in `running`, no step is in progress, and a step it must run next is refused before its claim — its trust, a precondition, or an input its schema rejects — so nothing can run until the workflow is corrected. Found the moment it is so, at any age, wherever the definition can be read (`list --stuck`, `inspect`, `get_run_state`). `since` is the run's last change (the record's own instant): the finding keeps no clock, and a workflow corrected or registered again later is not a change of the run. (added after version 0.47.0) | `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)` |",
+    );
+    claim(
+      PAGE,
+      '| `realm run list --stuck` | The runs that have a finding, with a short label at the end of the line. It judges each run with its registered workflow when that copy can be read, and four findings do not select a run. (added after version 0.47.0) |',
+    );
+    claim(
+      PAGE,
+      '| `guard_awaiting_settlement` | A guard step is ready, and no write has decided it. | None. It does not select a run: `advance` can decide the guard. (added after version 0.47.0) |',
+    );
+    claim(
+      PAGE,
+      '| `trust_value_invalid` | A step that is ready has a `trust` value Realm does not accept. The registered copy was stored by an older version. | None. It does not select a run; when nothing else can run, the run is also `cannot_go_on`, whose label is shown. (added after version 0.47.0) |',
+    );
+    claim(
+      PAGE,
+      '`cannot_go_on`, for a run whose step `publish` needs a `text` input that its earlier step did not return (added after version 0.47.0):',
+    );
+  });
+
+  it(
+    'W2’s stuck run at age 0: get_run_state (with this server’s registry) carries cannot_go_on as the example shows; inspect shows it once and the way out once; list --stuck lists it with its label',
+    { timeout: 60_000 },
+    async () => {
+      const home = await mkdtemp(join(tmpdir(), 'realm-pin-b-729-home-'));
+      const registry = createDefaultRegistry();
+      registry.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
+      const server = await connect({ home, registry });
+      await server.workflowStore.register(
+        yaml([
+          'id: w2-crown',
+          'name: w2 crown',
+          'version: 1',
+          'steps:',
+          '  summarize:',
+          '    description: Summarize the text.',
+          '    execution: agent',
+          '    depends_on: []',
+          '  publish:',
+          '    description: Publish.',
+          '    execution: auto',
+          '    depends_on: [summarize]',
+          '    handler: h',
+          '    input_map:',
+          '      text: context.resources.summarize.summary',
+          '    input_schema:',
+          '      type: object',
+          '      required: [text]',
+          '      properties:',
+          '        text: { type: string }',
+        ]),
+      );
+      const started = await server.call('start_run', { workflow_id: 'w2-crown' });
+      const runId = String(started['run_id']);
+      await server.call('execute_step', {
+        run_id: runId,
+        command: 'summarize',
+        params: { other: 'x' },
+      });
+      const state = await server.call('get_run_state', { run_id: runId });
+      const finding = (state['run_health'] as Array<Record<string, unknown>> | undefined)?.find(
+        (f) => f['kind'] === 'cannot_go_on',
+      );
+      // The page's example, its instant aside (the record's own `updated_at`).
+      const example = JSON.parse(block(PAGE, '"kind": "cannot_go_on"').join('\n')) as Record<
+        string,
+        unknown
+      >;
+      const { since: _exampleSince, ...exampleRest } = example;
+      const { since, ...findingRest } = finding ?? {};
+      // (a) red when get_run_state does not carry the finding, carries another kind beside it (a
+      //     capability, though this server has the handler: C46), differs from the page's example,
+      //     states another instant than the run's last change (correction 1, C2: the row's `since`
+      //     sentence), or carries a way out (C6: the CHANGELOG says inspect prints it, not
+      //     get_run_state); (b) prints the kinds, booleans, the evidence keys and whether a hint is
+      //     on the reply.
+      expect({
+        kinds: kinds(state),
+        sinceIsTheRunsLastChange: typeof since === 'string' && since === state['updated_at'],
+        asTheExample: JSON.stringify(findingRest) === JSON.stringify(exampleRest),
+        evidenceKeys: Object.keys((finding?.['evidence'] as Record<string, unknown>) ?? {}),
+        hint: 'context_hint' in state,
+      }).toEqual({
+        kinds: ['cannot_go_on'],
+        sinceIsTheRunsLastChange: true,
+        asTheExample: true,
+        evidenceKeys: ['refused'],
+        hint: false,
+      });
+      // correction 1, C6: the CHANGELOG's sentence — every surface names the step and the check;
+      // inspect prints the way out (counted below) and list --stuck points at it.
+      claim(
+        'CHANGELOG.md',
+        '`realm run list --stuck`, `realm run inspect` and `get_run_state` name a run that cannot go on the moment it cannot — the step and the check that refused it — at any age; `realm run inspect` prints the way out, and `list --stuck` points at it; the 24-hour idle finding stays as the second detector.',
+      );
+      const inspected = realm(home, ['run', 'inspect', runId]).out;
+      const listed = realm(home, ['run', 'list', '--stuck']).out;
+      // (a) red when inspect leaves the finding out or prints it (or the way out) twice, or
+      //     list --stuck does not list the run at age 0 with its label; (b) prints the counts and
+      //     what follows `idle:` on the run's line.
+      expect({
+        findingLines: inspected.filter((l) => l.includes('cannot_go_on [publish]: input_schema'))
+          .length,
+        wayOutLines: inspected.filter((l) => l.includes(`Run ${runId} stays open`)).length,
+        listed: listed.find((l) => l.startsWith(runId))?.replace(/^.* idle: /, ''),
+      }).toEqual({
+        findingLines: 1,
+        wayOutLines: 1,
+        listed: `0m  publish=cannot_go_on(input_schema) (realm run inspect ${runId})`,
       });
     },
   );
