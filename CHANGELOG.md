@@ -339,13 +339,18 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   evidence entry's `output_source`, and the cli README lists `--strict-base-url` among the flags
   `--provider-module` cannot be combined with.
 
-- **Schema checks no longer recompile their schema on every call (issue #560).** Each authored
-  schema whose content is plain JSON is compiled once per process (up to 256 schemas and 4 Mi
-  characters of schema text) and reused by every input, output, params and trace check, and by the
-  check that follows a workflow's load; a schema holding a date, an infinite number or binary data is
-  compiled each time, as before. `realm run list --stuck` over many open runs is no longer slowed by
-  it. The exported `compileSchema` now returns a validator shared by its callers: read its `.errors`
-  right after the call, and do not change the schema it was given.
+- **Schema checks no longer recompile their schema on every call (issue #560).** The run-time
+  checks (input, output, params and trace) compile each authored schema whose content is plain JSON
+  once per process and reuse it; the check at a workflow's load still compiles, so its strict-mode
+  notes are captured on every load, and the run time then reuses that compile. The cache holds at
+  most 256 schemas, weighed by their text and by the compiled code they keep, up to about 23 MB at
+  its bound in the heaviest case measured; a schema heavier than the whole bound is compiled each
+  time and not kept. A schema holding a date, an infinite number or binary data is compiled each
+  time, as before. `realm run list --stuck` over 50 stuck runs took 3.96–4.68 s before this change
+  and 1.29–1.65 s after. The exported `compileSchema` now returns a validator shared by its callers:
+  read its `.errors` right after calling the validator. For a schema it compiles from plain JSON
+  under 4 Mi characters of text, the validator's `.schema` is a frozen copy, not the object passed
+  in.
 
 ---
 

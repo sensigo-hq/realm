@@ -353,11 +353,12 @@ describe('validateAgentSubmission (issue #224)', () => {
 });
 
 // =================================================================================================
-// issue #560 — each authored schema is compiled once per process, not on every check. The cache
-// key is the schema's JSON text when its content is exactly JSON; the entry is compiled from its
-// own frozen copy; the capturing path (the loader) writes the cache and never reads it; the bound
-// is 256 entries and 4 Mi key characters. What a failing cell prints: function identities as
-// booleans, verdicts, error counts and instance paths — never a value.
+// issue #560 — the run-time checks reuse each authored schema's compiled validator instead of
+// compiling it on every check. The cache key is the schema's JSON text when its content is exactly
+// JSON; the entry is compiled from its own frozen copy; the capturing path (the loader) writes the
+// cache and never reads it; the bound is 256 entries and 4 Mi of weight. What a failing cell
+// prints: function identities as booleans, verdicts, error counts and instance paths — never a
+// value.
 // =================================================================================================
 describe('issue #560 — the compiled-validator cache', () => {
   it('1. same content, one function: the same object twice, and two JSON-equal objects; different content, different functions', () => {
@@ -415,8 +416,8 @@ describe('issue #560 — the compiled-validator cache', () => {
     }).toEqual({ firstThrew: true, secondThrew: true, sameError: false, validAfter: true });
   });
 
-  // 5a and 5b compile hundreds of schemas (or megabytes of one), each with its own Ajv: under the
-  // full suite's load they need more than the default five seconds.
+  // 5a and the 5b cells compile hundreds of schemas (or megabytes of code), each with its own Ajv:
+  // under the full suite's load they need more than the default five seconds.
   it(
     '5a. the LRU, by entries: 256 schemas, #1 used again, #257 compiled → #1 kept, #2 evicted',
     { timeout: 60_000 },
@@ -435,26 +436,126 @@ describe('issue #560 — the compiled-validator cache', () => {
     },
   );
 
+  // The weight's shapes (correction 1). Every entry gets its OWN generated code — a `pattern` varies
+  // with `k` — so no entry shares compiled code with another; CONST's code is the same for every k,
+  // and its weight is its JSON values.
+  const leaf = (k: number): Record<string, unknown> => ({
+    type: 'object',
+    properties: Object.fromEntries(
+      Array.from({ length: 40 }, (_, i) => [
+        `f${i}`,
+        { type: 'string', maxLength: 9, pattern: `^a${i}k${k}` },
+      ]),
+    ),
+  });
+  const refsToLeaf = (r: number): Record<string, unknown> =>
+    Object.fromEntries(
+      Array.from({ length: r }, (_, i) => [`r${i}`, { $ref: '#/definitions/leaf' }]),
+    );
+  /** `r` references to one leaf that holds no `$ref`: Ajv copies its code into the validator `r` times. */
+  const inlined = (r: number, k: number): JsonSchema =>
+    ({
+      definitions: { leaf: leaf(k) },
+      type: 'object',
+      properties: refsToLeaf(r),
+    }) as unknown as JsonSchema;
+  /** The `r` references sit in a definition that is itself referenced: Ajv compiles that target as a
+   *  separate function, which the root validator's source never shows. */
+  const indirect = (r: number, k: number): JsonSchema =>
+    ({
+      definitions: { leaf: leaf(k), mid: { type: 'object', properties: refsToLeaf(r) } },
+      type: 'object',
+      properties: { m: { $ref: '#/definitions/mid' } },
+    }) as unknown as JsonSchema;
+  /** `n` JSON values in a `const`: a short text that holds far more than its characters. */
+  const constOf = (n: number, k: number): JsonSchema =>
+    ({
+      type: 'array',
+      description: `c560-${k}`,
+      const: Array.from({ length: n }, () => ({})),
+    }) as unknown as JsonSchema;
+
+  // Weights measured under `allErrors` (registry 560-IA-C1-05): inlined(60) ≈ 2,336,443;
+  // indirect(40) ≈ 1,557,469; inlined(120) ≈ 4,692,126; constOf(50,000) ≈ 1,750,814. The bound is
+  // 4 Mi (4,194,304). Each cell asserts the kept entry FIRST: checking an evicted one compiles it
+  // again, which evicts in turn.
   it(
-    '5b. the LRU, by key characters: past 4 Mi characters the oldest is evicted; a key over the bound is never cached',
+    '5b-i. the weight counts the compiled code: two schemas whose code is over 4 Mi together cannot both stay',
     { timeout: 60_000 },
     () => {
-      const big = (tag: string): JsonSchema => ({
-        type: 'string',
-        description: `${tag}:${'x'.repeat(1.5 * 1024 * 1024)}`,
-      });
-      const s1 = compileSchema(big('c560-5b-1'));
-      const s2 = compileSchema(big('c560-5b-2'));
-      const s3 = compileSchema(big('c560-5b-3')); // 4.5 Mi characters: #1 is evicted
-      const huge: JsonSchema = { type: 'string', description: 'y'.repeat(4 * 1024 * 1024 + 1) };
-      // (a) red when the bound counts entries only (#1 stays), or a key over the bound is cached;
-      //     (b) prints four booleans.
+      const a = compileSchema(inlined(60, 1));
+      const b = compileSchema(inlined(60, 2));
+      // (a) red when the weight counts no compiled code (both stay: their keys are 4,498 characters);
+      //     (b) prints two booleans.
       expect({
-        thirdKept: compileSchema(big('c560-5b-3')) === s3,
-        secondKept: compileSchema(big('c560-5b-2')) === s2,
-        firstEvicted: compileSchema(big('c560-5b-1')) !== s1,
-        hugeNeverCached: compileSchema(huge) !== compileSchema(huge),
-      }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true, hugeNeverCached: true });
+        secondKept: compileSchema(inlined(60, 2)) === b,
+        firstEvicted: compileSchema(inlined(60, 1)) !== a,
+      }).toEqual({ secondKept: true, firstEvicted: true });
+    },
+  );
+
+  it(
+    '5b-ii. the weight counts the sub-validators a reference compiles apart: three indirect schemas cannot all stay',
+    { timeout: 60_000 },
+    () => {
+      const d1 = compileSchema(indirect(40, 1));
+      const d2 = compileSchema(indirect(40, 2));
+      const d3 = compileSchema(indirect(40, 3));
+      // (a) red when the weight counts the root validator's source only (each root is 674
+      //     characters, so all three stay); (b) prints three booleans.
+      expect({
+        thirdKept: compileSchema(indirect(40, 3)) === d3,
+        secondKept: compileSchema(indirect(40, 2)) === d2,
+        firstEvicted: compileSchema(indirect(40, 1)) !== d1,
+      }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true });
+    },
+  );
+
+  it(
+    '5b-iii. an entry heavier than the whole bound is never cached, and evicts nothing',
+    { timeout: 60_000 },
+    () => {
+      const small = (): JsonSchema => ({ type: 'string', description: 'c560-5b-iii' });
+      const s = compileSchema(small());
+      const h = compileSchema(inlined(120, 3));
+      // (a) red when the guard is removed (the heavy entry evicts everything, then itself); (b)
+      //     prints two booleans.
+      expect({
+        olderKept: compileSchema(small()) === s,
+        heavyNeverCached: compileSchema(inlined(120, 3)) !== h,
+      }).toEqual({ olderKept: true, heavyNeverCached: true });
+    },
+  );
+
+  it(
+    '5b-iv. the weight counts the JSON values: three schemas of 50,000 values cannot all stay',
+    { timeout: 60_000 },
+    () => {
+      const c1 = compileSchema(constOf(50_000, 1));
+      const c2 = compileSchema(constOf(50_000, 2));
+      const c3 = compileSchema(constOf(50_000, 3));
+      // (a) red when the weight counts no JSON values (each key is 150,049 characters, so all three
+      //     stay); (b) prints three booleans.
+      expect({
+        thirdKept: compileSchema(constOf(50_000, 3)) === c3,
+        secondKept: compileSchema(constOf(50_000, 2)) === c2,
+        firstEvicted: compileSchema(constOf(50_000, 1)) !== c1,
+      }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true });
+    },
+  );
+
+  it(
+    '5b-v. a schema whose text alone is over the bound is compiled from the caller’s object, never copied, never cached',
+    { timeout: 60_000 },
+    () => {
+      const huge: JsonSchema = { type: 'string', description: 'y'.repeat(4 * 1024 * 1024 + 1) };
+      // (a) red when such a schema is parsed and frozen like any keyable one (the validator's
+      //     schema is then a copy); (b) prints three booleans.
+      expect({
+        schemaIsCallers: compileSchema(huge).schema === huge,
+        callersFrozen: Object.isFrozen(huge),
+        neverCached: compileSchema(huge) !== compileSchema(huge),
+      }).toEqual({ schemaIsCallers: true, callersFrozen: false, neverCached: true });
     },
   );
 
@@ -482,14 +583,31 @@ describe('issue #560 — the compiled-validator cache', () => {
     const verdicts = pairs.map(([name, odd, json, input]) => {
       const oddFirst = [compileSchema(odd())(input), compileSchema(json())(input)];
       const jsonFirst = [compileSchema(json())(input), compileSchema(odd())(input)].reverse();
-      return { name, oddFirst, jsonFirst };
+      const oddCompiledEachTime = compileSchema(odd()) !== compileSchema(odd());
+      return { name, oddFirst, jsonFirst, oddCompiledEachTime };
     });
     // (a) red when the key is `JSON.stringify` plain (the odd schema and its JSON copy share a key,
-    //     so the second compiled answers for both); (b) prints each pair's verdicts in both orders.
+    //     so the second compiled answers for both), or when an odd schema is kept by any other key
+    //     (the same function twice); (b) prints each pair's verdicts in both orders and a boolean.
     expect(verdicts).toEqual([
-      { name: 'Date', oddFirst: [false, true], jsonFirst: [false, true] },
-      { name: 'Infinity', oddFirst: [false, true], jsonFirst: [false, true] },
-      { name: 'Uint8Array', oddFirst: [false, true], jsonFirst: [false, true] },
+      {
+        name: 'Date',
+        oddFirst: [false, true],
+        jsonFirst: [false, true],
+        oddCompiledEachTime: true,
+      },
+      {
+        name: 'Infinity',
+        oddFirst: [false, true],
+        jsonFirst: [false, true],
+        oddCompiledEachTime: true,
+      },
+      {
+        name: 'Uint8Array',
+        oddFirst: [false, true],
+        jsonFirst: [false, true],
+        oddCompiledEachTime: true,
+      },
     ]);
   });
 
@@ -532,12 +650,70 @@ describe('issue #560 — the compiled-validator cache', () => {
       rowFrozen = err instanceof TypeError;
     }
     // (a) red when the validator is compiled from the caller's object (the base): the verdict
-    //     follows the caller's change, and the error row is the caller's own array; (b) prints three
-    //     booleans.
-    expect({ stillValid, rowFrozen, callersSchemaFrozen: Object.isFrozen(mine) }).toEqual({
+    //     follows the caller's change, the error row is the caller's own array, and the validator's
+    //     schema is the caller's object; (b) prints four booleans.
+    expect({
+      stillValid,
+      rowFrozen,
+      callersSchemaFrozen: Object.isFrozen(mine),
+      schemaIsFrozenCopy: validate.schema !== mine && Object.isFrozen(validate.schema),
+    }).toEqual({
       stillValid: true,
       rowFrozen: true,
       callersSchemaFrozen: false,
+      schemaIsFrozenCopy: true,
+    });
+  });
+
+  it('9a. the key refuses a function value: the schema compiles from the caller’s object, and Ajv refuses the unknown keyword as before', () => {
+    const withFunction = { type: 'string', c560fn: () => 1 } as unknown as JsonSchema;
+    let threw = false;
+    let unknownKeyword = false;
+    try {
+      compileSchema(withFunction);
+    } catch (err) {
+      threw = true;
+      unknownKeyword = err instanceof Error && err.message.includes('strict mode: unknown keyword');
+    }
+    // (a) red when the key keeps a function value (JSON drops it, the copy compiles and the schema
+    //     is accepted); (b) prints two booleans.
+    expect({ threw, unknownKeyword }).toEqual({ threw: true, unknownKeyword: true });
+  });
+
+  it('9b. the key refuses a plain object with its own toJSON: the verdict is the caller’s schema’s, compiled each time', () => {
+    const disguised: Record<string, unknown> = { type: 'string' };
+    Object.defineProperty(disguised, 'toJSON', {
+      value: () => ({ type: 'number' }),
+      enumerable: false,
+    });
+    const v1 = compileSchema(disguised as JsonSchema);
+    const v2 = compileSchema(disguised as JsonSchema);
+    // (a) red when the key ignores `toJSON` (the key becomes the `toJSON` result: the verdict
+    //     flips to `number`, and it is cached); (b) prints two verdicts and a boolean.
+    expect({ abcValid: v1('abc'), oneValid: v1(1), twoFunctions: v1 !== v2 }).toEqual({
+      abcValid: true,
+      oneValid: false,
+      twoFunctions: true,
+    });
+  });
+
+  it('9c. the key refuses a cycle: the compile fails as before, by running out of stack', () => {
+    const cyclic: Record<string, unknown> = { type: 'object' };
+    cyclic['properties'] = { self: cyclic };
+    let isRangeError = false;
+    let startsWithMaxCallStack = false;
+    try {
+      compileSchema(cyclic as JsonSchema);
+    } catch (err) {
+      isRangeError = err instanceof RangeError;
+      startsWithMaxCallStack =
+        err instanceof Error && err.message.startsWith('Maximum call stack size exceeded');
+    }
+    // (a) red when the key's failure escapes (`JSON.stringify`'s own error about the circular
+    //     structure replaces the compile's); (b) prints two booleans.
+    expect({ isRangeError, startsWithMaxCallStack }).toEqual({
+      isRangeError: true,
+      startsWithMaxCallStack: true,
     });
   });
 });

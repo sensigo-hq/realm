@@ -33,87 +33,143 @@ import {
  * verdict-neutral (executed on ajv 8.20.0: every compile-error class still throws).
  *
  * Issue #560: the compiled-validator cache is built HERE. A schema whose content is exactly JSON
- * (`keyOf`) is compiled once per process, from its own frozen copy, and the validator is reused by
- * every later call with the same content — so a caller reads `.errors` right after its own call
- * (every caller in this file does, synchronously). A schema that is not exactly JSON is compiled
- * fresh each time, as before. The silent path reads and writes the cache; the capturing path
- * (`onStrictLog`, the loader at admission) compiles fresh so its strict-mode lines are captured on
- * every load, then writes the cache and never reads it. A compile that throws is not cached. The
- * cache is bounded by entries and by key characters (LRU). Issue #552's seam — an admission-time
- * cost bound on a legal-but-enormous schema — still belongs here, and is still not built.
+ * (`keyOf`) is compiled once per process for the run-time checks, from its own frozen copy, and the
+ * validator is reused by every later call with the same content — so a caller reads `.errors` right
+ * after its own call (every caller in this file does, synchronously). A schema that is not exactly
+ * JSON is compiled fresh each time, as before, and so is one whose text alone is heavier than the
+ * whole bound (it could never be kept). The silent path reads and writes the cache; the capturing
+ * path (`onStrictLog`, the loader at admission) compiles fresh so its strict-mode lines are captured
+ * on every load, then writes the cache and never reads it. A compile that throws is not cached. The
+ * cache is bounded by entries and by weight (its key, its JSON values and the compiled code it
+ * keeps), least recently used first. Issue #552's seam — an admission-time cost bound on a
+ * legal-but-enormous schema — still belongs here, and is still not built.
  */
 export function compileSchema(
   schema: JsonSchema,
   opts?: { onStrictLog?: (line: string) => void },
 ): ValidateFunction {
   const onStrictLog = opts?.onStrictLog;
-  const key = keyOf(schema);
+  const keyed = keyOf(schema);
+  // A schema whose text alone is heavier than the whole bound can never be kept, so it is compiled
+  // from the caller's object like a schema with no key: no parse, no frozen copy, no cache. Its
+  // key's `JSON.stringify` is still paid on every call (issue #552's bound would refuse it first).
+  const cacheable =
+    keyed !== undefined && keyed.key.length <= MAX_CACHED_WEIGHT ? keyed : undefined;
   // The silent path (run time) reads the cache; the capturing path never does (decision D7: the
   // strict-mode lines are captured on every load).
-  if (key !== undefined && onStrictLog === undefined) {
-    const hit = compiledSchemas.get(key);
+  if (cacheable !== undefined && onStrictLog === undefined) {
+    const hit = compiledSchemas.get(cacheable.key);
     if (hit !== undefined) {
-      compiledSchemas.delete(key);
-      compiledSchemas.set(key, hit);
-      return hit;
+      compiledSchemas.delete(cacheable.key);
+      compiledSchemas.set(cacheable.key, hit);
+      return hit.validate;
     }
   }
   // ONE constructor call, always — the source-text witness counts the construction shape in this
   // file (comments stripped) and that count IS the load-≡-run guarantee, so a ternary over two
   // constructor calls is forbidden here. The whole conditional lives in the OPTIONS OBJECT. A
-  // keyable schema is compiled from its own frozen copy: Ajv reads object-valued `enum`/`const`
+  // cacheable schema is compiled from its own frozen copy: Ajv reads object-valued `enum`/`const`
   // members at validate time and its error rows alias them, so a shared validator must never see
   // a caller change its schema. A throw propagates before anything is cached.
   const validate = newAjv(onStrictLog).compile(
-    key === undefined ? (schema as object) : (deepFreeze(JSON.parse(key)) as object),
+    cacheable === undefined
+      ? (schema as object)
+      : (deepFreeze(JSON.parse(cacheable.key)) as object),
   );
-  if (key !== undefined) rememberCompiled(key, validate);
+  if (cacheable !== undefined) {
+    rememberCompiled(cacheable.key, validate, weightOf(cacheable.key, cacheable.nodes, validate));
+  }
   return validate;
 }
 
 /** A workflow declares tens of schemas; 256 holds every schema of many workflows at once. */
 const MAX_CACHED_SCHEMAS = 256;
-/** A validator's heap grows with its schema's size, so the key characters — not the count — cap
- *  a long-running server that `create_workflow` callers can fill (4 Mi characters of schema). */
-const MAX_CACHED_KEY_CHARS = 4 * 1024 * 1024;
+/**
+ * The bound on the cache's total weight, 4 Mi. An entry's weight (`weightOf`) is its key's
+ * characters, `NODE_WEIGHT` per JSON value in its schema, and the source characters of every
+ * compiled function it keeps. The key alone says little about what an entry holds: Ajv copies a
+ * `$ref` target's code into the validator once per reference when the target holds no `$ref` of
+ * its own, and compiles it as a separate function (which the root's source never shows) when it
+ * does; and a schema of many small JSON values holds more per character than its text.
+ *
+ * Measured 2026-10-17 (Node 24.21, Ajv 8.20 with `allErrors`, each kept validator called 2,000
+ * times): 1.96 to 4.79 bytes of heap per weight character across five shapes (code copied per
+ * reference, references compiled apart, 50,000 JSON values, 3,000 plain properties, non-Latin
+ * text), plus about 2.9 MB for 256 small schemas — so about 23 MB at the bound in the heaviest case
+ * measured.
+ */
+const MAX_CACHED_WEIGHT = 4 * 1024 * 1024;
+/** The weight of one JSON value in a schema. A value holds more memory than its few characters of
+ *  text (the cache keeps the schema parsed and frozen): a `const` of 50,000 empty objects is 150,049
+ *  characters and held about 3.3 MB (measured 2026-10-17). */
+const NODE_WEIGHT = 32;
 
 /** The compiled validators by key, least recently used first (a `Map` keeps insertion order). */
-const compiledSchemas = new Map<string, ValidateFunction>();
-let cachedKeyChars = 0;
+const compiledSchemas = new Map<string, { validate: ValidateFunction; weight: number }>();
+let cachedWeight = 0;
 
-/** Inserts (or refreshes) one validator, then evicts the oldest until within both bounds. A key
- *  longer than the character bound is never cached. */
-function rememberCompiled(key: string, validate: ValidateFunction): void {
-  if (key.length > MAX_CACHED_KEY_CHARS) return;
-  if (compiledSchemas.delete(key)) cachedKeyChars -= key.length;
-  compiledSchemas.set(key, validate);
-  cachedKeyChars += key.length;
-  while (compiledSchemas.size > MAX_CACHED_SCHEMAS || cachedKeyChars > MAX_CACHED_KEY_CHARS) {
-    const oldest = compiledSchemas.keys().next().value as string;
-    compiledSchemas.delete(oldest);
-    cachedKeyChars -= oldest.length;
+/** Inserts (or refreshes) one validator, then evicts the oldest until within both bounds. An entry
+ *  heavier than the whole bound is never cached, and evicts nothing. */
+function rememberCompiled(key: string, validate: ValidateFunction, weight: number): void {
+  if (weight > MAX_CACHED_WEIGHT) return;
+  const previous = compiledSchemas.get(key);
+  if (previous !== undefined) {
+    compiledSchemas.delete(key);
+    cachedWeight -= previous.weight;
   }
+  compiledSchemas.set(key, { validate, weight });
+  cachedWeight += weight;
+  while (compiledSchemas.size > MAX_CACHED_SCHEMAS || cachedWeight > MAX_CACHED_WEIGHT) {
+    const [oldestKey, oldest] = compiledSchemas.entries().next().value as [
+      string,
+      { weight: number },
+    ];
+    compiledSchemas.delete(oldestKey);
+    cachedWeight -= oldest.weight;
+  }
+}
+
+/**
+ * What one entry holds, in characters: its key, `NODE_WEIGHT` per JSON value, and the source of
+ * every DISTINCT compiled function it keeps — the validator itself and each separately compiled
+ * reference target (`schemaEnv.root.refs[*].validate`; a target inlined into the validator is
+ * already in its source).
+ */
+function weightOf(key: string, nodes: number, validate: ValidateFunction): number {
+  const functions = new Set<unknown>([validate]);
+  for (const ref of Object.values(validate.schemaEnv.root.refs)) {
+    if (ref !== null && typeof ref === 'object') {
+      const sub = (ref as { validate?: unknown }).validate;
+      if (typeof sub === 'function') functions.add(sub);
+    }
+  }
+  let code = 0;
+  for (const fn of functions) code += (fn as () => unknown).toString().length;
+  return key.length + NODE_WEIGHT * nodes + code;
 }
 
 /** Thrown inside `keyOf`'s replacer to void a key. */
 const NOT_JSON_EXACT: unique symbol = Symbol('not JSON-exact');
 
 /**
- * The cache key: the schema's JSON text, or `undefined` (never cached) when its content is not
- * exactly JSON — a non-finite number, `undefined`, a function, a `bigint` or a symbol, an object
- * that is not a plain object or array (a `Date`, a typed array, a `RegExp`, a `Map`, an instance),
- * or a cycle. Why: the YAML loader keeps js-yaml's `Date`/`Infinity`/`Uint8Array` values, which
- * `JSON.stringify` maps onto other JSON — a key shared with a schema Ajv judges differently.
+ * The cache key: the schema's JSON text and its count of JSON values (the root included), or
+ * `undefined` (never cached) when its content is not exactly JSON — a non-finite number,
+ * `undefined`, a function, a `bigint` or a symbol, an object that is not a plain object or array (a
+ * `Date`, a typed array, a `RegExp`, a `Map`, an instance), or a cycle. Why: the YAML loader keeps
+ * js-yaml's `Date`/`Infinity`/`Uint8Array` values, which `JSON.stringify` maps onto other JSON — a
+ * key shared with a schema Ajv judges differently.
  */
-function keyOf(schema: unknown): string | undefined {
+function keyOf(schema: unknown): { key: string; nodes: number } | undefined {
+  let nodes = 0;
   try {
     // The replacer reads `this[k]`, the RAW value: `JSON.stringify` calls a `Date`'s `toJSON`
-    // before the replacer sees `value`.
+    // before the replacer sees `value`. It runs once per JSON value, so it also counts them.
     const key = JSON.stringify(schema, function (this: unknown, k: string, value: unknown) {
+      nodes += 1;
       if (!isJsonExact((this as Record<string, unknown>)[k])) throw NOT_JSON_EXACT;
       return value;
     });
-    return typeof key === 'string' ? key : undefined;
+    return typeof key === 'string' ? { key, nodes } : undefined;
   } catch {
     return undefined;
   }
