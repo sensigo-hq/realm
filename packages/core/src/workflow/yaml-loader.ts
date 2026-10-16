@@ -48,6 +48,8 @@ import {
   composeSchemaFailure,
   renderAuthoredValue,
   knownSchemaKeywords,
+  isAsyncSchemaRefusal,
+  asyncSchemaValidity,
 } from '../validation/input-schema.js';
 import {
   assessStructuredOutputEligibility,
@@ -1203,6 +1205,20 @@ function parseWorkflowString(
       try {
         compileSchema(block as JsonSchema, { onStrictLog: (line) => strictLines.push(line) });
       } catch (err) {
+        // A root `$async`: refused in its own four clauses, by type (never by the message the
+        // arms below read) — the validity once, the key's consequence, the remedy.
+        if (isAsyncSchemaRefusal(err)) {
+          const validity = asyncSchemaValidity((block as Record<string, unknown>)['$async']);
+          errors.push(
+            cite(
+              consequence === undefined
+                ? `${where}'${key}' declares ${validity}; remove \`$async\` from the schema.`
+                : `${where}'${key}' declares ${validity}. ${consequence}; remove \`$async\` ` +
+                    `from the schema.`,
+            ),
+          );
+          return true;
+        }
         // Ajv's own sentence, UNTOUCHED, is the input to three deterministic LOAD-ONLY transforms
         // below. Every arm keyed on it reads THIS raw string, never a transformed one — the
         // transforms rewrite exactly the tokens the arms match on.

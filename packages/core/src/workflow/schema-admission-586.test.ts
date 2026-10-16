@@ -11,7 +11,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { loadWorkflowFromString, loadWorkflowFromStringWithDiagnostics } from './yaml-loader.js';
+import {
+  loadWorkflowFromString,
+  loadWorkflowFromStringWithDiagnostics,
+  SCHEMA_KEY_CONSEQUENCE,
+} from './yaml-loader.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import {
   compileSchema,
@@ -19,6 +23,7 @@ import {
   composeSchemaFailure,
   validateInputSchema,
   validateOutputSchema,
+  asyncSchemaValidity,
 } from '../validation/input-schema.js';
 
 /** A workflow with one auto step; `extra` is spliced at the top level, `stepExtra` into the step. */
@@ -960,5 +965,82 @@ describe('#586 schema admission — the four authored keys', () => {
         'wf-id',
       ),
     ).not.toThrow();
+  });
+});
+
+// =================================================================================================
+// A root `$async` in any authored schema block is refused at load in four clauses: the validity
+// (`asyncSchemaValidity`), the key's consequence, the remedy, and the key's line — never the
+// generic validator phrasing. What a failing cell prints: booleans per clause.
+// =================================================================================================
+describe('the loader refuses a schema block whose root carries a truthy $async', () => {
+  const generic = ['is not a valid JSON Schema', 'fix the schema', 'so this check cannot run'];
+  const clauses = (message: string, key: keyof typeof SCHEMA_KEY_CONSEQUENCE, line: number) => ({
+    validity: message.includes(asyncSchemaValidity(true)),
+    consequence: message.includes(SCHEMA_KEY_CONSEQUENCE[key]),
+    remedy: message.includes('remove `$async` from the schema'),
+    line: message.includes(`(line ${line})`),
+    generic: generic.filter((g) => message.includes(g)),
+  });
+  const FOUR = { validity: true, consequence: true, remedy: true, line: true, generic: [] };
+
+  it.each([
+    ['params_schema', { extra: 'params_schema:\n  $async: true\n  type: object\n' }, 4, false],
+    [
+      'input_schema',
+      { stepExtra: '    input_schema:\n      $async: true\n      type: object\n' },
+      8,
+      false,
+    ],
+    [
+      'output_schema',
+      { stepExtra: '    output_schema:\n      $async: true\n      type: object\n' },
+      8,
+      true,
+    ],
+    [
+      'trace_schema',
+      { stepExtra: '    trace_schema:\n      $async: true\n      type: array\n' },
+      8,
+      true,
+    ],
+  ] as const)('2. %s: refused in four clauses on the key’s line', (key, opts, line, agent) => {
+    const yaml = wf(opts);
+    const { message } = refusalOf(
+      agent ? yaml.replace('execution: auto', 'execution: agent') : yaml,
+    );
+    // (a) red when the loader's arm is removed (the generic arm forwards the run-time message
+    //     under "is not a valid JSON Schema … fix the schema"); (b) prints each clause's boolean
+    //     and the generic phrases found.
+    expect(clauses(message, key, line)).toEqual(FOUR);
+  });
+
+  it('2. a YAML `$async: yes` is refused', () => {
+    const { message } = refusalOf(
+      wf({ stepExtra: '    input_schema:\n      $async: yes\n      type: object\n' }),
+    );
+    // (a) red when the detection reads `$async === true` only; (b) prints a boolean.
+    expect(message.includes(asyncSchemaValidity('yes'))).toBe(true);
+  });
+
+  it('2. an async output_schema with a default_output is refused, and the process lives', async () => {
+    const yaml =
+      `id: w\nname: W\nversion: 1\nsteps:\n  ask:\n    description: Ask.\n    execution: agent\n` +
+      `    output_schema:\n      $async: true\n      type: object\n      required: [x]\n` +
+      `    validation_exhaustion:\n      mode: default\n      default_output: {}\n`;
+    const { message, errors } = refusalOf(yaml);
+    // A tick for any stray rejection: with the detection removed, the default_output proof runs the
+    // async validator, its rejection goes unhandled, and the test run reports it as an error.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // (a) red when the detection is removed (not refused), or when the loader's arm does not mark
+    //     the key refused (the default_output proof then restates the refusal as a second error,
+    //     "… does not validate against the step's own 'output_schema': undefined"); (b) prints a
+    //     boolean and the count of default_output errors.
+    expect({
+      refused: message.includes(asyncSchemaValidity(true)),
+      defaultOutputErrors: errors.filter((e) =>
+        e.includes("'validation_exhaustion.default_output'"),
+      ).length,
+    }).toEqual({ refused: true, defaultOutputErrors: 0 });
   });
 });

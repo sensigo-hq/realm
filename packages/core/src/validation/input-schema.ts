@@ -26,6 +26,12 @@ import { quotedCommand, shellWord } from '../utils/shell-word.js';
  * unattributed and unciteable; `realm run` would have printed it twice in two voices. `false` is
  * verdict-neutral (executed on ajv 8.20.0: every compile-error class still throws).
  *
+ * A schema whose ROOT carries a truthy `$async` compiles (Ajv) to a validator that answers with a
+ * Promise. Realm checks data synchronously, so such a schema is refused HERE, read off the
+ * compiled validator (`$async === true`, which Ajv sets exactly when the root `$async` is truthy) —
+ * never off the key — with a typed `WorkflowError` (`isAsyncSchemaRefusal`). Every door and every
+ * check kind compiles through this function, so none can run such a check.
+ *
  * Issue #560's seam: a compiled-validator cache belongs HERE (one construction site, one key).
  * Issue #552's seam: an admission-time cost bound on a legal-but-enormous schema belongs here too.
  * Neither is built.
@@ -38,7 +44,56 @@ export function compileSchema(
   // ONE constructor call, always — the source-text witness counts the construction shape in this
   // file (comments stripped) and that count IS the load-≡-run guarantee, so a ternary over two
   // constructor calls is forbidden here. The whole conditional lives in the OPTIONS OBJECT.
-  return newAjv(onStrictLog).compile(schema as object);
+  const validate = newAjv(onStrictLog).compile(schema as object);
+  if ((validate as { $async?: unknown }).$async === true) throw asyncSchemaRefusal(schema);
+  return validate;
+}
+
+/** `details.reason` of the refusal of a schema whose root carries a truthy `$async`. */
+const ASYNC_SCHEMA_REASON = 'async_schema';
+
+/**
+ * The validity clause of a schema whose root carries a truthy `$async`, with the value as the
+ * author wrote it. ONE home: the run-time refusal, the loader and `create_workflow` all state it.
+ */
+export function asyncSchemaValidity(value: unknown): string {
+  return (
+    `\`$async: ${renderAuthoredValue(value)}\`, which Realm does not support: it checks data ` +
+    `against a schema synchronously and cannot wait for an asynchronous check`
+  );
+}
+
+/** Whether `err` is the refusal of a schema whose root carries a truthy `$async` — by type and
+ *  `details.reason`, never by message text. */
+export function isAsyncSchemaRefusal(err: unknown): err is WorkflowError {
+  return (
+    err instanceof WorkflowError &&
+    err.code === 'VALIDATION_WORKFLOW_SCHEMA' &&
+    err.details['reason'] === ASYNC_SCHEMA_REASON
+  );
+}
+
+/** The run-time form: what a check of a definition stored before this refusal existed replies. A
+ *  YAML workflow heals by registering it again (a run reads its definition by id); a workflow
+ *  made by `create_workflow` gets a new id when created again, so its old run is abandoned. */
+function asyncSchemaRefusal(schema: unknown): WorkflowError {
+  const value =
+    schema !== null && typeof schema === 'object'
+      ? (schema as Record<string, unknown>)['$async']
+      : undefined;
+  return new WorkflowError(
+    `This schema declares ${asyncSchemaValidity(value)}, so this check cannot run. Remove ` +
+      `\`$async\` from the schema and register the workflow again, then retry; for a workflow ` +
+      `made by \`create_workflow\`, create it again without \`$async\`, start a new run on it, ` +
+      `and abandon this one.`,
+    {
+      code: 'VALIDATION_WORKFLOW_SCHEMA',
+      category: 'VALIDATION',
+      agentAction: 'stop',
+      retryable: false,
+      details: { reason: ASYNC_SCHEMA_REASON },
+    },
+  );
 }
 
 /** The ONE construction (see `compileSchema`); every authored-block check goes through it. */
@@ -404,6 +459,23 @@ export function validateRunParams(
   try {
     validate = compileSchema(schema);
   } catch (err) {
+    // A root `$async`: realm's own sentence for this cause, never the generic opener (which is
+    // false here — the schema is valid JSON Schema) and never the run-time form's remedy twice.
+    if (isAsyncSchemaRefusal(err)) {
+      const value = (schema as Record<string, unknown>)['$async'];
+      throw new WorkflowError(
+        `Workflow '${workflowId}' declares a params_schema with ${asyncSchemaValidity(value)}. ` +
+          `No run was created. Remove \`$async\` from params_schema and register the workflow ` +
+          `again.`,
+        {
+          code: 'VALIDATION_WORKFLOW_SCHEMA',
+          category: 'VALIDATION',
+          agentAction: 'stop',
+          retryable: false,
+          details: { reason: ASYNC_SCHEMA_REASON },
+        },
+      );
+    }
     // The GRANDFATHERED population (#586 walk, finding D2): `start_run` / `start_run_batch` read
     // the REGISTERED copy, which the loader never sees again — so a stored `params_schema` that
     // this release refuses at load is still compiled HERE, for the first time, at run-creation.
@@ -522,6 +594,8 @@ export function validateAgentSubmission(
     try {
       validateInputSchema(effectiveObj, schemas.inputSchema, stepId);
     } catch (err) {
+      // A schema that cannot be checked is not the model's mistake: never a correction request.
+      if (isAsyncSchemaRefusal(err)) throw err;
       return { valid: false, rawErrors: extractRawErrors(err) };
     }
   }
@@ -529,6 +603,7 @@ export function validateAgentSubmission(
     try {
       validateOutputSchema(effectiveObj, schemas.outputSchema, stepId);
     } catch (err) {
+      if (isAsyncSchemaRefusal(err)) throw err;
       return { valid: false, rawErrors: extractRawErrors(err) };
     }
   }
@@ -572,7 +647,20 @@ export function validateTraceSchema(
   stepId: string,
   mode: 'warn' | 'enforce',
 ): TraceSchemaWarnResult | void {
-  const validate = compileSchema(schema);
+  let validate: ValidateFunction;
+  try {
+    validate = compileSchema(schema);
+  } catch (err) {
+    // Warn mode never throws (the engine's contract): a trace schema that cannot be checked is
+    // reported as one problem, naming the step and the cause; enforce mode refuses.
+    if (mode === 'warn' && isAsyncSchemaRefusal(err)) {
+      return {
+        errorCount: 1,
+        warning: `Trace schema for step '${stepId}' was not checked: ${err.message}`,
+      };
+    }
+    throw err;
+  }
   const valid = validate(entries);
   if (valid) {
     if (mode === 'warn') return { errorCount: 0, warning: '' };
