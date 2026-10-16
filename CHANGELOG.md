@@ -111,6 +111,12 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   `agent_action: "await"`. `get_run_state` gains `agent_action` when nothing can be called on an open
   run, and `basis`, `also` and `elsewhere`.
 
+- **A run that cannot go on is named the moment it cannot (issue #729).**
+  `realm run list --stuck`, `realm run inspect` and `get_run_state` name a run that cannot go on the
+  moment it cannot — the step, the check that refused it and the way out — at any age; the 24-hour
+  idle finding stays as the second detector. The finding is `cannot_go_on`;
+  `realm run list --stuck` labels it `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)`.
+
 ### Changed
 
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the

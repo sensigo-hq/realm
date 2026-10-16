@@ -12,7 +12,7 @@ import {
   buildFailedAttemptRecord,
   serializeFailedAttemptLine,
 } from '@sensigo/realm';
-import type { RunStore, RunRecord, FailedAttemptRecord } from '@sensigo/realm';
+import type { RunStore, RunRecord, FailedAttemptRecord, WorkflowDefinition } from '@sensigo/realm';
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -1031,12 +1031,136 @@ describe('--stuck cause attribution end-to-end via listRuns (issue #219)', () =>
   });
 });
 
-describe('list.ts source-text negative pin (issue #219): list stays definition-free', () => {
-  it('never references eligible_steps or loads a workflow definition — the cause signal comes only from the FailedAttemptStore sidecar', () => {
-    const source = readFileSync(fileURLToPath(new URL('./list.ts', import.meta.url)), 'utf8');
-    expect(source).not.toContain('eligible_steps');
-    expect(source).not.toContain('WorkflowDefinition');
-    expect(source).not.toContain('loadWorkflow');
+// issue #729 — the operator-side stuck marker. RETIRED here: the issue #219 source-text pin "list
+// stays definition-free" (`list.ts` names no `WorkflowDefinition`). Its premise ends with this
+// unit: `--stuck` passes the definition its probe already parsed to the classifier, so a run that
+// cannot go on is listed the moment it cannot. Cells 7 and 8 replace it. What a failing cell
+// prints: the lines `listRuns` printed (ids, steps, kinds, checks) — never a value.
+describe('issue #729 — realm run list --stuck names a run that cannot go on, at any age', () => {
+  const FRESH = new Date(Date.now() - 1000).toISOString();
+  const W2: WorkflowDefinition = {
+    id: 'w2',
+    name: 'w2',
+    version: 1,
+    steps: {
+      summarize: { description: 'Summarize.', execution: 'agent', depends_on: [] },
+      publish: {
+        description: 'Publish.',
+        execution: 'auto',
+        depends_on: ['summarize'],
+        handler: 'h',
+        input_map: { text: 'context.resources.summarize.summary' },
+        input_schema: {
+          type: 'object',
+          required: ['text'],
+          properties: { text: { type: 'string' } },
+        },
+      },
+    },
+  };
+  const live = (over: Partial<RunRecord>): RunRecord => {
+    // An open run: makeRun's completed seal (`terminal_reason`) left out.
+    const { terminal_reason: _sealed, ...open } = makeRun({
+      workflow_id: 'w2',
+      run_phase: 'running',
+      terminal_state: false,
+      updated_at: FRESH,
+      ...over,
+    });
+    return open;
+  };
+  /** W2's stuck run: summarize returned no `summary`, so publish's input cannot be built. */
+  const stuck = live({
+    id: 'run-stuck',
+    completed_steps: ['summarize'],
+    evidence: [
+      {
+        step_id: 'summarize',
+        started_at: FRESH,
+        completed_at: FRESH,
+        duration_ms: 0,
+        input_summary: { other: 'x' },
+        output_summary: { other: 'x' },
+        status: 'success',
+        evidence_hash: 'h1',
+      },
+    ],
+  });
+  /** W2's run before summarize: an agent step ready — it can go on. */
+  const healthy = live({ id: 'run-healthy' });
+  const stuckList = (runs: RunRecord[], definition: WorkflowDefinition = W2) =>
+    listRuns(undefined, makeStore(runs), undefined, true, undefined, undefined, () => ({
+      definition,
+    }));
+
+  it('7a. lists the stuck run at age 0 with `<step>=cannot_go_on(<check>) (realm run inspect <id>)`', async () => {
+    const out = await stuckList([stuck, healthy]);
+    // (a) red when the definition is not passed (the run is not listed under the 24h clock), or
+    //     the label or its pointer differ; (b) prints the lines.
+    expect(out.split('\n').filter((l) => l.includes('run-'))).toEqual([
+      expect.stringMatching(
+        /^run-stuck {2}w2 v1 {2}running {2}.+ {2}1 step\(s\) {2}idle: 0m {2}publish=cannot_go_on\(input_schema\) \(realm run inspect run-stuck\)$/,
+      ),
+    ]);
+  });
+
+  it('7b. lists NOTHING for a healthy run at age 0', async () => {
+    // (a) red when a run that can go on is listed; (b) prints the output.
+    expect(await stuckList([healthy])).toBe('No stuck runs found (threshold 24h).');
+  });
+
+  it('8a. a guard awaiting settlement at age 0 is NOT listed (advance is offered: it is not stuck, and the kind has no label)', async () => {
+    const guarded = live({ id: 'run-guard', completed_steps: ['gated_step'] });
+    const d: WorkflowDefinition = {
+      id: 'w2',
+      name: 'w2',
+      version: 1,
+      steps: {
+        gated_step: { description: 'g', execution: 'agent', depends_on: [] },
+        guard_after: {
+          description: 'guard',
+          execution: 'guard',
+          depends_on: ['gated_step'],
+          abort_unless: ['gated_step.status == "open"'],
+        },
+      },
+    };
+    // (a) red when `guard_awaiting_settlement` selects a run (a silent line at age 0); (b) prints
+    //     the output.
+    expect(await stuckList([guarded], d)).toBe('No stuck runs found (threshold 24h).');
+  });
+
+  const badTrust: WorkflowDefinition['steps'][string] = {
+    description: 'bad',
+    execution: 'auto',
+    trust: 'engine_delivered' as never,
+    depends_on: [],
+  };
+
+  it('8b. a refused trust value on a run that can go on (an agent step ready beside it) is NOT listed', async () => {
+    const d: WorkflowDefinition = {
+      id: 'w2',
+      name: 'w2',
+      version: 1,
+      steps: { bad: badTrust, a: { description: 'A', execution: 'agent', depends_on: [] } },
+    };
+    // (a) red when `trust_value_invalid` selects a run on its own (a silent line); (b) prints the
+    //     output.
+    expect(await stuckList([live({ id: 'run-trust-go' })], d)).toBe(
+      'No stuck runs found (threshold 24h).',
+    );
+  });
+
+  it('8c. a refused trust value that stops the run is listed by cannot_go_on’s label only', async () => {
+    const d: WorkflowDefinition = { id: 'w2', name: 'w2', version: 1, steps: { bad: badTrust } };
+    const line = (await stuckList([live({ id: 'run-trust' })], d))
+      .split('\n')
+      .find((l) => l.startsWith('run-trust'));
+    // (a) red when the trust finding gets a label of its own beside cannot_go_on's, or the run is
+    //     not listed; (b) prints what follows `idle:`.
+    expect(line?.replace(/^.* idle: 0m {2}/, '')).toBe(
+      'bad=cannot_go_on(trust) (realm run inspect run-trust)',
+    );
   });
 });
 

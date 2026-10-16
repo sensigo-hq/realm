@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listRuns, listCommand } from './list.js';
 import { STUCK_DEFINITION_PARSE_CAP_BYTES, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { RunStore, RunRecord, RunHealthFinding } from '@sensigo/realm';
+import type { RunStore, RunRecord, RunHealthFinding, WorkflowDefinition } from '@sensigo/realm';
 
 type Kind = RunHealthFinding['kind'];
 
@@ -57,7 +57,37 @@ const OLD = new Date(Date.now() - 47 * 86_400_000).toISOString();
  * produce that kind — never a hand-built finding, because the law is about the RENDER PATH and a
  * synthesized finding would bypass the producer that puts it there.
  */
-const FIXTURES: Array<{ kind: Kind; run: RunRecord; probe?: boolean; contains: string }> = [
+/** issue #729: the crown's W2 — `summarize` (agent) → `publish` (auto), whose input is built from
+ *  summarize's `summary` and must carry `text`. Its stuck run cannot go on until it is corrected. */
+const W2: WorkflowDefinition = {
+  id: 'test-workflow',
+  name: 'w2',
+  version: 1,
+  steps: {
+    summarize: { description: 'Summarize.', execution: 'agent', depends_on: [] },
+    publish: {
+      description: 'Publish.',
+      execution: 'auto',
+      depends_on: ['summarize'],
+      handler: 'h',
+      input_map: { text: 'context.resources.summarize.summary' },
+      input_schema: {
+        type: 'object',
+        required: ['text'],
+        properties: { text: { type: 'string' } },
+      },
+    },
+  },
+};
+
+const FIXTURES: Array<{
+  kind: Kind;
+  run: RunRecord;
+  probe?: boolean;
+  /** issue #729: the definition the probe hands back (the copy parsed). */
+  definition?: WorkflowDefinition;
+  contains: string;
+}> = [
   {
     kind: 'stale_claim',
     run: makeRun({
@@ -98,6 +128,29 @@ const FIXTURES: Array<{ kind: Kind; run: RunRecord; probe?: boolean; contains: s
     probe: true,
     contains: 'definition_unresolvable (unreadable) (realm run inspect run-abc123)',
   },
+  // issue #729: a W2-shaped stuck run with its definition through the probe — fresh, so only the
+  // no-clock finding can select it.
+  {
+    kind: 'cannot_go_on',
+    run: makeRun({
+      updated_at: new Date().toISOString(),
+      completed_steps: ['summarize'],
+      evidence: [
+        {
+          step_id: 'summarize',
+          started_at: OLD,
+          completed_at: OLD,
+          duration_ms: 0,
+          input_summary: { other: 'x' },
+          output_summary: { other: 'x' },
+          status: 'success',
+          evidence_hash: 'h1',
+        },
+      ],
+    }),
+    definition: W2,
+    contains: 'publish=cannot_go_on(input_schema) (realm run inspect run-abc123)',
+  },
 ];
 
 describe('the --stuck label law (issue #558 PR-T)', () => {
@@ -116,7 +169,9 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
               message: 'the registered copy could not be read (EACCES: /x.json)',
               class: 'unreadable',
             })
-          : undefined,
+          : f.definition !== undefined
+            ? () => ({ definition: f.definition! })
+            : undefined,
       );
       expect(out, `kind ${f.kind} must be SELECTED by --stuck`).toContain('run-abc123');
       expect(out, `kind ${f.kind} must RENDER its label`).toContain(f.contains);
@@ -144,7 +199,7 @@ describe('the --stuck label law (issue #558 PR-T)', () => {
     ];
     const covered = new Set<Kind>(FIXTURES.map((f) => f.kind));
     for (const k of LABELLED_WITHOUT_FIXTURE) expect(covered.has(k)).toBe(false);
-    expect(UNLABELLED.length + LABELLED_WITHOUT_FIXTURE.length + covered.size).toBe(14);
+    expect(UNLABELLED.length + LABELLED_WITHOUT_FIXTURE.length + covered.size).toBe(15);
   });
 
   it('LAW-c a `definition_unresolvable` finding is SELECTED and labelled even though it belongs to none of the five hard-coded groups — the RESIDUAL group is what makes that true', async () => {

@@ -73,10 +73,10 @@
 //          Since #625 a store's own `settleStep` settles a guard in the write that makes it
 //          eligible, so on such a store the state is left only by a write that is not a settlement
 //          (a resume, run creation, `store.update`) — it never needed a gate, which is why the
-//          name and the sentence no longer mention one. Disclosed consequence (list.ts is
-//          frozen and passes no `definition` — this finding never surfaces there; ACCEPTABLE, not a
-//          list.ts defect — see `trust_value_invalid` below, the SECOND finding this consequence
-//          now applies to).
+//          name and the sentence no longer mention one. `realm run list --stuck` passes the
+//          definition its probe parsed (issue #729, the operator-side stuck marker) but EXCLUDES
+//          this kind from its selection: `advance` is offered on such a run, so it is not stuck,
+//          and the kind has no `--stuck` label — selected, it would print a silent line.
 //   5b. issue #508 — `trust_value_invalid`: `opts.definition` supplied AND a step in
 //       `findEligibleSteps(definition, run)` (the DAG-eligibility set — auto/agent only,
 //       terminal-run and open-gate short-circuited to `[]` by that function itself) has a `trust`
@@ -85,7 +85,20 @@
 //       fresh run must report ZERO findings (the control that discriminates this design from a
 //       naive scan — see the module's cells below), and a whole-definition scan would also name
 //       guard/finalizer steps whose declared `trust` the engine never even reads (L2 never
-//       reaches those kinds; see execution-loop.ts's own eligibility scoping).
+//       reaches those kinds; see execution-loop.ts's own eligibility scoping). Excluded from
+//       `realm run list --stuck`'s selection like `guard_awaiting_settlement` (it has no label);
+//       a refused trust value makes the run `cannot_go_on` (5c), whose label carries the line.
+//   5c. issue #729 (the operator-side stuck marker, the owner's (A) of 2026-10-16) —
+//       `cannot_go_on`: `opts.definition` supplied, the run open (derived `running`, nothing in
+//       progress — a cheap pre-filter, not a second judge) AND PR-0's ONE predicate,
+//       `cannotGoOnUntilCorrected(composeWaysAt(run, now, { definition, registry }))`: nothing
+//       offered that moves the run, nothing held elsewhere, no question open or due, and a step
+//       refused before its claim (trust, precondition or input_schema). The same predicate
+//       `realm run inspect` prints its way-out line with, so no surface re-derives it. Found the
+//       moment it is so, at ANY age (no clock: `since` is the record's `updated_at`); the 24-hour
+//       `never_claimed_idle` stays the second detector (a run whose definition cannot be read).
+//       A capability-only block is not this finding (`capability_block` is): another runner can
+//       run that step.
 //   6. issue #302 (disclosure gaps) — `completed_with_failed_steps`: `run.terminal_state === true`
 //      ∧ `deriveRunPhase(run) === 'completed'` ∧ `run.failed_steps.length > 0` — checked inside
 //      branch 1, above its `pendingFindings.length > 0` return. A completed seal carrying
@@ -119,6 +132,7 @@ import { classifyInProgressClaims } from './claim-liveness.js';
 import { findCapabilityBlockedSteps } from './capability.js';
 import { findEligibleSteps, findEligibleGuardSteps, deriveRunPhase } from './eligibility.js';
 import { classifyStepTrust, buildTrustRefusal } from '../types/workflow-definition.js';
+import { cannotGoOnUntilCorrected, composeWaysAt, type Unavailable } from './ways.js';
 
 /**
  * Default age threshold for the `never_claimed_idle` finding (issue #221) — 24 hours. Engine-
@@ -166,6 +180,10 @@ export interface RunHealthFinding {
     // value the engine will refuse at dispatch (VALIDATION_TRUST_VALUE) — see item 5b in the
     // branch-conditioning table above. Definition-gated, like `guard_awaiting_settlement`.
     | 'trust_value_invalid'
+    // issue #729 (the operator-side stuck marker): the run cannot go on until its workflow is
+    // corrected — a step it must run next is refused before its claim and nothing else can move
+    // it. Definition-gated; found at any age. See item 5c in the branch-conditioning table above.
+    | 'cannot_go_on'
     // issue #558 PR-T: this run's registered workflow copy cannot be read — missing, permission-
     // denied, a directory, empty, corrupt JSON, a legacy record, or a registry directory that
     // itself cannot be read. Fires on ANY run, live or terminal: the class is about the COPY, not
@@ -179,8 +197,8 @@ export interface RunHealthFinding {
    *  invented sentence per finding. */
   reason: string;
   /** Age anchor (ISO timestamp) — the reader computes human-readable age from this; it is never
-   *  pre-formatted here. `updated_at` for `never_claimed_idle`; the capability block's own `at`
-   *  for `capability_block`. Absent for claim findings (no reliable claim-start timestamp is
+   *  pre-formatted here. `updated_at` for `never_claimed_idle` and `cannot_go_on` (the record's
+   *  instant — no clock); the capability block's own `at` for `capability_block`. Absent for claim findings (no reliable claim-start timestamp is
    *  tracked anywhere in the run record — only a deadline, which is carried in `evidence`
    *  instead). REQUIRED for kind `never_claimed_idle`. */
   since?: string;
@@ -190,7 +208,9 @@ export interface RunHealthFinding {
   /** Kind-specific supporting data — label-sufficient for every surface to render without
    *  reaching back into the run record: claim findings carry `{state, deadline}`; capability
    *  findings carry `{requirement, code}`; `never_claimed_idle` carries `{idle_threshold_ms}` and,
-   *  when `opts.definition` was supplied, `{eligible_steps}`. */
+   *  when `opts.definition` was supplied, `{eligible_steps}`; `cannot_go_on` carries `{refused}`
+   *  (each refused step's facts: `step`, `check`, `refusal`, and `param` / `precondition` when the
+   *  engine has them) and `{way_out: 'correct_and_register'}`. */
   evidence?: Record<string, unknown>;
 }
 
@@ -438,9 +458,9 @@ export function classifyRunHealth(
    * `--stuck` label forks to `realm run inspect` for them.
    *
    * NOTE (audit divergence, round-2 N-B1): the design record's literal carries
-   * `severity: 'warning'`. `RunHealthFinding` has NO `severity` field and none of the 13 other
-   * kinds sets one (TS2353, executed) — adding it is a decision about all 14 kinds, not a line in
-   * this PR. The label and the `--stuck` selection ARE the signal.
+   * `severity: 'warning'`. `RunHealthFinding` has NO `severity` field and none of the other kinds
+   * sets one (TS2353, executed) — adding it is a decision about every kind, not a line in that
+   * PR. The label and the `--stuck` selection ARE the signal.
    */
   const definitionUnresolvableFinding = (): RunHealthFinding | undefined => {
     const de = opts?.definitionError;
@@ -647,6 +667,41 @@ export function classifyRunHealth(
           evidence: { trust: stepDef!.trust },
         });
       }
+    }
+  }
+
+  // issue #729 (module doc item 5c): cannot_go_on — PR-0's one predicate decides; the phase and
+  // in-progress conjuncts only spare the composition on a run that is plainly not stuck (an
+  // open question, a step in flight). `step` is the first refused step in definition order (the
+  // order the ways list them in); `reason` its check; `evidence.refused` every refused entry's
+  // facts, whole — what every surface renders from.
+  if (
+    opts?.definition !== undefined &&
+    derivedPhase === 'running' &&
+    run.in_progress_steps.length === 0
+  ) {
+    const composed = composeWaysAt(run, now, {
+      definition: opts.definition,
+      ...(opts.registry !== undefined ? { registry: opts.registry } : {}),
+    });
+    if (cannotGoOnUntilCorrected(composed)) {
+      const refused = composed.unavailable.filter(
+        (u): u is Extract<Unavailable, { code: 'refused_before_claim' }> =>
+          u.verb === 'run_step' && u.code === 'refused_before_claim',
+      );
+      // The predicate holds only with a step refused before its claim, so `refused` is never
+      // empty here — the predicate is the one judge (no second check that could hide it).
+      const first = refused[0]!;
+      findings.push({
+        kind: 'cannot_go_on',
+        step: first.facts.step,
+        reason: first.facts.check,
+        since: run.updated_at,
+        evidence: {
+          refused: refused.map((u) => ({ ...u.facts })),
+          way_out: 'correct_and_register',
+        },
+      });
     }
   }
 

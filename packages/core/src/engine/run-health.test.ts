@@ -1,6 +1,7 @@
 // Tests for classifyRunHealth — typed run-health classification (issue #221).
 import { describe, it, expect } from 'vitest';
 import { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './run-health.js';
+import { composeWaysAt } from './ways.js';
 import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -530,8 +531,9 @@ describe('classifyRunHealth', () => {
     // call ("awaits the next drive") or to naming a gate; (b) prints the finding's reason text.
     expect(finding?.reason).toBe("guard 'guard_after' is eligible and has not been settled");
 
-    // Definition-free: the finding never surfaces (findEligibleGuardSteps needs a definition) —
-    // matches list.ts's own disclosed, accepted limitation (design record §9).
+    // Definition-free: the finding never surfaces (findEligibleGuardSteps needs a definition).
+    // `realm run list --stuck` passes its probe's definition since issue #729, but excludes this
+    // kind from its selection.
     const withoutDefinition = classifyRunHealth(run, { now: NOW });
     expect(withoutDefinition.some((f) => f.kind === 'guard_awaiting_settlement')).toBe(false);
   });
@@ -1467,5 +1469,182 @@ describe('definition_unresolvable (issue #558 PR-T)', () => {
       definitionError: { code: 'RESOURCE_FORMAT_INVALID', message: 'not parseable JSON: boom' },
     }).find((x) => x.kind === 'definition_unresolvable');
     expect(f?.evidence).toEqual({ workflow_id: 'wf', code: 'RESOURCE_FORMAT_INVALID' });
+  });
+});
+
+// =================================================================================================
+// issue #729 — the operator-side stuck marker: `cannot_go_on`, a run that cannot go on until its
+// workflow is corrected, found the moment it is so (no clock). ONE predicate, PR-0's
+// (`cannotGoOnUntilCorrected` over `composeWaysAt`) — the same one `realm run inspect` prints its
+// way-out line with. What a failing cell prints: kinds, steps, checks and booleans — never a value.
+// =================================================================================================
+describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
+  /** One second old: far under the 24-hour idle clock, so only a no-clock finding can fire. */
+  const FRESH = new Date(NOW.getTime() - 1000).toISOString();
+  const def = (steps: WorkflowDefinition['steps']): WorkflowDefinition => ({
+    id: 'wf',
+    name: 'wf',
+    version: 1,
+    steps,
+  });
+  /** An auto step whose input must carry `n` — an unmapped engine step runs on the run's params. */
+  const needsN: WorkflowDefinition['steps'][string] = {
+    description: 'X',
+    execution: 'auto',
+    depends_on: [],
+    input_schema: { type: 'object', required: ['n'], properties: { n: { type: 'number' } } },
+  };
+  /** The crown's W2: `summarize` (agent) → `publish` (auto), whose input is built from summarize's
+   *  `summary` and must carry `text`. */
+  const W2 = def({
+    summarize: { description: 'Summarize.', execution: 'agent', depends_on: [] },
+    publish: {
+      description: 'Publish.',
+      execution: 'auto',
+      depends_on: ['summarize'],
+      handler: 'h',
+      input_map: { text: 'context.resources.summarize.summary' },
+      input_schema: {
+        type: 'object',
+        required: ['text'],
+        properties: { text: { type: 'string' } },
+      },
+    },
+  });
+  /** W2's stuck run: summarize returned no `summary`, so publish's input cannot be built. */
+  const w2Stuck = makeRun({
+    completed_steps: ['summarize'],
+    updated_at: FRESH,
+    evidence: [
+      {
+        step_id: 'summarize',
+        started_at: FRESH,
+        completed_at: FRESH,
+        duration_ms: 0,
+        input_summary: { other: 'x' },
+        output_summary: { other: 'x' },
+        status: 'success',
+        evidence_hash: 'h1',
+      } as EvidenceSnapshot,
+    ],
+  });
+  const kinds = (fs: ReturnType<typeof classifyRunHealth>) => fs.map((f) => f.kind);
+
+  it('1. fires on W2’s stuck run with its definition: the step, the check, since = updated_at, the refused entries whole', () => {
+    const findings = classifyRunHealth(w2Stuck, { now: NOW, definition: W2 });
+    const f = findings.find((x) => x.kind === 'cannot_go_on');
+    const refused = f?.evidence?.['refused'] as Array<Record<string, unknown>> | undefined;
+    // The facts the ways carry for the refused step — the finding's evidence must be them, whole.
+    const facts = composeWaysAt(w2Stuck, NOW, { definition: W2 })
+      .unavailable.filter((u) => u.verb === 'run_step' && u.code === 'refused_before_claim')
+      .map((u) => u.facts);
+    // (a) red when the predicate is not called (no finding), or the finding names another step,
+    //     check or instant, or drops a fact; (b) prints kinds, step, check, keys and booleans.
+    expect({
+      kinds: kinds(findings),
+      step: f?.step,
+      reason: f?.reason,
+      sinceIsUpdatedAt: f?.since === w2Stuck.updated_at,
+      noIdleMs: f?.idle_ms === undefined,
+      refusedKeys: refused?.map((r) => Object.keys(r).sort()),
+      refusedWhole: JSON.stringify(refused) === JSON.stringify(facts),
+      wayOut: f?.evidence?.['way_out'],
+    }).toEqual({
+      kinds: ['cannot_go_on'],
+      step: 'publish',
+      reason: 'input_schema',
+      sinceIsUpdatedAt: true,
+      noIdleMs: true,
+      refusedKeys: [['check', 'refusal', 'step']],
+      refusedWhole: true,
+      wayOut: 'correct_and_register',
+    });
+  });
+
+  it('2a. NOT when the run can go on: an engine step owed (advance offered) beside a step refused before its claim', () => {
+    const run = makeRun({ updated_at: FRESH });
+    const d = def({ x: needsN, b: { description: 'B', execution: 'auto', depends_on: [] } });
+    // A regression cell on PR-0's arm (`cannotGoOnFrom`: advance offered → false). (a) red when
+    //     that arm is removed — the refused sibling then makes the run "stuck"; (b) prints kinds.
+    expect(kinds(classifyRunHealth(run, { now: NOW, definition: d }))).toEqual([]);
+  });
+
+  it('2b. NOT when the run can go on: an agent step ready beside a step refused before its claim', () => {
+    const run = makeRun({ updated_at: FRESH });
+    const d = def({ x: needsN, a: { description: 'A', execution: 'agent', depends_on: [] } });
+    // A regression cell on PR-0's arm (an agent `run_step` offered → false). (a) red when that arm
+    //     is removed; (b) prints kinds.
+    expect(kinds(classifyRunHealth(run, { now: NOW, definition: d }))).toEqual([]);
+  });
+
+  it('3. NOT on a run waiting on a question', () => {
+    const run = makeRun({
+      updated_at: FRESH,
+      in_progress_steps: ['g'],
+      pending_gate: {
+        gate_id: 'q1',
+        step_name: 'g',
+        preview: {},
+        choices: ['approve'],
+        opened_at: FRESH,
+      },
+    } as unknown as Partial<RunRecord>);
+    const d = def({
+      x: needsN,
+      g: { description: 'G', execution: 'auto', depends_on: [], trust: 'human_confirmed' },
+    });
+    // (a) red when a run at an open question is judged stuck (the pre-filter, PR-0's respond arms
+    //     and its composer's question rule all broken); (b) prints kinds.
+    expect(
+      kinds(classifyRunHealth(run, { now: NOW, definition: d })).includes('cannot_go_on'),
+    ).toBe(false);
+  });
+
+  it('4. NOT on a run with a step in flight (held elsewhere) beside a step refused before its claim', () => {
+    const run = makeRun({
+      updated_at: FRESH,
+      in_progress_steps: ['b'],
+      claims: {
+        b: {
+          run_version: 1,
+          claimed_at: FRESH,
+          deadline: '2099-01-01T00:00:00.000Z',
+          claimant: 'x',
+          attempt: 1,
+        },
+      },
+    } as unknown as Partial<RunRecord>);
+    const d = def({ x: needsN, b: { description: 'B', execution: 'auto', depends_on: [] } });
+    // (a) red when a step held elsewhere does not keep the run off the list (the pre-filter's
+    //     in-progress conjunct and PR-0's held_elsewhere arm broken); (b) prints kinds.
+    expect(
+      kinds(classifyRunHealth(run, { now: NOW, definition: d })).includes('cannot_go_on'),
+    ).toBe(false);
+  });
+
+  it('5. NOT when the only block is a capability — it stays capability_block (another runner can run the step)', () => {
+    const run = makeRun({
+      updated_at: FRESH,
+      capability_blocks: {
+        y: {
+          requirement: { kind: 'handler', name: 'missing_h' },
+          code: 'ENGINE_HANDLER_NOT_REGISTERED',
+          at: FRESH,
+        },
+      },
+    } as unknown as Partial<RunRecord>);
+    const d = def({
+      y: { description: 'Y', execution: 'auto', depends_on: [], handler: 'missing_h' },
+    });
+    // (a) red when `cannotGoOnUntilCorrected` is swapped for `cannotGoOnFrom` (a capability then
+    //     counts as a workflow to correct); (b) prints kinds.
+    expect(kinds(classifyRunHealth(run, { now: NOW, definition: d }))).toEqual([
+      'capability_block',
+    ]);
+  });
+
+  it('6. NOT without a definition: the classifier stays record-only', () => {
+    // (a) red when the definition guard is removed; (b) prints kinds.
+    expect(kinds(classifyRunHealth(w2Stuck, { now: NOW }))).toEqual([]);
   });
 });

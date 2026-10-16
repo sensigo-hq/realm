@@ -414,7 +414,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
   it('step-fields.md, run-state-and-health.md: a guard ready at creation — start_run decides it; a batch run names advance_run and carries the finding until advance_run decides it', async () => {
     claim(
       'docs/reference/workflow/step-fields.md',
-      "A guard that is already ready when a run is created is decided by `start_run`, in the call that creates the run. One that is ready some other way — a run created by `start_run_batch` or by a program, or opened again by `realm run resume` at a failed guard — is decided by the run's next such write or by `advance_run` (`realm run advance`), which the run's `next_actions` then names. Until then the run carries the finding [`guard_awaiting_settlement`](../mcp/run-state-and-health.md#the-14-findings).",
+      "A guard that is already ready when a run is created is decided by `start_run`, in the call that creates the run. One that is ready some other way — a run created by `start_run_batch` or by a program, or opened again by `realm run resume` at a failed guard — is decided by the run's next such write or by `advance_run` (`realm run advance`), which the run's `next_actions` then names. Until then the run carries the finding [`guard_awaiting_settlement`](../mcp/run-state-and-health.md#the-15-findings).",
     );
     claim(
       'docs/reference/mcp/run-state-and-health.md',
