@@ -598,7 +598,7 @@ describe('#401 chokepoint (4) — validation rejections DO mint', () => {
       schema_version: 1,
       steps: {
         // The ONLY lever on message length here: `result.errors` is one fixed-template string that
-        // embeds the step id and nothing else (the Ajv rows travel in error_details, never in
+        // embeds the step id and nothing else (the Ajv rows travel in error.facts, never in
         // errors), so a long step NAME is what pushes the message past the cap.
         [LONG_STEP]: {
           description: 'Ask',

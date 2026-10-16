@@ -142,7 +142,7 @@ describe('execute_step failed-attempt telemetry', () => {
     const events = emittedEvents();
     expect(events).toHaveLength(1);
     expect(events[0]!['error_code']).toBe('VALIDATION_OUTPUT_SCHEMA');
-    // The summarized validation error is present (metadata), proving pre-strip error_details was read.
+    // The summarized validation error is present (metadata), proving pre-strip error.facts was read.
     expect(Array.isArray(events[0]!['validation_error_summary'])).toBe(true);
     expect((events[0]!['validation_error_summary'] as unknown[]).length).toBeGreaterThan(0);
   });

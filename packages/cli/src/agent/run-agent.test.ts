@@ -16,7 +16,9 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   createDefaultRegistry,
   ExtensionRegistry,
+  executeStep,
   findEligibleSteps,
+  validationListOf,
 } from '@sensigo/realm';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { LlmProvider, ToolCapableLlmProvider } from './providers/llm-provider.js';
@@ -1567,4 +1569,70 @@ describe('the agent step prompt hides declared secrets (GHSA-gxfq cell 15)', () 
       });
     }
   }
+});
+
+// issue #759 (Part F, guardrail 7(b)'s CROSS cell): `realm agent`'s repair prompt is the later,
+// poorer carrier of the refusal's list — it must hold the SAME ten problems as the reply, in the
+// reply's order, and the remainder the reply's count gives. The fields are required in DESCENDING
+// order, so a renderer that re-sorts is caught. A failure prints field names and counts only.
+describe('issue #759 — the repair prompt carries the reply’s ten, in order, with the remainder', () => {
+  it('the prompt’s lines are the reply’s rows i < 10 and its `and N more` is `error_count − shown` (reds: a renderer re-sorting; a renderer recounting its input)', async () => {
+    const fields = Array.from({ length: 13 }, (_, i) => `f${String(13 - i).padStart(2, '0')}`);
+    const def = agentWorkflow({
+      output_schema: {
+        type: 'object',
+        required: fields,
+        properties: Object.fromEntries(fields.map((f) => [f, { type: 'string' }])),
+      },
+    });
+    // The reply an agent gets for `{}` — the list the wire carries (core's one reader).
+    const replyStore = new InMemoryStore();
+    const { run } = await replyStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const reply = await executeStep(replyStore, def, {
+      runId: run.id,
+      command: 'draft',
+      input: {},
+      dispatcher: async (_name, input) => ({ ...input }),
+    });
+    const list = validationListOf(reply);
+    const provider = new (class extends LlmProvider {
+      callStep = vi
+        .fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(Object.fromEntries(fields.map((f) => [f, 'v'])));
+    })();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await runAgent(
+      {
+        store: new InMemoryStore(),
+        workflowStore: makeWorkflowStore(def),
+        provider,
+        registry: createDefaultRegistry(),
+      },
+      { definition: def, params: {} },
+    );
+    vi.mocked(console.error).mockRestore();
+    const prompt = provider.callStep.mock.calls[1]?.[0] as string;
+    const block = prompt.slice(
+      prompt.indexOf('schema validator:\n') + 'schema validator:\n'.length,
+    );
+    const lines = block.slice(0, block.indexOf('\nEmit corrected JSON only')).split('\n');
+    expect({
+      result,
+      promptFields: lines
+        .filter((l) => l.startsWith('- '))
+        .map((l) => /\(missing property: '([^']+)'\)/.exec(l)?.[1]),
+      promptTail: lines.at(-1),
+    }).toEqual({
+      result: 'completed',
+      promptFields: (list?.errors ?? []).map(
+        (e) => (e as { params?: { missingProperty?: string } }).params?.missingProperty,
+      ),
+      promptTail: `and ${(list?.error_count ?? 0) - (list?.errors.length ?? 0)} more`,
+    });
+    expect({ shown: list?.errors.length, total: list?.error_count }).toEqual({
+      shown: 10,
+      total: 13,
+    });
+  });
 });

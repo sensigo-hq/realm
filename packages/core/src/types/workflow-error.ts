@@ -2,6 +2,7 @@
 import type { LoaderWarning } from '../workflow/diagnostics.js';
 import type { UnreadableFileFacts, UnreadableRunFilesFacts } from '../store/run-file.js';
 import type { WayOn } from '../engine/ways.js';
+import type { ErrorObject } from 'ajv';
 import { brandClass, REALM_BRAND } from '../brand.js';
 
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
@@ -227,14 +228,31 @@ export type StoredFileErrorFacts =
   ({ scope: 'file' } & UnreadableFileFacts) | ({ scope: 'files' } & UnreadableRunFilesFacts);
 
 /**
+ * issue #759 (PR0-CONTRACT Amendment 11 — its first owner of the validation codes): the typed facts
+ * of a refused answer — the validator's rows (`errors`, Ajv's own order, capped at
+ * `VALIDATION_PROBLEMS_SHOWN`, never re-sorted or de-duplicated), the total before the cap
+ * (`error_count`, counted once at the validator and carried — never recounted by a renderer), and,
+ * for an agent step's counted rejection, the countdown (`rejections`, `threshold`).
+ */
+export interface ValidationErrorFacts {
+  errors: readonly ErrorObject[];
+  error_count: number;
+  rejections?: number;
+  threshold?: number;
+}
+
+/**
  * The error codes whose facts are typed (PR0-CONTRACT Amendments 7, 11): ONE facts type per code,
  * entering with the unit that types it. Every other code keeps its untyped `details` until its owning
- * unit types it (#759 types the two validation codes next).
+ * unit types it (#759 typed the two validation codes; `VALIDATION_EXHAUSTED` and
+ * `VALIDATION_TRACE_SCHEMA` stay untyped until their owners type them).
  */
 export interface ErrorFactsByCode {
   RESOURCE_FORMAT_INVALID: StoredFileErrorFacts;
   ENGINE_STORE_FAILED: StoredFileErrorFacts;
   STATE_LEGACY_FORMAT: Extract<StoredFileErrorFacts, { scope: 'file' }>;
+  VALIDATION_INPUT_SCHEMA: ValidationErrorFacts;
+  VALIDATION_OUTPUT_SCHEMA: ValidationErrorFacts;
 }
 
 /** The typed facts of one error code (`never` for a code with none yet). */
@@ -353,3 +371,17 @@ export class WorkflowError extends Error {
 }
 
 brandClass(WorkflowError, Symbol.for('@sensigo/realm/WorkflowError'), REALM_BRAND);
+
+/**
+ * The stored-file facts an error carries (#729 PR-0, Amendment 7e), or `undefined` for any other
+ * error — the ONE narrowing of the facts union to its stored-file family. The union is keyed by
+ * CODE (`ErrorFactsByCode`); `scope` is that family's own field, not the union's discriminant, so
+ * the readers that need it narrow here by its VALUE — `'file'` or `'files'` — never by the key's
+ * presence alone (issue #759: the union gained a member without `scope`; a later family may carry
+ * a `scope` of its own that is not a stored file).
+ */
+export function storedFileFactsOf(err: WorkflowError): StoredFileErrorFacts | undefined {
+  const facts = err.facts;
+  if (facts === undefined || !('scope' in facts)) return undefined;
+  return facts.scope === 'file' || facts.scope === 'files' ? facts : undefined;
+}

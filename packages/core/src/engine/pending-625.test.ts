@@ -2015,3 +2015,65 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
     ]);
   });
 });
+
+// issue #759 (Part C): the refusal names EVERY problem — the engine's message, then each problem in
+// C37's words, joined by `; ` — and its first clause is the one before #759, byte for byte (the
+// one-problem pins above stay green unedited). A failure prints the sentence: key names and rules.
+describe('issue #759 — the pending refusal names every problem', () => {
+  const run = (params: Record<string, unknown>) =>
+    ({
+      id: 'r',
+      params,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+      terminal_state: false,
+    }) as unknown as RunRecord;
+
+  it('three problems → the engine message + three clauses, in Ajv order (red: the first only)', () => {
+    const d = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: {
+          type: 'object',
+          required: ['alpha'],
+          properties: { n: { type: 'number' } },
+          additionalProperties: false,
+        },
+      },
+    });
+    expect(
+      describePending(d, run({ n: 'one', extra: true }), undefined, new Date()).engine_runnable[0]
+        ?.refusal,
+    ).toBe(
+      "Invalid input for step 'x': the input must have required property 'alpha'; 'extra' is not allowed; 'n' must be number",
+    );
+  });
+
+  it("thirteen problems → ten clauses and `; and 3 more`; `executeStep`'s own error message unchanged", () => {
+    const d = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: {
+          type: 'object',
+          required: Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`),
+        },
+      },
+    });
+    const refusal =
+      describePending(d, run({}), undefined, new Date()).engine_runnable[0]?.refusal ?? '';
+    const verdict = checkPreClaim({ definition: d, run: run({}), step: 'x', input: {} });
+    expect({
+      clauses: refusal.split('; ').length,
+      tail: refusal.split('; ').at(-1),
+      engineMessage:
+        verdict !== undefined && 'error' in verdict ? verdict.error?.message : undefined,
+    }).toEqual({ clauses: 11, tail: 'and 3 more', engineMessage: "Invalid input for step 'x'" });
+  });
+});

@@ -598,16 +598,17 @@ describe('#729 Q3 correction 1, C2 — no agent-step telemetry for an engine ste
         agent: [agentLines.some((l) => l.includes('agent_step_attempt_failed')), sidecar(agentRun)],
       }).toEqual({ auto: [false, 0], agent: [true, 1] });
       // tools.md:298 — only an agent step's answer reaches that row now (an `auto` step's is :299):
-      // `provide_input`, the rules broken, and the countdown. (a) red when the agent step's refusal
-      // loses the countdown or its routing; (b) prints the action and the `error_details` keys.
+      // `provide_input`, the rules broken with their total (#759's `error_count`), and the countdown.
+      // (a) red when the agent step's refusal loses the countdown, the total or its routing; (b)
+      // prints the action and the `error_details` keys.
       claim(
         'docs/reference/mcp/tools.md',
-        '| An agent step\'s answer does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "provide_input"`, and in `error_details` the rules broken, and `rejections` and `threshold`. |',
+        '| An agent step\'s answer does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "provide_input"`, and in `error_details` the rules broken (up to 10, with the total in `error_count`; added after version 0.47.0, which named the first problem only), and `rejections` and `threshold`. |',
       );
       expect([
         agentReply['agent_action'],
         Object.keys((agentReply['error_details'] as Record<string, unknown>) ?? {}),
-      ]).toEqual(['provide_input', ['errors', 'rejections', 'threshold']]);
+      ]).toEqual(['provide_input', ['errors', 'error_count', 'rejections', 'threshold']]);
     } finally {
       spy.mockRestore();
     }

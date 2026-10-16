@@ -95,7 +95,7 @@ Defaulted (settled by default): classify
   ```text
   Invalid workflow: Step 'a': 'validation_exhaustion.mode: default' requires 'default_output' (nothing to substitute on exhaustion) (step at line 5)
   Invalid workflow: Step 'a': 'validation_exhaustion.default_output' requires the step to declare 'output_schema' (an undeclared schema makes the default unvalidatable) (step at line 5)
-  Invalid workflow: Step 'a': 'validation_exhaustion.default_output' does not validate against the step's own 'output_schema': … "message":"must be string" … (step at line 5)
+  Invalid workflow: Step 'a': 'validation_exhaustion.default_output' does not validate against the step's own 'output_schema': /category must be string (step at line 5)
   ```
 
 - `threshold` must be a whole number above 0. With `threshold: 1` the first refused answer ends the step.

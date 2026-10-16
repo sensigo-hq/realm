@@ -37,6 +37,9 @@ import {
   type ToolCallRecord,
   type TraceBufferStore,
   type StructuredOutputMeta,
+  moreOf,
+  renderProblemsLines,
+  validationListOf,
 } from '@sensigo/realm';
 import type {
   RunRecord,
@@ -53,7 +56,6 @@ import {
   sanitizeText,
   redactionSet,
   setAdditionalRedactionValues,
-  renderValidationSummaryEntry,
   deriveLlmClock,
   safeErrorText,
   safeExplainFailure,
@@ -1752,19 +1754,27 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
             result.run_version === versionBeforeAttempt
           ) {
             repairsUsed++;
+            // issue #759 (Part D.2): the refusal's list and its total, through core's one reader
+            // (the two validation codes carry them as typed `error.facts`, not `error_details`).
+            const list = validationListOf(result);
             const record = buildFailedAttemptRecord({
               run_id: runId,
               workflow_id: definition.id,
               step_id: stepName,
               ts: new Date().toISOString(),
               error_code: result.error_code,
-              ajv_errors: (result.error_details?.['errors'] as unknown[]) ?? [],
+              ajv_errors: list !== undefined ? [...list.errors] : [],
+              ...(list?.error_count !== undefined ? { error_count: list.error_count } : {}),
               params: stepInput,
               trace_entry_count: 0,
             });
             lastRejection = {
               kind: result.error_code === 'VALIDATION_OUTPUT_SCHEMA' ? 'output' : 'input',
-              summary: record.validation_error_summary.map(renderValidationSummaryEntry).join('\n'),
+              // issue #759 (Part F): the LINES of the record's list, then `and N more` as read.
+              summary: renderProblemsLines(
+                record.validation_error_summary,
+                moreOf(record) ?? 0,
+              ).join('\n'),
             };
             console.error(
               `  ⚠ output rejected (${result.error_code}); repairing (attempt ${repairsUsed}/${schemaRetries})`,

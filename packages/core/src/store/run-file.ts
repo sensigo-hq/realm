@@ -6,7 +6,7 @@ import { readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { readIfExists, FsIoError, errnoCode, isRetryableArtifactErrno } from './fs-io.js';
 import { SIDECAR_SUFFIX } from './failed-attempt-store.js';
-import { WorkflowError } from '../types/workflow-error.js';
+import { WorkflowError, storedFileFactsOf } from '../types/workflow-error.js';
 import type { RunRecord } from '../types/run-record.js';
 import {
   runRecordFieldProblems,
@@ -97,8 +97,10 @@ export interface UnreadableFileFacts {
 /** The facts a damaged-file error carries, or `undefined` for any other error — the ONE reader
  *  (#729 PR-0: it keys on the facts' `scope`, Amendment 7e). */
 export function unreadableFactsOf(err: unknown): UnreadableFileFacts | undefined {
-  if (!(err instanceof WorkflowError) || err.facts?.scope !== 'file') return undefined;
-  const { scope: _scope, ...facts } = err.facts;
+  if (!(err instanceof WorkflowError)) return undefined;
+  const stored = storedFileFactsOf(err);
+  if (stored?.scope !== 'file') return undefined;
+  const { scope: _scope, ...facts } = stored;
   return facts;
 }
 
@@ -113,8 +115,10 @@ export interface UnreadableRunFilesFacts {
 /** The facts of a decision that failed closed over damaged run files, or `undefined` for any other
  *  error — the ONE reader of {@link unreadableRunFilesError}'s facts (#729 PR-0: keyed on `scope`). */
 export function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined {
-  if (!(err instanceof WorkflowError) || err.facts?.scope !== 'files') return undefined;
-  const { scope: _scope, ...facts } = err.facts;
+  if (!(err instanceof WorkflowError)) return undefined;
+  const stored = storedFileFactsOf(err);
+  if (stored?.scope !== 'files') return undefined;
+  const { scope: _scope, ...facts } = stored;
   return facts;
 }
 

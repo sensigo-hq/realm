@@ -7,6 +7,7 @@ import type { InputMapNode, LiteralNode, StepDefinition } from '../types/workflo
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { validateInputSchema } from '../validation/input-schema.js';
+import { validationFactsOfError } from '../validation/validation-problems.js';
 import { buildEvidenceByStep } from './eligibility.js';
 import { resolvePath } from './render-template.js';
 
@@ -166,11 +167,10 @@ export function refusedInputField(step: InputMapStep, run: RunRecord): string | 
     validateInputSchema(built, step.input_schema, 'input_map');
     return undefined;
   } catch (err) {
-    const errors =
-      err instanceof WorkflowError ? (err.details as { errors?: unknown }).errors : undefined;
-    const first = Array.isArray(errors)
-      ? (errors[0] as Record<string, unknown> | undefined)
-      : undefined;
+    // issue #759 (Part D.4(a)): the refusal's list is its typed facts; the pointer still names ONE
+    // path — the first problem's.
+    const errors = err instanceof WorkflowError ? validationFactsOfError(err)?.errors : undefined;
+    const first = errors?.[0] as Record<string, unknown> | undefined;
     if (first === undefined) return undefined;
     const path = typeof first['instancePath'] === 'string' ? first['instancePath'] : '';
     if (path !== '') {

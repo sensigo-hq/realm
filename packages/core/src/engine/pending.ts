@@ -22,6 +22,11 @@ import { escapedBoundedValue } from '../utils/redaction.js';
 import { shellWord } from '../utils/shell-word.js';
 import { checkPreconditions } from './precondition.js';
 import { validateInputSchema } from '../validation/input-schema.js';
+import {
+  describeValidationProblems,
+  renderProblemsSentence,
+  validationFactsOfError,
+} from '../validation/validation-problems.js';
 import { consumesInputMap, resolveInputMap } from './input-map.js';
 import { requirementForStep } from './capability.js';
 import { isPastDeadline } from './instants.js';
@@ -192,12 +197,15 @@ export function checkPreClaim(args: {
                     agentAction: 'report_to_user',
                     retryable: err.retryable,
                     details: err.details,
+                    // issue #759 (Part D.1): the refusal's list is its typed facts — the re-mint
+                    // keeps them, or the reply loses every problem.
+                    ...(err.facts !== undefined ? { facts: err.facts } : {}),
                     ...(err.stepId !== undefined ? { stepId: err.stepId } : {}),
                   })
                 : err;
             return {
               refused_by: 'input_schema',
-              refusal: withFirstValidationMessage(error),
+              refusal: withValidationProblems(error),
               error,
             };
           }
@@ -242,27 +250,20 @@ export function checkPreClaim(args: {
 }
 
 /**
- * `Invalid input for step 'x': 'n' must be number` — the engine's message, then the FIRST validation
- * message with the field it names (decision C37). A property the schema does not allow is named
- * itself, from the validator's own detail: `'<p>' is not allowed` (decision C42). Total: an error
- * with no usable detail keeps the engine's message alone. Never a submitted value — Ajv's `message`
- * names only the rule, and an extra property's detail is its NAME.
+ * `Invalid input for step 'x': 'n' must be number; 'm' must be string; and 3 more` — the engine's
+ * message, then EVERY validation problem with the field it names (decision C37; issue #759), up to
+ * `VALIDATION_PROBLEMS_SHOWN`, and how many more. A property the schema does not allow is named
+ * itself, from the validator's own detail: `'<p>' is not allowed` (decision C42). The first clause
+ * is the one this function wrote before #759, byte for byte. Total: an error with no usable detail
+ * keeps the engine's message alone. Never a submitted value — Ajv's `message` names only the rule,
+ * and an extra property's detail is its NAME.
  */
-function withFirstValidationMessage(err: WorkflowError): string {
-  const errors = (err.details as { errors?: unknown } | undefined)?.errors;
-  const first = Array.isArray(errors)
-    ? (errors[0] as Record<string, unknown> | undefined)
-    : undefined;
-  const message = typeof first?.['message'] === 'string' ? first['message'] : undefined;
-  if (message === undefined) return err.message;
-  const path = typeof first?.['instancePath'] === 'string' ? first['instancePath'] : '';
-  const segments = path === '' ? [] : path.slice(1).split('/');
-  const extra = (first?.['params'] as Record<string, unknown> | undefined)?.['additionalProperty'];
-  if (first?.['keyword'] === 'additionalProperties' && typeof extra === 'string') {
-    return `${err.message}: '${[...segments, extra].join('.')}' is not allowed`;
-  }
-  const field = segments.length === 0 ? 'the input' : `'${segments.join('.')}'`;
-  return `${err.message}: ${field} ${message}`;
+function withValidationProblems(err: WorkflowError): string {
+  const facts = validationFactsOfError(err);
+  const sentence = renderProblemsSentence(
+    describeValidationProblems(facts?.errors ?? [], 'c37', facts?.error_count),
+  );
+  return sentence === '' ? err.message : `${err.message}: ${sentence}`;
 }
 
 /**

@@ -176,7 +176,8 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
       code: 'VALIDATION_INPUT_SCHEMA',
       action: 'report_to_user',
       hint: "Error during 'publish'. Run phase: 'running'. For 'publish', correct its input_map or its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.",
-      details: ['errors'],
+      // issue #759: the list's total rides beside it (an input_map-built refusal — no countdown).
+      details: ['errors', 'error_count'],
       missing: 'text',
       received: [],
     });
@@ -287,7 +288,8 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
       code: 'VALIDATION_INPUT_SCHEMA',
       action: 'report_to_user',
       hint: "Error during 'read_note'. Run phase: 'running'. For 'read_note', start a run with params that fit (its param 'path'), or correct its input_map or its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.",
-      details: ['errors'],
+      // issue #759: the list's total rides beside it (an input_map-built refusal — no countdown).
+      details: ['errors', 'error_count'],
     });
   });
 
@@ -367,12 +369,12 @@ describe('#688 correction — the docs say what a mapped step called by name is 
 
   // pre-Q3c1 title: 'item 3: tools.md, the execute_step outcome row for a mapped auto step'
   it('item 3: tools.md, the execute_step outcome row for an auto step (#729 Q3 correction 1)', () => {
-    // Executed by cells 4 (b) (status, code, action, `error_details` = `errors` only, the way out),
-    // 5 (the way out only when nothing else can run) and 6 (a `uses_service` step), and by
+    // Executed by cells 4 (b) (status, code, action, `error_details` = `errors` and `error_count`, the
+    // way out), 5 (the way out only when nothing else can run) and 6 (a `uses_service` step), and by
     // q3-729.test.ts F1-a…F1-f for a step with no map.
     claim(
       'docs/reference/mcp/tools.md',
-      '| You called an `auto` step, and the input the engine builds for it — what its `input_map` builds; else the run\'s params or an empty input — does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "resolve_precondition"` when another step can be called, else `"report_to_user"` (added after version 0.47.0, which said `report_to_user` for a step with an `input_map` and, for any other `auto` step, `provide_input` — or ran the step on params that fit), and in `error_details` the rules broken, without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
+      '| You called an `auto` step, and the input the engine builds for it — what its `input_map` builds; else the run\'s params or an empty input — does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "resolve_precondition"` when another step can be called, else `"report_to_user"` (added after version 0.47.0, which said `report_to_user` for a step with an `input_map` and, for any other `auto` step, `provide_input` — or ran the step on params that fit), and in `error_details` the rules broken (up to 10, with the total in `error_count`; added after version 0.47.0, which named the first problem only), without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
     );
   });
 
