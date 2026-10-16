@@ -425,6 +425,17 @@ describe('issue #759 — every problem, capped, with the total', () => {
     );
   });
 
+  it("C2 (#759 correction 1): start_run's params refusal names an extra property by its key (red: the old `(root) must NOT have additional properties`)", () => {
+    const err = refusalOf(() =>
+      validateRunParams(
+        { name: 'n', zzextra: 1 },
+        { type: 'object', properties: { name: { type: 'string' } }, additionalProperties: false },
+        'w',
+      ),
+    );
+    expect(err.message).toBe("Invalid params for workflow 'w': /zzextra is not allowed");
+  });
+
   it('D.4(b): validateAgentSubmission returns the capped rows and the TOTAL (red: read `details` → no rows)', () => {
     const refused = validateAgentSubmission({}, { outputSchema: requiring(13) }, 's');
     const accepted = validateAgentSubmission({ f01: 1 }, { outputSchema: requiring(1) }, 's');
@@ -470,6 +481,25 @@ describe('issue #759 — every problem, capped, with the total', () => {
     );
     expect(result.warning).toBe(
       "Trace schema violation for step 's': (root) must NOT have fewer than 2 items",
+    );
+  });
+
+  it('C2 (#759 correction 1): a trace entry with two extra keys names both, no repeated clause (red: the old clause, said twice)', () => {
+    const result = validateTraceSchema(
+      [{ event: 'searched', seq: 1, data: {} } as unknown as TraceEntry],
+      {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { event: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      's',
+      'warn',
+    );
+    expect(result.warning).toBe(
+      "Trace schema violation for step 's': /0/seq is not allowed; /0/data is not allowed",
     );
   });
 

@@ -389,7 +389,7 @@ Failed attempts for run 419c3c51-c4e7-4066-970f-8f877844709a (1):
     - /confidence: must be <= 1 [maximum]
 ```
 
-Each answer's first line holds the time, the step, the error code, how many fields the answer had, and how many problems it had. Below it come every rule it broke, up to 10, each with the field that broke it, and `and N more` when it broke more. An answer recorded by version 0.47.0 or earlier does not hold its total, so its count reads `≥N problems` when there may have been more.
+Each answer's first line holds the time, the step, the error code, how many fields the answer had, and how many problems it had. Below it come every rule it broke, up to 10, each with the field that broke it, and `and N more` when it broke more. An answer recorded by version 0.47.0 or earlier holds only the first problem that version found, so its count is a floor: `≥1 problem` (an `anyOf` miss may read `≥3 problems`).
 
 With `--json`:
 

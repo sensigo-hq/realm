@@ -203,23 +203,24 @@ describe('issue #759 — realm run attempts prints every problem', () => {
     expect(parsed.records.map((r) => r.error_count)).toEqual([13]);
   });
 
-  it('a record written before #759 (no count): ten entries → the floor `≥10 problems` and no remainder; three entries → exact (red: `and 0 more`)', async () => {
-    const floor = runId();
-    const exact = runId();
-    await seed(floor, 10);
-    await seed(exact, 3);
-    await attemptsCommand.parseAsync([floor], { from: 'user' });
-    const floorOut = out();
-    logSpy759.mockClear();
-    await attemptsCommand.parseAsync([exact], { from: 'user' });
-    const exactOut = out();
-    expect({
-      floorRow: floorOut.split('\n').some((l) => l.endsWith('≥10 problems')),
-      floorTail: floorOut.includes('and '),
-      exactRow: exactOut
-        .split('\n')
-        .some((l) => l.endsWith('3 problems') && !l.endsWith('≥3 problems')),
-      exactTail: exactOut.includes('and '),
-    }).toEqual({ floorRow: true, floorTail: false, exactRow: true, exactTail: false });
+  // pre-#759c1 title: 'a record written before #759 (no count): ten entries → the floor `≥10
+  // problems` and no remainder; three entries → exact (red: `and 0 more`)'
+  it('a record written by 0.47.0 or earlier (entries, no count) is a floor — one entry `≥1 problem`, three `≥3 problems`, ten `≥10 problems`, never a remainder (#759 correction 1, C1; reds: the exact branch restored → `1 problem`; the plural fixed → `≥1 problems`)', async () => {
+    const rows: Record<number, string> = {};
+    for (const n of [1, 3, 10]) {
+      const id = runId();
+      await seed(id, n);
+      logSpy759.mockClear();
+      await attemptsCommand.parseAsync([id], { from: 'user' });
+      const text = out();
+      rows[n] = `${
+        text
+          .split('\n')
+          .find((l) => l.includes('extract'))
+          ?.split('key(s)  ')[1]
+      }${text.includes('and ') ? ' +and' : ''}`;
+    }
+    // (b) prints each row's label (a count, never a value) and whether a remainder followed.
+    expect(rows).toEqual({ 1: '≥1 problem', 3: '≥3 problems', 10: '≥10 problems' });
   });
 });

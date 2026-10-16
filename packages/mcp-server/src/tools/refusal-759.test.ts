@@ -15,6 +15,9 @@ import {
 } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 import { handleExecuteStepTool } from './execute-step.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createRealmMcpServer } from '../server.js';
 
 const fields = Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`);
 const wf: WorkflowDefinition = {
@@ -114,5 +117,37 @@ describe('issue #759 — the wire and the sidecar carry the same ten and the tot
       lastEntries: 10,
       lastTotal: 13,
     });
+  });
+
+  it("start_run's params refusal names an extra property by its key (#759 correction 1, C2; red: the old `(root) must NOT have additional properties`)", async () => {
+    const withParams: WorkflowDefinition = {
+      id: 'params-759',
+      name: 'Params',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      params_schema: {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        additionalProperties: false,
+      },
+      steps: { first: { description: 'First.', execution: 'agent', depends_on: [] } },
+    } as WorkflowDefinition;
+    await workflowStore.register(withParams);
+    const server = createRealmMcpServer({ runStore, workflowStore });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'refusal-759', version: '0' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const raw = (await client.callTool({
+      name: 'start_run',
+      arguments: { workflow_id: withParams.id, params: { name: 'n', zzextra: 1 } },
+    })) as { content: Array<{ text: string }> };
+    await client.close();
+    const r = JSON.parse(raw.content[0]!.text) as Record<string, unknown>;
+    // (a) red when the pointer words lose the key; (b) prints the status, code and message.
+    expect([r['status'], r['error_code'], r['errors']]).toEqual([
+      'error',
+      'VALIDATION_INPUT_SCHEMA',
+      ["Invalid params for workflow 'params-759': /zzextra is not allowed"],
+    ]);
   });
 });

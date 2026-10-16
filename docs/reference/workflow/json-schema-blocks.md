@@ -25,7 +25,7 @@ On an agent step, `input_schema` and `output_schema` are both checked against th
 - **The value must fit; nothing is changed.** A `default` in the schema is not applied. A run started with `{}` against a schema whose `region` has `default: eu` had the parameters `{}`.
 - **Extra fields are kept unless the schema forbids them.** An answer `{"answer": "42", "extra": "kept?"}` against a schema that names only `answer` was accepted and recorded whole. To refuse extra fields, add `additionalProperties: false`.
 - **The whole list of trace entries is checked at once.** `trace_schema` describes a list, with `type: array`.
-- **A refusal names every problem found, up to 10, and gives the total.** The reply carries the first 10 in `error_details.errors` and the total in `error_count`; `realm run attempts` and `realm agent`'s repair message print the 10 and `and N more`:
+- **A refusal names every problem found, up to 10, and gives the total.** The reply carries the first 10 in `error_details.errors` and the total in `error_count` (added after version 0.47.0, which named the first problem only); `realm run attempts` and `realm agent`'s repair message print the 10 and `and N more`:
 
   ```text
   2026-10-16T17:54:01.097Z  extract  VALIDATION_OUTPUT_SCHEMA  8 key(s)  13 problems
@@ -113,7 +113,6 @@ This step requires at least two trace entries:
 research:
   description: Research the question.
   execution: agent
-  trace_validation_mode: enforce
   trace_schema:
     type: array
     minItems: 2
@@ -134,12 +133,26 @@ Trace schema violation for step 'research': (root) must NOT have fewer than 2 it
 
 The warning names every violation, up to 10, then `and N more`, and `validation_errors` in the step's trace summary is the number of violations found (added after version 0.47.0, whose check stopped at the first violation, so a run it recorded can count fewer).
 
-With `trace_validation_mode: enforce`, the same call was refused, and the step stayed open:
+With `trace_validation_mode: enforce` added to the step, the same call was refused, and the step stayed open. The reply, trimmed to these four keys:
 
-```text
-VALIDATION_TRACE_SCHEMA: Trace schema validation failed for step 'research'
-must NOT have fewer than 2 items
-agent_action: provide_input
+```json
+{
+  "error_code": "VALIDATION_TRACE_SCHEMA",
+  "errors": ["Trace schema validation failed for step 'research'"],
+  "error_details": {
+    "errors": [
+      {
+        "instancePath": "",
+        "schemaPath": "#/minItems",
+        "keyword": "minItems",
+        "params": { "limit": 2 },
+        "message": "must NOT have fewer than 2 items"
+      }
+    ],
+    "error_count": 1
+  },
+  "agent_action": "provide_input"
+}
 ```
 
 ## Schemas and strict output

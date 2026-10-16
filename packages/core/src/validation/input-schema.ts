@@ -395,7 +395,8 @@ export function validateOutputSchema(
  *
  * Throws `WorkflowError(VALIDATION_INPUT_SCHEMA)` — the same code every params refusal already
  * carries, so no consumer's error-code switch moves. The message names every failing row, up to
- * `VALIDATION_PROBLEMS_SHOWN`, and how many more (issue #759); the rows are the error's typed
+ * `VALIDATION_PROBLEMS_SHOWN`, and how many more (issue #759), in the pointer words — an extra
+ * property by its own pointer (`/zzextra is not allowed`); the rows are the error's typed
  * `facts.errors` (capped), the total `facts.error_count`.
  */
 /**
@@ -456,8 +457,9 @@ export function validateRunParams(
   if (validate(params)) return;
   const errors = validate.errors ?? [];
   // issue #759 (r1.2): every problem, in this site's pointer words (`(root) <message>` /
-  // `<instancePath> <message>`) — the first clause byte-identical to the single one before; with no
-  // usable row, today's `(root) is invalid`.
+  // `<instancePath> <message>`; an extra property by its key, `/<key> is not allowed` — #759
+  // correction 1) — any other first clause byte-identical to the single one before; with no usable
+  // row, today's `(root) is invalid`.
   const sentence = renderProblemsSentence(describeValidationProblems(errors, 'pointer'));
   throw new WorkflowError(
     `Invalid params for workflow '${workflowId}': ${sentence === '' ? '(root) is invalid' : sentence}`,
@@ -625,8 +627,8 @@ export function validateTraceSchema(
   }
 
   // warn mode — return error details without throwing. issue #759 (r1.6): the same composer, in the
-  // pointer words (a root violation reads `(root) <message>`), capped, with `; and N more`; the
-  // count is the true total.
+  // pointer words (a root violation reads `(root) <message>`; an extra property its own pointer,
+  // `/0/seq is not allowed`), capped, with `; and N more`; the count is the true total.
   const problems = describeValidationProblems(validate.errors ?? [], 'pointer');
   return {
     errorCount: problems.total,

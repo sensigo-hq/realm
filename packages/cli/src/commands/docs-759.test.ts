@@ -178,7 +178,7 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
     // #759 cross cell (the repair message).
     claim(
       BLOCKS,
-      "**A refusal names every problem found, up to 10, and gives the total.** The reply carries the first 10 in `error_details.errors` and the total in `error_count`; `realm run attempts` and `realm agent`'s repair message print the 10 and `and N more`:",
+      "**A refusal names every problem found, up to 10, and gives the total.** The reply carries the first 10 in `error_details.errors` and the total in `error_count` (added after version 0.47.0, which named the first problem only); `realm run attempts` and `realm agent`'s repair message print the 10 and `and N more`:",
     );
     const page = blockWith(BLOCKS, '13 problems');
     const { table, runId } = await refuse(INTAKE, 'extract', INTAKE_ANSWER);
@@ -202,11 +202,12 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
   it('the trace warning example is the engine’s own line for one entry — the root violation in the pointer words — and the count sentence holds (reds: the old bare message; a stale example)', async () => {
     const page = blockWith(BLOCKS, 'Trace schema violation for step');
     const step = /```yaml\n(research:[\s\S]*?)```/.exec(readFileSync(join(ROOT, BLOCKS), 'utf8'))!;
-    // the page's step, in the default mode it was called in
+    // the page's step AS WRITTEN — the default mode `warn` the text says it was called in (#759
+    // correction 1, C5: no filter; red: `trace_validation_mode: enforce` back in the YAML → the call
+    // is refused, no warning)
     const research = loadWorkflowFromString(
       `id: t\nname: t\nversion: 1\nsteps:\n${step[1]!
         .split('\n')
-        .filter((l) => !l.includes('trace_validation_mode'))
         .map((l) => `  ${l}`)
         .join('\n')}`,
     );
@@ -231,13 +232,92 @@ describe('issue #759 — json-schema-blocks.md', { timeout: 60_000 }, () => {
       "The warning names every violation, up to 10, then `and N more`, and `validation_errors` in the step's trace summary is the number of violations found (added after version 0.47.0, whose check stopped at the first violation, so a run it recorded can count fewer).",
     );
   });
+
+  it('the enforce example is the MCP reply for the same call with `trace_validation_mode: enforce` added, trimmed to its four keys (#759 correction 1, C5; red: the hand-condensed block)', async () => {
+    const page = JSON.parse(
+      blocks(BLOCKS).find((b) => b.includes('"VALIDATION_TRACE_SCHEMA"'))!,
+    ) as Record<string, unknown>;
+    const step = /```yaml\n(research:[\s\S]*?)```/.exec(readFileSync(join(ROOT, BLOCKS), 'utf8'))!;
+    const yaml = `id: t-enforce\nname: t\nversion: 1\nsteps:\n${[
+      ...step[1]!.split('\n').filter((l) => l !== ''),
+      '  trace_validation_mode: enforce',
+    ]
+      .map((l) => `  ${l}`)
+      .join('\n')}\n`;
+    const home = await mkdtemp(join(tmpdir(), 'realm-docs-759-enforce-'));
+    try {
+      const runStore = new JsonFileStore(join(home, 'runs'));
+      const workflowStore = new JsonWorkflowStore(join(home, 'wf'));
+      await workflowStore.register(loadWorkflowFromString(yaml));
+      const server = createRealmMcpServer({ runStore, workflowStore });
+      const [ct, st] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: 'docs-759-enforce', version: '0' });
+      await Promise.all([server.connect(st), client.connect(ct)]);
+      const call = async (name: string, args: Record<string, unknown>) =>
+        JSON.parse(
+          (
+            (await client.callTool({ name, arguments: args })) as {
+              content: Array<{ text: string }>;
+            }
+          ).content[0]!.text,
+        ) as Record<string, unknown>;
+      const runId = (await call('start_run', { workflow_id: 't-enforce', params: {} }))[
+        'run_id'
+      ] as string;
+      const reply = await call('execute_step', {
+        run_id: runId,
+        command: 'research',
+        params: { answer: 'x' },
+        trace: [{ event: 'searched' }],
+      });
+      await client.close();
+      // (b) prints the four keys of the reply and of the page.
+      expect(
+        Object.fromEntries(
+          ['error_code', 'errors', 'error_details', 'agent_action'].map((k) => [k, reply[k]]),
+        ),
+      ).toEqual(page);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('issue #759 — agent-step-controls.md', () => {
+  it("the loader's three `validation_exhaustion` errors are the build's own lines — the third names the rule broken in the pointer words (#759 correction 1, C3; red: the old JSON-dump line)", () => {
+    const page = blockWith(
+      'docs/reference/workflow/agent-step-controls.md',
+      'nothing to substitute on exhaustion',
+    );
+    const head =
+      'id: w\nname: W\nversion: 1\nsteps:\n  a:\n    description: A\n    execution: agent\n';
+    const schema =
+      '    output_schema:\n      type: object\n      properties:\n        category: { type: string }\n';
+    const refused = (yaml: string): string => {
+      try {
+        loadWorkflowFromString(yaml);
+      } catch (err) {
+        return (err as Error).message;
+      }
+      return 'LOADED';
+    };
+    expect([
+      refused(`${head}${schema}    validation_exhaustion:\n      mode: default\n`),
+      refused(
+        `${head}    validation_exhaustion:\n      mode: default\n      default_output: { category: x }\n`,
+      ),
+      refused(
+        `${head}${schema}    validation_exhaustion:\n      mode: default\n      default_output: { category: 1 }\n`,
+      ),
+    ]).toEqual(page);
+  });
 });
 
 describe('issue #759 — tools.md', { timeout: 60_000 }, () => {
   it('the refused-answer row: the rules broken, up to 10, with the total in `error_count` (red: the old row)', () => {
     claim(
       TOOLS,
-      '| The answer does not fit the step\'s schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "provide_input"`, and in `error_details` the rules broken (up to 10, with the total in `error_count`), and for an agent step `rejections` and `threshold`. |',
+      '| The answer does not fit the step\'s schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "provide_input"`, and in `error_details` the rules broken (up to 10, with the total in `error_count`; added after version 0.47.0, which named the first problem only), and for an agent step `rejections` and `threshold`. |',
     );
   });
 
@@ -274,7 +354,7 @@ describe('issue #759 — realm-run-reading.md (realm run attempts)', { timeout: 
     // Pinned by execution in attempts.test.ts ("13 problems → …", "a record written before #759 …").
     claim(
       READING,
-      "Each answer's first line holds the time, the step, the error code, how many fields the answer had, and how many problems it had. Below it come every rule it broke, up to 10, each with the field that broke it, and `and N more` when it broke more. An answer recorded by version 0.47.0 or earlier does not hold its total, so its count reads `≥N problems` when there may have been more.",
+      "Each answer's first line holds the time, the step, the error code, how many fields the answer had, and how many problems it had. Below it come every rule it broke, up to 10, each with the field that broke it, and `and N more` when it broke more. An answer recorded by version 0.47.0 or earlier holds only the first problem that version found, so its count is a floor: `≥1 problem` (an `anyOf` miss may read `≥3 problems`).",
     );
   });
 
@@ -317,5 +397,18 @@ describe('issue #759 — CHANGELOG.md', () => {
       ),
       forPrograms: section('Added').includes('For programs: `ValidationErrorFacts`'),
     }).toEqual({ fixed: true, added: true, changed: true, breaking: true, forPrograms: true });
+  });
+
+  it('the Changed bullet says the trace count truly and names the extra-property change (#759 correction 1, C6; reds: the old "not the first" sentence; the sentence missing)', () => {
+    // The trace count is pinned by execution in input-schema.test.ts ("G: through the engine …"); the
+    // extra key by the C2 cells (params, trace warning, loader).
+    claim(
+      'CHANGELOG.md',
+      "In a step's trace summary, `validation_errors` now counts every violation found; before, the check stopped at the first, so it counted one (three for an `anyOf` miss).",
+    );
+    claim(
+      'CHANGELOG.md',
+      "A run's params refusal, a trace-schema warning and the loader's `default_output` error whose problem is an extra property now name its key (`/zzextra is not allowed`) where 0.47.0 printed `(root) must NOT have additional properties` (or, in the loader, the raw rows).",
+    );
   });
 });

@@ -56,23 +56,45 @@ describe('issue #759 — the composer (Part B)', () => {
       ],
       pointer: [
         "(root) must have required property 'a'",
-        '(root) must NOT have additional properties',
-        '/n must NOT have additional properties',
+        // #759 correction 1 (C2): an extra property by its own pointer (before: `(root) must NOT
+        // have additional properties`, `/n must NOT have additional properties`)
+        '/extra is not allowed',
+        '/n/stray is not allowed',
         '/n/m must be number',
       ],
     });
   });
 
-  it('an extra property is NAMED, never its value (C42)', () => {
-    const rows = rowsOf(
-      { type: 'object', properties: {}, additionalProperties: false },
-      { stray: 'SUBMITTED-VALUE-C42' },
+  it('an extra property is NAMED, never its value (C42) — in the c37 words and in the pointer words (#759 correction 1, C2; red: the row’s `data` rendered)', () => {
+    const data = { stray: 'SUBMITTED-VALUE-C42' };
+    // as a verbose row would: the row carries the submitted value
+    const rows = rowsOf({ type: 'object', properties: {}, additionalProperties: false }, data).map(
+      (row) => ({ ...row, data }),
     );
     const clause = describeValidationProblems(rows, 'c37').problems[0]?.clause;
-    expect({ clause, valueShown: clause?.includes('SUBMITTED') }).toEqual({
+    const pointer = describeValidationProblems(rows, 'pointer').problems[0]?.clause;
+    expect({
+      clause,
+      valueShown: clause?.includes('SUBMITTED'),
+      pointer,
+      pointerValueShown: pointer?.includes('SUBMITTED'),
+    }).toEqual({
       clause: "'stray' is not allowed",
       valueShown: false,
+      pointer: '/stray is not allowed',
+      pointerValueShown: false,
     });
+  });
+
+  it('the pointer words escape an extra key as a JSON pointer segment, as Ajv escapes instancePath (`/` → `~1`, `~` → `~0`) (#759 correction 1, C2; red: the raw key)', () => {
+    const rows = rowsOf(
+      { type: 'object', properties: {}, additionalProperties: false },
+      { 'a/b': 1, 'c~d': 2 },
+    );
+    expect(describeValidationProblems(rows, 'pointer').problems.map((p) => p.clause)).toEqual([
+      '/a~1b is not allowed',
+      '/c~0d is not allowed',
+    ]);
   });
 
   // C42, one cell per keyword kind: the submitted value never reaches a clause or a LINE — even

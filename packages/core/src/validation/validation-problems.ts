@@ -57,7 +57,9 @@ export interface ValidationProblems {
 /**
  * The field words of a refusal's site (r1.2): `c37` — the words of a refused step answer
  * (`'<a.b>' <message>`, `the input <message>` at the root, `'<a.b>.<extra>' is not allowed`);
- * `pointer` — the words of a refused run's params (`(root) <message>` / `<instancePath> <message>`).
+ * `pointer` — the words of a refused run's params, a trace and an author's `default_output`
+ * (`(root) <message>` / `<instancePath> <message>`, and an extra property by its own JSON pointer:
+ * `<instancePath>/<extra> is not allowed`, its key escaped as a pointer segment).
  */
 export type FieldWords = 'c37' | 'pointer';
 
@@ -113,18 +115,29 @@ export function whitelistValidationRow(
 function clauseOf(row: Record<string, unknown>, fieldWords: FieldWords): string {
   const path = asString(row['instancePath']);
   const message = asString(row['message']);
-  if (fieldWords === 'pointer') return `${path === '' ? '(root)' : path} ${message}`;
-  const segments = path === '' ? [] : path.slice(1).split('/');
   const params =
     row['params'] !== null && typeof row['params'] === 'object'
       ? (row['params'] as Record<string, unknown>)
       : undefined;
   const extra = params?.['additionalProperty'];
-  if (row['keyword'] === 'additionalProperties' && typeof extra === 'string') {
+  const isExtra = row['keyword'] === 'additionalProperties' && typeof extra === 'string';
+  if (fieldWords === 'pointer') {
+    // #759 correction 1 (C2): C42 names an extra property by its key — here, its own JSON pointer,
+    // the mirror of `c37`'s `'<a.b>.<extra>' is not allowed`.
+    if (isExtra) return `${path}/${pointerSegment(extra)} is not allowed`;
+    return `${path === '' ? '(root)' : path} ${message}`;
+  }
+  const segments = path === '' ? [] : path.slice(1).split('/');
+  if (isExtra) {
     return `'${[...segments, extra].join('.')}' is not allowed`;
   }
   const field = segments.length === 0 ? 'the input' : `'${segments.join('.')}'`;
   return `${field} ${message}`;
+}
+
+/** A key as a JSON pointer segment, escaped as Ajv escapes `instancePath`: `~` → `~0`, then `/` → `~1`. */
+function pointerSegment(key: string): string {
+  return key.replace(/~/g, '~0').replace(/\//g, '~1');
 }
 
 /**

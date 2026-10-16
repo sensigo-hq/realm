@@ -79,7 +79,7 @@ export interface FailedAttemptRecord {
   /**
    * The serializer reduced this record to fit its line (`serializeFailedAttemptLine`): entries were
    * dropped from the END of `validation_error_summary`. Persisted by the MCP sidecar writer since
-   * P3; declared by #759, whose floor rule reads it.
+   * P3; declared by #759; no reader.
    */
   truncated?: true;
 }
@@ -145,20 +145,21 @@ function summarizeAjvErrors(ajvErrors: unknown[]): ValidationErrorSummaryEntry[]
 /**
  * issue #759 (r1.5): how many problems a record holds BEYOND its listed entries, AS READ —
  * `error_count − validation_error_summary.length` (the serializer pops entries from the end, so a
- * trimmed record says `and 10 more` for 3 entries of 13, never `− 10`). A record with no
- * `error_count` (written before #759) is exact only when it holds fewer than
- * `VALIDATION_PROBLEMS_SHOWN` entries and was not trimmed (`0` more); otherwise it cannot say, and
- * this returns `undefined` — a reader renders a FLOOR (`≥<entries>`, the `≥N×` convention of
- * `realm run list`), never an invented "and N more".
+ * trimmed record says `and 10 more` for 3 entries of 13, never `− 10`). A record that holds entries
+ * but no count was written by 0.47.0 or earlier, whose validator stopped at the first problem: it
+ * cannot say how many there were, and this returns `undefined` — a reader renders a FLOOR
+ * (`≥<entries>`, the `≥N×` convention of `realm run list`), never an invented "and N more". A
+ * record with neither names nothing either way.
  */
 export function moreOf(
-  record: Pick<FailedAttemptRecord, 'validation_error_summary' | 'error_count' | 'truncated'>,
+  record: Pick<FailedAttemptRecord, 'validation_error_summary' | 'error_count'>,
 ): number | undefined {
   const listed = Array.isArray(record.validation_error_summary)
     ? record.validation_error_summary.length
     : 0;
-  if (typeof record.error_count === 'number') return Math.max(0, record.error_count - listed);
-  return listed < VALIDATION_PROBLEMS_SHOWN && record.truncated !== true ? 0 : undefined;
+  return typeof record.error_count === 'number'
+    ? Math.max(0, record.error_count - listed)
+    : undefined;
 }
 
 /**

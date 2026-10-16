@@ -8,20 +8,18 @@ import type { FailedAttemptRecord } from '@sensigo/realm';
 type Renderers = Pick<typeof import('@sensigo/realm'), 'moreOf' | 'renderProblemsLines'>;
 
 /**
- * issue #759: a record's problems — the count on the row (`13 problems`; a FLOOR `≥10 problems` for
- * a record written before #759 that cannot say, the `≥N×` convention of `realm run list`), then
- * every entry it holds as LINES and `and N more` as read (`error_count − entries`) — never an
- * invented count.
+ * issue #759: a record's problems — the count on the row (`13 problems`; a FLOOR for a record written
+ * by 0.47.0 or earlier, whose validator stopped at the first problem — `≥1 problem`, `≥3 problems`,
+ * the `≥N×` convention of `realm run list`), then every entry it holds as LINES and `and N more` as
+ * read (`error_count − entries`) — never an invented count.
  */
 function summarize(rec: FailedAttemptRecord, core: Renderers): { label: string; lines: string[] } {
   const entries = Array.isArray(rec.validation_error_summary) ? rec.validation_error_summary : [];
   const more = core.moreOf(rec);
   const total = entries.length + (more ?? 0);
   if (total === 0) return { label: '', lines: [] };
-  const label =
-    more === undefined
-      ? `≥${entries.length} problems`
-      : `${total} ${total === 1 ? 'problem' : 'problems'}`;
+  const counted = (n: number): string => `${n} ${n === 1 ? 'problem' : 'problems'}`;
+  const label = more === undefined ? `≥${counted(entries.length)}` : counted(total);
   return { label, lines: core.renderProblemsLines(entries, more ?? 0) };
 }
 

@@ -201,6 +201,36 @@ steps:
       "'validation_exhaustion.default_output' does not validate against the step's own 'output_schema': (root) must have required property 'score'; /category must be string",
     );
   });
+
+  it("the loader's `default_output` refusal names an extra property by its key — as 0.47.0's raw rows did (#759 correction 1, C2; red: the old clause, which lost the key)", () => {
+    let message = '';
+    try {
+      loadWorkflowFromString(`
+id: vx-759-extra
+name: VX 759 extra
+version: 1
+steps:
+  draft:
+    description: Draft
+    execution: agent
+    output_schema:
+      type: object
+      required: [category]
+      properties:
+        category: { type: string }
+      additionalProperties: false
+    validation_exhaustion:
+      mode: default
+      default_output: { category: x, zzextra: 1 }
+`);
+    } catch (err) {
+      if (!(err instanceof WorkflowError)) throw err;
+      message = err.message;
+    }
+    expect(message).toContain(
+      "'validation_exhaustion.default_output' does not validate against the step's own 'output_schema': /zzextra is not allowed",
+    );
+  });
 });
 
 describe('issue #759 — AC6: the end-to-end that gave the issue its name', () => {

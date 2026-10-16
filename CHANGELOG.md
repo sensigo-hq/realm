@@ -139,7 +139,11 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 - **`realm run attempts` prints every problem of a refused answer (issue #759).** Each answer's line
   ends with how many problems it had, and every rule it broke, up to 10, follows on its own line,
   then `and N more`, instead of the first rule and `(+N more)`. In a step's trace summary,
-  `validation_errors` is now the number of violations found, not the first.
+  `validation_errors` now counts every violation found; before, the check stopped at the first, so
+  it counted one (three for an `anyOf` miss). A run's params refusal, a trace-schema warning and the
+  loader's `default_output` error whose problem is an extra property now name its key
+  (`/zzextra is not allowed`) where 0.47.0 printed `(root) must NOT have additional properties` (or,
+  in the loader, the raw rows).
 
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
   file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,

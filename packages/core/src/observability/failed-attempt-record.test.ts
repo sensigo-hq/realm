@@ -364,16 +364,31 @@ describe('issue #759 — the record carries the total; "more" as read', () => {
     }).toEqual({ truncated: true, entries: 3, total: 13, more: 10 });
   });
 
-  it('a record written before #759 (no count): exact only when it holds fewer than ten entries and was not trimmed, else a floor (`undefined`) — never `and 0 more` (red: 0 for every old record)', () => {
+  // pre-#759c1 title: 'a record written before #759 (no count): exact only when it holds fewer than
+  // ten entries and was not trimmed, else a floor (`undefined`) — never `and 0 more` (red: 0 for
+  // every old record)'
+  it('a record that holds entries but no count (written by 0.47.0 or earlier, whose validator stopped at the first problem) is a floor (`undefined`) whatever it holds — never `and 0 more` (#759 correction 1, C1; red: the exact branch restored)', () => {
     const entries = (n: number) =>
       buildFailedAttemptRecord(baseInput({ ajv_errors: tenRows.slice(0, n) }))
         .validation_error_summary;
+    // a trimmed record as the sidecar persists it: `truncated` no longer changes the answer
+    const trimmed: Pick<FailedAttemptRecord, 'validation_error_summary' | 'truncated'> = {
+      validation_error_summary: entries(3),
+      truncated: true,
+    };
     expect({
-      tenEntries: moreOf({ validation_error_summary: entries(10) }),
+      oneEntry: moreOf({ validation_error_summary: entries(1) }),
       threeEntries: moreOf({ validation_error_summary: entries(3) }),
-      threeTrimmed: moreOf({ validation_error_summary: entries(3), truncated: true }),
+      tenEntries: moreOf({ validation_error_summary: entries(10) }),
+      threeTrimmed: moreOf(trimmed),
       counted: moreOf({ validation_error_summary: entries(3), error_count: 13 }),
-    }).toEqual({ tenEntries: undefined, threeEntries: 0, threeTrimmed: undefined, counted: 10 });
+    }).toEqual({
+      oneEntry: undefined,
+      threeEntries: undefined,
+      tenEntries: undefined,
+      threeTrimmed: undefined,
+      counted: 10,
+    });
   });
 
   it("the record keeps the one whitelist without the schema's allowed values (#217/#224's choice)", () => {
