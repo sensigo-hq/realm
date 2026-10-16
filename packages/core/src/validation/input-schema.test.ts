@@ -413,38 +413,48 @@ describe('issue #560 — the compiled-validator cache', () => {
     }).toEqual({ firstThrew: true, secondThrew: true, sameError: false, validAfter: true });
   });
 
-  it('5a. the LRU, by entries: 256 schemas, #1 used again, #257 compiled → #1 kept, #2 evicted', () => {
-    const nth = (i: number): JsonSchema => ({ type: 'string', description: `c560-5a-${i}` });
-    const first: ValidateFunctionLike[] = [];
-    for (let i = 1; i <= 256; i++) first[i] = compileSchema(nth(i));
-    compileSchema(nth(1)); // a hit: #1 becomes the most recent
-    compileSchema(nth(257));
-    // (a) red when the cache does not keep #1–#256 (the base compiles afresh), does not refresh
-    //     a hit's recency, or evicts past the bound; (b) prints two booleans.
-    expect({
-      firstKept: compileSchema(nth(1)) === first[1],
-      secondEvicted: compileSchema(nth(2)) !== first[2],
-    }).toEqual({ firstKept: true, secondEvicted: true });
-  });
+  // 5a and 5b compile hundreds of schemas (or megabytes of one), each with its own Ajv: under the
+  // full suite's load they need more than the default five seconds.
+  it(
+    '5a. the LRU, by entries: 256 schemas, #1 used again, #257 compiled → #1 kept, #2 evicted',
+    { timeout: 60_000 },
+    () => {
+      const nth = (i: number): JsonSchema => ({ type: 'string', description: `c560-5a-${i}` });
+      const first: ValidateFunctionLike[] = [];
+      for (let i = 1; i <= 256; i++) first[i] = compileSchema(nth(i));
+      compileSchema(nth(1)); // a hit: #1 becomes the most recent
+      compileSchema(nth(257));
+      // (a) red when the cache does not keep #1–#256 (the base compiles afresh), does not refresh
+      //     a hit's recency, or evicts past the bound; (b) prints two booleans.
+      expect({
+        firstKept: compileSchema(nth(1)) === first[1],
+        secondEvicted: compileSchema(nth(2)) !== first[2],
+      }).toEqual({ firstKept: true, secondEvicted: true });
+    },
+  );
 
-  it('5b. the LRU, by key characters: past 4 Mi characters the oldest is evicted; a key over the bound is never cached', () => {
-    const big = (tag: string): JsonSchema => ({
-      type: 'string',
-      description: `${tag}:${'x'.repeat(1.5 * 1024 * 1024)}`,
-    });
-    const s1 = compileSchema(big('c560-5b-1'));
-    const s2 = compileSchema(big('c560-5b-2'));
-    const s3 = compileSchema(big('c560-5b-3')); // 4.5 Mi characters: #1 is evicted
-    const huge: JsonSchema = { type: 'string', description: 'y'.repeat(4 * 1024 * 1024 + 1) };
-    // (a) red when the bound counts entries only (#1 stays), or a key over the bound is cached;
-    //     (b) prints four booleans.
-    expect({
-      thirdKept: compileSchema(big('c560-5b-3')) === s3,
-      secondKept: compileSchema(big('c560-5b-2')) === s2,
-      firstEvicted: compileSchema(big('c560-5b-1')) !== s1,
-      hugeNeverCached: compileSchema(huge) !== compileSchema(huge),
-    }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true, hugeNeverCached: true });
-  });
+  it(
+    '5b. the LRU, by key characters: past 4 Mi characters the oldest is evicted; a key over the bound is never cached',
+    { timeout: 60_000 },
+    () => {
+      const big = (tag: string): JsonSchema => ({
+        type: 'string',
+        description: `${tag}:${'x'.repeat(1.5 * 1024 * 1024)}`,
+      });
+      const s1 = compileSchema(big('c560-5b-1'));
+      const s2 = compileSchema(big('c560-5b-2'));
+      const s3 = compileSchema(big('c560-5b-3')); // 4.5 Mi characters: #1 is evicted
+      const huge: JsonSchema = { type: 'string', description: 'y'.repeat(4 * 1024 * 1024 + 1) };
+      // (a) red when the bound counts entries only (#1 stays), or a key over the bound is cached;
+      //     (b) prints four booleans.
+      expect({
+        thirdKept: compileSchema(big('c560-5b-3')) === s3,
+        secondKept: compileSchema(big('c560-5b-2')) === s2,
+        firstEvicted: compileSchema(big('c560-5b-1')) !== s1,
+        hugeNeverCached: compileSchema(huge) !== compileSchema(huge),
+      }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true, hugeNeverCached: true });
+    },
+  );
 
   it('6. the key is exact: a Date, Infinity or a Uint8Array and their JSON copies keep their own verdicts, in both orders', () => {
     const pairs: Array<[string, () => JsonSchema, () => JsonSchema, unknown]> = [
