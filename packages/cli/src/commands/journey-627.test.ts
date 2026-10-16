@@ -284,6 +284,13 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
             }
             await call('advance_run', 'advance_run', { run_id: runId });
             await call('abandon_run:refused', 'abandon_run', { run_id: runId });
+            // The one probe that reaches the gate-mismatch tail on a door without the answer tool:
+            // present_question for a gate that is not the open one (`gate_not_open`; row 2 only).
+            if (session === 'forms')
+              await call('present_question:other-gate', 'present_question', {
+                run_id: runId,
+                gate_id: 'not-the-open-gate',
+              });
             await call('start_run:deduped', 'start_run', {
               workflow_id: def.id,
               params: realParams(fixture.params ?? {}, proj),
