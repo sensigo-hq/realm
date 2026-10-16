@@ -157,7 +157,8 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       });
     });
 
-    it('execute_step: a BARE call on a non-agent step stays byte-identical (auto steps still execute normally)', async () => {
+    // pre-Q3 title: execute_step: a BARE call on a non-agent step stays byte-identical (auto steps still execute normally)
+    it('execute_step: a BARE call on a non-agent step meets no nonce refusal — core’s admission refuses it as the engine’s step (#729, the Q3 unit)', async () => {
       const { run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
         workflowVersion: 1,
@@ -167,7 +168,15 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
         { run_id: run.id, command: 'step-auto', params: {} },
         { runStore, workflowStore, traceBufferStore },
       );
-      expect(result.status).toBe('ok');
+      // #729 (the Q3 unit): no nonce refusal — the nonce check fires only when a nonce is present —
+      // and core's one admission refuses the agent's by-name call on the engine's step instead.
+      expect({
+        status: result.status,
+        error_code: result.error_code,
+        engines: String(result.context_hint).startsWith(
+          "Step 'step-auto' cannot be called now: it is an automatic step: the engine runs it when it is owed.",
+        ),
+      }).toEqual({ status: 'blocked', error_code: undefined, engines: true });
     });
   });
 
@@ -379,7 +388,8 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
       ).rejects.toMatchObject({ code: 'VALIDATION_EMPTY_VALUE' });
     });
 
-    it('execute_step: a non-agent step is unaffected by the strict posture (never requires a nonce it cannot use)', async () => {
+    // pre-Q3 title: execute_step: a non-agent step is unaffected by the strict posture (never requires a nonce it cannot use)
+    it('execute_step: a non-agent step is unaffected by the strict posture (never requires a nonce it cannot use) — core’s admission refuses it as the engine’s step (#729, the Q3 unit)', async () => {
       process.env['REALM_REQUIRE_WRITER_NONCE'] = '1';
       const { run } = await runStore.create({
         workflowId: 'writer-nonce-wf',
@@ -390,7 +400,15 @@ describe('writer_nonce protocol surface (issue #197 PR-2)', () => {
         { run_id: run.id, command: 'step-auto', params: {} },
         { runStore, workflowStore, traceBufferStore },
       );
-      expect(result.status).toBe('ok');
+      // #729 (the Q3 unit): no nonce refusal — the nonce check fires only when a nonce is present —
+      // and core's one admission refuses the agent's by-name call on the engine's step instead.
+      expect({
+        status: result.status,
+        error_code: result.error_code,
+        engines: String(result.context_hint).startsWith(
+          "Step 'step-auto' cannot be called now: it is an automatic step: the engine runs it when it is owed.",
+        ),
+      }).toEqual({ status: 'blocked', error_code: undefined, engines: true });
     });
   });
 

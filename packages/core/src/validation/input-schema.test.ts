@@ -7,10 +7,12 @@ import { join } from 'node:path';
 import {
   compileSchema,
   validateInputSchema,
+  validateOutputSchema,
+  validateRunParams,
   validateTraceSchema,
   validateAgentSubmission,
 } from './input-schema.js';
-import { WorkflowError } from '../types/workflow-error.js';
+import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
 import type { JsonSchema } from '../types/workflow-definition.js';
 import type { TraceEntry } from '../types/run-record.js';
 import { executeStep } from '../engine/execution-loop.js';
@@ -507,11 +509,12 @@ describe('issue #560 — the compiled-validator cache', () => {
     };
     const first = refusal({ a: 1 });
     refusal({ b: 1 });
-    const paths = (first?.details['errors'] as Array<{ instancePath: string }> | undefined)?.map(
+    // The rows live in the refusal's typed facts (#759), as #759's own cells read them.
+    const paths = (first?.facts as ValidationErrorFacts | undefined)?.errors.map(
       (e) => e.instancePath,
     );
-    // (a) red when the call sites read `errors` from one array every call shares; (b) prints the
-    //     first refusal's instance paths.
+    // (a) red when the refusal's rows are one array every call shares, refilled on each call; (b)
+    //     prints the first refusal's instance paths.
     expect(paths).toEqual(['/a']);
   });
 
@@ -540,3 +543,200 @@ describe('issue #560 — the compiled-validator cache', () => {
 });
 
 type ValidateFunctionLike = ReturnType<typeof compileSchema>;
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// issue #759 — a refused answer names every problem: the option (A), the typed facts (C), the
+// params sentence (C), the agent verdict's count (D.4(b)) and the trace-schema path (G). Every cell
+// runs on core's ONE construction. Failure output names only the fixture's own key names and the
+// counts — never a submitted value.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe('issue #759 — every problem, capped, with the total', () => {
+  /** A schema that requires `n` fields named f01…fNN — `{}` breaks exactly `n` rules. */
+  const requiring = (n: number): JsonSchema => ({
+    type: 'object',
+    required: Array.from({ length: n }, (_, i) => `f${String(i + 1).padStart(2, '0')}`),
+  });
+
+  /** The refusal a validator throws, or a failure naming what it returned instead. */
+  function refusalOf(fn: () => unknown): WorkflowError {
+    try {
+      fn();
+    } catch (err) {
+      if (err instanceof WorkflowError) return err;
+      throw err;
+    }
+    throw new Error('expected a refusal; the validator accepted the answer');
+  }
+
+  it('A: nine required fields and `{}` — ONE refusal carries all nine (red: `allErrors` off → 1)', () => {
+    const err = refusalOf(() => validateInputSchema({}, requiring(9), 'extract'));
+    const facts = err.facts as ValidationErrorFacts;
+    expect({ shown: facts.errors.length, total: facts.error_count }).toEqual({
+      shown: 9,
+      total: 9,
+    });
+  });
+
+  it('C: the three mints type the facts — rows capped at 10 in Ajv order, the total, and `details` without the list (red: keep `details.errors`; red: uncapped)', () => {
+    const mints: Array<[string, () => unknown]> = [
+      ['validateInputSchema', () => validateInputSchema({}, requiring(13), 's')],
+      ['validateOutputSchema', () => validateOutputSchema({}, requiring(13), 's')],
+      ['validateRunParams', () => validateRunParams({}, requiring(13), 'w')],
+    ];
+    const seen = mints.map(([name, fn]) => {
+      const err = refusalOf(fn);
+      const facts = err.facts as ValidationErrorFacts;
+      return {
+        name,
+        shown: facts.errors.length,
+        total: facts.error_count,
+        firstMissing: (facts.errors[0]?.params as { missingProperty?: string }).missingProperty,
+        detailsKeys: Object.keys(err.details),
+      };
+    });
+    expect(seen).toEqual(
+      mints.map(([name]) => ({
+        name,
+        shown: 10,
+        total: 13,
+        firstMissing: 'f01',
+        detailsKeys: [],
+      })),
+    );
+  });
+
+  it("C: start_run's params name every problem in the pointer words — the first clause is today's (red: `errors[0]` only)", () => {
+    const err = refusalOf(() =>
+      validateRunParams(
+        { a: 1, b: 'x' },
+        { type: 'object', properties: { a: { type: 'string' }, b: { type: 'number' } } },
+        'w',
+      ),
+    );
+    expect(err.message).toBe(
+      "Invalid params for workflow 'w': /a must be string; /b must be number",
+    );
+  });
+
+  it("C2 (#759 correction 1): start_run's params refusal names an extra property by its key (red: the old `(root) must NOT have additional properties`)", () => {
+    const err = refusalOf(() =>
+      validateRunParams(
+        { name: 'n', zzextra: 1 },
+        { type: 'object', properties: { name: { type: 'string' } }, additionalProperties: false },
+        'w',
+      ),
+    );
+    expect(err.message).toBe("Invalid params for workflow 'w': /zzextra is not allowed");
+  });
+
+  it('D.4(b): validateAgentSubmission returns the capped rows and the TOTAL (red: read `details` → no rows)', () => {
+    const refused = validateAgentSubmission({}, { outputSchema: requiring(13) }, 's');
+    const accepted = validateAgentSubmission({ f01: 1 }, { outputSchema: requiring(1) }, 's');
+    expect({
+      valid: refused.valid,
+      rows: refused.rawErrors.length,
+      total: refused.errorCount,
+      acceptedTotal: accepted.errorCount,
+    }).toEqual({ valid: false, rows: 10, total: 13, acceptedTotal: 0 });
+  });
+
+  /** Thirteen trace entries each missing its `event` — thirteen violations of one rule. */
+  const thirteenBadEntries = Array.from({ length: 13 }, () => ({}) as unknown as TraceEntry);
+  const traceSchema: JsonSchema = {
+    type: 'array',
+    items: { type: 'object', required: ['event'] },
+  };
+
+  it('G: the trace warning names ten violations and `; and 3 more`; its count is the true 13 (red: the uncapped join; red: count 1)', () => {
+    const result = validateTraceSchema(thirteenBadEntries, traceSchema, 's', 'warn');
+    const clauses = result.warning
+      .slice("Trace schema violation for step 's': ".length)
+      .split('; ');
+    expect({
+      count: result.errorCount,
+      clauses: clauses.length,
+      first: clauses[0],
+      last: clauses.at(-1),
+    }).toEqual({
+      count: 13,
+      clauses: 11,
+      first: "/0 must have required property 'event'",
+      last: 'and 3 more',
+    });
+  });
+
+  it('G: a ROOT trace violation now reads `(root) <message>` — the pointer words (red: the old bare message)', () => {
+    const result = validateTraceSchema(
+      [{ event: 'only' } as unknown as TraceEntry],
+      { type: 'array', minItems: 2 },
+      's',
+      'warn',
+    );
+    expect(result.warning).toBe(
+      "Trace schema violation for step 's': (root) must NOT have fewer than 2 items",
+    );
+  });
+
+  it('C2 (#759 correction 1): a trace entry with two extra keys names both, no repeated clause (red: the old clause, said twice)', () => {
+    const result = validateTraceSchema(
+      [{ event: 'searched', seq: 1, data: {} } as unknown as TraceEntry],
+      {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { event: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+      's',
+      'warn',
+    );
+    expect(result.warning).toBe(
+      "Trace schema violation for step 's': /0/seq is not allowed; /0/data is not allowed",
+    );
+  });
+
+  it("G: the trace enforce refusal's untyped bag carries ten rows and the total (red: uncapped)", () => {
+    const err = refusalOf(() =>
+      validateTraceSchema(thirteenBadEntries, traceSchema, 's', 'enforce'),
+    );
+    expect({
+      code: err.code,
+      rows: (err.details['errors'] as unknown[]).length,
+      total: err.details['error_count'],
+    }).toEqual({ code: 'VALIDATION_TRACE_SCHEMA', rows: 10, total: 13 });
+  });
+
+  it('G: through the engine, a warn-mode trace with 13 violations records `validation_errors: 13` and the capped warning (red: the count 1)', async () => {
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-759-trace-')));
+    const def = {
+      id: 'trace-759',
+      name: 'T',
+      version: 1,
+      steps: {
+        s: {
+          description: 'S',
+          execution: 'agent',
+          depends_on: [],
+          // each entry the engine records must carry `data`; the agent's thirteen carry none
+          trace_schema: { type: 'array', items: { type: 'object', required: ['data'] } },
+          trace_validation_mode: 'warn',
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const envelope = await executeStep(store, def, {
+      runId: run.id,
+      command: 's',
+      input: { done: true },
+      dispatcher: async (_n, input) => ({ ...input }),
+      trace: Array.from({ length: 13 }, (_, i) => ({ event: `e${i}` })),
+    });
+    const warning = (envelope.warnings ?? []).find((w) => w.startsWith('Trace schema violation'));
+    expect({
+      status: envelope.status,
+      count: envelope.evidence[0]?.trace_summary?.validation_errors,
+      endsWithMore: warning?.endsWith('; and 3 more'),
+    }).toEqual({ status: 'ok', count: 13, endsWithMore: true });
+  });
+});

@@ -569,11 +569,21 @@ function hintOf(reply: EngineReply, narrowed: Narrowed | undefined, ended: boole
     refusal.code === 'refused_before_claim' &&
     refusal.step === reply.command &&
     (refusal.facts.check !== 'input_schema' ||
-      !refusal.remedy.some((w) => w.verb === 'run_step')) &&
+      !refusal.remedy.some(
+        (w) =>
+          w.verb === 'run_step' &&
+          (narrowed?.ways ?? []).some(
+            (n) => n.verb === 'run_step' && n.step === w.step && forAgent(n),
+          ),
+      )) &&
     cannotGoOnWithRefusal(narrowed, ended) &&
     narrowed !== undefined
   ) {
-    // C66, #688: a by-name refusal the caller cannot change ends with the person's way out.
+    // C66, #688: a by-name refusal the caller cannot change ends with the person's way out. #729 Q3
+    // correction 1 (the architect's ruling, Amendment 16's chain law): an input refusal's own
+    // `run_step` lever withholds it only when THIS caller may take that lever — at this door the
+    // operator's lever rides `elsewhere`, never the agent's ways, so the assistant is told the end of
+    // the chain.
     hint += ` ${wayOutWords(narrowed)}`;
   }
   if (reply.names_next === true) {
@@ -589,6 +599,16 @@ function hintOf(reply: EngineReply, narrowed: Narrowed | undefined, ended: boole
   }
   if (reply.status === 'error' && refusal === undefined && reply.error !== undefined) {
     hint += remedyWords(reply.error.remedy, reply.run_id);
+  }
+  // issue #729 (the Q3 unit, C1; R3): a step this program lacks the code for failed at its dispatch —
+  // core says what is so (blocked, not terminated); the way out is this door's, in its one producer
+  // of the capability words (the words `advance_run`'s reply prints for the same step).
+  if (reply.status === 'error' && reply.stopped_step !== undefined) {
+    const blocked = reply.unavailable.find(
+      (u) =>
+        u.verb === 'run_step' && u.step === reply.stopped_step && u.code === 'capability_missing',
+    );
+    if (blocked !== undefined) hint += ` ${cannotRunClause(blocked)}.`;
   }
   return hint;
 }

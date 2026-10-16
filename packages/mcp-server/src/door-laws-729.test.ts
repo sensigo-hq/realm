@@ -295,7 +295,9 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     ]);
   });
 
-  it('Amendment 9 / 11: error_details is one carrier — a #719 error’s typed facts; an input refusal’s details byte-identical', async () => {
+  // pre-#759 title: 'Amendment 9 / 11: error_details is one carrier — a #719 error’s typed facts; an
+  // input refusal’s details byte-identical'
+  it('Amendment 9 / 11: error_details is one carrier — a #719 error’s typed facts; an input refusal’s typed facts (#759)', async () => {
     const facts = { resource: 'run_file' as const, class: 'parse' as const, path: '/s/r.json' };
     const damaged = buildPreExecutionErrorEnvelope('x', 'r', 0, unreadableRunFileError(facts));
     const envelope = renderReply(damaged).envelope;
@@ -307,8 +309,9 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       input: { n: 5 },
       dispatcher: async () => ({}),
     });
-    // (a) red when the facts branch publishes `details`, or the input refusal's `details` is
-    //     reshaped; (b) prints the code and booleans.
+    // (a) red when the facts branch publishes `details`, or the input refusal's typed facts are not
+    //     what the wire carries (#759, Amendment 11's first owner of the validation codes); (b)
+    //     prints the code and booleans.
     expect({
       code: envelope.error_code,
       factsPublished:
@@ -317,9 +320,9 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       inputCode: refused.error_code,
       inputUntouched:
         JSON.stringify(renderReply(refused).envelope.error_details) ===
-        JSON.stringify(refused.error_details),
+        JSON.stringify(refused.error?.facts),
       inputHasErrors: Array.isArray(
-        (refused.error_details as Record<string, unknown> | undefined)?.['errors'],
+        (refused.error?.facts as Record<string, unknown> | undefined)?.['errors'],
       ),
     }).toEqual({
       code: 'RESOURCE_FORMAT_INVALID',

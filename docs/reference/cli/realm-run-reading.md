@@ -370,7 +370,7 @@ An answer the gate's expiry wrote with its default choice reads `Answer: hold ·
 realm run attempts <run-id> [--json]
 ```
 
-Lists the answers to agent steps that Realm refused because they did not fit the step's schema. Realm keeps the shape of each refused answer and not its values.
+Lists the answers to agent steps that Realm refused because they did not fit the step's schema. A run recorded by an earlier version may also list a refused call that named an engine step. Realm keeps the shape of each refused answer and not its values.
 
 | Flag     | What it does                              |
 | -------- | ----------------------------------------- |
@@ -383,10 +383,13 @@ realm run attempts 419c3c51-c4e7-4066-970f-8f877844709a
 ```text
 Failed attempts for run 419c3c51-c4e7-4066-970f-8f877844709a (1):
 
-2026-10-01T22:52:32.649Z  classify  VALIDATION_INPUT_SCHEMA  2 key(s)  enum /category
+2026-10-01T22:52:32.649Z  classify  VALIDATION_INPUT_SCHEMA  2 key(s)  3 problems
+    - (root): must have required property 'reason' [required] (missing property: 'reason')
+    - /category: must be equal to one of the allowed values [enum]
+    - /confidence: must be <= 1 [maximum]
 ```
 
-Each line holds the time, the step, the error code, how many fields the answer had, and the first rule it broke with the field that broke it. `(+N more)` follows when it broke more than one.
+Each answer's first line holds the time, the step, the error code, how many fields the answer had, and how many problems it had. Below it come every rule it broke, up to 10, each with the field that broke it, and `and N more` when it broke more. An answer recorded by version 0.47.0 or earlier holds only the first problem that version found, so its count is a floor: `≥1 problem` (an `anyOf` miss may read `≥3 problems`).
 
 With `--json`:
 
@@ -401,16 +404,30 @@ With `--json`:
       "error_code": "VALIDATION_INPUT_SCHEMA",
       "validation_error_summary": [
         {
+          "instancePath": "",
+          "schemaPath": "#/required",
+          "keyword": "required",
+          "message": "must have required property 'reason'",
+          "missing_property": "reason"
+        },
+        {
           "instancePath": "/category",
           "schemaPath": "#/properties/category/enum",
           "keyword": "enum",
           "message": "must be equal to one of the allowed values"
+        },
+        {
+          "instancePath": "/confidence",
+          "schemaPath": "#/properties/confidence/maximum",
+          "keyword": "maximum",
+          "message": "must be <= 1"
         }
       ],
       "submitted_key_count": 2,
       "submitted_keys": ["category", "confidence"],
-      "submitted_bytes": 41,
-      "trace_entry_count": 0
+      "submitted_bytes": 36,
+      "trace_entry_count": 0,
+      "error_count": 3
     }
   ],
   "capped": false

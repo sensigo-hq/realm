@@ -26,6 +26,7 @@ import {
   composeWaysOn,
   isRaceStop,
   type NotRecordedKind,
+  type Party,
   type RaceStop,
   type Unavailable,
   type UnavailableCode,
@@ -86,6 +87,7 @@ import type {
 } from '../types/settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { validateOutputSchema, validateTraceSchema } from '../validation/input-schema.js';
+import { validationFactsOfError } from '../validation/validation-problems.js';
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES, DRAIN_CEILING_SECONDS } from './lifecycle.js';
@@ -251,6 +253,16 @@ export interface ExecuteStepOptions {
    * REJECTS `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
    */
   caller?: StepCaller;
+  /**
+   * issue #729 (the Q3 unit): the party whose call this is, when the door knows it — the MCP
+   * `execute_step` handler sets `'agent'`. Absent = the program itself (an embedder, the CLI, the
+   * engine's own chain), and that absence is its identity on this axis: no judge treats an absent
+   * party as a party. Read by the one admission (`admitWay`, `WaysContext.party`): an agent's
+   * by-name call on an eligible engine step is refused and told to advance. Not one of
+   * `PARTIES` ⇒ `VALIDATION_OPTION_INVALID` before anything is read or written.
+   * @see WaysContext.party
+   */
+  party?: Party;
 }
 
 export interface SubmitGateOptions {
@@ -335,6 +347,11 @@ export interface ExecuteChainOptions {
    * admission step).
    */
   caller?: ChainCaller;
+  /**
+   * @see ExecuteStepOptions.party — the named step's call carries it (the options spread into it);
+   * the steps the chain runs after it are the engine's own and carry none.
+   */
+  party?: Party;
 }
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
@@ -716,7 +733,9 @@ function waysContext(
   store: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
   registry: ExtensionRegistry | undefined,
-  extra: Pick<WaysContext, 'opening_token' | 'presented'> = {},
+  // issue #729 (the Q3 unit): `party` only at the admission (Step 2, `byNameRefusal`) — never on a
+  // reply's composed ways (`waysOf`): the offer side is the door's (`narrowForDoor`).
+  extra: Pick<WaysContext, 'opening_token' | 'presented' | 'party'> = {},
 ): WaysContext {
   return {
     definition: { ok: definition },
@@ -766,13 +785,16 @@ function byNameRefusal(
   store: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
   run: RunRecord,
-  options: Pick<ExecuteStepOptions, 'runId' | 'command' | 'registry'>,
+  options: Pick<ExecuteStepOptions, 'runId' | 'command' | 'registry' | 'party'>,
   at: Date,
 ): Unavailable | undefined {
   const admission = admitWay(
     'run_step',
     writtenSnapshot(run, at),
-    waysContext(store, definition, options.registry),
+    // issue #729 (the Q3 unit): the same judge as Step 2, with the call's party (R26: one judge).
+    waysContext(store, definition, options.registry, {
+      ...(options.party !== undefined ? { party: options.party } : {}),
+    }),
     { run_id: options.runId, command: options.command },
   );
   return 'ok' in admission ? undefined : admission;
@@ -855,7 +877,10 @@ export function notCallableWords(refusal: Unavailable): string {
     case 'step_engine_decided':
       return refusal.facts.execution === 'guard'
         ? 'it is a guard step: the engine runs it when the run reaches it'
-        : 'it is a cleanup step: the engine runs it when the run ends';
+        : refusal.facts.execution === 'finalizer'
+          ? 'it is a cleanup step: the engine runs it when the run ends'
+          : // issue #729 (the Q3 unit): only what is so; the call to make is the door's.
+            'it is an automatic step: the engine runs it when it is owed';
     case 'question_due':
       return `it waits on ${dueExpiryWords(refusal.facts)}`;
     case 'gated_step':
@@ -2211,7 +2236,11 @@ async function executeStepBody(
   const admission = admitWay(
     'run_step',
     writtenSnapshot(run, gateExpiryCheckNow),
-    waysContext(store, definition, options.registry),
+    // issue #729 (the Q3 unit): the call's party rides into the one admission — an agent's by-name
+    // call on an eligible engine step is refused here, before anything is claimed or written.
+    waysContext(store, definition, options.registry, {
+      ...(options.party !== undefined ? { party: options.party } : {}),
+    }),
     { run_id: options.runId, command: options.command, params: options.input },
   );
   if (!('ok' in admission) && NOT_CALLABLE_CODES.has(admission.code)) {
@@ -2272,9 +2301,16 @@ async function executeStepBody(
   //
   // `_debug` is stripped first (pure) because the input-schema member validates the stripped input —
   // or, for a step that consumes its `input_map`, what the map builds (issue #688).
+  //
+  // #729 Q3 correction 1 (C1a): an engine step's input is the engine's at the agent's door too
+  // (T-13): the pre-claim check judges what the view judged and what `advance_run` will run it
+  // with — never the caller's params.
+  const engineInputAtAgentDoor = options.party === 'agent' && stepDef?.execution === 'auto';
   let debugOutput: unknown;
-  let effectiveInput = options.input;
-  if (Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
+  let effectiveInput = engineInputAtAgentDoor
+    ? engineStepInput(definition, run, options.command)
+    : options.input;
+  if (!engineInputAtAgentDoor && Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
     const { _debug, ...rest } = options.input;
     debugOutput = _debug;
     effectiveInput = rest;
@@ -2284,7 +2320,7 @@ async function executeStepBody(
     run,
     step: options.command,
     input: effectiveInput,
-    inputBy,
+    inputBy: engineInputAtAgentDoor ? 'engine' : inputBy,
   });
   const preClaim: PreClaimRefused | undefined =
     preClaimVerdict !== undefined && 'refused_by' in preClaimVerdict ? preClaimVerdict : undefined;
@@ -2383,10 +2419,14 @@ async function executeStepBody(
    * wedge. Any further failure — or a failed countability re-check — drops and swallows
    * (undercount-safe); envelope delivery is unconditional regardless of what this function does.
    */
-  async function countRejection(err: WorkflowError): Promise<void> {
-    if (counted) return; // at-most-once per invocation
-    if (stepDef?.execution !== 'agent') return; // non-agent steps are never counted
-    if (err.code !== 'VALIDATION_INPUT_SCHEMA' && err.code !== 'VALIDATION_OUTPUT_SCHEMA') return;
+  async function countRejection(
+    err: WorkflowError,
+  ): Promise<{ rejections: number; threshold: number } | undefined> {
+    if (counted) return undefined; // at-most-once per invocation
+    if (stepDef?.execution !== 'agent') return undefined; // non-agent steps are never counted
+    if (err.code !== 'VALIDATION_INPUT_SCHEMA' && err.code !== 'VALIDATION_OUTPUT_SCHEMA') {
+      return undefined;
+    }
     counted = true;
 
     const threshold =
@@ -2446,9 +2486,13 @@ async function executeStepBody(
       );
     }
     // Countdown observable (Temporal-style) — `rejections` is the JUST-PERSISTED count when one
-    // exists, else the attempted (unpersisted) value, so a caller always sees SOME number.
-    err.details['rejections'] = persisted ?? attempted;
-    err.details['threshold'] = threshold;
+    // exists, else the attempted (unpersisted) value, so a caller always sees SOME number. issue
+    // #759: RETURNED, never written into the error — the refusal's facts are readonly; the call
+    // site carries the count on a copy (`withCount`).
+    const countdown = { rejections: persisted ?? attempted, threshold };
+    // issue #759: the refusal's list (capped) and its total — the exhaustion bag stays untyped
+    // (Amendment 11: its owner types it); its keys ride beside the ones already there.
+    const facts = validationFactsOfError(err);
 
     if (persisted !== undefined && persisted >= threshold) {
       exhaustion = new WorkflowError(
@@ -2465,33 +2509,67 @@ async function executeStepBody(
             rejections: persisted,
             threshold,
             last_error: err.message,
-            last_ajv_errors: err.details['errors'],
+            last_ajv_errors: facts?.errors,
+            last_error_count: facts?.error_count,
           },
         },
       );
     }
+    return countdown;
+  }
+
+  /**
+   * issue #759: the refusal as the reply carries it — a copy of the validator's error with the
+   * countdown on its typed facts (`rejections`, `threshold`), every other option of the source
+   * error kept (the constructor's list). The source error is never mutated. An error with no count
+   * (not an agent step's counted rejection) or no facts is returned as it is — every error counted
+   * here is one of the validator's two mints, which always carry their facts.
+   */
+  function withCount(
+    err: WorkflowError,
+    countdown: { rejections: number; threshold: number } | undefined,
+  ): WorkflowError {
+    const facts = validationFactsOfError(err);
+    if (countdown === undefined || facts === undefined) return err;
+    return new WorkflowError(err.message, {
+      code: err.code,
+      category: err.category,
+      agentAction: err.agentAction,
+      retryable: err.retryable,
+      details: err.details,
+      facts: { ...facts, ...countdown },
+      ...(err.about !== undefined ? { about: err.about } : {}),
+      ...(err.remedy !== undefined ? { remedy: err.remedy } : {}),
+      ...(err.stepId !== undefined ? { stepId: err.stepId } : {}),
+      attempt: err.attempt,
+      ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
+      ...(err.warnings !== undefined ? { warnings: err.warnings } : {}),
+      ...(err.errors !== undefined ? { errors: err.errors } : {}),
+    });
   }
 
   // Step 2b: Validate input schema.
   if (preClaim?.refused_by === 'input_schema' && preClaim.error !== undefined) {
     {
       const err = preClaim.error;
-      await countRejection(err);
+      const countdown = await countRejection(err);
       if (exhaustion === null) {
         const refused = makeErrorEnvelope(
           store,
           options,
           run,
-          err,
+          withCount(err, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
         );
         // #729 PR-0 (C66, #688): an engine step's input is the engine's, so its refusal rides the
         // reply as data (an agent step's input is its own answer, C3: returned as it is). T-13 (a):
-        // a step that builds its input with its map routes like every refusal before the claim.
+        // a step that builds its input with its map routes like every refusal before the claim —
+        // and so does any engine step judged on the engine's input at the agent's door (#729 Q3
+        // correction 1, C1b).
         if (stepDef === undefined || stepDef.execution === 'agent') return refused;
         const own = withOwnInputRefusal(refused, options.command);
-        return consumesInputMap(stepDef) && own.refusal !== undefined
+        return (consumesInputMap(stepDef) || engineInputAtAgentDoor) && own.refusal !== undefined
           ? { ...own, reply_kind: 'refusal' }
           : own;
       }
@@ -2515,13 +2593,13 @@ async function executeStepBody(
     try {
       validateOutputSchema(effectiveInput, stepDef.output_schema, options.command);
     } catch (err) {
-      await countRejection(err as WorkflowError);
+      const countdown = await countRejection(err as WorkflowError);
       if (exhaustion === null) {
         return makeErrorEnvelope(
           store,
           options,
           run,
-          err as WorkflowError,
+          withCount(err as WorkflowError, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
         );
@@ -3917,7 +3995,7 @@ async function executeStepBody(
         intrinsic_action: blockedAction,
         reply_kind: 'error',
         error_code: recoverableCode,
-        context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it. Provision this runner (or re-run on a capable one), then follow next_actions.`,
+        context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it.`,
         run_phase: (persistedBlockedRun ?? blockedRun).run_phase,
         ...blockedWays,
       };
