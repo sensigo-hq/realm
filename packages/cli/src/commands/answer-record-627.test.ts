@@ -1,8 +1,8 @@
-// answer-record-627.test.ts — #627 W, Part G on the CLI door: `realm run respond` and the
-// `realm workflow run` prompt record route `cli` with the principal's absence `not_a_server_door`
-// (cell 5, CLI half); inspect's answer line names the route by its door's words (W-i10), the program,
-// the principal by kind (W-i8; cell 25's rendering) and the client prompt (W-i5), and its absences
-// (W-i2, W-i3, W-i7); one answerer phrase for inspect and respond (cell 20); inspect's open-gate block
+// answer-record-627.test.ts — #627 W, Part G on the CLI door: `realm run respond` records route
+// `cli` with the principal's absence `not_a_server_door` (cell 5, CLI half; the `realm workflow run`
+// prompt's cell is run-prompt-route-627.test.ts); inspect's answer line names the route by its
+// door's words (W-i10), the program, the principal by kind (W-i8; cell 25's rendering) and the client
+// prompt (W-i5), and its absences (W-i2, W-i3, W-i7); one answerer phrase for inspect and respond (cell 20); inspect's open-gate block
 // (cell 13: the frozen question, its absences, and the respond line); the `newer` readers (MA 3's W-r2
 // arms: `list --stuck`'s class word, `validate --registered`'s arm).
 //
