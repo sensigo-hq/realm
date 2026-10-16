@@ -219,6 +219,7 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
           transport.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
           await client.connect(transport);
           const results: { probe: string; class: string; found: string[] }[] = [];
+          let gateProbe: [string, boolean] | undefined;
           try {
             const call = async (probe: string, name: string, args: Reply): Promise<Reply> => {
               const r = (await client.callTool({ name, arguments: args })) as {
@@ -270,11 +271,20 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
               run_id: runId,
               include_steps: true,
             });
-            await call('execute_step:gate', 'execute_step', {
+            // After the Q3 unit (#795): at its open question a gated `auto` step's by-name call is
+            // the gate's refusal, never Q3's `step_engine_decided` (that is an ELIGIBLE engine step's;
+            // `start_run` has already run this one) — the class and the gate's own words.
+            const atGateReply = await call('execute_step:gate', 'execute_step', {
               run_id: runId,
               command: gate.step_name,
               params: {},
             });
+            gateProbe = [
+              results.at(-1)!.class,
+              String(atGateReply['context_hint']).startsWith(
+                `Step '${gate.step_name}' cannot be called now: its question is open`,
+              ),
+            ];
             if (downstream !== undefined) {
               await call('execute_step:downstream', 'execute_step', {
                 run_id: runId,
@@ -342,14 +352,16 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
             await client.close();
           }
           // (a) red when one census text is reverted (a forbidden string reaches a reply), a probe
-          //     internal-errors, or the exit assertion fires; (b) prints each offending probe.
+          //     internal-errors, the exit assertion fires, or the call at the gate is not the gate's
+          //     refusal; (b) prints each offending probe and that call's class.
           expect({
+            gateProbe,
             offending: results
               .filter((r) => r.found.length > 0)
               .map((r) => `${r.probe}: ${r.found.join(', ')}`),
             internal: results.filter((r) => r.class === 'internal_error').map((r) => r.probe),
             heldBack: (stderr.match(/realm: held back a /g) ?? []).length,
-          }).toEqual({ offending: [], internal: [], heldBack: 0 });
+          }).toEqual({ gateProbe: ['blocked', true], offending: [], internal: [], heldBack: 0 });
         } finally {
           rmSync(home, { recursive: true, force: true });
           rmSync(proj, { recursive: true, force: true });
