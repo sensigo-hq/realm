@@ -4,6 +4,7 @@
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { respondWayOfGate } from './ways.js';
 import { admitEntry } from '../admission.js';
 import { deriveRunPhase, sealRunLevel } from './eligibility.js';
 
@@ -67,6 +68,7 @@ export async function abandonRun(
   if (run.terminal_state) {
     // Derive-for-message: render the TRUE (derived) phase, never the possibly-stale persisted one.
     const derivedPhase = deriveRunPhase(run);
+    // #729 PR-0 (Table row 40): `abandon`'s `run_ended` — reading the run is the one way on.
     throw new WorkflowError(
       `Run '${runId}' is already terminal (${derivedPhase}); cannot abandon a finished run.`,
       {
@@ -75,6 +77,7 @@ export async function abandonRun(
         agentAction: 'report_to_user',
         retryable: false,
         details: { runId, run_phase: derivedPhase, persisted_run_phase: run.run_phase },
+        remedy: [{ verb: 'inspect', conditions: [], run_id: runId }],
       },
     );
   }
@@ -87,11 +90,11 @@ export async function abandonRun(
   // `running` and abandons like one.
   const gate = run.pending_gate;
   if (gate !== undefined) {
-    // The refusal is SURFACE-NEUTRAL: it states the fact and carries what a surface needs to name
-    // its own answer verb (`realm run respond` on the CLI, `submit_human_response` over MCP) —
-    // core never names one surface's verb to the other's operator (the three-walk finding).
+    // The refusal is SURFACE-NEUTRAL: it states the fact; #729 PR-0 (Table row 39): the way on —
+    // answering the open question — is its remedy, a typed `respond` way each door words
+    // (`realm run respond` on the CLI, the answer tool over MCP); the details re-parse is gone.
     throw new WorkflowError(
-      `Run '${runId}' is waiting on human gate '${gate.step_name}' (gate '${gate.gate_id}'); answer it before abandoning.`,
+      `Run '${runId}' is waiting on human gate '${gate.step_name}' (gate '${gate.gate_id}'); it cannot be abandoned while its question is open.`,
       {
         code: 'STATE_TRANSITION_DENIED',
         category: 'STATE',
@@ -103,10 +106,8 @@ export async function abandonRun(
           // The terminal arm's own `persisted_run_phase` precedent (`:73`): the two agree on a live
           // gate and the key is the disclosure, not a correction.
           persisted_run_phase: run.run_phase,
-          gate_id: gate.gate_id,
-          step_name: gate.step_name,
-          choices: gate.choices,
         },
+        remedy: [respondWayOfGate(runId, gate)],
       },
     );
   }

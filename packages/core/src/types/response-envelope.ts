@@ -1,28 +1,12 @@
-// Types for the EngineReply returned by every step execution.
+// Types for the EngineReply returned by every engine entry (issue #729 PR-0: the core reply; the MCP
+// envelope is rendered from it by `renderReply`, the CLI's lines by `CLI_COMMANDS`).
 import type { EvidenceSnapshot, RunPhase, SealArm } from './run-record.js';
-import type { AgentAction, ErrorCode } from './workflow-error.js';
+import type { AgentAction, ErrorCode, ErrorFacts } from './workflow-error.js';
 import type { LoaderWarning } from '../workflow/diagnostics.js';
 import type { ActorAbsent, Attributed, GateClaimVerdict } from '../engine/holder.js';
-
-export interface NextAction {
-  instruction: {
-    tool: string;
-    params: Record<string, unknown>;
-    /**
-     * Ready-to-use flat argument object for calling the tool.
-     * Agent-supplied params appear as placeholder strings (e.g. "<YOUR_PARAMS>", "<approve|reject>").
-     * Copy this object, replace the placeholder(s), and call the tool.
-     */
-    call_with: Record<string, unknown>;
-  } | null;
-  human_readable: string;
-  /** Current state orientation — describes what state the run is in and what just happened. */
-  orientation: string;
-  /** The step's declared input schema — use this to structure the params argument of your execute_step call. */
-  input_schema?: Record<string, unknown>;
-  /** Template-resolved step prompt, delivered to the agent at step entry. */
-  prompt?: string;
-}
+import type { RaceStopKind, ReplyKind, Unavailable, WayOn } from '../engine/ways.js';
+import type { Basis } from '../engine/snapshot.js';
+import type { EnactedVia } from '../engine/execution-loop.js';
 
 export type RunStatus = 'ok' | 'error' | 'blocked' | 'confirm_required';
 
@@ -30,9 +14,9 @@ export interface BlockedReason {
   /**
    * The steps that can be called now: the agent steps the run's view offers and the `auto` steps
    * it does not refuse — never a step refused before its claim (issue #625 PR-2a, decision C94).
+   * (#729 PR-0: the suggestion is the door's, rendered from its list of ways.)
    */
   eligible_steps: string[];
-  suggestion?: string;
 }
 
 export interface GateInfo {
@@ -64,6 +48,77 @@ export interface GateInfo {
   first_reminder_due_at?: string;
 }
 
+/**
+ * issue #729 PR-0 (PR0-CONTRACT §2, A-16, P-3, Amendment 6): what an answer that was NOT recorded
+ * met — the choice that was recorded instead and how (`answer` by a person, `timeout` by the
+ * question's expiry), or the gate cancelled when a step ended the run (`engine`, no choice: a
+ * cancelled gate chose nothing). `at` is the winning entry's `completed_at`; `by.name` comes from
+ * `responded_by`, always `basis: 'stated'` — realm never claims who was on the other end. `step` and
+ * `expiry` are the question's, from the call's snapshot taken before any wait; `attempted` says
+ * whether THIS call tried to answer. Data in PR-0; W's `renderOutcome` renders it.
+ */
+export interface Outcome {
+  choice?: string;
+  by:
+    | { kind: 'answer'; name?: string; basis: 'stated' }
+    | { kind: 'timeout' }
+    | {
+        kind: 'engine';
+        cause: 'gate_cancelled_by_abort';
+        step: string;
+        name?: string;
+        basis?: 'stated';
+      };
+  at?: string;
+  step: string;
+  /** The question's stored deadline, as an absolute time (display, never a judgement). */
+  expiry?: string;
+  attempted: boolean;
+}
+
+/** issue #729 PR-0 (T-3): one race a loop met — the step, the T-1 kind, whether this call's code ran. */
+export interface RaceEntry {
+  step: string;
+  kind: RaceStopKind;
+  ran_here: boolean;
+}
+
+/**
+ * issue #729 PR-0 (T-2; A.3 #5 "names the enactor and the lag"): an expired question's declared
+ * `on_expiry`, carried out — by this call or by another. `overdue` is read through `readInstant`:
+ * the lag, or `{ absent: 'unparseable_stamp' }`; a question not yet due never reaches a receipt.
+ */
+export interface ExpiryReceipt {
+  gate_id: string;
+  step: string;
+  on_expiry: 'settle_default' | 'abort';
+  choice?: string;
+  enacted_via: EnactedVia;
+  by_this_call: boolean;
+  expired_at: string;
+  overdue: { ms: number } | { absent: 'unparseable_stamp' };
+}
+
+/**
+ * issue #729 PR-0 (PR0-CONTRACT §2): the typed part of an error reply — the ways that lead on from
+ * it (`remedy`, every one judged), the step a stop is about when it is not the call's own (`about`,
+ * T-1), and the typed facts of its code (`facts`, Amendment 7). The untyped remainder stays in
+ * `error_details` until its code's unit types it (Amendment 11).
+ */
+export interface ReplyError {
+  remedy: WayOn[];
+  about?: string;
+  facts?: ErrorFacts;
+}
+
+/**
+ * issue #729 PR-0: the reply of every engine entry (PR0-CONTRACT §2) — today's envelope minus the
+ * door's words (`next_actions`, `agent_action`, `blocked_reason.suggestion`, the way clause,
+ * `gate.claim_token`), plus the ways as data: what can be done next (`ways`), what cannot and why
+ * (`unavailable`), what they were judged on (`basis`), and the typed receipts. Ways are never stored:
+ * a replayed request returns its first verdict with fresh ways. Each door renders it — MCP's
+ * `renderReply`, the CLI's `CLI_COMMANDS`; the library carries it as it is.
+ */
 export interface EngineReply {
   command: string;
   run_id: string;
@@ -71,10 +126,10 @@ export interface EngineReply {
   run_version: number;
   /**
    * Chain progress status.
-   * - 'ok': the chain made forward progress; follow next_actions for what to do next.
+   * - 'ok': the chain made forward progress; `ways` says what can be done next.
    *   Does NOT imply the original requested step succeeded — a recovery path also returns 'ok' with a warning.
-   * - 'error': unrecoverable failure; agent_action tells you how to respond.
-   * - 'blocked': wrong step for current state; next_actions redirects.
+   * - 'error': unrecoverable failure; `intrinsic_action` is the error's own action word.
+   * - 'blocked': wrong step for current state; `ways` says what can be done instead.
    * - 'confirm_required': a human gate is open; gate carries the display content.
    */
   status: RunStatus;
@@ -102,14 +157,26 @@ export interface EngineReply {
    * refusal of another choice carries.
    */
   error_details?: Record<string, unknown>;
-  agent_action?: AgentAction;
+  /** issue #729 PR-0: the typed part of an error — its remedies, the step it is about, its facts. */
+  error?: ReplyError;
   /**
-   * When present and agent_action is 'wait_and_proceed', the number of seconds
-   * the consumer should wait before following next_actions. Not set for other
-   * agent_action values.
+   * issue #729 PR-0 (D2 D-8 row 1; Amendment 12): the reply's OWN action word, the input of the one
+   * derivation `agentActionOf` — on an error reply the `WorkflowError.agentAction`, set once where
+   * the reply is composed; on an `ok` reply only `stop`, at the three ended-run anchors. Never on the
+   * MCP wire: `agent_action` is the door's derived word.
+   */
+  intrinsic_action?: AgentAction;
+  /** issue #729 PR-0 (D2 D-8): the kind of reply this is, as the one derivation of `agent_action` reads it. */
+  reply_kind: ReplyKind;
+  /**
+   * When present and the error's action is 'wait_and_proceed', the number of seconds the consumer
+   * should wait before going on. Not set otherwise.
    */
   retry_after?: number;
-  /** Current state orientation. Always populated — describes what just happened and what state the run is in. */
+  /**
+   * Current state orientation. Always populated — says what just happened and what state the run is
+   * in, and nothing more (issue #729 PR-0: the ways on are the door's to word).
+   */
   context_hint: string;
   /**
    * Derived phase of the run at the time of this response. Present whenever a run is loaded
@@ -117,11 +184,31 @@ export interface EngineReply {
    * could be loaded (`buildPreExecutionErrorEnvelope` / `errorEnvelope`).
    */
   run_phase?: RunPhase;
+  /** issue #729 PR-0: what can be done next, as data (PR0-CONTRACT §1). Never stored. */
+  ways: WayOn[];
+  /** issue #729 PR-0: what cannot be done now, each with its code, facts and remedies. */
+  unavailable: Unavailable[];
+  /** issue #729 PR-0: what the ways were judged on; absent on a reply that loaded no run. */
+  basis?: Basis;
+  /** issue #729 PR-0 (A-16, P-3): what an answer that was not recorded met. */
+  outcome?: Outcome;
+  /** issue #729 PR-0 (T-3): the races a loop met. */
+  races?: RaceEntry[];
+  /** issue #729 PR-0 (T-2): an expired question's declared `on_expiry`, carried out. */
+  expiry?: ExpiryReceipt;
   /**
-   * What to call next. Empty means nothing can be called now: the run has ended, waits on a person
-   * or another process, or cannot go on — check status, agent_action and run_phase.
+   * issue #729 PR-0 (D3 A-6): this call's own refusal — the verdict of the one admission
+   * (`admitWay`) on the way the call asked for: its code, typed facts and remedies (each a judged
+   * way). On a reply that refuses the step or the answer its caller named; absent otherwise.
    */
-  next_actions: NextAction[];
+  refusal?: Unavailable;
+  /**
+   * issue #729 PR-0 (decisions C34, C51, C57; Table rows 20–26): set on a reply whose moment says
+   * what comes next — a step's reply, an answer's reply, a refusal, a start, a call where nothing
+   * ran. `context_hint` says only what happened; a door that words the ways adds its sentence of
+   * what comes next after it on such a reply (MCP's `renderReply`). Data about the reply, never words.
+   */
+  names_next?: true;
   blocked_reason?: BlockedReason;
   gate?: GateInfo;
   /**

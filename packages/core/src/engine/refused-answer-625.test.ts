@@ -1,12 +1,16 @@
 // refused-answer-625.test.ts — issue #625 PR-2a, round 16 (the scoped walk on the merged head):
 // - decision C117 (W3-R1): the view's clock is required — a wrong gate id on an expired question
 //   offers `advance_run` and says its time is up, never the answer (which could not be recorded);
-// - decision C118 (W1-Y2): a refused answer routes by C94's rule and its hint names the open question
-//   (its step and gate id) — or says its time is up — or that none is open;
+// - decision C118 (W1-Y2): a refused answer names the open question (its step and gate id) — or says
+//   its time is up — or that none is open. #729 PR-0: the refusal (`gate_not_open`, the open gate,
+//   its remedy) is the reply's data — the doors word it — and its action word is fixed:
+//   `report_to_user` (D-8 row 6; DESIGN-D3 §6 — was C94's list-derived routing);
 // - decision C122 (W3-Y1): the late answer's line is C105's — this call carried the expiry out, or
 //   another call had (a program's own `submitHumanResponse` names itself since decision C151);
 // - decision C124 (W3-Y3): `advanceRun`'s caller names itself, on the reply and on the line;
-// - decision C125 (W1-Y1): the answer act outside the opening reply says where the question's text is.
+// - decision C125 (W1-Y1): the answer act outside the opening reply says where the question's text is
+//   (#729 PR-0: the MCP door's words, pinned in mcp-server's render-reply.test.ts; core pins the
+//   record's field and the respond way's presentation).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -22,7 +26,26 @@ import {
   type EnactedVia,
 } from './execution-loop.js';
 import { ENTRY_CALLERS } from './callers.js';
-import { answerAction, describePending } from './pending.js';
+import { describePending } from './pending.js';
+import { agentActionFor, nextCalls, owedOf } from '../test-support/ways-view.js';
+import type { EngineReply } from '../types/response-envelope.js';
+
+/**
+ * A refused answer's own verdict (#729 PR-0, D-A): its code, the open gate it names (whether it is
+ * the run's, and its step), and its remedies' verbs — what the doors' words for it are made from.
+ */
+function refusalOf(reply: EngineReply, openGateId?: string) {
+  const r = reply.refusal;
+  if (r === undefined || r.code !== 'gate_not_open') return r?.code;
+  return {
+    code: r.code,
+    open_gate:
+      r.facts.open_gate === undefined
+        ? undefined
+        : [r.facts.open_gate.gate_id === openGateId, r.facts.open_gate.step],
+    remedy: r.remedy.map((w) => w.verb),
+  };
+}
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { RunStore } from '../store/store-interface.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
@@ -103,17 +126,23 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
       expect({
         legacy,
         status: reply.status,
-        agent_action: reply.agent_action,
-        next: reply.next_actions,
+        agent_action: agentActionFor(reply),
+        next: nextCalls(reply),
+        owed: owedOf(reply),
         hint: reply.context_hint,
+        refusal: refusalOf(reply, gateId),
+        remedy: reply.error?.remedy.map((w) => w.verb),
       }).toEqual({
         legacy,
         status: 'error',
-        agent_action: 'resolve_precondition',
-        next: [describePending(d, await store.get(runId), undefined, past).act],
-        hint: `${first} The question on step 'q' (gate '${gateId}') can no longer be answered: its time is up — call advance_run to carry out its declared settle_default.`,
+        agent_action: 'report_to_user',
+        next: ['advance'],
+        owed: [`expiry:${gateId}`],
+        hint: first,
+        refusal: { code: 'gate_not_open', open_gate: [true, 'q'], remedy: ['advance'] },
+        remedy: ['advance'],
       });
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
+      expect(describePending(d, await store.get(runId), undefined, past).owed.length).toBe(1);
       // (a) red when the refusal carried the expiry out itself; (b) prints the gate.
       expect((await store.get(runId)).pending_gate?.gate_id).toBe(gateId);
     }
@@ -133,23 +162,31 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         : "Gate 'not-the-gate' is not the open gate and matches no committed resolution.";
       // (a) red when an unexpired question offers advance_run, the answer is missing, or the routing
       // is not C94's; (b) prints the reply.
+      const respond = reply.ways.find((w) => w.verb === 'respond');
       expect({
         legacy,
-        agent_action: reply.agent_action,
-        next: reply.next_actions,
+        agent_action: agentActionFor(reply),
+        next: nextCalls(reply),
+        answer:
+          respond?.verb === 'respond'
+            ? [respond.gate_id === gateId, respond.step, respond.choice.one_of, respond.proof]
+            : undefined,
         hint: reply.context_hint,
+        refusal: refusalOf(reply, gateId),
       }).toEqual({
         legacy,
-        agent_action: 'resolve_precondition',
-        next: [answerAction(runId, { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] })],
-        hint: `${first} The open question is on step 'q' (gate '${gateId}') — answer it as next_actions says.`,
+        agent_action: 'report_to_user',
+        next: ['respond'],
+        answer: [true, 'q', ['approve', 'reject'], undefined],
+        hint: first,
+        refusal: { code: 'gate_not_open', open_gate: [true, 'q'], remedy: ['respond'] },
       });
     }
   });
 
-  it('C118: a wrong gate id when no question is open — the hint says none is; resolve_precondition with work to call, report_to_user with nothing', async () => {
+  it('C118: a wrong gate id when no question is open — the refusal names no open gate; report_to_user (D-8 row 6), with or without work to call', async () => {
     for (const [stuck, agentAction, tools] of [
-      [false, 'resolve_precondition', ['advance_run']],
+      [false, 'report_to_user', ['advance']],
       [true, 'report_to_user', []],
     ] as const) {
       const d = gated(undefined, stuck);
@@ -165,14 +202,16 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
       // is not open; (b) prints the reply.
       expect({
         stuck,
-        agent_action: reply.agent_action,
-        next: reply.next_actions.map((a) => a.instruction?.tool),
+        agent_action: agentActionFor(reply),
+        next: nextCalls(reply),
         hint: reply.context_hint,
+        refusal: refusalOf(reply),
       }).toEqual({
         stuck,
         agent_action: agentAction,
         next: [...tools],
-        hint: "Gate 'not-the-gate' is not the open gate and matches no committed resolution. No question is open on this run.",
+        hint: "Gate 'not-the-gate' is not the open gate and matches no committed resolution.",
+        refusal: { code: 'gate_not_open', open_gate: undefined, remedy: ['inspect'] },
       });
     }
   });
@@ -285,7 +324,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     );
     for (const [via, call] of members) {
       // (a) red when a member names the wrong call or drops enacted_via; (b) prints the line.
-      expect(expiryCarriedOutLine('g1', 's', { on_expiry: 'abort' }, via, 15_000)).toBe(
+      expect(expiryCarriedOutLine('g1', 's', { on_expiry: 'abort' }, via, { ms: 15_000 })).toBe(
         `gate 'g1' on 's' had expired 15s before this call — this ${call} call first carried out its declared abort: the run ended (enacted_via: ${via}).`,
       );
     }
@@ -296,7 +335,7 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
         's',
         { on_expiry: 'settle_default', choice: 'c' },
         'submitHumanResponse',
-        15_000,
+        { ms: 15_000 },
         false,
       ),
     ).toBe(
@@ -304,24 +343,15 @@ describe('#625 PR-2a, C117/C118/C122/C124/C125 — the clock required, the refus
     );
   });
 
-  it("C125: the answer act outside the opening reply says where the question's text is — and it is there", async () => {
+  it("C125: the record keeps the question's text where the answer's words point; the answer outside the opening reply is presented alone (the MCP words: render-reply.test.ts)", async () => {
     const d = gated(undefined);
-    const { runId, gateId } = await atQuestion(d);
-    const act = answerAction(runId, { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] });
-    // (a) red when the pointer is dropped or names another field; (b) prints the text.
-    expect(act.human_readable).toBe(
-      "Human review required for step 'q'. Ask the user to choose one of: approve, reject, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one.",
-    );
+    const { runId } = await atQuestion(d);
     // (a) red when the record does not keep the gate's message where the pointer says; (b) prints it.
     expect((await store.get(runId)).pending_gate?.resolved_message).toBe('Go ahead?');
-    // (a) red when the opening form says it (its text points at gate.display); (b) prints it.
-    expect(
-      answerAction(
-        runId,
-        { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] },
-        undefined,
-        'gate_reply',
-      ).human_readable,
-    ).not.toContain('resolved_message');
+    // (a) red when a reply that did not open the question presents its answer with the gate (the
+    //     door's words would then point at gate.display, which this reply has not); (b) prints it.
+    const later = await advanceRun(store, d, { runId });
+    const respond = later.ways.find((w) => w.verb === 'respond');
+    expect(respond?.verb === 'respond' ? respond.presented : undefined).toBe('alone');
   });
 });

@@ -600,9 +600,9 @@ export interface EvidenceSnapshot {
   /**
    * Holder slice (PR-H): present only on a `gate_response` entry the ANSWER wrote, and only when the
    * answer was recorded (verdict rows 1–5; a settled question has no entry to carry `spent`).
-   * Whether the caller passed back the `claim_token` of the reply that opened the question, judged
-   * inside the answer's own write. It decides nothing: the answer is recorded the same with any
-   * token or none.
+   * Whether the caller passed back the claim token the reply that opened the question carried (#729
+   * PR-0: its `respond` way's `proof`), as `claim_token`, judged inside the answer's own write. It
+   * decides nothing: the answer is recorded the same with any token or none.
    */
   claim_proof?: GateClaimVerdict;
   /**
@@ -794,7 +794,8 @@ export interface ClaimRecord {
    * pass back (`claim_token`) to show it comes from the conversation that opened the question. It is
    * not a secret — it guards against accidents and races, not malice; anyone who can read the store
    * can read it, and realm has no authentication. It leaves the engine on ONE reply only: the reply
-   * of the call whose `claimStep` minted it.
+   * of the call whose `claimStep` minted it, inside that reply's `respond` way as `proof` (#729 PR-0,
+   * A-17).
    */
   token?: string;
   /**

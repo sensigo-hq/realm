@@ -7,7 +7,13 @@ import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
-import { respondCommand, withFullStop } from '../engine/pending.js';
+import { withFullStop } from '../engine/pending.js';
+import {
+  renderDefinitionAbsent,
+  respondWayOfGate,
+  type DefinitionAbsence,
+  type WayOn,
+} from '../engine/ways.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 import { admitEntry } from '../admission.js';
@@ -88,8 +94,15 @@ function workflowCopyError(facts: UnreadableFileFacts): WorkflowError {
     category: 'RESOURCE',
     agentAction: 'stop',
     retryable: false,
-    details: { ...facts },
+    // #729 PR-0 (Amendments 7, 7e): the facts are typed, keyed on `scope`.
+    facts: { scope: 'file', ...facts },
   });
+}
+
+/** A read failure's stored-file facts (#729 PR-0: typed `facts`), or `undefined` for the registry's
+ *  own probe failures, whose class, path and errno stay in `details` (Amendment 11). */
+function storedFileFacts(err: WorkflowError): UnreadableFileFacts | undefined {
+  return err.facts?.scope === 'file' ? err.facts : undefined;
 }
 
 /** issue #719 (C3): what is wrong with a registered copy's bytes — they are not JSON, or they are
@@ -147,9 +160,10 @@ function isProbeFailureClass(value: unknown): value is ProbeFailureClass {
  *  and for the facts of any resource other than a workflow copy (issue #719, C6: a damaged run
  *  file's `unreadable` and `empty` are not registry probe classes). */
 export function probeClassOf(err: WorkflowError): ProbeFailureClass | undefined {
-  const resource = err.details['resource'];
+  const stored = storedFileFacts(err);
+  const resource = stored !== undefined ? stored.resource : err.details['resource'];
   if (resource !== undefined && resource !== 'workflow_copy') return undefined;
-  const cls = err.details['class'];
+  const cls = stored !== undefined ? stored.class : err.details['class'];
   return isProbeFailureClass(cls) ? cls : undefined;
 }
 
@@ -198,8 +212,9 @@ export interface RepairAct {
 export function repairActFor(err: WorkflowError): RepairAct | undefined {
   // issue #719 (R7): a damaged RUN file gets no act here — re-registering or removing it would
   // free its run's key and orphan its side files; its own message carries its way out.
-  if (err.details['resource'] === 'run_file') return undefined;
-  const path = String(err.details['path'] ?? '');
+  const stored = storedFileFacts(err);
+  if (stored?.resource === 'run_file') return undefined;
+  const path = String(stored?.path ?? err.details['path'] ?? '');
   if (err.code === 'RESOURCE_FORMAT_INVALID')
     return {
       act: REREGISTER_ACT,
@@ -208,7 +223,7 @@ export function repairActFor(err: WorkflowError): RepairAct | undefined {
   if (err.code !== 'STATE_WORKFLOW_UNREADABLE') return undefined;
   const cls = probeClassOf(err);
   if (cls === undefined) return undefined;
-  const errno = String(err.details['errno'] ?? 'unknown');
+  const errno = String(stored?.errno ?? err.details['errno'] ?? 'unknown');
   switch (cls) {
     case 'missing': // not this code — kept for exhaustiveness
       return undefined;
@@ -388,6 +403,9 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
           category: 'STATE',
           agentAction: 'report_to_user',
           retryable: false,
+          // #729 PR-0 (T-21): the copy's path — the register way's `path` (a legacy copy is one the
+          // registry knows the file of).
+          details: { path: filePath },
         },
       );
     }
@@ -544,6 +562,37 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
 brandClass(JsonWorkflowStore, Symbol.for('@sensigo/realm/JsonWorkflowStore'), REALM_BRAND);
 
 /**
+ * issue #729 PR-0 (D3 A-5, D4 T-21): why a run's definition is absent, from the error a definition
+ * read threw — the `definition_absent` entry's cause, one per {@link getWorkflowForRun} arm, and the
+ * stored file's path where the store knows it (the unreadable, invalid and legacy copies; a workflow
+ * that was never registered, or an agent's copy that is gone, has none). `undefined` for any other
+ * error.
+ */
+export function definitionAbsenceOf(
+  err: unknown,
+  run: Pick<RunRecord, 'workflow_id'>,
+): { absent: DefinitionAbsence; workflow_id: string; path?: string } | undefined {
+  if (!(err instanceof WorkflowError)) return undefined;
+  const filed = storedFileFacts(err)?.path ?? err.details['path'];
+  const path = typeof filed === 'string' ? { path: filed } : {};
+  switch (err.code) {
+    case 'STATE_WORKFLOW_NOT_FOUND':
+      return {
+        absent: /-[0-9a-f]{16}$/.test(run.workflow_id) ? 'agent_copy_gone' : 'not_registered',
+        workflow_id: run.workflow_id,
+      };
+    case 'STATE_WORKFLOW_UNREADABLE':
+      return { absent: 'unreadable', workflow_id: run.workflow_id, ...path };
+    case 'RESOURCE_FORMAT_INVALID':
+      return { absent: 'format_invalid', workflow_id: run.workflow_id, ...path };
+    case 'STATE_LEGACY_FORMAT':
+      return { absent: 'legacy', workflow_id: run.workflow_id, ...path };
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Fetches the workflow definition a run-context resolution needs, wrapping a
  * `STATE_WORKFLOW_NOT_FOUND` throw with the one-time-register remedy (issue #456) — the ONE
  * chokepoint every run-context site (`respond`, `resume`, `replay`, `drain`, `agent --run-id`,
@@ -591,15 +640,27 @@ export async function getWorkflowForRun(
     return await store.get(run.workflow_id);
   } catch (err) {
     if (!(err instanceof WorkflowError)) throw err;
-    const copy = (message: string): WorkflowError =>
-      new WorkflowError(message, {
+    // #729 PR-0 (Part B): the way on from a run that waits on a question is its answer — carried
+    // as data on the error (`remedy`, rendered by each door), never a command in the message.
+    const gateRemedy = (): readonly WayOn[] | undefined => {
+      const live = run.terminal_state === true ? undefined : run.pending_gate;
+      return live === undefined ? undefined : [respondWayOfGate(run.id, live)];
+    };
+    const copy = (message: string, remedy?: readonly WayOn[]): WorkflowError => {
+      const ways = remedy ?? gateRemedy();
+      return new WorkflowError(message, {
         code: err.code,
         category: err.category,
         agentAction: err.agentAction,
         retryable: err.retryable,
         details: err.details,
+        // #729 PR-0 (Amendment 7): a damaged copy's typed facts ride the copy — they moved from
+        // `details` to `facts`, and the copy is what every caller reads them from.
+        ...(err.facts !== undefined ? { facts: err.facts } : {}),
         ...(err.warnings !== undefined ? { warnings: err.warnings } : {}),
+        ...(ways !== undefined ? { remedy: ways } : {}),
       });
+    };
 
     /**
      * The repair clause, minted ONCE per code (a second hand-typed copy is the #444/#508 class).
@@ -609,13 +670,10 @@ export async function getWorkflowForRun(
     // A terminal run's leftover pending_gate (the #282 zombie class) is not answerable — only a
     // LIVE run's gate shapes the text below.
     const gate = run.terminal_state === true ? undefined : run.pending_gate;
-    // decision C206: the answer command from the one composer (`--choice <one of: a, b>`, or the
-    // one choice) — this line is printed by `realm run advance` and `realm run respond` too.
-    const answer =
-      gate === undefined ? undefined : respondCommand(run.id, gate.gate_id, gate.choices);
     // The repair's closing act: the retry verb for a gate-less run; for a gate-waiting run the
-    // gate itself, since that is what the operator was trying to do (review fold C12).
-    const then = answer === undefined ? opts.retryVerb : `answer the gate (${answer})`;
+    // gate itself, since that is what the operator was trying to do (review fold C12). #729 PR-0:
+    // the answer is the error's `remedy` (a `respond` way), worded by the door that shows it.
+    const then = gate === undefined ? opts.retryVerb : 'answer the gate';
     // Review fold R1: the act is keyed on the CLASS (`repairActFor`), never the code — three
     // classes share STATE_WORKFLOW_UNREADABLE and their acts differ. One joiner: the act, then
     // the retry. (`missing`/`legacy` yield no act — see `repairActFor`.)
@@ -680,11 +738,13 @@ export async function getWorkflowForRun(
                 `to register.${terminal ? '' : ` ${disposalSentence('To end the run:')}`}`,
             )
           : copy(
-              // The #456 arm, pinned whole-message by `run-attach.test.ts` C12 and 28 substring
-              // pins: its em-dash join ships VERBATIM. The "joins are sentences" rule governs
-              // the clauses this composer ADDS, not the arms quoted from main.
-              `${err.message} — most often this run was created from a file without --register. ` +
+              // #729 PR-0 (T-21, #742): the reason is the `definition_absent { cause:
+              // 'not_registered' }` entry's words, from the one composer — never a flag the command
+              // in use lacks (the old text named `--register` to a `realm workflow run` run). The
+              // way on is the `register` way, carried as data; its words below stay PR-2's.
+              `${renderDefinitionAbsent({ workflow_id: run.workflow_id, cause: 'not_registered' })}. ` +
                 `Register the workflow (realm workflow register <file>) and ${opts.retryVerb}.`,
+              [{ verb: 'register', conditions: [], workflow_id: run.workflow_id, run_id: run.id }],
             );
       case 'STATE_WORKFLOW_UNREADABLE':
         throw copy(
@@ -715,9 +775,7 @@ export async function getWorkflowForRun(
           join(
             withFullStop(err.message),
             terminal ? undefined : disposalSentence('To end the run instead:'),
-            terminal || answer === undefined
-              ? undefined
-              : `Once re-registered, answer the gate (${answer}).`,
+            terminal || gate === undefined ? undefined : 'Once re-registered, answer the gate.',
           ),
         );
       default:

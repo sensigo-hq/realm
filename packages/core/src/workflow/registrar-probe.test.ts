@@ -348,6 +348,16 @@ describe('listWithDiagnostics — one class per entry, never a throw', () => {
   });
 });
 
+/**
+ * #729 PR-0 (D-C, D-M): the typed remedy an error carries — each way as its verb, with the answer's
+ * gate and choices (the doors print the command from it; the CLI's words are pinned in its tests).
+ */
+function remedyOf(err: WorkflowError): unknown[] {
+  return (err.remedy ?? []).map((w) =>
+    w.verb === 'respond' ? ['respond', w.run_id, w.gate_id, w.choice.one_of] : [w.verb],
+  );
+}
+
 describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
   it('C-a a LIVE run whose copy is chmod-000: the sentence names EACCES and the path, then the way out and the repair', async () => {
     await shape.chmod000();
@@ -380,10 +390,13 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       verb: 'resume',
       terminalOk: true,
     }).catch((e: unknown) => e)) as WorkflowError;
+    // #729 PR-0 (T-21): what is so, by cause — never "most often"; the register way rides the remedy.
     expect(err.message).toBe(
-      'Workflow not found: gate-558 — most often this run was created from a file without ' +
-        '--register. Register the workflow (realm workflow register <file>) and resume again.',
+      "Workflow 'gate-558' is not registered in this workflow store, and the store does not know " +
+        'the file it came from, so no path to it is recorded. Register the workflow (realm workflow ' +
+        'register <file>) and resume again.',
     );
+    expect(remedyOf(err)).toEqual([['register']]);
   });
 
   it('C-k (review fold C9) a TERMINAL run through a terminalOk site never gets "To end the run" — abandon refuses a finished run — while the repair survives, whole-message', async () => {
@@ -446,10 +459,11 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
         'To repair: re-register the workflow from its source (realm workflow register ' +
-        '<path-to-workflow>), then answer the gate (realm run respond run-1 --gate g1 ' +
-        '--choice <one of: approve, reject>); if it was never registered from a source, ' +
+        '<path-to-workflow>), then answer the gate; if it was never registered from a source, ' +
         `remove the file (rm ${file}) instead.`,
     );
+    // #729 PR-0 (D-C): the answer is the typed remedy, never a command in core's words.
+    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['approve', 'reject']]]);
     expect(err.message).not.toContain('To end the run');
     expect(err.message).not.toContain('PR-V');
     expect(err.message).not.toContain('answer it (');
@@ -464,9 +478,9 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       `the registered copy of 'gate-558' could not be read (EACCES: ${file}). ` +
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
-        `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate (realm run respond run-1 --gate g1 ` +
-        '--choice <one of: approve, reject>).',
+        `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate.`,
     );
+    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['approve', 'reject']]]);
     expect(err.message).not.toContain('This run cannot continue until the copy is repaired.');
   });
 
@@ -478,10 +492,12 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     const err = (await getWorkflowForRun(store, oneChoice, RESPOND).catch(
       (e: unknown) => e,
     )) as WorkflowError;
-    // (a) red when one choice is given as `<one of: ack>`; (b) prints the message.
+    // (a) red when the remedy's choices are not the question's own one; (b) prints the remedy. The
+    //     CLI prints `--choice ack` from it (cli ways-renderer.test.ts, C206).
     expect(err.message).toContain(
-      `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate (realm run respond run-1 --gate g1 --choice ack).`,
+      `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate.`,
     );
+    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['ack']]]);
   });
 
   it('C-e3 the gate fork on a LEGACY copy: the store\'s own re-register remedy once, then "Once re-registered, answer the gate (…)"', async () => {
@@ -494,13 +510,13 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
         'Re-register it with: realm workflow register <path-to-workflow>. ' +
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
-        'Once re-registered, answer the gate (realm run respond run-1 --gate g1 ' +
-        '--choice <one of: approve, reject>).',
+        'Once re-registered, answer the gate.',
     );
+    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['approve', 'reject']]]);
     expect(err.message.split('realm workflow register').length - 1).toBe(1); // one remedy, never doubled
   });
 
-  it('C-f the suffix heuristic: an agent-shaped id gets the no-source sentence, a plain id keeps the #456 hedge, and a HUMAN id carrying a 16-hex suffix gets the agent one too (a SHAPE heuristic, stated)', async () => {
+  it('C-f the suffix heuristic: an agent-shaped id gets the no-source sentence, a plain id gets the T-21 sentence (#729 PR-0; was the #456 hedge), and a HUMAN id carrying a 16-hex suffix gets the agent one too (a SHAPE heuristic, stated)', async () => {
     const agent = (await getWorkflowForRun(
       store,
       makeRun({ workflow_id: 'dynamic-0123456789abcdef' }),
@@ -518,9 +534,11 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       RESPOND,
     ).catch((e: unknown) => e)) as WorkflowError;
     expect(plain.message).toBe(
-      'Workflow not found: plain-wf — most often this run was created from a file without ' +
-        '--register. Register the workflow (realm workflow register <file>) and respond again.',
+      "Workflow 'plain-wf' is not registered in this workflow store, and the store does not know " +
+        'the file it came from, so no path to it is recorded. Register the workflow (realm workflow ' +
+        'register <file>) and respond again.',
     );
+    expect(remedyOf(plain)).toEqual([['register']]);
 
     // The control the heuristic's own JSDoc promises: realm has no provenance field, so a
     // human-registered id that happens to end in 16 hex chars is told the agent story. Pinned so

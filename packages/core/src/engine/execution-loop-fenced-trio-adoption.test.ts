@@ -15,6 +15,7 @@ import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import type { StepDispatcher } from './execution-loop.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 const agentDef: WorkflowDefinition = {
   id: 'fenced-adoption-agent-wf',
@@ -191,7 +192,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
 
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
-    expect(envelope.agent_action).toBe('stop');
+    expect(agentActionFor(envelope)).toBe('stop');
 
     const after = await store.get(run.id);
     expect(after.in_progress_steps).not.toContain('step-agent'); // no claim consumed
@@ -234,7 +235,7 @@ describe('execution-loop.ts — fenced-trio call-site adoption (issue #207 PR-2)
 
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
-    expect(envelope.agent_action).toBe('stop');
+    expect(agentActionFor(envelope)).toBe('stop');
 
     const after = await store.get(run.id);
     expect(after.in_progress_steps).not.toContain('step-agent'); // claim released

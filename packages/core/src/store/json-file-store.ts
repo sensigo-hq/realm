@@ -1202,10 +1202,12 @@ export class JsonFileStore implements RunStore, PerRunArtifactStore {
         // per-run artifact contract's L3/L4 type (`details.failures`).
         const facts = unreadableFactsOf(err);
         if (facts !== undefined && facts.class !== 'unreadable') throw err;
-        // issue #719 (R12): any other `WorkflowError` carries an errno only in `details.errno` —
-        // read there, never from `err.code`, which is the error's own code.
+        // issue #719 (R12): the errno, never from `err.code` (the error's own code). Both arms are
+        // live: an unreadable run file's error carries it in its typed `facts` (#729 PR-0 moved it
+        // there, Amendment 7); the registrar's own failures still mint `details: { class, errno,
+        // path }` and keep it there (Amendment 11 leaves those mints untouched).
         if (err instanceof WorkflowError) {
-          const errno = err.details['errno'];
+          const errno = facts?.errno ?? err.details['errno'];
           throw artifactDeleteFailedError(
             runId,
             'JsonFileStore',

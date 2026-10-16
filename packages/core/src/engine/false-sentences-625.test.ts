@@ -16,6 +16,7 @@ import { advanceRun, executeStep, submitHumanResponse } from './execution-loop.j
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
+import { owedOf } from '../test-support/ways-view.js';
 
 const PAGE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -144,6 +145,7 @@ describe('#625 PR-2a, F17 — core-library.md says what the build does', () => {
       expect({
         guards: answered.guards,
         hint: answered.context_hint,
+        owed: owedOf(answered),
         afterAnswer,
         advance: (advanced.chained_auto_steps ?? []).map((c) => c.step),
         phase: (await s.get(id)).run_phase,
@@ -151,7 +153,8 @@ describe('#625 PR-2a, F17 — core-library.md says what the build does', () => {
         legacy
           ? {
               guards: undefined,
-              hint: "Gate 'q' resolved with choice 'approve'. Owed to the engine: 'g' — call advance_run.",
+              hint: "Gate 'q' resolved with choice 'approve'.",
+              owed: ['g'],
               afterAnswer: ['q'],
               advance: ['g'],
               phase: 'completed',
@@ -159,6 +162,7 @@ describe('#625 PR-2a, F17 — core-library.md says what the build does', () => {
           : {
               guards: [{ step: 'g', outcome: 'pass' }],
               hint: "Guard step 'g' passed and completed the run.",
+              owed: undefined,
               afterAnswer: ['q', 'g'],
               advance: [],
               phase: 'completed',

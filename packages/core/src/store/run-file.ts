@@ -52,16 +52,18 @@ export const TRACE_FILE_SUFFIX = '.jsonl';
  */
 export const RUN_ID_LENGTH = 36;
 
-/** issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder. */
-export type SideFileKind = 'attempts' | 'trace_buffer' | 'sealed_trace';
+/** issue #719 (F4): the kinds of side file a run keeps beside its file, in its runs folder —
+ *  exported by name as one const and its type (#729 PR-0, PR0-CONTRACT Amendment 7d). */
+export const SIDE_FILE_KINDS = ['attempts', 'trace_buffer', 'sealed_trace'] as const;
+/** One of {@link SIDE_FILE_KINDS}. */
+export type SideFileKind = (typeof SIDE_FILE_KINDS)[number];
 
 /**
- * The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendment 7): names, classes and
- * type words — never its content. Written as the `details` of every such error, on run files, on
- * the runs folder and on the registrar's `empty` and `parse` failures. The `details` slot is
- * temporary: #729 PR-0 moves these facts to `error.facts`; read them through
- * {@link unreadableFactsOf}. {@link renderUnreadableStoredFile} builds every message from them
- * alone.
+ * The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendments 7, 7e): names, classes
+ * and type words — never its content. Written as the typed `facts` of every such error
+ * (`{ scope: 'file', …facts }`), on run files, on the runs folder and on the registrar's `empty` and
+ * `parse` failures; read them through {@link unreadableFactsOf}. {@link renderUnreadableStoredFile}
+ * builds every message from them alone.
  */
 export interface UnreadableFileFacts {
   resource: 'run_file' | 'workflow_copy' | 'run_folder';
@@ -92,14 +94,12 @@ export interface UnreadableFileFacts {
   refused?: 'every_new_key' | 'this_key';
 }
 
-/** The facts a damaged-file error carries, or `undefined` for any other error — the ONE reader. */
+/** The facts a damaged-file error carries, or `undefined` for any other error — the ONE reader
+ *  (#729 PR-0: it keys on the facts' `scope`, Amendment 7e). */
 export function unreadableFactsOf(err: unknown): UnreadableFileFacts | undefined {
-  if (!(err instanceof WorkflowError)) return undefined;
-  const resource = err.details['resource'];
-  if (resource !== 'run_file' && resource !== 'workflow_copy' && resource !== 'run_folder') {
-    return undefined;
-  }
-  return err.details as unknown as UnreadableFileFacts;
+  if (!(err instanceof WorkflowError) || err.facts?.scope !== 'file') return undefined;
+  const { scope: _scope, ...facts } = err.facts;
+  return facts;
 }
 
 /** What {@link unreadableRunFilesError} carries: the command that did not run, the runs folder, and
@@ -111,14 +111,11 @@ export interface UnreadableRunFilesFacts {
 }
 
 /** The facts of a decision that failed closed over damaged run files, or `undefined` for any other
- *  error — the ONE reader of {@link unreadableRunFilesError}'s details. */
+ *  error — the ONE reader of {@link unreadableRunFilesError}'s facts (#729 PR-0: keyed on `scope`). */
 export function unreadableRunFilesOf(err: unknown): UnreadableRunFilesFacts | undefined {
-  if (!(err instanceof WorkflowError)) return undefined;
-  const { command, folder, files } = err.details;
-  if (typeof command !== 'string' || typeof folder !== 'string' || !Array.isArray(files)) {
-    return undefined;
-  }
-  return err.details as unknown as UnreadableRunFilesFacts;
+  if (!(err instanceof WorkflowError) || err.facts?.scope !== 'files') return undefined;
+  const { scope: _scope, ...facts } = err.facts;
+  return facts;
 }
 
 /** An id a file holds, as text may show it (issue #719, C6): one made of letters, digits, `.`,
@@ -315,19 +312,20 @@ export function renderUnreadableStoredFile(facts: UnreadableFileFacts): string {
 /**
  * The typed error for a damaged run file or an unreadable runs folder (issue #719, B2):
  * `unreadable` → `ENGINE_STORE_FAILED` (retryable by its errno); `legacy` → `STATE_LEGACY_FORMAT`;
- * every other class → `RESOURCE_FORMAT_INVALID`. Its details are the facts; its message is the
- * composer's.
+ * every other class → `RESOURCE_FORMAT_INVALID`. Its facts are typed (`{ scope: 'file', … }`, #729
+ * PR-0); its message is the composer's. Exported so no caller restates core's retry rule (#729 PR-0,
+ * Amendment 7d).
  */
 export function unreadableRunFileError(facts: UnreadableFileFacts): WorkflowError {
   const message = renderUnreadableStoredFile(facts);
-  const details = { ...facts } as unknown as Record<string, unknown>;
+  const typed = { scope: 'file' as const, ...facts };
   if (facts.class === 'unreadable') {
     return new WorkflowError(message, {
       code: 'ENGINE_STORE_FAILED',
       category: 'ENGINE',
       agentAction: 'stop',
       retryable: retryableFor(facts),
-      details,
+      facts: typed,
     });
   }
   if (facts.class === 'legacy') {
@@ -336,7 +334,7 @@ export function unreadableRunFileError(facts: UnreadableFileFacts): WorkflowErro
       category: 'STATE',
       agentAction: 'report_to_user',
       retryable: false,
-      details,
+      facts: typed,
     });
   }
   return new WorkflowError(message, {
@@ -344,7 +342,7 @@ export function unreadableRunFileError(facts: UnreadableFileFacts): WorkflowErro
     category: 'RESOURCE',
     agentAction: 'stop',
     retryable: false,
-    details,
+    facts: typed,
   });
 }
 
@@ -367,8 +365,8 @@ export function runsFolderUnreadableError(folder: string, err: unknown): Workflo
  * `realm run gc --heal`) fails closed when any run file cannot be read: ONE error naming every such file, and nothing is
  * written. `RESOURCE_FORMAT_INVALID` when every file's fault is in its bytes, else
  * `ENGINE_STORE_FAILED`. `command` is the exact command the operator ran, flags included, as its
- * caller passes it. Its details are typed ({@link UnreadableRunFilesFacts}); read them through
- * {@link unreadableRunFilesOf}.
+ * caller passes it. Its facts are typed (`{ scope: 'files', …}` — {@link UnreadableRunFilesFacts});
+ * read them through {@link unreadableRunFilesOf}.
  */
 export function unreadableRunFilesError(
   command: string,
@@ -392,7 +390,7 @@ export function unreadableRunFilesError(
     category: anyUnreadable ? 'ENGINE' : 'RESOURCE',
     agentAction: 'stop',
     retryable: files.length > 0 && files.every(retryableFor),
-    details: facts as unknown as Record<string, unknown>,
+    facts: { scope: 'files', ...facts },
   });
 }
 

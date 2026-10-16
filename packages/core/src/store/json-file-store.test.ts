@@ -2331,7 +2331,7 @@ describe('issue #719 — a damaged run file through every reader of the JSON sto
     });
 
     it.skipIf(asRoot)(
-      'guard: a file this user cannot read keeps the delete-failure wrap, its errno from the details',
+      'guard: a file this user cannot read keeps the delete-failure wrap, its errno from the facts',
       async () => {
         await writeFile(
           join(d, 'x.json'),

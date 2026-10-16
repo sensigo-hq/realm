@@ -187,17 +187,16 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
   it('line 103, the describePending row: describePending(definition, run, registry, now) returns an object with every field the row names', async () => {
     claim(
       PAGE,
-      "| `describePending(definition, run, registry, now)` | Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer) and `agent_actions` (the call for each), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why), `expiry_due` (the open question whose time is up at `now` and whose `on_expiry` the engine carries out — it can no longer be answered), `open_question` (whenever the run waits on a question: its `step`, `gate_id` and `choices`) and `act` (the call to make next: `advance_run`, when the engine owes work that can run with the given registry — with no registry, any owed step counts — or an expired question's `on_expiry`).",
+      "| `describePending(definition, run, registry, now)` | Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why), `expiry_due` (the open question whose time is up at `now` and whose `on_expiry` the engine carries out — it can no longer be answered), `open_question` (whenever the run waits on a question: its `step`, `gate_id` and `choices`) and `owed` (what the engine owes that can run with the given registry — with no registry, any owed step counts — each `{ step }`, an expired question's `on_expiry` first as `{ expiry }`; added after version 0.47.0, in place of `agent_actions` and `act`).",
     );
     const { runId, gateId } = await atQuestion();
     const run = await store.get(runId);
     const due = describePending(GATED, run, undefined, LATER());
     // (a) red when a field the row names is dropped, or the expired question is not named as due
-    //     and as the act; (b) prints the object.
+    //     and as owed; (b) prints the object.
     expect(Object.keys(due).sort()).toEqual(
       [
-        'act',
-        'agent_actions',
+        'owed',
         'agent_refused',
         'agent_steps',
         'cannot_run',
@@ -207,13 +206,13 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
         'pending_guards',
       ].sort(),
     );
-    expect([due.open_question, due.act?.instruction?.tool]).toEqual([
+    expect([due.open_question, due.owed.map((o) => ('expiry' in o ? 'expiry' : o.step))]).toEqual([
       { step: 'q', gate_id: gateId, choices: ['approve', 'reject'] },
-      'advance_run',
+      ['expiry'],
     ]);
-    // Not yet due at the current time: no act, no expiry_due.
+    // Not yet due at the current time: nothing owed, no expiry_due.
     const open = describePending(GATED, run, undefined, new Date());
-    expect([open.expiry_due, open.act]).toEqual([undefined, undefined]);
+    expect([open.expiry_due, open.owed]).toEqual([undefined, []]);
     // An agent step ready, and an auto step owed beside it.
     const both: WorkflowDefinition = {
       id: 'dp-both',
@@ -230,14 +229,13 @@ describe('#625 PR-2a, C174 lane F — core-library.md rows no cell quoted yet, t
       params: {},
     });
     const p = describePending(both, fresh, undefined, new Date());
-    // (a) red when the agent step, its call, or the owed auto step is not named; (b) prints them.
+    // (a) red when the agent step or the owed auto step is not named; (b) prints them.
     expect([
       p.agent_steps,
-      p.agent_actions.map((a) => a.instruction?.tool),
       p.engine_runnable.map((e) => e.step),
       typeof p.engine_runnable[0]?.runnable_here,
-      p.act?.instruction?.tool,
-    ]).toEqual([['x'], ['execute_step'], ['y'], 'boolean', 'advance_run']);
+      p.owed,
+    ]).toEqual([['x'], ['y'], 'boolean', [{ step: 'y' }]]);
   });
 
   it('line 104, the executeEngineStep row and its options: runId, step and run; caller executeEngineStep (the default) or agent; another rejects naming executeEngineStep before anything is read or written', async () => {

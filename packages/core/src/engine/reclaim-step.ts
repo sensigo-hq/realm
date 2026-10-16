@@ -13,6 +13,7 @@ import type { TraceBufferStore } from '../store/trace-buffer-store.js';
 import { storeDeclaresSeal } from '../store/trace-buffer-store.js';
 import { ReclaimVersionChanged, type FencePredicate } from '../store/fence-predicate.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { respondWayOfGate } from './ways.js';
 import { admitEntry } from '../admission.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { classifyClaim, omitClaim, type ClaimState } from './claim-liveness.js';
@@ -409,15 +410,19 @@ export async function reclaimStep(
   // a gate_waiting run is still reclaimable (findEligibleSteps returns [] under a gate, so the
   // re-eligible step waits inertly until the gate resolves).
   if (run.pending_gate?.step_name === stepName) {
+    // #729 PR-0 (Table row 41): the way on — answering the open question — is the error's remedy
+    // (a `respond` way), worded by each door; the message names no tool.
+    const gate = run.pending_gate;
     throw new WorkflowError(
-      `Step '${stepName}' is the open gate on run '${runId}'; resolve or reject the gate via ` +
-        `submit_human_response instead of reclaiming it.`,
+      `Step '${stepName}' is the open gate on run '${runId}'; its claim is held by the open ` +
+        `question, which is answered, not reclaimed.`,
       {
         code: 'STATE_TRANSITION_DENIED',
         category: 'STATE',
         agentAction: 'report_to_user',
         retryable: false,
         details: { runId, stepName },
+        remedy: [respondWayOfGate(runId, gate)],
       },
     );
   }

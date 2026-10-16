@@ -58,6 +58,7 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
 import type { StepHandler } from '../extensions/step-handler.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 /**
  * Delegates every RunStore method to a real, functional JsonFileStore. `settleStep` is
@@ -328,7 +329,7 @@ describe('GUARD_CHAIN_CONSUMPTION — the chain-consumption table (issue #279, i
       expect(store.fired).toBe(true);
       expect(result.status).toBe('error');
       expect(result.error_code).toBe('STATE_STEP_ALREADY_SETTLED');
-      expect(result.agent_action).toBe('report_to_user');
+      expect(agentActionFor(result)).toBe('report_to_user');
       expect(result.errors[0]).toContain('NOT recorded');
       const finalRun = await inner.get(run.id);
       // The SIBLING's 'pass' won — our abort was never recorded.

@@ -14,6 +14,7 @@ import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { RunStore, LoadBearingRunRecordField } from '../store/store-interface.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 const echoDispatcher: StepDispatcher = async (_step, input) => ({ ...input });
 
@@ -369,7 +370,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     // field, which is observationally inert on this specific path (see the mint-site comment in
     // execution-loop.ts). A mint-site mutant will NOT redden this assertion; only a mutation to
     // the terminal-branch translation itself will.
-    expect(envelope.agent_action).toBe('stop');
+    expect(agentActionFor(envelope)).toBe('stop');
   });
 
   it('(j) success-settle stamp: reject twice then succeed ⇒ the settle evidence carries diagnostics.validation_rejections === 2', async () => {

@@ -20,7 +20,7 @@ import { abandonRun } from './abandon-run.js';
 import { resumeWay } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { RunRecord } from '../types/run-record.js';
-import type { ResponseEnvelope } from '../types/response-envelope.js';
+import type { EngineReply } from '../types/response-envelope.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import * as redaction from '../utils/redaction.js';
 
@@ -125,7 +125,7 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
   });
 
   it('an ended-run reply (execute_step, advance_run, start_run) on a run an operator ended ends with the ending; a failed one with the offer (preservation)', async () => {
-    const reply = (hint: string): ResponseEnvelope => ({
+    const reply = (hint: string): EngineReply => ({
       command: 'x',
       run_id: 'r',
       run_version: 1,
@@ -136,7 +136,9 @@ describe('#625 PR-2a, F2 — a run an operator ended is never offered the undo',
       errors: [],
       context_hint: hint,
       run_phase: 'abandoned',
-      next_actions: [],
+      reply_kind: 'ok',
+      ways: [],
+      unavailable: [],
     });
     const abandoned = await ended('abandoned');
     const failed = await ended('failed');

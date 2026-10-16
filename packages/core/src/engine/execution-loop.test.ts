@@ -4,12 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  executeStep,
-  executeChain,
-  buildNextActions,
-  submitHumanResponse,
-} from './execution-loop.js';
+import { executeStep, executeChain, submitHumanResponse } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { classifyRunHealth } from './run-health.js';
 import { WorkflowError } from '../types/workflow-error.js';
@@ -21,6 +16,8 @@ import type { ServiceAdapter } from '../extensions/service-adapter.js';
 import type { StepHandler, StepHandlerInputs, StepContext } from '../extensions/step-handler.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
+import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
+import { composeWaysAt } from './ways.js';
 
 // Two-step workflow: step-one (auto) → step-two (agent).
 const definition: WorkflowDefinition = {
@@ -82,8 +79,7 @@ describe('executeStep', () => {
     expect(envelope.evidence).toHaveLength(1);
     expect(envelope.evidence[0]?.status).toBe('success');
     // step-two is the next eligible agent step → appears in next_actions
-    expect(envelope.next_actions).toHaveLength(1);
-    expect(envelope.next_actions[0]?.human_readable).toContain('step-two');
+    expect(nextCalls(envelope)).toEqual(['run_step:step-two']);
     expect(envelope.context_hint).toBeDefined();
     expect(envelope.context_hint).not.toBe('');
 
@@ -109,13 +105,16 @@ describe('executeStep', () => {
 
     expect(envelope.status).toBe('blocked');
     expect(envelope.blocked_reason).toBeDefined();
-    expect(envelope.agent_action).toBe('resolve_precondition');
+    expect(agentActionFor(envelope)).toBe('resolve_precondition');
     // issue #625 PR-2a: step-one (auto) is owed to the engine — the one act names it
-    expect(envelope.next_actions).toHaveLength(1);
-    expect(envelope.next_actions[0]!.instruction!.tool).toBe('advance_run');
-    // decision C136: next_actions holds only the act, so the suggestion names it (it said "Call one
-    // of the steps indicated in next_actions" while none was).
-    expect(envelope.blocked_reason?.suggestion).toBe('Call advance_run, as next_actions says.');
+    expect(nextCalls(envelope)).toEqual(['advance']);
+    // #729 PR-0: the refusal is typed (its code, its remedies); decision C136's suggestion is the
+    // door's (render-reply.test.ts).
+    expect(envelope.refusal).toMatchObject({
+      verb: 'run_step',
+      step: 'step-two',
+      code: 'deps_unsettled',
+    });
     expect(envelope.context_hint).toContain('step-two');
   });
 
@@ -150,9 +149,10 @@ describe('executeStep', () => {
     expect(envelope.status).toBe('blocked');
     // issue #625 PR-2a (decision C104, C94's rule): nothing can be called, so report_to_user —
     // never resolve_precondition, which points at next_actions.
-    expect(envelope.agent_action).toBe('report_to_user');
-    expect(envelope.next_actions).toHaveLength(0);
-    expect(envelope.blocked_reason?.suggestion).toBeDefined();
+    expect(agentActionFor(envelope)).toBe('report_to_user');
+    expect(nextCalls(envelope)).toHaveLength(0);
+    // #729 PR-0: the suggestion is the door's; the refusal says why, typed.
+    expect(envelope.refusal?.code).toBe('deps_unsettled');
   });
 
   it('dispatcher error returns error envelope with evidence', async () => {
@@ -199,9 +199,15 @@ describe('executeStep', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.next_actions).toHaveLength(0);
-    expect(envelope.context_hint).toContain('get_run_state');
-    expect(envelope.context_hint).toContain(run.id);
+    expect(nextCalls(envelope)).toHaveLength(0);
+    // #729 PR-0 (Table row 32): the hint says the run completed; reading it is the `inspect` way
+    // (the MCP door words it "Call get_run_state with run_id …").
+    expect(envelope.context_hint).toBe("Run completed (phase: 'completed').");
+    expect(envelope.ways.find((w) => w.verb === 'inspect')).toEqual({
+      verb: 'inspect',
+      conditions: [],
+      run_id: run.id,
+    });
 
     const updated = await store.get(run.id);
     expect(updated.run_phase).toBe('completed');
@@ -217,8 +223,8 @@ describe('executeStep', () => {
 
     expect(envelope.status).toBe('error');
     expect(envelope.errors[0]).toContain('Run not found');
-    expect(envelope.agent_action).toBe('report_to_user');
-    expect(envelope.next_actions).toHaveLength(0);
+    expect(agentActionFor(envelope)).toBe('report_to_user');
+    expect(nextCalls(envelope)).toHaveLength(0);
   });
 
   it('input schema validation blocks dispatch when input is invalid', async () => {
@@ -257,8 +263,8 @@ describe('executeStep', () => {
 
     expect(envelope.status).toBe('error');
     expect(dispatchCalled).not.toHaveBeenCalled();
-    expect(envelope.agent_action).toBe('provide_input');
-    expect(envelope.next_actions).toHaveLength(0);
+    expect(agentActionFor(envelope)).toBe('provide_input');
+    expect(nextCalls(envelope)).toHaveLength(0);
   });
 
   it('input schema validation passes through for valid input', async () => {
@@ -334,14 +340,14 @@ describe('executeStep', () => {
 
     expect(envelope.status).toBe('error');
     expect(dispatchCalled).not.toHaveBeenCalled();
-    expect(envelope.agent_action).toBe('provide_input');
+    expect(agentActionFor(envelope)).toBe('provide_input');
     // The step was never claimed — it is still eligible and appears in next_actions
     // so the agent can immediately correct and re-submit it. issue #220: true while this step's
     // accrued rejection count stays below its exhaustion threshold (default 6) — this single
     // rejection is call 1 of 6 by default, so this premise holds here; it stops holding once the
     // count reaches the threshold, at which point the step terminalizes instead (see
     // validation-exhaustion.test.ts).
-    expect(envelope.next_actions).toHaveLength(1);
+    expect(nextCalls(envelope)).toHaveLength(1);
 
     const runAfter = await store.get(run.id);
     expect(runAfter.in_progress_steps).not.toContain('step-one');
@@ -826,7 +832,7 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('error');
-      expect(envelope.agent_action).toBe('stop');
+      expect(agentActionFor(envelope)).toBe('stop');
       expect(envelope.errors[0]).toContain("does not support service_method 'delete'");
     });
 
@@ -1144,7 +1150,7 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('ok');
-      expect(envelope.next_actions).toHaveLength(0);
+      expect(nextCalls(envelope)).toHaveLength(0);
 
       const updatedRun = await store.get(run.id);
       expect(updatedRun.run_phase).toBe('aborted');
@@ -1406,7 +1412,7 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('ok');
-      expect(envelope.next_actions).toHaveLength(0);
+      expect(nextCalls(envelope)).toHaveLength(0);
       const updatedRun = await store.get(run.id);
       expect(updatedRun.run_phase).toBe('aborted');
       expect(updatedRun.aborted_at?.abort_message).toBe('Abort wins');
@@ -1454,9 +1460,12 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('ok');
-      const nextAction = envelope.next_actions.find((a) => a.human_readable?.includes('step-two'));
-      expect(nextAction).toBeDefined();
-      expect(nextAction?.prompt).toBe('Use result: value-from-step-one');
+      // #729 PR-0: the step's prompt rides its `run_step` way's brief (template-resolved).
+      const way = envelope.ways.find((w) => w.verb === 'run_step' && w.step === 'step-two');
+      expect(way).toBeDefined();
+      expect(way?.verb === 'run_step' ? way.brief.prompt : undefined).toBe(
+        'Use result: value-from-step-one',
+      );
     });
 
     it('resolves step.prompt into gate.display when step has trust: human_confirmed', async () => {
@@ -1508,17 +1517,13 @@ describe('executeStep', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // buildNextActions instruction population
+  // the run_step way's brief (#729 PR-0: the instruction an agent reads is the MCP door's —
+  // render-reply.test.ts keeps the instruction-population cells; core pins the brief)
   // ---------------------------------------------------------------------------
 
-  describe('buildNextActions instruction population', () => {
-    // issue #412: the `expected_timeout` display is gone. It rendered on every NextAction built
-    // from a step carrying `timeout_seconds` — agent steps, and handler-bearing steps of any
-    // kind — and on both the INSTRUCTED action is outside anything that enforced the number.
-    // The definitions here are built programmatically because the loader now refuses this shape
-    // on an agent step (#402); a definition from the registry or an older store can still carry
-    // it, which is exactly the population that must not be shown a bound nobody applies.
-    it('an agent step carrying timeout_seconds gets NO timeout display', async () => {
+  describe("the run_step way's brief", () => {
+    // issue #412: the `expected_timeout` display is gone — and nothing in a way carries it.
+    it('an agent step carrying timeout_seconds: its way carries no timeout', async () => {
       const def: WorkflowDefinition = {
         id: 'no-expected-timeout-agent-wf',
         name: 'No Expected Timeout (agent)',
@@ -1537,44 +1542,17 @@ describe('executeStep', () => {
         workflowVersion: 1,
         params: {},
       });
-      const action = buildNextActions(def, run, undefined, new Date())[0]!;
-      expect(action.instruction!.tool).toBe('execute_step');
-      expect(Object.keys(action)).not.toContain('expected_timeout');
-      expect(JSON.stringify(action)).not.toContain('60s');
+      const way = composeWaysAt(run, new Date(), { definition: def }).ways.find(
+        (w) => w.verb === 'run_step',
+      )!;
+      expect(way.verb === 'run_step' ? way.step : undefined).toBe('review-code');
+      // The run id is random: the check reads the way without it, so a '60' in a uuid cannot fail it.
+      const { run_id: _id, ...rest } = way;
+      expect(JSON.stringify(rest)).not.toContain('expected_timeout');
+      expect(JSON.stringify(rest)).not.toContain('60');
     });
 
-    it('a HANDLER-bearing step carrying timeout_seconds gets none either', async () => {
-      // The other half of the reach, and the one the audit corrected: the NextActions filter is
-      // agent-OR-handler, so an auto step with a handler is shown this too — and its instruction
-      // tells the reader to call the handler themselves, which no withTimeout wraps.
-      const def: WorkflowDefinition = {
-        id: 'no-expected-timeout-handler-wf',
-        name: 'No Expected Timeout (handler)',
-        version: 1,
-        steps: {
-          enrich: {
-            description: 'Enrich the record',
-            execution: 'auto',
-            depends_on: [],
-            handler: 'do_enrich',
-            timeout_seconds: 60,
-          },
-        },
-      };
-      const { run } = await store.create({
-        workflowId: 'no-expected-timeout-handler-wf',
-        workflowVersion: 1,
-        params: {},
-      });
-      // issue #625 PR-2a (decision C5): an auto step is never its own next action — its handler is
-      // no tool a client can call; the one act is `advance_run`.
-      const action = buildNextActions(def, run, undefined, new Date())[0]!;
-      expect(action.instruction!.tool).toBe('advance_run');
-      expect(Object.keys(action)).not.toContain('expected_timeout');
-      expect(JSON.stringify(action)).not.toContain('60s');
-    });
-
-    it('populates instruction with execute_step for an agent step', async () => {
+    it('an agent step: its brief carries the input schema the answer must fit; an auto step is owed, never its own way', async () => {
       const agentStepDef: WorkflowDefinition = {
         id: 'agent-instr-wf',
         name: 'Agent Instruction Workflow',
@@ -1586,66 +1564,25 @@ describe('executeStep', () => {
             depends_on: [],
             input_schema: { required: ['findings'], properties: { findings: { type: 'array' } } },
           },
+          'fetch-data': { description: 'Fetch', execution: 'auto', depends_on: [] },
         },
       };
-
-      const { run: run } = await store.create({
+      const { run } = await store.create({
         workflowId: 'agent-instr-wf',
         workflowVersion: 1,
         params: {},
       });
-
-      const actions = buildNextActions(agentStepDef, run, undefined, new Date());
-      expect(actions).toHaveLength(1);
-      const action = actions[0]!;
-      expect(action.instruction).not.toBeNull();
-      expect(action.instruction!.tool).toBe('execute_step');
-      expect((action.instruction!.params as Record<string, unknown>)['command']).toBe(
-        'review-code',
-      );
-      expect((action.instruction!.params as Record<string, unknown>)['run_id']).toBe(run.id);
-      expect(action.input_schema).toEqual(agentStepDef.steps['review-code']?.input_schema);
-      expect(
-        (action.instruction!.params as Record<string, unknown>)['input_schema'],
-      ).toBeUndefined();
-      expect(action.instruction!.call_with).toBeDefined();
-      expect((action.instruction!.call_with as Record<string, unknown>)['run_id']).toBe(run.id);
-      expect((action.instruction!.call_with as Record<string, unknown>)['command']).toBe(
-        'review-code',
-      );
-      // input_schema is present → call_with.params is a skeleton object
-      const callWithParams = (action.instruction!.call_with as Record<string, unknown>)['params'];
-      expect(typeof callWithParams).toBe('object');
-      expect(callWithParams).not.toBeNull();
-    });
-
-    it('returns no actions for an auto step without a handler', async () => {
-      const autoStepDef: WorkflowDefinition = {
-        id: 'auto-instr-wf',
-        name: 'Auto Instruction Workflow',
-        version: 1,
-        steps: {
-          'fetch-data': {
-            description: 'Fetch data automatically',
-            execution: 'auto',
-            depends_on: [],
-          },
-        },
-      };
-
-      const { run: run } = await store.create({
-        workflowId: 'auto-instr-wf',
-        workflowVersion: 1,
-        params: {},
+      const composed = composeWaysAt(run, new Date(), { definition: agentStepDef });
+      const way = composed.ways.find((w) => w.verb === 'run_step')!;
+      expect(way.verb === 'run_step' ? way.brief : undefined).toEqual({
+        execution: 'agent',
+        description: 'Review the code',
+        input_schema: agentStepDef.steps['review-code']?.input_schema,
       });
-
-      // issue #625 PR-2a: an auto step is never its own next action — the one act runs it
-      const actions = buildNextActions(autoStepDef, run, undefined, new Date());
-      expect(actions).toHaveLength(1);
-      expect(actions[0]!.instruction!.tool).toBe('advance_run');
-      expect(actions[0]!.human_readable).toBe(
-        "Call advance_run to run the step the engine owes: 'fetch-data'. It runs it with this server's extensions and environment.",
-      );
+      const advance = composed.ways.find((w) => w.verb === 'advance');
+      expect(advance?.verb === 'advance' ? advance.owed : undefined).toEqual([
+        { step: 'fetch-data' },
+      ]);
     });
   });
 
@@ -1695,17 +1632,15 @@ describe('executeStep', () => {
     expect(reviewed.gate?.display).toBe(confirmed.gate?.display);
     expect(reviewed.gate?.agent_hint).toBe(confirmed.gate?.agent_hint);
     expect(reviewed.gate?.response_spec).toEqual(confirmed.gate?.response_spec);
-    expect(reviewed.next_actions[0]?.instruction?.tool).toBe(
-      confirmed.next_actions[0]?.instruction?.tool,
-    );
-    expect(reviewed.next_actions[0]?.human_readable).toBe(
-      confirmed.next_actions[0]?.human_readable,
-    );
-    // orientation embeds the gate_id verbatim (legitimately differs per run — see below) —
-    // compared with the id stripped out instead of a bare toBe.
-    expect(reviewed.next_actions[0]?.orientation?.replace(/'[0-9a-f-]{36}'/, "'<gate_id>'")).toBe(
-      confirmed.next_actions[0]?.orientation?.replace(/'[0-9a-f-]{36}'/, "'<gate_id>'"),
-    );
+    // #729 PR-0: the answer way — everything but the random ids — is identical too.
+    const answerWay = (r: typeof confirmed) => {
+      const way = r.ways.find((w) => w.verb === 'respond');
+      if (way === undefined || way.verb !== 'respond') return undefined;
+      const { gate_id: _g, run_id: _r, proof, ...rest } = way;
+      return { ...rest, proof: proof !== undefined };
+    };
+    expect(nextCalls(reviewed)).toEqual(nextCalls(confirmed));
+    expect(answerWay(reviewed)).toEqual(answerWay(confirmed));
     // The one field that MUST differ — proof the two runs are genuinely independent, not a
     // vacuous self-comparison.
     expect(reviewed.gate?.gate_id).not.toBe(confirmed.gate?.gate_id);
@@ -1804,7 +1739,7 @@ describe('executeStep', () => {
       const { envelope } = await refuseBadTrust('engine_delivered');
       expect(envelope.status).toBe('error');
       expect(envelope.error_code).toBe('VALIDATION_TRUST_VALUE');
-      expect(envelope.agent_action).toBe('report_to_user');
+      expect(agentActionFor(envelope)).toBe('report_to_user');
     });
 
     it('next_actions is [] — omitting `definition` from makeErrorEnvelope, not merely empty by coincidence', async () => {
@@ -1812,7 +1747,7 @@ describe('executeStep', () => {
       // into its own refusal (buildNextActions would find 'work' still eligible and re-offer it),
       // an infinite-retry trap for an agent following next_actions literally.
       const { envelope } = await refuseBadTrust('engine_delivered');
-      expect(envelope.next_actions).toEqual([]);
+      expect(nextCalls(envelope)).toEqual([]);
     });
 
     it('the PRE-CLAIM pin: refusal never claims the step — in_progress_steps stays [], version unchanged', async () => {
@@ -2006,23 +1941,20 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('confirm_required');
-      expect(envelope.next_actions).toHaveLength(1);
-      const gateAction = envelope.next_actions[0]!;
-      expect(gateAction.instruction).not.toBeNull();
-      expect(gateAction.instruction!.tool).toBe('submit_human_response');
-      expect((gateAction.instruction!.params as Record<string, unknown>)['run_id']).toBe(run.id);
-      expect((gateAction.instruction!.params as Record<string, unknown>)['gate_id']).toBe(
-        envelope.gate!.gate_id,
-      );
+      expect(nextCalls(envelope)).toEqual(['respond']);
+      // #729 PR-0: the answer is the `respond` way — its run, its gate, the gate's choices; the
+      // instruction an agent reads is the MCP door's (render-reply.test.ts).
+      const answer = envelope.ways.find((w) => w.verb === 'respond');
+      expect(answer?.verb === 'respond' ? answer.run_id : undefined).toBe(run.id);
+      expect(answer?.verb === 'respond' ? answer.gate_id : undefined).toBe(envelope.gate!.gate_id);
+      expect(answer?.verb === 'respond' ? answer.choice.one_of : undefined).toEqual([
+        'approve',
+        'reject',
+      ]);
+      expect(answer?.verb === 'respond' ? answer.presented : undefined).toBe('with_gate');
       expect(envelope.gate!.response_spec).toBeDefined();
       expect(envelope.gate!.response_spec!.choices).toContain('approve');
       expect(envelope.gate!.response_spec!.choices).toContain('reject');
-      const callWith = gateAction.instruction!.call_with as Record<string, unknown>;
-      expect(callWith['run_id']).toBe(run.id);
-      expect(callWith['gate_id']).toBe(envelope.gate!.gate_id);
-      expect(typeof callWith['choice']).toBe('string');
-      expect((callWith['choice'] as string).startsWith('<')).toBe(true);
-      expect((callWith['choice'] as string).includes('approve')).toBe(true);
       expect(envelope.context_hint).toContain('gate');
     });
   });
@@ -2136,7 +2068,7 @@ describe('executeStep', () => {
         expect(envelope.status).toBe('error');
         expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
         expect(envelope.errors[0]).toMatch(/Failed to persist run update/);
-        expect(envelope.agent_action).toBe('stop');
+        expect(agentActionFor(envelope)).toBe('stop');
       } finally {
         vi.restoreAllMocks();
       }
@@ -2291,7 +2223,7 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('error');
-      expect(envelope.agent_action).toBe('stop');
+      expect(agentActionFor(envelope)).toBe('stop');
       expect(envelope.errors[0]).toContain('gate.message has unresolvable references');
       expect(envelope.errors[0]).toContain('context.resources.gate_step.missing_field');
 
@@ -2831,10 +2763,10 @@ describe('executeStep', () => {
       });
 
       expect(envelope.status).toBe('error');
-      expect(envelope.agent_action).toBe('provide_input');
+      expect(agentActionFor(envelope)).toBe('provide_input');
       expect(dispatchCalled).not.toHaveBeenCalled();
       // Step not claimed — it is still eligible and in next_actions
-      expect(envelope.next_actions).toHaveLength(1);
+      expect(nextCalls(envelope)).toHaveLength(1);
       const runAfter = await store.get(run.id);
       expect(runAfter.in_progress_steps).not.toContain('step-one');
     });
@@ -3775,7 +3707,7 @@ describe('Step 5 dispatch-failure envelope', () => {
     },
   };
 
-  it('non-terminal failure with wait_for_human exposes recovery branch', async () => {
+  it('non-terminal failure with wait_for_service exposes recovery branch', async () => {
     const { run: run } = await store.create({
       workflowId: 'two-step-wf',
       workflowVersion: 1,
@@ -3790,16 +3722,16 @@ describe('Step 5 dispatch-failure envelope', () => {
         throw new WorkflowError('Service unavailable', {
           code: 'SERVICE_HTTP_5XX',
           category: 'SERVICE',
-          agentAction: 'wait_for_human',
+          agentAction: 'wait_for_service',
           retryable: false,
         });
       },
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('wait_for_human');
-    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
-    expect(envelope.next_actions[0]?.instruction!.call_with.command).toBe('step_b');
+    expect(agentActionFor(envelope)).toBe('wait_for_service');
+    expect(nextCalls(envelope).length).toBeGreaterThanOrEqual(1);
+    expect(nextCalls(envelope)[0]).toBe('run_step:step_b');
     expect(
       envelope.context_hint.toLowerCase().includes('service') ||
         envelope.context_hint.toLowerCase().includes('recovery'),
@@ -3828,9 +3760,9 @@ describe('Step 5 dispatch-failure envelope', () => {
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('report_to_user');
-    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
-    expect(envelope.next_actions[0]?.instruction!.call_with.command).toBe('step_b');
+    expect(agentActionFor(envelope)).toBe('report_to_user');
+    expect(nextCalls(envelope).length).toBeGreaterThanOrEqual(1);
+    expect(nextCalls(envelope)[0]).toBe('run_step:step_b');
   });
 
   it('non-terminal failure with stop is translated to report_to_user and exposes recovery branch', async () => {
@@ -3855,8 +3787,8 @@ describe('Step 5 dispatch-failure envelope', () => {
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('report_to_user');
-    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(agentActionFor(envelope)).toBe('report_to_user');
+    expect(nextCalls(envelope).length).toBeGreaterThanOrEqual(1);
   });
 
   it('terminal failure always returns stop with empty next_actions', async () => {
@@ -3888,15 +3820,15 @@ describe('Step 5 dispatch-failure envelope', () => {
         throw new WorkflowError('Service unavailable', {
           code: 'SERVICE_HTTP_5XX',
           category: 'SERVICE',
-          agentAction: 'wait_for_human',
+          agentAction: 'wait_for_service',
           retryable: false,
         });
       },
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('stop');
-    expect(envelope.next_actions).toHaveLength(0);
+    expect(agentActionFor(envelope)).toBe('stop');
+    expect(nextCalls(envelope)).toHaveLength(0);
   });
 
   it('WAL deletion failure does NOT suppress next_actions', async () => {
@@ -3917,7 +3849,7 @@ describe('Step 5 dispatch-failure envelope', () => {
         throw new WorkflowError('Service unavailable', {
           code: 'SERVICE_HTTP_5XX',
           category: 'SERVICE',
-          agentAction: 'wait_for_human',
+          agentAction: 'wait_for_service',
           retryable: false,
         });
       },
@@ -3925,8 +3857,8 @@ describe('Step 5 dispatch-failure envelope', () => {
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('wait_for_human');
-    expect(envelope.next_actions.length).toBeGreaterThanOrEqual(1);
+    expect(agentActionFor(envelope)).toBe('wait_for_service');
+    expect(nextCalls(envelope).length).toBeGreaterThanOrEqual(1);
     expect(
       envelope.warnings.some(
         (w) => w.toLowerCase().includes('trace') || w.toLowerCase().includes('buffer'),
@@ -3957,7 +3889,7 @@ describe('Step 5 dispatch-failure envelope', () => {
         throw new WorkflowError('Service unavailable', {
           code: 'SERVICE_HTTP_5XX',
           category: 'SERVICE',
-          agentAction: 'wait_for_human',
+          agentAction: 'wait_for_service',
           retryable: false,
         });
       },
@@ -3965,8 +3897,8 @@ describe('Step 5 dispatch-failure envelope', () => {
 
     expect(envelope.status).toBe('error');
     expect(envelope.error_code).toBe('ENGINE_STORE_FAILED');
-    expect(envelope.agent_action).toBe('stop');
-    expect(envelope.next_actions).toHaveLength(0);
+    expect(agentActionFor(envelope)).toBe('stop');
+    expect(nextCalls(envelope)).toHaveLength(0);
     expect(envelope.errors.some((w) => w.toLowerCase().includes('persist'))).toBe(true);
   });
 
@@ -4076,7 +4008,7 @@ describe('retry_after on ResponseEnvelope', () => {
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('wait_and_proceed');
+    expect(agentActionFor(envelope)).toBe('wait_and_proceed');
     expect(envelope.retry_after).toBe(30);
   });
 
@@ -4095,14 +4027,14 @@ describe('retry_after on ResponseEnvelope', () => {
         throw new WorkflowError('Service unavailable', {
           code: 'SERVICE_HTTP_5XX',
           category: 'SERVICE',
-          agentAction: 'wait_for_human',
+          agentAction: 'wait_for_service',
           retryable: false,
         });
       },
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('wait_for_human');
+    expect(agentActionFor(envelope)).toBe('wait_for_service');
     expect(envelope.retry_after).toBeUndefined();
   });
 
@@ -4134,7 +4066,7 @@ describe('retry_after on ResponseEnvelope', () => {
     });
 
     expect(envelope.status).toBe('error');
-    expect(envelope.agent_action).toBe('wait_and_proceed');
+    expect(agentActionFor(envelope)).toBe('wait_and_proceed');
     expect(envelope.retry_after).toBe(45);
   });
 
@@ -4566,9 +4498,7 @@ describe('guard step execution', () => {
     // Guard ran inline — visible in chained_auto_steps
     expect(envelope.chained_auto_steps?.some((s) => s.step === 'guard_b')).toBe(true);
     // step_c is the next eligible agent step
-    expect(envelope.next_actions.some((a) => a.instruction?.call_with.command === 'step_c')).toBe(
-      true,
-    );
+    expect(nextCalls(envelope).includes('run_step:step_c')).toBe(true);
 
     const savedRun = await store.get(run.id);
     expect(savedRun.completed_steps).toContain('guard_b');
@@ -4590,7 +4520,7 @@ describe('guard step execution', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.next_actions).toHaveLength(0);
+    expect(nextCalls(envelope)).toHaveLength(0);
 
     const savedRun = await store.get(run.id);
     expect(savedRun.run_phase).toBe('aborted');
@@ -4657,7 +4587,7 @@ describe('guard step execution', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.next_actions).toHaveLength(0);
+    expect(nextCalls(envelope)).toHaveLength(0);
 
     const savedRun = await store.get(run.id);
     expect(savedRun.run_phase).toBe('failed');
@@ -4736,9 +4666,7 @@ describe('guard step execution', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.next_actions.some((a) => a.instruction?.call_with.command === 'step_d')).toBe(
-      true,
-    );
+    expect(nextCalls(envelope).includes('run_step:step_d')).toBe(true);
 
     const savedRun = await store.get(run.id);
     expect(savedRun.completed_steps).toContain('guard_b');
@@ -4783,7 +4711,7 @@ describe('guard step execution', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.next_actions).toHaveLength(0);
+    expect(nextCalls(envelope)).toHaveLength(0);
 
     const savedRun = await store.get(run.id);
     expect(savedRun.run_phase).toBe('aborted');
@@ -5522,8 +5450,8 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.agent_action).toBe('stop');
-    expect(envelope.next_actions).toEqual([]);
+    expect(agentActionFor(envelope)).toBe('stop');
+    expect(nextCalls(envelope)).toEqual([]);
     expect(envelope.run_version).toBe(before.version);
     expect(envelope.run_phase).toBe('aborted'); // #92: signal present on the entry-guard envelope
     expect(dispatcher).not.toHaveBeenCalled(); // no step executed
@@ -5556,7 +5484,7 @@ describe('executeChain — terminal-run entry guard (#91)', () => {
     });
 
     expect(envelope.status).toBe('ok');
-    expect(envelope.agent_action).toBe('stop');
+    expect(agentActionFor(envelope)).toBe('stop');
     expect(dispatcher).not.toHaveBeenCalled();
     const after = await store.get(run.id);
     expect(after).toEqual(before);

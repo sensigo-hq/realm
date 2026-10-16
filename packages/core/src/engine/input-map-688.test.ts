@@ -2,17 +2,21 @@
 // `uses_service`) has its `input_schema` checked against the input the map builds — the input the
 // step receives — by the view and by the engine alike; its refusal names a fix that can work.
 //
-// Every cell drives the public surfaces (`advanceRun`, `executeStep`, `describePending`, the way-out
-// composers) — never the new predicates directly — so reverting the change turns them red. Beside
-// each: (a) what turns it red; (b) what it prints on failure (the reply's hint, the completed and
-// failed steps, the handler's received input, the way-out text) — never an environment.
+// Every cell drives the public surfaces (`advanceRun`, `executeStep`, `describePending`, the ways
+// composed from the record) — never the new predicates directly — so reverting the change turns them
+// red. #729 PR-0: the way out is the refused step's `unavailable` entry — its remedies and whether a
+// new run can change the input (`no_remedy` `start`); the doors' words for it are pinned in their
+// renderer tests. Beside each: (a) what turns it red; (b) what it prints on failure (the reply's hint,
+// the completed and failed steps, the handler's received input, the way out) — never an environment.
 import { describe, it, expect } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { advanceRun, executeStep, type StepDispatcher } from './execution-loop.js';
-import { cannotRunWayOutTools, describePending } from './pending.js';
+import { describePending } from './pending.js';
+import { composeWaysAt } from './ways.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -74,9 +78,41 @@ const SHAPE_B = def({
   },
 });
 
-/** The tools' way out of a run whose only refused step is `step`, with the run's tail. */
-const toolsWay = (step: string, way: string): string =>
-  `For '${step}', ${way}; then, after a fix, call advance_run; or end the run with abandon_run.`;
+/**
+ * The way out of a run whose refused step is `step`, as data: the refusal's check, its remedies' verbs,
+ * and whether a new run with other params can change what the schema checks (`no_remedy` `start`).
+ */
+function wayOut(run: RunRecord, d: WorkflowDefinition, registry: ExtensionRegistry, step: string) {
+  const entry = composeWaysAt(run, new Date(), { definition: d, registry }).unavailable.find(
+    (u) => u.verb === 'run_step' && u.step === step,
+  );
+  return {
+    code: entry?.code,
+    check: entry?.code === 'refused_before_claim' ? entry.facts.check : undefined,
+    remedy: entry?.remedy.map((w) => w.verb),
+    new_run:
+      entry?.no_remedy?.cause === 'operator_command_untyped' && entry.no_remedy.command === 'start',
+  };
+}
+const PARAMS_FIX = {
+  code: 'refused_before_claim',
+  check: 'input_schema',
+  remedy: ['register'],
+  new_run: true,
+};
+const MAP_FIX = {
+  code: 'refused_before_claim',
+  check: 'input_schema',
+  remedy: ['register'],
+  new_run: false,
+};
+/** A step that consumes no map: the engine gives it no input — the operator's lever beside the fix (Q4). */
+const NO_INPUT_FIX = {
+  code: 'refused_before_claim',
+  check: 'input_schema',
+  remedy: ['register', 'run_step'],
+  new_run: false,
+};
 
 /** Creates a run of `d`, answers its agent step `answerStep` (when given), returns the fresh record. */
 async function begin(
@@ -183,19 +219,16 @@ describe('#688 — a mapped input that does not fit: refused, report_to_user, th
         refused_by: entry?.refused_by,
         namesText: String(entry?.refusal).includes("'text'"),
         code: reply.error_code,
-        action: reply.agent_action,
+        action: agentActionFor(reply),
         received: seen,
-        way: cannotRunWayOutTools(run, SHAPE_B, view),
+        way: wayOut(run, SHAPE_B, registry, 'publish'),
       }).toEqual({
         refused_by: 'input_schema',
         namesText: true,
         code: 'VALIDATION_INPUT_SCHEMA',
         action: 'report_to_user',
         received: [],
-        way: toolsWay(
-          'publish',
-          'correct its input_map or its input_schema and register the workflow again',
-        ),
+        way: MAP_FIX,
       });
     });
   });
@@ -204,34 +237,22 @@ describe('#688 — a mapped input that does not fit: refused, report_to_user, th
     await withStore(async (store) => {
       const { registry } = recording();
       const run = await begin(store, SHAPE_A, { other: 1 }, registry);
-      const view = describePending(SHAPE_A, run, registry, new Date());
       // (a) red when the refused step is offered the input_schema-only fix, or no new run; (b) prints
       //     the way out.
-      expect(cannotRunWayOutTools(run, SHAPE_A, view)).toBe(
-        toolsWay(
-          'x',
-          'start a run with params that fit, or correct its input_map or its input_schema and register the workflow again',
-        ),
-      );
+      expect(wayOut(run, SHAPE_A, registry, 'x')).toEqual(PARAMS_FIX);
     });
   });
 });
 
-describe('#688 cell 5 — when a new run can change what the schema checks (through the way-out words)', () => {
-  const PARAMS_WAY = toolsWay(
-    'x',
-    'start a run with params that fit, or correct its input_map or its input_schema and register the workflow again',
-  );
-  const MAP_WAY = toolsWay(
-    'x',
-    'correct its input_map or its input_schema and register the workflow again',
-  );
+describe('#688 cell 5 — when a new run can change what the schema checks (through the way out)', () => {
+  const PARAMS_WAY = PARAMS_FIX;
+  const MAP_WAY = MAP_FIX;
   async function wayFor(
     step: Record<string, unknown>,
     params: Record<string, unknown>,
     extra: Record<string, unknown> = {},
     answer?: { step: string; output: Record<string, unknown> },
-  ): Promise<string> {
+  ): Promise<ReturnType<typeof wayOut>> {
     return withStore(async (store) => {
       const { registry } = recording();
       const d = def({
@@ -239,7 +260,7 @@ describe('#688 cell 5 — when a new run can change what the schema checks (thro
         x: { description: 'X.', execution: 'auto', handler: 'h', ...step },
       });
       const run = await begin(store, d, params, registry, answer);
-      return cannotRunWayOutTools(run, d, describePending(d, run, registry, new Date()));
+      return wayOut(run, d, registry, 'x');
     });
   }
 
@@ -254,7 +275,7 @@ describe('#688 cell 5 — when a new run can change what the schema checks (thro
         },
         { sku: 5 },
       ),
-    ).toBe(MAP_WAY);
+    ).toEqual(MAP_WAY);
   });
 
   it('a leaf that is exactly run.params reads the params: a new run is offered', async () => {
@@ -271,7 +292,7 @@ describe('#688 cell 5 — when a new run can change what the schema checks (thro
         },
         { other: 1 },
       ),
-    ).toBe(PARAMS_WAY);
+    ).toEqual(PARAMS_WAY);
   });
 
   it('a leaf with a leading space reads the params: a new run is offered', async () => {
@@ -284,7 +305,7 @@ describe('#688 cell 5 — when a new run can change what the schema checks (thro
         },
         { other: 1 },
       ),
-    ).toBe(PARAMS_WAY);
+    ).toEqual(PARAMS_WAY);
   });
 
   it('a mixed map whose refused key comes from context.resources: no new run', async () => {
@@ -301,7 +322,7 @@ describe('#688 cell 5 — when a new run can change what the schema checks (thro
         { ask: { description: 'Ask.', execution: 'agent' } },
         { step: 'ask', output: { other: 'x' } },
       ),
-    ).toBe(MAP_WAY);
+    ).toEqual(MAP_WAY);
   });
 
   it('a root additionalProperties refusal names no key: no new run', async () => {
@@ -322,7 +343,7 @@ describe('#688 cell 5 — when a new run can change what the schema checks (thro
         { ask: { description: 'Ask.', execution: 'agent' } },
         { step: 'ask', output: { summary: 'hello' } },
       ),
-    ).toBe(MAP_WAY);
+    ).toEqual(MAP_WAY);
   });
 
   it('a key with `/` is found by its unescaped name: a new run is offered', async () => {
@@ -336,7 +357,7 @@ describe('#688 cell 5 — when a new run can change what the schema checks (thro
         },
         { v: 'not a number' },
       ),
-    ).toBe(PARAMS_WAY);
+    ).toEqual(PARAMS_WAY);
   });
 });
 
@@ -425,7 +446,7 @@ describe('#688 cell 7 — each conjunct of the one rule', () => {
     });
   });
 
-  it('not bare: a bare mapped auto step is still checked against the engine’s input, with today’s words', async () => {
+  it('not bare: a bare mapped auto step is still checked against the engine’s input, with the no-input way out', async () => {
     await withStore(async (store) => {
       const { registry } = recording();
       const d = def({
@@ -448,18 +469,15 @@ describe('#688 cell 7 — each conjunct of the one rule', () => {
       //     and the way out.
       expect({
         refused_by: view.engine_runnable.find((e) => e.step === 'show')?.refused_by,
-        way: cannotRunWayOutTools(run, d, view),
+        way: wayOut(run, d, registry, 'show'),
       }).toEqual({
         refused_by: 'input_schema',
-        way: toolsWay(
-          'show',
-          'the engine gives it no input, so correct its input_schema and register the workflow again',
-        ),
+        way: NO_INPUT_FIX,
       });
     });
   });
 
-  it('the map present: a handler step with no input_map keeps today’s words', async () => {
+  it('the map present: a handler step with no input_map keeps the no-input way out', async () => {
     await withStore(async (store) => {
       const { registry } = recording();
       const d = def({
@@ -475,12 +493,7 @@ describe('#688 cell 7 — each conjunct of the one rule', () => {
       const run = await begin(store, d, {}, registry, { step: 'ask', output: {} });
       // (a) red when a step with no map counts as consuming one (break: drop the map conjunct): its
       //     way out names an input_map it does not have; (b) prints the way out.
-      expect(cannotRunWayOutTools(run, d, describePending(d, run, registry, new Date()))).toBe(
-        toolsWay(
-          'compute',
-          'the engine gives it no input, so correct its input_schema and register the workflow again',
-        ),
-      );
+      expect(wayOut(run, d, registry, 'compute')).toEqual(NO_INPUT_FIX);
     });
   });
 });

@@ -27,7 +27,8 @@ import {
 import { ENTRY_CALLERS } from './callers.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
-import type { ResponseEnvelope } from '../types/response-envelope.js';
+import type { EngineReply } from '../types/response-envelope.js';
+import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
 
 /** `q` (a question, 60 s, `on_expiry` as given), then `after` (a bare `auto` step). */
 function gated(onExpiry: 'settle_default' | 'abort'): WorkflowDefinition {
@@ -234,7 +235,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     runId: string,
     gateId: string,
     past: Date,
-  ) => Promise<ResponseEnvelope>;
+  ) => Promise<EngineReply>;
   const CARRY: Array<[string, EnactedVia, Carry]> = [
     [
       'executeStep',
@@ -324,11 +325,20 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
             ? { on_expiry: 'settle_default', choice: 'approve' }
             : { on_expiry: 'abort' },
           via,
-          5_000,
+          { ms: 5_000 },
         );
         // (a) red when the function names another call (the MCP tool's, as before C151) or its
         // default is lost; (b) prints the reply's warnings.
         expect(reply.warnings.filter((w) => w.includes('had expired'))).toEqual([line]);
+        // #729 PR-0 (T-2): the line is the receipt's — the reply carries the receipt as data.
+        expect(reply.expiry).toMatchObject({
+          gate_id: gateId,
+          step: 'q',
+          on_expiry: onExpiry,
+          enacted_via: via,
+          by_this_call: true,
+          overdue: { ms: 5_000 },
+        });
         // (a) red when enacted_via is written to the run's record; (b) prints the record's text.
         expect(JSON.stringify(await store.get(runId))).not.toContain('enacted_via');
       },
@@ -344,21 +354,16 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
     await setup?.(run.id);
     const reply = await executeStep(store, d, { runId: run.id, command, input: {}, dispatcher });
-    return {
-      status: reply.status,
-      next: reply.next_actions.map(
-        (n) => n.instruction?.params?.['command'] ?? n.instruction?.tool,
-      ),
-      suggestion: reply.blocked_reason?.suggestion,
-    };
+    // #729 PR-0: the suggestion is the MCP door's (render-reply.test.ts keeps C149's sentences);
+    // core pins what the reply offers instead — its progress ways.
+    return { status: reply.status, next: nextCalls(reply) };
   }
 
   it('C149, W4-Y2: steps and the act — the suggestion names the steps and advance_run, and never calls the act a step', async () => {
     // (a) red when this mix gets the steps-only sentence again; (b) prints the reply.
     expect(await blockedOn(MIX, 'c')).toEqual({
       status: 'blocked',
-      next: ['a', 'advance_run'],
-      suggestion: 'Call one of the steps indicated in next_actions, or advance_run, instead.',
+      next: ['run_step:a', 'advance'],
     });
   });
 
@@ -366,8 +371,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     // (a) red when the steps-only sentence changes or names advance_run; (b) prints the reply.
     expect(await blockedOn(MIX, 'x', (runId) => advanceRun(store, MIX, { runId }))).toEqual({
       status: 'blocked',
-      next: ['a'],
-      suggestion: 'Call one of the steps indicated in next_actions instead.',
+      next: ['run_step:a'],
     });
   });
 
@@ -384,8 +388,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
     // (a) red when the act-only sentence calls it a step; (b) prints the reply.
     expect(await blockedOn(d, 'y')).toEqual({
       status: 'blocked',
-      next: ['advance_run'],
-      suggestion: 'Call advance_run, as next_actions says.',
+      next: ['advance'],
     });
   });
 
@@ -398,8 +401,7 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       ),
     ).toEqual({
       status: 'blocked',
-      next: ['submit_human_response'],
-      suggestion: 'Answer the open question first, as next_actions says.',
+      next: ['respond'],
     });
   });
   // C148: the step called has already completed, failed or been skipped; `b` is ready beside it.
@@ -458,17 +460,18 @@ describe('#625 PR-2a, C144/C149/C151 — each call names itself; the suggestion 
       //     (b) prints the reply and the record's lists.
       expect({
         status: reply.status,
-        agent_action: reply.agent_action,
+        agent_action: agentActionFor(reply),
         hint: reply.context_hint,
-        next: reply.next_actions.map((n) => n.instruction?.params?.['command']),
+        next: nextCalls(reply),
         called,
         version: (await store.get(run.id)).version,
         phase: reply.run_phase,
       }).toEqual({
         status: 'blocked',
         agent_action: 'resolve_precondition',
-        hint: `Step 's' cannot be called now: ${words}. Ready for the agent: 'b'.`,
-        next: ['b'],
+        // #729 PR-0: what happened; "Ready for the agent: 'b'." is the door's sentence.
+        hint: `Step 's' cannot be called now: ${words}.`,
+        next: ['run_step:b'],
         called: 0,
         version: before.version,
         phase: 'running',

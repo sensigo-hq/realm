@@ -21,6 +21,7 @@ import { findEligibleSteps } from '../engine/eligibility.js';
 import type { StepDispatcher } from '../engine/execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 /** A two-step workflow: `extract`, then `cleanup` with the caller's body. */
 function wf(cleanupBody: string, extraSteps = ''): string {
@@ -470,7 +471,7 @@ describe('dead failure condition — the claimed consequences, executed (issue #
     // called, and with nothing else to call it says to report to the user.)
     expect(findEligibleSteps(definition, after)).toContain('cleanup');
     expect(envelope.blocked_reason?.eligible_steps).toEqual([]);
-    expect(envelope.agent_action).toBe('report_to_user');
+    expect(agentActionFor(envelope)).toBe('report_to_user');
     expect(after.completed_steps).not.toContain('cleanup');
     expect(after.failed_steps).not.toContain('cleanup');
     expect(after.skipped_steps).not.toContain('cleanup');

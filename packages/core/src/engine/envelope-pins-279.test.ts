@@ -19,6 +19,7 @@ import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore, CreateRunOptions } from '../store/store-interface.js';
 import type { SettlementDelta, SettlementResult } from '../types/settlement.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 describe('run_terminal envelope — the composed cancelled-predicate (issue #279, increment 2, PR-D, design record D-4)', () => {
   it('CANCELLED variant: a gate cancelled by a sibling abort discloses "your choice was NOT recorded" + the aborting step', async () => {
@@ -94,7 +95,7 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
       // issue #332 item 7: agent_action was previously only asserted negatively elsewhere in this
       // file (:290 — a DIFFERENT envelope, never `report_to_user`); this positive pin closes the
       // gap for the CANCELLED variant.
-      expect(submitAfterCancel.agent_action).toBe('report_to_user');
+      expect(agentActionFor(submitAfterCancel)).toBe('report_to_user');
       expect(submitAfterCancel.errors[0]).toContain('NOT recorded');
       expect(submitAfterCancel.errors[0]).toContain('aborter');
     } finally {
@@ -147,7 +148,7 @@ describe('run_terminal envelope — the composed cancelled-predicate (issue #279
       expect(result.error_code).toBe('STATE_RUN_TERMINAL');
       // issue #332 item 7: positive agent_action pin for the ZOMBIE variant (see the CANCELLED
       // variant above for the same addition and its rationale).
-      expect(result.agent_action).toBe('report_to_user');
+      expect(agentActionFor(result)).toBe('report_to_user');
       expect(result.errors[0]).not.toContain('NOT recorded'); // never the cancelled text
       // #625 PR-2a, decision C170: the way out is true for the kind of ending — this record is
       // completed, so nothing is owed and `realm run resume` (which refuses it) is not offered.
@@ -202,7 +203,10 @@ describe('gate_choice_conflict envelope (issue #279, increment 2, PR-D)', () => 
       });
       expect(conflictingSubmit.status).toBe('error');
       expect(conflictingSubmit.error_code).toBe('STATE_BLOCKED');
-      expect(conflictingSubmit.error_details?.['winning_choice']).toBe('approve');
+      // #729 PR-0 (P-3, A-16; D-H): the winning choice is the reply's `outcome`, no longer
+      // `error_details.winning_choice`.
+      expect(conflictingSubmit.outcome?.choice).toBe('approve');
+      expect(conflictingSubmit.error_details?.['winning_choice']).toBeUndefined();
       expect(conflictingSubmit.errors[0]).toContain('approve');
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -305,7 +309,7 @@ describe('already_open envelope — the LIVE gate wins, rendered verbatim (issue
       });
 
       expect(result.status).toBe('confirm_required');
-      expect(result.agent_action).toBeUndefined(); // never report_to_user
+      expect(agentActionFor(result)).toBeUndefined(); // never report_to_user
       expect(result.gate?.gate_id).toBe('live-gate-id'); // the LIVE gate, not the rebuilt one
       expect(result.gate?.preview).toEqual({ forced: true });
       expect(result.context_hint).toContain('already paused');

@@ -21,6 +21,7 @@ import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { RunRecord } from '../types/run-record.js';
+import { nextCalls } from '../test-support/ways-view.js';
 
 /** The agent step's submission, accepted as given. */
 const echo: StepDispatcher = async (_name, input) => ({ ...input });
@@ -146,16 +147,20 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
     // (a) red when the chain attempts the refused step again (the reply then becomes its
     //     `blocked` refusal) or an ok reply gains the field; (b) prints status, command, presence
     //     and the hint.
+    // #729 PR-0: the step that cannot run is the reply's data (its `unavailable` entry); the doors
+    // word it (the hint says what happened).
     expect({
       status: reply.status,
       command: reply.command,
       has_stopped_step: 'stopped_step' in reply,
-      hint: reply.context_hint,
+      cannot_run: reply.unavailable
+        .filter((u) => u.verb === 'run_step' && u.code === 'refused_before_claim')
+        .map((u) => (u.code === 'refused_before_claim' ? [u.facts.step, u.facts.check] : [])),
     }).toEqual({
       status: 'ok',
       command: 'draft',
       has_stopped_step: false,
-      hint: expect.stringContaining("'publish' cannot run (precondition)"),
+      cannot_run: [['publish', 'precondition']],
     });
   });
 
@@ -206,14 +211,14 @@ describe('stopped_step names the step a non-ok reply belongs to', () => {
       command: reply.command,
       stopped_step: reply.stopped_step,
       run_phase: reply.run_phase,
-      act: reply.next_actions.map((a) => a.instruction?.tool),
+      act: nextCalls(reply),
       gate_step: record.pending_gate?.step_name,
     }).toEqual({
       status: 'ok',
       command: 'advance_run',
       stopped_step: undefined,
       run_phase: 'gate_waiting',
-      act: ['submit_human_response'],
+      act: ['respond'],
       gate_step: 'x',
     });
   });

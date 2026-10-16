@@ -10,14 +10,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { advanceRun, buildNextActions, executeStep } from './execution-loop.js';
-import {
-  describePending,
-  describeNext,
-  composeNextActionsStatusWord,
-  dueExpiry,
-  owedList,
-} from './pending.js';
+import { advanceRun, executeStep } from './execution-loop.js';
+import { describePending, composeNextActionsStatusWord, dueExpiry, owedList } from './pending.js';
+import { composeWaysAt } from './ways.js';
+import { nextCalls, owedOf } from '../test-support/ways-view.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -134,11 +130,15 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       gate: after.pending_gate?.gate_id,
       warnings: reply.warnings,
       hint: reply.context_hint,
+      names_next: reply.names_next,
+      next: nextCalls(reply),
     }).toEqual({
       gate: gateId,
       warnings: [],
-      // decision C103: the open question is named, with its choices and the act.
-      hint: `Run '${runId}': nothing ran. Waiting on the question on step 'confirm' (choices: approve, reject) — answer it with submit_human_response.`,
+      // decision C103: the open question is named — #729 PR-0: by its respond way; the door words it.
+      hint: `Run '${runId}': nothing ran.`,
+      names_next: true,
+      next: ['respond'],
     });
   });
 
@@ -157,11 +157,12 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       phase: 'gate_waiting',
       warnings: [],
     });
-    // (a) red when the view offers an act for it; (b) prints the view's act.
-    expect(describePending(d, after, undefined, past).act).toBeUndefined();
+    // (a) red when the view owes engine work for it; (b) prints the view's owed list.
+    expect(describePending(d, after, undefined, past).owed).toEqual([]);
+    expect(nextCalls(composeWaysAt(after, past, { definition: d }))).toEqual(['respond']);
   });
 
-  it('the view, given a clock: a due expiry is owed engine work — the advance_run act, advance_owed, its words; before its time is up, nothing', async () => {
+  it('the view, given a clock: a due expiry is owed engine work — the advance way, advance_owed; before its time is up, nothing', async () => {
     const d = def('settle_default');
     const { runId, gateId, past, before } = await atGate(d);
     const run = await store.get(runId);
@@ -173,28 +174,16 @@ describe('#625 PR-2a, C95 — advance carries out a due expiry, and the view nam
       on_expiry: 'settle_default',
     });
     expect(composeNextActionsStatusWord(view)).toBe('advance_owed');
-    // (a) red when the act or its words change; (b) prints them.
-    expect(view.act?.instruction).toEqual({
-      tool: 'advance_run',
-      params: { run_id: runId },
-      call_with: { run_id: runId },
-    });
-    expect(view.act?.human_readable).toBe(
-      "Call advance_run to carry out the expired question on 'confirm' (its declared settle_default), then run what it leaves owed until a step opens a question, fails or ends the run. It runs with this server's extensions and environment.",
-    );
-    expect(view.act?.orientation).toBe(
-      "Run is active. Engine work is owed: the expired question on 'confirm' (its declared settle_default).",
-    );
+    // (a) red when the owed work or the advance way changes; (b) prints them. #729 PR-0: the act's
+    //     words are the doors' (MCP render-reply.test.ts; CLI ways-renderer.test.ts C211).
+    const due = { expiry: { gate_id: gateId, step: 'confirm', on_expiry: 'settle_default' } };
+    expect(view.owed).toEqual([due]);
     expect(owedList(view)).toBe("the expired question on 'confirm' (its declared settle_default)");
-    expect(describeNext(view, run, d)).toBe(
-      // decision C211 (walk c14 W2-1): the call then runs what the default leaves owed — said.
-      " Owed to the engine: the expired question on 'confirm' (its declared settle_default) — call advance_run; then it runs what that leaves owed until a step opens a question, fails or ends the run.",
-    );
-    expect(buildNextActions(d, run, undefined, past).map((a) => a.instruction?.tool)).toEqual([
-      'advance_run',
-    ]);
+    const composed = composeWaysAt(run, past, { definition: d });
+    expect([nextCalls(composed), owedOf(composed)]).toEqual([['advance'], [`expiry:${gateId}`]]);
     // (a) red when a view before the expiry reads one; (b) prints the acts.
-    expect(describePending(d, run, undefined, before).act).toBeUndefined();
+    expect(describePending(d, run, undefined, before).owed).toEqual([]);
+    expect(nextCalls(composeWaysAt(run, before, { definition: d }))).toEqual(['respond']);
     expect(dueExpiry(run.pending_gate, before)).toBeUndefined();
   });
 });
