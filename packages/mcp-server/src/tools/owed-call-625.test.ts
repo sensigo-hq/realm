@@ -372,8 +372,12 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
       ask: { description: 'Ask.', execution: 'agent', depends_on: [] },
     },
   };
+  // #729 (the Q3 unit, C1): core's hint says what is so — no door word (`next_actions`) in core; the
+  // MCP reply of the call that attempted the step ends with the door's capability sentence (below).
   const BLOCK =
-    "Step 'enrich' is blocked: its handler 'h' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. Provision this runner (or re-run on a capable one), then follow next_actions.";
+    "Step 'enrich' is blocked: its handler 'h' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it.";
+  const CAPABILITY =
+    "'enrich' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.";
 
   it('C52: start_run on a created run whose engine attempt is capability-blocked returns the creation reply — ok, the step named, the block in warnings', async () => {
     await workflowStore.register(capHeadDef);
@@ -414,7 +418,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     );
     expect(reply.status).toBe('error');
     expect(reply.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
-    expect(reply.context_hint).toBe(BLOCK);
+    // #729 (the Q3 unit, C1): core's two sentences, then the door's way out (cannotRunClause).
+    expect(reply.context_hint).toBe(`${BLOCK} ${CAPABILITY}`);
   });
 
   it('C52 control: a FAILED engine step on a created run still returns the error reply', async () => {
@@ -613,7 +618,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     expect(r.status).toBe('ok');
     expect(r.warnings).toEqual([
       "Step 'later' needs handler 'h2', which is not registered in this runner. If reached it will block recoverably (not fail) until a runner that provides this handler executes it — load the missing extension or run on a capable runner.",
-      "Step 'enrich' is blocked: its handler 'h' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. Provision this runner (or re-run on a capable one), then follow next_actions.",
+      // #729 (the Q3 unit, C1): start_run's warnings carry core's hint (no door word in core).
+      "Step 'enrich' is blocked: its handler 'h' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it.",
     ]);
   });
 });

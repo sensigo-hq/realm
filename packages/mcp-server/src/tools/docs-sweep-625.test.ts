@@ -276,46 +276,80 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     });
   });
 
-  it('call-a-service.md: a missing adapter — start_run replies ok and warns; execute_step names the service', async () => {
+  // pre-Q3 title: call-a-service.md: a missing adapter — start_run replies ok and warns; execute_step names the service
+  it('call-a-service.md: a missing adapter — start_run replies ok and warns; the call that first attempts the step (advance_run, or an execute_step whose chain reaches it) carries the adapter’s own line', async () => {
     claim(
       'docs/guides/call-a-service.md',
-      "Over MCP, `start_run` replies `ok` and names the step in `warnings` (`Step '<step>' is blocked: …`), and `execute_step` on the step is refused with:",
+      "Over MCP, the call that first attempts the step says so: `start_run` replies `ok` and names the step in `warnings` (`Step '<step>' is blocked: …`); `advance_run`, or an `execute_step` whose chain reaches the step, replies `error`, names the step in `stopped_step` and carries the adapter's own line in `errors`:",
     );
     const shown = block('docs/guides/call-a-service.md', "Adapter 'github' for service")[0]!;
     const { call, workflowStore } = await connect(createDefaultRegistry());
+    const service = [
+      'services:',
+      '  github:',
+      '    adapter: github',
+      '    trust: engine_delivered',
+    ];
+    const open = [
+      '  open:',
+      '    description: Open an issue.',
+      '    execution: auto',
+      '    uses_service: github',
+      '    operation: create_issue',
+    ];
+    await workflowStore.register(
+      wf(
+        ['id: issues', 'name: issues', 'version: 1', ...service, 'steps:', ...open, ''].join('\n'),
+      ),
+    );
     await workflowStore.register(
       wf(
         [
-          'id: issues',
-          'name: issues',
+          'id: issues-after-ask',
+          'name: issues-after-ask',
           'version: 1',
-          'services:',
-          '  github:',
-          '    adapter: github',
-          '    trust: engine_delivered',
+          ...service,
           'steps:',
-          '  open:',
-          '    description: Open an issue.',
-          '    execution: auto',
-          '    uses_service: github',
-          '    operation: create_issue',
+          '  ask:',
+          '    description: Ask.',
+          '    execution: agent',
+          ...open,
+          '    depends_on: [ask]',
           '',
         ].join('\n'),
       ),
     );
     const s = await call('start_run', { workflow_id: 'issues' });
-    const r = await call('execute_step', {
-      run_id: s['run_id'] as string,
-      command: 'open',
+    // advance_run on a run nothing has attempted the step on (a batch run creates and runs none).
+    const batch = await call('start_run_batch', { workflow_id: 'issues', items: [{ params: {} }] });
+    const batchId = (batch['started'] as Array<{ run_id: string }>)[0]!.run_id;
+    const a = await call('advance_run', { run_id: batchId });
+    // execute_step on the agent step before it: its chain reaches the step and attempts it.
+    const asked = await call('start_run', { workflow_id: 'issues-after-ask' });
+    const e = await call('execute_step', {
+      run_id: asked['run_id'] as string,
+      command: 'ask',
       params: {},
     });
-    // (a) red when start_run refuses, does not warn, or the refusal names another service;
-    //     (b) prints the replies.
-    expect([
-      s['status'],
-      ((s['warnings'] as string[]) ?? []).some((w) => w.startsWith("Step 'open' is blocked: ")),
+    const attempt = (r: Reply) => [
+      r['status'],
+      r['stopped_step'],
       String((r['errors'] as string[])[0]).startsWith(shown.replace(' …', '')),
-    ]).toEqual(['ok', true, true]);
+    ];
+    // (a) red when start_run refuses or does not warn, or an attempting call's reply is not an error
+    //     naming the step with the adapter's own line; (b) prints each reply's status, step and match.
+    expect({
+      start: [
+        s['status'],
+        ((s['warnings'] as string[]) ?? []).some((w) => w.startsWith("Step 'open' is blocked: ")),
+      ],
+      advance: attempt(a),
+      chain: attempt(e),
+    }).toEqual({
+      start: ['ok', true],
+      advance: ['error', 'open', true],
+      chain: ['error', 'open', true],
+    });
   });
 
   it('step-handlers.md: start_run runs the handler step and its reply says so; the next step’s prompt shows the result', async () => {

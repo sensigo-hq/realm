@@ -265,7 +265,8 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     }).toEqual({ plain: 8, own: 3, sameTail: true, ownFirst: 'Mine.' });
   });
 
-  it('F-R2: an auto step’s protocol text names advance_run and forbids nothing — execute_step called by name runs it', async () => {
+  // pre-Q3 title: F-R2: an auto step’s protocol text names advance_run and forbids nothing — execute_step called by name runs it
+  it('F-R2: an auto step’s protocol text names advance_run — execute_step naming the step is refused and told advance_run, which runs it (#729, the Q3 unit)', async () => {
     claim(
       'CHANGELOG.md',
       "an `auto` step's `agent_involvement` reads `none — the engine runs this step; when next_actions names advance_run, call it`. It said `… do NOT call execute_step for it`, but `execute_step` called by name runs it.",
@@ -290,17 +291,27 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
       items: [{ params: {} }],
     });
     const id = String((batch['started'] as Reply[])[0]!['run_id']);
-    const ran = await call('execute_step', { run_id: id, command: 's', params: {} });
-    // (a) red when the protocol forbids the call that runs the step, or execute_step by name does
-    //     not run an owed auto step (F-R2); (b) prints the involvement, the status and what ran.
+    // The CHANGELOG line is 0.47.0's history; after #729's Q3 unit an agent's execute_step naming the
+    // engine's step is refused and told advance_run — which runs it, as the protocol text says.
+    const named = await call('execute_step', { run_id: id, command: 's', params: {} });
+    const notRun = (await runStore.get(id)).completed_steps;
+    const advanced = await call('advance_run', { run_id: id });
+    const tools = (r: Reply) =>
+      ((r['next_actions'] as Array<{ instruction: { tool: string } | null }>) ?? []).map(
+        (n) => n.instruction?.tool,
+      );
+    // (a) red when the protocol text changes, execute_step naming the step runs it (as 0.47.0 did)
+    //     or names another call, or advance_run does not run it; (b) prints the involvement, the
+    //     statuses, the calls named and what ran.
     expect({
       involvement: s.agent_involvement,
-      status: ran['status'],
-      done: (await runStore.get(id)).completed_steps,
+      named: [named['status'], tools(named), notRun],
+      advanced: [advanced['status'], (await runStore.get(id)).completed_steps],
     }).toEqual({
       involvement: 'none — the engine runs this step; when next_actions names advance_run, call it',
-      status: 'ok',
-      done: ['s'],
+      // the agent step `a` is ready too: next_actions offers it beside advance_run.
+      named: ['blocked', ['execute_step', 'advance_run'], []],
+      advanced: ['ok', ['s']],
     });
   });
 

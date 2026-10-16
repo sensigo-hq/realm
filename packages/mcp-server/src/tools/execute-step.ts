@@ -241,9 +241,10 @@ export async function handleExecuteStep(
   }
 
   // A writer_nonce PRESENT on a non-agent step is refused (design §6) — mirrors append_trace's
-  // own non-agent taxonomy (STATE_STEP_NOT_ELIGIBLE + step_type detail). A BARE execute_step call
-  // on a non-agent step stays byte-identical — auto/handler steps legally execute through this
-  // tool, and this check only fires when a nonce was actually supplied.
+  // own non-agent taxonomy (STATE_STEP_NOT_ELIGIBLE + step_type detail). This check fires first, and
+  // only when a nonce was actually supplied. A BARE execute_step call on an engine step is refused
+  // by core's one admission (issue #729, the Q3 unit: the agent party rides the call below) and told
+  // to call advance_run; a guard or cleanup step was already refused there (A-7).
   if (args.writer_nonce !== undefined && stepDef !== undefined && stepDef.execution !== 'agent') {
     throw new WorkflowError(
       `Step '${args.command}' is not an agent step (execution: '${stepDef.execution}') — ` +
@@ -300,6 +301,10 @@ export async function handleExecuteStep(
     ...(args.writer_nonce !== undefined ? { writerNonce: args.writer_nonce } : {}),
     // issue #625: the program this server runs as — the claim's `holder`, the evidence's `driven_by`.
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
+    // issue #729 (the Q3 unit): the MCP `execute_step` door is the agent's (an operator uses the CLI;
+    // the asked person answers through submit_human_response); the party rides the call so core's
+    // one judge refuses what this door never offers (Q4) — R26 holds on both sides at this door.
+    party: 'agent',
   });
 
   // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the

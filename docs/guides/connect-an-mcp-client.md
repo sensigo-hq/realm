@@ -37,19 +37,19 @@ Restart the assistant, or reload its MCP servers.
 
 The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):
 
-| Tool                    | What it does                                                         |
-| ----------------------- | -------------------------------------------------------------------- |
-| `list_workflows`        | Lists the registered workflows.                                      |
-| `get_workflow_protocol` | Returns the briefing for one workflow: its steps, schemas and rules. |
-| `start_run`             | Starts a run.                                                        |
-| `start_run_batch`       | Starts several runs of one workflow at once.                         |
-| `execute_step`          | Submits the answer to an agent step, or runs an automatic step.      |
-| `advance_run`           | Runs the guards and automatic steps a run owes (when named).         |
-| `submit_human_response` | Records a person's answer to a gate.                                 |
-| `get_run_state`         | Returns where a run stands and what to do next.                      |
-| `abandon_run`           | Ends a run that should not continue.                                 |
-| `create_workflow`       | Lets the assistant define a small workflow of its own and start it.  |
-| `append_trace`          | Lets the assistant record notes while it works on a step.            |
+| Tool                    | What it does                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------- |
+| `list_workflows`        | Lists the registered workflows.                                                                |
+| `get_workflow_protocol` | Returns the briefing for one workflow: its steps, schemas and rules.                           |
+| `start_run`             | Starts a run.                                                                                  |
+| `start_run_batch`       | Starts several runs of one workflow at once.                                                   |
+| `execute_step`          | Submits the answer to an agent step. An automatic step is the engine's: `advance_run` runs it. |
+| `advance_run`           | Runs the guards and automatic steps a run owes (when named).                                   |
+| `submit_human_response` | Records a person's answer to a gate.                                                           |
+| `get_run_state`         | Returns where a run stands and what to do next.                                                |
+| `abandon_run`           | Ends a run that should not continue.                                                           |
+| `create_workflow`       | Lets the assistant define a small workflow of its own and start it.                            |
+| `append_trace`          | Lets the assistant record notes while it works on a step.                                      |
 
 Ask the assistant to list the Realm workflows. With one workflow registered, `list_workflows` returns:
 

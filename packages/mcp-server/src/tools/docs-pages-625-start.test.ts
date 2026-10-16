@@ -20,6 +20,7 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   composeWaysAt,
   describePending,
+  executeChain,
   loadWorkflowFromString,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -200,9 +201,16 @@ describe(
       const engineRun = (await call('start_run', { workflow_id: 'bare', params: { order: 7 } }))[
         'run_id'
       ] as string;
-      // A batch run runs no step; the caller then names `first` with its own params.
+      // A batch run runs no step; a caller then names `first` with its own output — the library
+      // (an embedder: no party), whose chain runs the rest; #729 (the Q3 unit, E2 (a)): an agent's
+      // execute_step naming it is refused.
       const named = await batchRun(call, 'bare', { order: 8 });
-      await call('execute_step', { run_id: named, command: 'first', params: { picked: 'caller' } });
+      await executeChain(runStore, await workflowStore.get('bare'), {
+        runId: named,
+        command: 'first',
+        input: { picked: 'caller' },
+        dispatcher: async () => ({ picked: 'caller' }),
+      });
       // (a) red when a bare step records anything else, or its evidence names another source;
       //     (b) prints each step's output and source.
       expect({ engine: await outputs(engineRun), named: await outputs(named) }).toEqual({

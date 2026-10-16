@@ -10,6 +10,7 @@ import {
   type RunRecordFieldProblem,
 } from '../types/run-record-shape.js';
 import { callsHostDispatcher } from './output-source.js';
+import { PARTIES } from './ways.js';
 import type { StepDefinition } from '../types/workflow-definition.js';
 import type { EngineEntry as Entry } from '../admission.js';
 import type {
@@ -34,7 +35,8 @@ type PartKind =
   | 'date'
   | 'run'
   | 'output_source'
-  | 'registry';
+  | 'registry'
+  | 'party';
 
 const EXPECTED: Record<PartKind, string> = {
   object: 'an object',
@@ -47,6 +49,8 @@ const EXPECTED: Record<PartKind, string> = {
   run: 'a run record',
   output_source: `one of ${OUTPUT_SOURCES.join(', ')}`,
   registry: 'an extension registry',
+  // issue #729 (the Q3 unit): the party a door hands in with its call (`ExecuteStepOptions.party`).
+  party: `one of ${PARTIES.join(', ')}`,
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -110,6 +114,8 @@ function holds(kind: PartKind, value: unknown): boolean {
       return (OUTPUT_SOURCES as readonly unknown[]).includes(value);
     case 'registry':
       return isExtensionRegistry(value);
+    case 'party':
+      return (PARTIES as readonly unknown[]).includes(value);
   }
 }
 
@@ -179,6 +185,8 @@ const STEP_PARTS: readonly PartRule[] = [
   typed('array', 'options', 'trace'),
   typed('object', 'options', 'traceBufferStore'),
   typed('string', 'options', 'writerNonce'),
+  // issue #729 (the Q3 unit): the door's party, checked when present — a closed vocabulary.
+  typed('party', 'options', 'party'),
 ];
 
 /**
@@ -269,6 +277,7 @@ const EXECUTE_STEP_MEMBERS = [
   'driver',
   'outputSource',
   'caller',
+  'party',
 ] as const satisfies readonly (keyof ExecuteStepOptions)[];
 const EXECUTE_CHAIN_MEMBERS = [
   'runId',
@@ -283,6 +292,7 @@ const EXECUTE_CHAIN_MEMBERS = [
   'driver',
   'now',
   'caller',
+  'party',
 ] as const satisfies readonly (keyof ExecuteChainOptions)[];
 const EXECUTE_ENGINE_STEP_MEMBERS = [
   'runId',

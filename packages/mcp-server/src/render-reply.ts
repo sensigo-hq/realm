@@ -590,6 +590,16 @@ function hintOf(reply: EngineReply, narrowed: Narrowed | undefined, ended: boole
   if (reply.status === 'error' && refusal === undefined && reply.error !== undefined) {
     hint += remedyWords(reply.error.remedy, reply.run_id);
   }
+  // issue #729 (the Q3 unit, C1; R3): a step this program lacks the code for failed at its dispatch —
+  // core says what is so (blocked, not terminated); the way out is this door's, in its one producer
+  // of the capability words (the words `advance_run`'s reply prints for the same step).
+  if (reply.status === 'error' && reply.stopped_step !== undefined) {
+    const blocked = reply.unavailable.find(
+      (u) =>
+        u.verb === 'run_step' && u.step === reply.stopped_step && u.code === 'capability_missing',
+    );
+    if (blocked !== undefined) hint += ` ${cannotRunClause(blocked)}.`;
+  }
   return hint;
 }
 
