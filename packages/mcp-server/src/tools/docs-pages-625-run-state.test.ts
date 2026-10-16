@@ -1140,7 +1140,7 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
     claim(PAGE, '### The 15 findings');
     claim(
       PAGE,
-      '| `cannot_go_on` | The run is in `running`, no step is in progress, and a step it must run next is refused before its claim — its trust, a precondition, or an input its schema rejects — so nothing can run until the workflow is corrected. Found the moment it is so, at any age, wherever the definition can be read (`list --stuck`, `inspect`, `get_run_state`). (added after version 0.47.0) | `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)` |',
+      "| `cannot_go_on` | The run is in `running`, no step is in progress, and a step it must run next is refused before its claim — its trust, a precondition, or an input its schema rejects — so nothing can run until the workflow is corrected. Found the moment it is so, at any age, wherever the definition can be read (`list --stuck`, `inspect`, `get_run_state`). `since` is the run's last change (the record's own instant): the finding keeps no clock, and a workflow corrected or registered again later is not a change of the run. (added after version 0.47.0) | `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)` |",
     );
     claim(
       PAGE,
@@ -1211,13 +1211,30 @@ describe('issue #729 — cannot_go_on on run-state-and-health.md', () => {
       const { since: _exampleSince, ...exampleRest } = example;
       const { since, ...findingRest } = finding ?? {};
       // (a) red when get_run_state does not carry the finding, carries another kind beside it (a
-      //     capability, though this server has the handler: C46), or differs from the page's
-      //     example; (b) prints the kinds, whether `since` is set, and the two shapes' equality.
+      //     capability, though this server has the handler: C46), differs from the page's example,
+      //     states another instant than the run's last change (correction 1, C2: the row's `since`
+      //     sentence), or carries a way out (C6: the CHANGELOG says inspect prints it, not
+      //     get_run_state); (b) prints the kinds, booleans, the evidence keys and whether a hint is
+      //     on the reply.
       expect({
         kinds: kinds(state),
-        sinceSet: typeof since === 'string',
+        sinceIsTheRunsLastChange: typeof since === 'string' && since === state['updated_at'],
         asTheExample: JSON.stringify(findingRest) === JSON.stringify(exampleRest),
-      }).toEqual({ kinds: ['cannot_go_on'], sinceSet: true, asTheExample: true });
+        evidenceKeys: Object.keys((finding?.['evidence'] as Record<string, unknown>) ?? {}),
+        hint: 'context_hint' in state,
+      }).toEqual({
+        kinds: ['cannot_go_on'],
+        sinceIsTheRunsLastChange: true,
+        asTheExample: true,
+        evidenceKeys: ['refused'],
+        hint: false,
+      });
+      // correction 1, C6: the CHANGELOG's sentence — every surface names the step and the check;
+      // inspect prints the way out (counted below) and list --stuck points at it.
+      claim(
+        'CHANGELOG.md',
+        '`realm run list --stuck`, `realm run inspect` and `get_run_state` name a run that cannot go on the moment it cannot — the step and the check that refused it — at any age; `realm run inspect` prints the way out, and `list --stuck` points at it; the 24-hour idle finding stays as the second detector.',
+      );
       const inspected = realm(home, ['run', 'inspect', runId]).out;
       const listed = realm(home, ['run', 'list', '--stuck']).out;
       // (a) red when inspect leaves the finding out or prints it (or the way out) twice, or

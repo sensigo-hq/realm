@@ -208,9 +208,9 @@ export interface RunHealthFinding {
   /** Kind-specific supporting data — label-sufficient for every surface to render without
    *  reaching back into the run record: claim findings carry `{state, deadline}`; capability
    *  findings carry `{requirement, code}`; `never_claimed_idle` carries `{idle_threshold_ms}` and,
-   *  when `opts.definition` was supplied, `{eligible_steps}`; `cannot_go_on` carries `{refused}`
-   *  (each refused step's facts: `step`, `check`, `refusal`, and `param` / `precondition` when the
-   *  engine has them) and `{way_out: 'correct_and_register'}`. */
+   *  when `opts.definition` was supplied, `{eligible_steps}`; `cannot_go_on` carries `{refused}` —
+   *  each refused step's facts (`step`, `check`, `refusal`, and `param` / `precondition` when the
+   *  engine has them) — nothing else. */
   evidence?: Record<string, unknown>;
 }
 
@@ -697,10 +697,7 @@ export function classifyRunHealth(
         step: first.facts.step,
         reason: first.facts.check,
         since: run.updated_at,
-        evidence: {
-          refused: refused.map((u) => ({ ...u.facts })),
-          way_out: 'correct_and_register',
-        },
+        evidence: { refused: refused.map((u) => ({ ...u.facts })) },
       });
     }
   }

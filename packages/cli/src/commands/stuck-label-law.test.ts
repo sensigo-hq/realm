@@ -316,7 +316,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     );
     expect(err()).toContain(
       '⚠ workflow definition wf-big (4.0 MiB, 1 run) was not inspected by --stuck (over the ' +
-        '4 MiB listing cap): this run was not checked for a broken definition; ' +
+        '4 MiB listing cap): this run was not checked for a broken definition or for whether it can go on; ' +
         'realm run list --workflow wf-big lists it, ' +
         'realm workflow validate --registered wf-big reads the copy.',
     );
@@ -341,7 +341,7 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
     expect(lines.filter((l) => l.startsWith('⚠ workflow definition ')).length).toBe(2);
     expect(err()).toContain(
       '⚠ workflow definition wf-big (4.0 MiB, 2 runs) was not inspected by --stuck (over the ' +
-        '4 MiB listing cap): these runs were not checked for a broken definition; ' +
+        '4 MiB listing cap): these runs were not checked for a broken definition or for whether it can go on; ' +
         'realm run list --workflow wf-big lists them, ' +
         'realm workflow validate --registered wf-big reads the copy.',
     );

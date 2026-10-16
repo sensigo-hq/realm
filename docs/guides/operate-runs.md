@@ -21,7 +21,7 @@ It prints one line for each run: its ID, workflow, phase, last change and number
 
 Narrow the list with `--status <phase>` or `--workflow <id>`.
 
-To see only the runs that are open and have not moved for a while, use `--stuck`:
+To see only the runs that need someone — such as a run that cannot go on until its workflow is corrected (listed the moment it cannot), or an open run that has not moved for a while — use `--stuck`:
 
 ```bash
 realm run list --stuck

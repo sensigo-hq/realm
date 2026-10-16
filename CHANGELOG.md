@@ -113,8 +113,9 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 - **A run that cannot go on is named the moment it cannot (issue #729).**
   `realm run list --stuck`, `realm run inspect` and `get_run_state` name a run that cannot go on the
-  moment it cannot — the step, the check that refused it and the way out — at any age; the 24-hour
-  idle finding stays as the second detector. The finding is `cannot_go_on`;
+  moment it cannot — the step and the check that refused it — at any age; `realm run inspect` prints
+  the way out, and `list --stuck` points at it; the 24-hour idle finding stays as the second
+  detector. The finding is `cannot_go_on`;
   `realm run list --stuck` labels it `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)`.
 
 ### Changed
@@ -234,6 +235,9 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   An `auto` step that builds its input with `input_map`, refused for it when called by name, says
   `resolve_precondition` when another step can be called. The protocol's standard rules are six: the
   first says what to do when `next_actions` is empty, the sixth what `also` and `elsewhere` are.
+
+- `realm run list --stuck`'s not-inspected warning now says the copy's run was also not checked for
+  whether it can go on (issue #729).
 
 ### Fixed
 

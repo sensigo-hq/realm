@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listRuns, formatGateAge, renderCauseSegment } from './list.js';
+import { listRuns, formatGateAge, renderCauseSegment, listCommand } from './list.js';
 import {
   FailedAttemptStore,
   FAILED_ATTEMPT_SIDECAR_MAX_BYTES,
@@ -1148,6 +1148,15 @@ describe('issue #729 — realm run list --stuck names a run that cannot go on, a
     //     output.
     expect(await stuckList([live({ id: 'run-trust-go' })], d)).toBe(
       'No stuck runs found (threshold 24h).',
+    );
+  });
+
+  it('C4. the --stuck help line says what --stuck lists: every health finding, among them a run that cannot go on (correction 1)', () => {
+    // In-process: commander wraps `--help` at 80 columns when stdout is not a TTY, so the option's
+    // own description is read. (a) red when the old 'wedged/idle runs' wording comes back, or the
+    // line names a subset as the whole; (b) prints the description.
+    expect(listCommand.options.find((o) => o.long === '--stuck')?.description).toBe(
+      'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than',
     );
   });
 

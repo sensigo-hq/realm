@@ -1539,7 +1539,8 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
       .unavailable.filter((u) => u.verb === 'run_step' && u.code === 'refused_before_claim')
       .map((u) => u.facts);
     // (a) red when the predicate is not called (no finding), or the finding names another step,
-    //     check or instant, or drops a fact; (b) prints kinds, step, check, keys and booleans.
+    //     check or instant, drops a fact, or its evidence carries anything but `refused` (a word
+    //     no const defines, R3); (b) prints kinds, step, check, keys and booleans.
     expect({
       kinds: kinds(findings),
       step: f?.step,
@@ -1548,7 +1549,7 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
       noIdleMs: f?.idle_ms === undefined,
       refusedKeys: refused?.map((r) => Object.keys(r).sort()),
       refusedWhole: JSON.stringify(refused) === JSON.stringify(facts),
-      wayOut: f?.evidence?.['way_out'],
+      evidenceKeys: Object.keys(f?.evidence ?? {}),
     }).toEqual({
       kinds: ['cannot_go_on'],
       step: 'publish',
@@ -1557,7 +1558,7 @@ describe('issue #729 — cannot_go_on (the operator-side stuck marker)', () => {
       noIdleMs: true,
       refusedKeys: [['check', 'refusal', 'step']],
       refusedWhole: true,
-      wayOut: 'correct_and_register',
+      evidenceKeys: ['refused'],
     });
   });
 

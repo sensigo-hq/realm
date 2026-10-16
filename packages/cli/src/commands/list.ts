@@ -400,7 +400,7 @@ export async function listRuns(
       console.error(
         `⚠ workflow definition ${id} (${(u.bytes / (1024 * 1024)).toFixed(1)} MiB, ${u.runs} run${one ? '' : 's'}) ` +
           `was not inspected by --stuck (over the ${capMb} MiB listing cap): ` +
-          `${one ? 'this run was' : 'these runs were'} not checked for a broken definition; ` +
+          `${one ? 'this run was' : 'these runs were'} not checked for a broken definition or for whether it can go on; ` +
           `realm run list --workflow ${shellWord(id)} lists ${one ? 'it' : 'them'}, ` +
           `realm workflow validate --registered ${shellWord(id)} reads the copy.`,
       );
@@ -587,7 +587,10 @@ export const listCommand = new Command('list')
   .description('List all runs, sorted by most recent first')
   .option('--workflow <id>', 'Filter by workflow ID')
   .option('--status <phase>', `Filter by run phase (${VALID_PHASES.join(', ')})`)
-  .option('--stuck', 'Show only wedged/idle runs (typed run-health classification — issue #221)')
+  .option(
+    '--stuck',
+    'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than',
+  )
   .option(
     '--older-than <duration>',
     'With --stuck: idle-age threshold for the never-claimed-idle check (e.g. 24h, 7d); default ' +
