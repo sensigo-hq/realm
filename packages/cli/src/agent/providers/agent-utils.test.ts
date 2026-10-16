@@ -10,10 +10,12 @@ import {
   serializeToolResult,
   setAdditionalRedactionValues,
   extractJsonObject,
+  renderSubmissionProblems,
 } from './agent-utils.js';
 import { createHash } from 'node:crypto';
 import * as variants from './redaction-variants.js';
 import { leakedForms, type LeakedForm } from '../test-support/redaction-oracle.js';
+import { validateAgentSubmission } from '@sensigo/realm';
 
 describe('buildSystemPrompt', () => {
   it('returns base prompt when no schema given', () => {
@@ -1187,4 +1189,50 @@ describe("the release build's correction (GHSA-gxfq): read the token rules off t
       declared: { error: true, prompt: true, object: true },
     });
   }, 60_000);
+});
+
+// issue #759 (Part F): the providers' in-conversation correction trailer is core's LINES rendering
+// over the verdict's capped rows — the schema's own allowed values for `enum`/`const`, never a
+// submitted value — and ends with `and N more` from the verdict's carried total. A failure prints
+// the trailer: key names, rules and the schema's values only.
+describe('issue #759 — renderSubmissionProblems (the providers’ trailer)', () => {
+  const fields = Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`);
+
+  it('13 problems → ten LINES and `and 3 more` (red: the trailer’s own cap of ten with no remainder)', () => {
+    const verdict = validateAgentSubmission(
+      {},
+      { outputSchema: { type: 'object', required: fields } },
+      's',
+    );
+    const lines = renderSubmissionProblems(verdict).split('\n');
+    expect({ count: lines.length, first: lines[0], last: lines.at(-1) }).toEqual({
+      count: 11,
+      first: "- (root): must have required property 'f01' [required] (missing property: 'f01')",
+      last: 'and 3 more',
+    });
+  });
+
+  it('`enum` renders its values, `const` its ONE value (`params.allowedValue`), and no submitted value appears (red: the plural key for `const`)', () => {
+    const verdict = validateAgentSubmission(
+      { kind: 'SUBMITTED-VALUE-9Z', mode: 'SUBMITTED-VALUE-9Z' },
+      {
+        outputSchema: {
+          type: 'object',
+          properties: { kind: { enum: ['alpha', 'beta'] }, mode: { const: 'gamma' } },
+        },
+      },
+      's',
+    );
+    const trailer = renderSubmissionProblems(verdict);
+    expect({
+      lines: trailer.split('\n'),
+      valueShown: trailer.includes('SUBMITTED'),
+    }).toEqual({
+      lines: [
+        '- /kind: must be equal to one of the allowed values [enum] (allowed values: ["alpha","beta"])',
+        '- /mode: must be equal to constant [const] (allowed values: ["gamma"])',
+      ],
+      valueShown: false,
+    });
+  });
 });

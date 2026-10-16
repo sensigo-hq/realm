@@ -27,8 +27,7 @@ import {
   extractJsonObject,
   rejectAfter,
   buildSystemPrompt,
-  summarizeAgentValidationErrors,
-  renderValidationSummaryEntry,
+  renderSubmissionProblems,
   extractHttpStatus,
   extractApiErrorFields,
   driveCreate,
@@ -862,9 +861,7 @@ export class OpenAIProvider extends ToolCapableLlmProvider {
         correction_count++;
         const summary =
           verdict !== undefined
-            ? summarizeAgentValidationErrors(verdict.rawErrors)
-                .map(renderValidationSummaryEntry)
-                .join('\n')
+            ? renderSubmissionProblems(verdict)
             : 'no valid JSON object could be extracted from the response';
         console.error(`  ⚠ output rejected (in-conversation); correcting (${correction_count})`);
         history.push({ role: 'assistant', content: text });

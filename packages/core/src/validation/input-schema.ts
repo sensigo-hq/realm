@@ -5,6 +5,12 @@ import type { JsonSchema } from '../types/workflow-definition.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { TraceEntry } from '../types/run-record.js';
 import { quotedCommand, shellWord } from '../utils/shell-word.js';
+import {
+  VALIDATION_PROBLEMS_SHOWN,
+  describeValidationProblems,
+  renderProblemsSentence,
+  validationFactsOfError,
+} from './validation-problems.js';
 
 /**
  * The ONE Ajv construction for AUTHORED JSON-Schema blocks (`params_schema`, and a step's
@@ -45,6 +51,10 @@ export function compileSchema(
 function newAjv(onStrictLog?: (line: string) => void): Ajv {
   const fwd = (...args: unknown[]): void => onStrictLog?.(args.map(String).join(' '));
   const ajv = new Ajv({
+    // issue #759: every rule an answer breaks, not only the first — Ajv's production note
+    // (`allErrors` validates past the first failure) is bounded by the author's own
+    // `maxLength` / `maxItems`; the general bound is #552's seam above.
+    allErrors: true,
     logger: onStrictLog === undefined ? false : { log: fwd, warn: fwd, error: fwd },
   });
   return ajv;
@@ -341,7 +351,9 @@ export function validateInputSchema(
       category: 'VALIDATION',
       agentAction: 'provide_input',
       retryable: false,
-      details: { errors: validate.errors ?? [] },
+      // issue #759 (Amendment 11): the rows are this code's typed facts — capped, with the total;
+      // `details` keeps no second copy of the list.
+      facts: validationFactsOf(validate.errors ?? []),
       stepId,
     });
   }
@@ -364,7 +376,9 @@ export function validateOutputSchema(
       category: 'VALIDATION',
       agentAction: 'provide_input',
       retryable: false,
-      details: { errors: validate.errors ?? [] },
+      // issue #759 (Amendment 11): the rows are this code's typed facts — capped, with the total;
+      // `details` keeps no second copy of the list.
+      facts: validationFactsOf(validate.errors ?? []),
       stepId,
     });
   }
@@ -380,8 +394,10 @@ export function validateOutputSchema(
  * step's input).
  *
  * Throws `WorkflowError(VALIDATION_INPUT_SCHEMA)` — the same code every params refusal already
- * carries, so no consumer's error-code switch moves. The message names the FIRST failing row; all
- * rows are on `details.errors`.
+ * carries, so no consumer's error-code switch moves. The message names every failing row, up to
+ * `VALIDATION_PROBLEMS_SHOWN`, and how many more (issue #759), in the pointer words — an extra
+ * property by its own pointer (`/zzextra is not allowed`); the rows are the error's typed
+ * `facts.errors` (capped), the total `facts.error_count`.
  */
 /**
  * Whether an Ajv compile failure is a STRICT-MODE refusal — an unknown keyword (`strict mode: …`)
@@ -440,16 +456,21 @@ export function validateRunParams(
   }
   if (validate(params)) return;
   const errors = validate.errors ?? [];
-  const first = errors[0];
-  const where = first === undefined || first.instancePath === '' ? '(root)' : first.instancePath;
-  const detail = first?.message ?? 'is invalid';
-  throw new WorkflowError(`Invalid params for workflow '${workflowId}': ${where} ${detail}`, {
-    code: 'VALIDATION_INPUT_SCHEMA',
-    category: 'VALIDATION',
-    agentAction: 'provide_input',
-    retryable: false,
-    details: { errors },
-  });
+  // issue #759 (r1.2): every problem, in this site's pointer words (`(root) <message>` /
+  // `<instancePath> <message>`; an extra property by its key, `/<key> is not allowed` — #759
+  // correction 1) — any other first clause byte-identical to the single one before; with no usable
+  // row, today's `(root) is invalid`.
+  const sentence = renderProblemsSentence(describeValidationProblems(errors, 'pointer'));
+  throw new WorkflowError(
+    `Invalid params for workflow '${workflowId}': ${sentence === '' ? '(root) is invalid' : sentence}`,
+    {
+      code: 'VALIDATION_INPUT_SCHEMA',
+      category: 'VALIDATION',
+      agentAction: 'provide_input',
+      retryable: false,
+      facts: validationFactsOf(errors),
+    },
+  );
 }
 
 /**
@@ -477,6 +498,12 @@ export interface AgentSubmissionValidation {
    * a caller may need, e.g. `params.allowedValues` — see that module's #224 note).
    */
   rawErrors: RawValidationError[];
+  /**
+   * issue #759: the total number of problems the validator found — `rawErrors` holds at most
+   * `VALIDATION_PROBLEMS_SHOWN` of them, so a renderer's "and N more" is `errorCount −
+   * rawErrors.length`, never a recount. `0` when `valid` is true.
+   */
+  errorCount: number;
 }
 
 /**
@@ -522,24 +549,28 @@ export function validateAgentSubmission(
     try {
       validateInputSchema(effectiveObj, schemas.inputSchema, stepId);
     } catch (err) {
-      return { valid: false, rawErrors: extractRawErrors(err) };
+      return { valid: false, ...extractRawErrors(err) };
     }
   }
   if (schemas.outputSchema !== undefined) {
     try {
       validateOutputSchema(effectiveObj, schemas.outputSchema, stepId);
     } catch (err) {
-      return { valid: false, rawErrors: extractRawErrors(err) };
+      return { valid: false, ...extractRawErrors(err) };
     }
   }
-  return { valid: true, rawErrors: [] };
+  return { valid: true, rawErrors: [], errorCount: 0 };
 }
 
-/** Pulls the raw ajv error rows off a caught `WorkflowError`; `[]` for anything else. */
-function extractRawErrors(err: unknown): RawValidationError[] {
-  if (!(err instanceof WorkflowError)) return [];
-  const errors = err.details['errors'];
-  return Array.isArray(errors) ? (errors as RawValidationError[]) : [];
+/**
+ * Pulls the raw ajv error rows (capped) and their total off a caught `WorkflowError`'s typed facts
+ * (issue #759); none for anything else.
+ */
+function extractRawErrors(err: unknown): { rawErrors: RawValidationError[]; errorCount: number } {
+  if (!(err instanceof WorkflowError)) return { rawErrors: [], errorCount: 0 };
+  const facts = validationFactsOfError(err);
+  if (facts === undefined) return { rawErrors: [], errorCount: 0 };
+  return { rawErrors: [...facts.errors], errorCount: facts.error_count };
 }
 
 export interface TraceSchemaWarnResult {
@@ -585,17 +616,33 @@ export function validateTraceSchema(
       category: 'VALIDATION',
       agentAction: 'provide_input',
       retryable: false,
-      details: { errors: validate.errors ?? [] },
+      // issue #759 (rail 4): the untyped bag carries the capped rows and their total, under the
+      // typed codes' key names.
+      details: {
+        errors: (validate.errors ?? []).slice(0, VALIDATION_PROBLEMS_SHOWN),
+        error_count: (validate.errors ?? []).length,
+      },
       stepId,
     });
   }
 
-  // warn mode — return error details without throwing
-  const errorSummary = (validate.errors ?? [])
-    .map((e) => `${e.instancePath !== '' ? e.instancePath + ' ' : ''}${e.message ?? ''}`.trim())
-    .join('; ');
+  // warn mode — return error details without throwing. issue #759 (r1.6): the same composer, in the
+  // pointer words (a root violation reads `(root) <message>`; an extra property its own pointer,
+  // `/0/seq is not allowed`), capped, with `; and N more`; the count is the true total.
+  const problems = describeValidationProblems(validate.errors ?? [], 'pointer');
   return {
-    errorCount: (validate.errors ?? []).length,
-    warning: `Trace schema violation for step '${stepId}': ${errorSummary}`,
+    errorCount: problems.total,
+    warning: `Trace schema violation for step '${stepId}': ${renderProblemsSentence(problems)}`,
   };
+}
+
+/**
+ * issue #759: a validation refusal's typed facts (Amendment 11) — the rows capped at
+ * `VALIDATION_PROBLEMS_SHOWN` in Ajv's own order, and the total before the cap, counted here, once.
+ */
+function validationFactsOf(rows: readonly RawValidationError[]): {
+  errors: RawValidationError[];
+  error_count: number;
+} {
+  return { errors: rows.slice(0, VALIDATION_PROBLEMS_SHOWN), error_count: rows.length };
 }

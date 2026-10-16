@@ -87,6 +87,7 @@ import type {
 } from '../types/settlement.js';
 import { captureEvidence } from '../evidence/snapshot.js';
 import { validateOutputSchema, validateTraceSchema } from '../validation/input-schema.js';
+import { validationFactsOfError } from '../validation/validation-problems.js';
 import { normalizeTrace } from './trace-normalizer.js';
 import type { NormalizeTraceResult } from './trace-normalizer.js';
 import { TERMINAL_PHASES, DRAIN_CEILING_SECONDS } from './lifecycle.js';
@@ -2418,10 +2419,14 @@ async function executeStepBody(
    * wedge. Any further failure — or a failed countability re-check — drops and swallows
    * (undercount-safe); envelope delivery is unconditional regardless of what this function does.
    */
-  async function countRejection(err: WorkflowError): Promise<void> {
-    if (counted) return; // at-most-once per invocation
-    if (stepDef?.execution !== 'agent') return; // non-agent steps are never counted
-    if (err.code !== 'VALIDATION_INPUT_SCHEMA' && err.code !== 'VALIDATION_OUTPUT_SCHEMA') return;
+  async function countRejection(
+    err: WorkflowError,
+  ): Promise<{ rejections: number; threshold: number } | undefined> {
+    if (counted) return undefined; // at-most-once per invocation
+    if (stepDef?.execution !== 'agent') return undefined; // non-agent steps are never counted
+    if (err.code !== 'VALIDATION_INPUT_SCHEMA' && err.code !== 'VALIDATION_OUTPUT_SCHEMA') {
+      return undefined;
+    }
     counted = true;
 
     const threshold =
@@ -2481,9 +2486,13 @@ async function executeStepBody(
       );
     }
     // Countdown observable (Temporal-style) — `rejections` is the JUST-PERSISTED count when one
-    // exists, else the attempted (unpersisted) value, so a caller always sees SOME number.
-    err.details['rejections'] = persisted ?? attempted;
-    err.details['threshold'] = threshold;
+    // exists, else the attempted (unpersisted) value, so a caller always sees SOME number. issue
+    // #759: RETURNED, never written into the error — the refusal's facts are readonly; the call
+    // site carries the count on a copy (`withCount`).
+    const countdown = { rejections: persisted ?? attempted, threshold };
+    // issue #759: the refusal's list (capped) and its total — the exhaustion bag stays untyped
+    // (Amendment 11: its owner types it); its keys ride beside the ones already there.
+    const facts = validationFactsOfError(err);
 
     if (persisted !== undefined && persisted >= threshold) {
       exhaustion = new WorkflowError(
@@ -2500,24 +2509,56 @@ async function executeStepBody(
             rejections: persisted,
             threshold,
             last_error: err.message,
-            last_ajv_errors: err.details['errors'],
+            last_ajv_errors: facts?.errors,
+            last_error_count: facts?.error_count,
           },
         },
       );
     }
+    return countdown;
+  }
+
+  /**
+   * issue #759: the refusal as the reply carries it — a copy of the validator's error with the
+   * countdown on its typed facts (`rejections`, `threshold`), every other option of the source
+   * error kept (the constructor's list). The source error is never mutated. An error with no count
+   * (not an agent step's counted rejection) or no facts is returned as it is — every error counted
+   * here is one of the validator's two mints, which always carry their facts.
+   */
+  function withCount(
+    err: WorkflowError,
+    countdown: { rejections: number; threshold: number } | undefined,
+  ): WorkflowError {
+    const facts = validationFactsOfError(err);
+    if (countdown === undefined || facts === undefined) return err;
+    return new WorkflowError(err.message, {
+      code: err.code,
+      category: err.category,
+      agentAction: err.agentAction,
+      retryable: err.retryable,
+      details: err.details,
+      facts: { ...facts, ...countdown },
+      ...(err.about !== undefined ? { about: err.about } : {}),
+      ...(err.remedy !== undefined ? { remedy: err.remedy } : {}),
+      ...(err.stepId !== undefined ? { stepId: err.stepId } : {}),
+      attempt: err.attempt,
+      ...(err.retry_after !== undefined ? { retry_after: err.retry_after } : {}),
+      ...(err.warnings !== undefined ? { warnings: err.warnings } : {}),
+      ...(err.errors !== undefined ? { errors: err.errors } : {}),
+    });
   }
 
   // Step 2b: Validate input schema.
   if (preClaim?.refused_by === 'input_schema' && preClaim.error !== undefined) {
     {
       const err = preClaim.error;
-      await countRejection(err);
+      const countdown = await countRejection(err);
       if (exhaustion === null) {
         const refused = makeErrorEnvelope(
           store,
           options,
           run,
-          err,
+          withCount(err, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
         );
@@ -2552,13 +2593,13 @@ async function executeStepBody(
     try {
       validateOutputSchema(effectiveInput, stepDef.output_schema, options.command);
     } catch (err) {
-      await countRejection(err as WorkflowError);
+      const countdown = await countRejection(err as WorkflowError);
       if (exhaustion === null) {
         return makeErrorEnvelope(
           store,
           options,
           run,
-          err as WorkflowError,
+          withCount(err as WorkflowError, countdown),
           definition,
           countWarnings.length > 0 ? countWarnings : undefined,
         );

@@ -8,6 +8,16 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`error_count`: the total number of problems a refusal found (issue #759).** On the MCP
+  reply's `error_details` for `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, beside the
+  first 10 `errors`; on each record `realm run attempts` reads; and as `last_error_count` in a
+  `VALIDATION_EXHAUSTED` reply's `error_details`, beside its `last_ajv_errors`. For programs:
+  `ValidationErrorFacts`, the typed facts of the two validation codes; `VALIDATION_PROBLEMS_SHOWN`
+  (10); the composer `describeValidationProblems` and its renderings `renderProblemsSentence`,
+  `renderProblemsLines` and `renderMore`, with `whitelistValidationRow`; `validationListOf`, which
+  reads a refusal's list from a reply; `moreOf`, which reads a failed-attempt record's remainder;
+  `storedFileFactsOf`; and `errorCount` on `AgentSubmissionValidation`.
+
 - **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
   `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
   `executeChain`, `executeEngineStep`, `advanceRun`, `submitHumanResponse`, `drainFinalizers`,
@@ -131,6 +141,22 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   capability block. The library, the CLI and the engine's own chain are unchanged. Such a refusal no
   longer writes a failed-attempt record — the MCP server's `agent_step_attempt_failed` stderr line or
   the run's attempts file: those record an agent step's own refused answers.
+
+- **BREAKING — for programs:** the rules a validation refusal broke moved to the error's typed facts
+  (issue #759). For `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, a `WorkflowError`'s
+  `details.errors` and the core reply's `error_details` are gone; the rows (the first 10),
+  `error_count`, `rejections` and `threshold` are on `error.facts` (`ValidationErrorFacts`). The MCP
+  reply's `error_details` keeps its keys.
+
+- **`realm run attempts` prints every problem of a refused answer (issue #759).** Each answer's line
+  ends with how many problems it had, and every rule it broke, up to 10, follows on its own line,
+  then `and N more`, instead of the first rule and `(+N more)`. In a step's trace summary,
+  `validation_errors` now counts every violation found; before, the check stopped at the first, so
+  it counted one (three for an `anyOf` miss). A run's params refusal, a trace-schema warning and the
+  loader's `default_output` error whose problem is an extra property now name its key
+  (`/zzextra is not allowed`) where 0.47.0 printed `(root) must NOT have additional properties` (or,
+  in the loader, the raw rows).
+
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
   file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,
   or holding another run is `RESOURCE_FORMAT_INVALID` (`stop`); one in the format of an earlier
@@ -255,6 +281,14 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
 - **The capability block's `context_hint` no longer says `then follow next_actions` beside an empty
   list (issue #729).** The MCP reply ends with the step's own words (`'<step>' cannot run here
 (capability): …`).
+
+- **A refused answer names every problem, not only the first (issue #759).** The schema check
+  stopped at the first rule an answer broke, so an agent learned one problem per refusal and its
+  step could run out of tries before the answer was right. A refused step answer, a refused
+  `start_run`'s params and an input an `input_map` builds now name every problem, up to 10, with the
+  total; `realm agent`'s repair message, `realm run attempts` and the trace-schema warning carry the
+  same list in the same order, with `and N more` when there are more.
+
 - **A dispatcher's call no longer leaves its step's timer running (issue #719).** A dispatcher that
   threw synchronously, or was not a function, left a `STEP_TIMEOUT` timer that rejected unhandled up
   to an hour later and could end the host's process; one that returned a plain value failed with

@@ -120,6 +120,7 @@ export { boundRequestFacts } from './engine/request-facts.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,
+  moreOf,
   serializeFailedAttemptLine,
 } from './observability/failed-attempt-record.js';
 export type {
@@ -619,6 +620,21 @@ export type {
   AgentSubmissionValidation,
   SchemaFailure,
 } from './validation/input-schema.js';
+// issue #759: a refused answer names every problem — one list, one cap, one count, two renderings.
+export {
+  VALIDATION_PROBLEMS_SHOWN,
+  describeValidationProblems,
+  renderMore,
+  renderProblemsSentence,
+  renderProblemsLines,
+  validationListOf,
+  whitelistValidationRow,
+} from './validation/validation-problems.js';
+export type {
+  ValidationProblem,
+  ValidationProblems,
+  FieldWords,
+} from './validation/validation-problems.js';
 
 // Workflow
 export {
