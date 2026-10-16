@@ -24,12 +24,12 @@ realm run list --stuck [--older-than <duration>] [--workflow <id>]
 
 Prints one line for each run, newest change first.
 
-| Flag                      | What it does                                                                                             |
-| ------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `--workflow <id>`         | Lists only runs of this workflow.                                                                        |
-| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`. |
-| `--stuck`                 | Lists only runs that have a health finding. Cannot be combined with `--status`.                          |
-| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed. Default `24h`.                    |
+| Flag                      | What it does                                                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--workflow <id>`         | Lists only runs of this workflow.                                                                                                                                               |
+| `--status <phase>`        | Lists only runs in this phase: `running`, `gate_waiting`, `completed`, `failed`, `abandoned`, `aborted`.                                                                        |
+| `--stuck`                 | Lists only runs that have a health finding. Cannot be combined with `--status`.                                                                                                 |
+| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`. |
 
 A duration is a whole number followed by `d`, `h` or `m`: `7d`, `6h`, `30m`. Write zero as `0m`.
 
@@ -59,12 +59,13 @@ With `--stuck`, a first line gives the limit, each line has `idle:` and the time
 
 ```text
 Stuck runs (threshold 0m):
+b773eb50-728d-40e1-945c-096244c88a36  w2-crown v1  running  10/16/2026, 1:53:51 PM  1 step(s)  idle: 0m  publish=cannot_go_on(input_schema) (realm run inspect b773eb50-728d-40e1-945c-096244c88a36)
 3b4c2b57-9b87-4bb6-88a1-e0c553f4970f  triage v1  running  10/2/2026, 12:26:36 AM  0 step(s)  idle: 1h 29m  classify=drive_failing(connection_error)
 07125815-e69c-40e2-8af1-afff99a7b7d9  price2 v1  running  10/1/2026, 11:15:33 PM  1 step(s)  idle: 2h 40m  total: needs handler 'order_totl'
 8814edbd-f187-4e95-a83b-5a0529fb55d0  price v1  running  10/1/2026, 11:15:03 PM  1 step(s)  idle: 2h 40m
 ```
 
-A line with nothing after `idle:` is an open run with no step in progress that has not changed for longer than the limit. [Run state and health findings](../mcp/run-state-and-health.md) lists every finding.
+A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding (`never_claimed_idle`) alone, and every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0). [Run state and health findings](../mcp/run-state-and-health.md) lists every finding.
 
 When nothing matches, `list` prints one of:
 

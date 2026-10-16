@@ -28,6 +28,8 @@ import {
   JsonWorkflowStore,
   ExtensionRegistry,
   advanceRun,
+  createDefaultRegistry,
+  executeChain,
   executeStep,
   loadWorkflowFromString,
 } from '@sensigo/realm';
@@ -1467,3 +1469,84 @@ describe(
     });
   },
 );
+
+// issue #729 — the operator-side stuck marker on realm-run-reading.md's `--stuck` section: the
+// `--older-than` row and the idle-line sentence, quoted; the example line for a run that cannot go
+// on, compared with what the built `realm run list --stuck` prints for the same run (the crown's W2,
+// driven to stuck through the library). What a failing cell prints: the page's line and the built
+// line, ids and the local time put in place.
+describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot go on', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-729-pin-rd-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it('the --older-than row and the idle-line sentence: the limit applies to the idle finding alone', () => {
+    claim(
+      RD_PAGE,
+      '| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`. |',
+    );
+    claim(
+      RD_PAGE,
+      'A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding (`never_claimed_idle`) alone, and every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0).',
+    );
+  });
+
+  it(
+    'the example line: a run that cannot go on, listed at age 0 with its label and the inspect pointer, as the built realm prints it',
+    { timeout: 60_000 },
+    async () => {
+      const W2 = wf([
+        'id: w2-crown',
+        'name: w2 crown',
+        'version: 1',
+        'steps:',
+        '  summarize:',
+        '    description: Summarize the text.',
+        '    execution: agent',
+        '    depends_on: []',
+        '  publish:',
+        '    description: Publish.',
+        '    execution: auto',
+        '    depends_on: [summarize]',
+        '    handler: h',
+        '    input_map:',
+        '      text: context.resources.summarize.summary',
+        '    input_schema:',
+        '      type: object',
+        '      required: [text]',
+        '      properties:',
+        '        text: { type: string }',
+      ]);
+      const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
+      const { run } = await runStore.create({
+        workflowId: 'w2-crown',
+        workflowVersion: 1,
+        params: {},
+      });
+      const registry = createDefaultRegistry();
+      registry.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
+      // summarize returns no `summary`, so publish's input cannot be built: the run cannot go on.
+      await executeChain(runStore, W2, {
+        runId: run.id,
+        command: 'summarize',
+        input: { other: 'x' },
+        dispatcher: async (_step, input) => input,
+        registry,
+      });
+      const pageLine = block(RD_PAGE, 'Stuck runs (threshold 0m):').find((l) =>
+        l.includes('cannot_go_on'),
+      );
+      const pageId = pageLine?.split(' ')[0] ?? '';
+      const time = (l: string) => l.replace(/\d+\/\d+\/\d+, \d+:\d+:\d+ [AP]M/, '<time>');
+      const built = realm(home, ['run', 'list', '--stuck']).out.find((l) => l.startsWith(run.id));
+      // (a) red when the built line differs from the page's (the label, the pointer, the parse
+      //     shape — `idle:` and the counts), or the run is not listed at age 0; (b) prints both.
+      expect(time(built ?? '')).toBe(time((pageLine ?? '').replaceAll(pageId, run.id)));
+    },
+  );
+});
