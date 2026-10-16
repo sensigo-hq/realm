@@ -276,46 +276,80 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     });
   });
 
-  it('call-a-service.md: a missing adapter — start_run replies ok and warns; execute_step names the service', async () => {
+  // pre-Q3 title: call-a-service.md: a missing adapter — start_run replies ok and warns; execute_step names the service
+  it('call-a-service.md: a missing adapter — start_run replies ok and warns; the call that first attempts the step (advance_run, or an execute_step whose chain reaches it) carries the adapter’s own line', async () => {
     claim(
       'docs/guides/call-a-service.md',
-      "Over MCP, `start_run` replies `ok` and names the step in `warnings` (`Step '<step>' is blocked: …`), and `execute_step` on the step is refused with:",
+      "Over MCP, the call that first attempts the step says so: `start_run` replies `ok` and names the step in `warnings` (`Step '<step>' is blocked: …`); `advance_run`, or an `execute_step` whose chain reaches the step, replies `error`, names the step in `stopped_step` and carries the adapter's own line in `errors`:",
     );
     const shown = block('docs/guides/call-a-service.md', "Adapter 'github' for service")[0]!;
     const { call, workflowStore } = await connect(createDefaultRegistry());
+    const service = [
+      'services:',
+      '  github:',
+      '    adapter: github',
+      '    trust: engine_delivered',
+    ];
+    const open = [
+      '  open:',
+      '    description: Open an issue.',
+      '    execution: auto',
+      '    uses_service: github',
+      '    operation: create_issue',
+    ];
+    await workflowStore.register(
+      wf(
+        ['id: issues', 'name: issues', 'version: 1', ...service, 'steps:', ...open, ''].join('\n'),
+      ),
+    );
     await workflowStore.register(
       wf(
         [
-          'id: issues',
-          'name: issues',
+          'id: issues-after-ask',
+          'name: issues-after-ask',
           'version: 1',
-          'services:',
-          '  github:',
-          '    adapter: github',
-          '    trust: engine_delivered',
+          ...service,
           'steps:',
-          '  open:',
-          '    description: Open an issue.',
-          '    execution: auto',
-          '    uses_service: github',
-          '    operation: create_issue',
+          '  ask:',
+          '    description: Ask.',
+          '    execution: agent',
+          ...open,
+          '    depends_on: [ask]',
           '',
         ].join('\n'),
       ),
     );
     const s = await call('start_run', { workflow_id: 'issues' });
-    const r = await call('execute_step', {
-      run_id: s['run_id'] as string,
-      command: 'open',
+    // advance_run on a run nothing has attempted the step on (a batch run creates and runs none).
+    const batch = await call('start_run_batch', { workflow_id: 'issues', items: [{ params: {} }] });
+    const batchId = (batch['started'] as Array<{ run_id: string }>)[0]!.run_id;
+    const a = await call('advance_run', { run_id: batchId });
+    // execute_step on the agent step before it: its chain reaches the step and attempts it.
+    const asked = await call('start_run', { workflow_id: 'issues-after-ask' });
+    const e = await call('execute_step', {
+      run_id: asked['run_id'] as string,
+      command: 'ask',
       params: {},
     });
-    // (a) red when start_run refuses, does not warn, or the refusal names another service;
-    //     (b) prints the replies.
-    expect([
-      s['status'],
-      ((s['warnings'] as string[]) ?? []).some((w) => w.startsWith("Step 'open' is blocked: ")),
+    const attempt = (r: Reply) => [
+      r['status'],
+      r['stopped_step'],
       String((r['errors'] as string[])[0]).startsWith(shown.replace(' …', '')),
-    ]).toEqual(['ok', true, true]);
+    ];
+    // (a) red when start_run refuses or does not warn, or an attempting call's reply is not an error
+    //     naming the step with the adapter's own line; (b) prints each reply's status, step and match.
+    expect({
+      start: [
+        s['status'],
+        ((s['warnings'] as string[]) ?? []).some((w) => w.startsWith("Step 'open' is blocked: ")),
+      ],
+      advance: attempt(a),
+      chain: attempt(e),
+    }).toEqual({
+      start: ['ok', true],
+      advance: ['error', 'open', true],
+      chain: ['error', 'open', true],
+    });
   });
 
   it('step-handlers.md: start_run runs the handler step and its reply says so; the next step’s prompt shows the result', async () => {
@@ -471,10 +505,12 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
   });
 
   it('json-schema-blocks.md: an auto step’s input_schema is checked against the input the step will receive — what its input_map builds when it has an input_map and a handler or a uses_service, otherwise its input', () => {
-    // issue #688: (a) red when the row no longer says this (the docs flip); (b) prints the row.
+    // issue #688: (a) red when the row no longer says this (the docs flip); (b) prints the row. #729
+    // Q3 correction 1 (C6): the row says whose input is checked — the library's lever is executed by
+    // q3-729.test.ts F1-e, the assistant's call by F1-a…F1-c.
     claim(
       'docs/reference/workflow/json-schema-blocks.md',
-      "| `input_schema` | An auto step | The input the step will receive: what its `input_map` builds when the step has an `input_map` and a `handler` or `uses_service`; otherwise its input — the input a caller passes when it names the step, or the engine's: the run's params when the step has no `depends_on`, `{}` otherwise. | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out when nothing else can run. |",
+      "| `input_schema` | An auto step | The input the step will receive: what its `input_map` builds when the step has an `input_map` and a `handler` or `uses_service`; otherwise the engine's input: the run's params when the step has no `depends_on`, `{}` otherwise. A program that names the step through the library (`executeStep`) with an input of its own has that input checked; an assistant's call never does (its `params` are not the step's input). | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out when nothing else can run. |",
     );
   });
 

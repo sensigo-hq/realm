@@ -85,7 +85,9 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
     );
   });
 
-  it('execute_step named on the step with input that fits still runs it today — whether an agent door may make that call is #729 PR-0’s (preservation)', async () => {
+  // pre-Q3c1 title: 'execute_step named on the step with input that fits still runs it today —
+  // whether an agent door may make that call is #729 PR-0’s (preservation)'
+  it('execute_step (the assistant’s door) named on the step with params that fit is refused on the engine’s input — the run’s params — never run on them, with the step’s own way out (#729 Q3 correction 1)', async () => {
     const r = await advance(
       wf('f15-params-run', {
         first: { description: 'F.', execution: 'auto', depends_on: [], input_schema: NEEDS_N },
@@ -96,11 +98,22 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
       { run_id: r.id, command: 'first', params: { n: 5 } },
       { runStore: r.runStore, workflowStore: r.workflowStore },
     );
-    // (a) red when execute_step by name no longer runs an `auto` step given input its schema accepts
-    //     — a behaviour this fix does not change; (b) prints its status and the completed steps.
-    expect({ status: ran.status, done: (await r.runStore.get(r.id)).completed_steps }).toEqual({
-      status: 'ok',
-      done: ['first'],
+    const hint = String(ran.context_hint);
+    // (a) red when execute_step by name runs an `auto` step on the caller's params (as before the
+    //     correction), routes it `provide_input`, or drops the step's own way out; (b) prints the
+    //     status, code, action, the completed steps and the hint's end.
+    expect({
+      status: ran.status,
+      code: ran.error_code,
+      action: ran.agent_action,
+      done: (await r.runStore.get(r.id)).completed_steps,
+      way: hint.slice(hint.indexOf(' For ')),
+    }).toEqual({
+      status: 'error',
+      code: 'VALIDATION_INPUT_SCHEMA',
+      action: 'report_to_user',
+      done: [],
+      way: ` For 'first', start a run with params that fit, or correct its input_schema and register the workflow again; ${RUN_WAY_NEW_RUN}`,
     });
   });
 

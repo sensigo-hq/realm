@@ -219,11 +219,13 @@ services:
     trust: engine_delivered
 ```
 
-If `realm.yaml` is missing, a step that uses the adapter is blocked, and the run waits. Over MCP, `start_run` replies `ok` and names the step in `warnings` (`Step '<step>' is blocked: …`), and `execute_step` on the step is refused with:
+If `realm.yaml` is missing, a step that uses the adapter is blocked, and the run waits. Over MCP, the call that first attempts the step says so: `start_run` replies `ok` and names the step in `warnings` (`Step '<step>' is blocked: …`); `advance_run`, or an `execute_step` whose chain reaches the step, replies `error`, names the step in `stopped_step` and carries the adapter's own line in `errors`:
 
 ```text
 Adapter 'github' for service 'github' is not registered. Declare this adapter under 'adapters:' in realm.yaml …
 ```
+
+After that attempt, `advance_run` says the step cannot run here (capability) without attempting it again. `execute_step` naming the step is refused before any attempt: it is the engine's step.
 
 If the secret is missing, nothing starts, and Realm names it:
 
