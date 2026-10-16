@@ -108,6 +108,8 @@ Step 'send' cannot be called now: it waits on the question on step 'review' (cho
 
 Its `next_actions` holds that answer, `submit_human_response`. Added after version 0.46.0, which says `Step 'send' is not eligible in the current run state.` and offers nothing to call.
 
+That refusal is from a session that lists the answer tool. Under `withheld`, or in an app that shows forms, the refusal names no answer, and `next_actions` holds the await entry instead of the answer call (see [Gate answers](../reference/mcp/gate-answers.md)).
+
 Find runs that are waiting, from any terminal:
 
 ```bash

@@ -108,9 +108,13 @@ agent_action: provide_input
 
 ## 4. What happens at a human gate
 
-When the run reaches a gate, the reply has `status: confirm_required`, the text to show you, and the choices. The briefing instructs the assistant to show you that text, wait for your choice, and pass it on with `submit_human_response`.
+When the run reaches a gate, the reply has `status: confirm_required`, the text to show you, and the choices. What happens next follows the server's [gate-answers value](../reference/mcp/gate-answers.md):
 
-The assistant answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. That call includes the `claim_token` of the reply that opened the gate, which shows the answer comes from the conversation that opened it. It is never required.
+- Under the default `asked`, an app that shows forms asks you in its own form, and the assistant gets no tool that records an answer. An app that shows no forms keeps `submit_human_response`, and the app is asked to have you approve each call; some apps and settings skip that.
+- Under `offered`, the briefing instructs the assistant to show you that text, wait for your choice, and pass it on with `submit_human_response`.
+- Under `withheld`, you answer from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.
+
+Where it has the answer tool, the assistant answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. That call includes the `claim_token` of the reply that opened the gate, which shows the answer comes from the conversation that opened it. It is never required.
 
 Realm records the choice it is given. It does not check that you made it. If the assistant must not be able to approve its own work, see [Human gates and trust levels](../concepts/gates-and-trust.md#who-can-answer).
 

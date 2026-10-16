@@ -261,6 +261,68 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
 });
 
 describe('#627 W — the other pages W changed', () => {
+  it('gates-and-trust.md, connect-an-mcp-client.md, human-gates.md, what-is-realm.md: who can answer follows the value', async () => {
+    claim(
+      'docs/concepts/gates-and-trust.md',
+      'Under `offered` the assistant has `submit_human_response`, and nothing stops it from answering on its own. Under `withheld` no tool on the server records an answer.',
+    );
+    claim(
+      'docs/concepts/gates-and-trust.md',
+      'start the MCP server with `--gate-answers withheld` and answer from the command line',
+    );
+    claim(
+      'docs/guides/connect-an-mcp-client.md',
+      'Under the default `asked`, an app that shows forms asks you in its own form, and the assistant gets no tool that records an answer.',
+    );
+    claim(
+      'docs/guides/human-gates.md',
+      'Under `withheld`, or in an app that shows forms, the refusal names no answer, and `next_actions` holds the await entry instead of the answer call',
+    );
+    claim(
+      'docs/start/what-is-realm.md',
+      'That is a session whose assistant has the answer tool. Under `withheld`, or in an app that shows forms, the refusal names no answer',
+    );
+    /** A step waiting on the open question, called by name: the refusal's answer words and entry. */
+    const refusalAt = async (g: 'asked' | 'offered' | 'withheld', forms: boolean) => {
+      const s = await session(g, forms);
+      const text = async (name: string, args: Record<string, unknown>) =>
+        JSON.parse(
+          (
+            (await s.client.callTool({ name, arguments: args })) as {
+              content: Array<{ text: string }>;
+            }
+          ).content[0]!.text,
+        ) as Record<string, unknown>;
+      const started = await text('start_run', { workflow_id: s.def.id, params: {} });
+      const r = await text('execute_step', {
+        run_id: started['run_id'],
+        command: 'after',
+        params: {},
+      });
+      const first = (r['next_actions'] as Array<{ instruction: unknown; awaiting?: unknown }>)[0];
+      return {
+        tools: (await s.tools())
+          .map((t) => t.name)
+          .filter((n) => n === 'submit_human_response' || n === 'present_question'),
+        namesAnswer: String(r['context_hint']).includes('submit_human_response'),
+        firstEntry: first?.awaiting !== undefined ? 'await' : 'call',
+      };
+    };
+    // (a) red when a session lists an answer tool against these pages, or a refusal names the
+    //     answer where no tool records one; (b) prints each session's tools and refusal.
+    expect({
+      withheld: await refusalAt('withheld', false),
+      forms: await refusalAt('asked', true),
+      fallback: await refusalAt('asked', false),
+      offered: await refusalAt('offered', false),
+    }).toEqual({
+      withheld: { tools: [], namesAnswer: false, firstEntry: 'await' },
+      forms: { tools: ['present_question'], namesAnswer: false, firstEntry: 'await' },
+      fallback: { tools: ['submit_human_response'], namesAnswer: true, firstEntry: 'call' },
+      offered: { tools: ['submit_human_response'], namesAnswer: true, firstEntry: 'call' },
+    });
+  });
+
   it('tools.md: the gate example is the default session’s; error_details names the new typed facts', () => {
     claim(
       'docs/reference/mcp/tools.md',
