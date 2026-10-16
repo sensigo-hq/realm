@@ -26,19 +26,120 @@ import { quotedCommand, shellWord } from '../utils/shell-word.js';
  * unattributed and unciteable; `realm run` would have printed it twice in two voices. `false` is
  * verdict-neutral (executed on ajv 8.20.0: every compile-error class still throws).
  *
- * Issue #560's seam: a compiled-validator cache belongs HERE (one construction site, one key).
- * Issue #552's seam: an admission-time cost bound on a legal-but-enormous schema belongs here too.
- * Neither is built.
+ * Issue #560: the compiled-validator cache is built HERE. A schema whose content is exactly JSON
+ * (`keyOf`) is compiled once per process, from its own frozen copy, and the validator is reused by
+ * every later call with the same content — so a caller reads `.errors` right after its own call
+ * (every caller in this file does, synchronously). A schema that is not exactly JSON is compiled
+ * fresh each time, as before. The silent path reads and writes the cache; the capturing path
+ * (`onStrictLog`, the loader at admission) compiles fresh so its strict-mode lines are captured on
+ * every load, then writes the cache and never reads it. A compile that throws is not cached. The
+ * cache is bounded by entries and by key characters (LRU). Issue #552's seam — an admission-time
+ * cost bound on a legal-but-enormous schema — still belongs here, and is still not built.
  */
 export function compileSchema(
   schema: JsonSchema,
   opts?: { onStrictLog?: (line: string) => void },
 ): ValidateFunction {
   const onStrictLog = opts?.onStrictLog;
+  const key = keyOf(schema);
+  // The silent path (run time) reads the cache; the capturing path never does (decision D7: the
+  // strict-mode lines are captured on every load).
+  if (key !== undefined && onStrictLog === undefined) {
+    const hit = compiledSchemas.get(key);
+    if (hit !== undefined) {
+      compiledSchemas.delete(key);
+      compiledSchemas.set(key, hit);
+      return hit;
+    }
+  }
   // ONE constructor call, always — the source-text witness counts the construction shape in this
   // file (comments stripped) and that count IS the load-≡-run guarantee, so a ternary over two
-  // constructor calls is forbidden here. The whole conditional lives in the OPTIONS OBJECT.
-  return newAjv(onStrictLog).compile(schema as object);
+  // constructor calls is forbidden here. The whole conditional lives in the OPTIONS OBJECT. A
+  // keyable schema is compiled from its own frozen copy: Ajv reads object-valued `enum`/`const`
+  // members at validate time and its error rows alias them, so a shared validator must never see
+  // a caller change its schema. A throw propagates before anything is cached.
+  const validate = newAjv(onStrictLog).compile(
+    key === undefined ? (schema as object) : (deepFreeze(JSON.parse(key)) as object),
+  );
+  if (key !== undefined) rememberCompiled(key, validate);
+  return validate;
+}
+
+/** A workflow declares tens of schemas; 256 holds every schema of many workflows at once. */
+const MAX_CACHED_SCHEMAS = 256;
+/** A validator's heap grows with its schema's size, so the key characters — not the count — cap
+ *  a long-running server that `create_workflow` callers can fill (4 Mi characters of schema). */
+const MAX_CACHED_KEY_CHARS = 4 * 1024 * 1024;
+
+/** The compiled validators by key, least recently used first (a `Map` keeps insertion order). */
+const compiledSchemas = new Map<string, ValidateFunction>();
+let cachedKeyChars = 0;
+
+/** Inserts (or refreshes) one validator, then evicts the oldest until within both bounds. A key
+ *  longer than the character bound is never cached. */
+function rememberCompiled(key: string, validate: ValidateFunction): void {
+  if (key.length > MAX_CACHED_KEY_CHARS) return;
+  if (compiledSchemas.delete(key)) cachedKeyChars -= key.length;
+  compiledSchemas.set(key, validate);
+  cachedKeyChars += key.length;
+  while (compiledSchemas.size > MAX_CACHED_SCHEMAS || cachedKeyChars > MAX_CACHED_KEY_CHARS) {
+    const oldest = compiledSchemas.keys().next().value as string;
+    compiledSchemas.delete(oldest);
+    cachedKeyChars -= oldest.length;
+  }
+}
+
+/** Thrown inside `keyOf`'s replacer to void a key. */
+const NOT_JSON_EXACT: unique symbol = Symbol('not JSON-exact');
+
+/**
+ * The cache key: the schema's JSON text, or `undefined` (never cached) when its content is not
+ * exactly JSON — a non-finite number, `undefined`, a function, a `bigint` or a symbol, an object
+ * that is not a plain object or array (a `Date`, a typed array, a `RegExp`, a `Map`, an instance),
+ * or a cycle. Why: the YAML loader keeps js-yaml's `Date`/`Infinity`/`Uint8Array` values, which
+ * `JSON.stringify` maps onto other JSON — a key shared with a schema Ajv judges differently.
+ */
+function keyOf(schema: unknown): string | undefined {
+  try {
+    // The replacer reads `this[k]`, the RAW value: `JSON.stringify` calls a `Date`'s `toJSON`
+    // before the replacer sees `value`.
+    const key = JSON.stringify(schema, function (this: unknown, k: string, value: unknown) {
+      if (!isJsonExact((this as Record<string, unknown>)[k])) throw NOT_JSON_EXACT;
+      return value;
+    });
+    return typeof key === 'string' ? key : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether one raw value is carried exactly by JSON (its members are checked as they are visited). */
+function isJsonExact(raw: unknown): boolean {
+  if (raw === null) return true;
+  switch (typeof raw) {
+    case 'string':
+    case 'boolean':
+      return true;
+    case 'number':
+      return Number.isFinite(raw);
+    case 'object': {
+      const proto: unknown = Object.getPrototypeOf(raw);
+      if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) return false;
+      // A plain object with its own `toJSON` serializes as something else.
+      return typeof (raw as { toJSON?: unknown }).toJSON !== 'function';
+    }
+    default:
+      return false;
+  }
+}
+
+/** Freezes a value parsed from JSON, all the way down. */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const member of Object.values(value as object)) deepFreeze(member);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 /** The ONE construction (see `compileSchema`); every authored-block check goes through it. */

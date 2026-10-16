@@ -5,6 +5,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  compileSchema,
   validateInputSchema,
   validateTraceSchema,
   validateAgentSubmission,
@@ -348,3 +349,184 @@ describe('validateAgentSubmission (issue #224)', () => {
     }
   });
 });
+
+// =================================================================================================
+// issue #560 — each authored schema is compiled once per process, not on every check. The cache
+// key is the schema's JSON text when its content is exactly JSON; the entry is compiled from its
+// own frozen copy; the capturing path (the loader) writes the cache and never reads it; the bound
+// is 256 entries and 4 Mi key characters. What a failing cell prints: function identities as
+// booleans, verdicts, error counts and instance paths — never a value.
+// =================================================================================================
+describe('issue #560 — the compiled-validator cache', () => {
+  it('1. same content, one function: the same object twice, and two JSON-equal objects; different content, different functions', () => {
+    const s1: JsonSchema = { type: 'object', properties: { c560a: { type: 'string' } } };
+    const s2 = JSON.parse(JSON.stringify(s1)) as JsonSchema;
+    // (a) red when every call compiles afresh (the base), or the key confuses two contents; (b)
+    //     prints three booleans.
+    expect({
+      sameObjectTwice: compileSchema(s1) === compileSchema(s1),
+      jsonEqualObjects: compileSchema(s1) === compileSchema(s2),
+      differentContent: compileSchema({ type: 'string' }) === compileSchema({ type: 'number' }),
+    }).toEqual({ sameObjectTwice: true, jsonEqualObjects: true, differentContent: false });
+  });
+
+  it('2. the capturing path captures every time — after a silent call put the content in the cache', () => {
+    const union = { type: ['string', 'number'], description: 'c560-2' } as unknown as JsonSchema;
+    compileSchema(union); // silent first: the cache now holds this content
+    const capture = () => {
+      const lines: string[] = [];
+      compileSchema(union, { onStrictLog: (line) => lines.push(line) });
+      return lines.filter((l) => l.includes('strict mode: use allowUnionTypes')).length;
+    };
+    // (a) red when the capturing path reads the cache (no compile, no line); (b) prints the count
+    //     of strict-mode lines each capture held.
+    expect([capture(), capture()]).toEqual([1, 1]);
+  });
+
+  it('3. admission → run time compiles once: a capturing call, then a silent call on the same content, return one function', () => {
+    const block: JsonSchema = { type: 'object', required: ['c560b'] };
+    const captured = compileSchema(block, { onStrictLog: () => {} });
+    // (a) red when the capturing compile is not written to the cache (the run time compiles the
+    //     same schema a second time); (b) prints a boolean.
+    expect(compileSchema(JSON.parse(JSON.stringify(block)) as JsonSchema) === captured).toBe(true);
+  });
+
+  it('4. a compile that throws is not cached: two calls throw two errors; a valid schema after it is unaffected', () => {
+    const bad = { type: 'object', c560NotAKeyword: true } as unknown as JsonSchema;
+    const thrown = () => {
+      try {
+        compileSchema(bad);
+        return undefined;
+      } catch (err) {
+        return err;
+      }
+    };
+    const first = thrown();
+    const second = thrown();
+    // (a) red when a failed compile leaves a slot (the second call rethrows the first's error);
+    //     (b) prints whether each threw, whether they are one object, and the valid verdict.
+    expect({
+      firstThrew: first instanceof Error,
+      secondThrew: second instanceof Error,
+      sameError: first === second,
+      validAfter: compileSchema({ type: 'string', description: 'c560-4' })('ok'),
+    }).toEqual({ firstThrew: true, secondThrew: true, sameError: false, validAfter: true });
+  });
+
+  it('5a. the LRU, by entries: 256 schemas, #1 used again, #257 compiled → #1 kept, #2 evicted', () => {
+    const nth = (i: number): JsonSchema => ({ type: 'string', description: `c560-5a-${i}` });
+    const first: ValidateFunctionLike[] = [];
+    for (let i = 1; i <= 256; i++) first[i] = compileSchema(nth(i));
+    compileSchema(nth(1)); // a hit: #1 becomes the most recent
+    compileSchema(nth(257));
+    // (a) red when the cache does not keep #1–#256 (the base compiles afresh), does not refresh
+    //     a hit's recency, or evicts past the bound; (b) prints two booleans.
+    expect({
+      firstKept: compileSchema(nth(1)) === first[1],
+      secondEvicted: compileSchema(nth(2)) !== first[2],
+    }).toEqual({ firstKept: true, secondEvicted: true });
+  });
+
+  it('5b. the LRU, by key characters: past 4 Mi characters the oldest is evicted; a key over the bound is never cached', () => {
+    const big = (tag: string): JsonSchema => ({
+      type: 'string',
+      description: `${tag}:${'x'.repeat(1.5 * 1024 * 1024)}`,
+    });
+    const s1 = compileSchema(big('c560-5b-1'));
+    const s2 = compileSchema(big('c560-5b-2'));
+    const s3 = compileSchema(big('c560-5b-3')); // 4.5 Mi characters: #1 is evicted
+    const huge: JsonSchema = { type: 'string', description: 'y'.repeat(4 * 1024 * 1024 + 1) };
+    // (a) red when the bound counts entries only (#1 stays), or a key over the bound is cached;
+    //     (b) prints four booleans.
+    expect({
+      thirdKept: compileSchema(big('c560-5b-3')) === s3,
+      secondKept: compileSchema(big('c560-5b-2')) === s2,
+      firstEvicted: compileSchema(big('c560-5b-1')) !== s1,
+      hugeNeverCached: compileSchema(huge) !== compileSchema(huge),
+    }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true, hugeNeverCached: true });
+  });
+
+  it('6. the key is exact: a Date, Infinity or a Uint8Array and their JSON copies keep their own verdicts, in both orders', () => {
+    const pairs: Array<[string, () => JsonSchema, () => JsonSchema, unknown]> = [
+      [
+        'Date',
+        () => ({ const: new Date('2024-01-01') }) as unknown as JsonSchema,
+        () => ({ const: '2024-01-01T00:00:00.000Z' }) as JsonSchema,
+        '2024-01-01T00:00:00.000Z',
+      ],
+      [
+        'Infinity',
+        () => ({ const: Infinity }) as unknown as JsonSchema,
+        () => ({ const: null }) as JsonSchema,
+        null,
+      ],
+      [
+        'Uint8Array',
+        () => ({ const: new Uint8Array([1]) }) as unknown as JsonSchema,
+        () => ({ const: { '0': 1 } }) as JsonSchema,
+        { '0': 1 },
+      ],
+    ];
+    const verdicts = pairs.map(([name, odd, json, input]) => {
+      const oddFirst = [compileSchema(odd())(input), compileSchema(json())(input)];
+      const jsonFirst = [compileSchema(json())(input), compileSchema(odd())(input)].reverse();
+      return { name, oddFirst, jsonFirst };
+    });
+    // (a) red when the key is `JSON.stringify` plain (the odd schema and its JSON copy share a key,
+    //     so the second compiled answers for both); (b) prints each pair's verdicts in both orders.
+    expect(verdicts).toEqual([
+      { name: 'Date', oddFirst: [false, true], jsonFirst: [false, true] },
+      { name: 'Infinity', oddFirst: [false, true], jsonFirst: [false, true] },
+      { name: 'Uint8Array', oddFirst: [false, true], jsonFirst: [false, true] },
+    ]);
+  });
+
+  it('7. verdicts stay each call’s own: a second invalid input does not rewrite the first refusal’s errors', () => {
+    const shared: JsonSchema = {
+      type: 'object',
+      description: 'c560-7',
+      properties: { a: { type: 'string' }, b: { type: 'string' } },
+    };
+    const refusal = (input: Record<string, unknown>) => {
+      try {
+        validateInputSchema(input, shared, 's');
+        return undefined;
+      } catch (err) {
+        return err as WorkflowError;
+      }
+    };
+    const first = refusal({ a: 1 });
+    refusal({ b: 1 });
+    const paths = (first?.details['errors'] as Array<{ instancePath: string }> | undefined)?.map(
+      (e) => e.instancePath,
+    );
+    // (a) red when the call sites read `errors` from one array every call shares; (b) prints the
+    //     first refusal's instance paths.
+    expect(paths).toEqual(['/a']);
+  });
+
+  it('8. the frozen copy: a caller changing its schema after a compile does not change the verdict; an error row cannot change the cache; the caller’s schema stays unfrozen', () => {
+    const mine = { enum: [{ c560k: 1 }] } as unknown as JsonSchema;
+    const validate = compileSchema(mine);
+    (mine as unknown as { enum: Array<{ c560k: number }> }).enum[0]!.c560k = 2;
+    const stillValid = validate({ c560k: 1 });
+    validate('nope');
+    const allowed = validate.errors?.[0]?.params['allowedValues'] as unknown[] | undefined;
+    let rowFrozen = false;
+    try {
+      allowed?.push('x');
+    } catch (err) {
+      rowFrozen = err instanceof TypeError;
+    }
+    // (a) red when the validator is compiled from the caller's object (the base): the verdict
+    //     follows the caller's change, and the error row is the caller's own array; (b) prints three
+    //     booleans.
+    expect({ stillValid, rowFrozen, callersSchemaFrozen: Object.isFrozen(mine) }).toEqual({
+      stillValid: true,
+      rowFrozen: true,
+      callersSchemaFrozen: false,
+    });
+  });
+});
+
+type ValidateFunctionLike = ReturnType<typeof compileSchema>;
