@@ -1,4 +1,4 @@
-// Types for the ResponseEnvelope returned by every step execution.
+// Types for the EngineReply returned by every step execution.
 import type { EvidenceSnapshot, RunPhase, SealArm } from './run-record.js';
 import type { AgentAction, ErrorCode } from './workflow-error.js';
 import type { LoaderWarning } from '../workflow/diagnostics.js';
@@ -62,19 +62,9 @@ export interface GateInfo {
    * same `computeGateDueState` derivation, which may differ from this snapshot).
    */
   first_reminder_due_at?: string;
-  /**
-   * Holder slice (PR-H): the claim token of the call that opened this question — the proof a caller
-   * of its answer may pass back (as `claim_token`) to show that the answer comes from the
-   * conversation that opened it. Present only on the two replies whose own call minted the claim,
-   * and only when the store minted a token. It is the ONE surface that carries a claim's token
-   * (also inside the answer instruction, both renderings). Not a secret: it guards against
-   * accidents and races, not malice — anyone who can read the store can read it, and realm has no
-   * authentication. Passing it back changes nothing about whether the answer is recorded.
-   */
-  claim_token?: string;
 }
 
-export interface ResponseEnvelope {
+export interface EngineReply {
   command: string;
   run_id: string;
   /** Integer version of the run record at time of response. For observability only — not required as input to any tool. */

@@ -513,6 +513,19 @@ export interface StepCacheDetail {
 }
 
 /**
+ * issue #729 PR-0 (T-17 (ii)): the parties that supply a step's input or output, as an evidence
+ * entry records them (`supplied_by`). PR-0's producer is the agent's answer to an agent step; a door
+ * through which an operator supplies an engine step's input adds `operator` with it (the membership
+ * rule — no member is reserved).
+ */
+export const SUPPLIER_ROLES = ['agent'] as const;
+export type SupplierRole = (typeof SUPPLIER_ROLES)[number];
+
+/** Why an entry names no supplier (#729 PR-0, §5 E1 (ii)). */
+export const SUPPLIER_ABSENT_CAUSES = ['engine_input', 'not_recorded'] as const;
+export type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
+
+/**
  * Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's
  * recorded output came from — the one closed vocabulary of {@link EvidenceSnapshot.output_source}.
  * A bare `auto` step has no handler and no service.
@@ -571,6 +584,19 @@ export interface EvidenceSnapshot {
    * before the field; core's `outputSourceOf` says, for any entry, the source or why it has none.
    */
   output_source?: OutputSource;
+  /**
+   * issue #729 PR-0 (T-17 (ii); §5 E1): who supplied this entry's input or output — the PARTY of
+   * the door the call came through, beside `driven_by` (the program). `agent`: an agent step's answer.
+   * (i) Written only at its mint, on the entry of an agent step's own attempt; (ii) absent on every
+   * entry whose input the engine built and on entries written before this field — read through
+   * `readSupplier`, which names why (`engine_input`, `not_recorded`); (iii) said on `realm run
+   * inspect`'s attribution line BY RULE — only when the role differs from the party the step is
+   * designed for (an engine step given an operator's input); the expected case (an agent's answer to
+   * an agent step) and every absence print nothing, and in PR-0 no path writes a differing role;
+   * (iv) the run-store fidelity contract's SUPPLIER_ROUND_TRIPS law. A
+   * role, never a name: realm never claims who was on the other end.
+   */
+  supplied_by?: SupplierRole;
   /**
    * Holder slice (PR-H): present only on a `gate_response` entry the ANSWER wrote, and only when the
    * answer was recorded (verdict rows 1–5; a settled question has no entry to carry `spent`).

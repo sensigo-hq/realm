@@ -4,13 +4,31 @@ import { brandClass, REALM_BRAND } from '../brand.js';
 
 export type ErrorCategory = 'NETWORK' | 'SERVICE' | 'STATE' | 'VALIDATION' | 'ENGINE' | 'RESOURCE';
 
+/**
+ * What an agent does next (engine-owned, R3). `wait_for_service`: an outside service is unavailable —
+ * wait, then try again (issue #729 PR-0, D4 P-2: renamed from `wait_for_human`, every vocabulary read
+ * uses "human" for a person). `await`: the run waits on someone else — a person's answer or another
+ * program's step (D3 A-2); its replies carry `poll_after_ms` and, when the record states one, `until`.
+ */
 export type AgentAction =
   | 'report_to_user'
   | 'provide_input'
   | 'resolve_precondition'
   | 'stop'
-  | 'wait_for_human'
-  | 'wait_and_proceed';
+  | 'wait_for_service'
+  | 'wait_and_proceed'
+  | 'await';
+
+/** Every {@link AgentAction}, in declaration order — the closed list a renderer's table is checked against. */
+export const AGENT_ACTIONS = [
+  'report_to_user',
+  'provide_input',
+  'resolve_precondition',
+  'stop',
+  'wait_for_service',
+  'wait_and_proceed',
+  'await',
+] as const satisfies readonly AgentAction[];
 
 export type ErrorCode =
   // NETWORK

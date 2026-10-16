@@ -90,7 +90,7 @@ export class GenericHttpAdapter implements ServiceAdapter {
       throw new WorkflowError(message, {
         code: 'NETWORK_UNREACHABLE',
         category: 'NETWORK',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_for_service',
         retryable: true,
       });
     }
@@ -100,7 +100,7 @@ export class GenericHttpAdapter implements ServiceAdapter {
       throw new WorkflowError(`HTTP ${status}: ${response.statusText}`, {
         code: status >= 500 ? 'SERVICE_HTTP_5XX' : 'SERVICE_HTTP_4XX',
         category: 'SERVICE',
-        agentAction: status >= 500 ? 'wait_for_human' : 'report_to_user',
+        agentAction: status >= 500 ? 'wait_for_service' : 'report_to_user',
         retryable: status >= 500,
       });
     }
