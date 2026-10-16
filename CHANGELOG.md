@@ -130,6 +130,18 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 ### Changed
 
+- **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
+  an `auto` step the engine could run is refused before anything is claimed: `blocked`,
+  `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.`
+  followed by what the engine owes and the call to make, `next_actions` = `advance_run`,
+  `agent_action: resolve_precondition`; `advance_run` runs the step with the engine's input. A step
+  refused before its claim (its `trust`, a precondition, its `input_schema`) still returns that
+  refusal first, judged on the input the engine builds — never the assistant's `params` — and routed
+  like every refusal before the claim; a step this server cannot run is refused without a claim or a
+  capability block. The library, the CLI and the engine's own chain are unchanged. Such a refusal no
+  longer writes a failed-attempt record — the MCP server's `agent_step_attempt_failed` stderr line or
+  the run's attempts file: those record an agent step's own refused answers.
+
 - **BREAKING — for programs:** the rules a validation refusal broke moved to the error's typed facts
   (issue #759). For `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, a `WorkflowError`'s
   `details.errors` and the core reply's `error_details` are gone; the rows (the first 10),
@@ -265,6 +277,10 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   whether it can go on (issue #729).
 
 ### Fixed
+
+- **The capability block's `context_hint` no longer says `then follow next_actions` beside an empty
+  list (issue #729).** The MCP reply ends with the step's own words (`'<step>' cannot run here
+(capability): …`).
 
 - **A refused answer names every problem, not only the first (issue #759).** The schema check
   stopped at the first rule an answer broke, so an agent learned one problem per refusal and its

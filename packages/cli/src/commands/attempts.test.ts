@@ -58,15 +58,21 @@ describe('realm run attempts (CLI command)', () => {
     return `1111111${counter}-2222-4333-8444-555555555555`.slice(0, 36);
   }
 
-  async function seedAttempt(runId: string): Promise<void> {
+  async function seedAttempt(
+    runId: string,
+    line: { step_id: string; error_code: string } = {
+      step_id: 'classify',
+      error_code: 'VALIDATION_OUTPUT_SCHEMA',
+    },
+  ): Promise<void> {
     const { FailedAttemptStore, buildFailedAttemptRecord, serializeFailedAttemptLine } =
       await import('@sensigo/realm');
     const rec = buildFailedAttemptRecord({
       run_id: runId,
       workflow_id: 'wf',
-      step_id: 'classify',
+      step_id: line.step_id,
       ts: '2026-06-27T00:00:00.000Z',
-      error_code: 'VALIDATION_OUTPUT_SCHEMA',
+      error_code: line.error_code,
       ajv_errors: [
         {
           instancePath: '/category',
@@ -91,6 +97,22 @@ describe('realm run attempts (CLI command)', () => {
     expect(out).toContain('VALIDATION_OUTPUT_SCHEMA');
     expect(out).toContain('required');
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('lists every line the run’s attempts file holds — including a refused call that named an engine step, as runs recorded by an earlier version may hold (#729 Q3 correction 1)', async () => {
+    const runId = nextRunId();
+    // An earlier version wrote a line for an engine step's by-name refusal (since #729 Q3 correction
+    // 1 only an agent step's refused answer is written); `attempts` reads no definition, so it lists
+    // it like any other.
+    await seedAttempt(runId, { step_id: 'pub', error_code: 'VALIDATION_INPUT_SCHEMA' });
+    await attemptsCommand.parseAsync([runId], { from: 'user' });
+    const out = logged();
+    // (a) red when `attempts` stops listing a line its file holds (a filter by step kind, say); (b)
+    //     prints whether the step's name and the code were listed.
+    expect({ step: out.includes('pub'), code: out.includes('VALIDATION_INPUT_SCHEMA') }).toEqual({
+      step: true,
+      code: true,
+    });
   });
 
   it('--json prints the raw records', async () => {

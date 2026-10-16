@@ -770,3 +770,53 @@ describe('issue #719 C4 — the Date check is a brand check', () => {
     });
   });
 });
+
+// issue #729 (the Q3 unit, A2): `party` is an option of executeStep and executeChain — the door's
+// party for the call (the MCP execute_step handler sets 'agent') — checked when present: one of the
+// parties, else refused before anything is read or written.
+describe('#729 Q3 (A2) — `party` is an option of executeStep and executeChain, one of the parties', () => {
+  it.each([
+    ['executeStep', 'nobody'],
+    ['executeStep', 42],
+    ['executeChain', 'nobody'],
+    ['executeChain', 42],
+  ] as const)('%s: party %s is refused before any read', async (entry, value) => {
+    // (a) red when `party` is unchecked (a value outside the vocabulary reaches the entry) or
+    //     unlisted; (b) prints the code, the options named and the store calls.
+    expect(await outcome(entry, withPart(BASE[entry](), 'options.party', value))).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      invalid: ['options.party'],
+      calls: [],
+    });
+  });
+
+  it.each(['executeStep', 'executeChain'] as const)(
+    "%s: party 'agent' is admitted — the call goes on to its store",
+    async (entry) => {
+      const o = await outcome(entry, withPart(BASE[entry](), 'options.party', 'agent'));
+      // (a) red when 'party' leaves the entry's member list (refused as not an option); (b) prints
+      //     whether it was refused and whether the store was used.
+      expect({ refused: o.code === 'VALIDATION_OPTION_INVALID', used: o.calls.length > 0 }).toEqual(
+        {
+          refused: false,
+          used: true,
+        },
+      );
+    },
+  );
+
+  it('the refusal names the vocabulary, by its type word only', async () => {
+    const { s } = trapStore();
+    const err = (await executeChain(s, AGENT, {
+      runId: 'r',
+      command: 'a',
+      input: {},
+      dispatcher: async () => ({}),
+      party: 'nobody',
+    } as never).catch((e: unknown) => e)) as { message?: string };
+    // (a) red when the phrase changes; (b) prints the message (a type word, never the value).
+    expect(err.message).toBe(
+      'executeChain was called with 1 invalid option(s): options.party must be one of operator, agent, asked_person (got string). Nothing was read or written.',
+    );
+  });
+});

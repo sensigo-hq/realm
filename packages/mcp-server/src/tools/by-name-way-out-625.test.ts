@@ -3,8 +3,9 @@
 // the cause is the record or the workflow, which the caller cannot change: when the run cannot go on
 // until its workflow is corrected, the reply's `context_hint` ends with the way out in the tools'
 // words — core's `cannotRunWayOutTools()` — and in every other state the reply is byte-identical to
-// the step's own refusal. An input-schema refusal concerns the caller's own input (decision C3):
-// unchanged in every state. Whole-message pins.
+// the step's own refusal. An input-schema refusal of an `auto` step is judged on the input the
+// engine builds, never the caller's (#729 Q3 correction 1): when the run cannot go on, it too ends
+// with the step's own way out. Whole-message pins.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -61,10 +62,13 @@ describe('#625 PR-2a, C66 — execute_step by name on a step refused before its 
     workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
   });
 
-  async function callCompute(d: WorkflowDefinition) {
+  async function callCompute(d: WorkflowDefinition, params?: Record<string, unknown>) {
     await workflowStore.register(d);
     const { run } = await runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-    return handleExecuteStep({ run_id: run.id, command: 'compute' }, { runStore, workflowStore });
+    return handleExecuteStep(
+      { run_id: run.id, command: 'compute', ...(params !== undefined ? { params } : {}) },
+      { runStore, workflowStore },
+    );
   }
 
   it('precondition, nothing else can run: the refusal, then the way out', async () => {
@@ -108,9 +112,15 @@ describe('#625 PR-2a, C66 — execute_step by name on a step refused before its 
     });
   });
 
-  it('input_schema, nothing else can run: the refusal unchanged (the input is the caller’s own)', async () => {
-    const reply = await callCompute(def('bn-input', INPUT, false));
-    // (a) red when the input-schema member gains the way out; (b) prints status, code and hint.
+  // pre-Q3c1 title: 'input_schema, nothing else can run: the refusal unchanged (the input is the
+  // caller’s own)'
+  it('input_schema, nothing else can run: refused on the engine’s input, the hint ends with the step’s own way out (#729 Q3 correction 1)', async () => {
+    // The caller's params FIT (`n` is a number) while the engine's input (the run's `{}`) does not,
+    // so a check that judged the caller's input would let the call past this refusal.
+    const reply = await callCompute(def('bn-input', INPUT, false), { n: 5 });
+    // (a) red when the refusal judges the caller's input (#729 Q3 correction 1, C1a) or drops the way
+    //     out (C1b, the architect's ruling (A) in render-reply's hintOf); (b) prints status, code and
+    //     hint.
     expect({
       status: reply.status,
       error_code: reply.error_code,
@@ -118,7 +128,7 @@ describe('#625 PR-2a, C66 — execute_step by name on a step refused before its 
     }).toEqual({
       status: 'error',
       error_code: 'VALIDATION_INPUT_SCHEMA',
-      hint: "Error during 'compute'. Run phase: 'running'.",
+      hint: "Error during 'compute'. Run phase: 'running'. For 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.",
     });
   });
 });

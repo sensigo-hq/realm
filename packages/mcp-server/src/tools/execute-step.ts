@@ -120,6 +120,10 @@ const VALIDATION_TELEMETRY_CODES = new Set([
  * (P2) and a durable per-run sidecar (P3, when a store is wired). Each sink is separately guarded so a
  * throw in one cannot suppress the other; the whole thing never throws and never alters the
  * execute_step response.
+ *
+ * #729 Q3 correction 1 (C2): written only when the named step is an AGENT step — its record is that
+ * step's refused answer. An engine step's input is the engine's (T-13): a by-name call on it is
+ * refused on the engine's input, so the caller's `params` are no answer of that step's.
  */
 async function emitFailedAttemptTelemetry(
   args: {
@@ -129,12 +133,14 @@ async function emitFailedAttemptTelemetry(
     trace?: AgentTraceEntry[] | undefined;
   },
   workflowId: string,
+  stepExecution: string | undefined,
   result: EngineReply,
   failedAttemptStore?: FailedAttemptStoreLike,
 ): Promise<void> {
   // Build the shared metadata-only record once (bail both sinks if it can't be built).
   let record: ReturnType<typeof buildFailedAttemptRecord>;
   try {
+    if (stepExecution !== 'agent') return;
     if (result.status !== 'error') return;
     // issue #676 (review): a rejection from a step the engine ran AFTER this one is not a failed
     // attempt of this step — its submission was accepted and it settled (`stopped_step` names
@@ -241,9 +247,10 @@ export async function handleExecuteStep(
   }
 
   // A writer_nonce PRESENT on a non-agent step is refused (design §6) — mirrors append_trace's
-  // own non-agent taxonomy (STATE_STEP_NOT_ELIGIBLE + step_type detail). A BARE execute_step call
-  // on a non-agent step stays byte-identical — auto/handler steps legally execute through this
-  // tool, and this check only fires when a nonce was actually supplied.
+  // own non-agent taxonomy (STATE_STEP_NOT_ELIGIBLE + step_type detail). This check fires first, and
+  // only when a nonce was actually supplied. A BARE execute_step call on an engine step is refused
+  // by core's one admission (issue #729, the Q3 unit: the agent party rides the call below) and told
+  // to call advance_run; a guard or cleanup step was already refused there (A-7).
   if (args.writer_nonce !== undefined && stepDef !== undefined && stepDef.execution !== 'agent') {
     throw new WorkflowError(
       `Step '${args.command}' is not an agent step (execution: '${stepDef.execution}') — ` +
@@ -300,12 +307,22 @@ export async function handleExecuteStep(
     ...(args.writer_nonce !== undefined ? { writerNonce: args.writer_nonce } : {}),
     // issue #625: the program this server runs as — the claim's `holder`, the evidence's `driven_by`.
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
+    // issue #729 (the Q3 unit): the MCP `execute_step` door is the agent's (an operator uses the CLI;
+    // the asked person answers through submit_human_response); the party rides the call so core's
+    // one judge refuses what this door never offers (Q4) — R26 holds on both sides at this door.
+    party: 'agent',
   });
 
   // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the
   // ephemeral stderr line (P2) and the durable per-run sidecar (P3, when wired). Reads the pre-strip
   // envelope; awaited but best-effort — it never throws and never alters the response.
-  await emitFailedAttemptTelemetry(args, run.workflow_id, result, stores?.failedAttemptStore);
+  await emitFailedAttemptTelemetry(
+    args,
+    run.workflow_id,
+    stepDef?.execution,
+    result,
+    stores?.failedAttemptStore,
+  );
 
   // decisions C205, C211 (the architect's addendum): a reply on a run that has ended — this call's
   // own step or a step it chained failed, or the run had ended before it — ends with the ways back

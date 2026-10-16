@@ -317,7 +317,7 @@ describe('issue #759 — tools.md', { timeout: 60_000 }, () => {
   it('the refused-answer row: the rules broken, up to 10, with the total in `error_count` (red: the old row)', () => {
     claim(
       TOOLS,
-      '| The answer does not fit the step\'s schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "provide_input"`, and in `error_details` the rules broken (up to 10, with the total in `error_count`; added after version 0.47.0, which named the first problem only), and for an agent step `rejections` and `threshold`. |',
+      '| An agent step\'s answer does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "provide_input"`, and in `error_details` the rules broken (up to 10, with the total in `error_count`; added after version 0.47.0, which named the first problem only), and `rejections` and `threshold`. |',
     );
   });
 

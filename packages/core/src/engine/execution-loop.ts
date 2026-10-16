@@ -26,6 +26,7 @@ import {
   composeWaysOn,
   isRaceStop,
   type NotRecordedKind,
+  type Party,
   type RaceStop,
   type Unavailable,
   type UnavailableCode,
@@ -252,6 +253,16 @@ export interface ExecuteStepOptions {
    * REJECTS `VALIDATION_CALLER_INVALID` before anything is read or written (the admission step).
    */
   caller?: StepCaller;
+  /**
+   * issue #729 (the Q3 unit): the party whose call this is, when the door knows it — the MCP
+   * `execute_step` handler sets `'agent'`. Absent = the program itself (an embedder, the CLI, the
+   * engine's own chain), and that absence is its identity on this axis: no judge treats an absent
+   * party as a party. Read by the one admission (`admitWay`, `WaysContext.party`): an agent's
+   * by-name call on an eligible engine step is refused and told to advance. Not one of
+   * `PARTIES` ⇒ `VALIDATION_OPTION_INVALID` before anything is read or written.
+   * @see WaysContext.party
+   */
+  party?: Party;
 }
 
 export interface SubmitGateOptions {
@@ -336,6 +347,11 @@ export interface ExecuteChainOptions {
    * admission step).
    */
   caller?: ChainCaller;
+  /**
+   * @see ExecuteStepOptions.party — the named step's call carries it (the options spread into it);
+   * the steps the chain runs after it are the engine's own and carry none.
+   */
+  party?: Party;
 }
 
 /** issue #625: the one line added to a reply when a store keeping claims dropped the claimant. */
@@ -717,7 +733,9 @@ function waysContext(
   store: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
   registry: ExtensionRegistry | undefined,
-  extra: Pick<WaysContext, 'opening_token' | 'presented'> = {},
+  // issue #729 (the Q3 unit): `party` only at the admission (Step 2, `byNameRefusal`) — never on a
+  // reply's composed ways (`waysOf`): the offer side is the door's (`narrowForDoor`).
+  extra: Pick<WaysContext, 'opening_token' | 'presented' | 'party'> = {},
 ): WaysContext {
   return {
     definition: { ok: definition },
@@ -767,13 +785,16 @@ function byNameRefusal(
   store: Pick<RunStore, 'persistsClaims'>,
   definition: WorkflowDefinition,
   run: RunRecord,
-  options: Pick<ExecuteStepOptions, 'runId' | 'command' | 'registry'>,
+  options: Pick<ExecuteStepOptions, 'runId' | 'command' | 'registry' | 'party'>,
   at: Date,
 ): Unavailable | undefined {
   const admission = admitWay(
     'run_step',
     writtenSnapshot(run, at),
-    waysContext(store, definition, options.registry),
+    // issue #729 (the Q3 unit): the same judge as Step 2, with the call's party (R26: one judge).
+    waysContext(store, definition, options.registry, {
+      ...(options.party !== undefined ? { party: options.party } : {}),
+    }),
     { run_id: options.runId, command: options.command },
   );
   return 'ok' in admission ? undefined : admission;
@@ -856,7 +877,10 @@ export function notCallableWords(refusal: Unavailable): string {
     case 'step_engine_decided':
       return refusal.facts.execution === 'guard'
         ? 'it is a guard step: the engine runs it when the run reaches it'
-        : 'it is a cleanup step: the engine runs it when the run ends';
+        : refusal.facts.execution === 'finalizer'
+          ? 'it is a cleanup step: the engine runs it when the run ends'
+          : // issue #729 (the Q3 unit): only what is so; the call to make is the door's.
+            'it is an automatic step: the engine runs it when it is owed';
     case 'question_due':
       return `it waits on ${dueExpiryWords(refusal.facts)}`;
     case 'gated_step':
@@ -2212,7 +2236,11 @@ async function executeStepBody(
   const admission = admitWay(
     'run_step',
     writtenSnapshot(run, gateExpiryCheckNow),
-    waysContext(store, definition, options.registry),
+    // issue #729 (the Q3 unit): the call's party rides into the one admission — an agent's by-name
+    // call on an eligible engine step is refused here, before anything is claimed or written.
+    waysContext(store, definition, options.registry, {
+      ...(options.party !== undefined ? { party: options.party } : {}),
+    }),
     { run_id: options.runId, command: options.command, params: options.input },
   );
   if (!('ok' in admission) && NOT_CALLABLE_CODES.has(admission.code)) {
@@ -2273,9 +2301,16 @@ async function executeStepBody(
   //
   // `_debug` is stripped first (pure) because the input-schema member validates the stripped input —
   // or, for a step that consumes its `input_map`, what the map builds (issue #688).
+  //
+  // #729 Q3 correction 1 (C1a): an engine step's input is the engine's at the agent's door too
+  // (T-13): the pre-claim check judges what the view judged and what `advance_run` will run it
+  // with — never the caller's params.
+  const engineInputAtAgentDoor = options.party === 'agent' && stepDef?.execution === 'auto';
   let debugOutput: unknown;
-  let effectiveInput = options.input;
-  if (Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
+  let effectiveInput = engineInputAtAgentDoor
+    ? engineStepInput(definition, run, options.command)
+    : options.input;
+  if (!engineInputAtAgentDoor && Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
     const { _debug, ...rest } = options.input;
     debugOutput = _debug;
     effectiveInput = rest;
@@ -2285,7 +2320,7 @@ async function executeStepBody(
     run,
     step: options.command,
     input: effectiveInput,
-    inputBy,
+    inputBy: engineInputAtAgentDoor ? 'engine' : inputBy,
   });
   const preClaim: PreClaimRefused | undefined =
     preClaimVerdict !== undefined && 'refused_by' in preClaimVerdict ? preClaimVerdict : undefined;
@@ -2529,10 +2564,12 @@ async function executeStepBody(
         );
         // #729 PR-0 (C66, #688): an engine step's input is the engine's, so its refusal rides the
         // reply as data (an agent step's input is its own answer, C3: returned as it is). T-13 (a):
-        // a step that builds its input with its map routes like every refusal before the claim.
+        // a step that builds its input with its map routes like every refusal before the claim —
+        // and so does any engine step judged on the engine's input at the agent's door (#729 Q3
+        // correction 1, C1b).
         if (stepDef === undefined || stepDef.execution === 'agent') return refused;
         const own = withOwnInputRefusal(refused, options.command);
-        return consumesInputMap(stepDef) && own.refusal !== undefined
+        return (consumesInputMap(stepDef) || engineInputAtAgentDoor) && own.refusal !== undefined
           ? { ...own, reply_kind: 'refusal' }
           : own;
       }
@@ -3958,7 +3995,7 @@ async function executeStepBody(
         intrinsic_action: blockedAction,
         reply_kind: 'error',
         error_code: recoverableCode,
-        context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it. Provision this runner (or re-run on a capable one), then follow next_actions.`,
+        context_hint: `Step '${options.command}' is blocked: its ${reqLabel} is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this ${requirement?.kind ?? 'capability'} can execute it.`,
         run_phase: (persistedBlockedRun ?? blockedRun).run_phase,
         ...blockedWays,
       };
