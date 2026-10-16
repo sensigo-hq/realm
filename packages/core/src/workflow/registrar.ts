@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
-import { WorkflowError } from '../types/workflow-error.js';
+import { WorkflowError, storedFileFactsOf } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { withFullStop } from '../engine/pending.js';
@@ -102,7 +102,9 @@ function workflowCopyError(facts: UnreadableFileFacts): WorkflowError {
 /** A read failure's stored-file facts (#729 PR-0: typed `facts`), or `undefined` for the registry's
  *  own probe failures, whose class, path and errno stay in `details` (Amendment 11). */
 function storedFileFacts(err: WorkflowError): UnreadableFileFacts | undefined {
-  return err.facts?.scope === 'file' ? err.facts : undefined;
+  // issue #759: a thin alias of core's one narrowing (`storedFileFactsOf`), to one file's facts.
+  const stored = storedFileFactsOf(err);
+  return stored?.scope === 'file' ? stored : undefined;
 }
 
 /** issue #719 (C3): what is wrong with a registered copy's bytes — they are not JSON, or they are

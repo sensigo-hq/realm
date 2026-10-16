@@ -3,13 +3,26 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import type { FailedAttemptRecord } from '@sensigo/realm';
 
-/** One-line validation summary: "<keyword> <instancePath>" of the first entry, plus a +N suffix. */
-function summarize(rec: FailedAttemptRecord): string {
+/** The two core renderers this command needs, loaded lazily with the rest of core (see the test's
+ *  header for the idiom). */
+type Renderers = Pick<typeof import('@sensigo/realm'), 'moreOf' | 'renderProblemsLines'>;
+
+/**
+ * issue #759: a record's problems — the count on the row (`13 problems`; a FLOOR `≥10 problems` for
+ * a record written before #759 that cannot say, the `≥N×` convention of `realm run list`), then
+ * every entry it holds as LINES and `and N more` as read (`error_count − entries`) — never an
+ * invented count.
+ */
+function summarize(rec: FailedAttemptRecord, core: Renderers): { label: string; lines: string[] } {
   const entries = Array.isArray(rec.validation_error_summary) ? rec.validation_error_summary : [];
-  if (entries.length === 0) return '';
-  const first = entries[0]!;
-  const head = `${first.keyword}${first.instancePath ? ` ${first.instancePath}` : ''}`.trim();
-  return entries.length > 1 ? `${head} (+${entries.length - 1} more)` : head;
+  const more = core.moreOf(rec);
+  const total = entries.length + (more ?? 0);
+  if (total === 0) return { label: '', lines: [] };
+  const label =
+    more === undefined
+      ? `≥${entries.length} problems`
+      : `${total} ${total === 1 ? 'problem' : 'problems'}`;
+  return { label, lines: core.renderProblemsLines(entries, more ?? 0) };
 }
 
 export const attemptsCommand = new Command('attempts')
@@ -17,7 +30,8 @@ export const attemptsCommand = new Command('attempts')
   .argument('<run-id>', 'ID of the run to inspect')
   .option('--json', 'Print the raw records as JSON instead of a table')
   .action(async (runId: string, opts: { json?: boolean }) => {
-    const { JsonFileStore, FailedAttemptStore } = await import('@sensigo/realm');
+    const { JsonFileStore, FailedAttemptStore, moreOf, renderProblemsLines } =
+      await import('@sensigo/realm');
     const store = new FailedAttemptStore(new JsonFileStore().runsDirPath);
     try {
       const { records, capped } = await store.read(runId);
@@ -43,10 +57,12 @@ export const attemptsCommand = new Command('attempts')
       for (const rec of records) {
         const ts = typeof rec.ts === 'string' ? rec.ts : '';
         const keyCount = typeof rec.submitted_key_count === 'number' ? rec.submitted_key_count : 0;
+        const { label, lines } = summarize(rec, { moreOf, renderProblemsLines });
         console.log(
           `${chalk.dim(ts)}  ${chalk.bold(rec.step_id)}  ${chalk.red(rec.error_code)}  ` +
-            `${keyCount} key(s)  ${summarize(rec)}`,
+            `${keyCount} key(s)${label !== '' ? `  ${label}` : ''}`,
         );
+        for (const line of lines) console.log(`    ${line}`);
       }
       if (capped) {
         console.log(

@@ -25,7 +25,24 @@ On an agent step, `input_schema` and `output_schema` are both checked against th
 - **The value must fit; nothing is changed.** A `default` in the schema is not applied. A run started with `{}` against a schema whose `region` has `default: eu` had the parameters `{}`.
 - **Extra fields are kept unless the schema forbids them.** An answer `{"answer": "42", "extra": "kept?"}` against a schema that names only `answer` was accepted and recorded whole. To refuse extra fields, add `additionalProperties: false`.
 - **The whole list of trace entries is checked at once.** `trace_schema` describes a list, with `type: array`.
-- **A refusal names the first problem found.** An answer that broke seven rules of its schema was refused with one: `/code must match pattern "^[A-Z]+-[0-9]+$"`.
+- **A refusal names every problem found, up to 10, and gives the total.** The reply carries the first 10 in `error_details.errors` and the total in `error_count`; `realm run attempts` and `realm agent`'s repair message print the 10 and `and N more`:
+
+  ```text
+  2026-10-16T17:54:01.097Z  extract  VALIDATION_OUTPUT_SCHEMA  8 key(s)  13 problems
+      - (root): must have required property 'area' [required] (missing property: 'area')
+      - (root): must have required property 'reporter' [required] (missing property: 'reporter')
+      - (root): must have required property 'product' [required] (missing property: 'product')
+      - (root): must have required property 'version' [required] (missing property: 'version')
+      - (root): must NOT have additional properties [additionalProperties] (additional property: 'note')
+      - /code: must match pattern "^[A-Z]+-[0-9]+$" [pattern]
+      - /title: must NOT have fewer than 5 characters [minLength]
+      - /priority: must be equal to one of the allowed values [enum]
+      - /estimate: must be >= 0 [minimum]
+      - /tags: must NOT have more than 3 items [maxItems]
+      and 3 more
+  ```
+
+- **Every rule is checked, so bound what an answer may hold.** Realm checks an answer against every rule of its schema, not only up to the first one it breaks. The validator's own notes warn that this can take long for a large answer against a costly rule, such as a `pattern` over a long string; give string fields a `maxLength` and lists a `maxItems`.
 
 ## Which JSON Schema is accepted
 
@@ -112,8 +129,10 @@ research:
 Called with one entry, in the default mode `warn`, the step completed and the reply carried:
 
 ```text
-Trace schema violation for step 'research': must NOT have fewer than 2 items
+Trace schema violation for step 'research': (root) must NOT have fewer than 2 items
 ```
+
+The warning names every violation, up to 10, then `and N more`, and `validation_errors` in the step's trace summary is the number of violations found (added after version 0.47.0, whose check stopped at the first violation, so a run it recorded can count fewer).
 
 With `trace_validation_mode: enforce`, the same call was refused, and the step stayed open:
 

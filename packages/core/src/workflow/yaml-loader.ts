@@ -51,6 +51,11 @@ import {
   knownSchemaKeywords,
 } from '../validation/input-schema.js';
 import {
+  describeValidationProblems,
+  renderProblemsSentence,
+  validationFactsOfError,
+} from '../validation/validation-problems.js';
+import {
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
 } from './structured-output-eligibility.js';
@@ -1980,7 +1985,9 @@ function parseWorkflowString(
               // it discriminates: a VALIDATION_OUTPUT_SCHEMA WorkflowError (default_output fails the
               // schema — the live case) and a raw Error with NO `.details` at all (reading
               // `.details.errors` on it throws a TypeError that would escape the loader mid-walk —
-              // verified empirically). Discriminate.
+              // verified empirically). Discriminate. issue #759 (Part D.4(c)): the refusal's rows
+              // are its typed facts, named through the one composer in the pointer words (capped,
+              // with the remainder) — never a raw JSON dump of the rows.
               try {
                 validateOutputSchema(
                   exhaustionBlock['default_output'] as Record<string, unknown>,
@@ -1988,12 +1995,16 @@ function parseWorkflowString(
                   stepName,
                 );
               } catch (err) {
+                const facts =
+                  err instanceof WorkflowError ? validationFactsOfError(err) : undefined;
+                const problems =
+                  facts !== undefined
+                    ? renderProblemsSentence(
+                        describeValidationProblems(facts.errors, 'pointer', facts.error_count),
+                      )
+                    : '';
                 const detail =
-                  err instanceof WorkflowError
-                    ? JSON.stringify(err.details['errors'])
-                    : err instanceof Error
-                      ? err.message
-                      : String(err);
+                  problems !== '' ? problems : err instanceof Error ? err.message : String(err);
                 errors.push(
                   withStepLine(
                     stepName,

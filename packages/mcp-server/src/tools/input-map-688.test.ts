@@ -176,7 +176,8 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
       code: 'VALIDATION_INPUT_SCHEMA',
       action: 'report_to_user',
       hint: "Error during 'publish'. Run phase: 'running'. For 'publish', correct its input_map or its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.",
-      details: ['errors'],
+      // issue #759: the list's total rides beside it (an input_map-built refusal — no countdown).
+      details: ['errors', 'error_count'],
       missing: 'text',
       received: [],
     });
@@ -287,7 +288,8 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
       code: 'VALIDATION_INPUT_SCHEMA',
       action: 'report_to_user',
       hint: "Error during 'read_note'. Run phase: 'running'. For 'read_note', start a run with params that fit (its param 'path'), or correct its input_map or its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.",
-      details: ['errors'],
+      // issue #759: the list's total rides beside it (an input_map-built refusal — no countdown).
+      details: ['errors', 'error_count'],
     });
   });
 
@@ -364,7 +366,7 @@ describe('#688 correction — the docs say what a mapped step called by name is 
     // 5 (the way out only when nothing else can run) and 6 (a `uses_service` step).
     claim(
       'docs/reference/mcp/tools.md',
-      '| You called an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`), and what the map builds does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "resolve_precondition"` when another step can be called, else `"report_to_user"` (added after version 0.47.0, which always said `report_to_user`), and in `error_details` the rules broken, without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
+      '| You called an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`), and what the map builds does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "resolve_precondition"` when another step can be called, else `"report_to_user"` (added after version 0.47.0, which always said `report_to_user`), and in `error_details` the rules broken (up to 10, with the total in `error_count`), without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
     );
   });
 

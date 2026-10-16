@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { loadWorkflowFromString, loadWorkflowFromStringWithDiagnostics } from './yaml-loader.js';
-import { WorkflowError } from '../types/workflow-error.js';
+import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
 import {
   compileSchema,
   validateRunParams,
@@ -854,6 +854,13 @@ describe('#586 schema admission — the four authored keys', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
     expect(stripped.split('new Ajv(').length - 1).toBe(1);
+    // (a') issue #759: that ONE construction's options object — from `new Ajv({` to its closing
+    // `})` — holds `allErrors: true` (a refused answer names every problem). Red: the option set
+    // outside the object, or left off.
+    const open = stripped.indexOf('new Ajv({');
+    expect(open).toBeGreaterThan(-1);
+    const options = stripped.slice(open, stripped.indexOf('})', open));
+    expect(options).toMatch(/\ballErrors: true,/);
     // (b) the loader's admission closure compiles through that helper and constructs nothing. The
     // three pre-existing loader constructions (extensions declaration, adapter config_schema,
     // service entry) compile CODE-declared schemas and are outside this slice by construction.
@@ -900,7 +907,10 @@ describe('#586 schema admission — the four authored keys', () => {
       expect(e.category).toBe('VALIDATION');
       expect(e.agentAction).toBe('provide_input');
       expect(e.retryable).toBe(false);
-      expect((e.details as { errors: unknown[] }).errors).toHaveLength(1);
+      // issue #759 (Amendment 11): the rows are the refusal's typed facts (one problem: no
+      // countdown on a params refusal).
+      expect((e.facts as ValidationErrorFacts).errors).toHaveLength(1);
+      expect((e.facts as ValidationErrorFacts).error_count).toBe(1);
       // The old call said `Invalid input for step '<id>'` — a false statement about what ran.
       expect(e.message).not.toContain('step');
     }

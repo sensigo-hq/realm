@@ -1,7 +1,13 @@
 // Tests for the pure failed-attempt record builder + serializer (P2 observability).
 import { describe, it, expect } from 'vitest';
-import { buildFailedAttemptRecord, serializeFailedAttemptLine } from './failed-attempt-record.js';
-import type { BuildFailedAttemptInput } from './failed-attempt-record.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import {
+  buildFailedAttemptRecord,
+  moreOf,
+  serializeFailedAttemptLine,
+} from './failed-attempt-record.js';
+import type { BuildFailedAttemptInput, FailedAttemptRecord } from './failed-attempt-record.js';
 
 function baseInput(over: Partial<BuildFailedAttemptInput> = {}): BuildFailedAttemptInput {
   return {
@@ -306,5 +312,103 @@ describe('serializeFailedAttemptLine', () => {
     const { line, truncated } = serializeFailedAttemptLine(obj, 256);
     expect(truncated).toBe(true);
     expect(Buffer.byteLength(line, 'utf8')).toBeLessThanOrEqual(256);
+  });
+});
+
+// issue #759 (Part E): the record says how many problems there were — `error_count`, the total
+// before the cap, as the refusal carried it — and a reader computes "more" from the record AS READ
+// (`error_count − entries`); a record written before #759 renders a floor, never an invented count.
+// A failure prints counts only.
+describe('issue #759 — the record carries the total; "more" as read', () => {
+  /** Ten whitelisted-shape rows (the refusal's capped list) with 200-character messages. */
+  const tenRows = Array.from({ length: 10 }, (_, i) => ({
+    instancePath: `/f${i}`,
+    schemaPath: '#/required',
+    keyword: 'required',
+    message: 'm'.repeat(200),
+    params: { missingProperty: `f${i}` },
+  }));
+
+  it('`error_count` is written from the input, never recounted from the rows (red: recount → 10)', () => {
+    const rec = buildFailedAttemptRecord(baseInput({ ajv_errors: tenRows, error_count: 13 }));
+    expect({ entries: rec.validation_error_summary.length, total: rec.error_count }).toEqual({
+      entries: 10,
+      total: 13,
+    });
+  });
+
+  it('`error_count` is absent when the caller has none', () => {
+    const rec = buildFailedAttemptRecord(baseInput({ ajv_errors: tenRows }));
+    expect('error_count' in rec).toBe(false);
+  });
+
+  it('the 3,072-byte trim pops entries from the end and keeps the total: 13 problems, 3 entries left → `more` 10 AS READ (reds: the trim drops the count; `− 10`)', () => {
+    // sixteen 100-character key names leave room for exactly three entries (measured)
+    const params = Object.fromEntries(
+      Array.from({ length: 16 }, (_, i) => [`k${i}`.padEnd(100, 'x'), 1]),
+    );
+    const rec = buildFailedAttemptRecord(
+      baseInput({ ajv_errors: tenRows, error_count: 13, params }),
+    );
+    const serialized = serializeFailedAttemptLine({ ...rec });
+    // as the MCP sidecar persists a reduced line
+    const read = {
+      ...(JSON.parse(serialized.line) as FailedAttemptRecord),
+      ...(serialized.truncated ? { truncated: true as const } : {}),
+    };
+    expect({
+      truncated: serialized.truncated,
+      entries: read.validation_error_summary.length,
+      total: read.error_count,
+      more: moreOf(read),
+    }).toEqual({ truncated: true, entries: 3, total: 13, more: 10 });
+  });
+
+  it('a record written before #759 (no count): exact only when it holds fewer than ten entries and was not trimmed, else a floor (`undefined`) — never `and 0 more` (red: 0 for every old record)', () => {
+    const entries = (n: number) =>
+      buildFailedAttemptRecord(baseInput({ ajv_errors: tenRows.slice(0, n) }))
+        .validation_error_summary;
+    expect({
+      tenEntries: moreOf({ validation_error_summary: entries(10) }),
+      threeEntries: moreOf({ validation_error_summary: entries(3) }),
+      threeTrimmed: moreOf({ validation_error_summary: entries(3), truncated: true }),
+      counted: moreOf({ validation_error_summary: entries(3), error_count: 13 }),
+    }).toEqual({ tenEntries: undefined, threeEntries: 0, threeTrimmed: undefined, counted: 10 });
+  });
+
+  it("the record keeps the one whitelist without the schema's allowed values (#217/#224's choice)", () => {
+    const rec = buildFailedAttemptRecord(
+      baseInput({
+        ajv_errors: [
+          {
+            instancePath: '/c',
+            schemaPath: '#/properties/c/enum',
+            keyword: 'enum',
+            message: 'must be equal to one of the allowed values',
+            params: { allowedValues: ['alpha', 'beta'] },
+          },
+        ],
+      }),
+    );
+    expect(Object.keys(rec.validation_error_summary[0] ?? {}).sort()).toEqual([
+      'instancePath',
+      'keyword',
+      'message',
+      'schemaPath',
+    ]);
+  });
+
+  it('the cap is the imported const, never a local number (red: a local `10` beside it)', () => {
+    const src = readFileSync(
+      fileURLToPath(new URL('./failed-attempt-record.ts', import.meta.url)),
+      'utf8',
+    );
+    expect({
+      imports:
+        /import \{[^}]*VALIDATION_PROBLEMS_SHOWN[^}]*\} from '\.\.\/validation\/validation-problems\.js'/.test(
+          src,
+        ),
+      localCap: /const MAX_SUMMARY_ENTRIES|>= 10\b/.test(src),
+    }).toEqual({ imports: true, localCap: false });
   });
 });

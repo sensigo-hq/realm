@@ -8,6 +8,7 @@ import {
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   buildFailedAttemptRecord,
+  validationListOf,
   serializeFailedAttemptLine,
   getWorkflowForRun,
   endedRunWaysSentence,
@@ -141,20 +142,19 @@ async function emitFailedAttemptTelemetry(
     if (result.stopped_step !== undefined && result.stopped_step !== args.command) return;
     const code = result.error_code;
     if (code === undefined || !VALIDATION_TELEMETRY_CODES.has(code)) return;
-    // issue #220: VALIDATION_EXHAUSTED carries its ajv errors under `last_ajv_errors` (the last
-    // counted rejection's own errors, threaded through by countRejection) — every other code here
-    // carries them under the pre-existing `errors` key.
-    const ajvErrors =
-      code === 'VALIDATION_EXHAUSTED'
-        ? result.error_details?.['last_ajv_errors']
-        : result.error_details?.['errors'];
+    // issue #759 (Part D.2): the refusal's list and its total, read from the CORE reply through
+    // core's one reader — the two validation codes carry them as typed `error.facts`;
+    // VALIDATION_EXHAUSTED under `last_ajv_errors` / `last_error_count` (#220: the last counted
+    // rejection's own errors); VALIDATION_TRACE_SCHEMA under `errors` / `error_count`.
+    const list = validationListOf(result);
     record = buildFailedAttemptRecord({
       run_id: args.run_id,
       workflow_id: workflowId,
       step_id: args.command,
       ts: new Date().toISOString(),
       error_code: code,
-      ajv_errors: Array.isArray(ajvErrors) ? ajvErrors : [],
+      ajv_errors: list !== undefined ? [...list.errors] : [],
+      ...(list?.error_count !== undefined ? { error_count: list.error_count } : {}),
       params: args.params ?? {},
       trace_entry_count: args.trace?.length ?? 0,
     });
