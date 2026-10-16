@@ -8,8 +8,7 @@ import {
   JsonWorkflowStore,
   WorkflowError,
   getWorkflowForRun,
-  resolvePreExecutionAgentAction,
-  buildNextActions,
+  buildPreExecutionErrorEnvelope,
   classifyInProgressClaims,
   findCapabilityBlockedSteps,
   classifyRunHealth,
@@ -21,9 +20,11 @@ import {
   composeDriveFailureCosts,
   describePending,
   composeNextActionsStatusWord,
+  composeWaysOn,
+  definitionAbsenceOf,
   dueExpiry,
-  answerAction,
-  openQuestionOf,
+  loadSnapshot,
+  agentActionOf,
   offeredResumeWay,
   pendingCleanupWay,
   waitingOnAnswer as waitingOnAnswerOf,
@@ -32,8 +33,12 @@ import {
   type ADVANCE_OWED,
   type EngineRunnable,
   type RunPhase,
-  type NextAction,
   type ClaimState,
+  type AgentAction,
+  type Basis,
+  type WaysContext,
+  type LoadErrorCode,
+  escapedBoundedValue,
   type SkipDetail,
   type RunStore,
   type WorkflowDefinition,
@@ -45,6 +50,18 @@ import {
   runReadError,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import {
+  MCP_POLL_AFTER_MS,
+  PERSON_BLOCK,
+  renderReply,
+  renderWaysOf,
+  toolContentOf,
+  type McpAlsoEntry,
+  type McpElsewhereEntry,
+  type McpNextAction,
+  type OperatorRoute,
+  type WithPersonBlock,
+} from '../render-reply.js';
 import {
   assertToolStores,
   isReleaseLineRefusal,
@@ -89,6 +106,8 @@ export interface HandleRunStateStores {
   registry?: ExtensionRegistry;
   /** Per-definition registry resolution; wins over `registry`. A failure falls back to none. */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+  /** issue #729 PR-0 (P-6): the operator route the launching program injected, if any. */
+  operatorRoute?: OperatorRoute;
 }
 
 /**
@@ -221,9 +240,25 @@ export interface RunStateSummary {
    * except a `claim_stale` status may accompany still-actionable steps when a dead claim coexists
    * with eligible work mid-fan-out (the dead claim overrides the status but does not hide the work).
    */
-  next_actions: NextAction[];
+  next_actions: McpNextAction[];
   /** Diagnostic classification — distinguishes a genuinely-stuck run from "nothing pending". */
   next_actions_status: NextActionsStatus;
+  /**
+   * issue #729 PR-0 (D-8, T-22): the agent's next act on this run, read as an `ok` reply reads it —
+   * `report_to_user` when nothing can be called and the run cannot go on, `await` when it waits on
+   * another program's step; absent when a way is offered or the run has ended.
+   */
+  agent_action?: AgentAction;
+  /** issue #729 PR-0 (P-2): on an `await` read — read the run again no sooner than this. */
+  poll_after_ms?: number;
+  /** issue #729 PR-0 (P-2): on an `await` read, the deadline the record states for the blocker. */
+  until?: string;
+  /** issue #729 PR-0 (A-1): reading and ending the run — never counted as a next step. */
+  also?: McpAlsoEntry[];
+  /** issue #729 PR-0 (D2 §5): ways only an operator can take, with why — never a command. */
+  elsewhere?: McpElsewhereEntry[];
+  /** issue #729 PR-0 (D-9): what the ways were judged on. */
+  basis?: Basis;
   /**
    * Advisory (issue #101): non-healthy in-progress claims that are NOT the open-gate step —
    * present on any non-terminal run whenever such claims exist. This surfaces an after-claim wedge
@@ -350,22 +385,34 @@ export interface RunStateSummary {
 }
 
 /**
+ * #729 PR-0 (A-5, F-Y11; Amendment 16, Q19): the warning a read carries when this server could not
+ * load the project's code — its code first (or that it carries none), then the loader's message
+ * through the one escaped, bounded value renderer (E1 (b)).
+ */
+function loadFailureWarning(workflowId: string, code: LoadErrorCode, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return `this server could not load the project code for workflow '${workflowId}' (${code === 'uncoded' ? 'no error code' : code}): ${escapedBoundedValue(message)}; no step can be run or advanced from this server until it loads.`;
+}
+
+/**
  * Business logic for the get_run_state tool.
  * Returns a structured summary of the run without the full evidence array.
  */
 export async function handleGetRunState(
   args: { run_id: string; include_steps?: boolean | undefined },
   stores?: HandleRunStateStores,
-): Promise<RunStateSummary> {
+): Promise<WithPersonBlock<RunStateSummary>> {
   assertToolStores(stores, 'handleGetRunState');
   const runStore = stores?.runStore ?? new JsonFileStore();
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
   // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
   // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
-  // untyped throw, ENGINE_STORE_FAILED naming its cause.
-  const run = await runStore.get(args.run_id).catch((err: unknown) => {
+  // untyped throw, ENGINE_STORE_FAILED naming its cause. #729 PR-0 (A-9): through the one snapshot
+  // constructor — the reading taken before the load is the one every judgement below uses.
+  const snap = await loadSnapshot(runStore, args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });
+  const run = snap.record;
 
   // #134 capability-block detection — definition-free (reads capability_blocks + the four step sets),
   // computed once and used both to refine the status (below) and as the advisory array (in the return).
@@ -403,11 +450,37 @@ export async function handleGetRunState(
   // `on_expiry` (decision C95: carrying that out is owed engine work, read through the view below);
   // no/unresolved workflow → workflow_unresolved; else describePending → ok | advance_owed (issue
   // #625 PR-2a).
-  const now = new Date();
+  const now = snap.at;
   // `definition` is hoisted (issue #221) so classifyRunHealth below can reuse it when resolved —
   // scoping/resolution logic here is otherwise UNCHANGED.
-  let nextActions: NextAction[] = [];
   let nextActionsStatus: NextActionsStatus;
+  // #729 PR-0: the run's ways — composed ONCE by core's composer on this read's snapshot, with the
+  // registry the view judged with (an observer when none), and rendered by the MCP door.
+  let rendered: ReturnType<typeof renderWaysOf> | undefined;
+  // #729 PR-0 (A-5, F-Y11; Amendment 16, Q19): this server's project code failed to load — nothing it
+  // would run can be offered (`enactor_load_failed`), and a warning names the error.
+  let loadFailed: LoadErrorCode | undefined;
+  const waysNow = (): ReturnType<typeof renderWaysOf> => {
+    rendered ??= renderWaysOf(
+      composeWaysOn(snap, {
+        definition: waysDefinition,
+        enactor:
+          loadFailed !== undefined
+            ? { kind: 'load_failed', error_code: loadFailed }
+            : registry !== undefined
+              ? { kind: 'this_program', registry }
+              : { kind: 'observer' },
+        store: { persistsClaims: runStore.persistsClaims === true },
+      }),
+      stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {},
+    );
+    return rendered;
+  };
+  // #729 PR-0 (A-5, T-21): the definition the ways are judged against, or why it is absent.
+  let waysDefinition: WaysContext['definition'] = {
+    absent: 'not_read',
+    workflow_id: run.workflow_id,
+  };
   let definition: WorkflowDefinition | undefined;
   // issue #558 PR-T — the failure the definition read produced, when it produced one.
   let definitionError: { code: string; message: string; class?: string } | undefined;
@@ -420,10 +493,18 @@ export async function handleGetRunState(
   // (`cleanup_pending`); at an open question,
   // the steps it holds (`waiting_on_answer`). Each read of the workflow is best-effort: a workflow
   // that cannot be read leaves that field out.
-  const readWorkflow = async (): Promise<WorkflowDefinition | undefined> =>
-    stores?.workflowStore === undefined
-      ? undefined
-      : await stores.workflowStore.get(run.workflow_id).catch(() => undefined);
+  const readWorkflow = async (): Promise<WorkflowDefinition | undefined> => {
+    if (stores?.workflowStore === undefined) return undefined;
+    try {
+      const read = await stores.workflowStore.get(run.workflow_id);
+      waysDefinition = { ok: read };
+      return read;
+    } catch (err) {
+      const absence = definitionAbsenceOf(err, run);
+      if (absence !== undefined) waysDefinition = absence;
+      return undefined;
+    }
+  };
   let resumable: { steps: string[]; command: string } | undefined;
   let waitingOnAnswer: string[] = [];
   // F12: judged at this call's clock (a lease that has not passed holds the cleanup step).
@@ -436,11 +517,9 @@ export async function handleGetRunState(
     resumable = ended === undefined ? undefined : offeredResumeWay(run, ended);
   } else if (run.pending_gate !== undefined && dueExpiry(run.pending_gate, now) === undefined) {
     nextActionsStatus = 'awaiting_human';
-    // decision C103: the question is named by its answer — core's one composer, never with the claim
-    // token (only the reply that opened the question carries it). Read from the record alone: no
-    // definition is needed to answer a question.
-    const question = openQuestionOf(run);
-    if (question !== undefined) nextActions = [answerAction(run.id, question)];
+    // decision C103: the question is named by its answer — the `respond` way, never with the claim
+    // token (only the reply that opened the question carries it). #729 PR-0 (T-21): answering reads
+    // the definition, so the way is offered when the definition can be found.
     const held = await readWorkflow();
     waitingOnAnswer = held === undefined ? [] : waitingOnAnswerOf(held, run);
   } else {
@@ -458,9 +537,13 @@ export async function handleGetRunState(
             // below instead of being discarded. Live runs only: the terminal guard at the
             // classify call is the pre-existing frozen R3 guard (#331), untouched here.
             definitionError = toDefinitionError(err);
+            // #729 PR-0 (T-21): why the ways cannot be judged against it.
+            const absence = definitionAbsenceOf(err, run);
+            if (absence !== undefined) waysDefinition = absence;
             return undefined;
           })
         : undefined;
+    if (definition !== undefined) waysDefinition = { ok: definition };
     if (definition === undefined) {
       nextActionsStatus = 'workflow_unresolved';
     } else {
@@ -479,10 +562,14 @@ export async function handleGetRunState(
         );
       } catch (err) {
         if (isReleaseLineRefusal(err)) throw err;
+        // The view keeps today's observer reading (no registry: a capability is `unknown`).
         registry = undefined;
+        if (stores?.registryProvider !== undefined) {
+          loadFailed = err instanceof WorkflowError ? err.code : 'uncoded';
+          warnings.push(loadFailureWarning(run.workflow_id, loadFailed, err));
+        }
       }
       pending = describePending(definition, run, registry, now);
-      nextActions = buildNextActions(definition, run, registry, now);
       nextActionsStatus = composeNextActionsStatusWord(pending) ?? 'ok';
     }
 
@@ -505,7 +592,7 @@ export async function handleGetRunState(
         // F14 (review F-R5): only when a claim is left once the question's own is set aside — an
         // empty list is no claim in flight, never `claim_unknown_age`.
         claimStates.length > 0 &&
-        nextActions.length === 0 &&
+        waysNow().next_actions.length === 0 &&
         !claimStates.includes('healthy')
       ) {
         nextActionsStatus = 'claim_unknown_age';
@@ -523,7 +610,7 @@ export async function handleGetRunState(
     // Without the definition there is no view; the marker is then the only fact (the #134 rule).
     const blockedOnCapability =
       pending !== undefined
-        ? pending.act === undefined &&
+        ? pending.owed.length === 0 &&
           pending.engine_runnable.some((e) => e.refused_by === 'capability')
         : capabilityBlocks.length > 0;
     if (blockedOnCapability) {
@@ -610,6 +697,10 @@ export async function handleGetRunState(
   // complete-only stamping), via the SAME shared helper that stamping itself now calls.
   const defaultedSteps = deriveDefaultedSteps(run.evidence);
 
+  // #729 PR-0 (D-8 row 2, T-22): this read's action word, as an `ok` reply on the same run reads it.
+  const ways = waysNow();
+  const agentAction = agentActionOf(undefined, 'ok', ways.rendered);
+
   /* eslint-disable-next-line no-restricted-syntax --
    * issue #367 (part 2), AUTHORIZED: this is an envelope ECHO of a stored value, not a writer.
    * Nothing here reaches a store — the object is the MCP response shape.
@@ -665,8 +756,15 @@ export async function handleGetRunState(
     // agent can tell "no failures" from "this surface does not report them".
     ...(run.drive_failures !== undefined ? { drive_failures: run.drive_failures } : {}),
     ...(run.aborted_at !== undefined ? { abort_context: run.aborted_at } : {}),
-    next_actions: nextActions,
+    next_actions: ways.next_actions,
     next_actions_status: nextActionsStatus,
+    ...(agentAction !== undefined ? { agent_action: agentAction } : {}),
+    ...(agentAction === 'await' ? { poll_after_ms: MCP_POLL_AFTER_MS } : {}),
+    ...(agentAction === 'await' && ways.until !== undefined ? { until: ways.until } : {}),
+    ...(ways.also.length > 0 ? { also: ways.also } : {}),
+    ...(ways.elsewhere.length > 0 ? { elsewhere: ways.elsewhere } : {}),
+    ...(ways.narrowed !== undefined ? { basis: ways.narrowed.basis } : {}),
+    ...(ways.person !== undefined ? { [PERSON_BLOCK]: ways.person } : {}),
     ...(stuckClaims.length > 0 ? { stuck_claims: stuckClaims } : {}),
     ...(stepClaims.length > 0 ? { step_claims: stepClaims } : {}),
     ...(capabilityBlocks.length > 0
@@ -727,40 +825,39 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
     async (args) => {
       try {
         const result = await handleGetRunState(args, opts);
-        return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
+        return toolContentOf(result as unknown as Record<string, unknown>, sseJsonStringify);
       } catch (err) {
-        const agentAction =
-          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
-        const message = err instanceof Error ? err.message : String(err);
+        const workflowErr =
+          err instanceof WorkflowError
+            ? err
+            : new WorkflowError(err instanceof Error ? err.message : String(err), {
+                code: 'ENGINE_INTERNAL',
+                category: 'ENGINE',
+                agentAction: 'report_to_user',
+                retryable: false,
+              });
         const contextHint =
           err instanceof WorkflowError && err.code === 'STATE_RUN_NOT_FOUND'
             ? `Run '${args.run_id}' not found.`
             : `An error occurred while loading run state.`;
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify({
-                command: 'get_run_state',
-                run_id: args.run_id,
-                status: 'error',
-                data: {},
-                evidence: [],
-                warnings: [],
-                errors: [message],
-                // issue #625 PR-2a: the code and details, as every other tool's error reply — a
-                // release-line refusal from the registry this tool now resolves names its role there.
-                ...(err instanceof WorkflowError ? { error_code: err.code } : {}),
-                ...(err instanceof WorkflowError && Object.keys(err.details).length > 0
-                  ? { error_details: err.details }
-                  : {}),
-                agent_action: agentAction,
-                context_hint: contextHint,
-                next_actions: [],
-              }),
-            },
-          ],
-        };
+        // issue #625 PR-2a: the code and details, as every other tool's error reply — a release-line
+        // refusal from the registry this tool now resolves names its role there. #729 PR-0
+        // (Amendments 9, 11): `error_details` through the ONE carrier — a #719 error's typed facts,
+        // else the untouched details.
+        const rendered = renderReply(
+          buildPreExecutionErrorEnvelope('get_run_state', args.run_id, 0, workflowErr, contextHint),
+          opts?.operatorRoute !== undefined ? { operatorRoute: opts.operatorRoute } : {},
+        );
+        // This reply's field set is as before PR-0: no run was read (no version), and an untyped
+        // throw names no code.
+        const { run_version: _version, error_code: _code, ...envelope } = rendered.envelope;
+        return toolContentOf(
+          {
+            ...envelope,
+            ...(err instanceof WorkflowError ? { error_code: err.code } : {}),
+          },
+          sseJsonStringify,
+        );
       }
     },
   );

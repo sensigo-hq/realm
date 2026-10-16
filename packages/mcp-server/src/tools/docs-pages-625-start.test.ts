@@ -18,8 +18,8 @@ import {
   JsonWorkflowStore,
   ExtensionRegistry,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  composeWaysAt,
   describePending,
-  describeNext,
   loadWorkflowFromString,
   type WorkflowDefinition,
 } from '@sensigo/realm';
@@ -27,6 +27,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createRealmMcpServer } from '../server.js';
+import { renderWaysOf } from '../render-reply.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const CLI = join(ROOT, 'packages/cli/dist/index.js');
@@ -307,6 +308,10 @@ describe(
           runnable_here: false,
           refused_by: check,
           refusal,
+          // #729 PR-0 (D-L, E1 (b); add-only): a failed precondition's facts.
+          ...(check === 'precondition'
+            ? { precondition: { expression: 'run.params.ok == true', value: 'undefined' } }
+            : {}),
         })),
         {
           step: 'h',
@@ -616,12 +621,18 @@ describe(
       const def = await workflowStore.get('cap');
       const id = await batchRun(call, 'cap');
       // Neither extensions nor a record: unknown, and the act names it (the library and inspect).
-      const fresh = describePending(def, await runStore.get(id), undefined, new Date());
+      const record = await runStore.get(id);
+      const fresh = describePending(def, record, undefined, new Date());
+      // #729 PR-0: the act is the advance way, as the MCP door renders it from the ways composed by
+      // a caller with neither extensions nor a record of them (an observer).
+      const act = renderWaysOf(
+        composeWaysAt(record, new Date(), { definition: def }),
+      ).next_actions.find((n) => n.instruction?.tool === 'advance_run');
       const owedLine = realm(h, ['run', 'inspect', id]).out.find((l) => l.startsWith('Owed'));
       // (a) red when a caller with neither judges the step, or the act stops naming it; (b) prints both.
       expect({
         view: fresh.engine_runnable,
-        act: fresh.act?.orientation,
+        act: act?.orientation,
         inspect: owedLine,
       }).toEqual({
         view: [{ step: 'h', runnable_here: 'unknown' }],
@@ -700,7 +711,8 @@ describe(
       //     inspect does not print the page's line; (b) prints the view, the sentence and the screen.
       expect({
         view: marked.engine_runnable,
-        next: describeNext(marked, twice, def),
+        // #729 PR-0: what comes next is the MCP door's sentence over the ways (describeNext died).
+        next: renderWaysOf(composeWaysAt(twice, new Date(), { definition: def })).next_sentence,
         inspect: inspected.find((l) => l.startsWith('Could not run')),
       }).toEqual({
         view: [

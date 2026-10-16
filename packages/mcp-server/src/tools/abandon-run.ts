@@ -6,11 +6,12 @@ import {
   JsonFileStore,
   WorkflowError,
   abandonRun,
-  resolvePreExecutionAgentAction,
+  buildPreExecutionErrorEnvelope,
   type RunPhase,
   type RunStore,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { renderReply, toolContentOf } from '../render-reply.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleAbandonRunStores {
@@ -90,57 +91,42 @@ export function registerAbandonRun(server: McpServer, opts?: HandleAbandonRunSto
         const result = await handleAbandonRun(args, opts);
         return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };
       } catch (err) {
-        const agentAction =
-          err instanceof WorkflowError ? resolvePreExecutionAgentAction(err) : 'report_to_user';
-        const message = err instanceof Error ? err.message : String(err);
+        const workflowErr =
+          err instanceof WorkflowError
+            ? err
+            : new WorkflowError(err instanceof Error ? err.message : String(err), {
+                code: 'ENGINE_INTERNAL',
+                category: 'ENGINE',
+                agentAction: 'report_to_user',
+                retryable: false,
+              });
         const code = err instanceof WorkflowError ? err.code : undefined;
-        // issue #558 PR-C: core's gate refusal is surface-neutral and carries the gate in
-        // `details`; THIS surface appends the MCP call an agent can actually make. `instanceof`
-        // narrowing, never a duck-typed cast. The gate arm is lifted OUT of the code-keyed ternary
-        // chain below so `errors[0]` and `context_hint` read the same narrowed details.
-        const gateDetails =
-          err instanceof WorkflowError &&
-          err.code === 'STATE_TRANSITION_DENIED' &&
-          typeof err.details['gate_id'] === 'string'
-            ? {
-                gateId: err.details['gate_id'],
-                choices: Array.isArray(err.details['choices'])
-                  ? err.details['choices'].filter((c): c is string => typeof c === 'string')
-                  : [],
-              }
-            : undefined;
-        const errorText =
-          gateDetails !== undefined
-            ? `${message} Answer it: submit_human_response {run_id: '${args.run_id}', gate_id: '${gateDetails.gateId}', choice: <one of: ${gateDetails.choices.join(', ')}>}.`
-            : message;
+        // #729 PR-0 (Table rows 39, 40): core's refusal states the fact; its way on — the open
+        // question's answer, or reading an ended run — is the error's typed remedy, which the one
+        // renderer words (the `details` re-parse is gone).
         const contextHint =
           code === 'STATE_RUN_NOT_FOUND'
             ? `Run '${args.run_id}' not found.`
             : code === 'STATE_RUN_TERMINAL'
               ? `Run '${args.run_id}' is already terminal; nothing to abandon.`
               : code === 'STATE_TRANSITION_DENIED'
-                ? `The run is waiting on a human gate; submit_human_response answers it, then abandon_run is possible.`
+                ? `The run is waiting on a human gate, so it cannot be abandoned yet.`
                 : `An error occurred while abandoning the run.`;
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify({
-                command: 'abandon_run',
-                run_id: args.run_id,
-                status: 'error',
-                data: {},
-                evidence: [],
-                warnings: [],
-                errors: [errorText],
-                ...(code !== undefined ? { error_code: code } : {}),
-                agent_action: agentAction,
-                context_hint: contextHint,
-                next_actions: [],
-              }),
-            },
-          ],
-        };
+        const rendered = renderReply(
+          buildPreExecutionErrorEnvelope('abandon_run', args.run_id, 0, workflowErr, contextHint),
+        );
+        // This reply's field set is as before PR-0: no run was read (no version), the refusal's
+        // `details` are not published here, and an untyped throw names no code.
+        const {
+          run_version: _version,
+          error_details: _details,
+          error_code: _code,
+          ...envelope
+        } = rendered.envelope;
+        return toolContentOf(
+          { ...envelope, ...(code !== undefined ? { error_code: code } : {}) },
+          sseJsonStringify,
+        );
       }
     },
   );

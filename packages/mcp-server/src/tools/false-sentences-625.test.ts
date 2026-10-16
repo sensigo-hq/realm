@@ -8,7 +8,8 @@
 //     except beside a claim past its time, where the status is `claim_stale` and the act stays.
 //   - G6-R6: a step the engine refuses before its claim stops nothing; a step that fails, or a step
 //     called by name that is refused, does.
-//   - F-R1: five standard rules, plus two about concurrent attempts that are always added.
+//   - F-R1: six standard rules (#729 PR-0, A9: the sixth for `also`/`elsewhere`), plus two about
+//     concurrent attempts that are always added.
 //   - F-R2: the protocol no longer forbids `execute_step` for an `auto` step — called by name, it
 //     runs it.
 //   - F-R3: `create_workflow`, `submit_human_response` and `advance_run` name an unknown argument;
@@ -237,10 +238,10 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     });
   });
 
-  it('F-R1: without protocol.rules, five standard rules and the two always added — seven', async () => {
+  it('F-R1: without protocol.rules, six standard rules and the two always added — eight', async () => {
     claim(
       TOOLS,
-      "| `rules` | The rules to follow. The workflow's `protocol.rules`, or five standard rules; two rules about concurrent attempts are always added after either. |",
+      "| `rules` | The rules to follow. The workflow's `protocol.rules`, or six standard rules; two rules about concurrent attempts are always added after either. |",
     );
     const { call, workflowStore } = await connect();
     const steps = {
@@ -254,14 +255,14 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     const own = (await call('get_workflow_protocol', { workflow_id: 'f17-own' }))[
       'rules'
     ] as string[];
-    // (a) red when the count is not five plus two, or the two are not added after the workflow's
-    //     own (F-R1: the page said six); (b) prints the counts and the shared tail.
+    // (a) red when the count is not six plus two, or the two are not added after the workflow's
+    //     own; (b) prints the counts and the shared tail.
     expect({
       plain: plain.length,
       own: own.length,
-      sameTail: JSON.stringify(plain.slice(5)) === JSON.stringify(own.slice(1)),
+      sameTail: JSON.stringify(plain.slice(6)) === JSON.stringify(own.slice(1)),
       ownFirst: own[0],
-    }).toEqual({ plain: 7, own: 3, sameTail: true, ownFirst: 'Mine.' });
+    }).toEqual({ plain: 8, own: 3, sameTail: true, ownFirst: 'Mine.' });
   });
 
   it('F-R2: an auto step’s protocol text names advance_run and forbids nothing — execute_step called by name runs it', async () => {

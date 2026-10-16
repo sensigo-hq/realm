@@ -297,7 +297,7 @@ describe('handleAppendTrace', () => {
         { run_id: run.id, step_id: 'step-agent', entries: [] },
         { runStore, workflowStore, traceBufferStore },
       ),
-    ).rejects.toThrow(/most often/);
+    ).rejects.toThrow(/is not registered in this workflow store/); // #729 PR-0 (T-21): the words by cause
     await expect(
       handleAppendTrace(
         { run_id: run.id, step_id: 'step-agent', entries: [] },

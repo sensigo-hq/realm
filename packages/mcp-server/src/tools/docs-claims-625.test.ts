@@ -42,7 +42,7 @@ const lagless = (v: unknown): unknown =>
 
 /** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
 function claim(
-  page: 'mcp/tools.md' | 'workflow/gates.md' | 'core-library.md',
+  page: 'mcp/tools.md' | 'workflow/gates.md' | 'core-library.md' | 'glossary.md',
   sentence: string,
 ): void {
   expect(
@@ -389,8 +389,8 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
   );
 
   it('C163 agent_action: on every error and blocked reply; never on confirm_required', async () => {
-    claim('mcp/tools.md', 'On every `error` and `blocked` reply.');
-    claim('mcp/tools.md', 'Never on `confirm_required`');
+    claim('mcp/tools.md', 'On every `error` and `blocked` reply;');
+    claim('mcp/tools.md', 'never on `confirm_required`');
     const { call, workflowStore } = await connect();
     await workflowStore.register(gated('docs-aa'));
     await workflowStore.register(STEPS);
@@ -414,10 +414,12 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
 });
 
 describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that has ended, as measured', () => {
+  // #729 PR-0 (T-22): the `agent_action` row's new words — `stop`, `report_to_user` and `await` on
+  // an `ok` reply; T-22 fires only on an OPEN run, so these ended-run cells stay green by construction.
   const ENDED_ROW =
-    "Never on `confirm_required`, and never on another `ok` reply: on a run that had ended before the call, `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the choice its gate recorded (`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).";
+    'never on `confirm_required`; on a run that had ended before the call `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the recorded choice';
   const OK_STOP =
-    'On an `ok` reply only as `stop`: from `execute_step` on a run that has already ended, and from a call that finds the run ended by another process meanwhile, at a guard step or at a step it picked (added after version 0.46.0 for a step it picked)';
+    'on an `ok` reply as `stop` (`execute_step` on a run that has already ended; a run found ended by another process meanwhile), as `report_to_user` (nothing can be called and the run is open: a step cannot run), or as `await` (a step in flight elsewhere)';
 
   it('C154 execute_step: ok with stop, no steps executed', async () => {
     claim('mcp/tools.md', OK_STOP);
@@ -967,13 +969,18 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163 ok: next_actions empty when a step cannot run — the hint names it and why, and ends with the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`await`, with `poll_after_ms`; `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
     const runId = (await call('start_run', { workflow_id: STUCK.id }))['run_id'] as string;
     const r = await call('execute_step', { run_id: runId, command: 'b', params: { go: false } });
-    expect([r['status'], next(r)]).toEqual(['ok', []]);
+    claim(
+      'glossary.md',
+      "The field of a tool's reply that tells the caller what to do after an error or a block, and on an `ok` reply too: `stop` on a run that has ended, `report_to_user` when the run cannot go on, `await` when it waits on another process.",
+    );
+    // #729 PR-0 (T-22): the empty list's word — a step cannot run: `report_to_user`.
+    expect([r['status'], next(r), r['agent_action']]).toEqual(['ok', [], 'report_to_user']);
     expect(String(r['context_hint'])).toContain("'a' cannot run (precondition)");
     expect(String(r['context_hint']).endsWith(WAY_OUT)).toBe(true);
   });
@@ -981,7 +988,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163 ok: next_actions empty while a step is in flight in another process — No step is ready, with the step and the wait (decision C205), step_claims names it', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`await`, with `poll_after_ms`; `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(STUCK);
@@ -989,10 +996,19 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     await runStore.claimStep(runId, 'b', STUCK);
     const r = await call('advance_run', { run_id: runId });
     const state = await call('get_run_state', { run_id: runId });
-    expect([r['status'], next(r), r['context_hint']]).toEqual([
+    // #729 PR-0 (T-22, P-2): the empty list's word — a step in flight elsewhere: `await`, paced.
+    expect([
+      r['status'],
+      next(r),
+      r['context_hint'],
+      r['agent_action'],
+      r['poll_after_ms'],
+    ]).toEqual([
       'ok',
       [],
       `Run '${runId}': nothing ran. No step is ready: 'b' is in flight elsewhere — wait for it, then call get_run_state.`,
+      'await',
+      30_000,
     ]);
     expect(JSON.stringify(state['step_claims'])).toContain('"b"');
   });
@@ -1163,7 +1179,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163: a step refused before its claim with nothing else to run — report_to_user and the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply says `report_to_user`, and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
+      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply routes as that refusal: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`), and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
@@ -1408,7 +1424,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     expect(lagless(r['warnings'])).toContain(line);
   });
 
-  it('C163 submit_human_response: a gate ID that is not the open one — STATE_BLOCKED, the open question named and its answer offered, resolve_precondition', async () => {
+  it('C163 submit_human_response: a gate ID that is not the open one — STATE_BLOCKED, the open question named and its answer offered, report_to_user (A-2 row 6)', async () => {
     claim(
       'mcp/tools.md',
       "`Gate 'x' is not the open gate and matches no committed resolution.` See below.",
@@ -1419,7 +1435,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      "Its `next_actions` holds that question's answer — or, when the question's time is up and it declares `on_expiry`, `advance_run`, since an answer could no longer be recorded — and its `agent_action` is `resolve_precondition` (`report_to_user` when `next_actions` is empty).",
+      "Its `next_actions` holds that question's answer — or, when the question's time is up and it declares `on_expiry`, `advance_run`, since an answer could no longer be recorded — and its `agent_action` is `report_to_user` (version 0.47.0 said `resolve_precondition` when `next_actions` named something).",
     );
     claim(
       'mcp/tools.md',
@@ -1438,7 +1454,8 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     });
     expect([r['error_code'], r['agent_action'], next(r), r['context_hint']]).toEqual([
       'STATE_BLOCKED',
-      'resolve_precondition',
+      // #729 PR-0 (A-2 row 6, DESIGN-D3 §6): the gate-mismatch error's fixed action word.
+      'report_to_user',
       ['submit_human_response:'],
       `Gate 'x' is not the open gate and matches no committed resolution. The open question is on step 'confirm' (gate '${g}') — answer it as next_actions says.`,
     ]);
@@ -1450,7 +1467,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       gate_id: 'x',
       choice: 'approve',
     });
-    expect([late['agent_action'], next(late)]).toEqual(['resolve_precondition', ['advance_run:']]);
+    expect([late['agent_action'], next(late)]).toEqual(['report_to_user', ['advance_run:']]);
     expect(String(late['context_hint'])).toContain(
       `The question on step 'confirm' (gate '${ge}') can no longer be answered: its time is up — call advance_run to carry out its declared settle_default.`,
     );
@@ -1461,9 +1478,8 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       choice: 'approve',
     });
     expect(String(n['context_hint'])).toContain('No question is open on this run.');
-    expect(n['agent_action']).toBe(
-      next(n).length === 0 ? 'report_to_user' : 'resolve_precondition',
-    );
+    // #729 PR-0 (A-2 row 6): the gate-mismatch error's fixed action word, whatever next_actions holds.
+    expect(n['agent_action']).toBe('report_to_user');
   });
 
   it('C163 submit_human_response: an answer the expiry settled another choice for — report_to_user, the hint says what the run owes, next_actions holds it; the line names the tool', async () => {
@@ -2024,7 +2040,7 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
   it('C163 submit_human_response: a gate ID that is not the open one with nothing to offer — report_to_user, No question is open on this run.', async () => {
     claim(
       'mcp/tools.md',
-      'and its `agent_action` is `resolve_precondition` (`report_to_user` when `next_actions` is empty).',
+      'and its `agent_action` is `report_to_user` (version 0.47.0 said `resolve_precondition` when `next_actions` named something).',
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
@@ -2279,11 +2295,11 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
   it('C171, W4-Y2: repeating the choice the question’s expiry recorded says it was settled by timeout, as the CLI does; a person’s recorded choice repeated still says already resolved', async () => {
     claim(
       'mcp/tools.md',
-      'or, when the question\'s expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.` with `answer_recorded: false` and `error_details` carrying `resolved_by: "timeout"`.',
+      'or, when the question\'s expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.` with `answer_recorded: false` and `outcome` carrying `by: { "kind": "timeout" }`.',
     );
     claim(
       'mcp/tools.md',
-      "(`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).",
+      "`ok` without `agent_action` when it repeats the choice its gate recorded: `Gate '<gate>' was already resolved with choice '<c>' — no action was taken.`, or, when the question's expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.`",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r21-exp', 'settle_default'));
@@ -2298,18 +2314,22 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     });
     // (a) red when the repeat reads as a person's recorded answer, or (decision C185) its fields do
     //     not say the expiry chose it; (b) prints it.
+    const outcome = r['outcome'] as { choice?: string; by?: unknown } | undefined;
     expect([
       r['status'],
       'agent_action' in r,
       r['answer_recorded'],
       r['context_hint'],
+      // #729 PR-0 (P-3, A-16; D-H): what decided the question is `outcome`, not `error_details`.
+      { choice: outcome?.choice, by: outcome?.by },
       r['error_details'],
     ]).toEqual([
       'ok',
       false,
       false,
       'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
-      { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
+      { choice: 'approve', by: { kind: 'timeout' } },
+      undefined,
     ]);
     const { call: c2, runId: done, gateId: g2 } = await endedRun();
     const human = await c2('submit_human_response', {
@@ -2441,11 +2461,15 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     async (_case, earlier) => {
       claim(
         'mcp/tools.md',
-        "For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry's write decided, a `context_hint` that is the expiry's sentence, and `error_details` with the choice the expiry recorded (`winning_choice`), `resolved_by: \"timeout\"`, when the question's time was up (`expired_at`) and how long before this call (`overdue_ms`, in milliseconds); the line in `warnings` says that lag too. When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
+        'For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry\'s write decided, a `context_hint` that is the expiry\'s sentence, `expiry` — the receipt: when the question\'s time was up (`expired_at`), how long before this call (`overdue.ms`, in milliseconds), and that this call carried it out — and `outcome`, the choice the expiry recorded with `by: { "kind": "timeout" }`; the line in `warnings` says that lag too.',
       );
       claim(
         'mcp/tools.md',
-        'An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `error_details` and what the run owes included. Neither has the expiry line in `warnings`; that call printed it.',
+        "When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
+      );
+      claim(
+        'mcp/tools.md',
+        'An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `outcome` and what the run owes included. Neither has the expiry line in `warnings`, nor `expiry`; that call printed it.',
       );
       const { call, workflowStore, runStore } = await connect();
       const id = `r23-same-${earlier ? 'earlier' : 'this'}`;
@@ -2480,28 +2504,34 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         choice: 'approve',
       });
       const expiryLine = `gate '${gateId}' on 'confirm' had expired <lag> before this call — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`;
-      // (a) red when the same-choice reply has no `resolved_by`, its hint stops before what the run
-      //     owes, or the expiry line is in the wrong reply; (b) prints the reply's fields.
+      // (a) red when the same-choice reply does not say the timeout decided it, its hint stops before
+      //     what the run owes, or the expiry line or receipt is in the wrong reply; (b) prints the
+      //     reply's fields.
+      const outcome = r['outcome'] as { choice?: string; by?: unknown } | undefined;
+      const expiry = r['expiry'] as
+        { expired_at?: string; overdue?: { ms?: unknown }; by_this_call?: boolean } | undefined;
       expect({
         status: r['status'],
         recorded: r['answer_recorded'],
         details: r['error_details'],
+        outcome: { choice: outcome?.choice, by: outcome?.by },
+        expiry:
+          expiry === undefined
+            ? undefined
+            : [expiry.expired_at, typeof expiry.overdue?.ms, expiry.by_this_call],
         hint: r['context_hint'],
         next: next(r),
         expiryLine: ((lagless(r['warnings']) as string[]) ?? []).includes(expiryLine),
       }).toEqual({
         status: 'ok',
         recorded: false,
-        // F1: the answer that found the expired question open is told when its time was up and how
-        // late it is; the answer after an earlier call carried the expiry out finds no such question
-        // (the settled record no longer holds `expires_at`) and carries neither.
-        details: {
-          runId,
-          gateId,
-          winning_choice: 'approve',
-          resolved_by: 'timeout',
-          ...(earlier ? {} : { expired_at: expiresAt, overdue_ms: expect.any(Number) }),
-        },
+        // #729 PR-0 (T-2, D-G/D-H): no `error_details` on this ok reply; the timeout's choice is
+        // `outcome`; F1: the answer that found the expired question open carries the receipt (when
+        // its time was up, how late, by this call); the answer after an earlier call carried the
+        // expiry out finds no such question and carries none.
+        details: undefined,
+        outcome: { choice: 'approve', by: { kind: 'timeout' } },
+        expiry: earlier ? undefined : [expiresAt, 'number', true],
         hint: "the outcome matches your choice, but it was settled by timeout; your response was not recorded. Ready for the agent: 'write'.",
         next: ['execute_step:write'],
         expiryLine: !earlier,
@@ -2509,10 +2539,10 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     },
   );
 
-  it('C185: tools.md’s `error_details` row and its late same-choice example (the guard ends the run) are the reply, field by field', async () => {
+  it('C185: tools.md’s `expiry` and `outcome` rows and its late same-choice example (the guard ends the run) are the reply, field by field', async () => {
     claim(
       'mcp/tools.md',
-      "| `error_details` | On some errors, and on a late answer that names the choice the question's expiry recorded | Details that depend on the code, such as the schema rules that were broken; on a late answer that found the expired question still open, when its time was up (`expired_at`) and how long before the call (`overdue_ms`); on that late answer, the choice the expiry recorded and `resolved_by`. |",
+      "A late answer's expiry and the choice it recorded are in `expiry` and `outcome` (added after version 0.47.0, which carried `expired_at`, `overdue_ms`, the recorded choice and `resolved_by` here).",
     );
     const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
     const blocks = page.split(/^```[a-z]*\n/m).filter((_, i) => i % 2 === 1);
@@ -2559,18 +2589,22 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       choice: 'hold',
     });
     // F1: the reply's time facts are this run's — the question's own `expires_at`, a lag in
-    // milliseconds, and the warning's lag written from it; then the page's values stand in for them.
-    const got = r['error_details'] as Reply;
-    const shown = example['error_details'] as Reply;
+    // milliseconds, the outcome's moment, and the warning's lag written from it; then the page's
+    // values stand in for them. #729 PR-0 (T-2, P-3): they are `expiry` and `outcome`.
+    type Receipt = { gate_id: string; expired_at: string; overdue: { ms: number } };
+    const got = r['expiry'] as Receipt;
+    const shown = example['expiry'] as Receipt;
+    const gotAt = String((r['outcome'] as { at?: string }).at);
+    const shownAt = String((example['outcome'] as { at?: string }).at);
     const lagOf = (w: unknown) => /had expired (.+?) before this call/.exec(String(w))?.[1];
-    // (a) red when the reply's `expired_at` is not the question's, `overdue_ms` is missing, or the
-    //     warning's lag is not `overdue_ms` written by the one formatter; (b) prints the three.
+    // (a) red when the receipt's `expired_at` is not the question's, its lag is missing, or the
+    //     warning's lag is not the receipt's written by the one formatter; (b) prints the three.
     expect({
-      expired_at: got['expired_at'],
+      expired_at: got.expired_at,
       lag: lagOf((r['warnings'] as string[])[0]),
     }).toEqual({
       expired_at: expiresAt,
-      lag: typeof got['overdue_ms'] === 'number' ? formatDuration(got['overdue_ms']) : '<none>',
+      lag: typeof got.overdue.ms === 'number' ? formatDuration(got.overdue.ms) : '<none>',
     });
     const ids = (v: unknown) =>
       JSON.parse(
@@ -2578,13 +2612,12 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
           .split(runId)
           .join(String(example['run_id']))
           .split(gateId)
-          .join(String(shown['gateId']))
-          .split(String(got['expired_at']))
-          .join(String(shown['expired_at']))
-          .replace(
-            `"overdue_ms":${String(got['overdue_ms'])}`,
-            `"overdue_ms":${String(shown['overdue_ms'])}`,
-          )
+          .join(shown.gate_id)
+          .split(got.expired_at)
+          .join(shown.expired_at)
+          .split(gotAt)
+          .join(shownAt)
+          .replace(`"overdue":{"ms":${got.overdue.ms}}`, `"overdue":{"ms":${shown.overdue.ms}}`)
           .replace(
             `had expired ${String(lagOf((r['warnings'] as string[])[0]))} before this call`,
             `had expired ${String(lagOf((example['warnings'] as string[])[0]))} before this call`,
@@ -2598,7 +2631,8 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       'guards',
       'ended_by',
       'answer_recorded',
-      'error_details',
+      'outcome',
+      'expiry',
     ] as const;
     // (a) red when the reply and the page's example differ in any field the example shows (the
     //     expiry line is compared as the example's first warning); (b) prints both.
@@ -2611,10 +2645,10 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     });
   });
 
-  it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and error_details carries resolved_by; a person’s recorded choice is not', async () => {
+  it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and outcome says the timeout (#729 PR-0); a person’s recorded choice says the answer', async () => {
     claim(
       'mcp/tools.md',
-      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `error_details`, `resolved_by: \"timeout\"` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `error_details` and what the run owes included. Neither has the expiry line in `warnings`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `error_details` have no `resolved_by`.",
+      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `outcome`, `by: { \"kind\": \"timeout\" }` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `outcome` and what the run owes included. Neither has the expiry line in `warnings`, nor `expiry`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `outcome` says `by: { \"kind\": \"answer\", … }`.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r22-exp', 'settle_default'));
@@ -2628,19 +2662,25 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       choice: 'reject',
     });
     // (a) red when the refusal reads as a person's choice, or a program cannot tell from
-    //     error_details; (b) prints the reply.
+    //     `outcome`; (b) prints the reply.
+    const lateOutcome = late['outcome'] as { choice?: string; by?: unknown } | undefined;
     expect([
       late['error_code'],
       late['agent_action'],
       (late['errors'] as string[])[0],
       late['error_details'],
+      { choice: lateOutcome?.choice, by: lateOutcome?.by },
       late['answer_recorded'],
       ((late['warnings'] as string[] | undefined) ?? []).some((w) => w.includes('had expired')),
+      'expiry' in late,
     ]).toEqual([
       'STATE_BLOCKED',
       'report_to_user',
       `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
-      { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
+      // Amendment 11: the moved facts leave `details`; what stays is the mint's own.
+      { runId, gateId },
+      { choice: 'approve', by: { kind: 'timeout' } },
+      false,
       false,
       false,
     ]);
@@ -2650,9 +2690,16 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       gate_id: g2,
       choice: 'reject',
     });
-    expect([(person['errors'] as string[])[0], person['error_details']]).toEqual([
+    const personOutcome = person['outcome'] as
+      { choice?: string; by?: { kind?: string } } | undefined;
+    expect([
+      (person['errors'] as string[])[0],
+      person['error_details'],
+      [personOutcome?.choice, personOutcome?.by?.kind],
+    ]).toEqual([
       `Gate '${g2}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
-      { runId: done, gateId: g2, winning_choice: 'approve' },
+      { runId: done, gateId: g2 },
+      ['approve', 'answer'],
     ]);
   });
 });

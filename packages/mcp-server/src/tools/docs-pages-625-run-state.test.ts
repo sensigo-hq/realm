@@ -262,7 +262,7 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     async () => {
       claim(
         PAGE,
-        '| `agent_refused` | The run is open and an agent step that is ready to start is refused before its claim | Each such step, in the order of the workflow: `step`, `runnable_here` (`false`), `refused_by` (`trust` or `precondition`) and `refusal`. Such a step is never in `next_actions`. Added after version 0.46.0. |',
+        '| `agent_refused` | The run is open and an agent step that is ready to start is refused before its claim | Each such step, in the order of the workflow: `step`, `runnable_here` (`false`), `refused_by` (`trust` or `precondition`) and `refusal`; for a failed precondition, `precondition`: its `expression` and the `value` it read, escaped (added after version 0.47.0). Such a step is never in `next_actions`. Added after version 0.46.0. |',
       );
       const { call, workflowStore } = await connect();
       // Workflow order zeta, alpha, mid — not alphabetical, so the order is the workflow's.
@@ -295,7 +295,12 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       }).toEqual({
         refused: [
           [['refusal', 'refused_by', 'runnable_here', 'step'], 'zeta', false, 'trust'],
-          [['refusal', 'refused_by', 'runnable_here', 'step'], 'alpha', false, 'precondition'],
+          [
+            ['precondition', 'refusal', 'refused_by', 'runnable_here', 'step'],
+            'alpha',
+            false,
+            'precondition',
+          ],
         ],
         offered: ['mid'],
       });
@@ -619,11 +624,14 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
     'ok with an empty next_actions on an open run: a step in flight elsewhere, or every step that could run next cannot — engine_runnable or agent_refused names it',
     { timeout: 30_000 },
     async () => {
-      claim(PAGE, '`ok` with an empty `next_actions` on an open run means one of two things.');
-      claim(PAGE, 'A step is in flight elsewhere: wait for it.');
       claim(
         PAGE,
-        'Or every step that could run next cannot: an `auto` step for an invalid `trust`, a failed precondition or an input its schema refuses — `engine_runnable` names each with `refused_by` and `refusal` — or an agent step for an invalid `trust` or a failed precondition — `agent_refused` names it the same way, and it is never offered in `next_actions` (agent steps added after version 0.46.0).',
+        '`ok` with an empty `next_actions` on an open run means one of two things, and `agent_action` says which (added after version 0.47.0).',
+      );
+      claim(PAGE, 'A step is in flight elsewhere: wait for it (`await`).');
+      claim(
+        PAGE,
+        'Or every step that could run next cannot (`report_to_user`): an `auto` step for an invalid `trust`, a failed precondition or an input its schema refuses — `engine_runnable` names each with `refused_by` and `refusal` — or an agent step for an invalid `trust` or a failed precondition — `agent_refused` names it the same way, and it is never offered in `next_actions` (agent steps added after version 0.46.0).',
       );
       const { call, workflowStore, runStore } = await connect();
       // In flight elsewhere: a program holds the auto step's claim, within its time.
@@ -637,11 +645,14 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
       await runStore.claimStep(fRun, 'x', flight);
       const inFlight = await call('get_run_state', { run_id: fRun });
       // (a) red when a healthy claim elsewhere is not ok with empty next_actions; (b) prints them.
+      // #729 PR-0 (T-22, P-2): the read names the wait — `await`, with its pace.
       expect([
         inFlight['next_actions_status'],
         inFlight['next_actions'],
         inFlight['in_progress_steps'],
-      ]).toEqual(['ok', [], ['x']]);
+        inFlight['agent_action'],
+        inFlight['poll_after_ms'],
+      ]).toEqual(['ok', [], ['x'], 'await', 30_000]);
       const cases: Array<
         [string, Partial<StepDefinition>, 'engine_runnable' | 'agent_refused', string]
       > = [
@@ -682,11 +693,15 @@ describe('#625 PR-2a, C174 pin lane B — run-state-and-health.md, from the real
           named?.['step'],
           named?.['refused_by'],
           typeof named?.['refusal'],
+          s['agent_action'],
         ]);
       }
-      // (a) red when a step refused for one of the five reasons is offered, the status is not ok, or
-      //     its field does not name it with refused_by and refusal; (b) prints each case.
-      expect(seen).toEqual(cases.map(([, , , by]) => ['ok', [], 'only', by, 'string']));
+      // (a) red when a step refused for one of the five reasons is offered, the status is not ok, its
+      //     field does not name it with refused_by and refusal, or the read does not say a person must
+      //     act (#729 PR-0, T-22); (b) prints each case.
+      expect(seen).toEqual(
+        cases.map(([, , , by]) => ['ok', [], 'only', by, 'string', 'report_to_user']),
+      );
     },
   );
 

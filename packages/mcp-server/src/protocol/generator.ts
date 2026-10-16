@@ -1,7 +1,12 @@
 // Protocol generator — produces the full agent briefing from a WorkflowDefinition.
 // This is what an AI agent reads before starting a workflow run.
-import type { WorkflowDefinition, JsonSchema } from '@sensigo/realm';
-import { classifyStepTrust, buildTrustRefusal, renderTrustValue } from '@sensigo/realm';
+import type { AgentAction, WorkflowDefinition, JsonSchema } from '@sensigo/realm';
+import {
+  classifyStepTrust,
+  buildTrustRefusal,
+  gateChoicesOf,
+  renderTrustValue,
+} from '@sensigo/realm';
 
 export interface ProtocolStepGate {
   choices: string[];
@@ -40,27 +45,41 @@ export interface WorkflowProtocol {
   quick_start: string;
 }
 
+/**
+ * issue #729 PR-0 (D4 T-10, PR0-CONTRACT Amendment 1): the rules for the reply's entry kinds — the
+ * `next_actions` an agent calls, the `also` list it never counts, the `elsewhere` entries
+ * (`instruction: null`) only an operator takes, and the `await` word. This is the `offered` variant;
+ * #627 W adds the others.
+ */
 const DEFAULT_RULES = [
-  'Follow the next_action instruction in each response exactly.',
+  'Follow the instruction in each next_actions entry exactly. next_actions lists only what you can call now; when it is empty, agent_action says what to do.',
   "When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
   'Do NOT auto-confirm any human gate. The user must decide.',
   'Do NOT ask the user for permission between steps unless the system tells you to.',
   'When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.',
+  'An entry in also (reading the run, ending it) is never a next step: end a run only when the user asks you to. An entry in elsewhere has instruction: null — only an operator can take it; tell the user, and never try it yourself.',
 ];
 
-const ERROR_HANDLING: Record<string, string> = {
+/**
+ * What an agent does on each action word (PR0-CONTRACT §2, §5; Amendment 9): one text per
+ * `AgentAction`, checked exhaustive by the type. `await`'s text is A-2's sentence plus D4 P-2's
+ * clause, verbatim; `report_to_user` names T-22's `ok` reply (the owner, 2026-10-15).
+ */
+const ERROR_HANDLING = {
   provide_input:
     'The engine rejected your input. Read the error details — they tell you exactly what was wrong. Fix the input and call the step again.',
   report_to_user:
-    'Something failed that you cannot fix automatically. Show the error message to the user and wait for their guidance.',
+    'Something failed that you cannot fix automatically. Show the error message to the user and wait for their guidance. It also comes on an `ok` reply when the run cannot go on and only a person can change that: nothing can be called, and `context_hint` names the step, the check that refused it and the way out — tell the user.',
   resolve_precondition:
     'A prerequisite step has not completed. The error includes which precondition failed and what step to call. Follow the suggestion.',
   stop: 'A critical error occurred. Report it to the user and do not attempt any further steps.',
-  wait_for_human:
+  wait_for_service:
     'An external service is unavailable and cannot be retried automatically (e.g. network unreachable, upstream server error). Show the error to the user and wait for them to confirm the issue is resolved — the run cannot continue until the external dependency is back.',
   wait_and_proceed:
     'The upstream service returned a rate-limit response. retry_after in the envelope gives the number of seconds to wait. After that delay, follow next_actions without human involvement — the step has already failed; if a recovery branch exists it will appear in next_actions. This action only appears when engine-level retry is not configured for the step; when retry is configured, the engine retries internally and surfaces STEP_RETRY_EXHAUSTED (report_to_user) on exhaustion of attempts or total-time budget.',
-};
+  await:
+    "The run is waiting on someone else — a person's answer or another program's step; the reply names which. Tell the user what it waits on, and do not call a step until next_actions offers one. Call get_run_state no sooner than poll_after_ms; when until passes, tell the user.",
+} satisfies Record<AgentAction, string>;
 
 /**
  * Generates the full agent protocol briefing from a WorkflowDefinition.
@@ -138,7 +157,8 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
     } else if (step.execution === 'auto' && hasGate) {
       agent_involvement =
         'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
-      possible_gate = { choices: ['approve', 'reject'] };
+      // #729 PR-0 (T-10, Amendment 1): the step's declared choices, else the engine's one default.
+      possible_gate = { choices: gateChoicesOf(step) };
       autoStepCount++;
     } else if (step.execution === 'agent' && !hasGate) {
       agent_involvement = `YOU execute this step. Call execute_step with command '${id}' and the required params.`;
@@ -161,7 +181,8 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
     } else {
       // execution === 'agent' with gate
       agent_involvement = `YOU execute this step. Call execute_step with command '${id}'. The engine will run your dispatcher, then pause for human confirmation of your output.`;
-      possible_gate = { choices: ['approve', 'reject'] };
+      // #729 PR-0 (T-10, Amendment 1): the step's declared choices, else the engine's one default.
+      possible_gate = { choices: gateChoicesOf(step) };
       agentStepCount++;
     }
 

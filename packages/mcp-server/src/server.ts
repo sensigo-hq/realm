@@ -34,6 +34,7 @@ import { registerAbandonRun } from './tools/abandon-run.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
+import type { OperatorRoute } from './render-reply.js';
 
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
@@ -94,6 +95,14 @@ export interface RealmMcpServerOptions {
    * refused by the engine (`VALIDATION_ACTOR_INVALID`) on the first call. Absent ⇒ none recorded.
    */
   driver?: Attributed;
+  /**
+   * issue #729 PR-0 (D2 §5, D4 P-6): the operator route the program that launches this server
+   * injects — `realm mcp` and `realm serve` hand the CLI's renderer, so the block of a reply addressed
+   * to the person (`audience: ["user"]`) can name the command an operator runs for a way only an
+   * operator can take. Never in a structured entry the model reads. The standalone `realm-mcp` bin
+   * injects none: its replies name no operator command at all.
+   */
+  operatorRoute?: OperatorRoute;
 }
 
 /**
@@ -113,7 +122,7 @@ export interface RealmMcpServerOptions {
 export { createDefaultRegistry };
 
 /**
- * Creates and configures the Realm MCP server with all 10 workflow tools.
+ * Creates and configures the Realm MCP server with all 11 workflow tools.
  *
  * When no `registry` is provided, `FileSystemAdapter` is pre-registered automatically
  * under the name `filesystem`. Pass a custom `registry` to add your own handlers and

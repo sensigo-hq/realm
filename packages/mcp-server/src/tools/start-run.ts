@@ -6,12 +6,10 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   advanceRun,
-  withEndedRunWays,
   classifyStop,
   endedRunWaysSentence,
-  buildNextActions,
-  describeNext,
-  describePending,
+  composeWaysOn,
+  writtenSnapshot,
   hashParams,
   WorkflowError,
   buildPreExecutionErrorEnvelope,
@@ -19,7 +17,7 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
-  type ResponseEnvelope,
+  type EngineReply,
   type RunStore,
   type TraceBufferStore,
   type FailedAttemptStore,
@@ -30,16 +28,49 @@ import {
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
+import {
+  mcpReplyOf,
+  withHintTail,
+  renderReply,
+  toolContentOf,
+  type McpEnvelope,
+  type McpHost,
+  type OperatorRoute,
+  type WithPersonBlock,
+} from '../render-reply.js';
+
+/**
+ * issue #729 PR-0: the ways of a record a tool hands back, composed by core's one composer
+ * (`composeWaysOn`) from the record as the tool last read or wrote it, at the tool's reading — this
+ * server's registry, or none (an observer, C33). The tools compose; the renderer only renders.
+ */
+export function composeToolWays(
+  runStore: Pick<RunStore, 'persistsClaims'>,
+  definition: WorkflowDefinition,
+  run: RunRecord,
+  registry: ExtensionRegistry | undefined,
+  at: Date,
+): Pick<EngineReply, 'ways' | 'unavailable' | 'basis'> {
+  return composeWaysOn(writtenSnapshot(run, at), {
+    definition: { ok: definition },
+    enactor: registry !== undefined ? { kind: 'this_program', registry } : { kind: 'observer' },
+    store: { persistsClaims: runStore.persistsClaims === true },
+  });
+}
+
+/** The MCP host of a tool's stores: the operator route the launching program injected, if any. */
+export function mcpHostOf(stores: { operatorRoute?: OperatorRoute } | undefined): McpHost {
+  return stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {};
+}
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
 /**
  * The hint of a reply that hands back a run on which this call ran nothing (decisions C45, C57, C64,
  * C65): `Run '<id>' created for workflow '<wf>'.` (with the supersede clause when the run replaced
  * another), or `Matched existing run '<id>' (idempotent) in phase '<phase>'; no new run created.`
- * for a run an idempotency key matched — then, on a live run, what comes next ({@link describeNext}):
- * the open question it waits on (decision C103), the agent steps ready, the engine's owed work, each
- * engine step that cannot run and, when the run cannot go on until its workflow is corrected, the way
- * out. `start_run`'s reply
+ * for a run an idempotency key matched. #729 PR-0 (Part B, A-10): what comes next on a live run is
+ * no longer composed here — the reply carries the ways and `names_next`, and the renderer says it;
+ * the ended-run half (`endedRunWaysSentence`, PR-1's verbs) stays until PR-1. `start_run`'s reply
  * and every `started` entry of `start_run_batch` carry it; neither composes its own.
  *
  * @param run      The record the store returned: the run created, or the one the key matched.
@@ -50,28 +81,16 @@ export function handBackHint(args: {
   run: RunRecord;
   current: RunRecord;
   definition: WorkflowDefinition;
-  registry?: ExtensionRegistry;
   deduped: boolean;
-  /**
-   * decisions C95, C117: the call's clock — a matched run whose open question is due names its
-   * expiry as owed, never its answer. Required: a hint built without one assumed nothing had expired.
-   */
-  now: Date;
 }): string {
-  const { run, current, definition, registry, deduped, now } = args;
-  // decision C103: a run waiting on a question is described too — `describeNext` names the
-  // question, its choices and the act, as `next_actions` holds its answer.
-  const describes = !current.terminal_state;
-  const next = describes
-    ? describeNext(describePending(definition, current, registry, now), current, definition)
-    : '';
+  const { run, current, definition, deduped } = args;
   if (deduped) {
     // decisions C205, C211: a matched run that has ended says the ways back in.
-    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${next}${endedRunWaysSentence(current, definition, new Date())}`;
+    return `Matched existing run '${run.id}' (idempotent) in phase '${deriveRunPhase(run)}'; no new run created.${endedRunWaysSentence(current, definition, new Date())}`;
   }
   return run.rerun_of !== undefined
-    ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).${next}`
-    : `Run '${run.id}' created for workflow '${definition.id}'.${next}`;
+    ? `Run '${run.id}' created for workflow '${definition.id}'; it supersedes run '${run.rerun_of}' under the same idempotency key (on_terminal_match).`
+    : `Run '${run.id}' created for workflow '${definition.id}'.`;
 }
 
 /** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
@@ -116,6 +135,12 @@ export interface HandleRunStores {
    * never compared, never a reason to refuse. Absent ⇒ none recorded.
    */
   driver?: Attributed;
+  /**
+   * issue #729 PR-0 (D2 §5, P-6): the operator route the launching program injected — `realm mcp`
+   * and `realm serve` hand the CLI's renderer, so the block addressed to the person can name an
+   * operator's command; the standalone `realm-mcp` bin injects none.
+   */
+  operatorRoute?: OperatorRoute;
 }
 
 /**
@@ -131,7 +156,7 @@ export async function handleStartRun(
     on_live_match?: 'use_existing' | 'fail' | undefined;
   },
   stores?: HandleRunStores,
-): Promise<ResponseEnvelope & { deduped: boolean; rerun_of?: string }> {
+): Promise<WithPersonBlock<McpEnvelope> & { deduped: boolean; rerun_of?: string }> {
   assertToolStores(stores, 'handleStartRun');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
@@ -218,7 +243,7 @@ export async function handleStartRun(
   // decision C52: the record the creation reply is composed from — the created record, or the one a
   // capability block left (its attempt wrote the marker and an entry).
   let createdRun = run;
-  let capabilityBlock: ResponseEnvelope | undefined;
+  let capabilityBlock: EngineReply | undefined;
   if (!deduped) {
     const result = await advanceRun(runStore, definition, {
       runId: run.id,
@@ -243,7 +268,7 @@ export async function handleStartRun(
       result.status === 'error' ? await runStore.get(run.id).catch(() => run) : undefined;
     if (
       afterAdvance !== undefined &&
-      classifyStop(result, undefined, afterAdvance)?.kind === 'capability'
+      classifyStop(result, undefined, afterAdvance)?.kind === 'capability_missing'
     ) {
       capabilityBlock = result;
       createdRun = afterAdvance;
@@ -252,8 +277,8 @@ export async function handleStartRun(
       const finalRun = await runStore.get(run.id).catch(() => run);
       // decisions C205, C211 (the architect's addendum): a run this call ended — its own step
       // failed, or cleanup steps were left pending — says the ways back in.
-      return {
-        ...withEndedRunWays(result, finalRun, definition, new Date()),
+      const ranReply: EngineReply = {
+        ...result,
         run_id: run.id,
         data: {},
         evidence: [],
@@ -262,14 +287,17 @@ export async function handleStartRun(
         // issue #558 PR-C (walk): a superseding run says so in the response that created it — the
         // agent should not need a second call to learn that `on_terminal_match: 'rerun'` replaced
         // a run.
-        ...(finalRun.rerun_of !== undefined
-          ? {
-              rerun_of: finalRun.rerun_of,
-              // walk 2: the hint is what an agent reads first; a supersede must be said there, not
-              // only carried as a key below the next_actions block.
-              context_hint: `${result.context_hint} This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`,
-            }
-          : {}),
+        ...(finalRun.rerun_of !== undefined ? { rerun_of: finalRun.rerun_of } : {}),
+      };
+      // walk 2: the hint is what an agent reads first; a supersede must be said there, not only
+      // carried as a key below the next_actions block. It, or the ended run's ways back in, follow
+      // the door's next sentence, as before #729 PR-0.
+      const tail =
+        finalRun.rerun_of !== undefined
+          ? ` This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`
+          : endedRunWaysSentence(finalRun, definition, new Date());
+      return {
+        ...mcpReplyOf(withHintTail(renderReply(ranReply, mcpHostOf(stores)), tail)),
         deduped,
       };
     }
@@ -278,9 +306,6 @@ export async function handleStartRun(
   // decision C95: with the clock, a run the key matched whose open question is due (its time is up,
   // `on_expiry` declared) is handed back with the `advance_run` act that carries it out.
   const now = new Date();
-  const nextActions = createdRun.terminal_state
-    ? []
-    : buildNextActions(definition, createdRun, registry, now);
   // decision C58: the block happened, so the pre-flight warning for the same step ("If reached it
   // will block") is dropped beside it. The blocked steps are the ones whose `capability_blocks`
   // marker this call's attempt wrote — a created run carries none before it.
@@ -295,11 +320,12 @@ export async function handleStartRun(
   const droppedPreflight = new Set(
     unmet.filter((requirement) => blockedHere.has(requirement.step)).map(capabilityWarning),
   );
-  return {
+  const handBack: EngineReply = {
     command: 'start_run',
     run_id: run.id,
     run_version: createdRun.version,
     status: 'ok',
+    reply_kind: 'ok',
     data: {},
     evidence: [],
     warnings:
@@ -313,19 +339,14 @@ export async function handleStartRun(
     // issue #625 PR-2a (decisions C45, C57, C64): a run this call ran nothing on — created, or
     // matched by its key — says what comes next in its own hint, so a step that cannot run, and the
     // way out when the run cannot go on, are named on the reply that hands the run back.
-    context_hint: handBackHint({
-      run,
-      current: createdRun,
-      definition,
-      ...(registry !== undefined ? { registry } : {}),
-      deduped,
-      now,
-    }),
+    context_hint: handBackHint({ run, current: createdRun, definition, deduped }),
     run_phase: deriveRunPhase(createdRun),
     ...(run.rerun_of !== undefined ? { rerun_of: run.rerun_of } : {}),
-    deduped,
-    next_actions: nextActions,
+    ...composeToolWays(runStore, definition, createdRun, registry, now),
+    // decisions C45, C57, C64: the hand-back says what comes next on a live run (the renderer's).
+    ...(createdRun.terminal_state ? {} : { names_next: true as const }),
   };
+  return { ...mcpReplyOf(renderReply(handBack, mcpHostOf(stores))), deduped };
 }
 
 /** Registers the start_run MCP tool on the server. */
@@ -344,17 +365,10 @@ export function registerStartRun(server: McpServer, opts?: HandleRunStores): voi
     async (args) => {
       try {
         const result = await handleStartRun(args, opts);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              // Override command to 'start_run': MCP callers invoked start_run, not the first auto
-              // step executeChain may have run. The step a non-ok reply belongs to stays named in
-              // `stopped_step` (issue #676 review).
-              text: sseJsonStringify({ ...result, command: 'start_run' }),
-            },
-          ],
-        };
+        // Override command to 'start_run': MCP callers invoked start_run, not the first auto step
+        // executeChain may have run. The step a non-ok reply belongs to stays named in
+        // `stopped_step` (issue #676 review).
+        return toolContentOf({ ...result, command: 'start_run' }, sseJsonStringify);
       } catch (err) {
         const workflowErr =
           err instanceof WorkflowError
@@ -369,21 +383,11 @@ export function registerStartRun(server: McpServer, opts?: HandleRunStores): voi
           workflowErr.code === 'STATE_WORKFLOW_NOT_FOUND'
             ? `Workflow '${args.workflow_id}' not found.`
             : `An error occurred before the run could be started.`;
-        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
-          'start_run',
-          '',
-          0,
-          workflowErr,
-          contextHint,
+        const rendered = renderReply(
+          buildPreExecutionErrorEnvelope('start_run', '', 0, workflowErr, contextHint),
+          mcpHostOf(opts),
         );
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify(envelope),
-            },
-          ],
-        };
+        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
       }
     },
   );

@@ -15,7 +15,6 @@ import {
   type AppendResult,
   type TraceBufferStore,
   type AgentTraceEntry,
-  type ResponseEnvelope,
   type RunStore,
 } from '@sensigo/realm';
 import {
@@ -24,6 +23,7 @@ import {
   isWriterNonceRequired,
   writerNonceRequiredError,
 } from './execute-step.js';
+import { mcpReplyOf, renderReply, toolContentOf } from '../render-reply.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
@@ -184,7 +184,7 @@ function buildAppendOkResult(
  * any entries submitted at execute_step finalization.
  *
  * Throws WorkflowError for all error conditions. Callers (typically
- * registerAppendTrace) catch and convert to ResponseEnvelope.
+ * registerAppendTrace) catch and convert to the tool's error reply.
  */
 export async function handleAppendTrace(
   args: {
@@ -275,7 +275,13 @@ export async function handleAppendTrace(
   // above: this check only reads the four step-membership arrays off the SAME pre-CS `run` load.
   const preCsState = stepStateOf(run, args.step_id);
   if (preCsState !== undefined) {
-    throw stepNotEligibleError(args.step_id, run.version, preCsState);
+    throw stepNotEligibleError(
+      args.step_id,
+      run.version,
+      preCsState,
+      undefined,
+      run.claims?.[args.step_id]?.deadline ?? undefined,
+    );
   }
 
   // Steps 6 + 7: Require buffer store for any append_trace operation.
@@ -422,16 +428,16 @@ export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceS
                 : workflowErr.code === 'BUFFER_FULL'
                   ? `Trace buffer is full for step '${args.step_id}'.`
                   : `An error occurred during append_trace for run '${args.run_id}'.`;
-        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
-          'append_trace',
-          args.run_id,
-          runVersion,
-          workflowErr,
-          contextHint,
+        const rendered = renderReply(
+          buildPreExecutionErrorEnvelope(
+            'append_trace',
+            args.run_id,
+            runVersion,
+            workflowErr,
+            contextHint,
+          ),
         );
-        return {
-          content: [{ type: 'text' as const, text: sseJsonStringify(envelope) }],
-        };
+        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
       }
     },
   );

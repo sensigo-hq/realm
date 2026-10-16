@@ -474,7 +474,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     // issue #688: (a) red when the row no longer says this (the docs flip); (b) prints the row.
     claim(
       'docs/reference/workflow/json-schema-blocks.md',
-      "| `input_schema` | An auto step | The input the step will receive: what its `input_map` builds when the step has an `input_map` and a `handler` or `uses_service`; otherwise its input — the input a caller passes when it names the step, or the engine's: the run's params when the step has no `depends_on`, `{}` otherwise. | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out. |",
+      "| `input_schema` | An auto step | The input the step will receive: what its `input_map` builds when the step has an `input_map` and a `handler` or `uses_service`; otherwise its input — the input a caller passes when it names the step, or the engine's: the run's params when the step has no `depends_on`, `{}` otherwise. | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out when nothing else can run. |",
     );
   });
 
@@ -565,14 +565,14 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     }).toMatchObject({ completed: ['order', 'show'], received: [{ sku: 'A-100' }] });
   });
 
-  it('top-level-fields.md: the five standard rules, the fifth about advance_run', async () => {
+  it('top-level-fields.md: the six standard rules, the fifth about advance_run (#729 PR-0, A9: the sixth about also and elsewhere)', async () => {
     const shown = block(
       'docs/reference/workflow/top-level-fields.md',
-      'Follow the next_action instruction',
+      'Follow the instruction in each next_actions entry',
     );
     claim(
       'docs/reference/workflow/top-level-fields.md',
-      'The fifth rule was added after version 0.46.0. Setting `rules` removes all five, including the two about human gates.',
+      "The fifth rule was added after version 0.46.0; the sixth, and the first rule's second sentence, after version 0.47.0. Setting `rules` removes all six, including the two about human gates.",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(
@@ -591,8 +591,8 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
     );
     const p = await call('get_workflow_protocol', { workflow_id: 'plain' });
     const rules = p['rules'] as string[];
-    // (a) red when the standard rules are not the page's five, in order; (b) prints both.
-    expect(rules.slice(0, 5)).toEqual(shown.filter((l) => l !== ''));
+    // (a) red when the standard rules are not the page's six, in order; (b) prints both.
+    expect(rules.slice(0, 6)).toEqual(shown.filter((l) => l !== ''));
   });
 
   it('tools.md: start_run_batch’s hint names an agent step refused before its claim', async () => {

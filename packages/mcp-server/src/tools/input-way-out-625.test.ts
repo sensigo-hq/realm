@@ -47,6 +47,9 @@ const wf = (id: string, steps: Record<string, StepDefinition>): WorkflowDefiniti
   steps,
 });
 const RUN_WAY = 'then, after a fix, call advance_run; or end the run with abandon_run.';
+// #729 PR-0 (T-20 (i)): when a new run is a way out, the run's way says THIS run stays open.
+const RUN_WAY_NEW_RUN =
+  'this run stays open — after a fix, call advance_run on it; or end it with abandon_run.';
 
 /** `advance_run` on a fresh run of `def` with `params`; the reply's hint after its refusal lines. */
 async function advance(def: WorkflowDefinition, params: Record<string, unknown>) {
@@ -63,7 +66,7 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
   it('a step with no depends_on (the engine gives it the run’s params): a run with params that fit, or a corrected input_schema', async () => {
     claim(
       'docs/reference/mcp/tools.md',
-      "`For '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.` for a step with no `depends_on` (the engine gives it the run's params)",
+      "`For '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.` for a step with no `depends_on` (the engine gives it the run's params)",
     );
     claim(
       'docs/reference/mcp/run-state-and-health.md',
@@ -78,7 +81,7 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
     // (a) red when the way out says only "correct the workflow" for an input the run's params decide
     //     (F-R6), or tells the caller to supply the step's input; (b) prints the hint's end.
     expect(r.reply.context_hint.slice(r.reply.context_hint.indexOf(' For '))).toBe(
-      ` For 'first', start a run with params that fit, or correct its input_schema and register the workflow again; ${RUN_WAY}`,
+      ` For 'first', start a run with params that fit, or correct its input_schema and register the workflow again; ${RUN_WAY_NEW_RUN}`,
     );
   });
 
@@ -142,9 +145,9 @@ describe('#625 PR-2a, F15 — the input-schema way out is true for both kinds of
     //     said more than once; (b) prints the hint's end and the count.
     expect({
       tail: hint.slice(hint.indexOf(' For ')),
-      runWay: hint.split(RUN_WAY).length - 1,
+      runWay: hint.split(RUN_WAY_NEW_RUN).length - 1,
     }).toEqual({
-      tail: ` For 't', correct the workflow and register it again; for 'first', start a run with params that fit, or correct its input_schema and register the workflow again; ${RUN_WAY}`,
+      tail: ` For 't', correct the workflow and register it again; for 'first', start a run with params that fit, or correct its input_schema and register the workflow again; ${RUN_WAY_NEW_RUN}`,
       runWay: 1,
     });
   });

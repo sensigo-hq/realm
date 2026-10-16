@@ -118,7 +118,14 @@ describe('#625 PR-2a, C82 — an agent step refused before its claim, over the M
       status: 'ok',
       next: [],
       agent_refused: [
-        { step: 'ask', runnable_here: false, refused_by: 'precondition', refusal: PRE_REFUSAL },
+        {
+          step: 'ask',
+          runnable_here: false,
+          refused_by: 'precondition',
+          refusal: PRE_REFUSAL,
+          // #729 PR-0 (D-L, E1 (b); add-only): the precondition's facts, escaped.
+          precondition: { expression: 'run.params.ok == true', value: 'undefined' },
+        },
       ],
       engine_runnable: undefined,
     });

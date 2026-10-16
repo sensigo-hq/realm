@@ -17,7 +17,8 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   ExtensionRegistry,
 } from '@sensigo/realm';
-import type { ResponseEnvelope, WorkflowDefinition } from '@sensigo/realm';
+import type { WorkflowDefinition } from '@sensigo/realm';
+import type { McpEnvelope } from '../render-reply.js';
 import { registerStartRun } from './start-run.js';
 
 let runStore: JsonFileStore;
@@ -36,7 +37,7 @@ function workflow(id: string, steps: WorkflowDefinition['steps']): WorkflowDefin
 async function startRun(
   def: WorkflowDefinition,
   registry?: ExtensionRegistry,
-): Promise<ResponseEnvelope> {
+): Promise<McpEnvelope> {
   await workflowStore.register(def);
   const server = new McpServer({ name: 'test', version: '0' });
   registerStartRun(server, {
@@ -54,7 +55,7 @@ async function startRun(
       arguments: { workflow_id: def.id, params: {} },
     });
     const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
-    return JSON.parse(text) as ResponseEnvelope;
+    return JSON.parse(text) as McpEnvelope;
   } finally {
     await client.close();
   }

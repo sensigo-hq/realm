@@ -195,7 +195,8 @@ describe('mcp tool handlers', () => {
     // would break — MCP agents key on this field, not on message text.
     expect(envelope['error_code']).toBe('STATE_WORKFLOW_NOT_FOUND');
     const errors = envelope['errors'] as string[];
-    expect(errors[0]).toContain('most often');
+    // #729 PR-0 (T-21): the words by cause (was "most often").
+    expect(errors[0]).toContain('is not registered in this workflow store');
     expect(errors[0]).toContain('retry');
   });
 
@@ -628,11 +629,11 @@ describe('mcp tool handlers', () => {
     expect((parsed['next_actions'] as unknown[]).length).toBeGreaterThan(0);
   });
 
-  it('Step 5 dispatch failure: non-terminal run, wait_for_human error → agent_action: wait_for_human', async () => {
+  it('Step 5 dispatch failure: non-terminal run, wait_for_service error → agent_action: wait_for_service', async () => {
     const adapterErr = new WorkflowError('Mock adapter temporarily unavailable', {
       code: 'SERVICE_HTTP_5XX',
       category: 'SERVICE',
-      agentAction: 'wait_for_human',
+      agentAction: 'wait_for_service',
       retryable: true,
     });
     const registry = new ExtensionRegistry();
@@ -654,8 +655,8 @@ describe('mcp tool handlers', () => {
 
     const parsed = JSON.parse(result.content[0]!.text) as Record<string, unknown>;
     expect(parsed['status']).toBe('error');
-    // Non-terminal run, wait_for_human passes through.
-    expect(parsed['agent_action']).toBe('wait_for_human');
+    // Non-terminal run, wait_for_service passes through.
+    expect(parsed['agent_action']).toBe('wait_for_service');
   });
 
   it('Step 5 dispatch failure: wait_and_proceed with retry_after → MCP response contains retry_after', async () => {

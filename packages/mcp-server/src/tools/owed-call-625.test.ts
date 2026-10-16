@@ -149,7 +149,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
     expect(refused.next_actions).toEqual([]);
     // decision C33: this server cannot run the only owed step — said before any attempt.
     expect(refused.next_actions_status).toBe('blocked_on_capability');
-    // A registry provider that throws falls back to none — never a new failure on a poll.
+    // A registry provider that throws is never a new failure on a poll: the view keeps the observer
+    // reading (unknown); #729 PR-0 (A-5, Q19): nothing it would run is offered, and a warning says why.
     const fallback = await handleGetRunState(
       { run_id: run.id },
       {
@@ -515,7 +516,8 @@ describe('#625 PR-2a — the owed call over the MCP handlers', () => {
   // cannot go on until its workflow is corrected — not only advance_run's nothing-ran reply.
   // F15: `compute` is refused for its input — its own way out, by whether it has `depends_on`.
   const TOOLS_WAY_OUT =
-    "For 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.";
+    // #729 PR-0 (T-20 (i)): a new run is a way out, so the run's way says THIS run stays open.
+    "For 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; this run stays open — after a fix, call advance_run on it; or end it with abandon_run.";
   const TOOLS_WAY_OUT_DEPS =
     "For 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.";
   const needsN = { type: 'object', required: ['n'], properties: { n: { type: 'number' } } };
