@@ -343,36 +343,46 @@ describe('#688 over MCP — the view, and a refusal’s reply', () => {
 
 describe('#688 correction — the docs say what a mapped step called by name is told', () => {
   // Beside each: (a) red when the page no longer holds the words (the docs flip); (b) prints them.
-  it('item 1: error-codes.md, the paragraph after the three-case table — a mapped auto step is the exception', () => {
-    // Executed by cells 4 (b) and 6: the refusal says `report_to_user`, not `provide_input`.
+  // pre-Q3c1 title: 'item 1: error-codes.md, the paragraph after the three-case table — a mapped
+  // auto step is the exception'
+  it('item 1: error-codes.md, the paragraph after the three-case table — an auto step is the exception (#729 Q3 correction 1)', () => {
+    // Executed by cells 4 (b) and 6 (a mapped step) and q3-729.test.ts F1-a…F1-f (an unmapped one):
+    // the refusal routes as every refusal before the claim, never `provide_input`.
     claim(
       'docs/reference/error-codes.md',
-      "An `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`) is the exception: its schema checks what the map builds, not the caller's input, so the reply routes as every refusal before the claim: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`).",
+      "An answer that an agent step's schema refuses is not one of these cases: the run is read and no step starts, so the reply keeps the error's `provide_input`. An `auto` step is the exception: its schema checks the input the engine builds — what its `input_map` builds; else the run's params or an empty input — never the caller's, so the reply routes as every refusal before the claim: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which said `report_to_user` for a step with an `input_map` and, for any other `auto` step, `provide_input` — or ran the step on params that fit).",
     );
   });
 
-  it('item 2: error-codes.md, the VALIDATION_INPUT_SCHEMA row names the input the map builds', () => {
-    // Executed by cells 4 (b) and 6: the code is `VALIDATION_INPUT_SCHEMA` for the built input.
+  // pre-Q3c1 title: 'item 2: error-codes.md, the VALIDATION_INPUT_SCHEMA row names the input the
+  // map builds'
+  it('item 2: error-codes.md, the VALIDATION_INPUT_SCHEMA row names the input the engine builds (#729 Q3 correction 1)', () => {
+    // Executed by cells 4 (b) and 6 and q3-729.test.ts F1-a…F1-c: the code is `VALIDATION_INPUT_SCHEMA`
+    // for the engine's input — a map's, the run's params, or an empty input.
     claim(
       'docs/reference/error-codes.md',
-      "An answer does not fit the step's `input_schema`, or the input an `auto` step with a `handler` or a `uses_service` builds with its `input_map` does not fit it,",
+      "An answer does not fit the step's `input_schema`, or the input the engine builds for an `auto` step (its `input_map`'s, the run's params, or an empty input) does not fit it,",
     );
   });
 
-  it('item 3: tools.md, the execute_step outcome row for a mapped auto step', () => {
+  // pre-Q3c1 title: 'item 3: tools.md, the execute_step outcome row for a mapped auto step'
+  it('item 3: tools.md, the execute_step outcome row for an auto step (#729 Q3 correction 1)', () => {
     // Executed by cells 4 (b) (status, code, action, `error_details` = `errors` only, the way out),
-    // 5 (the way out only when nothing else can run) and 6 (a `uses_service` step).
+    // 5 (the way out only when nothing else can run) and 6 (a `uses_service` step), and by
+    // q3-729.test.ts F1-a…F1-f for a step with no map.
     claim(
       'docs/reference/mcp/tools.md',
-      '| You called an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`), and what the map builds does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "resolve_precondition"` when another step can be called, else `"report_to_user"` (added after version 0.47.0, which always said `report_to_user`), and in `error_details` the rules broken, without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
+      '| You called an `auto` step, and the input the engine builds for it — what its `input_map` builds; else the run\'s params or an empty input — does not fit its schema | `error` | `error_code: "VALIDATION_INPUT_SCHEMA"`, `agent_action: "resolve_precondition"` when another step can be called, else `"report_to_user"` (added after version 0.47.0, which said `report_to_user` for a step with an `input_map` and, for any other `auto` step, `provide_input` — or ran the step on params that fit), and in `error_details` the rules broken, without `rejections` or `threshold`. When nothing else can run, `context_hint` ends with the way out: each refused step\'s own way, then the run\'s, as for [`advance_run`](#advance_run). |',
     );
   });
 
-  it('item 4: tools.md, the by-name refusal paragraph — the mapped exception', () => {
-    // Executed by cells 4 (b), 5 and 6: `report_to_user`, and the way out when nothing else can run.
+  // pre-Q3c1 title: 'item 4: tools.md, the by-name refusal paragraph — the mapped exception'
+  it('item 4: tools.md, the by-name refusal paragraph — an auto step is checked on the input the engine builds (#729 Q3 correction 1)', () => {
+    // Executed by cells 4 (b), 5 and 6 (a mapped step) and q3-729.test.ts F1-a…F1-f (no map, with
+    // and without `depends_on`): the routing, and the way out when nothing else can run.
     claim(
       'docs/reference/mcp/tools.md',
-      "An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply routes as that refusal: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`), and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
+      "An input its schema refuses is the caller's own input for an agent step, and that reply is unchanged. For an `auto` step the schema checks the input the engine builds — what its `input_map` builds; else the run's params (no `depends_on`) or an empty input (with `depends_on`) — never your `params`, so the reply routes as that refusal: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which said `report_to_user` for a step with an `input_map` and, for any other `auto` step, `provide_input` — or ran the step on params that fit), and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
     );
   });
 });

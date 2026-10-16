@@ -2300,9 +2300,16 @@ async function executeStepBody(
   //
   // `_debug` is stripped first (pure) because the input-schema member validates the stripped input —
   // or, for a step that consumes its `input_map`, what the map builds (issue #688).
+  //
+  // #729 Q3 correction 1 (C1a): an engine step's input is the engine's at the agent's door too
+  // (T-13): the pre-claim check judges what the view judged and what `advance_run` will run it
+  // with — never the caller's params.
+  const engineInputAtAgentDoor = options.party === 'agent' && stepDef?.execution === 'auto';
   let debugOutput: unknown;
-  let effectiveInput = options.input;
-  if (Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
+  let effectiveInput = engineInputAtAgentDoor
+    ? engineStepInput(definition, run, options.command)
+    : options.input;
+  if (!engineInputAtAgentDoor && Object.prototype.hasOwnProperty.call(options.input, '_debug')) {
     const { _debug, ...rest } = options.input;
     debugOutput = _debug;
     effectiveInput = rest;
@@ -2312,7 +2319,7 @@ async function executeStepBody(
     run,
     step: options.command,
     input: effectiveInput,
-    inputBy,
+    inputBy: engineInputAtAgentDoor ? 'engine' : inputBy,
   });
   const preClaim: PreClaimRefused | undefined =
     preClaimVerdict !== undefined && 'refused_by' in preClaimVerdict ? preClaimVerdict : undefined;
@@ -2516,10 +2523,12 @@ async function executeStepBody(
         );
         // #729 PR-0 (C66, #688): an engine step's input is the engine's, so its refusal rides the
         // reply as data (an agent step's input is its own answer, C3: returned as it is). T-13 (a):
-        // a step that builds its input with its map routes like every refusal before the claim.
+        // a step that builds its input with its map routes like every refusal before the claim —
+        // and so does any engine step judged on the engine's input at the agent's door (#729 Q3
+        // correction 1, C1b).
         if (stepDef === undefined || stepDef.execution === 'agent') return refused;
         const own = withOwnInputRefusal(refused, options.command);
-        return consumesInputMap(stepDef) && own.refusal !== undefined
+        return (consumesInputMap(stepDef) || engineInputAtAgentDoor) && own.refusal !== undefined
           ? { ...own, reply_kind: 'refusal' }
           : own;
       }

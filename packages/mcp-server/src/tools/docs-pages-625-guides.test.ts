@@ -348,6 +348,63 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
+  it('connect-an-mcp-client.md: if the run does not finish, the assistant calls what next_actions names — execute_step for an agent step, advance_run for the engine’s (#729 Q3 correction 1, C5)', async () => {
+    claim(
+      'docs/guides/connect-an-mcp-client.md',
+      "If the run does not finish, tell the assistant to call what `next_actions` names: `execute_step` for an agent step, `advance_run` for the engine's.",
+    );
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register(
+      wf([
+        'id: c5-next',
+        'name: c5-next',
+        'version: 1',
+        'steps:',
+        '  first:',
+        '    description: First.',
+        '    execution: agent',
+        '  review:',
+        '    description: Review.',
+        '    execution: auto',
+        '    depends_on: [first]',
+        '    trust: human_confirmed',
+        '    gate:',
+        '      choices: [send, discard]',
+        '  send:',
+        '    description: Send.',
+        '    execution: auto',
+        '    depends_on: [review]',
+      ]),
+    );
+    const started = await call('start_run', { workflow_id: 'c5-next' });
+    const runId = started['run_id'] as string;
+    await call('execute_step', { run_id: runId, command: 'first', params: { done: true } });
+    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
+    const answered = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: gateId,
+      choice: 'send',
+    });
+    const before = await runStore.get(runId);
+    const byName = await call('execute_step', { run_id: runId, command: 'send', params: {} });
+    const untouched = (await runStore.get(runId)).version === before.version;
+    const advanced = await call('advance_run', { run_id: runId });
+    // (a) red when the agent step is not offered as execute_step, the owed engine step is not
+    //     offered as advance_run, execute_step naming it runs it, or advance_run does not run it;
+    //     (b) prints the tools offered, the by-name reply's status and the phases.
+    expect({
+      agentStep: nextCall(started),
+      engineStep: tools(answered),
+      byName: [byName['status'], tools(byName), untouched],
+      advanced: [advanced['run_phase'], (await runStore.get(runId)).completed_steps],
+    }).toEqual({
+      agentStep: 'execute_step first',
+      engineStep: ['advance_run'],
+      byName: ['blocked', ['advance_run'], true],
+      advanced: ['completed', ['first', 'review', 'send']],
+    });
+  });
+
   it('human-gates.md: a step behind the open gate is refused with the question it waits on, and next_actions holds the answer', async () => {
     const page = 'docs/guides/human-gates.md';
     claim(page, 'Its `next_actions` holds that answer, `submit_human_response`.');

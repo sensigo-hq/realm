@@ -505,10 +505,12 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
   });
 
   it('json-schema-blocks.md: an auto step’s input_schema is checked against the input the step will receive — what its input_map builds when it has an input_map and a handler or a uses_service, otherwise its input', () => {
-    // issue #688: (a) red when the row no longer says this (the docs flip); (b) prints the row.
+    // issue #688: (a) red when the row no longer says this (the docs flip); (b) prints the row. #729
+    // Q3 correction 1 (C6): the row says whose input is checked — the library's lever is executed by
+    // q3-729.test.ts F1-e, the assistant's call by F1-a…F1-c.
     claim(
       'docs/reference/workflow/json-schema-blocks.md',
-      "| `input_schema` | An auto step | The input the step will receive: what its `input_map` builds when the step has an `input_map` and a `handler` or `uses_service`; otherwise its input — the input a caller passes when it names the step, or the engine's: the run's params when the step has no `depends_on`, `{}` otherwise. | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out when nothing else can run. |",
+      "| `input_schema` | An auto step | The input the step will receive: what its `input_map` builds when the step has an `input_map` and a `handler` or `uses_service`; otherwise the engine's input: the run's params when the step has no `depends_on`, `{}` otherwise. A program that names the step through the library (`executeStep`) with an input of its own has that input checked; an assistant's call never does (its `params` are not the step's input). | Before the step is claimed. | The step is not run: `'<step>' cannot run (input_schema): …`, with the way out when nothing else can run. |",
     );
   });
 

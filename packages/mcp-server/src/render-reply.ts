@@ -569,11 +569,21 @@ function hintOf(reply: EngineReply, narrowed: Narrowed | undefined, ended: boole
     refusal.code === 'refused_before_claim' &&
     refusal.step === reply.command &&
     (refusal.facts.check !== 'input_schema' ||
-      !refusal.remedy.some((w) => w.verb === 'run_step')) &&
+      !refusal.remedy.some(
+        (w) =>
+          w.verb === 'run_step' &&
+          (narrowed?.ways ?? []).some(
+            (n) => n.verb === 'run_step' && n.step === w.step && forAgent(n),
+          ),
+      )) &&
     cannotGoOnWithRefusal(narrowed, ended) &&
     narrowed !== undefined
   ) {
-    // C66, #688: a by-name refusal the caller cannot change ends with the person's way out.
+    // C66, #688: a by-name refusal the caller cannot change ends with the person's way out. #729 Q3
+    // correction 1 (the architect's ruling, Amendment 16's chain law): an input refusal's own
+    // `run_step` lever withholds it only when THIS caller may take that lever — at this door the
+    // operator's lever rides `elsewhere`, never the agent's ways, so the assistant is told the end of
+    // the chain.
     hint += ` ${wayOutWords(narrowed)}`;
   }
   if (reply.names_next === true) {

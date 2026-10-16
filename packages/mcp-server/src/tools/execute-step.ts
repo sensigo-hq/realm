@@ -119,6 +119,10 @@ const VALIDATION_TELEMETRY_CODES = new Set([
  * (P2) and a durable per-run sidecar (P3, when a store is wired). Each sink is separately guarded so a
  * throw in one cannot suppress the other; the whole thing never throws and never alters the
  * execute_step response.
+ *
+ * #729 Q3 correction 1 (C2): written only when the named step is an AGENT step — its record is that
+ * step's refused answer. An engine step's input is the engine's (T-13): a by-name call on it is
+ * refused on the engine's input, so the caller's `params` are no answer of that step's.
  */
 async function emitFailedAttemptTelemetry(
   args: {
@@ -128,12 +132,14 @@ async function emitFailedAttemptTelemetry(
     trace?: AgentTraceEntry[] | undefined;
   },
   workflowId: string,
+  stepExecution: string | undefined,
   result: EngineReply,
   failedAttemptStore?: FailedAttemptStoreLike,
 ): Promise<void> {
   // Build the shared metadata-only record once (bail both sinks if it can't be built).
   let record: ReturnType<typeof buildFailedAttemptRecord>;
   try {
+    if (stepExecution !== 'agent') return;
     if (result.status !== 'error') return;
     // issue #676 (review): a rejection from a step the engine ran AFTER this one is not a failed
     // attempt of this step — its submission was accepted and it settled (`stopped_step` names
@@ -310,7 +316,13 @@ export async function handleExecuteStep(
   // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the
   // ephemeral stderr line (P2) and the durable per-run sidecar (P3, when wired). Reads the pre-strip
   // envelope; awaited but best-effort — it never throws and never alters the response.
-  await emitFailedAttemptTelemetry(args, run.workflow_id, result, stores?.failedAttemptStore);
+  await emitFailedAttemptTelemetry(
+    args,
+    run.workflow_id,
+    stepDef?.execution,
+    result,
+    stores?.failedAttemptStore,
+  );
 
   // decisions C205, C211 (the architect's addendum): a reply on a run that has ended — this call's
   // own step or a step it chained failed, or the run had ended before it — ends with the ways back
