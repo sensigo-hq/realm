@@ -249,6 +249,15 @@ describe(
         RD_PAGE,
         "When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):",
       );
+      // #729 PR-0 correction (C2): the sentence under the screen, pinned by this cell's execution —
+      // the stuck run's `Cannot run` line, then the operator's input fact (`head(shown.stuck)`
+      // below, against the page's screen). A step that builds its input with an `input_map` gets
+      // no such line: its entry carries no lever (`ways.test.ts`, "refused_before_claim
+      // (input_schema)", the mapped half), and the line is the lever's alone.
+      claim(
+        RD_PAGE,
+        'For a step refused for its input that builds no input from an `input_map`, like `compute` here, the line after `Cannot run` says that an operator supplies its input, checked against its `input_schema`, and that no `realm` command does (added after version 0.47.0).',
+      );
       const STAYS = ' stays open (phase ';
       /** The `Cannot run` line and the two that follow it (#729 PR-0: the operator's input fact, then the way out). */
       const head = (lines: string[]) => {

@@ -182,6 +182,10 @@ describe('abandon_run MCP tool', () => {
       'The run is waiting on a human gate, so it cannot be abandoned yet. ' +
         `Answer it: submit_human_response {run_id: '${run.id}', gate_id: 'g1', choice: <one of: approve>}.`,
     );
+    // #729 PR-0 correction (C3): the gate refusal's `details` are untyped, and abandon_run keeps
+    // not publishing them (only a code's typed facts are). (a) red when abandon_run publishes the
+    // untyped details; (b) prints whether the field is there.
+    expect('error_details' in env).toBe(false);
   });
 
   it('the #432-class divergent record (persisted gate_waiting, NO pending_gate) is abandoned, not refused', async () => {

@@ -711,3 +711,125 @@ describe('the answerer clause reads the record (#706 walk W8-R1)', () => {
     );
   });
 });
+
+// #729 PR-0 correction (C5; A-2 row 6, Table rows 33–34): an answer that names a gate which is not
+// the open one is refused with core's message, then the refusal's way on — its typed remedy, worded
+// by the CLI's one renderer, as the MCP door names the open question and its answer. C212: the line
+// ends with its command, no stop after it. The refused answer THROWS; its message is every line the
+// command prints on stderr, one per line.
+describe('#729 PR-0 correction (C5) — a wrong gate id: the refusal names its way on', () => {
+  const MESSAGE = "Gate 'wrong-gate-id' is not the open gate and matches no committed resolution.";
+  const dueWorkflow: WorkflowDefinition = {
+    id: 'respond-c5-due-wf',
+    name: 'Respond C5 Due Workflow',
+    version: 1,
+    schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+    steps: {
+      q: {
+        description: 'Auto step with a gate whose time runs out',
+        execution: 'auto',
+        trust: 'human_confirmed',
+        gate: {
+          choices: ['approve', 'reject'],
+          timeout_seconds: 1,
+          on_expiry: 'settle_default',
+          default_choice: 'approve',
+        },
+      },
+    },
+  } as WorkflowDefinition;
+
+  async function stores() {
+    const runStore = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-respond-c5-run-')));
+    const workflowStore = new JsonWorkflowStore(
+      await mkdtemp(join(tmpdir(), 'realm-respond-c5-wf-')),
+    );
+    await workflowStore.register(gateWorkflow);
+    await workflowStore.register(dueWorkflow);
+    return { runStore, workflowStore };
+  }
+
+  /** The refused answer's lines, as the command prints them. */
+  async function refusedLines(
+    runStore: JsonFileStore,
+    workflowStore: JsonWorkflowStore,
+    runId: string,
+  ): Promise<string[]> {
+    try {
+      await respondToGate(
+        runId,
+        { gate: 'wrong-gate-id', choice: 'approve' },
+        runStore,
+        workflowStore,
+        new ExtensionRegistry(),
+      );
+    } catch (err) {
+      if (err instanceof WorkflowError) return err.message.split('\n');
+      throw err;
+    }
+    throw new Error('fixture: the answer naming a wrong gate was recorded');
+  }
+
+  it('a question open: the line after the message answers the open question, its command last', async () => {
+    const { runStore, workflowStore } = await stores();
+    const { run } = await runStore.create({
+      workflowId: gateWorkflow.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(runStore, gateWorkflow, {
+      runId: run.id,
+      command: 'step-one',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    const gateId = (await runStore.get(run.id)).pending_gate?.gate_id;
+    expect(gateId, 'fixture: the question is open').toBeDefined();
+    // (a) red when the refusal prints no way on (the core message alone, as before the correction),
+    //     or the answer's command is not the open gate's; (b) prints the lines.
+    expect(await refusedLines(runStore, workflowStore, run.id)).toEqual([
+      MESSAGE,
+      `The open question is on step 'step-one' — answer it: realm run respond ${run.id} --gate ${gateId!} --choice <one of: approve, reject>`,
+    ]);
+  });
+
+  it('no question open: the line after the message reads the run', async () => {
+    const { runStore, workflowStore } = await stores();
+    const { run } = await runStore.create({
+      workflowId: gateWorkflow.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    // (a) red when the refusal prints no way on, or one that names a question; (b) prints the lines.
+    expect(await refusedLines(runStore, workflowStore, run.id)).toEqual([
+      MESSAGE,
+      `No question is open on this run — to read it: realm run inspect ${run.id}`,
+    ]);
+  });
+
+  it('the open question’s time is up: the line after the message carries out its expiry (Q18 (a))', async () => {
+    const { runStore, workflowStore } = await stores();
+    const { run } = await runStore.create({
+      workflowId: dueWorkflow.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(runStore, dueWorkflow, {
+      runId: run.id,
+      command: 'q',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    expect(
+      (await runStore.get(run.id)).pending_gate,
+      'fixture: the question is open',
+    ).toBeDefined();
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    // (a) red when the refusal prints no way on, or offers the answer a question past its time can
+    //     no longer take; (b) prints the lines.
+    expect(await refusedLines(runStore, workflowStore, run.id)).toEqual([
+      MESSAGE,
+      `The open question on step 'q' can no longer be answered: its time is up — to carry out its expiry: realm run advance ${run.id}`,
+    ]);
+  });
+});

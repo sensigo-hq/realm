@@ -6,6 +6,7 @@ import type {
   ExtensionRegistry,
   Attributed,
   AnswerView,
+  EngineReply,
   RunRecord,
   WorkflowDefinition,
 } from '@sensigo/realm';
@@ -130,6 +131,38 @@ function withCleanupLine(lines: string[], run: RunRecord): string[] {
 }
 
 /**
+ * #729 PR-0 correction (C5; A-2 row 6, Table rows 33–34): the way on from an answer that names a
+ * gate which is not the open one — the refusal's typed remedy (`error.remedy`), worded by the CLI's
+ * one renderer, as the MCP door words it: the open question's answer; the advance that carries out
+ * the open question's expiry when its time is up (Q18 (a)); with no question open, reading the run.
+ * The lead comes from the refusal's facts (`open_gate`), never from which verb the remedy names.
+ * C212: each line ends with its command, with no stop after it.
+ */
+function gateMismatchLines(result: EngineReply): string[] {
+  const refusal = result.refusal;
+  if (refusal === undefined || refusal.code !== 'gate_not_open') return [];
+  const open = refusal.facts.open_gate;
+  return (result.error?.remedy ?? []).flatMap((way) => {
+    if (way.verb === 'respond') {
+      return [
+        `The open question is on step '${way.step}' — answer it: ${CLI_COMMANDS.respond(way, undefined, NO_DRIVE_FLAGS)}`,
+      ];
+    }
+    if (way.verb === 'advance' && open !== undefined) {
+      return [
+        `The open question on step '${open.step}' can no longer be answered: its time is up — to carry out its expiry: ${CLI_COMMANDS.advance(way, undefined, NO_DRIVE_FLAGS)}`,
+      ];
+    }
+    if (way.verb === 'inspect' && open === undefined) {
+      return [
+        `No question is open on this run — to read it: ${CLI_COMMANDS.inspect(way, undefined, NO_DRIVE_FLAGS)}`,
+      ];
+    }
+    return [];
+  });
+}
+
+/**
  * #706 walk W8-R1 (decision C11): the answerer clause of the `Responded:` line. It reads the RECORD
  * — `answer` is the answer the run record holds for the question's step after this call
  * (`recordedAnswer`) — never this command's own `--by`: a repeat of the recorded choice records
@@ -245,9 +278,10 @@ export async function respondToGate(
     // gate whose expiry settled a choice enacts that expiry itself, and the expiry's write may
     // have settled guards — passed, or ended the run. A person who wanted the other choice must
     // learn what the run is doing now: refusal → guard lines → `Not recorded:`. Every other
-    // refusal prints exactly what it printed before (plus the ending, should the reply carry one).
+    // refusal prints exactly what it printed before (plus the ending, should the reply carry one),
+    // and an answer naming a gate that is not the open one its way on (#729 PR-0 correction, C5).
     const refusal = result.errors[0] ?? 'Gate response failed';
-    let lines = [refusal, ...describeEndedBy(result)];
+    let lines = [refusal, ...gateMismatchLines(result), ...describeEndedBy(result)];
     if (result.answer_recorded === false) {
       const lateRun = await runStore.get(runId);
       const late = lateAnswerOutcome(result, lateRun);

@@ -116,15 +116,23 @@ export function registerAbandonRun(server: McpServer, opts?: HandleAbandonRunSto
           buildPreExecutionErrorEnvelope('abandon_run', args.run_id, 0, workflowErr, contextHint),
         );
         // This reply's field set is as before PR-0: no run was read (no version), the refusal's
-        // `details` are not published here, and an untyped throw names no code.
+        // untyped `details` are not published here, and an untyped throw names no code. A code's
+        // TYPED facts (a damaged run file's, #719) are published as `error_details`, as on every
+        // other MCP door — the one carrier (Amendments 9, 11; #729 PR-0 correction, C3).
         const {
           run_version: _version,
-          error_details: _details,
+          error_details: details,
           error_code: _code,
           ...envelope
         } = rendered.envelope;
         return toolContentOf(
-          { ...envelope, ...(code !== undefined ? { error_code: code } : {}) },
+          {
+            ...envelope,
+            ...(code !== undefined ? { error_code: code } : {}),
+            ...(workflowErr.facts !== undefined && details !== undefined
+              ? { error_details: details }
+              : {}),
+          },
           sseJsonStringify,
         );
       }

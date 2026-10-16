@@ -306,6 +306,42 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     expect(tools(r)).toEqual(['submit_human_response']);
   });
 
+  it('#729 PR-0 correction (C2): human-gates.md — at the gate the driver is told the pause only; the choices are the gate’s', async () => {
+    const page = 'docs/guides/human-gates.md';
+    claim(
+      page,
+      "The choices are the gate's (`send`, `discard`); the line named them up to version 0.47.0.",
+    );
+    const text = readFileSync(join(ROOT, page), 'utf8');
+    const yaml = text.slice(
+      text.indexOf('```yaml\n') + 8,
+      text.indexOf('\n```', text.indexOf('```yaml\n')),
+    );
+    const { call, workflowStore } = await connect();
+    await workflowStore.register(loadWorkflowFromString(yaml));
+    const runId = (await call('start_run', { workflow_id: 'announce' }))['run_id'] as string;
+    const r = await call('execute_step', {
+      run_id: runId,
+      command: 'draft',
+      params: { subject: 'Office closed Friday', body: 'The office is closed this Friday.' },
+    });
+    const gate = r['gate'] as { gate_id: string; choices: string[] };
+    // (a) red when what the driver is told is not the page's three lines (the hint naming the
+    //     choices again, as up to 0.47.0), or the gate's choices are not the page's; (b) prints both,
+    //     the gate's id put as the page's.
+    expect({
+      told: [
+        `status: ${String(r['status'])}`,
+        `run_phase: ${String(r['run_phase'])}`,
+        String(r['context_hint']).split(gate.gate_id).join('39792a3a-f9c3-470a-b94c-c314fb254234'),
+      ],
+      choices: gate.choices,
+    }).toEqual({
+      told: block(page, 'run_phase: gate_waiting'),
+      choices: ['send', 'discard'],
+    });
+  });
+
   it('idempotency-and-batches.md: a repeat with the same key returns the run and says what comes next, as the first reply did', async () => {
     const page = 'docs/guides/idempotency-and-batches.md';
     claim(

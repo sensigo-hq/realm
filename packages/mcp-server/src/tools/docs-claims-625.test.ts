@@ -21,11 +21,13 @@ import {
   executeStep,
   formatDuration,
   loadWorkflowFromString,
+  type EngineReply,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { renderReply } from '../render-reply.js';
 
 const DOCS = join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -2643,6 +2645,210 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       ...Object.fromEntries(fields.map((f) => [f, example[f]])),
       warning: (example['warnings'] as string[])[0],
     });
+  });
+
+  /** The triage workflow of tools.md's examples: `classify`, then `draft`, whose answer opens a gate. */
+  const TRIAGE = [
+    'id: triage',
+    'name: triage',
+    'version: 1',
+    'steps:',
+    '  classify:',
+    '    description: Classify.',
+    '    execution: agent',
+    '  draft:',
+    '    description: Draft.',
+    '    execution: agent',
+    '    depends_on: [classify]',
+    '    trust: human_confirmed',
+    '    gate:',
+    '      choices: [send, discard]',
+    '',
+  ].join('\n');
+
+  /** The run of TRIAGE at its gate: the reply that opened it, and the ids the page stands in for. */
+  async function triageAtGate() {
+    const conn = await connect();
+    await conn.workflowStore.register(loadWorkflowFromString(TRIAGE));
+    const runId = (
+      await conn.call('start_run', { workflow_id: 'triage', params: { ticket: 101 } })
+    )['run_id'] as string;
+    await conn.call('execute_step', { run_id: runId, command: 'classify', params: {} });
+    const opened = await conn.call('execute_step', {
+      run_id: runId,
+      command: 'draft',
+      params: { reply: 'We have refunded the charge.' },
+    });
+    const gateId = (opened['gate'] as { gate_id: string }).gate_id;
+    return { ...conn, runId, gateId, opened };
+  }
+
+  it('#729 PR-0 correction (C1): tools.md\'s "A step with a gate" example is the opening reply, field by field — the hint says the pause only; the token rides the answer instruction alone', async () => {
+    claim(
+      'mcp/tools.md',
+      `"context_hint": "Run is paused at gate '00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e'.",`,
+    );
+    const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
+    const found = page
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1)
+      .filter(
+        (b) => b.includes('"status": "confirm_required"') && b.includes('"step_name": "draft"'),
+      );
+    expect(found.length, 'the page has one "A step with a gate" example').toBe(1);
+    const example = JSON.parse(found[0]!.replace(/\n```[\s\S]*$/, '')) as Reply;
+    type Answer = { instruction: { params: Record<string, unknown> } };
+    const shownToken = String(
+      (example['next_actions'] as Answer[])[0]!.instruction.params['claim_token'],
+    );
+    const { runId, gateId, opened } = await triageAtGate();
+    const token = (opened['next_actions'] as Answer[] | undefined)?.[0]?.instruction.params[
+      'claim_token'
+    ];
+    // (a) red when the opening reply carries no token in its answer instruction; (b) prints a
+    //     boolean, never the token.
+    expect(
+      typeof token === 'string' && token !== '',
+      'the opening reply carries a claim token',
+    ).toBe(true);
+    // The run's ids and token replaced by the page's, so the comparison prints the page's stand-ins.
+    const ids = (v: unknown): unknown =>
+      v === undefined
+        ? v
+        : JSON.parse(
+            JSON.stringify(v)
+              .split(runId)
+              .join('7da561ee-5987-497d-83a5-1eded6dc9b63')
+              .split(gateId)
+              .join('00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e')
+              .split(String(token))
+              .join(shownToken),
+          );
+    const fields = ['command', 'status', 'context_hint', 'run_phase', 'next_actions', 'gate'];
+    // (a) red when the reply and the page's example differ in any field the example shows — the
+    //     hint naming the choices again, the token leaving the answer instruction or riding `gate`;
+    //     (b) prints both, the run's ids and token put as the page's.
+    expect(Object.fromEntries(fields.map((f) => [f, ids(opened[f])]))).toEqual(
+      Object.fromEntries(fields.map((f) => [f, example[f]])),
+    );
+  });
+
+  it('#729 PR-0 correction (C2): tools.md — the opening reply alone carries the claim token, in both forms of the answer instruction, with its sentence; with no token, neither', async () => {
+    claim(
+      'mcp/tools.md',
+      "The reply that opens a gate carries the token of the claim that the opening call made on the gate's step, in both forms of the answer instruction, `instruction.params.claim_token` and `instruction.call_with.claim_token`, and the instruction's `human_readable` text says to pass it back.",
+    );
+    claim(
+      'mcp/tools.md',
+      'Up to version 0.47.0 it was also in `gate.claim_token`. When the store gave no token, the field and the sentence are left out. That reply is the only one that carries it. `get_run_state`, `realm run inspect` and every refusal leave it out.',
+    );
+    type Answer = {
+      instruction: {
+        tool: string;
+        params: Record<string, unknown>;
+        call_with: Record<string, unknown>;
+      };
+      human_readable: string;
+    };
+    const answerOf = (r: Record<string, unknown>) =>
+      ((r['next_actions'] as Answer[] | undefined) ?? []).find(
+        (n) => n.instruction?.tool === 'submit_human_response',
+      );
+    const SENTENCE = 'passing claim_token back unchanged';
+    const { call, runId, opened } = await triageAtGate();
+    const answer = answerOf(opened)!;
+    const token = String(answer.instruction.params['claim_token']);
+    const state = await call('get_run_state', { run_id: runId });
+    const refused = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: 'not-the-open-gate',
+      choice: 'send',
+    });
+    expect(refused['status'], 'fixture: the answer naming another gate is refused').toBe('error');
+    // (a) red when the token leaves either form of the opening reply's answer, its sentence goes,
+    //     it rides `gate`, or get_run_state or a refusal carries it; (b) prints booleans only.
+    //     `realm run inspect` is cost-view-disclosure-parity.test.ts's "the claim token is withheld".
+    expect({
+      params: 'claim_token' in answer.instruction.params,
+      call_with: 'claim_token' in answer.instruction.call_with,
+      sentence: answer.human_readable.includes(SENTENCE),
+      gate: 'claim_token' in ((opened['gate'] as object | undefined) ?? {}),
+      state: JSON.stringify(state).includes(token),
+      refusal: JSON.stringify(refused).includes(token),
+    }).toEqual({
+      params: true,
+      call_with: true,
+      sentence: true,
+      gate: false,
+      state: false,
+      refusal: false,
+    });
+    // When the store gave no token: the opening reply's answer way carries no proof, and the one
+    // renderer leaves out both the field and the sentence.
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-docs-c2-')));
+    const def = loadWorkflowFromString(TRIAGE);
+    const { run } = await store.create({ workflowId: 'triage', workflowVersion: 1, params: {} });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'classify',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    const lib = await executeStep(store, def, {
+      runId: run.id,
+      command: 'draft',
+      input: { reply: 'We have refunded the charge.' },
+      dispatcher: async () => ({}),
+    });
+    const noToken = {
+      ...lib,
+      ways: lib.ways.map((w) => {
+        if (w.verb !== 'respond') return w;
+        const { proof: _proof, ...rest } = w;
+        return rest;
+      }),
+    } as EngineReply;
+    const shape = (r: EngineReply) => {
+      const a = answerOf(renderReply(r).envelope as Record<string, unknown>)!;
+      return {
+        params: 'claim_token' in a.instruction.params,
+        call_with: 'claim_token' in a.instruction.call_with,
+        sentence: a.human_readable.includes(SENTENCE),
+      };
+    };
+    // (a) red when a reply with no token still prints the field or the sentence, or the control
+    //     (the same reply with its token) loses them; (b) prints booleans only.
+    expect({ withToken: shape(lib), noToken: shape(noToken) }).toEqual({
+      withToken: { params: true, call_with: true, sentence: true },
+      noToken: { params: false, call_with: false, sentence: false },
+    });
+  });
+
+  it('#729 PR-0 correction (C2): tools.md — abandon_run at an open question: the first line is errors[0], the second context_hint, as the page shows them', async () => {
+    claim(
+      'mcp/tools.md',
+      'The first line is `errors[0]`, the second `context_hint` (added after version 0.47.0, whose `errors[0]` carried both).',
+    );
+    const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
+    const found = page
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1)
+      .filter((b) => b.includes('it cannot be abandoned while its question is open'));
+    expect(found.length, 'the page has one block with the abandon refusal').toBe(1);
+    const shown = found[0]!
+      .replace(/\n```[\s\S]*$/, '')
+      .split('\n')
+      .filter((l) => l !== '');
+    const { call, runId, gateId } = await triageAtGate();
+    const r = await call('abandon_run', { run_id: runId });
+    // The page shortens the ids to their first group and an ellipsis.
+    const short = (t: unknown) =>
+      String(t).split(runId).join('7da561ee-…').split(gateId).join('00bb04f5-…');
+    // (a) red when errors[0] and context_hint are not the page's two lines (one carrying both, as
+    //     0.47.0 did, or the answer missing from the hint); (b) prints both, the ids shortened.
+    expect([short((r['errors'] as string[] | undefined)?.[0]), short(r['context_hint'])]).toEqual(
+      shown,
+    );
   });
 
   it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and outcome says the timeout (#729 PR-0); a person’s recorded choice says the answer', async () => {

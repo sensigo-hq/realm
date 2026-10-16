@@ -343,9 +343,28 @@ A step with a gate:
 {
   "command": "draft",
   "status": "confirm_required",
-  "context_hint": "Run is paused at gate '00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e'. Available choices: send, discard.",
+  "context_hint": "Run is paused at gate '00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e'.",
   "run_phase": "gate_waiting",
-  "next_actions": ["…"],
+  "next_actions": [
+    {
+      "instruction": {
+        "tool": "submit_human_response",
+        "params": {
+          "run_id": "7da561ee-5987-497d-83a5-1eded6dc9b63",
+          "gate_id": "00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e",
+          "claim_token": "3b9d6f2e-8a41-4c57-9e0b-2d7f1a6c4e85"
+        },
+        "call_with": {
+          "run_id": "7da561ee-5987-497d-83a5-1eded6dc9b63",
+          "gate_id": "00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e",
+          "choice": "<send|discard>",
+          "claim_token": "3b9d6f2e-8a41-4c57-9e0b-2d7f1a6c4e85"
+        }
+      },
+      "human_readable": "Human review required for step 'draft'. Present gate.display to the user, wait for their choice from gate.response_spec.choices, then call submit_human_response with call_with, passing claim_token back unchanged — it shows that this answer comes from the conversation that opened the question.",
+      "orientation": "Run is paused at gate '00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e'."
+    }
+  ],
   "gate": {
     "gate_id": "00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e",
     "step_name": "draft",
