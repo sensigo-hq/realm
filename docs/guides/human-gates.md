@@ -120,11 +120,13 @@ It prints:
 64993bb2-6f65-47d9-801c-d008e9291a00  announce v1  gate_waiting  10/1/2026, 11:13:36 PM  2 step(s)  gate: review (0m)
 ```
 
-`realm run inspect <run-id>` shows the gate's ID and choices:
+`realm run inspect <run-id>` shows the gate's ID, its question as the person reads it, its choices and the command that answers it (the question and the command were added after version 0.47.0):
 
 ```text
 Gate: review (gate 39792a3a-f9c3-470a-b94c-c314fb254234, opened 0m ago)
+  Question: "Subject: OFFICE CLOSED FRIDAY\n\nThe office is closed this Friday.\n"
   Choices: send, discard
+  To answer: realm run respond 64993bb2-6f65-47d9-801c-d008e9291a00 --gate 39792a3a-f9c3-470a-b94c-c314fb254234 --choice <one of: send, discard>
 ```
 
 ## 6. Answer it
@@ -151,9 +153,9 @@ The answer names its answerer only if you say who with `--by`:
 realm run respond 64993bb2-6f65-47d9-801c-d008e9291a00 --gate 39792a3a-f9c3-470a-b94c-c314fb254234 --choice send --by alice
 ```
 
-Realm records the name as you give it, without spaces at either end, and does not check it. It takes at most 200 characters, with no control characters, and `realm run inspect` shows it as `answered by alice (as stated, not verified)`. Without `--by` it shows `(not stated)`. `--by` names a person. It is never filled in from the operating system or from `REALM_OPERATOR`, which name a program.
+Realm records the name as you give it, without spaces at either end, and does not check it. It takes at most 200 characters, with no control characters, and `realm run inspect` shows it as `answered by alice (as stated)`. Without `--by` it shows `(not stated)`. `--by` names a person. It is never filled in from the operating system or from `REALM_OPERATOR`, which name a program.
 
-An AI assistant connected over MCP answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. In the reply that opened the gate, that call carries the gate's `claim_token`; the same call in a later reply, such as `get_run_state`'s, has none. See [The claim token](../reference/mcp/tools.md#the-claim-token).
+Over MCP, who answers depends on the server's gate-answers value (see [Gate answers over MCP](../reference/mcp/gate-answers.md)). Under the default, `asked`, a chat app that shows forms gets the question as a form, and the person answers there; under `withheld`, no tool answers. An AI assistant that has the answer tool (under `offered`, or under `asked` in an app that shows no forms) answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. In the reply that opened the gate, that call carries the gate's `claim_token`; the same call in a later reply, such as `get_run_state`'s, has none. See [The claim token](../reference/mcp/tools.md#the-claim-token).
 
 A choice that is not on the list is refused, and the gate stays open:
 

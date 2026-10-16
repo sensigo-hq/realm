@@ -15,7 +15,9 @@ import type {
   StepCacheDetail,
   SealArm,
   OutputSource,
+  Principal,
 } from '../types/run-record.js';
+import { answerViaOf } from './answer-facts.js';
 import { isBareAutoStep as isBareAutoStepDef } from './output-source.js';
 import { boundRequestFacts } from './request-facts.js';
 import { isPastDeadline, overdueOf } from './instants.js';
@@ -316,6 +318,27 @@ export interface SubmitGateOptions {
    * (the admission step).
    */
   caller?: AnswerCaller;
+  /**
+   * #627 W (§5.8): the route this answer arrived through, as the calling DOOR declares it — the MCP
+   * answer tool passes `mcp`, its form `mcp_form`, `realm run respond` and the `realm run` prompt
+   * `cli`. Recorded as `answer.route` on the answer's entry; absent ⇒ `route_not_declared` is
+   * recorded. A route sent by a tool's caller never reaches this: the door passes its own.
+   */
+  route?: string;
+  /** #627 W (§5.2): with route `mcp_form`, what showed the question (`shownViewEvidence`). */
+  shown?: { renderer: string };
+  /**
+   * #627 W (§5.8, F29): what the door's transport authenticated — an API key's id, `realm serve`'s
+   * shared token, or the door's typed absence. Absent ⇒ `principal_not_passed` is recorded. Never a
+   * secret.
+   */
+  principal?: Principal;
+  /**
+   * #627 W (§5.2 row 3, F30): the answer came through the MCP fallback, whose answer tool asks the
+   * client to have its user approve each call. Recorded as `client_prompt_requested`; admission never
+   * waits on it (Realm cannot see the prompt).
+   */
+  clientPromptRequested?: boolean;
 }
 
 export interface ExecuteChainOptions {
@@ -1805,7 +1828,15 @@ export function expiryReceiptLine(receipt: ExpiryReceipt): string {
  * the call's read before any wait (`expiresAt`); `attempted`: whether this call tried to answer.
  * `undefined` when the record shows no settlement of `step`.
  */
-function outcomeOf(
+/**
+ * How a question was settled, read from the record that settled it (T-1's `outcome`): the winning
+ * answer with its route (#627 W, cell 29), the expiry, or the engine's cancel on a sibling's abort;
+ * `undefined` while the question is not settled. `step` and `expiresAt` are the question's, from a
+ * snapshot taken before any wait (a settled record has no `pending_gate`); `attempted` says whether
+ * the caller tried to answer. Exported for #627 W's form path, whose reply after a wait reads it from
+ * a fresh snapshot (`renderOutcome`).
+ */
+export function outcomeOf(
   run: RunRecord,
   step: string,
   expiresAt: string | undefined,
@@ -1817,20 +1848,30 @@ function outcomeOf(
   const base = { step, ...(expiresAt !== undefined ? { expiry: expiresAt } : {}), attempted };
   const at = winning !== undefined ? { at: winning.completed_at } : {};
   const settled = run.settled?.[step];
+  // #627 W (cell 29): how the winning entry arrived — its route, else the record's own absence.
+  const via = winning !== undefined ? { via: answerViaOf(winning) } : {};
   if (settled?.outcome === 'gate') {
     const choice = settled.choice !== undefined ? { choice: settled.choice } : {};
     if (settled.resolved_by === 'timeout')
-      return { ...choice, by: { kind: 'timeout' }, ...at, ...base };
+      return {
+        ...choice,
+        by: { kind: 'timeout' },
+        via: { absent: 'settled_by_expiry' },
+        ...at,
+        ...base,
+      };
     const name = winning?.responded_by;
     return {
       ...choice,
       by: { kind: 'answer', ...(name !== undefined ? { name } : {}), basis: 'stated' },
+      ...via,
       ...at,
       ...base,
     };
   }
   const skipped = run.skip_details?.[step];
-  if (skipped?.kind === 'gate_expired') return { by: { kind: 'timeout' }, ...at, ...base };
+  if (skipped?.kind === 'gate_expired')
+    return { by: { kind: 'timeout' }, via: { absent: 'settled_by_expiry' }, ...at, ...base };
   if (skipped?.kind === 'gate_cancelled_by_abort') {
     const cancel = [...run.evidence]
       .reverse()
@@ -5548,6 +5589,7 @@ function buildGateResponseSnapshot(
   choice: string,
   respondedAt: Date,
   respondedBy: string | undefined,
+  answerFacts: AnswerEntryFacts,
 ): EvidenceSnapshot {
   const gateEvidence = captureEvidence({
     stepId: gate.step_name,
@@ -5561,6 +5603,36 @@ function buildGateResponseSnapshot(
     kind: 'gate_response' as const,
     ...(gate.resolved_message !== undefined ? { gate_message: gate.resolved_message } : {}),
     ...(respondedBy !== undefined ? { responded_by: respondedBy } : {}),
+    ...answerFacts,
+  };
+}
+
+/** #627 W (§5.8): what an answer's own entry records about how it arrived (never in `evidence_hash`). */
+type AnswerEntryFacts = Pick<
+  EvidenceSnapshot,
+  'answer' | 'driven_by' | 'client_prompt_requested' | 'principal'
+>;
+
+/**
+ * #627 W (§5.8): the answer's facts on its entry, from the door's options — the route the door
+ * declared (`route_not_declared` when a library caller declared none), the program that recorded it
+ * (`driven_by`, as on every entry a program's call wrote), whether the client was asked to have its
+ * user approve the call, and what the door's transport authenticated (`principal_not_passed` when it
+ * passed none). Both answer builds write these (the legacy one dies with #715's step (b)).
+ */
+function answerEntryFactsOf(options: SubmitGateOptions): AnswerEntryFacts {
+  const principal: Principal = options.principal ?? { absent: 'principal_not_passed' };
+  return {
+    answer:
+      options.route !== undefined
+        ? {
+            route: options.route,
+            ...(options.shown !== undefined ? { shown: { renderer: options.shown.renderer } } : {}),
+          }
+        : { absent: 'route_not_declared' },
+    ...(options.driver !== undefined ? { driven_by: options.driver } : {}),
+    ...(options.clientPromptRequested === true ? { client_prompt_requested: true as const } : {}),
+    principal,
   };
 }
 
@@ -5925,6 +5997,7 @@ export async function submitHumanResponse(
               options.choice,
               respondedAt,
               options.respondedBy,
+              answerEntryFactsOf(options),
             ),
           ]
         : [];
@@ -6523,6 +6596,9 @@ export async function submitHumanResponse(
     // issue #625 (holder slice): what the caller showed about the question's claim — recorded on
     // the answer's own entry, and deciding nothing.
     claim_proof: verdictOnly(legacyGateClaim),
+    // #627 W (§5.8): how the answer arrived — on this legacy build too, until #715's step (b) removes
+    // the legacy path.
+    ...answerEntryFactsOf(options),
   };
 
   // issue #367: `sealed_by` joins the strip list — this write re-derives the run's liveness from

@@ -33,6 +33,7 @@ import {
 import {
   recordedAnswer,
   renderAnswerLine,
+  recordedArrival,
   questionLines,
   takenPhrase,
   takenLine,
@@ -403,7 +404,7 @@ export function questionClosedLine(run: RunRecord, step: string): string {
   const last = recordedAnswer(run, step);
   const what =
     last !== undefined
-      ? renderAnswerLine(last)
+      ? renderAnswerLine(last, recordedArrival(run, step))
       : `no answer was recorded; the run is '${deriveRunPhase(run)}'`;
   return `This prompt is closed: the question on '${step}' is no longer open — ${what}.`;
 }
@@ -830,6 +831,9 @@ export const runCommand = new Command('run')
               // issue #625: this program, named on the cleanup steps the answer drains. Never a
               // `claim_token`: a dev-mode prompt shows the gate on this terminal, not a reply.
               ...(driver !== undefined ? { driver } : {}),
+              // #627 W (§5.8): the CLI door's route; a terminal is not a server door.
+              route: 'cli',
+              principal: { absent: 'not_a_server_door' },
             });
             if (respondResult.status === 'ok') {
               run = await store.get(runId);

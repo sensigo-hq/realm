@@ -655,7 +655,10 @@ export const listCommand = new Command('list')
                     ? 'corrupt'
                     : err.code === 'STATE_LEGACY_FORMAT'
                       ? 'legacy'
-                      : undefined);
+                      : // #627 W (W-r2): a copy a later Realm registered.
+                        err.code === 'STATE_NEWER_FORMAT'
+                        ? 'newer'
+                        : undefined);
                 result = {
                   code: err.code,
                   message: err.message,

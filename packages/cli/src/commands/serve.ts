@@ -16,6 +16,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { makeProjectProviders } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { hostRefusalLine } from '../lib/host-refusal-line.js';
+import {
+  checkValueLine,
+  gateAnswersStartLine,
+  readBinDoorSettings,
+  DEV_MODE_ANSWER_WARNING,
+} from '../lib/gate-answers-door.js';
+import { measureSeparation, renderSeparation, systemProbes } from '../lib/separation-check.js';
 
 const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
 
@@ -53,6 +60,8 @@ export interface StartServerOptions {
    * session, never a caller: this names the PROGRAM, as stated at startup.
    */
   driver?: Attributed;
+  /** #627 W: the `--gate-answers` flag's value, passed to every per-request server (source `flag`). */
+  gateAnswersFlag?: string;
 }
 
 /**
@@ -78,6 +87,7 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     registryProvider,
     priceSourceProvider,
     driver,
+    gateAnswersFlag,
   } = options;
 
   // ONE workflow store per process (constructed at startup when none is injected).
@@ -93,6 +103,14 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     // #729 PR-0 (P-6): the CLI's renderer as the operator route — an operator's command reaches
     // only the block addressed to the person.
     operatorRoute: cliOperatorRoute('realm serve'),
+    // #627 W: one stateless request per server — it sends no forms, so `asked` is its fallback.
+    statelessHttp: true,
+    ...(gateAnswersFlag !== undefined ? { gateAnswersFlag } : {}),
+    // #627 W (§5.8): the principal this door authenticates — the shared token names no one; dev mode
+    // authenticates nothing. Stamped by the door on every answer it records.
+    principal: devMode
+      ? ({ absent: 'door_authentication_disabled' } as const)
+      : ({ kind: 'shared_token' } as const),
   };
   // The startup construction: a throw here rejects this async function's promise.
   createRealmMcpServer(serverOptions);
@@ -210,7 +228,44 @@ export const serveCommand = new Command('serve')
     '--project <dir>',
     'CONFIG anchor: deployment root whose realm.yaml applies to definitions without a stored trust_root (default: current directory — serve is operator-launched)',
   )
+  .option(
+    '--gate-answers <value>',
+    'How this server handles gate answers: asked (the default), offered or withheld. The most restrictive of this flag and REALM_MCP_GATE_ANSWERS wins.',
+  )
+  .option(
+    '--form-wait-seconds <seconds>',
+    'Refused here: this server sends no forms (accepted by realm mcp)',
+  )
+  .option(
+    '--check',
+    'Print the gate-answers value this server would start with and the separation check, then exit without starting',
+  )
   .action(async (options) => {
+    // #627 W (§5.1): the settings, read as the server will read them; a bad value, or a form wait on
+    // this door that sends no forms (W-s9), refuses the start before anything is bound.
+    const settings = readBinDoorSettings(
+      'serve',
+      {
+        gateAnswers: options.gateAnswers as string | undefined,
+        formWaitSeconds: options.formWaitSeconds as string | undefined,
+      },
+      process.env,
+    );
+    if (!settings.ok) {
+      console.error(settings.line);
+      process.exit(1);
+    }
+    if (options.check === true) {
+      // W-s6 and the separation check (Part K): nothing is started.
+      console.log(checkValueLine(settings.answers));
+      const evidence = await measureSeparation({
+        probes: systemProbes(),
+        value: { value: settings.answers.value, source: settings.answers.source },
+        roots: [(options.project as string | undefined) ?? process.cwd()],
+      });
+      for (const line of renderSeparation(evidence)) console.log(line);
+      process.exit(0);
+    }
     // issue #625 (holder slice): this program's name, made once outside the per-request handler,
     // before anything is bound. A name that cannot be used prints one line and exits 1.
     const driver = resolveProgramIdentity('mcp-http');
@@ -253,6 +308,9 @@ export const serveCommand = new Command('serve')
         registryProvider,
         priceSourceProvider,
         ...(driver !== undefined ? { driver } : {}),
+        ...(options.gateAnswers !== undefined
+          ? { gateAnswersFlag: options.gateAnswers as string }
+          : {}),
       });
     } catch (err) {
       if (isListenFailure(err)) throw err;
@@ -263,6 +321,9 @@ export const serveCommand = new Command('serve')
     if (!devMode) {
       console.log('Authentication: Bearer token (REALM_SERVE_TOKEN)');
     }
+    // #627 W: the start line (stdout on this door), and W-s5 when dev mode leaves an answer tool open.
+    console.log(gateAnswersStartLine(settings.answers, true));
+    if (devMode && settings.answers.value !== 'withheld') console.warn(DEV_MODE_ANSWER_WARNING);
 
     // Graceful shutdown on SIGINT / SIGTERM.
     const shutdown = () => httpServer.close(() => process.exit(0));

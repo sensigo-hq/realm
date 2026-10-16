@@ -16,7 +16,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: field
 // names, verbs, tools and booleans — never a token's value.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -386,7 +386,34 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       ...opening,
       gate: { ...(opening.gate ?? {}), claim_token: 'planted' },
     } as unknown as EngineReply;
-    expect(() => renderReply(planted)).toThrow(/claim token reached the wire/);
+    // #627 W (Part I): a stray token no longer throws — the reply is held back (W-e1) and the log
+    // line (W-e2) names the tool and the run, never the token. (a) red when the stray token reaches
+    // the wire, or the held-back reply is not W-e1; (b) prints the reply's fields and the log lines.
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    const held = renderReply(planted).envelope;
+    spy.mockRestore();
+    expect({
+      token: JSON.stringify(held).includes('planted'),
+      status: held.status,
+      agent_action: held.agent_action,
+      retryable: held.retryable,
+      next_actions: held.next_actions,
+      held: held.context_hint.startsWith('Realm held back this reply'),
+      logged: logged.map((l) => l.startsWith('realm: held back a q reply for run')),
+      loggedToken: logged.some((l) => l.includes('planted')),
+    }).toEqual({
+      token: false,
+      status: 'error',
+      agent_action: 'report_to_user',
+      retryable: false,
+      next_actions: [],
+      held: true,
+      logged: [true],
+      loggedToken: false,
+    });
   });
 
   it('Amendment 7: every damaged-file class × resource — the MCP door prints #719’s own text, byte for byte, and publishes its facts', () => {

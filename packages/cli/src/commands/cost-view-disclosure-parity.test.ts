@@ -867,21 +867,23 @@ const HOLDER_ANSWER_VIEW = {
   choice: { surface: 'rendered', probe: (out) => expect(out).toContain('Answer: approve ·') },
   answered_by: {
     surface: 'rendered',
-    probe: (out) => expect(out).toContain('answered by alice (as stated, not verified)'),
+    probe: (out) => expect(out).toContain('answered by alice (as stated)'),
   },
   claim_proof: {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        'proof: no claim_token passed (the CLI never passes one; over MCP, only the conversation ' +
-          'that opened the question has one to pass)',
+        "token: none passed (only an answer through Realm's MCP answer tool, from the " +
+          'conversation that opened the question, can pass one)',
       ),
   },
   claim_proof_absent: {
     surface: 'rendered',
     // `proof_not_recorded` — an answer with neither a verdict nor an expiry.
     probe: (out) =>
-      expect(out).toContain('Answer: reject · answered by (not stated) · proof: none recorded'),
+      expect(out).toContain(
+        'Answer: reject · answered by (not stated) · how it arrived was not recorded · token: none recorded',
+      ),
   },
 } satisfies Record<keyof AnswerView, DisclosureRoute>;
 

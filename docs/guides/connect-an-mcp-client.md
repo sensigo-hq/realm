@@ -33,6 +33,25 @@ claude mcp add realm -- realm mcp
 
 Restart the assistant, or reload its MCP servers.
 
+To choose how gate answers are handled, put the flag in the same config. For example, to keep every assistant from answering a gate:
+
+```json
+{
+  "mcpServers": {
+    "realm": {
+      "command": "realm",
+      "args": ["mcp", "--gate-answers", "withheld"]
+    }
+  }
+}
+```
+
+```bash
+claude mcp add realm -- realm mcp --gate-answers withheld
+```
+
+Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell does not reach a server the assistant starts. The default, `asked`, sends each question to the person as a form in an app that shows forms. See [Gate answers over MCP](../reference/mcp/gate-answers.md). Added after version 0.47.0.
+
 ## 2. Check what the assistant sees
 
 The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):
@@ -50,6 +69,8 @@ The assistant now has eleven tools (`advance_run` was added after version 0.46.0
 | `abandon_run`           | Ends a run that should not continue.                                                           |
 | `create_workflow`       | Lets the assistant define a small workflow of its own and start it.                            |
 | `append_trace`          | Lets the assistant record notes while it works on a step.                                      |
+
+In an app that shows forms, under the default `asked`, `present_question` takes the place of `submit_human_response`; under `withheld` neither is listed (added after version 0.47.0).
 
 Ask the assistant to list the Realm workflows. With one workflow registered, `list_workflows` returns:
 

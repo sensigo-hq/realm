@@ -18,6 +18,43 @@ All notable changes to this project are documented here.
   reads a refusal's list from a reply; `moreOf`, which reads a failed-attempt record's remainder;
   `storedFileFactsOf`; and `errorCount` on `AgentSubmissionValidation`.
 
+- **How the MCP door handles gate answers is one setting (issue #627).** `--gate-answers` on
+  `realm mcp` and `realm serve`, the `REALM_MCP_GATE_ANSWERS` environment variable and
+  `createRealmMcpServer`'s `gateAnswers` option take `asked`, `offered` or `withheld`; when more than
+  one is set, the most restrictive wins (`withheld`, then `asked`, then `offered`), and a value that
+  is not one of the three refuses to start the server (the library throws). `effectiveGateAnswers()`
+  (`@sensigo/realm-mcp`) returns the value a server runs with, where it came from and every other
+  value set, for an embedder's log. Each bin prints the value on start.
+- **Questions go to the person as a form in the chat app (issue #627).** Under `asked`, in a session
+  whose client shows forms, the question is sent to the user's app as a form when `start_run`,
+  `execute_step` or `advance_run` first reaches it, and the new tool `present_question` sends it
+  again (three more times per question in one server process). Realm waits for the answer itself,
+  at most `--form-wait-seconds` (`REALM_MCP_FORM_WAIT_SECONDS`, the `formWaitSeconds` option; 30 to
+  3600 seconds, 240 by default; the smallest value set wins; refused on `realm serve`, which sends
+  no forms). Only an accepted form holding one of the question's choices records an answer. The
+  reply names an `awaiting` entry where the agent used to get an answer call. The `present` way joins
+  the ways; on a library reply it is `unavailable` under every value.
+- **`realm mcp --check` and `realm serve --check` (issue #627).** Each prints the gate-answers value
+  it would start with and where it came from, then a separation check of the login that runs it: how
+  far that login reaches into Realm's store and the programs Realm runs, each condition measured,
+  configured or unknown, and what that means for who can answer a gate. Nothing is started; a bad
+  value exits 1.
+- **The `initialize` result names the gate-answers value (issue #627).**
+  `capabilities.experimental['realm/gate_answers']` is `{ value, source_kind }`.
+- **Each answer records how it arrived (issue #627).** A `gate_response` entry gains `answer`
+  (`{ route, shown? }`: `mcp_form`, `mcp` or `cli`, as its door declared it, or
+  `{ absent: 'route_not_declared' }`), `driven_by`, `client_prompt_requested` and `principal` (an API
+  key's id, `realm serve`'s shared token, or the door's typed absence). `submitHumanResponse` takes
+  `route`, `shown`, `principal` and `clientPromptRequested`; an answer's reply `outcome` gains `via`.
+  `realm run inspect`'s answer line names the route, the program and the principal. The store test
+  kit gains the law `EVIDENCE_KEEPS_ANSWER_FACTS`.
+- **A load note for author text that names an answer tool (issue #627).** A gated step's
+  `instructions`, or the workflow's `protocol.rules`, that names `submit_human_response`,
+  `present_question` or `realm run respond` gets the note `AUTHOR_TEXT_NAMES_ANSWER_TOOL`, with its
+  line. It is a text match: it finds tool names, not every way of asking.
+- **A code for a workflow a later Realm registered (issue #627).** `STATE_NEWER_FORMAT`
+  (`report_to_user`, not retryable), with typed facts (`path`, `schema_version`, `reads_up_to`); a
+  run's ways name it as the definition absence `newer`.
 - **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
   `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
   `executeChain`, `executeEngineStep`, `advanceRun`, `submitHumanResponse`, `drainFinalizers`,
@@ -165,6 +202,32 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   (`/zzextra is not allowed`) where 0.47.0 printed `(root) must NOT have additional properties` (or,
   in the loader, the raw rows).
 
+- **BREAKING — the MCP door's default is `asked` (issue #627).** In a chat app that shows forms the
+  agent no longer gets a tool that records a gate answer: the person answers in the app's form. In
+  an app without forms the agent keeps `submit_human_response`, marked so the app asks the person to
+  approve each call (`_meta["anthropic/requiresUserInteraction"]`), and the answer records that the
+  app was asked. A headless client that declares forms but cancels them waits at the question.
+  **Upgrading:** set `--gate-answers offered` (or `REALM_MCP_GATE_ANSWERS=offered`) to keep today's
+  answer tool for every client.
+- **BREAKING — the published reply types gain W's members (issue #627).** `DoorPolicy.answers`, the
+  `client_prompt` condition on a way's `conditions`, the `present` verb, and the codes
+  `no_form_here`, `form_open`, `asks_exhausted` and `door_withholds_answers`.
+- **The loader and the registry refuse what this version cannot hold (issue #627).** A step's
+  `gate.answer_via` is refused at load, in either form, with or without a time limit; a registered
+  workflow whose `schema_version` is above this version's is refused when it is read
+  (`STATE_NEWER_FORMAT`).
+- **Every MCP tool carries annotations and a title (issue #627).** Reads are `readOnlyHint`; writes
+  and the answer tool are `destructiveHint`; `present_question` is neither, with `openWorldHint:
+false`.
+- **The protocol says what the session's way means (issue #627).** `get_workflow_protocol` always
+  adds the rule for an `awaiting` entry, and a line for the session's gate-answers value; its
+  confirm rule and the per-step gate text follow the value.
+- **Author text is labelled as the author's (issue #627).** A gate's `agent_hint`, a gated step's
+  instructions in the protocol and a workflow's `protocol.rules` are forwarded after "From the
+  workflow's author:" (for the rules, "Rules from the workflow's author:"), under every value.
+- **`realm run inspect`'s answer line (issue #627).** The answerer reads `(as stated)`; the proof
+  part is labelled `token:`, and a token not passed reads "none passed (only an answer through
+  Realm's MCP answer tool, from the conversation that opened the question, can pass one)".
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
   file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,
   or holding another run is `RESOURCE_FORMAT_INVALID` (`stop`); one in the format of an earlier

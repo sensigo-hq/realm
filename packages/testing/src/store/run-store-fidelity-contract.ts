@@ -39,7 +39,11 @@ import {
  * a request record's facts, the model and what realm asked to cache among them, survive a round trip
  * in a step's evidence and in a failed drive's usage) and `SUPPLIER_ROUND_TRIPS` (issue #729 PR-0,
  * T-17 (iv), §5 E1 (iv) — the supplier's role an evidence entry records survives a round trip, and
- * an entry written without one reads back without one, never a role the store made up).
+ * an entry written without one reads back without one, never a role the store made up) and
+ * `EVIDENCE_KEEPS_ANSWER_FACTS` (issue #627 W, §5.8 — how an answer arrived: the route its door
+ * declared with what showed the question, the program that recorded it, whether the door asked the
+ * user's app to ask the person, and the transport's principal, each read back exactly, typed
+ * absences included).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -50,6 +54,7 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'STORE_RELEASE_LINE_TRUE',
   'USAGE_RECORD_ROUNDTRIP',
   'SUPPLIER_ROUND_TRIPS',
+  'EVIDENCE_KEEPS_ANSWER_FACTS',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -490,6 +495,79 @@ export function runStoreFidelityContract(
         throw new Error(
           `an evidence entry written without supplied_by must read back without it (issue #729 ` +
             `PR-0): read back ${JSON.stringify(second?.supplied_by)}`,
+        );
+      }
+    },
+  });
+
+  // issue #627 W (§5.8) — EVIDENCE_KEEPS_ANSWER_FACTS. Always active: every store round-trips
+  // evidence. Two `gate_response` entries: one with every fact a server door declares (a form's
+  // route with what showed it, the program, the client-prompt request, an API-key principal), one
+  // with the record's typed absences (a library caller that declared no route; dev mode's principal)
+  // — a store keeps an absence as written and never fills one in.
+  cases.push({
+    law: 'EVIDENCE_KEEPS_ANSWER_FACTS',
+    name: 'a gate_response entry written with answer, driven_by, client_prompt_requested and principal reads back with each one, and one written with the typed absences reads back with them',
+    run: async () => {
+      const { run } = await adapter.store.create({
+        workflowId: `tck-answer-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base: EvidenceSnapshot = {
+        step_id: adapter.stepName,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'tck-answer',
+        kind: 'gate_response',
+      };
+      const declared = {
+        answer: { route: 'mcp_form', shown: { renderer: 'tck-renderer/1' } },
+        driven_by: TCK_CLAIMANT,
+        client_prompt_requested: true,
+        principal: { kind: 'api_key', id: 'tck-key-id' },
+      } as const satisfies Partial<EvidenceSnapshot>;
+      const absent = {
+        answer: { absent: 'route_not_declared' },
+        principal: { absent: 'door_authentication_disabled' },
+      } as const satisfies Partial<EvidenceSnapshot>;
+      await adapter.store.update({
+        ...run,
+        evidence: [
+          { ...base, ...declared },
+          { ...base, ...absent },
+        ],
+      });
+      const reread = await adapter.store.get(run.id);
+      const pairs: [string, unknown, unknown][] = [
+        ['answer', declared.answer, reread.evidence[0]?.answer],
+        ['driven_by', declared.driven_by, reread.evidence[0]?.driven_by],
+        [
+          'client_prompt_requested',
+          declared.client_prompt_requested,
+          reread.evidence[0]?.client_prompt_requested,
+        ],
+        ['principal', declared.principal, reread.evidence[0]?.principal],
+        ['answer (a typed absence)', absent.answer, reread.evidence[1]?.answer],
+        ['principal (a typed absence)', absent.principal, reread.evidence[1]?.principal],
+      ];
+      for (const [field, wrote, read] of pairs) {
+        if (JSON.stringify(read) !== JSON.stringify(wrote)) {
+          throw new Error(
+            `a store must round-trip a gate_response entry's ${field} (issue #627): wrote ` +
+              `${JSON.stringify(wrote)}, read back ${JSON.stringify(read)}`,
+          );
+        }
+      }
+      const second = reread.evidence[1];
+      if (second === undefined || 'client_prompt_requested' in second || 'driven_by' in second) {
+        throw new Error(
+          'a gate_response entry written without client_prompt_requested and driven_by must read ' +
+            'back without them (issue #627): a store never fills in an answer fact',
         );
       }
     },

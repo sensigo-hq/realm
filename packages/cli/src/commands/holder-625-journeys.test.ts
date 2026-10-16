@@ -404,7 +404,8 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
       'Question opened through: opener-row (from REALM_OPERATOR, via mcp-stdio)',
     );
     expect(inspected.stdout).toContain(
-      'Answer: approve · answered by alice (as stated, not verified) · proof: no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)',
+      // #627 W (W-i1): the route its door declared, the program that recorded it, the token.
+      "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as cli-row (from REALM_OPERATOR) · token: none passed (only an answer through Realm's MCP answer tool, from the conversation that opened the question, can pass one)",
     );
     expect(inspected.stdout.indexOf('Question opened through')).toBeLessThan(
       inspected.stdout.indexOf('Answer: approve'),
@@ -426,7 +427,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     expect(answered.code).toBe(0);
     const inspected = await cli(['run', 'inspect', runId], {});
     expect(inspected.stdout).toContain(
-      'Answer: reject · answered by (not stated) · proof: no claim_token passed',
+      'Answer: reject · answered by (not stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as cli-row (from REALM_OPERATOR) · token: none passed',
     );
     expect(inspected.stdout).not.toContain('answered by cli-row');
   }, 60_000);
@@ -447,7 +448,7 @@ describe('THE CLI AFTER — `realm run respond --by`, and `realm run inspect` re
     }
     const inspected = await cli(['run', 'inspect', runId], {});
     expect(inspected.stdout).toContain(
-      'proof: no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)',
+      "token: none passed (only an answer through Realm's MCP answer tool, from the conversation that opened the question, can pass one)",
     );
   }, 60_000);
 

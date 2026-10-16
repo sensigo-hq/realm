@@ -46,13 +46,15 @@ For a run that is waiting at a gate:
           "choice": "<send|discard>"
         }
       },
-      "human_readable": "Human review required for step 'draft'. Ask the user to choose one of: send, discard, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one.",
+      "human_readable": "Human review required for step 'draft'. Ask the user to choose one of: send, discard, then call submit_human_response with their choice. The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message. The conversation that opened the question passes back the claim_token it was given then, when it was given one. Your client may ask the user to approve this call (Claude Code does in interactive sessions and refuses it in headless runs; other clients may not ask). If the call is refused, the run keeps waiting at step 'draft': tell the user so.",
       "orientation": "Run is paused at gate '00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e'."
     }
   ],
   "next_actions_status": "awaiting_human"
 }
 ```
+
+This read came from a server with the default gate-answers value, `asked`, in a session whose client shows no forms. Under `withheld`, and under `asked` with a client that shows forms, the entry has `awaiting` in place of `instruction`, and `poll_after_ms` (and `until`, when the question has a deadline) are added. See [Gate answers over MCP](gate-answers.md). Added after version 0.47.0.
 
 For the same run after it completed, `pending_gate` is gone and two fields are added:
 

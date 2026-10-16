@@ -890,9 +890,10 @@ export function judgeProgramFit(
 /**
  * The newest evidence entry that names its driver, and how many NEWER entries of the kinds the holder
  * slice stamps with `driven_by` name none (decision C21). Only a step's own execution entry and a
- * cleanup step's entry can carry `driven_by`; a person's answer (`kind: 'gate_response'`) and the
- * entry the engine writes for a guard never do, so they are never counted. The definition is what
- * tells a guard's entry from a step's: an entry carries no marker of its own.
+ * cleanup step's entry name the program that drove a step; the entry the engine writes for a guard
+ * never does, and a person's answer (`kind: 'gate_response'`) names, since #627 W, the program that
+ * RECORDED it — so neither is ever this reading's driver, nor counted. The definition is what tells a
+ * guard's entry from a step's: an entry carries no marker of its own.
  */
 export function describeRunDriver(
   run: RunRecord,
@@ -906,6 +907,11 @@ export function describeRunDriver(
   let newer = 0;
   for (let i = run.evidence.length - 1; i >= 0; i--) {
     const entry = run.evidence[i]!;
+    // #627 W (§5.8): an answer's entry now names the program that RECORDED it (`driven_by`), which
+    // is not the program that drives the run's steps — so an answer is still never this line's
+    // driver, as before W (when answers carried no `driven_by`). `realm run inspect` names who
+    // recorded an answer on its `Answer:` line.
+    if (entry.kind === 'gate_response') continue;
     const read = readDrivenBy(entry);
     if (read.by !== null) {
       return {
@@ -915,8 +921,7 @@ export function describeRunDriver(
         newer_without_driver: newer,
       };
     }
-    const canCarry =
-      entry.kind !== 'gate_response' && definition.steps[entry.step_id]?.execution !== 'guard';
+    const canCarry = definition.steps[entry.step_id]?.execution !== 'guard';
     if (canCarry) newer++;
   }
   return { driver: { by: null, absent_cause: 'driver_not_recorded' }, newer_without_driver: 0 };

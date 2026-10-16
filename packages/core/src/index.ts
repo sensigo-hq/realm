@@ -140,6 +140,8 @@ export {
   buildPreExecutionErrorEnvelope,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
   raceClausesOf,
+  // #627 W: how a question was settled, read from the record (the form path's reply after a wait).
+  outcomeOf,
 } from './engine/execution-loop.js';
 export type { SubmitGateOptions, ExecuteChainOptions } from './engine/execution-loop.js';
 // Issue #625 (PR-1, PR-2a). `advanceRun` runs what the engine owes on a run (settle eligible
@@ -227,6 +229,13 @@ export {
   cannotGoOnUntilCorrected,
   LIBRARY_WORDS,
   libraryCannotRunWords,
+  // #627 W: the door's gate answers, the condition its fallback carries, `present`.
+  COND_TAGS,
+  GATE_ANSWERS_VALUES,
+  answersRowOf,
+  presentDoorVerdict,
+  presentWayOfGate,
+  doorWithholdsAnswers,
 } from './engine/ways.js';
 export type {
   Party,
@@ -241,6 +250,7 @@ export type {
   InspectWay,
   AbandonWay,
   RegisterWay,
+  PresentWay,
   WayOn,
   WayOf,
   CodeTag,
@@ -256,6 +266,11 @@ export type {
   RouteId,
   Source,
   DoorPolicy,
+  CondTag,
+  GateAnswers,
+  DoorAnswers,
+  DoorFormFacts,
+  AnswersRow,
   ForWay,
   Narrowed,
   WayRenderer,
@@ -276,6 +291,24 @@ export type {
   StopRecord,
   StopReply,
 } from './engine/ways.js';
+// #627 W (§5.8): how a gate answer arrived — the one reading, and the form's evidence.
+export {
+  answerViaOf,
+  answerArrivalOf,
+  principalOf,
+  shownViewEvidence,
+  MCP_FORM_RENDERER,
+} from './engine/answer-facts.js';
+export type { AnswerArrival } from './engine/answer-facts.js';
+// #627 W (F31): author text an agent reads — the label W-t1 forwards it under, the load note W-l1.
+export {
+  ANSWER_TOOL_NAMES,
+  AUTHOR_TEXT_LABEL,
+  AUTHOR_RULES_LABEL,
+  answerToolNamedIn,
+  authorTextNote,
+} from './workflow/author-text.js';
+export type { AnswerToolName } from './workflow/author-text.js';
 // issue #729 PR-0 (D3 A-9; #715 D6-16/17/18/59): one record and the reading it is judged at.
 export { loadSnapshot, writtenSnapshot, stampOf } from './engine/snapshot.js';
 export type { Snapshot, Stamp, Basis, EnactorBasis, DefinitionBasis } from './engine/snapshot.js';
@@ -795,3 +828,38 @@ export {
   runNotFoundError,
   ReclaimVersionChanged,
 } from './store/fence-predicate.js';
+// #627 W (§5.9): the separation check's evidence, typed once (the CLI measures it).
+export {
+  SEPARATION_MODES,
+  SEPARATION_BASES,
+  SEPARATION_CONDITIONS,
+  PREVENTS_CONDITIONS,
+  separationModeOf,
+  separationPrevents,
+  separationGaps,
+  valueMeasuredWithheld,
+} from './engine/separation.js';
+export type {
+  SeparationMode,
+  SeparationBasis,
+  SeparationCondition,
+  ConditionReading,
+  SeparationEvidence,
+} from './engine/separation.js';
+// #627 W (§5.1, §5.2b): the MCP door's two process settings, judged once (the server and the bins).
+export {
+  judgeGateAnswers,
+  judgeFormWait,
+  alsoSetClause,
+  GATE_ANSWERS_ENV,
+  FORM_WAIT_ENV,
+  FORM_WAIT_SECONDS_DEFAULT,
+  FORM_WAIT_SECONDS_MIN,
+  FORM_WAIT_SECONDS_MAX,
+} from './engine/gate-answers-setting.js';
+export type {
+  GateAnswersSetting,
+  GateAnswersInput,
+  FormWaitSetting,
+  FormWaitInput,
+} from './engine/gate-answers-setting.js';

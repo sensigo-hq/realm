@@ -405,7 +405,7 @@ describe(
     it("line 313: an answer the expiry wrote reads `settled by the gate's expiry (no answer in time)`, no answerer, no proof — whether no answer came, or one came late and was not recorded", async () => {
       claim(
         RD_PAGE,
-        "An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no answer in time)`, with no answerer and no proof part: no answer came before the time was up, or one came after it and was not recorded.",
+        "An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no answer in time)`, with no answerer, route or token part: no answer came before the time was up, or one came after it and was not recorded.",
       );
       const def = wf([
         'id: exp313',
@@ -490,7 +490,7 @@ describe(
         none: [WORDS],
         late: [WORDS],
         lateExit: 1,
-        inTime: [expect.stringMatching(/^Answer: ship · answered by alice .* · proof: /)],
+        inTime: [expect.stringMatching(/^Answer: ship · answered by alice .* · token: /)],
       });
     });
   },

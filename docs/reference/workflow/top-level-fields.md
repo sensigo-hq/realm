@@ -98,10 +98,10 @@ VALIDATION_INPUT_SCHEMA: Invalid params for workflow 'review-note': (root) must 
 - **Type:** map with two optional keys, `quick_start` and `rules`. **Optional.**
 - Changes what `get_workflow_protocol` tells an assistant.
 
-| Key           | Type            | Effect                                                                                             |
-| ------------- | --------------- | -------------------------------------------------------------------------------------------------- |
-| `quick_start` | string          | Replaces the opening instruction. An empty string is ignored.                                      |
-| `rules`       | list of strings | Replaces the six standard rules. Two rules about concurrent attempts are always added after yours. |
+| Key           | Type            | Effect                                                                                                                                                                                                                                                                             |
+| ------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quick_start` | string          | Replaces the opening instruction. An empty string is ignored.                                                                                                                                                                                                                      |
+| `rules`       | list of strings | Replaces the six standard rules, after the line `Rules from the workflow's author:`. Realm's own rules are always added after yours: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `offered`), and two rules about concurrent attempts. |
 
 ```yaml
 protocol:
@@ -122,7 +122,7 @@ and the six standard rules are:
 
 ```text
 Follow the instruction in each next_actions entry exactly. next_actions lists only what you can call now; when it is empty, agent_action says what to do.
-When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.
+When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.
 Do NOT auto-confirm any human gate. The user must decide.
 Do NOT ask the user for permission between steps unless the system tells you to.
 When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.
@@ -130,6 +130,8 @@ An entry in also (reading the run, ending it) is never a next step: end a run on
 ```
 
 The fifth rule was added after version 0.46.0; the sixth, and the first rule's second sentence, after version 0.47.0. Setting `rules` removes all six, including the two about human gates.
+
+The second rule above is the one a session gets from a server whose gate-answers value is `asked`, the default, when its client shows no forms. Under `offered` it ends after "filling in their choice." Under `withheld`, and under `asked` with a client that shows forms, it reads: "When you receive status 'confirm_required', read gate.agent_hint, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation." See [Gate answers over MCP](../mcp/gate-answers.md). Added after version 0.47.0.
 
 ## `services`
 

@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
-import { WorkflowError, storedFileFactsOf } from '../types/workflow-error.js';
+import {
+  WorkflowError,
+  newerDefinitionFactsOf,
+  storedFileFactsOf,
+} from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { withFullStop } from '../engine/pending.js';
@@ -411,6 +415,34 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
         },
       );
     }
+    // #627 W (R25, W-r2): the upper bound beside the lower one. A definition a LATER Realm wrote
+    // (V bumps `schema_version` for the definitions that use `gate.answer_via`) may carry
+    // requirements this version cannot read; reading it anyway would run it with those requirements
+    // ignored — fail open. Refused here, so every reader (start, step, answer, inspect) refuses it
+    // through this one gate and no gate it would open is ever opened. Its own code: the copy is not
+    // legacy (STATE_LEGACY_FORMAT's meaning and remedy are for an OLDER format) and not damaged.
+    if (parsed.schema_version > CURRENT_WORKFLOW_SCHEMA_VERSION) {
+      throw new WorkflowError(
+        `Workflow '${workflowId}' was registered by a later version of Realm (definition format ` +
+          `${String(parsed.schema_version)}; this version reads up to ` +
+          `${CURRENT_WORKFLOW_SCHEMA_VERSION}) — refused: this version would ignore requirements ` +
+          'it cannot read. Use the Realm version that registered it, or register the ' +
+          "workflow's source again with this version. Nothing was run.",
+        {
+          code: 'STATE_NEWER_FORMAT',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          // Typed facts (MA 3, 2026-10-16): `details` stays empty for this code.
+          facts: {
+            scope: 'newer_definition',
+            path: filePath,
+            schema_version: parsed.schema_version,
+            reads_up_to: CURRENT_WORKFLOW_SCHEMA_VERSION,
+          },
+        },
+      );
+    }
     return parsed;
   }
 
@@ -573,8 +605,25 @@ brandClass(JsonWorkflowStore, Symbol.for('@sensigo/realm/JsonWorkflowStore'), RE
 export function definitionAbsenceOf(
   err: unknown,
   run: Pick<RunRecord, 'workflow_id'>,
-): { absent: DefinitionAbsence; workflow_id: string; path?: string } | undefined {
+):
+  | {
+      absent: DefinitionAbsence;
+      workflow_id: string;
+      path?: string;
+      format?: { schema_version: number; reads_up_to: number };
+    }
+  | undefined {
   if (!(err instanceof WorkflowError)) return undefined;
+  // #627 W (W-r2): a copy a later Realm wrote — the mirror of `legacy`, read from its typed facts.
+  const newer = err.code === 'STATE_NEWER_FORMAT' ? newerDefinitionFactsOf(err) : undefined;
+  if (newer !== undefined) {
+    return {
+      absent: 'newer',
+      workflow_id: run.workflow_id,
+      path: newer.path,
+      format: { schema_version: newer.schema_version, reads_up_to: newer.reads_up_to },
+    };
+  }
   const filed = storedFileFacts(err)?.path ?? err.details['path'];
   const path = typeof filed === 'string' ? { path: filed } : {};
   switch (err.code) {
@@ -773,6 +822,17 @@ export async function getWorkflowForRun(
       case 'STATE_LEGACY_FORMAT':
         // The store's own message already carries the re-register remedy (wrapping it again would
         // double-remedy — this function's JSDoc); a gate-waiting run is told what comes after it.
+        throw copy(
+          join(
+            withFullStop(err.message),
+            terminal ? undefined : disposalSentence('To end the run instead:'),
+            terminal || gate === undefined ? undefined : 'Once re-registered, answer the gate.',
+          ),
+        );
+      case 'STATE_NEWER_FORMAT':
+        // #627 W (W-r2): the mirror of the legacy arm — the message carries its own two remedies
+        // (the Realm version that registered it, or registering the source again with this one);
+        // a gate-waiting run is told what comes after it.
         throw copy(
           join(
             withFullStop(err.message),

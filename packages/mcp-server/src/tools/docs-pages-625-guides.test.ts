@@ -664,11 +664,11 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     expect(rules).toHaveLength(6);
   });
 
-  it('top-level-fields.md: rules replaces the six standard rules; two rules about concurrent attempts follow yours', async () => {
+  it("top-level-fields.md: rules replaces the six standard rules, after the author's label; Realm's own rules follow yours (#627 W)", async () => {
     const page = 'docs/reference/workflow/top-level-fields.md';
     claim(
       page,
-      '| `rules` | list of strings | Replaces the six standard rules. Two rules about concurrent attempts are always added after yours. |',
+      "| `rules` | list of strings | Replaces the six standard rules, after the line `Rules from the workflow's author:`. Realm's own rules are always added after yours: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `offered`), and two rules about concurrent attempts. |",
     );
     const standard = block(page, 'Follow the instruction in each next_actions entry');
     const { call, workflowStore } = await connect();
@@ -689,17 +689,24 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     const got = (await call('get_workflow_protocol', { workflow_id: 'own-rules' }))[
       'rules'
     ] as string[];
-    // (a) red when a standard rule survives, the workflow's rule is not first, or the two added
-    //     rules are not there; (b) prints the rules.
+    // (a) red when a standard rule survives, the workflow's rule is not right after the author's
+    //     label, or Realm's four rules (the default server, a client with no forms) are not after it,
+    //     in order, the two about attempts last; (b) prints the rules.
     expect({
-      first: got[0],
+      label: got[0],
+      first: got[1],
       count: got.length,
       standardLeft: got.filter((r) => standard.includes(r)),
-      attempts: got.slice(1).every((r) => /attempt/.test(r)),
+      awaitRule: got[2]?.startsWith('When a next_actions entry has `awaiting`'),
+      valueLine: got[3]?.startsWith('Answers to gates go through submit_human_response'),
+      attempts: got.slice(4).every((r) => /attempt/.test(r)),
     }).toEqual({
+      label: "Rules from the workflow's author:",
       first: 'Never state a fact that is not in the note.',
-      count: 3,
+      count: 6,
       standardLeft: [],
+      awaitRule: true,
+      valueLine: true,
       attempts: true,
     });
   });
@@ -786,10 +793,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 88 codes defined — 73 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 89 codes defined — 74 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 88 codes that Realm defines: the 73 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
+      'This page lists all 89 codes that Realm defines: the 74 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -841,8 +848,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       unraisedWritten: listedUnraised.filter(written),
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
-      defined: 88,
-      raised: 73,
+      defined: 89,
+      raised: 74,
       unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],

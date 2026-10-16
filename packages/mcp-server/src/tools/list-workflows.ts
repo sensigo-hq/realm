@@ -5,6 +5,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { JsonWorkflowStore } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleStores {
@@ -104,9 +105,13 @@ export async function handleListWorkflows(stores?: HandleStores): Promise<ListWo
 
 /** Registers the list_workflows MCP tool on the server. */
 export function registerListWorkflows(server: McpServer, opts?: HandleStores): void {
-  server.tool(
+  server.registerTool(
     'list_workflows',
-    'List all registered Realm workflows; names every registered copy that could not be read, and refuses when the registry directory itself cannot be read.',
+    {
+      ...toolMeta('list_workflows'),
+      description:
+        'List all registered Realm workflows; names every registered copy that could not be read, and refuses when the registry directory itself cannot be read.',
+    },
     async () => {
       const result = await handleListWorkflows(opts);
       return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };

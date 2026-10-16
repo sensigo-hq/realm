@@ -124,6 +124,9 @@ const TABLE: ReadonlyArray<readonly [Page, string, string, string, Cell]> = [
   ['docs/guides/call-a-service.md', 'services:', 'yaml', 'fragment: merged into a workflow with a github step, validated', 'credentials'],
   ['docs/guides/connect-an-mcp-client.md', '{', 'json', 'client config: command and args started, listTools', 'clients'],
   ['docs/guides/connect-an-mcp-client.md', 'claude mcp add realm -- realm mcp', 'bash', 'EXCLUDED: a third party program; the command after -- is started', 'clients'],
+  // #627 W: the gate-answers flag's form of the two (the server it starts lists no answer tool).
+  ['docs/guides/connect-an-mcp-client.md', '{', 'json', 'client config with --gate-answers withheld: started, listTools', 'clients'],
+  ['docs/guides/connect-an-mcp-client.md', 'claude mcp add realm -- realm mcp --gate-answers withheld', 'bash', 'EXCLUDED: a third party program; the command after -- is started', 'clients'],
   ['docs/guides/connect-an-mcp-client.md', '{', 'json', 'a reply: list_workflows with the article workflow', 'listReply'],
   ['docs/guides/connect-an-mcp-client.md', 'REALM_SERVE_TOKEN=choose-a-long-secret realm serve --port 30', 'bash', 'long-running: a free port for 3001; HTTP checked, stopped', 'serve'],
   ['docs/guides/human-gates.md', 'id: announce', 'yaml', 'whole workflow: loaded, registered, run to its gate', 'gates'],
@@ -455,6 +458,7 @@ describe(
         fence('README.md', '"mcpServers"', 1),
         fence('docs/guides/connect-an-mcp-client.md', '"mcpServers"'),
         fence('packages/mcp-server/README.md', '"mcpServers"'),
+        fence('docs/guides/connect-an-mcp-client.md', '"mcpServers"', 1),
       ].map(
         (t) =>
           (JSON.parse(t) as { mcpServers: { realm: { command: string; args?: string[] } } })
@@ -466,6 +470,7 @@ describe(
       const lines = [
         fence('README.md', 'realm mcp').trim(),
         fence('docs/guides/connect-an-mcp-client.md', 'claude mcp add').split(' -- ')[1]!.trim(),
+        fence('docs/guides/connect-an-mcp-client.md', 'claude mcp add', 1).split(' -- ')[1]!.trim(),
       ];
       for (const line of lines) {
         const [command, ...args] = line.split(' ');
@@ -479,9 +484,11 @@ describe(
           { command: 'realm', args: ['mcp'] },
           { command: 'realm', args: ['mcp'] },
           { command: 'realm-mcp' },
+          { command: 'realm', args: ['mcp', '--gate-answers', 'withheld'] },
         ],
-        lines: ['realm mcp', 'realm mcp'],
-        counts: [11, 11, 11, 11, 11, 11],
+        lines: ['realm mcp', 'realm mcp', 'realm mcp --gate-answers withheld'],
+        // #627 W: under withheld the server lists no answer tool — 10.
+        counts: [11, 11, 11, 11, 10, 11, 11, 10],
       });
     });
 
@@ -764,10 +771,7 @@ describe(
             respond.code,
             respond.out.includes(`Responded: ${first.runId} | choice 'send'`),
           ],
-          byAlice: [
-            byAlice.code,
-            inspect.out.includes('answered by alice (as stated, not verified)'),
-          ],
+          byAlice: [byAlice.code, inspect.out.includes('answered by alice (as stated)')],
         },
         list.out + respond.out + respond.err + byAlice.out + byAlice.err + inspect.out,
       ).toEqual({ list: [0, true], respond: [0, true], byAlice: [0, true] });

@@ -14,6 +14,8 @@ import {
   resumeWay,
   dueExpiry,
   composeWaysAt,
+  narrowForDoor,
+  DOOR_SERVES,
   CACHE_BASES,
   CACHE_STATES,
   SEAL_ARMS,
@@ -27,6 +29,7 @@ import {
   composeDriveFailureCosts,
   composeRunCost,
   describeClaimHolder,
+  answerArrivalOf,
   isAnswerEntry,
   outputSourceOf,
   readSupplier,
@@ -54,6 +57,7 @@ import { agentReadyReason } from './run-advance.js';
 import type {
   RunStore,
   RunRecord,
+  WayOn,
   WorkflowRegistrar,
   WorkflowDefinition,
   EvidenceSnapshot,
@@ -86,6 +90,44 @@ import {
  * A step lacking a detail (legacy run, or a skip family not yet carrying one) is the caller's
  * responsibility to fall back on; `skipped_steps` stays authoritative regardless.
  */
+/**
+ * #627 W (§5.4b): the open question's text as the gate froze it at open (`resolved_message`). The
+ * definition only tells the two absences apart — a gate that declares no message, and one an earlier
+ * version opened without keeping it; its words are never printed (they may have changed since).
+ */
+function openQuestionLine(
+  gate: NonNullable<RunRecord['pending_gate']>,
+  definition: WorkflowDefinition | undefined,
+): string {
+  if (gate.resolved_message !== undefined)
+    return `  Question: ${quotedForTerminal(gate.resolved_message)}`;
+  const declares = definition?.steps[gate.step_name]?.gate?.message !== undefined;
+  return declares
+    ? '  Question: not recorded — this gate was opened by a version of Realm that did not keep its message'
+    : '  Question: none — the gate declares no message';
+}
+
+/**
+ * #627 W (§5.4b): the open question's `respond` way as the CLI door narrows it — callable here when
+ * its `for` holds the operator or the asked person; `undefined` when the run's ways offer none (no
+ * definition, the question's time is up).
+ */
+function cliRespondWay(
+  run: RunRecord,
+  definition: WorkflowDefinition | undefined,
+): Extract<WayOn, { verb: 'respond' }> | undefined {
+  if (definition === undefined || run.terminal_state) return undefined;
+  const composed = composeWaysAt(run, new Date(), { definition });
+  const narrowed = narrowForDoor(composed, {
+    door: 'cli',
+    serves: DOOR_SERVES.cli,
+    route: 'cli',
+    source: { kind: 'default', ref: 'the CLI door' },
+  });
+  const way = narrowed.ways.find((w) => w.verb === 'respond' && w.for.length > 0);
+  return way !== undefined && way.verb === 'respond' ? way : undefined;
+}
+
 function formatSkipDetail(detail: SkipDetail): string {
   switch (detail.kind) {
     case 'when_false': {
@@ -1320,8 +1362,18 @@ export async function inspectRun(
     // stays true for that population, not this line's to fix. An ABSENT `choices` is out of
     // contract — the field is required and always minted — and is trusted exactly as the Gate
     // line above trusts `gate_id` and `step_name`.
+    // #627 W (§5.4b): the question as it was frozen when the gate opened — never the live
+    // definition's message, which may have been edited since. A gate with no message, and one an
+    // earlier version opened without keeping it, each say so.
+    lines.push(openQuestionLine(gate, definition));
     if (gate.choices.length > 0) {
       lines.push(`  Choices: ${gate.choices.join(', ')}`);
+    }
+    // #627 W (§5.4b): the person's route — whenever the CLI door's narrowed list holds a callable
+    // `respond` (W-s1 says `realm run inspect` shows the question, its gate id and its choices).
+    const respond = cliRespondWay(run, definition);
+    if (respond !== undefined) {
+      lines.push(`  To answer: ${CLI_COMMANDS.respond(respond, undefined, { driveFlags: '' })}`);
     }
   }
 
@@ -1656,7 +1708,7 @@ export async function inspectRun(
       if (message !== undefined) {
         lines.push(`     Message:  ${quotedForTerminal(message)}`);
       }
-      lines.push(`     ${renderAnswerLine(answer)}`);
+      lines.push(`     ${renderAnswerLine(answer, answerArrivalOf(answerEntries[i]))}`);
     });
   });
 

@@ -25,6 +25,7 @@ import {
 import type { McpEnvelope } from '../render-reply.js';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 /**
@@ -549,8 +550,8 @@ export async function handleCreateWorkflow(
 
 /** Registers the create_workflow MCP tool on the server. */
 export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores): void {
-  // issue #419 — this is the repo's FIRST `registerTool` user; the other nine tools still call
-  // `server.tool()`, and the deviation is forced rather than stylistic. `server.tool()` accepts a
+  // issue #419 — this was the repo's FIRST `registerTool` user (#627 W moved every other tool to it,
+  // for their annotations); the deviation was forced rather than stylistic. `server.tool()` accepts a
   // raw shape only: handed a full `z.object` it throws ("expected a Zod schema or
   // ToolAnnotations, but received an unrecognized object"), and a raw shape is exactly what the
   // SDK wraps in a stripping `z.object`. Carrying `.passthrough()` to the handler therefore
@@ -563,6 +564,7 @@ export function registerCreateWorkflow(server: McpServer, opts?: HandleRunStores
   server.registerTool(
     'create_workflow',
     {
+      ...toolMeta('create_workflow'),
       description:
         'Create a dynamic Realm workflow at runtime and immediately start a run. Use this when you have a multi-step task and want to track your own execution plan. Returns next_action pointing at your first step — proceed with execute_step as normal. Top-level fields: steps, metadata, and extensions (extensions is register-time, operator-only, and rejected here); any other field is dropped and returned as a warning.',
       inputSchema: createWorkflowArgsSchema,

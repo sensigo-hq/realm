@@ -1,12 +1,23 @@
 // Protocol generator — produces the full agent briefing from a WorkflowDefinition.
 // This is what an AI agent reads before starting a workflow run.
-import type { AgentAction, WorkflowDefinition, JsonSchema } from '@sensigo/realm';
+import type { AgentAction, AnswersRow, WorkflowDefinition, JsonSchema } from '@sensigo/realm';
 import {
   classifyStepTrust,
   buildTrustRefusal,
   gateChoicesOf,
   renderTrustValue,
+  AUTHOR_TEXT_LABEL,
 } from '@sensigo/realm';
+
+/**
+ * #627 W (§5.4d): the session's effective way with gate answers — the row of §5.2's table the door
+ * is on: `offered`; `asked` with forms (`asked_forms`); `asked` without (`fallback`); `withheld`.
+ */
+export type EffectiveWay = AnswersRow;
+
+/** #627 W (W-p2): the approval sentence `asked`'s fallback adds to PR-0's answer texts. */
+const APPROVAL_SENTENCE =
+  ' Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.';
 
 export interface ProtocolStepGate {
   choices: string[];
@@ -45,15 +56,40 @@ export interface WorkflowProtocol {
   quick_start: string;
 }
 
+/** W-p1: PR-0's rule 2, the `offered` variant, byte-identical. */
+const CONFIRM_RULE_OFFERED =
+  "When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.";
+
+/**
+ * #627 W (§5.4d): rule 2 by the session's effective way — W-p1 (`offered`), W-p2 (the fallback:
+ * PR-0's text plus the approval sentence), W-p3 (`withheld` and `asked` with forms: no answer act).
+ */
+function confirmRuleOf(way: EffectiveWay): string {
+  if (way === 'offered') return CONFIRM_RULE_OFFERED;
+  if (way === 'fallback') return `${CONFIRM_RULE_OFFERED}${APPROVAL_SENTENCE}`;
+  return "When you receive status 'confirm_required', read gate.agent_hint, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation.";
+}
+
+/** PR-0's auto+gate step text, the `offered` variant (W-p8's base). */
+const AUTO_GATE_INVOLVEMENT_OFFERED =
+  'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
+
+/** #627 W (W-p8): the auto+gate step's text by the session's effective way. */
+function autoGateInvolvementOf(way: EffectiveWay): string {
+  if (way === 'offered') return AUTO_GATE_INVOLVEMENT_OFFERED;
+  if (way === 'fallback') return `${AUTO_GATE_INVOLVEMENT_OFFERED}${APPROVAL_SENTENCE}`;
+  return 'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions, present `gate.display` to the user verbatim, and follow next_actions: the question is answered outside this conversation.';
+}
+
 /**
  * issue #729 PR-0 (D4 T-10, PR0-CONTRACT Amendment 1): the rules for the reply's entry kinds — the
  * `next_actions` an agent calls, the `also` list it never counts, the `elsewhere` entries
- * (`instruction: null`) only an operator takes, and the `await` word. This is the `offered` variant;
- * #627 W adds the others.
+ * (`instruction: null`) only an operator takes, and the `await` word. #627 W: rule 2 is the
+ * session's variant (`confirmRuleOf`); the others are the same under every way.
  */
-const DEFAULT_RULES = [
+const defaultRulesOf = (way: EffectiveWay): string[] => [
   'Follow the instruction in each next_actions entry exactly. next_actions lists only what you can call now; when it is empty, agent_action says what to do.',
-  "When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
+  confirmRuleOf(way),
   'Do NOT auto-confirm any human gate. The user must decide.',
   'Do NOT ask the user for permission between steps unless the system tells you to.',
   'When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.',
@@ -82,9 +118,14 @@ const ERROR_HANDLING = {
 } satisfies Record<AgentAction, string>;
 
 /**
- * Generates the full agent protocol briefing from a WorkflowDefinition.
+ * Generates the full agent protocol briefing from a WorkflowDefinition. #627 W: `way` is the
+ * session's effective way with gate answers (the server passes it); the one-argument call is PR-0's
+ * `offered` text. The protocol is built with no run, so nothing in it is narrowed.
  */
-export function generateProtocol(definition: WorkflowDefinition): WorkflowProtocol {
+export function generateProtocol(
+  definition: WorkflowDefinition,
+  way: EffectiveWay = 'offered',
+): WorkflowProtocol {
   const steps: ProtocolStep[] = [];
   let agentStepCount = 0;
   let autoStepCount = 0;
@@ -155,8 +196,7 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
         'none — the engine runs this step; when next_actions names advance_run, call it';
       autoStepCount++;
     } else if (step.execution === 'auto' && hasGate) {
-      agent_involvement =
-        'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
+      agent_involvement = autoGateInvolvementOf(way);
       // #729 PR-0 (T-10, Amendment 1): the step's declared choices, else the engine's one default.
       possible_gate = { choices: gateChoicesOf(step) };
       autoStepCount++;
@@ -198,6 +238,9 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
     }
     if (step.instructions !== undefined) {
       protocolStep.instructions = step.instructions;
+      // #627 W (F31, W-t1): a gated step's instructions are forwarded marked as the author's, under
+      // every way; an ordinary step's are unchanged.
+      if (hasGate) protocolStep.instructions = `${AUTHOR_TEXT_LABEL} ${protocolStep.instructions}`;
     }
     if (possible_gate !== undefined) {
       protocolStep.possible_gate = possible_gate;
@@ -222,7 +265,7 @@ export function generateProtocol(definition: WorkflowDefinition): WorkflowProtoc
     `${agentStepCount === 1 ? 'requires' : 'require'} agent action. ` +
     `${autoStepCount} ${autoStepCount === 1 ? 'is' : 'are'} run by the engine.`;
 
-  const rules = definition.protocol?.rules ?? DEFAULT_RULES;
+  const rules = definition.protocol?.rules ?? defaultRulesOf(way);
 
   // issue #178: `??` only falls back on null/undefined — an empty or whitespace-only authored
   // quick_start is a "present" value that would otherwise win and blank out the generated

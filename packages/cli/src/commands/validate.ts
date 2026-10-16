@@ -14,6 +14,7 @@ import {
   loadWorkflowFromStringWithDiagnostics,
   resolveAgentProfiles,
   WorkflowError,
+  newerDefinitionFactsOf,
   shouldEnforceTimeout,
   DEFAULT_EXECUTION_TIMEOUT_SECONDS,
   resolveSeverity,
@@ -525,6 +526,34 @@ async function validateRegistered(
       }
       console.error(`Error: ${err.message}`);
       console.error('Registered workflows: realm workflow list');
+      process.exit(1);
+    }
+    const newer =
+      err instanceof WorkflowError && err.code === 'STATE_NEWER_FORMAT'
+        ? newerDefinitionFactsOf(err)
+        : undefined;
+    if (newer !== undefined && err instanceof WorkflowError) {
+      // #627 W (W-r2): the mirror of the legacy arm below — a copy a LATER Realm registered. Its
+      // format IS known (the copy states it), so it is named; the store's own message carries the
+      // two remedies. Without this arm the error falls past the guard below into the rethrow.
+      if (json) {
+        emitValidateJson({
+          valid: false,
+          mode: 'registered',
+          path: null,
+          workflowId: id,
+          schemaVersion: newer.schema_version,
+          strictRequested: strict,
+          strictFailed: false,
+          diagnostics: [],
+          errors: [err.message],
+          checksNotRun: [],
+          extensionKeys: [],
+        });
+        process.exit(1);
+      }
+      console.log(`Auditing the registered copy of '${id}' with realm ${VERSION}'s loader.`);
+      console.error(renderLoadFailure(err));
       process.exit(1);
     }
     if (err instanceof WorkflowError && err.code === 'STATE_LEGACY_FORMAT') {

@@ -233,6 +233,11 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('date', 'options', 'now'),
     typed('string', 'options', 'respondedBy'),
     typed('string', 'options', 'claimToken'),
+    // #627 W (§5.8): the door's route, the form's evidence, the principal, the fallback's prompt.
+    typed('string', 'options', 'route'),
+    typed('object', 'options', 'shown'),
+    typed('object', 'options', 'principal'),
+    typed('boolean', 'options', 'clientPromptRequested'),
   ],
   abandonRun: [need('string', 'runId'), typed('string', 'reason')],
   drainFinalizers: [...DEFINITION, typed('registry', 'registry'), need('string', 'runId')],
@@ -318,6 +323,11 @@ const ADVANCE_RUN_MEMBERS = [
   'command',
   'onExpiry',
 ] as const satisfies readonly (keyof AdvanceRunOptions)[];
+/**
+ * #627 W (§5.8): `route`, `shown`, `principal`, `clientPromptRequested` are W's. Skew: an embedder
+ * bundle that passes one of them to a core older than W is refused with `VALIDATION_OPTION_INVALID`
+ * (an unknown member) before anything is read — upgrade core with the door that passes them.
+ */
 const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'runId',
   'gateId',
@@ -328,6 +338,10 @@ const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'now',
   'driver',
   'caller',
+  'route',
+  'shown',
+  'principal',
+  'clientPromptRequested',
 ] as const satisfies readonly (keyof SubmitGateOptions)[];
 const GET_WORKFLOW_FOR_RUN_MEMBERS = [
   'retryVerb',

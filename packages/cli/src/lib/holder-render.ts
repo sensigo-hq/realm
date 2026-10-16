@@ -5,15 +5,19 @@
 // the MCP carriers. The wording rule on every surface: a PROGRAM, past tense ("taken by", "question
 // opened through"), with how its name is known. Never "is running", "is driving", "attended by".
 import {
+  answerArrivalOf,
   composeStepViews,
   deriveRunPhase,
   describeClaimHolder,
+  isAnswerEntry,
   offeredResumeWay,
   operatorEndingSentence,
   resumeWay,
   shellWord,
 } from '@sensigo/realm';
+import { routePhraseOf } from '@sensigo/realm-mcp';
 import type {
+  AnswerArrival,
   AnswerView,
   Attributed,
   BySourceClass,
@@ -266,8 +270,9 @@ export function outcomeNotRecordedLine(
 /** The proof part of an answer line, in words — never a code. */
 export const PROOF_WORDS = {
   matched: 'matched the claim_token of the reply that opened this question',
+  // #627 W (W-i4).
   absent:
-    'no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)',
+    "none passed (only an answer through Realm's MCP answer tool, from the conversation that opened the question, can pass one)",
   mismatch: "the claim_token passed is not this question's",
   unverifiable: {
     no_claim: 'could not be checked — no claim on this record',
@@ -345,13 +350,72 @@ export function answererPhrase(by: AnswerView['answered_by'], statedLabel: strin
 }
 
 /**
- * One answer, one line: `Answer: <choice> · answered by <name> (as stated, not verified) ·
- * proof: <words>`. The answerer is the caller-STATED, unverified name — or `(not stated)` — or,
+ * #627 W (W-i1, W-i8 by_source): how the program that recorded an answer knows its own name, as
+ * words — on the answer line a stated name is the one "named by the program that runs Realm".
+ */
+const RECORDED_BY_SOURCE_WORDS: Record<BySourceClass, string> = {
+  ...BY_SOURCE_WORDS,
+  stated: 'named by the program that runs Realm',
+};
+
+/**
+ * #627 W (W-i1, W-i2): the program part of the route — channel first, then the name it runs as; or,
+ * with no program recorded, that it did not name itself.
+ */
+function recordedByPhrase(
+  recordedBy: AnswerArrival['recorded_by'],
+  lead: 'recorded by' | 'as recorded by',
+): string {
+  if (recordedBy.by !== null) {
+    return `${lead} ${recordedBy.channel}, running as ${recordedBy.by} (${RECORDED_BY_SOURCE_WORDS[recordedBy.by_source]})`;
+  }
+  if (recordedBy.absent_cause === 'name_unreadable') return `${lead} ${UNSHOWABLE_NAME}`;
+  return 'as recorded by a program that did not name itself';
+}
+
+/**
+ * #627 W: how the answer arrived — "through <route> (as its door declared)" states a declaration,
+ * never an arrival (W-i1); a route its program did not declare (W-i7); no route recorded (W-i3,
+ * which claims nothing about when the entry was written; the program part is omitted).
+ */
+function arrivalPhrase(arrival: AnswerArrival): string {
+  const via = arrival.via;
+  if (typeof via === 'string') {
+    return `through ${routePhraseOf(via)} (as its door declared), ${recordedByPhrase(arrival.recorded_by, 'recorded by')}`;
+  }
+  if (via.absent === 'route_not_declared') {
+    return `through a route its program did not declare, ${recordedByPhrase(arrival.recorded_by, 'as recorded by')}`;
+  }
+  return 'how it arrived was not recorded';
+}
+
+/** #627 W (W-i8): the transport's principal, by kind — nothing for the absences that name no one. */
+function principalPhrase(principal: AnswerArrival['principal']): string | undefined {
+  if (principal === undefined) return undefined;
+  if ('kind' in principal) {
+    return principal.kind === 'api_key'
+      ? `authenticated by API key ${principal.id}`
+      : "through realm serve's shared token, which names no one";
+  }
+  return principal.absent === 'door_authentication_disabled'
+    ? 'with authentication turned off (dev mode)'
+    : undefined;
+}
+
+/** #627 W (W-i5): the door asked the client to have the person approve the call. */
+const CLIENT_PROMPT_WORDS =
+  'client prompt requested (anthropic/requiresUserInteraction); Realm cannot tell whether anyone approved';
+
+/**
+ * One answer, one line (#627 W, W-i1): `Answer: <choice> · answered by <name> (as stated) · through
+ * <route> (as its door declared), recorded by <program>, running as <name> (<source>) · <principal> ·
+ * <client prompt> · token: <words>`. The answerer is the caller-STATED name — or `(not stated)` — or,
  * with no parentheses around it so nothing nests, the one unshowable phrase ({@link answererPhrase}).
  * An answer the gate's expiry wrote reads `Answer: <choice> · settled by the gate's expiry (no
- * answer in time)`: no answerer part and no proof part, since both would repeat the same fact.
+ * answer in time)` (W-i6): no answerer, route or token part, since each would repeat the same fact.
+ * `arrival` is the answer entry's own facts (`answerArrivalOf`), read beside its view.
  */
-export function renderAnswerLine(answer: AnswerView): string {
+export function renderAnswerLine(answer: AnswerView, arrival: AnswerArrival): string {
   const by = answer.answered_by;
   const choice = answer.choice ?? '(no choice recorded)';
   const absent = answer.claim_proof_absent;
@@ -361,8 +425,23 @@ export function renderAnswerLine(answer: AnswerView): string {
   ) {
     return `Answer: ${choice} · ${SETTLED_BY_EXPIRY_WORDS}`;
   }
-  const answerer = answererPhrase(by, 'as stated, not verified');
-  return `Answer: ${choice} · answered by ${answerer} · proof: ${describeProof(answer.claim_proof, absent)}`;
+  const principal = principalPhrase(arrival.principal);
+  return [
+    `Answer: ${choice}`,
+    `answered by ${answererPhrase(by, 'as stated')}`,
+    arrivalPhrase(arrival),
+    ...(principal !== undefined ? [principal] : []),
+    ...(arrival.client_prompt_requested ? [CLIENT_PROMPT_WORDS] : []),
+    `token: ${describeProof(answer.claim_proof, absent)}`,
+  ].join(' · ');
+}
+
+/** The arrival facts of the answer the record holds for a step's question (its last answer entry). */
+export function recordedArrival(run: RunRecord, step: string): AnswerArrival {
+  const entries = (Array.isArray(run.evidence) ? run.evidence : []).filter(
+    (e) => isAnswerEntry(e) && (e as { step_id?: unknown }).step_id === step,
+  );
+  return answerArrivalOf(entries[entries.length - 1]);
 }
 
 /**
