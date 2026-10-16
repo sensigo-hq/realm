@@ -3,6 +3,7 @@
 import 'dotenv/config';
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
+import { shellWord } from '@sensigo/realm';
 import { workflowCommands, runCommands, topLevelCommands } from './commands-registry.js';
 import { VERSION } from './version.js';
 
@@ -41,8 +42,11 @@ if (
   (token.includes('/') || token.endsWith('.yaml') || token.endsWith('.yml') || existsSync(token))
 ) {
   console.error(`error: unknown command '${token}'`);
+  // #729 PR-0 (T-8): the token through the one quoter, the command delimited on its own — no
+  // punctuation after it (C212).
+  console.error(`Did you mean: realm workflow run ${shellWord(token)}`);
   console.error(
-    `Did you mean 'realm workflow run ${token}'? ('realm run' manages run instances; the dev-mode runner is 'realm workflow run'.)`,
+    "('realm run' manages run instances; the dev-mode runner is 'realm workflow run'.)",
   );
   process.exit(1);
 }

@@ -48,10 +48,12 @@ import {
   renderLoaderWarning,
   describePending,
   owedNames,
-  cannotGoOnLines,
+  composeWaysAt,
   deriveRunPhase,
   hashParams,
+  isPastDeadline,
 } from '@sensigo/realm';
+import { cannotGoOnLines } from './ways-renderer.js';
 import type {
   WorkflowDefinition,
   WebhookTrigger,
@@ -1000,7 +1002,8 @@ export async function sweepExpiredGates(
     const gate = run.pending_gate;
     // Finding-only (no on_expiry) or no enforce clock at all — nothing this sweep can enact.
     if (gate.expires_at === undefined || gate.on_expiry === undefined) continue;
-    if (now.getTime() < new Date(gate.expires_at).getTime()) continue;
+    // #729 PR-0 (A2): core's one due test of a stored deadline.
+    if (!isPastDeadline(gate.expires_at, now)) continue;
 
     result.scanned += 1;
 
@@ -1029,14 +1032,22 @@ export async function sweepExpiredGates(
           ? undefined
           : describePending(definition, outcome.run, undefined, now);
         // decision C64: an expiry that leaves nothing able to run from here names the steps and the
-        // way out — core's lines.
+        // way out — the CLI renderer's lines over the ways core composes (#729 PR-0, A-10).
         const cannotGoOn =
-          owedView === undefined ? [] : cannotGoOnLines(outcome.run, owedView, definition);
+          owedView === undefined
+            ? []
+            : cannotGoOnLines(
+                composeWaysAt(outcome.run, now, { definition }),
+                outcome.run.id,
+                deriveRunPhase(outcome.run),
+              );
         deps.logger.info('listen: sweeper enacted an expired gate', {
           run_id: run.id,
           gate_id: gate.gate_id,
           disposition: gate.on_expiry,
-          ...(owedView?.act !== undefined ? { owed: owedNames(owedView) } : {}),
+          ...(owedView !== undefined && owedView.owed.length > 0
+            ? { owed: owedNames(owedView) }
+            : {}),
           ...(cannotGoOn.length > 0 ? { cannot_go_on: cannotGoOn } : {}),
         });
         if (outcome.transitioned) {

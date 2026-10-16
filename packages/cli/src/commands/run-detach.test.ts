@@ -64,10 +64,12 @@ function record(over: Partial<RunRecord> = {}): RunRecord {
 function ways(
   over: Partial<PendingView> = {},
   steps: Record<string, { execution?: string }> = {},
-): { pending: PendingView; workflow: { steps: Record<string, { execution?: string }> } } {
+): { pending: PendingView; workflow: WorkflowDefinition } {
   return {
     pending: {
-      agent_actions: [],
+      // #729 PR-0 (D-L): the view names what the engine owes (`owed`); its act left with the
+      // composers.
+      owed: [],
       agent_steps: [],
       agent_refused: [],
       pending_guards: [],
@@ -75,7 +77,8 @@ function ways(
       cannot_run: [],
       ...over,
     } as PendingView,
-    workflow: { steps },
+    // #729 PR-0: the map composes the run's ways from the whole definition.
+    workflow: { id: 'wf', name: 'wf', version: 1, steps } as unknown as WorkflowDefinition,
   };
 }
 
@@ -283,7 +286,10 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
       undefined,
       new Date(),
     );
-    const map = renderDetachMap(rec, 'confirm', { pending, workflow: { steps: {} } }).split('\n');
+    const map = renderDetachMap(rec, 'confirm', {
+      pending,
+      workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
+    }).split('\n');
     // (a) red when an expired question that declares `on_expiry` is offered an answer, or no owed
     //     call; (b) prints the map.
     expect(map.slice(1)).toEqual([
@@ -310,7 +316,10 @@ describe('renderDetachMap, round 27 — C202: the ways on that fit the run (unit
     );
     const one = describePending(wfOf({ fetch: auto }), record(), undefined, new Date());
     const advanceOf = (pending: PendingView) =>
-      renderDetachMap(record(), 'approve', { pending, workflow: { steps: {} } }).split('\n')[1];
+      renderDetachMap(record(), 'approve', {
+        pending,
+        workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
+      }).split('\n')[1];
     // (a) red when several owed read as a promise that all run, or one owed gets the clause; (b)
     //     prints the lines.
     expect({ two: advanceOf(two), one: advanceOf(one) }).toEqual({

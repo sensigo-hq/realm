@@ -236,26 +236,34 @@ export const resumeCommand = new Command('resume')
           owedWords,
           getWorkflowForRun,
           cannotGoOnHere,
-          cannotGoOnLines,
+          composeWaysAt,
+          deriveRunPhase,
         } = await import('@sensigo/realm');
+        const { cannotGoOnLines } = await import('./ways-renderer.js');
         const resumed = await runStore.get(runId);
         const wf = await getWorkflowForRun(workflowStore, resumed, {
           retryVerb: 'resume again',
           verb: 'resume',
         });
-        const pending = describePending(wf, resumed, undefined, new Date());
+        const resumedAt = new Date();
+        const pending = describePending(wf, resumed, undefined, resumedAt);
         // decision C207: with several owed, where the call stops — never a promise that all run.
         const { steps, until } = owedWords(pending);
         view = {
           owedLine:
-            pending.act !== undefined
+            pending.owed.length > 0
               ? // decision C212: the line ends with its command — no full stop.
                 `To run ${steps} the engine owes (${owedList(pending)})${until === '' ? '' : `${until},`} without a model: realm run advance ${runId}`
               : undefined,
           stuck: cannotGoOnHere(resumed, pending),
           agentReady: pending.agent_steps.length > 0,
           // decision C64: the resumed run cannot go on from here — the steps and the way out.
-          cannotGoOn: cannotGoOnLines(resumed, pending, wf),
+          // #729 PR-0 (A-10): the run's ways, composed by core and rendered by the CLI's renderer.
+          cannotGoOn: cannotGoOnLines(
+            composeWaysAt(resumed, resumedAt, { definition: wf }),
+            runId,
+            deriveRunPhase(resumed),
+          ),
         };
       } catch {
         // The resume itself succeeded; the owed line is advisory.

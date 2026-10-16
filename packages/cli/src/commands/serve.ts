@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { JsonWorkflowStore } from '@sensigo/realm';
 import type { ExtensionRegistry, WorkflowDefinition, Attributed } from '@sensigo/realm';
 import { createRealmMcpServer } from '@sensigo/realm-mcp';
+import { cliOperatorRoute } from './ways-renderer.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { makeRegistryProvider } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
@@ -72,6 +73,9 @@ export async function startHttpMcpServer(options: StartServerOptions): Promise<S
     workflowStore: store,
     ...(registryProvider !== undefined ? { registryProvider } : {}),
     ...(driver !== undefined ? { driver } : {}),
+    // #729 PR-0 (P-6): the CLI's renderer as the operator route — an operator's command reaches
+    // only the block addressed to the person.
+    operatorRoute: cliOperatorRoute('realm serve'),
   };
   // The startup construction: a throw here rejects this async function's promise.
   createRealmMcpServer(serverOptions);

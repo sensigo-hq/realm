@@ -725,7 +725,7 @@ describe('#625 PR-2a, C174 lane C — realm-agent.md, from the drive', { timeout
   it('the `✗ Step …`, `✗ The drive stops: …`, `⚠ Step … is blocked …` row, and "the line that starts with ✗ (⚠ for a missing handler or adapter) gives the reason"', async () => {
     claim(
       AGENT_PAGE,
-      "| `✗ Step '<step>' …`, `✗ The drive stops: …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
+      "| `✗ Step '<step>' …`, `✗ The drive stops: …` or `✗ The drive stops — …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
     );
     claim(
       AGENT_PAGE,
@@ -1146,7 +1146,7 @@ describe(
       );
       claim(
         LISTEN_PAGE,
-        'When it leaves the run with nothing that can run from here, the line adds `cannot_go_on`: each step that cannot run, then the way out.',
+        'When it leaves the run with nothing that can run from here, the line adds `cannot_go_on`: each step that cannot run — with, for one that builds no input from an `input_map`, the fact that an operator supplies its input (added after version 0.47.0) — then the way out.',
       );
       const shown = block(LISTEN_PAGE, '"cannot_go_on"').filter((l) => l !== '');
       const { runStore, workflowStore } = fresh();

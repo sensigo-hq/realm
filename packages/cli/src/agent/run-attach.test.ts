@@ -173,7 +173,7 @@ describe('resolveRunAttach', () => {
         workflowStore: makeWorkflowStore(),
         loadExtensions: loader,
       }),
-    ).rejects.toThrow(`Run ${runId} is already in terminal state: spawn_failed`);
+    ).rejects.toThrow(`Run ${runId} has already ended (failed).\nReason: "spawn_failed"`);
     expect(loader).not.toHaveBeenCalled();
     const untouched = await store.get(runId);
     expect(untouched.terminal_reason).toBe('spawn_failed');
@@ -195,7 +195,9 @@ describe('resolveRunAttach', () => {
         workflowStore: makeWorkflowStore(),
         loadExtensions: okLoader(),
       }),
-    ).rejects.toThrow(`1 finalizer(s) not yet delivered — realm run drain ${runId}`);
+    ).rejects.toThrow(
+      `1 cleanup step is not yet delivered — to deliver it: realm run drain ${runId}`,
+    );
   });
 
   it('a completed run is refused, not re-attached', async () => {
@@ -212,7 +214,7 @@ describe('resolveRunAttach', () => {
         workflowStore: makeWorkflowStore(),
         loadExtensions: okLoader(),
       }),
-    ).rejects.toThrow(/already in terminal state/);
+    ).rejects.toThrow(/has already ended \(completed\)/);
   });
 });
 
@@ -360,10 +362,10 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
       },
     });
 
-  it('carries the remediation, HEDGED — this site cannot know the cause', async () => {
-    // "most often", not "because": a wiped store, a different $HOME and an unregistered file all
-    // produce this same code from the registrar. Claiming one cause unconditionally is the exact
-    // class of overreach this fix is repairing.
+  it('carries the remediation — what is so (#729 PR-0, T-21), never a guessed cause', async () => {
+    // A wiped store, a different $HOME and an unregistered file all produce this same code from the
+    // registrar, so the message claims no cause: it says what the store knows (not registered, and
+    // no file recorded) — T-21 replaced the #456 hedge "most often".
     const store = new InMemoryStore();
     const runId = await createRun(store);
     const err = await resolveRunAttach(runId, {
@@ -373,9 +375,8 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
     }).catch((e: unknown) => e);
 
     const message = (err as Error).message;
-    expect(message).toContain('Workflow not found: attach-wf');
-    expect(message).toContain('most often');
-    expect(message).toContain('--register');
+    expect(message).toContain("Workflow 'attach-wf' is not registered in this workflow store");
+    expect(message).not.toContain('most often');
     expect(message).toContain('realm workflow register');
   });
 
@@ -425,8 +426,9 @@ describe('resolveRunAttach — a not-found workflow says what to do about it', (
     }).catch((e: unknown) => e);
 
     expect((err as Error).message).toBe(
-      'Workflow not found: attach-wf — most often this run was created from a file without ' +
-        '--register. Register the workflow (realm workflow register <file>) and re-attach.',
+      "Workflow 'attach-wf' is not registered in this workflow store, and the store does not know " +
+        'the file it came from, so no path to it is recorded. Register the workflow (realm workflow ' +
+        'register <file>) and re-attach.',
     );
   });
 

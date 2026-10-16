@@ -193,8 +193,10 @@ describe('realm run abandon (CLI command)', () => {
 
     const printed = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(printed).toBe(
-      `Run '${run.id}' is waiting on human gate 'review_changes' (gate 'g-approve-1'); answer it before abandoning. ` +
-        `Answer it: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>.`,
+      // #729 PR-0 (Table rows 39–42; C212): core states the fact; the answer is its typed remedy,
+      // printed as this door's command — no stop after a command.
+      `Run '${run.id}' is waiting on human gate 'review_changes' (gate 'g-approve-1'); it cannot be abandoned while its question is open. ` +
+        `Answer it: realm run respond ${run.id} --gate g-approve-1 --choice <one of: approve, reject>`,
     );
     expect(printed).not.toContain('submit_human_response');
     expect(exitSpy).toHaveBeenCalledWith(1);

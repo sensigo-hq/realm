@@ -1043,9 +1043,11 @@ describe('run_health rendering (issue #221)', () => {
       ),
     );
     expect(result).toContain(
-      '(showing run record only — Workflow not found: wf — most often this run was created from a ' +
-        'file without --register. Register the workflow (realm workflow register <file>) and ' +
-        'inspect again.)',
+      // #729 PR-0 (T-21): what is so, by cause (was "Workflow not found: … — most often …"), naming
+      // the run's own workflow.
+      "(showing run record only — Workflow 'test-workflow' is not registered in this workflow store, and the " +
+        'store does not know the file it came from, so no path to it is recorded. Register the ' +
+        'workflow (realm workflow register <file>) and inspect again.)',
     );
     expect(result).not.toContain('workflow definition not found');
   });

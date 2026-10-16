@@ -103,7 +103,7 @@ describe('respondToGate', () => {
     expect(updated.run_phase).toBe('completed');
   });
 
-  it('C1 (issue #456) a workflow-absent run carries the remedy — "most often" and "respond again"', async () => {
+  it('C1 (issue #456) a workflow-absent run carries the remedy — the T-21 words (#729 PR-0; was "most often") and "respond again"', async () => {
     // Direct respondToGate call, bypassing the CLI action entirely — exercises :25's OWN fetch
     // (the direct-caller/test seam; the CLI action's :91 prefetch never runs here).
     const missingWfStore = new JsonWorkflowStore(
@@ -135,7 +135,7 @@ describe('respondToGate', () => {
         missingWfStore,
         new ExtensionRegistry(),
       ),
-    ).rejects.toThrow(/most often/);
+    ).rejects.toThrow(/is not registered in this workflow store/);
     await expect(
       respondToGate(
         run.id,
@@ -469,7 +469,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
     expect(errored()).not.toContain('most often');
   });
 
-  it('C2 (issue #456) a workflow-absent run carries the remedy via the ACTION path — "most often" and "respond again"', async () => {
+  it('C2 (issue #456) a workflow-absent run carries the remedy via the ACTION path — the T-21 words (#729 PR-0; was "most often") and "respond again"', async () => {
     // Via the CLI action (respondCommand.parseAsync) — exercises :91's OWN prefetch, which fails
     // BEFORE respondToGate (and its own :25 fetch) is ever called. The action constructs its own
     // default JsonWorkflowStore (under this describe's $HOME override) — nothing registered in
@@ -498,7 +498,7 @@ describe('respondCommand — `Error loading extensions:` (issue #466)', () => {
       }),
     ).rejects.toThrow('process.exit');
 
-    expect(errored()).toContain('most often');
+    expect(errored()).toContain('is not registered in this workflow store');
     expect(errored()).toContain('respond again');
     expect(errored()).not.toContain('Error loading extensions');
     expect(exitSpy).toHaveBeenCalledWith(1);

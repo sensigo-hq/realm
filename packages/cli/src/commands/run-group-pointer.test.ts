@@ -34,7 +34,8 @@ describe('realm run <path> — the did-you-mean pointer (issue #427)', () => {
     const { code, stderr } = await runCli(['run', './my-workflow']);
     expect(code).toBe(1);
     expect(stderr).toContain("error: unknown command './my-workflow'");
-    expect(stderr).toContain("Did you mean 'realm workflow run ./my-workflow'?");
+    // #729 PR-0 (E1 (j), C212): the command on its own, never closed by a stop or a mark.
+    expect(stderr).toContain('Did you mean: realm workflow run ./my-workflow');
     expect(stderr).toContain("'realm run' manages run instances");
   }, 30_000);
 

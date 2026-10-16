@@ -16,7 +16,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
 } from '@sensigo/realm';
-import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { PendingView, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
@@ -109,16 +109,17 @@ describe('the dev-run detach map prints the model flags to fill in (issue #676)'
       updated_at: '2026-09-01T00:00:00.000Z',
     } as unknown as RunRecord;
     // decision C202: the map offers the drive where an agent step is ready — here, the step asked for.
-    const agentReady = {
+    const agentReady: { pending: PendingView; workflow: WorkflowDefinition } = {
       pending: {
-        agent_actions: [],
+        owed: [],
         agent_steps: ['summarise'],
         agent_refused: [],
         pending_guards: [],
         engine_runnable: [],
         cannot_run: [],
       },
-      workflow: { steps: {} },
+      // #729 PR-0: the map composes the run's ways from the whole definition.
+      workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
     };
     const line = renderDetachMap(record, 'summarise', agentReady)
       .split('\n')
@@ -301,6 +302,35 @@ describe('buildReattachFlags (issue #676)', () => {
       releaseLineAdvisory: false,
     } as unknown as Parameters<typeof buildReattachFlags>[0];
     expect(buildReattachFlags(opts)).toBe('--model m');
+  });
+});
+
+// #729 PR-0 (RE-CUT; caching PR 2's R6-1): the prompt-cache rule lives INSIDE the one builder — the
+// caller says only where the setting came from and whether the provider applies it.
+describe('#729 PR-0 — buildReattachFlags owns the prompt-cache rule', () => {
+  it('a stated setting the provider applies is repeated; a default, or one the provider cannot apply, never is', () => {
+    // (a) red when the rule is left at a caller (the builder repeats whatever it is given); (b)
+    //     prints the three flag strings.
+    expect([
+      buildReattachFlags({
+        model: 'm',
+        promptCache: '1h',
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: true,
+      }),
+      buildReattachFlags({
+        model: 'm',
+        promptCache: '1h',
+        promptCacheSource: 'default',
+        providerAppliesPromptCache: true,
+      }),
+      buildReattachFlags({
+        model: 'm',
+        promptCache: '1h',
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: false,
+      }),
+    ]).toEqual(['--model m --prompt-cache 1h', '--model m', '--model m']);
   });
 });
 

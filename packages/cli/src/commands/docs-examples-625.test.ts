@@ -1044,7 +1044,7 @@ describe(
 
     it(CELLS.coreQuickStartNext, async () => {
       // decision C192: the comment's call, as written, after the quick start — on a workflow whose
-      // my_step leaves an `auto` step owed, so next_actions names advance_run.
+      // my_step leaves an `auto` step owed, so the reply offers an advance way (#729 PR-0).
       const dir = nodeProject();
       mkdirSync(join(dir, 'my-workflow'));
       writeFileSync(
@@ -1072,12 +1072,12 @@ describe(
         join(dir, 'main.ts'),
         [
           quickStart,
-          // what the comment says: import it beside executeStep, and call it when next_actions names
-          // advance_run
+          // what the comment says: import it beside executeStep, and call it when an advance way is
+          // offered; then neither a run_step nor an advance way is left
           "import { advanceRun } from '@sensigo/realm';",
-          "if (response.next_actions[0]?.instruction.tool === 'advance_run') {",
+          "if (response.ways.some((w) => w.verb === 'advance')) {",
           `  const next = await ${call};`,
-          '  console.log(next.status, next.run_phase, next.next_actions.length);',
+          "  console.log(next.status, next.run_phase, next.ways.filter((w) => w.verb === 'run_step' || w.verb === 'advance').length);",
           '}',
           '',
         ].join('\n'),

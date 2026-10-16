@@ -430,6 +430,9 @@ function makeGateStore(gate: PendingGate): RunStore {
     version: 2,
     in_progress_steps: [],
     completed_steps: [gate.step_name],
+    // #729 PR-0: every reply composes the run's ways from the record, which reads its step lists —
+    // a record always has them.
+    failed_steps: [],
     skipped_steps: [],
     evidence: [],
   };
@@ -441,6 +444,7 @@ function makeGateStore(gate: PendingGate): RunStore {
     version: 1,
     in_progress_steps: [gate.step_name],
     completed_steps: [],
+    failed_steps: [],
     skipped_steps: [],
     evidence: [],
   };

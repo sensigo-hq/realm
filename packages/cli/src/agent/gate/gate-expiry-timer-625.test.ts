@@ -6,6 +6,7 @@
 // (or a passed line) — a run a guard ended is never reported as just "expired".
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
+import { lagless } from '../../test-support/lag.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import { deriveRunPhase } from '@sensigo/realm';
@@ -81,8 +82,10 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
 
     // (a) red when the timer logs only "expired — enacted" for an expiry whose guard ended the
     //     run, or drops the reason; (b) prints every line the timer logged.
-    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0]))).toEqual([
-      `⏰ gate 'gate-1' on run '${run.id}' expired — enacted via the attending-process timer (enacted_via: timer). ` +
+    // #729 PR-0 (T-2; Table rows 35, 50): the timer's line is the receipt's — its second composer
+    // died; the step and the lag on the fake clock are said, as on every door.
+    expect(lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])))).toEqual([
+      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'reject' was recorded (enacted_via: timer). " +
         "Guard step 'check' aborted the run. Reason: Not approved — stopping the run.",
     ]);
     const final = await store.get(run.id);
@@ -108,8 +111,8 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
 
     // (a) red when a guard that passed is not named on the timer's line (a later answer's screen
     //     has no guard lines — this write is the one that reports them); (b) prints the lines.
-    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0]))).toEqual([
-      `⏰ gate 'gate-1' on run '${run.id}' expired — enacted via the attending-process timer (enacted_via: timer). ` +
+    expect(lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])))).toEqual([
+      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). " +
         "Guard step 'check' passed.",
     ]);
     // (a) red when the guard is not on the record as passed; (b) prints the completed steps.
@@ -138,8 +141,8 @@ describe('issue #625 — the attending-process expiry timer reports the guards i
 
     // The control. (a) red when the timer appends anything for a write that settled no guard;
     //     (b) prints the lines.
-    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0]))).toEqual([
-      `⏰ gate 'gate-1' on run '${run.id}' expired — enacted via the attending-process timer (enacted_via: timer).`,
+    expect(lagless(logSpy.mock.calls.map((c: unknown[]) => String(c[0])))).toEqual([
+      "⏰ gate 'gate-1' on 'approve' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer).",
     ]);
   });
 });

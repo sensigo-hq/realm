@@ -20,9 +20,8 @@ import {
   lateAnswerOutcome,
   deriveRunPhase,
   describePending,
-  owedList,
-  owedWords,
-  cannotGoOnLines,
+  composeWaysAt,
+  deriveRunPhase as derivePhase,
   sentenceEnd,
   pendingCleanupLine,
   pendingCleanupWay,
@@ -33,6 +32,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { answererPhrase, recordedAnswer } from '../lib/holder-render.js';
+import { CLI_COMMANDS, NO_DRIVE_FLAGS, cannotGoOnLines, owedItems } from './ways-renderer.js';
 import {
   agentReadyReason,
   attendingLine,
@@ -67,18 +67,26 @@ function nextLines(
   registry: ExtensionRegistry,
   hasCode: boolean,
 ): string[] {
-  const pending = describePending(workflow, run, registry, new Date());
+  const now = new Date();
+  const pending = describePending(workflow, run, registry, now);
+  // #729 PR-0 (A-10): the run's ways, composed by core and rendered by the CLI's one renderer.
+  const ways = composeWaysAt(run, now, { definition: workflow, registry });
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
-  // that cannot run and the way out — core's lines, never a copy.
-  const cannotGoOn = cannotGoOnLines(run, pending, workflow);
+  // that cannot run and the way out — the renderer's lines, never a copy.
+  const cannotGoOn = cannotGoOnLines(ways, runId, derivePhase(run));
   const ready = agentReadyReason(runId, pending.agent_steps);
-  // decision C207: with several owed, where the call stops — never a promise that all of them run.
-  const { them, until } = owedWords(pending);
+  const advance = ways.ways.find((w) => w.verb === 'advance');
   const commands = [
-    ...(pending.act !== undefined
-      ? [
-          `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${them}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
-        ]
+    ...(advance !== undefined && advance.verb === 'advance'
+      ? (() => {
+          // decision C207: with several owed, where the call stops — never a promise that all run.
+          const items = owedItems(advance);
+          const one = items.length === 1;
+          const until = one ? '' : ' until a step opens a question, fails or ends the run';
+          return [
+            `Owed to the engine: ${items.join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, NO_DRIVE_FLAGS)} runs ${one ? 'it' : 'them'}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
+          ];
+        })()
       : []),
     // decision C212: the ready line ends with its command — no full stop.
     ...(ready !== undefined

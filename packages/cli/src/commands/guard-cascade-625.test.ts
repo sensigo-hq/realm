@@ -58,7 +58,7 @@ const respondCarriedOut = (gateId: string, choice?: string): string =>
       'confirm',
       choice !== undefined ? { on_expiry: 'settle_default', choice } : { on_expiry: 'abort' },
       'respond',
-      0,
+      { ms: 0 },
     )}`,
   );
 

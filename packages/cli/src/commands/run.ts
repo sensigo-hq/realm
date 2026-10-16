@@ -18,14 +18,11 @@ import {
   deriveRunPhase,
   describePending,
   stepsThatCannotRun,
-  cannotGoOnLines,
   cannotGoOnHere,
+  composeWaysAt,
+  respondWayOfGate,
   consumesInputMap,
-  resumeWay,
-  owedList,
-  owedRunsClause,
   pendingCleanupLine,
-  respondCommand,
   describeClaimHolder,
   classifyInProgressClaims,
   pendingGateQuestion,
@@ -57,7 +54,14 @@ import type {
   RunStore,
   Attributed,
 } from '@sensigo/realm';
-import type { ResponseEnvelope, StepDispatcher, PendingView } from '@sensigo/realm';
+import type { EngineReply, StepDispatcher, PendingView, WayOf } from '@sensigo/realm';
+import {
+  CLI_COMMANDS,
+  NO_DRIVE_FLAGS,
+  cannotGoOnLines,
+  owedItems,
+  owedRunsWords,
+} from './ways-renderer.js';
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { buildReattachFlags } from './agent.js';
 import { attendingLine } from './run-advance.js';
@@ -82,7 +86,7 @@ function isWriterNonceRequired(): boolean {
  * @internal Exported for testing only.
  */
 export function renderStepFailureLine(
-  result: Pick<ResponseEnvelope, 'status' | 'errors' | 'stopped_step'>,
+  result: Pick<EngineReply, 'status' | 'errors' | 'stopped_step'>,
   stepName: string,
 ): string {
   const stoppedAfter =
@@ -142,7 +146,8 @@ export function renderDetachMap(
    */
   ways: {
     pending: PendingView;
-    workflow: Parameters<typeof resumeWay>[1] & Parameters<typeof cannotGoOnLines>[2];
+    // #729 PR-0: the whole definition — the run's ways are composed from it.
+    workflow: WorkflowDefinition;
   },
   opts?: {
     headline?: string;
@@ -168,6 +173,9 @@ export function renderDetachMap(
   const lines = [
     `${headline} — detached from run '${record.id}' at step '${step}' (phase: ${phase}). The run is saved.`,
   ];
+  // #729 PR-0 (A-10, A-11: the detach map once per verb family): the PR-0 ways' commands are the CLI
+  // renderer's — inspect, advance, abandon, the answer.
+  const inspectLine = `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, NO_DRIVE_FLAGS)}`;
 
   if (record.terminal_state) {
     // decisions C202, C205: the way on from a failed step `realm run resume` takes.
@@ -176,7 +184,7 @@ export function renderDetachMap(
     // decision C211: cleanup steps the ending left pending — the command that runs them.
     const cleanup = pendingCleanupLine(record, new Date());
     if (cleanup !== undefined) lines.push(`  ${cleanup}`);
-    lines.push(`  Inspect:   realm run inspect ${record.id}`);
+    lines.push(inspectLine);
     return lines.join('\n');
   }
 
@@ -184,25 +192,31 @@ export function renderDetachMap(
   const { pending } = ways;
   // decision C202: the owed call — for what the engine owes, an expired question's declared
   // `on_expiry` included (the view's act); decision C207: with several owed, where the call stops.
-  const advanceLine = `  Advance:   realm run advance ${record.id} — for what the engine owes (${owedList(pending)}), with no model${owedRunsClause(pending)}`;
+  const owedWay: WayOf<'advance'> = {
+    verb: 'advance',
+    conditions: [],
+    run_id: record.id,
+    owed: pending.owed,
+  };
+  const advanceLine = `  Advance:   ${CLI_COMMANDS.advance(owedWay, undefined, NO_DRIVE_FLAGS)} — for what the engine owes (${owedItems(owedWay).join(', ')}), with no model${owedRunsWords(owedWay)}`;
   if (gate !== undefined) {
     // decision C202: a question whose time is up and that declares `on_expiry` can no longer be
     // answered — the owed call carries its expiry out.
     lines.push(
-      pending.act !== undefined
+      pending.owed.length > 0
         ? advanceLine
         : // decision C206: the one answer command (`--choice <one of: a, b>`), never `a|b` — a
           // shell runs that as a pipe, and records the first choice.
-          `  Respond:   ${respondCommand(record.id, gate.gate_id, gate.choices)}`,
+          `  Respond:   ${CLI_COMMANDS.respond(respondWayOfGate(record.id, gate), undefined, NO_DRIVE_FLAGS)}`,
     );
-    lines.push(`  Inspect:   realm run inspect ${record.id}`);
+    lines.push(inspectLine);
     return lines.join('\n');
   }
 
   // decision C202: the ways on the run's view gives — the owed call where the engine owes work, the
   // drive only where an agent step is ready.
   const commands: string[] = [];
-  if (pending.act !== undefined) commands.push(advanceLine);
+  if (pending.owed.length > 0) commands.push(advanceLine);
   if (pending.agent_steps.length > 0) {
     const driveFlags =
       opts?.driveFlags !== undefined && opts.driveFlags !== '' ? ` ${opts.driveFlags}` : '';
@@ -218,20 +232,32 @@ export function renderDetachMap(
   } else if (cannotGoOnHere(record, pending)) {
     // decision C202: the run cannot go on from here — core's lines: each step that cannot run, then
     // the way out (which ends with `realm run abandon`).
-    lines.push(...cannotGoOnLines(record, pending, ways.workflow).map((line) => `  ${line}`));
-    lines.push(`  Inspect:   realm run inspect ${record.id}`);
+    const composed = composeWaysAt(record, new Date(), { definition: ways.workflow });
+    lines.push(...cannotGoOnLines(composed, record.id, phase).map((line) => `  ${line}`));
+    lines.push(inspectLine);
     return lines.join('\n');
   } else {
     // decision C202: a step another program holds — C188's way on, and no Discard line.
     const inFlight = record.in_progress_steps.filter((s) => s !== record.pending_gate?.step_name);
     if (inFlight.length > 0) {
-      lines.push(goOnLine(inFlight, `realm run advance ${record.id}`));
-      lines.push(`  Inspect:   realm run inspect ${record.id}`);
+      lines.push(
+        goOnLine(
+          inFlight,
+          CLI_COMMANDS.advance(
+            { verb: 'advance', conditions: [], run_id: record.id, owed: [] },
+            undefined,
+            NO_DRIVE_FLAGS,
+          )!,
+        ),
+      );
+      lines.push(inspectLine);
       return lines.join('\n');
     }
   }
-  lines.push(`  Inspect:   realm run inspect ${record.id}`);
-  lines.push(`  Discard:   realm run abandon ${record.id}`);
+  lines.push(inspectLine);
+  lines.push(
+    `  Discard:   ${CLI_COMMANDS.abandon({ verb: 'abandon', conditions: [], run_id: record.id }, undefined, NO_DRIVE_FLAGS)}`,
+  );
   return lines.join('\n');
 }
 
@@ -253,8 +279,16 @@ export function renderInFlightHandBack(record: RunRecord, held: readonly string[
   const steps = held.length === 1 ? `step ${names}` : `steps ${names}`;
   return [
     `Stopped waiting — detached from run '${record.id}' at ${steps} (phase: ${deriveRunPhase(record)}). The run is saved.`,
-    goOnLine(held, `realm run advance ${record.id}`),
-    `  Inspect:   realm run inspect ${record.id}`,
+    // #729 PR-0 (F.2): the commands come from the CLI door's renderer, never a literal here.
+    goOnLine(
+      held,
+      CLI_COMMANDS.advance(
+        { verb: 'advance', conditions: [], run_id: record.id, owed: [] },
+        undefined,
+        NO_DRIVE_FLAGS,
+      )!,
+    ),
+    `  Inspect:   ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: record.id }, undefined, NO_DRIVE_FLAGS)}`,
   ].join('\n');
 }
 
@@ -914,12 +948,17 @@ export const runCommand = new Command('run')
           }
 
           if (eligibleSteps.length === 0 && cannotPrompt.size > 0) {
-            // The steps that cannot run, and the way out — core's lines (decision C64).
+            // The steps that cannot run, and the way out — the CLI renderer's lines over the ways
+            // core composes (decision C64; #729 PR-0, A-10).
             const record = await store.get(runId);
             const cannotGoOn = cannotGoOnLines(
-              record,
-              describePending(definition, record, registry, new Date()),
-              definition,
+              composeWaysAt(record, new Date(), {
+                definition,
+                registry,
+                persistsClaims: store.persistsClaims === true,
+              }),
+              record.id,
+              deriveRunPhase(record),
             );
             if (cannotGoOn.length > 0) {
               console.error('\nWorkflow stalled: nothing else can run.');
@@ -941,10 +980,10 @@ export const runCommand = new Command('run')
             // F16 (review G1-R1): with engine work owed — a guard, for one: this command runs only the
             // steps it prompts — the run is not stalled. The headline says what the engine owes, which
             // this command does not run; the map below names the call that runs it.
-            const owed = pending.act !== undefined;
+            const owed = pending.owed.length > 0;
             console.error(
               owed
-                ? `\nThe engine owes ${owedList(pending)}, which this command does not run.`
+                ? `\nThe engine owes ${owedItems({ verb: 'advance', conditions: [], run_id: runId, owed: pending.owed }).join(', ')}, which this command does not run.`
                 : `\nNo eligible steps in phase '${run.run_phase}'. Workflow stalled.`,
             );
             console.error(
@@ -1079,13 +1118,15 @@ export const runCommand = new Command('run')
           // answer (rows 1–2: `taken`) — the answer typed here was not recorded; `takenLine` when the
           // record names no one to say it of.
           const notRun =
-            isRaceStop(stop) && stop.kind === 'taken' && !stop.ran_here
+            isRaceStop(stop) && stop.kind === 'held_elsewhere' && !stop.ran_here
               ? (answerNotRunLine(replyRecord!, stepName, keeps) ??
                 takenLine(stepName, describeClaimHolder(replyRecord!.claims?.[stepName], keeps)))
               : undefined;
           if (
             result.status === 'ok' &&
-            result.agent_action === 'stop' &&
+            // #729 PR-0 (D-8 row 2): an `ok` reply's own action word is `stop` only on a run that
+            // has ended (Amendment 12's anchors).
+            result.intrinsic_action === 'stop' &&
             result.evidence.length === 0
           ) {
             // decision C165: the run ended before this answer reached the engine (another process
@@ -1121,7 +1162,7 @@ export const runCommand = new Command('run')
             run = await store.get(runId);
             console.log(`  Gate opened for '${result.gate.step_name}'.\n`);
           } else if (
-            stop?.kind === 'capability' &&
+            stop?.kind === 'capability_missing' &&
             result.stopped_step !== undefined &&
             result.stopped_step !== stepName
           ) {
@@ -1199,7 +1240,9 @@ export const runCommand = new Command('run')
             // answer for a missing record is a clean not-found rather than a stack.
             const message = getErr instanceof Error ? getErr.message : String(getErr);
             console.error(
-              `Prompt cancelled — detached from run '${runId}'. Its record could not be re-read: ${message}. Inspect: realm run inspect ${runId}`,
+              // #729 PR-0 (E1 (j)): the command ends its line (no stop after it); the stored error
+              // text is printed after its label, as written, with no stop added.
+              `Prompt cancelled — detached from run '${runId}'; its record could not be re-read. To read it: ${CLI_COMMANDS.inspect({ verb: 'inspect', conditions: [], run_id: runId }, undefined, NO_DRIVE_FLAGS)}\n  Error: ${message}`,
             );
             rl.close();
             process.exit(1);

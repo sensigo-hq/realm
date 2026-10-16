@@ -8,16 +8,10 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import {
   describePending,
-  stepsThatCannotRun,
-  owedList,
-  owedCallWords,
   pendingCleanupLine,
-  waitingWords,
   resumeWay,
   dueExpiry,
-  capabilityMarkerWayOut,
-  cannotRunWayOut,
-  cannotRunWayOutApplies,
+  composeWaysAt,
   CACHE_BASES,
   CACHE_STATES,
   PROMPT_CACHE_LIFETIMES,
@@ -33,7 +27,20 @@ import {
   describeClaimHolder,
   isAnswerEntry,
   outputSourceOf,
+  readSupplier,
 } from '@sensigo/realm';
+import {
+  CLI_COMMANDS,
+  cannotGoOnWithRefusal,
+  cannotRunEntries,
+  cannotRunParts,
+  cannotRunWayOut,
+  capabilityMarkerWayOut,
+  operatorInputLine,
+  owedCallWords,
+  owedItems,
+  heldByAnswerWords,
+} from './ways-renderer.js';
 // issue #221 correction: the CLI's first command→command import (sanctioned — harmless
 // module-level Command construction; `listCommand` is a standalone Commander object never
 // auto-registered anywhere by being imported). Reused so inspect's never_claimed_idle age
@@ -630,13 +637,35 @@ function formatDiagnostics(
 function attemptProgramLine(
   attempt: AttemptView | undefined,
   isQuestionStep: boolean,
+  supplier = '',
 ): string | undefined {
   const driven = attempt?.driven_by;
   if (driven === undefined) return undefined;
   const label = isQuestionStep ? 'Question opened through' : 'Taken by';
-  if (driven.by !== null) return `${label}: ${describeProgram(driven)}`;
-  if (driven.absent_cause === 'name_unreadable') return `${label}: ${UNSHOWABLE_NAME}`;
+  if (driven.by !== null) return `${label}: ${describeProgram(driven)}${supplier}`;
+  if (driven.absent_cause === 'name_unreadable') return `${label}: ${UNSHOWABLE_NAME}${supplier}`;
   return undefined;
+}
+
+/**
+ * #729 PR-0 (§5 E1 (iii), T-17 (ii); the implementer's Q20, ruled 2026-10-16): who supplied an
+ * attempt's input, said on its attribution line BY RULE — ` — its input supplied by the <role>` only
+ * when the role differs from the party the step is designed for (an engine step given an operator's
+ * input, T-17's lever). The expected case — an agent's answer to an agent step — and every absence
+ * (`not_recorded`, `engine_input`) print nothing: a clause that is the same on every agent attempt is
+ * not information, and `driven_by`'s own surface withholds its expected case the same way. In PR-0 no
+ * path writes a differing role (`operator` enters with its producer).
+ *
+ * @internal Exported for testing only.
+ */
+export function supplierClause(
+  entry: Pick<EvidenceSnapshot, 'supplied_by' | 'step_id' | 'kind'>,
+  definition: Pick<WorkflowDefinition, 'steps'> | undefined,
+): string {
+  const read = readSupplier(entry, definition);
+  if (!('role' in read)) return '';
+  const designed = definition?.steps[entry.step_id]?.execution === 'agent' ? 'agent' : 'engine';
+  return read.role === designed ? '' : ` — its input supplied by the ${read.role}`;
 }
 
 /** Applies chalk color to a step status string. */
@@ -814,30 +843,39 @@ export async function inspectRun(
     (run.pending_gate === undefined || dueExpiry(run.pending_gate, inspectNow) !== undefined)
   ) {
     const pending = describePending(definition, run, undefined, inspectNow);
-    if (pending.act !== undefined) {
+    // #729 PR-0 (A-10): the run's ways, composed by core with no registry (an observer, C33), and
+    // rendered by the CLI's one renderer.
+    const ways = composeWaysAt(run, inspectNow, { definition });
+    const advance = ways.ways.find((w) => w.verb === 'advance');
+    if (advance !== undefined && advance.verb === 'advance') {
       // decision C207: with several owed, where the call stops — the clause the preview ends with.
       // decision C212: the words after the command are set off by a space — no punctuation follows
       // it (`owedCallWords`).
       lines.push(
-        `Owed to the engine: ${owedList(pending)} — realm run advance ${run.id}${owedCallWords(pending)}`,
+        `Owed to the engine: ${owedItems(advance).join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, { driveFlags: '' })}${owedCallWords(advance)}`,
       );
     }
     // decision C205: an agent step ready — the drive, in the words `realm run advance` and `realm
     // run respond` print.
     const ready = agentReadyReason(run.id, pending.agent_steps);
     if (ready !== undefined) lines.push(`${ready.charAt(0).toUpperCase()}${ready.slice(1)}`);
-    for (const e of stepsThatCannotRun(pending)) {
+    for (const entry of cannotRunEntries(ways)) {
+      const e = cannotRunParts(entry);
+      if (e === undefined) continue;
       // decision C41: a capability refusal judged from the run's marker (inspect passes no
       // registry) is past tense — no runner was consulted here.
-      const verb = e.basis === 'marker' ? 'Could not run' : 'Cannot run';
+      const verb = e.marker ? 'Could not run' : 'Cannot run';
       // decision C53: the marker line ends with its way out — a program that has the extension
       // runs the step.
-      const wayOut = e.basis === 'marker' ? capabilityMarkerWayOut(run.id) : '';
-      lines.push(`${verb} '${e.step}' (${e.refused_by}): ${e.refusal}${wayOut}`);
+      const wayOut = e.marker ? capabilityMarkerWayOut(run.id) : '';
+      lines.push(`${verb} '${e.step}' (${e.check}): ${e.refusal}${wayOut}`);
+      // PR0-CONTRACT Amendment 14 (T-17's lever): an operator may supply this step's input — a fact.
+      const lever = operatorInputLine(entry);
+      if (lever !== undefined) lines.push(lever);
     }
     // decision C62: when the run cannot go on until its workflow is corrected, the way out follows
     // the steps that cannot run — the line `realm run advance` and the drive's stop line print.
-    if (cannotRunWayOutApplies(run, pending)) lines.push(cannotRunWayOut(run, definition, pending));
+    if (cannotGoOnWithRefusal(ways)) lines.push(cannotRunWayOut(ways, run.id, deriveRunPhase(run)));
   }
   // decision C211 (walk c14 W2-2): at an open question, the steps it holds — they go on after the
   // answer, and nothing is owed until then.
@@ -847,7 +885,11 @@ export async function inspectRun(
     run.pending_gate !== undefined &&
     dueExpiry(run.pending_gate, inspectNow) === undefined
   ) {
-    const waiting = waitingWords(describePending(definition, run, undefined, inspectNow));
+    // #729 PR-0 (Part B): the steps the question holds are its `respond` way's, in the CLI's words.
+    const respond = composeWaysAt(run, inspectNow, { definition }).ways.find(
+      (w) => w.verb === 'respond',
+    );
+    const waiting = heldByAnswerWords(respond?.verb === 'respond' ? respond.holds : []);
     if (waiting !== undefined) {
       lines.push(`Question open on '${run.pending_gate.step_name}': ${waiting}.`);
     }
@@ -1140,6 +1182,7 @@ export async function inspectRun(
         const programLine = attemptProgramLine(
           attempts[ai],
           isQuestionStepId(stepId) && ai === executionSnaps.length - 1,
+          supplierClause(snap, definition),
         );
         if (programLine !== undefined) lines.push(`       ${programLine}`);
       });
@@ -1238,7 +1281,11 @@ export async function inspectRun(
           if (Object.keys(shown).length > 0) lines.push(`     Output: ${formatSummary(shown)}`);
         }
       } else {
-        const programLine = attemptProgramLine(attempts[0], isQuestionStepId(stepId));
+        const programLine = attemptProgramLine(
+          attempts[0],
+          isQuestionStepId(stepId),
+          supplierClause(snap, definition),
+        );
         if (programLine !== undefined) lines.push(`     ${programLine}`);
         lines.push(`     Input:  ${formatSummary(snap.input_summary)}`);
         if (snap.resolved_params !== undefined) {
