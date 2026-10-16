@@ -8,14 +8,14 @@ import {
   advanceRun,
   propagateSkips,
   describePending,
-  stepsThatCannotRun,
-  cannotRunWayOutApplies,
-  cannotRunClause,
   withFullStop,
   type WorkflowDefinition,
   type ExtensionManifest,
   type StepHandler,
   type Processor,
+  composeWaysAt,
+  cannotGoOnUntilCorrected,
+  libraryCannotRunWords,
 } from '@sensigo/realm';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -266,14 +266,25 @@ async function runSingleFixture(
       // does not stop the fixture here on its own: the engine's call below (`advanceRun`) attempts
       // it, and the fixture fails with the engine's own message, as a chained step that needs it does. Beside a step
       // refused before its claim, it is named here too, with the other steps that cannot run.
-      const pending = describePending(definition, currentRun, fixtureRegistry, new Date());
-      if (cannotRunWayOutApplies(currentRun, pending)) {
+      const viewAt = new Date();
+      const pending = describePending(definition, currentRun, fixtureRegistry, viewAt);
+      // #729 PR-0 (Part C, F10): the runner is a library door — it reads the run's ways, composed by
+      // core, and words them with the library's words (`libraryCannotRunWords`).
+      const ways = composeWaysAt(currentRun, viewAt, {
+        definition,
+        registry: fixtureRegistry,
+        persistsClaims: store.persistsClaims === true,
+      });
+      if (cannotGoOnUntilCorrected(ways)) {
         return {
           name: fixture.name,
           passed: false,
           error: [
             'Workflow stalled: nothing else can run.',
-            ...stepsThatCannotRun(pending).map((e) => withFullStop(cannotRunClause(e))),
+            ...ways.unavailable
+              .map((u) => (u.verb === 'run_step' ? libraryCannotRunWords(u) : undefined))
+              .filter((words): words is string => words !== undefined)
+              .map((words) => withFullStop(words)),
           ].join('\n'),
         };
       }
@@ -287,7 +298,7 @@ async function runSingleFixture(
       // C23), which fails the fixture with the engine's own message — never a spin to the iteration
       // cap.
       const capabilityAttempt = pending.engine_runnable.some((e) => e.refused_by === 'capability');
-      if (pending.act !== undefined || capabilityAttempt) {
+      if (pending.owed.length > 0 || capabilityAttempt) {
         const advanced = await advanceRun(store, definition, { runId, registry: fixtureRegistry });
         if (advanced.status === 'error') {
           return {
