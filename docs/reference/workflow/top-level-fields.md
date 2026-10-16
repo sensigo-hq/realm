@@ -98,10 +98,10 @@ VALIDATION_INPUT_SCHEMA: Invalid params for workflow 'review-note': (root) must 
 - **Type:** map with two optional keys, `quick_start` and `rules`. **Optional.**
 - Changes what `get_workflow_protocol` tells an assistant.
 
-| Key           | Type            | Effect                                                                                              |
-| ------------- | --------------- | --------------------------------------------------------------------------------------------------- |
-| `quick_start` | string          | Replaces the opening instruction. An empty string is ignored.                                       |
-| `rules`       | list of strings | Replaces the five standard rules. Two rules about concurrent attempts are always added after yours. |
+| Key           | Type            | Effect                                                                                             |
+| ------------- | --------------- | -------------------------------------------------------------------------------------------------- |
+| `quick_start` | string          | Replaces the opening instruction. An empty string is ignored.                                      |
+| `rules`       | list of strings | Replaces the six standard rules. Two rules about concurrent attempts are always added after yours. |
 
 ```yaml
 protocol:
@@ -118,17 +118,18 @@ Call start_run with workflow_id 'review-note'. The engine runs the steps it owns
 
 The `advance_run` clause was added after version 0.46.0.
 
-and the five standard rules are:
+and the six standard rules are:
 
 ```text
-Follow the next_action instruction in each response exactly.
+Follow the instruction in each next_actions entry exactly. next_actions lists only what you can call now; when it is empty, agent_action says what to do.
 When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.
 Do NOT auto-confirm any human gate. The user must decide.
 Do NOT ask the user for permission between steps unless the system tells you to.
 When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.
+An entry in also (reading the run, ending it) is never a next step: end a run only when the user asks you to. An entry in elsewhere has instruction: null — only an operator can take it; tell the user, and never try it yourself.
 ```
 
-The fifth rule was added after version 0.46.0. Setting `rules` removes all five, including the two about human gates.
+The fifth rule was added after version 0.46.0; the sixth, and the first rule's second sentence, after version 0.47.0. Setting `rules` removes all six, including the two about human gates.
 
 ## `services`
 

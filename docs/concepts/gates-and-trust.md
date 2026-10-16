@@ -43,7 +43,7 @@ While the gate is open, the steps after it cannot run. An agent that tried to ru
 A run that is waiting at a gate cannot be abandoned either. The gate has to be answered first:
 
 ```text
-Run 'c3b7eed7-…' is waiting on human gate 'approve' (gate '9a35fbef-…'); answer it before abandoning.
+Run 'c3b7eed7-…' is waiting on human gate 'approve' (gate '9a35fbef-…'); it cannot be abandoned while its question is open.
 ```
 
 ## Routing on the answer

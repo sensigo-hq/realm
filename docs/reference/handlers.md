@@ -182,13 +182,13 @@ throw new WorkflowError('Order A-17 is not in the system.', {
 });
 ```
 
-| Option        | Required | Holds                                                                                                      |
-| ------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `code`        | Yes      | One of Realm's [error codes](error-codes.md).                                                              |
-| `category`    | Yes      | `NETWORK`, `SERVICE`, `STATE`, `VALIDATION`, `ENGINE` or `RESOURCE`.                                       |
-| `agentAction` | Yes      | `report_to_user`, `provide_input`, `resolve_precondition`, `stop`, `wait_for_human` or `wait_and_proceed`. |
-| `retryable`   | Yes      | Whether the step may be tried again.                                                                       |
-| `details`     | No       | An object with anything else about the failure.                                                            |
+| Option        | Required | Holds                                                                                                                                                                                                            |
+| ------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code`        | Yes      | One of Realm's [error codes](error-codes.md).                                                                                                                                                                    |
+| `category`    | Yes      | `NETWORK`, `SERVICE`, `STATE`, `VALIDATION`, `ENGINE` or `RESOURCE`.                                                                                                                                             |
+| `agentAction` | Yes      | `report_to_user`, `provide_input`, `resolve_precondition`, `stop`, `wait_for_service`, `wait_and_proceed` or `await` (`wait_for_service` was `wait_for_human` up to version 0.47.0; `await` was added after it). |
+| `retryable`   | Yes      | Whether the step may be tried again.                                                                                                                                                                             |
+| `details`     | No       | An object with anything else about the failure.                                                                                                                                                                  |
 
 The error above gave a caller over MCP this reply:
 
