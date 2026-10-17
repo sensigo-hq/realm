@@ -429,6 +429,13 @@ export async function measureSeparation(args: {
   const ownedByOther = owner !== undefined && owner !== probes.uid();
   const svc = ownedByOther ? (probes.userName(owner) ?? `uid ${owner}`) : undefined;
   const stored = storedDefinitions(probes, store);
+  // Correction 1 (D3): the registered workflows' extension files are "not read" only where some may
+  // exist — a store this login cannot open, or a workflows folder it cannot list. A store that is
+  // not there, or one with no workflows folder, has none to read.
+  const unread =
+    !stored.readable &&
+    state !== 'missing' &&
+    !(state === 'present' && !probes.exists(join(store, 'workflows')));
   const executed = [
     ...(args.extensionsModule !== undefined ? [resolve(args.extensionsModule)] : []),
     ...stored.extensions,
@@ -442,7 +449,7 @@ export async function measureSeparation(args: {
       probes,
       [...new Set([...args.roots, ...stored.roots])],
       executed,
-      !stored.readable,
+      unread,
     ),
     other_answer_host: {
       basis: 'unknown',
@@ -465,7 +472,7 @@ export async function measureSeparation(args: {
     store,
     owns_store: owner !== undefined && owner === probes.uid(),
     door: args.door,
-    extensions_unread: !stored.readable,
+    extensions_unread: unread,
   };
 }
 

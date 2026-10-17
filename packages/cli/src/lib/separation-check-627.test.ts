@@ -371,6 +371,46 @@ describe('#627 W — the separation check (cell 26)', () => {
     );
   });
 
+  it('correction 1 (D3): the extension files are "not read" only where some may exist — per conjunct: a missing store, a store with no workflows folder, an unlistable folder, a store this login cannot open', async () => {
+    const line = async (over: Partial<SeparationProbes>, present: string[] = []) =>
+      conditionLine(
+        'trust_root_writable',
+        await measure(machine(over, SUDO_NEGATIVE, [...SUDO_BIN, ...present])),
+      );
+    const CHECKED = '3 files and folders checked.';
+    const NOT_READ =
+      "the registered workflows' extension files were not read (the store cannot be read)";
+    // (a) red per cell when its conjunct is dropped — a missing store, or a store with no workflows
+    //     folder, said to hold unread files; an unlistable folder, or a store this login cannot open,
+    //     not said so; (b) prints each line's tail.
+    const tail = (l: string) =>
+      l.endsWith(CHECKED) ? 'checked' : l.includes(NOT_READ) ? 'not read' : l;
+    expect({
+      missing: tail(await line({ stat: () => ({ error: 'ENOENT' }), list: () => undefined })),
+      noFolder: tail(
+        await line({
+          exists: (p) =>
+            p !== `${STORE}/workflows` &&
+            [STORE, `${STORE}/runs`, ...Object.keys(SUDO_NEGATIVE), ...SUDO_BIN].includes(p),
+          list: () => undefined,
+        }),
+      ),
+      unlistable: tail(await line({ list: (p) => (p === `${STORE}/workflows` ? undefined : []) })),
+      denied: tail(
+        await line({
+          stat: (p) =>
+            p === STORE ? { error: 'EACCES' } : p === HOME ? { uid: 900 } : { error: 'ENOENT' },
+          list: () => undefined,
+        }),
+      ),
+    }).toEqual({
+      missing: 'checked',
+      noFolder: 'checked',
+      unlistable: 'not read',
+      denied: 'not read',
+    });
+  });
+
   it('correction 1 (D4): the per-user Docker socket is looked for in the login’s own home, never in HOME', async () => {
     const own = '/home/agent/.docker/run/docker.sock';
     const viaHome = `${HOME}/.docker/run/docker.sock`;
