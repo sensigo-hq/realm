@@ -5,6 +5,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   compileSchema,
   isStrictModeRefusal,
+  isAsyncSchemaRefusal,
+  asyncSchemaValidity,
   describeSchemaFailure,
   SCHEMA_KEY_CONSEQUENCE,
   composeSchemaFailure,
@@ -169,6 +171,17 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
       try {
         compileSchema(step.input_schema);
       } catch (err) {
+        // A root `$async`: refused in its own clauses, as the loader refuses it.
+        if (isAsyncSchemaRefusal(err)) {
+          const validity = asyncSchemaValidity(
+            (step.input_schema as Record<string, unknown>)['$async'],
+          );
+          errors.push(
+            `Step '${step.id}': 'input_schema' declares ${validity}. ` +
+              `${SCHEMA_KEY_CONSEQUENCE.input_schema}; remove \`$async\` from the schema.`,
+          );
+          continue;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         const strict = isStrictModeRefusal(msg);
         // The meta-schema class gets realm's own sentence and remedy (walk #13), as the loader
