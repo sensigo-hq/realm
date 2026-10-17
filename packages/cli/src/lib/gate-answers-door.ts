@@ -31,7 +31,7 @@ export function formWaitBinRefusal(bin: 'mcp' | 'serve', kind: SetKind, raw: str
  * the inert-config policy (validity · consequence · remedy · re-admission).
  */
 export function formWaitInertRefusal(where: '--form-wait-seconds' | typeof FORM_WAIT_ENV): string {
-  return `realm serve: ${where} has no effect on this server: its clients get no forms until Realm's MCP library moves to its next version — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.`;
+  return `realm serve: ${where} has no effect on this server: its clients get no forms until Realm's HTTP server can hold a form open — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.`;
 }
 
 /** What a bin was given for the two settings: its flags (unchecked). */
@@ -55,9 +55,8 @@ export function readBinDoorSettings(
   const answers = judgeGateAnswers({ flag: flags.gateAnswers, env: env[GATE_ANSWERS_ENV] });
   if (!answers.ok)
     return { ok: false, line: gateAnswersBinRefusal(bin, answers.kind, answers.raw) };
-  const formWait = judgeFormWait({ flag: flags.formWaitSeconds, env: env[FORM_WAIT_ENV] });
-  if (!formWait.ok)
-    return { ok: false, line: formWaitBinRefusal(bin, formWait.kind, formWait.raw) };
+  // Correction 1 (E2): on `realm serve` any form-wait value refuses the start with W-s9 — its presence
+  // is tested before W-s8 judges it (W-s8's "starts as soon as it is valid" would be false there).
   if (bin === 'serve') {
     if (flags.formWaitSeconds !== undefined)
       return { ok: false, line: formWaitInertRefusal('--form-wait-seconds') };
@@ -65,6 +64,9 @@ export function readBinDoorSettings(
     if (fromEnv !== undefined && fromEnv !== '')
       return { ok: false, line: formWaitInertRefusal(FORM_WAIT_ENV) };
   }
+  const formWait = judgeFormWait({ flag: flags.formWaitSeconds, env: env[FORM_WAIT_ENV] });
+  if (!formWait.ok)
+    return { ok: false, line: formWaitBinRefusal(bin, formWait.kind, formWait.raw) };
   return { ok: true, answers: answers.setting, formWait: formWait.setting };
 }
 
@@ -82,7 +84,11 @@ export function gateAnswersStartLine(setting: GateAnswersSetting, http: boolean)
     case 'asked': {
       const from =
         setting.source.kind === 'default' ? alsoSetClause(setting) : `; ${fromClause(setting)}`;
-      return `Gate answers over MCP: asked (the default${from}). In chat apps that show forms, questions go to the person in the app's own form, and the agent gets no tool that records a gate answer. In apps without forms${http ? ' — every app on this server until its MCP library moves to 2.x' : ''}, the agent keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.`;
+      // Correction 1 (E3): the HTTP door's first sentence is its own — no app gets forms there.
+      const forms = http
+        ? 'On this server no chat app gets forms: under `asked` every client keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that.'
+        : "In chat apps that show forms, questions go to the person in the app's own form, and the agent gets no tool that records a gate answer. In apps without forms, the agent keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that.";
+      return `Gate answers over MCP: asked (the default${from}). ${forms} To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.`;
     }
     case 'withheld':
       return `Gate answers over MCP: withheld (${fromClause(setting)}). No tool on this server records a gate answer, and its replies name no way to answer. To answer a waiting question, a person runs, in a terminal on this machine as the user that runs this server: realm run inspect <run_id> (shows the question, its gate id and its choices), then realm run respond <run_id> --gate <gate_id> --choice <choice>. The agent tells the user the run id. Another Realm server or CLI on the same store can still record answers.`;

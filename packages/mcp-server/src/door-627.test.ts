@@ -37,7 +37,7 @@ import {
   type RealmMcpServerOptions,
 } from './server.js';
 import { effectiveGateAnswers } from './door.js';
-import { renderReply } from './render-reply.js';
+import { renderReply, tokenStrayed, type McpEnvelope } from './render-reply.js';
 
 type Reply = Record<string, unknown>;
 
@@ -762,8 +762,9 @@ describe('#627 W — Part I: a token for a handed-off question is held back', ()
       },
     }).envelope;
     spy.mockRestore();
-    // (a) red when the predicate misses the handed-off case, or PR-0's old throw text returns;
-    //     (b) prints the reply's hint start and the log line's start, never the token.
+    // (a) red when a token planted on the gate object reaches the wire (PR-0's branch), or PR-0's old
+    //     throw returns — the handed-off case (the narrowed opening) is pinned by correction 1's E5
+    //     cell; (b) prints the reply's hint and the log line, never the token.
     expect({
       hint: held.context_hint,
       leaked: JSON.stringify(held).includes('planted'),
@@ -775,6 +776,89 @@ describe('#627 W — Part I: a token for a handed-off question is held back', ()
         `realm: held back a ${opening.command} reply for run ${run.id}: it carried a claim_token on a handed-off question. This is a bug in Realm or in the program embedding it; please report it with this line.`,
       ],
     });
+  });
+});
+
+describe('#627 W correction 1 (E4, E5) — the held-back reply by row, its arms, and the narrowed opening', () => {
+  const ANSWERS = (value: 'offered' | 'withheld') => ({
+    value,
+    source: { kind: 'default' as const, ref: 'test' },
+    forms: { shown: false, source: { kind: 'negotiated' as const, ref: 'test' } },
+  });
+  async function planted(gateAnswers: 'offered' | 'withheld') {
+    const s = await session({ gateAnswers });
+    const def = await registered(s);
+    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const opening = await advanceRun(s.runStore, def, { runId: run.id });
+    return {
+      run,
+      opening,
+      plant: (reply: EngineReply) =>
+        ({
+          ...reply,
+          gate: { ...(reply.gate ?? {}), claim_token: 'planted' },
+        }) as unknown as EngineReply,
+    };
+  }
+  const held = (reply: EngineReply, host: Parameters<typeof renderReply>[1]) => {
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    const envelope = renderReply(reply, host).envelope;
+    spy.mockRestore();
+    return { hint: envelope.context_hint, logged };
+  };
+
+  it('E4: on offered the clause is the opening reply’s answer instruction, in the text and the log line', async () => {
+    const p = await planted('offered');
+    // (a) red when the withholding clause prints on a row that does not withhold answers;
+    //     (b) prints the hint and the log line, never the token.
+    expect(held(p.plant(p.opening), { answers: ANSWERS('offered') })).toEqual({
+      hint: `Realm held back this reply: it carried a claim token outside the answer instruction of the reply that opened the question. The call itself ran and changed the run (version ${p.opening.run_version}). This is a fault in Realm or in the program that embeds it, and it was logged. Do not repeat this call: tell the user, and call get_run_state to see where the run stands.`,
+      logged: [
+        `realm: held back a ${p.opening.command} reply for run ${p.run.id}: it carried a claim_token outside the answer instruction of the reply that opened the question. This is a bug in Realm or in the program embedding it; please report it with this line.`,
+      ],
+    });
+  });
+
+  it('E4: a call that read the run and changed nothing says so ("it changed nothing")', async () => {
+    const p = await planted('withheld');
+    // A later reply at the open question: no opening token on its ways, the version as read.
+    const later = {
+      ...p.opening,
+      ways: p.opening.ways.map((w) => (w.verb === 'respond' ? { ...w, proof: undefined } : w)),
+    } as EngineReply;
+    // (a) red when W-e1's changed-nothing arm is missing; (b) prints the hint.
+    expect(
+      held(p.plant(later), { answers: ANSWERS('withheld'), readVersion: later.run_version }).hint,
+    ).toBe(
+      'Realm held back this reply: it carried a claim token for a question this session cannot answer, which this server never sends. The call itself ran; it changed nothing. This is a fault in Realm or in the program that embeds it, and it was logged. Do not repeat this call: tell the user, and call get_run_state to see where the run stands.',
+    );
+  });
+
+  it('E5: the narrowed opening is the withholding rows’ guard — an answer instruction with a token strays where the agent has no respond', () => {
+    const envelope = {
+      next_actions: [
+        {
+          instruction: {
+            tool: 'submit_human_response',
+            params: { claim_token: 't' },
+            call_with: {},
+          },
+          human_readable: '',
+        },
+      ],
+    } as unknown as McpEnvelope;
+    const respond = { verb: 'respond', proof: { claim_token: 't' }, conditions: [] };
+    const narrowed = (forParties: string[]) =>
+      ({ ways: [{ ...respond, for: forParties }], unavailable: [] }) as never;
+    // (a) red when the opening is read from the un-narrowed ways (the agent's withheld respond
+    //     counted as an opening); (b) prints both verdicts.
+    expect({
+      withheld: tokenStrayed(envelope, narrowed(['asked_person'])),
+      offered: tokenStrayed(envelope, narrowed(['agent', 'asked_person'])),
+    }).toEqual({ withheld: true, offered: false });
   });
 });
 

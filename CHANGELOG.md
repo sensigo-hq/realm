@@ -226,8 +226,9 @@ false`.
   instructions in the protocol and a workflow's `protocol.rules` are forwarded after "From the
   workflow's author:" (for the rules, "Rules from the workflow's author:"), under every value.
 - **`realm run inspect`'s answer line (issue #627).** The answerer reads `(as stated)`; the proof
-  part is labelled `token:`, and a token not passed reads "none passed (only an answer through
-  Realm's MCP answer tool, from the conversation that opened the question, can pass one)".
+  part is labelled `token:`, and a token not passed reads "none passed (a token is passed only by
+  Realm's MCP answer tool, from the conversation that opened the question, or by a program that
+  calls the library with it)".
 - **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
   file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,
   or holding another run is `RESOURCE_FORMAT_INVALID` (`stop`); one in the format of an earlier

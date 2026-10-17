@@ -46,7 +46,7 @@ Each answer's entry in the run record says how it arrived:
 `realm run inspect` prints them on the answer's line, for example:
 
 ```text
-Answer: approve · answered by (not stated) · through the user's app, as a form (as its door declared), recorded by mcp-stdio, running as ops@server-1 (from the OS user) · token: none passed (only an answer through Realm's MCP answer tool, from the conversation that opened the question, can pass one)
+Answer: approve · answered by (not stated) · through the user's app, as a form (as its door declared), recorded by mcp-stdio, running as ops@server-1 (from the OS user) · token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)
 ```
 
 An entry written by an earlier version reads `how it arrived was not recorded`.

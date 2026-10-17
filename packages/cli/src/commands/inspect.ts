@@ -101,7 +101,11 @@ function openQuestionLine(
 ): string {
   if (gate.resolved_message !== undefined)
     return `  Question: ${quotedForTerminal(gate.resolved_message)}`;
-  const declares = definition?.steps[gate.step_name]?.gate?.message !== undefined;
+  // Correction 1 (E6): with no frozen message and no definition to read, inspect cannot know whether
+  // the gate declares one — it says so, never "none".
+  if (definition === undefined)
+    return "  Question: not shown — the workflow's definition cannot be read";
+  const declares = definition.steps[gate.step_name]?.gate?.message !== undefined;
   return declares
     ? '  Question: not recorded — this gate was opened by a version of Realm that did not keep its message'
     : '  Question: none — the gate declares no message';

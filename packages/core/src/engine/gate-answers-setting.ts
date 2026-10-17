@@ -67,7 +67,10 @@ export function judgeGateAnswers(
   const set: { kind: SetKind; value: GateAnswers }[] = [];
   for (const kind of ['flag', 'env', 'option'] as const) {
     const raw = input[kind];
-    if (raw === undefined || raw === '') continue;
+    // Correction 1 (E1): an EMPTY flag is a value given, and not one of the three — refused (a
+    // `--gate-answers "$MODE"` with `MODE` unset must not start the default silently); an empty
+    // environment variable, or option, stays unset.
+    if (raw === undefined || (raw === '' && kind !== 'flag')) continue;
     if (!isGateAnswers(raw)) return { ok: false, kind, raw };
     set.push({ kind, value: raw });
   }

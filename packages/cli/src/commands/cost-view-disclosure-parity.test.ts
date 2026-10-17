@@ -873,8 +873,8 @@ const HOLDER_ANSWER_VIEW = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        "token: none passed (only an answer through Realm's MCP answer tool, from the " +
-          'conversation that opened the question, can pass one)',
+        "token: none passed (a token is passed only by Realm's MCP answer tool, from the " +
+          'conversation that opened the question, or by a program that calls the library with it)',
       ),
   },
   claim_proof_absent: {

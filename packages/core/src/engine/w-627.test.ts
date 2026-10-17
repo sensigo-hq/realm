@@ -868,6 +868,13 @@ describe('#627 W — W-l1: a load note for author text that names an answer tool
     ]);
   });
 
+  it('correction 1 (E7): the command is matched in any case — a sentence may open with "Realm run respond"', () => {
+    // (a) red when the command pattern is case-sensitive; (b) prints the notes.
+    expect(notes(AUTHOR_YAML('Realm run respond answers it.'))).toEqual([
+      `Note: Step 's': instructions (line 9) tells the agent to use 'realm run respond'. When this server withholds answers, or the user's app shows forms, the agent has no such tool; Realm forwards this text marked as the author's, followed by its own rule that the agent cannot answer. Consider removing it. (This is a text match: it finds tool names, not every way of asking.)`,
+    ]);
+  });
+
   it('silent on text that names no answer tool ("respond to the user"), and on an ordinary step', () => {
     // (a) red when "respond" alone matches, or an ungated step is noted (its text is not labelled,
     //     so the note's claim would be false); (b) prints the notes.

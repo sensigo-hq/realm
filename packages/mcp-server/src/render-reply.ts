@@ -172,6 +172,11 @@ export interface McpHost {
    * `present`, and by the await entry's words.
    */
   formFacts?: (gateId: string) => DoorFormFacts | undefined;
+  /**
+   * #627 W (correction 1, E4): the run version this call read before it acted, when the tool knows
+   * it (a read). W-e1 says "it changed nothing" only when the reply's version is still that one.
+   */
+  readVersion?: number;
 }
 
 /** P-2: how long an agent waits before reading the run again, on every `await` reply (a constant). */
@@ -919,7 +924,7 @@ export function renderReply(reply: EngineReply, host: McpHost): RenderedReply {
       : {}),
     ...(gate !== undefined ? { gate: withAuthorLabel(gate) } : {}),
   };
-  if (tokenStrayed(envelope, narrowed)) return heldBackReply(reply);
+  if (tokenStrayed(envelope, narrowed)) return heldBackReply(reply, host);
   const person = personBlockOf(elsewhereEntries, reply.basis, host);
   return { envelope, ...(person !== undefined ? { person } : {}) };
 }
@@ -941,11 +946,23 @@ function withAuthorLabel(gate: GateInfo): GateInfo {
  * call opened the question (a write, at `run_version`); otherwise it claims neither. The log line
  * names the tool and the run, never the token.
  */
-function heldBackReply(reply: EngineReply): RenderedReply {
+function heldBackReply(reply: EngineReply, host: McpHost): RenderedReply {
   const opened = reply.ways.some((w) => w.verb === 'respond' && w.proof !== undefined);
-  const wrote = opened ? ` and changed the run (version ${reply.run_version})` : '';
+  // Correction 1 (E4): W-e1's two arms — the opening reply's write, or a read whose version is
+  // unchanged; otherwise neither is claimed.
+  const wrote = opened
+    ? ` and changed the run (version ${reply.run_version})`
+    : host.readVersion !== undefined && host.readVersion === reply.run_version
+      ? '; it changed nothing'
+      : '';
+  // Correction 1 (E4): the clause by row — "a question this session cannot answer" only where the
+  // door withholds answers; elsewhere the token strayed outside the opening reply's answer.
+  const withholds = doorWithholdsAnswers(mcpDoorPolicy(host));
+  const where = withholds
+    ? 'for a question this session cannot answer, which this server never sends'
+    : 'outside the answer instruction of the reply that opened the question';
   console.error(
-    `realm: held back a ${reply.command} reply for run ${reply.run_id}: it carried a claim_token on a handed-off question. This is a bug in Realm or in the program embedding it; please report it with this line.`,
+    `realm: held back a ${reply.command} reply for run ${reply.run_id}: it carried a claim_token ${withholds ? 'on a handed-off question' : 'outside the answer instruction of the reply that opened the question'}. This is a bug in Realm or in the program embedding it; please report it with this line.`,
   );
   return {
     envelope: {
@@ -960,7 +977,7 @@ function heldBackReply(reply: EngineReply): RenderedReply {
       error_code: 'ENGINE_INTERNAL',
       agent_action: 'report_to_user',
       retryable: false,
-      context_hint: `Realm held back this reply: it carried a claim token for a question this session cannot answer, which this server never sends. The call itself ran${wrote}. This is a fault in Realm or in the program that embeds it, and it was logged. Do not repeat this call: tell the user, and call get_run_state to see where the run stands.`,
+      context_hint: `Realm held back this reply: it carried a claim token ${where}. The call itself ran${wrote}. This is a fault in Realm or in the program that embeds it, and it was logged. Do not repeat this call: tell the user, and call get_run_state to see where the run stands.`,
       next_actions: [],
     },
   };
@@ -991,24 +1008,27 @@ function personBlockOf(
 }
 
 /**
- * A-17's egress assertion: a claim token leaves this door only inside the `submit_human_response`
- * instruction of the reply whose own call opened the question (its `respond` way's `proof`) — never
- * in the gate object, never on any other entry, and (#627 W) never for a question this door hands to
- * the person: there the opening reply renders no answer instruction, so no entry may carry one, the
- * await entry included. True when a token strayed; the reply is then held back (W-e1).
+ * A-17's egress assertion: a claim token leaves this door only inside the answer instruction of the
+ * reply whose own call opened the question (its `respond` way's `proof`) — never in the gate object,
+ * never on any other entry, and (#627 W) never for a question this door hands to the person. The
+ * opening reply is read from the NARROWED ways, for the agent: on a withholding row the agent has no
+ * `respond`, so there is no opening reply and any carrier strays (that is W's guard). True when a
+ * token strayed; the reply is then held back (W-e1).
+ *
+ * Correction 1 (E5): the two carriers W had added beside PR-0's are gone — an await entry never
+ * copies `proof` (`awaitEntryOf`), and only a `respond` way carries one, so neither could fire.
+ * Exported for the cell that pins the narrowed opening on a constructed envelope.
  */
-function tokenStrayed(envelope: McpEnvelope, narrowed: Narrowed | undefined): boolean {
+export function tokenStrayed(envelope: McpEnvelope, narrowed: Narrowed | undefined): boolean {
   const opening = (narrowed?.ways ?? []).some(
     (w) => w.verb === 'respond' && w.proof !== undefined && forAgent(w),
   );
   const carries = (a: McpNextAction): boolean =>
-    (a.instruction !== null && 'claim_token' in a.instruction.params) ||
-    (a.awaiting !== undefined && 'claim_token' in (a.awaiting as object));
+    a.instruction !== null && 'claim_token' in a.instruction.params;
   const carriers = envelope.next_actions.filter(carries);
   return (
     (envelope.gate !== undefined && 'claim_token' in (envelope.gate as object)) ||
     (envelope.also ?? []).some(carries) ||
-    carriers.some((a) => a.instruction?.tool !== 'submit_human_response') ||
     (!opening && carriers.length > 0)
   );
 }

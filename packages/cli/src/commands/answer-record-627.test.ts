@@ -94,7 +94,7 @@ describe('#627 W — the CLI door records its route (cell 5, CLI half)', () => {
       answer: { route: 'cli' },
       principal: { absent: 'not_a_server_door' },
       driver: { by: 'ops', by_source: 'ambient', channel: 'respond' },
-      line: "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · token: none passed (only an answer through Realm's MCP answer tool, from the conversation that opened the question, can pass one)",
+      line: "Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops (from REALM_OPERATOR) · token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
     });
   }, 60_000);
 });
@@ -227,6 +227,17 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
       legacy:
         '  Question: not recorded — this gate was opened by a version of Realm that did not keep its message',
     });
+  }, 60_000);
+  it('correction 1 (E6): no frozen message and a definition that cannot be read → "not shown", never "none"', async () => {
+    const h = await home(false);
+    writeFileSync(join(h.dir, '.realm', 'workflows', 'rec627.json'), '{ not json');
+    const line = h
+      .realm(['run', 'inspect', h.runId])
+      .out.split('\n')
+      .find((l) => l.startsWith('  Question:'));
+    // (a) red when inspect says the gate declares no message although it could not read the
+    //     definition; (b) prints the line.
+    expect(line).toBe("  Question: not shown — the workflow's definition cannot be read");
   }, 60_000);
 });
 

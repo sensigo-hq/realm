@@ -19,7 +19,8 @@ export type AnswerToolName = (typeof ANSWER_TOOL_NAMES)[number];
 const PATTERNS: readonly (readonly [AnswerToolName, RegExp])[] = [
   ['submit_human_response', /\bsubmit_human_response\b/],
   ['present_question', /\bpresent_question\b/],
-  ['realm run respond', /\brealm\s+run\s+respond\b/],
+  // Correction 1 (E7): case-insensitive — a sentence may open with "Realm run respond".
+  ['realm run respond', /\brealm\s+run\s+respond\b/i],
 ];
 
 /** The first answer tool a text names, or `undefined`. */

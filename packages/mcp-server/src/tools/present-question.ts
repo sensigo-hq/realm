@@ -155,7 +155,9 @@ export async function handlePresentQuestion(
     context_hint: refusalHint(entry, run.id, args.gate_id, gate),
     names_next: true,
   });
-  const host = mcpHostOf(stores);
+  // Correction 1 (E4): this call writes the run only when the person accepts a form; W-e1 may say "it
+  // changed nothing" exactly when the reply's version is still the one read here.
+  const host = { ...mcpHostOf(stores), readVersion: snap.record.version };
   const refusal = judged();
   if (refusal !== undefined) return mcpReplyOf(renderReply(refuse(refusal), host));
   const deps = formDepsOf(stores, runStore, definition, registry);

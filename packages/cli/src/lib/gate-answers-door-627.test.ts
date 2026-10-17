@@ -62,10 +62,34 @@ describe('#627 W — the bins read the two settings as the server will', () => {
       low: "realm mcp: invalid --form-wait-seconds value '10': expected a whole number of seconds from 30 to 3600 — refused at start: this server does not start while it is set, because a form must not wait less than a person needs, and the bound keeps a mistyped value from holding a call for hours. Fix the value or remove it; the default is 240. The server starts as soon as it is valid.",
       high: "realm mcp: invalid REALM_MCP_FORM_WAIT_SECONDS value '3601': expected a whole number of seconds from 30 to 3600 — refused at start: this server does not start while it is set, because a form must not wait less than a person needs, and the bound keeps a mistyped value from holding a call for hours. Fix the value or remove it; the default is 240. The server starts as soon as it is valid.",
       serveFlag:
-        "realm serve: --form-wait-seconds has no effect on this server: its clients get no forms until Realm's MCP library moves to its next version — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.",
+        "realm serve: --form-wait-seconds has no effect on this server: its clients get no forms until Realm's HTTP server can hold a form open — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.",
       serveEnv:
-        "realm serve: REALM_MCP_FORM_WAIT_SECONDS has no effect on this server: its clients get no forms until Realm's MCP library moves to its next version — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.",
+        "realm serve: REALM_MCP_FORM_WAIT_SECONDS has no effect on this server: its clients get no forms until Realm's HTTP server can hold a form open — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.",
       ok: 'starts',
+    });
+  });
+
+  it('correction 1 (E1, E2): an empty --gate-answers flag refuses (W-s4); an empty variable stays unset; on serve a bad wait gets W-s9, never W-s8', () => {
+    const line = (
+      bin: 'mcp' | 'serve',
+      flags: Parameters<typeof readBinDoorSettings>[1],
+      env: Record<string, string> = {},
+    ) => {
+      const r = readBinDoorSettings(bin, flags, env);
+      return r.ok ? `starts ${r.answers.value}` : r.line;
+    };
+    // (a) red when an empty flag starts the default, an empty variable refuses, or serve judges a
+    //     wait it never uses with W-s8; (b) prints each line.
+    expect({
+      emptyFlag: line('mcp', { gateAnswers: '' }),
+      emptyEnv: line('mcp', {}, { REALM_MCP_GATE_ANSWERS: '' }),
+      serveBadWait: line('serve', { formWaitSeconds: '10' }),
+    }).toEqual({
+      emptyFlag:
+        "realm mcp: invalid --gate-answers value '': expected asked, offered or withheld — refused at start: this server does not start while it is set, because a misspelt value would leave gate answers handled differently from what you believe. Fix the value or remove it. The server starts as soon as it is valid.",
+      emptyEnv: 'starts asked',
+      serveBadWait:
+        "realm serve: --form-wait-seconds has no effect on this server: its clients get no forms until Realm's HTTP server can hold a form open — refused at start: this server does not start while it is set, because the setting would claim a wait that never happens. Remove it. The server starts as soon as it is removed.",
     });
   });
 
@@ -82,7 +106,7 @@ describe('#627 W — the bins read the two settings as the server will', () => {
       askedMcp:
         "Gate answers over MCP: asked (the default). In chat apps that show forms, questions go to the person in the app's own form, and the agent gets no tool that records a gate answer. In apps without forms, the agent keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.",
       askedServe:
-        "Gate answers over MCP: asked (the default; from REALM_MCP_GATE_ANSWERS). In chat apps that show forms, questions go to the person in the app's own form, and the agent gets no tool that records a gate answer. In apps without forms — every app on this server until its MCP library moves to 2.x, the agent keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.",
+        'Gate answers over MCP: asked (the default; from REALM_MCP_GATE_ANSWERS). On this server no chat app gets forms: under `asked` every client keeps the answer tool, and the app is asked to have the person approve each call; some apps and settings skip that. To keep the agent from answering in every app, set --gate-answers withheld. To answer from a terminal: realm run inspect <run_id>, then realm run respond <run_id> --gate <gate_id> --choice <choice>.',
       offered:
         'Gate answers over MCP: offered (from the program that started this server (gateAnswers option); the default is asked). Any client of this server, the agent included, can record a gate answer; it is recorded as arriving through the MCP answer tool.',
     });

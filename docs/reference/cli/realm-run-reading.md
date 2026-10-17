@@ -347,7 +347,7 @@ A step with a gate prints, for each answer, the question as the person read it (
 
 ```text
      Message:  "Approve the refund?"
-     Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops@server-1 (from the OS user) · token: none passed (only an answer through Realm's MCP answer tool, from the conversation that opened the question, can pass one)
+     Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops@server-1 (from the OS user) · token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)
 ```
 
 The answerer is the name the caller gave with `realm run respond --by` or `responded_by`, which Realm does not check. Without one it reads `(not stated)`. A recorded name that cannot be printed reads `a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
@@ -356,15 +356,15 @@ Then the line says how the answer arrived, as its door declared it — `through 
 
 The token part is one of these:
 
-| It reads                                                                                                                     | When                                                   |
-| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `matched the claim_token of the reply that opened this question`                                                             | The caller passed back the question's token.           |
-| `none passed (only an answer through Realm's MCP answer tool, from the conversation that opened the question, can pass one)` | No token was passed, over either door.                 |
-| `the claim_token passed is not this question's`                                                                              | A token was passed and it is not this question's.      |
-| `could not be checked — no claim on this record` / `— the claim has no token` / `— this store keeps no claims`               | There was nothing to check it against.                 |
-| `could not be checked — already settled by an earlier answer` / `— already settled by its expiry`                            | The question was settled before this call.             |
-| `none recorded`                                                                                                              | The answer was written before the proof was recorded.  |
-| `the recorded proof cannot be read`                                                                                          | The record holds a proof that is not one of the above. |
+| It reads                                                                                                                                                          | When                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `matched the claim_token of the reply that opened this question`                                                                                                  | The caller passed back the question's token.           |
+| `none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)` | No token was passed, over either door.                 |
+| `the claim_token passed is not this question's`                                                                                                                   | A token was passed and it is not this question's.      |
+| `could not be checked — no claim on this record` / `— the claim has no token` / `— this store keeps no claims`                                                    | There was nothing to check it against.                 |
+| `could not be checked — already settled by an earlier answer` / `— already settled by its expiry`                                                                 | The question was settled before this call.             |
+| `none recorded`                                                                                                                                                   | The answer was written before the proof was recorded.  |
+| `the recorded proof cannot be read`                                                                                                                               | The record holds a proof that is not one of the above. |
 
 The token never decides whether the answer was recorded. See [The claim token](../mcp/tools.md#the-claim-token).
 
