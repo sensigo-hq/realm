@@ -11,6 +11,7 @@ import { isAbsolute, join } from 'node:path';
 import {
   describePending,
   pendingCleanupLine,
+  pendingGateQuestion,
   resumeWay,
   dueExpiry,
   composeWaysAt,
@@ -91,11 +92,15 @@ import {
  * responsibility to fall back on; `skipped_steps` stays authoritative regardless.
  */
 /**
- * #627 W (§5.4b): the open question's text as the gate froze it at open (`resolved_message`). The
- * definition only tells the two absences apart — a gate that declares no message, and one an earlier
- * version opened without keeping it; its words are never printed (they may have changed since).
+ * #627 W (§5.4b): the open question's text as the gate froze it at open (`resolved_message`). Without
+ * one, the definition tells the cases apart (correction 1, E6; correction 2, 2.1 and 8.3), in order:
+ * it cannot be read; the gate's step is not in it; the gate declares a message (an earlier version
+ * opened it without keeping it — its words are never printed, they may have changed since); the step
+ * declares a `prompt` — the question, through the one composer (`pendingGateQuestion`), LABELLED as
+ * read from the workflow as registered now (R14; V-1 freezes it at open); else none.
  */
 function openQuestionLine(
+  run: RunRecord,
   gate: NonNullable<RunRecord['pending_gate']>,
   definition: WorkflowDefinition | undefined,
 ): string {
@@ -105,10 +110,22 @@ function openQuestionLine(
   // the gate declares one — it says so, never "none".
   if (definition === undefined)
     return "  Question: not shown — the workflow's definition cannot be read";
-  const declares = definition.steps[gate.step_name]?.gate?.message !== undefined;
-  return declares
-    ? '  Question: not recorded — this gate was opened by a version of Realm that did not keep its message'
-    : '  Question: none — the gate declares no message';
+  const step = definition.steps[gate.step_name];
+  if (step === undefined)
+    return "  Question: not shown — the gate's step is not in the workflow's definition";
+  if (step.gate?.message !== undefined)
+    return '  Question: not recorded — this gate was opened by a version of Realm that did not keep its message';
+  if (step.prompt !== undefined) {
+    let question: string | undefined;
+    try {
+      question = pendingGateQuestion(definition, { ...run, pending_gate: gate });
+    } catch {
+      return "  Question: not shown — the step's prompt could not be rendered";
+    }
+    if (question !== undefined)
+      return `  Question (the step's prompt, from the workflow as registered now): ${quotedForTerminal(question)}`;
+  }
+  return '  Question: none — the gate declares no message and its step no prompt';
 }
 
 /**
@@ -1369,7 +1386,7 @@ export async function inspectRun(
     // #627 W (§5.4b): the question as it was frozen when the gate opened — never the live
     // definition's message, which may have been edited since. A gate with no message, and one an
     // earlier version opened without keeping it, each say so.
-    lines.push(openQuestionLine(gate, definition));
+    lines.push(openQuestionLine(run, gate, definition));
     if (gate.choices.length > 0) {
       lines.push(`  Choices: ${gate.choices.join(', ')}`);
     }

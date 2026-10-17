@@ -600,7 +600,7 @@ describe('#627 W — the await entry: a question answered outside this conversat
         choices: ['approve', 'reject'],
         expires_at: gate.expires_at,
       },
-      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, when the gate declares a message and tell them it is waiting for their answer; an answer they give here is not recorded. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question — get_run_state's pending_gate.resolved_message when the gate declares a message; otherwise it is shown to them where they answer it — and tell them it is waiting for their answer; an answer they give here is not recorded. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
       noAnswerCall: false,
       noToken: false,
       pace: [30_000, gate.expires_at, gate.expires_at],

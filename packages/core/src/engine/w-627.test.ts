@@ -32,7 +32,7 @@ import {
   type WaysContext,
 } from './ways.js';
 import { writtenSnapshot } from './snapshot.js';
-import { advanceRun, submitHumanResponse } from './execution-loop.js';
+import { advanceRun, executeStep, submitHumanResponse } from './execution-loop.js';
 import { describeRunDriver } from './pending.js';
 import { answerArrivalOf, answerViaOf, principalOf } from './answer-facts.js';
 import {
@@ -1083,5 +1083,60 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
       { gap: 'trust_root_writable', reading: UNKNOWN },
       { gap: 'value' },
     ]);
+  });
+});
+
+// ─── correction 2 (2.1): the question of a gate with no message, through the one composer ───────
+
+describe('#627 W correction 2 (2.1) — a re-read gate shows its step’s prompt', () => {
+  it('a second caller reaching an already-open prompt-only gate gets the step’s prompt as gate.display', async () => {
+    const def = loadWorkflowFromString(
+      [
+        'id: prompt627',
+        'name: prompt627',
+        'version: 1',
+        'steps:',
+        '  q:',
+        '    description: Ask.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    prompt: Ship the release to production?',
+        '    gate:',
+        '      choices: [approve, reject]',
+      ].join('\n'),
+    );
+    // The second caller: its own settle of the gate finds it already open (D-1's `already_open` arm,
+    // which renders the LIVE gate) — reached by replaying the opening settle once.
+    class SecondCaller extends JsonFileStore {
+      override async settleStep(
+        ...args: Parameters<JsonFileStore['settleStep']>
+      ): ReturnType<JsonFileStore['settleStep']> {
+        const first = await super.settleStep(...args);
+        const delta = args[1];
+        if (delta.kind !== 'open_gate') return first;
+        // A second caller's gate: its own id, finding the first one open.
+        return super.settleStep(
+          args[0],
+          { ...delta, pendingGate: { ...delta.pendingGate, gate_id: 'second-caller-gate' } },
+          args[2],
+        );
+      }
+    }
+    const store = new SecondCaller(await mkdtemp(join(tmpdir(), 'realm-w627-prompt-')));
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const again = await executeStep(store, def, {
+      runId: run.id,
+      command: 'q',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    const hint = again.context_hint;
+    // (a) red when a re-read gate's display carries resolved_message only (absent here); (b) prints
+    //     the reply's status and display.
+    expect({ status: again.status, hint, display: again.gate?.display }).toEqual({
+      status: 'confirm_required',
+      hint: `Run is already paused at gate '${again.gate?.gate_id}'.`,
+      display: 'Ship the release to production?',
+    });
   });
 });

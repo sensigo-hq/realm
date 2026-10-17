@@ -1304,6 +1304,16 @@ export function pendingGateQuestion(
   });
 }
 
+/** {@link pendingGateQuestion}, never throwing: a prompt the definition can no longer render reads as
+ *  no question (correction 2, 2.1 — a surface that shows the question never fails on it). */
+function questionOrUndefined(definition: WorkflowDefinition, run: RunRecord): string | undefined {
+  try {
+    return pendingGateQuestion(definition, run);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The offer of `realm run resume` on a run an engine failure ended with a failed step it takes
  * (decisions C170, C204): `to make the failed step runnable again: <the command>` — the command from
@@ -4676,9 +4686,11 @@ async function executeStepBody(
               step_name: liveGate.step_name,
               preview: liveGate.preview,
               choices: liveGate.choices,
-              ...(liveGate.resolved_message !== undefined
-                ? { display: liveGate.resolved_message }
-                : {}),
+              // Correction 2 (2.1): the question through the ONE composer — the message, else the
+              // step's prompt rendered with what the step had when the gate opened.
+              ...((q) => (q !== undefined ? { display: q } : {}))(
+                questionOrUndefined(definition, { ...result.run, pending_gate: liveGate }),
+              ),
               response_spec: { choices: liveGate.choices },
               ...(liveGate.expires_at !== undefined ? { expires_at: liveGate.expires_at } : {}),
               ...(liveGateDueState.next_reminder_due_at !== undefined

@@ -408,7 +408,8 @@ function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
     const show =
       way.presented === 'with_gate'
         ? 'Show the user gate.display'
-        : "Show the user the question: get_run_state's pending_gate.resolved_message, when the gate declares a message";
+        : // Correction 2 (2.1): no command; the separator the walk found missing.
+          "Show the user the question — get_run_state's pending_gate.resolved_message when the gate declares a message; otherwise it is shown to them where they answer it —";
     words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show} and tell them it is waiting for their answer; an answer they give here is not recorded.`;
   }
   return {

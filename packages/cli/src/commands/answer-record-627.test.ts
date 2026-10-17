@@ -10,7 +10,7 @@
 // that turns it red and (b) what it prints on failure: lines and record fields — never a token.
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -223,11 +223,77 @@ describe('#627 W — cell 13: inspect’s open-gate block', () => {
     // (a) red when an absence prints the live definition's words, or the two read the same; (b)
     //     prints both lines.
     expect({ none: questionOf(none), legacy: questionOf(legacy) }).toEqual({
-      none: '  Question: none — the gate declares no message',
+      // Correction 2 (2.1): its step declares no prompt either.
+      none: '  Question: none — the gate declares no message and its step no prompt',
       legacy:
         '  Question: not recorded — this gate was opened by a version of Realm that did not keep its message',
     });
   }, 60_000);
+  it('correction 2 (2.1): a prompt-only gate → the step’s prompt, labelled as read from the workflow as registered now', async () => {
+    const h = await home(false);
+    const withPrompt = loadWorkflowFromString(
+      YAML(false).replace(
+        '    trust: human_confirmed\n',
+        '    trust: human_confirmed\n    prompt: Ship the release to production?\n',
+      ),
+    );
+    await new JsonWorkflowStore(join(h.dir, '.realm', 'workflows')).register(withPrompt);
+    const line = h
+      .realm(['run', 'inspect', h.runId])
+      .out.split('\n')
+      .find((l) => l.startsWith('  Question'));
+    // (a) red when inspect prints "none" for a gate whose step declares a prompt; (b) prints the line.
+    expect(line).toBe(
+      `  Question (the step's prompt, from the workflow as registered now): "Ship the release to production?"`,
+    );
+  }, 60_000);
+
+  it('correction 2 (2.1): a prompt that cannot be rendered → "not shown", never a thrown error', async () => {
+    const h = await home(false);
+    // The renderer throws only in strict mode, so the one input that makes the composer throw is a
+    // registered copy whose prompt is not a string.
+    const copy = join(h.dir, '.realm', 'workflows', 'rec627.json');
+    const parsed = JSON.parse(readFileSync(copy, 'utf8')) as {
+      steps: Record<string, Record<string, unknown>>;
+    };
+    parsed.steps['q']!['prompt'] = 42;
+    writeFileSync(copy, JSON.stringify(parsed));
+    const r = h.realm(['run', 'inspect', h.runId]);
+    // (a) red when inspect throws on the prompt (exit 1, no Question line); (b) prints the exit and
+    //     the line.
+    expect({
+      code: r.code,
+      line: r.out.split('\n').find((l) => l.startsWith('  Question')),
+    }).toEqual({
+      code: 0,
+      line: "  Question: not shown — the step's prompt could not be rendered",
+    });
+  }, 60_000);
+
+  it('correction 2 (8.3): the gate’s step is not in a readable definition → "not shown", never "none"', async () => {
+    const h = await home(false);
+    const without = loadWorkflowFromString(
+      [
+        'id: rec627',
+        'name: rec627',
+        'version: 1',
+        'steps:',
+        '  other:',
+        '    description: Other.',
+        '    execution: agent',
+      ].join('\n'),
+    );
+    await new JsonWorkflowStore(join(h.dir, '.realm', 'workflows')).register(without);
+    const line = h
+      .realm(['run', 'inspect', h.runId])
+      .out.split('\n')
+      .find((l) => l.startsWith('  Question'));
+    // (a) red when a missing step reads as "the gate declares no message"; (b) prints the line.
+    expect(line).toBe(
+      "  Question: not shown — the gate's step is not in the workflow's definition",
+    );
+  }, 60_000);
+
   it('correction 1 (E6): no frozen message and a definition that cannot be read → "not shown", never "none"', async () => {
     const h = await home(false);
     writeFileSync(join(h.dir, '.realm', 'workflows', 'rec627.json'), '{ not json');
