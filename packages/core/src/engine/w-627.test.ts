@@ -1277,6 +1277,8 @@ describe('#627 W correction 2 (3.3) — a form’s answer gets no token sentence
   it.each([
     ['recorded', async () => form(await atGate())],
     [
+      // Its claim verdict is `spent`, for which no sentence is composed: this row cannot turn red by
+      // dropping its route (the red-first run, break 3.3-same) — it pins that the branch composes none.
       'the same choice again (already settled)',
       async () => {
         const s = await atGate();

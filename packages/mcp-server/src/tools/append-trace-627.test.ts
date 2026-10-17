@@ -118,12 +118,14 @@ describe('#627 W correction 1 (A2) — append_trace’s error reply names no ans
     });
     const parsed = JSON.parse(reply) as Record<string, unknown>;
     const { hint, next } = judged(reply);
-    // (a) red when the server passes no door to append_trace (its reply words the gate's remedy as
-    //     the answer call); (b) prints the reply's status, whether it names an answer way, and the hint.
+    // (a) red when the server passes no door to append_trace — correction 2 (3.1): the repair's own
+    //     words say "outside this conversation" on every door, so the door is read from the
+    //     handing-off doors' sentence; (b) prints the reply's status, whether it names an answer way,
+    //     and whether the hint holds that sentence.
     expect({
       status: parsed['status'],
       namesAnswer: ANSWER_WAY.test(hint) || ANSWER_WAY.test(next),
-      waitsOutside: hint.includes('outside this conversation'),
+      waitsOutside: hint.includes(WAITS_ONCE_REPAIRED),
     }).toEqual({ status: 'error', namesAnswer: false, waitsOutside: true });
   });
 });
