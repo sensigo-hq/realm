@@ -5,7 +5,7 @@
 //
 // Each assertion carries (a) the change that turns it red and (b) what it prints on failure.
 import { describe, it, expect } from 'vitest';
-import type { AnswerView, ClaimHolderAbsentCause } from '@sensigo/realm';
+import { answerArrivalOf, type AnswerView, type ClaimHolderAbsentCause } from '@sensigo/realm';
 import { ABSENCE_WORDS, UNSHOWABLE_NAME, renderAnswerLine } from './holder-render.js';
 
 const WORDS: Record<ClaimHolderAbsentCause, string> = {
@@ -34,8 +34,9 @@ describe('renderAnswerLine — an answer with no choice on the record', () => {
       answered_by: { by: null, absent_cause: 'not_stated' },
       claim_proof_absent: 'proof_not_recorded',
     };
-    expect(renderAnswerLine(answer)).toBe(
-      'Answer: (no choice recorded) · answered by (not stated) · proof: none recorded',
+    // #627 W: an entry with no answer facts reads W-i3; the label is `token:`.
+    expect(renderAnswerLine(answer, answerArrivalOf(undefined))).toBe(
+      'Answer: (no choice recorded) · answered by (not stated) · how it arrived was not recorded · token: none recorded',
     );
   });
 });

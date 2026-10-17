@@ -189,15 +189,17 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
   it('connect-an-mcp-client.md, glossary.md, packages/mcp-server/README.md: the server has 11 tools, advance_run among them, each in the guide’s table', async () => {
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      'The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):',
+      // Correction 2 (6.5): by value.
+      "The assistant now has ten tools under `withheld` (the value step 1's example sets); eleven under `asked` or `offered` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven:",
     );
     claim(
       'docs/reference/glossary.md',
-      'Realm is an MCP server with 11 tools (10 in version 0.46.0).',
+      'Realm is an MCP server with 11 tools, 10 under `withheld` (10 in version 0.46.0).',
     );
     claim(
       'packages/mcp-server/README.md',
-      'Creates the MCP server with all 11 tools pre-registered.',
+      // Correction 2 (4.4): listed per value, and what is REGISTERED under asked.
+      "Creates the MCP server with its tools registered. A client is listed 11, or 10 under `withheld`; under `asked` both answer tools are registered, and the session's forms enable one.",
     );
     const { client } = await connect();
     const listed = (await client.listTools()).tools.map((t) => t.name);
@@ -210,6 +212,25 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       true,
       [...listed].sort(),
     ]);
+    // Correction 2 (4.4): the REGISTERED set per value — the SDK's own table of the server's tools.
+    const registered = (gateAnswers: 'asked' | 'offered' | 'withheld') =>
+      Object.keys(
+        (createRealmMcpServer({ gateAnswers }) as unknown as { _registeredTools: object })
+          ._registeredTools,
+      );
+    const answerTools = (names: string[]) =>
+      names.filter((n) => n === 'submit_human_response' || n === 'present_question').sort();
+    // (a) red when a value registers another set than the README says (both answer tools under
+    //     asked, one under offered, none under withheld); (b) prints each count and answer tools.
+    expect({
+      asked: [registered('asked').length, answerTools(registered('asked'))],
+      offered: [registered('offered').length, answerTools(registered('offered'))],
+      withheld: [registered('withheld').length, answerTools(registered('withheld'))],
+    }).toEqual({
+      asked: [12, ['present_question', 'submit_human_response']],
+      offered: [11, ['submit_human_response']],
+      withheld: [10, []],
+    });
   });
 
   it('connect-an-mcp-client.md: execute_step submits the answer to an agent step; an automatic step is the engine’s — advance_run runs it (#729, the Q3 unit)', async () => {
@@ -664,11 +685,11 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     expect(rules).toHaveLength(6);
   });
 
-  it('top-level-fields.md: rules replaces the six standard rules; two rules about concurrent attempts follow yours', async () => {
+  it("top-level-fields.md: rules replaces the six standard rules, after the author's label; Realm's own rules follow yours (#627 W)", async () => {
     const page = 'docs/reference/workflow/top-level-fields.md';
     claim(
       page,
-      '| `rules` | list of strings | Replaces the six standard rules. Two rules about concurrent attempts are always added after yours. |',
+      "| `rules` | list of strings | Replaces the six standard rules, after the line `Rules from the workflow's author:`. Realm's own rules are always added after yours: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `offered`), and two rules about concurrent attempts. |",
     );
     const standard = block(page, 'Follow the instruction in each next_actions entry');
     const { call, workflowStore } = await connect();
@@ -689,17 +710,24 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     const got = (await call('get_workflow_protocol', { workflow_id: 'own-rules' }))[
       'rules'
     ] as string[];
-    // (a) red when a standard rule survives, the workflow's rule is not first, or the two added
-    //     rules are not there; (b) prints the rules.
+    // (a) red when a standard rule survives, the workflow's rule is not right after the author's
+    //     label, or Realm's four rules (the default server, a client with no forms) are not after it,
+    //     in order, the two about attempts last; (b) prints the rules.
     expect({
-      first: got[0],
+      label: got[0],
+      first: got[1],
       count: got.length,
       standardLeft: got.filter((r) => standard.includes(r)),
-      attempts: got.slice(1).every((r) => /attempt/.test(r)),
+      awaitRule: got[2]?.startsWith('When a next_actions entry has `awaiting`'),
+      valueLine: got[3]?.startsWith('Answers to gates go through submit_human_response'),
+      attempts: got.slice(4).every((r) => /attempt/.test(r)),
     }).toEqual({
+      label: "Rules from the workflow's author:",
       first: 'Never state a fact that is not in the note.',
-      count: 3,
+      count: 6,
       standardLeft: [],
+      awaitRule: true,
+      valueLine: true,
       attempts: true,
     });
   });
@@ -786,10 +814,10 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     ]);
   });
 
-  it('error-codes.md: 88 codes defined — 73 raised, 15 that nothing raises', () => {
+  it('error-codes.md: 89 codes defined — 74 raised, 15 that nothing raises', () => {
     claim(
       'docs/reference/error-codes.md',
-      'This page lists all 88 codes that Realm defines: the 73 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
+      'This page lists all 89 codes that Realm defines: the 74 it raises, with when each is raised and what it tells the caller to do, and the 15 that nothing raises.',
     );
     const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
     const lines = types.slice(types.indexOf('export type ErrorCode')).split('\n');
@@ -841,8 +869,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       unraisedWritten: listedUnraised.filter(written),
       raisedNowhere: listedRaised.filter((c) => !written(c)),
     }).toEqual({
-      defined: 88,
-      raised: 73,
+      defined: 89,
+      raised: 74,
       unraised: 15,
       cover: [...defined].sort(),
       unraisedWritten: [],

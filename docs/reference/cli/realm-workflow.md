@@ -145,13 +145,13 @@ invoice-check  invoice-check  1        human   1 (current)
 1 workflow registered.
 ```
 
-| Column    | Holds                                                                                     |
-| --------- | ----------------------------------------------------------------------------------------- |
-| `ID`      | The workflow's `id`.                                                                      |
-| `NAME`    | Its `name`.                                                                               |
-| `VERSION` | Its `version`.                                                                            |
-| `ORIGIN`  | `human` for a workflow registered from a file; `agent` for one made by `create_workflow`. |
-| `SCHEMA`  | The format of the stored copy, and whether it is the format this version of Realm writes. |
+| Column    | Holds                                                                                                                                                                                                    |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ID`      | The workflow's `id`.                                                                                                                                                                                     |
+| `NAME`    | Its `name`.                                                                                                                                                                                              |
+| `VERSION` | Its `version`.                                                                                                                                                                                           |
+| `ORIGIN`  | `human` for a workflow registered from a file; `agent` for one made by `create_workflow`.                                                                                                                |
+| `SCHEMA`  | The format of the stored copy, and whether it is the format this version of Realm writes. A copy a later or an older version of Realm registered is never in the table: it is counted under the ⚠ lines. |
 
 With `--json`:
 
@@ -171,6 +171,15 @@ With `--json`:
   "mismatched": []
 }
 ```
+
+The text output counts the copies it cannot list on its last line, and names them on standard error, one ⚠ line per kind, each ending ` — realm cannot audit what it cannot read.`:
+
+```text
+⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.
+⚠ 1 file in the registry was registered by an older version of Realm: ancient.json — realm cannot audit what it cannot read.
+```
+
+The other kinds read `could not be read (<errno>)`, `could not be parsed`, `is empty`, `is a directory, not a workflow file` and `is gone`. Added after version 0.47.0 for the later and the older version.
 
 `unreadable` lists stored files that could not be read, each with the reason. `mismatched` lists stored files whose name differs from the `id` inside them. With no workflows registered, the table is empty and the last line reads `0 workflows registered.`
 

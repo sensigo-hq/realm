@@ -17,7 +17,15 @@ import {
   type EngineReply,
   type AgentTraceEntry,
 } from '@sensigo/realm';
-import { mcpHostOf, type HandleRunStores, type FailedAttemptStoreLike } from './start-run.js';
+import {
+  formCallOf,
+  formDepsOf,
+  mcpHostOf,
+  type HandleRunStores,
+  type FailedAttemptStoreLike,
+} from './start-run.js';
+import { withQuestionForm, type FormCall } from '../form-path.js';
+import { toolMeta } from '../tool-annotations.js';
 import {
   mcpReplyOf,
   withHintTail,
@@ -220,6 +228,7 @@ export async function handleExecuteStep(
     writer_nonce?: string | undefined;
   },
   stores?: HandleRunStores,
+  call?: FormCall,
 ): Promise<WithPersonBlock<McpEnvelope>> {
   assertToolStores(stores, 'handleExecuteStep');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -324,6 +333,13 @@ export async function handleExecuteStep(
     stores?.failedAttemptStore,
   );
 
+  // #627 W (§5.2b): a reply that reached a question this process never sent sends its form here.
+  const reply = await withQuestionForm(
+    result,
+    formDepsOf(stores, runStore, definition, registry),
+    call,
+  );
+
   // decisions C205, C211 (the architect's addendum): a reply on a run that has ended — this call's
   // own step or a step it chained failed, or the run had ended before it — ends with the ways back
   // in: the failed step `realm run resume` takes, the cleanup steps left pending (PR-1's words).
@@ -331,11 +347,11 @@ export async function handleExecuteStep(
   // is gone): the reply carries the refusal and the ways, and `renderReply` words them.
   // The ended run's ways back in follow the door's next sentence, as before.
   let tail = '';
-  if (result.run_phase !== undefined && TERMINAL_PHASES.has(result.run_phase)) {
+  if (reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase)) {
     const ended = await runStore.get(args.run_id).catch(() => undefined);
     if (ended !== undefined) tail = endedRunWaysSentence(ended, definition, new Date());
   }
-  return mcpReplyOf(withHintTail(renderReply(result, mcpHostOf(stores)), tail));
+  return mcpReplyOf(withHintTail(renderReply(reply, mcpHostOf(stores)), tail));
 }
 
 /**
@@ -352,10 +368,11 @@ export async function handleExecuteStepTool(
     writer_nonce?: string | undefined;
   },
   stores?: HandleRunStores,
+  call?: FormCall,
 ): Promise<ReturnType<typeof toolContentOf>> {
   assertToolStores(stores, 'handleExecuteStepTool');
   try {
-    const result = await handleExecuteStep(args, stores);
+    const result = await handleExecuteStep(args, stores, call);
     return toolContentOf({ ...result, data: {}, evidence: [] }, sseJsonStringify);
   } catch (err) {
     const workflowErr =
@@ -384,29 +401,32 @@ export async function handleExecuteStepTool(
 /** Registers the execute_step MCP tool on the server. */
 export function registerExecuteStep(server: McpServer, opts?: HandleRunStores): void {
   markServedByTool(opts);
-  server.tool(
+  server.registerTool(
     'execute_step',
-    [
-      'Execute a workflow step. For agent steps, pass your output in params.',
-      'Optional: writer_nonce — mint a fresh UUIDv4 per step-attempt (same value on every',
-      "append_trace call for this attempt, a NEW one next attempt) to get this step's own",
-      'buffered trace lines faithfully attributed instead of the honest-but-unattributed floor.',
-      'Mint on BOTH append_trace and execute_step for this attempt, or neither — a guessable or',
-      'reused nonce is worse than omitting one (it lets residue be adopted with no caveat, or',
-      'silently folds a crashed attempt into this one).',
-    ].join(' '),
     {
-      run_id: z.string(),
-      command: z.string(),
-      params: z.record(z.unknown()).optional().default({}),
-      trace: z.array(traceEntrySchema).optional(),
-      // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
-      // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
-      // envelope refusal, never a bare zod/SDK error.
-      writer_nonce: z.string().optional(),
+      ...toolMeta('execute_step'),
+      description: [
+        'Execute a workflow step. For agent steps, pass your output in params.',
+        'Optional: writer_nonce — mint a fresh UUIDv4 per step-attempt (same value on every',
+        "append_trace call for this attempt, a NEW one next attempt) to get this step's own",
+        'buffered trace lines faithfully attributed instead of the honest-but-unattributed floor.',
+        'Mint on BOTH append_trace and execute_step for this attempt, or neither — a guessable or',
+        'reused nonce is worse than omitting one (it lets residue be adopted with no caveat, or',
+        'silently folds a crashed attempt into this one).',
+      ].join(' '),
+      inputSchema: {
+        run_id: z.string(),
+        command: z.string(),
+        params: z.record(z.unknown()).optional().default({}),
+        trace: z.array(traceEntrySchema).optional(),
+        // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
+        // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
+        // envelope refusal, never a bare zod/SDK error.
+        writer_nonce: z.string().optional(),
+      },
     },
-    async (args) => {
-      return handleExecuteStepTool(args, opts);
+    async (args, extra) => {
+      return handleExecuteStepTool(args, opts, formCallOf(opts, extra));
     },
   );
 }

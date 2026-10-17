@@ -71,6 +71,8 @@ import {
 } from './step-key-registry.js';
 import type { ExecutionMode } from '../types/workflow-definition.js';
 import { quotedCommand, shellWord } from '../utils/shell-word.js';
+import { VERSION } from '../version.js';
+import { answerToolNamedIn, authorTextNote } from './author-text.js';
 
 type ConditionSurface = 'when' | 'abort_unless' | 'preconditions';
 
@@ -2191,16 +2193,75 @@ function parseWorkflowString(
       // confirmation (Step 5b, `execution-loop.ts`) — on any other step the WHOLE block is inert,
       // so a per-member remedy ("set a timeout") would be false: following it never makes the key
       // live, it only silences the one diagnostic that said so.
+      // #627 W (F31, W-l1): a gated step's `instructions` reach the agent as the reply's
+      // `gate.agent_hint` and as the protocol's step text, both forwarded labelled as the author's
+      // (W-t1). Text there that names an answer tool is NOTED, never refused. Gate-trusted steps only
+      // (the mint's own predicate, with or without a `gate:` block): the note says Realm forwards the
+      // text marked as the author's, which holds only where W-t1 labels it — an ordinary step's
+      // instructions are forwarded unlabelled, so the note would be false there.
+      if (isGateTrust(step['trust']) && typeof step['instructions'] === 'string') {
+        const tool = answerToolNamedIn(step['instructions']);
+        if (tool !== undefined) {
+          const pos = sourceMap.posOf(['steps', stepName, 'instructions']);
+          warnings.push({
+            code: 'AUTHOR_TEXT_NAMES_ANSWER_TOOL',
+            severity: resolveSeverity('AUTHOR_TEXT_NAMES_ANSWER_TOOL'),
+            scope: 'step',
+            step: stepName,
+            key: 'instructions',
+            ...(pos !== undefined
+              ? {
+                  line: pos.line,
+                  column: pos.column,
+                  endLine: pos.endLine,
+                  endColumn: pos.endColumn,
+                }
+              : {}),
+            message: authorTextNote({
+              step: stepName,
+              field: 'instructions',
+              ...(pos !== undefined ? { line: pos.line } : {}),
+              tool,
+            }),
+          });
+        }
+      }
+
       if (step['gate'] !== undefined) {
         if (typeof step['gate'] !== 'object' || step['gate'] === null) {
           errors.push(withStepLine(stepName, `Step '${stepName}': 'gate' must be an object`));
         } else {
           const gate = step['gate'] as Record<string, unknown>;
 
+          // #627 W (R25, W-r1): 'gate.answer_via' is REFUSED in either form (a list of route ids, an
+          // object of trait names), timed or not, on any trust (a shape the binary cannot hold is a
+          // mistake whether or not the step can gate). This binary cannot hold a gate to the routes
+          // the key names, so a run would let an answer through ANY route settle it — fail open.
+          // Every later answer requirement enters INSIDE this key (design §5.7), so refusing it here
+          // is what makes every binary from W on fail closed. It is left out of the unknown-key
+          // advisory below: the refusal is its one diagnostic, and a "did you mean" on it would
+          // offer a sibling key as a remedy for a key that is refused, not misspelt.
+          if ('answer_via' in gate) {
+            errors.push(
+              withPathLine(
+                ['steps', stepName, 'gate', 'answer_via'],
+                `Step '${stepName}': 'gate.answer_via' is not supported by this version of Realm ` +
+                  `(${VERSION}) — refused at load: this workflow cannot create a run while it is ` +
+                  'set, because this version cannot hold a gate to the routes it names and would ' +
+                  "let an answer through any route settle it. Remove 'gate.answer_via', or load " +
+                  'the workflow with a later version of Realm that documents the key. The workflow ' +
+                  'loads as soon as either is done.',
+              ),
+            );
+          }
+          const gateUnrefusedKeys = Object.fromEntries(
+            Object.entries(gate).filter(([key]) => key !== 'answer_via'),
+          );
+
           // WARN (do not reject) on an unknown gate-block key — same non-breaking posture as
           // retry/validation_exhaustion (issues #140/#220).
           warnings.push(
-            ...findUnknownKeys(gate, KNOWN_GATE_KEYS, {
+            ...findUnknownKeys(gateUnrefusedKeys, KNOWN_GATE_KEYS, {
               scope: 'step',
               code: 'UNKNOWN_GATE_KEY',
               step: stepName,
@@ -3407,6 +3468,45 @@ function parseWorkflowString(
             ),
           );
         }
+      }
+    }
+
+    // #627 W (F31, W-l1): the workflow's `protocol.rules` reach the agent in the protocol, after
+    // W-t1's "Rules from the workflow's author:" and before Realm's own rules. One note for the
+    // field (the first rule that names an answer tool), never a refusal.
+    const protocolRaw = doc['protocol'];
+    const authorRules =
+      typeof protocolRaw === 'object' && protocolRaw !== null
+        ? (protocolRaw as Record<string, unknown>)['rules']
+        : undefined;
+    if (Array.isArray(authorRules)) {
+      let tool: ReturnType<typeof answerToolNamedIn>;
+      for (const rule of authorRules) {
+        if (typeof rule !== 'string') continue;
+        tool = answerToolNamedIn(rule);
+        if (tool !== undefined) break;
+      }
+      if (tool !== undefined) {
+        const pos = sourceMap.posOf(['protocol', 'rules']);
+        warnings.push({
+          code: 'AUTHOR_TEXT_NAMES_ANSWER_TOOL',
+          severity: resolveSeverity('AUTHOR_TEXT_NAMES_ANSWER_TOOL'),
+          scope: 'workflow',
+          key: 'protocol',
+          ...(pos !== undefined
+            ? {
+                line: pos.line,
+                column: pos.column,
+                endLine: pos.endLine,
+                endColumn: pos.endColumn,
+              }
+            : {}),
+          message: authorTextNote({
+            field: 'protocol.rules',
+            ...(pos !== undefined ? { line: pos.line } : {}),
+            tool,
+          }),
+        });
       }
     }
 

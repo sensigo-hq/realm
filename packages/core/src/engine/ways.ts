@@ -61,16 +61,37 @@ export type Slot<T> = { readonly one_of: readonly T[] };
  * W adds `client_prompt`; PR-1 adds `confirm_after_preview`, `erases_operator_ending`,
  * `override_claim_unknown_age` — each with its producer, never reserved here.
  */
-export type Cond = {
-  code: 'enactor_has';
-  kind: 'handler' | 'adapter';
-  name: string;
-  basis: 'marker' | 'unjudged' | 'load_failed';
-};
+export type Cond =
+  | {
+      code: 'enactor_has';
+      kind: 'handler' | 'adapter';
+      name: string;
+      basis: 'marker' | 'unjudged' | 'load_failed';
+    }
+  /**
+   * #627 W (Part B, §5.2 row 3): the MCP door's fallback — a client that shows no forms keeps the
+   * answer tool, marked so the app asks the person to approve each call. The CLIENT discharges it,
+   * outside Realm: no argument discharges it (it is in no `ArgSpec.discharges` list — discharge is
+   * declared on the argument, the one home, PR0-CONTRACT Amendment 17 item 9), and admission never
+   * waits on it, since Realm cannot see the prompt (cell 31). Its `tag` names the outside discharger.
+   */
+  | { code: 'client_prompt'; tag: CondTag };
+
+/**
+ * #627 W: who discharges a condition outside Realm (`client`: the MCP client's own approval
+ * prompt). Beside {@link Cond}, never on {@link CODE_TAGS}, which tags UNAVAILABLE codes.
+ * OFFER_EQUALS_ADMISSION compares offer and admission over conditions Realm judges, so it leaves a
+ * `client`-tagged condition out of the compared set.
+ */
+export const COND_TAGS = ['client'] as const;
+export type CondTag = (typeof COND_TAGS)[number];
 
 // ─── The ways ───────────────────────────────────────────────────────────────────────────────────
 
-/** PR-0's verbs (option B): PR-1 adds resume/drain/purge, PR-2 reclaim/validate/export, PR-7 start. */
+/**
+ * PR-0's verbs (option B) and #627 W's `present` (Amendment 2): PR-1 adds resume/drain/purge, PR-2
+ * reclaim/validate/export, PR-7 start.
+ */
 export const WAY_VERBS = [
   'respond',
   'run_step',
@@ -78,6 +99,7 @@ export const WAY_VERBS = [
   'inspect',
   'abandon',
   'register',
+  'present',
 ] as const;
 export type WayVerb = (typeof WAY_VERBS)[number];
 
@@ -148,7 +170,9 @@ export type AbandonWay = Base<'abandon'> & { run_id: string };
 
 /**
  * Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry. `path` only
- * when the registry knows the file (T-21: the unreadable, invalid and legacy copies carry it).
+ * when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
+ * it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
+ * door words it as a copy to repair).
  */
 export type RegisterWay = Base<'register'> & {
   workflow_id: string;
@@ -156,8 +180,16 @@ export type RegisterWay = Base<'register'> & {
   path?: string;
 };
 
+/**
+ * #627 W (Amendment 2): show the open question again, as a form in the agent's own call — the MCP
+ * door's `present_question`. The agent cannot answer through it: the person's accept records the
+ * answer. No `step`: a renderer reads the step from the reply it already holds.
+ */
+export type PresentWay = Base<'present'> & { run_id: string; gate_id: string };
+
 /** One way on, discriminated on `verb` (PR0-CONTRACT §1). */
-export type WayOn = RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay;
+export type WayOn =
+  RespondWay | RunStepWay | AdvanceWay | InspectWay | AbandonWay | RegisterWay | PresentWay;
 
 /** The way of one verb. */
 export type WayOf<V extends WayVerb> = Extract<WayOn, { verb: V }>;
@@ -175,6 +207,8 @@ export const WAY_PARTIES: { readonly [V in WayVerb]: readonly Party[] } = {
   inspect: ['operator', 'agent'],
   abandon: ['operator', 'agent'],
   register: ['operator'],
+  // #627 W: only the agent asks again (Amendment 2); the person answers through the form itself.
+  present: ['agent'],
 };
 
 // ─── Why a way is not available ─────────────────────────────────────────────────────────────────
@@ -192,11 +226,12 @@ export type CodeTag = (typeof CODE_TAGS)[number];
  */
 export const UNAVAILABLE_CODES = {
   // respond
-  run_ended: { tag: 'snapshot', verbs: ['respond', 'run_step', 'advance', 'abandon'] },
-  question_settled: { tag: 'snapshot', verbs: ['respond'] },
-  question_due: { tag: 'snapshot', verbs: ['respond', 'run_step', 'advance'] },
+  // #627 W: `present` shares respond's snapshot codes (Amendment 5), named here by verb.
+  run_ended: { tag: 'snapshot', verbs: ['respond', 'run_step', 'advance', 'abandon', 'present'] },
+  question_settled: { tag: 'snapshot', verbs: ['respond', 'present'] },
+  question_due: { tag: 'snapshot', verbs: ['respond', 'run_step', 'advance', 'present'] },
   question_past_deadline: { tag: 'write', verbs: ['respond'] },
-  gate_not_open: { tag: 'input', verbs: ['respond'] },
+  gate_not_open: { tag: 'input', verbs: ['respond', 'present'] },
   // run_step / advance
   not_a_step: { tag: 'input', verbs: ['run_step'] },
   step_settled: { tag: 'snapshot', verbs: ['run_step'] },
@@ -211,17 +246,29 @@ export const UNAVAILABLE_CODES = {
   capability_missing: { tag: 'snapshot', verbs: ['run_step', 'advance'] },
   step_engine_decided: { tag: 'snapshot', verbs: ['run_step'] },
   enactor_load_failed: { tag: 'snapshot', verbs: ['run_step', 'advance'] },
-  definition_absent: { tag: 'snapshot', verbs: ['respond', 'run_step', 'advance', 'abandon'] },
+  definition_absent: {
+    tag: 'snapshot',
+    verbs: ['respond', 'run_step', 'advance', 'abandon', 'present'],
+  },
   // admission's input code (P-5)
   argument_out_of_contract: {
     tag: 'input',
-    verbs: ['respond', 'run_step', 'advance', 'inspect', 'abandon'],
+    verbs: ['respond', 'run_step', 'advance', 'inspect', 'abandon', 'present'],
   },
   // the door's
   door_cannot_enact: {
     tag: 'door',
-    verbs: ['respond', 'run_step', 'advance', 'inspect', 'abandon', 'register'],
+    verbs: ['respond', 'run_step', 'advance', 'inspect', 'abandon', 'register', 'present'],
   },
+  // #627 W's door codes (§5.2, §5.2b; Amendments 2, 3): judged by the door from its own facts.
+  // `no_form_here`: this door sends no form for the question (every row of §5.2's table but
+  // `asked` with forms, and the library door); `form_open`: a form for it is open on this server;
+  // `asks_exhausted`: the asks after the first are spent here; `door_withholds_answers`: the door
+  // removed the agent's `respond` (the conservation law).
+  no_form_here: { tag: 'door', verbs: ['present'] },
+  form_open: { tag: 'door', verbs: ['present'] },
+  asks_exhausted: { tag: 'door', verbs: ['present'] },
+  door_withholds_answers: { tag: 'door', verbs: ['respond'] },
 } as const satisfies Record<string, { tag: CodeTag; verbs: readonly WayVerb[] }>;
 export type UnavailableCode = keyof typeof UNAVAILABLE_CODES;
 
@@ -243,6 +290,8 @@ export const DEFINITION_ABSENCES = [
   'format_invalid',
   'legacy',
   'not_read',
+  // #627 W (W-r2): the stored copy was written by a LATER Realm (the mirror of `legacy`).
+  'newer',
 ] as const;
 export type DefinitionAbsence = (typeof DEFINITION_ABSENCES)[number];
 
@@ -293,7 +342,13 @@ export interface FactsByCode {
   step_engine_decided: { step: string; execution: 'guard' | 'finalizer' | 'auto' };
   /** Amendment 16 (Q19): the loader's code, or `uncoded` for a throw that carries none. */
   enactor_load_failed: { error_code: LoadErrorCode };
-  definition_absent: { workflow_id: string; cause: DefinitionAbsence; path?: string };
+  definition_absent: {
+    workflow_id: string;
+    cause: DefinitionAbsence;
+    path?: string;
+    /** #627 W: `newer` only — the definition format the copy states, and the latest this version reads. */
+    format?: { schema_version: number; reads_up_to: number };
+  };
   argument_out_of_contract: { arg: string };
   /**
    * The door cannot enact the way for some party (the conservation law). `engine_step` (T-13,
@@ -301,6 +356,14 @@ export interface FactsByCode {
    * `run_step` way on a step that is not an agent step.
    */
   door_cannot_enact: { door: string; reason?: 'engine_step' };
+  /** #627 W: the question this door sends no form for. */
+  no_form_here: { gate_id: string };
+  /** #627 W: a form for the question is open on this server; the call re-judges it (R26). */
+  form_open: { gate_id: string };
+  /** #627 W: how many times this server has sent the question's form (the first and the asks). */
+  asks_exhausted: { gate_id: string; sent: number };
+  /** #627 W: the party the door removed from the question's `respond` (the conservation law). */
+  door_withholds_answers: { party: 'agent' };
 }
 export type FactsOf<C extends UnavailableCode> = FactsByCode[C];
 
@@ -325,6 +388,13 @@ export function renderDefinitionAbsent(facts: FactsOf<'definition_absent'>): str
       return `The stored copy of workflow ${id}${at} is in a format this version no longer reads`;
     case 'not_read':
       return `The definition of workflow ${id} was not read`;
+    case 'newer':
+      // #627 W (W-r2's words, as a reason — what is so, never a way on).
+      return `Workflow ${id}${at} was registered by a later version of Realm${
+        facts.format !== undefined
+          ? ` (definition format ${facts.format.schema_version}; this version reads up to ${facts.format.reads_up_to})`
+          : ''
+      }, so this version would ignore requirements it cannot read`;
   }
 }
 
@@ -412,6 +482,12 @@ export const ARGS: { readonly [V in WayVerb]: Readonly<Record<string, ArgSpec>> 
   register: {
     path: { type: 'string', required: true, discharges: [] },
   },
+  // #627 W (Amendment 2): the run and its open gate; the door-schema witness makes
+  // `present_question`'s input exactly these.
+  present: {
+    run_id: { type: 'string', required: true, discharges: [] },
+    gate_id: { type: 'string', required: true, discharges: [] },
+  },
 };
 
 // ─── The door and the narrowing (A-3, P-10) ─────────────────────────────────────────────────────
@@ -420,10 +496,48 @@ export const ARGS: { readonly [V in WayVerb]: Readonly<Record<string, ArgSpec>> 
 export type RouteId = string;
 
 /**
- * Where a door setting came from (P-10). PR-0's kinds; `negotiated` enters with #627 W, its only
- * producer (Amendment 10).
+ * Where a door setting came from (P-10). PR-0's kinds, and #627 W's `negotiated` (Amendment 10): its
+ * only producer is `answers.forms.source`, with `ref` naming the client's `initialize` capability.
  */
-export type Source = { kind: 'flag' | 'env' | 'option' | 'config' | 'default'; ref: string };
+export type Source = {
+  kind: 'flag' | 'env' | 'option' | 'config' | 'default' | 'negotiated';
+  ref: string;
+};
+
+/**
+ * #627 W (§5.1, F21): how the MCP door handles gate answers. `asked` (the default): the question goes
+ * to the person in the chat app's own form, and the agent gets no answer tool — or, in a client that
+ * shows no forms, keeps it with the app's approval prompt (F30); `offered` (opt-in): today's answer
+ * tool; `withheld`: no answer way at all. The most restrictive value wins: `withheld` > `asked` >
+ * `offered`.
+ */
+export const GATE_ANSWERS_VALUES = ['asked', 'offered', 'withheld'] as const;
+export type GateAnswers = (typeof GATE_ANSWERS_VALUES)[number];
+
+/**
+ * #627 W: the door's gate-answers setting, as `narrowForDoor` reads it — the value and where it came
+ * from, and whether this session's client shows forms (`forms.source.kind: 'negotiated'`, `ref`
+ * naming its `initialize` capability; on stateless HTTP always `false` until the SDK 2.x move).
+ */
+export interface DoorAnswers {
+  value: GateAnswers;
+  source: Source;
+  forms: { shown: boolean; source: Source };
+}
+
+/**
+ * #627 W (§5.2b; Amendment 4): what this door has SENT for one question, per server process — never
+ * what the person saw, and never on the run record. `sent_here`: no form sent here, one open now, or
+ * every one sent came back; `came_back`: how many came back without an answer; `asks_left`: how many
+ * more times the agent may ask (`present_question`) in this process.
+ */
+export interface DoorFormFacts {
+  sent_here: 'never' | 'open' | 'closed';
+  came_back: number;
+  asks_left: number;
+  /** How many times this server has sent the question's form, the first included. */
+  sent: number;
+}
 
 /**
  * One door's policy (PR0-CONTRACT §4). `serves` is a VALUE per door instance, never per session.
@@ -437,6 +551,11 @@ export interface DoorPolicy {
   route: RouteId;
   source: Source;
   operator_route?: { renderer: 'cli'; source: Source };
+  /**
+   * #627 W: the door's gate answers (the MCP door's alone). Absent ⇒ the door narrows as PR-0 did:
+   * the agent's `respond` kept, `present` judged `no_form_here`.
+   */
+  answers?: DoorAnswers;
 }
 
 /** The default parties each door serves (A-3). */
@@ -481,10 +600,70 @@ function isEngineStepWay(way: WayOn): boolean {
  * A way's parties at a door (A-3): WAY_PARTIES[verb] ∩ serves — minus `agent` on a `run_step` way
  * whose step is engine-decided (T-13; Amendment 13, Q4).
  */
-function partiesAt(way: WayOn, serves: readonly Party[]): Party[] {
+function partiesAt(way: WayOn, serves: readonly Party[], row?: AnswersRow): Party[] {
   return WAY_PARTIES[way.verb].filter(
-    (party) => serves.includes(party) && !(party === 'agent' && isEngineStepWay(way)),
+    (party) =>
+      serves.includes(party) &&
+      !(party === 'agent' && isEngineStepWay(way)) &&
+      // #627 W, §5.2 rows 2 and 4: the door withholds the agent's answer.
+      !(party === 'agent' && way.verb === 'respond' && withholdsAnswers(row)),
   );
+}
+
+/**
+ * #627 W: which row of §5.2's table a door's answers setting puts it on — `offered`; `asked` with a
+ * client that shows forms; `asked` without (F30's fallback); `withheld`. `undefined` for a door with
+ * no answers setting (the CLI, the library): it narrows as PR-0 did.
+ */
+export type AnswersRow = 'offered' | 'asked_forms' | 'fallback' | 'withheld';
+export function answersRowOf(answers: DoorAnswers | undefined): AnswersRow | undefined {
+  if (answers === undefined) return undefined;
+  if (answers.value === 'offered') return 'offered';
+  if (answers.value === 'withheld') return 'withheld';
+  return answers.forms.shown ? 'asked_forms' : 'fallback';
+}
+
+/** #627 W: the rows where the door removes the agent's `respond` (§5.2's rows 2 and 4). */
+function withholdsAnswers(row: AnswersRow | undefined): boolean {
+  return row === 'asked_forms' || row === 'withheld';
+}
+
+/**
+ * #627 W: whether this door hands every question to the person — it serves the agent and its answers
+ * row removes the agent from every `respond` (§5.2's rows 2 and 4). The ONE predicate a door reads
+ * for a `respond` it renders outside a narrowed list (an error's remedy), so its words agree with
+ * {@link narrowForDoor}'s.
+ */
+export function doorWithholdsAnswers(policy: DoorPolicy): boolean {
+  return policy.serves.includes('agent') && withholdsAnswers(answersRowOf(policy.answers));
+}
+
+/** #627 W, §5.2 row 3: the fallback's condition — the client asks the person; Realm cannot see it. */
+const CLIENT_PROMPT: Cond = { code: 'client_prompt', tag: 'client' };
+
+/**
+ * #627 W (§5.2b; Amendment 2): the door's verdict on showing the question again — the ONE predicate
+ * the offer (`narrowForDoor`) and the call (the MCP door's `present_question`, R26) both read. The
+ * snapshot's codes (the gate open, not due, the definition found) are core's, judged before this;
+ * this judges the door's own: a form here at all (`no_form_here`), one already open (`form_open`),
+ * asks left (`asks_exhausted`).
+ */
+export function presentDoorVerdict(
+  answers: DoorAnswers | undefined,
+  gateId: string,
+  facts: DoorFormFacts | undefined,
+):
+  | { offered: true }
+  | { code: 'no_form_here'; facts: FactsOf<'no_form_here'> }
+  | { code: 'form_open'; facts: FactsOf<'form_open'> }
+  | { code: 'asks_exhausted'; facts: FactsOf<'asks_exhausted'> } {
+  if (answersRowOf(answers) !== 'asked_forms')
+    return { code: 'no_form_here', facts: { gate_id: gateId } };
+  if (facts?.sent_here === 'open') return { code: 'form_open', facts: { gate_id: gateId } };
+  if (facts !== undefined && facts.asks_left <= 0) {
+    return { code: 'asks_exhausted', facts: { gate_id: gateId, sent: facts.sent } };
+  }
+  return { offered: true };
 }
 
 /**
@@ -492,40 +671,105 @@ function partiesAt(way: WayOn, serves: readonly Party[]): Party[] {
  * the door serves, minted here and nowhere else; a way whose `for` is empty is listed in
  * `unavailable` with `door_cannot_enact` (per verb); every remedy is narrowed by the same law. The
  * conservation law: every way a door removes is listed, with why.
+ *
+ * #627 W: a door with an answers setting applies §5.2's four-row table exactly. `offered`: the
+ * agent's `respond` kept. `asked` with forms and `withheld`: the agent removed from every `respond`
+ * — top-level and nested in a remedy — and each listed once per question as `door_withholds_answers`
+ * with party `agent`; the asked person's `respond` stays (its `for` never empties, so it never
+ * becomes `door_cannot_enact`). `asked` without forms: kept, with the `client_prompt` condition.
+ * `present`, composed by core as `no_form_here` at an open question, is re-judged by the door's own
+ * facts (`formFacts`, per gate) on the `asked`-with-forms row only.
  */
 export function narrowForDoor(
   composed: { ways: readonly WayOn[]; unavailable: readonly Unavailable[]; basis: Basis },
   policy: DoorPolicy,
+  formFacts?: (gateId: string) => DoorFormFacts | undefined,
 ): Narrowed {
+  const row = answersRowOf(policy.answers);
   const ways: ForWay[] = [];
   const removed: (Unavailable & { party?: Party })[] = [];
+  const withheld = new Map<string, Unavailable & { party?: Party }>();
+  const narrow = (way: WayOn): ForWay => {
+    const narrowed = withParties(way, policy.serves, row);
+    if (way.verb === 'respond' && withholdsAnswers(row) && policy.serves.includes('agent')) {
+      // Correction 1 (A5): the opening claim token is the agent's, and the agent is removed here — so
+      // it rides neither the person's kept way nor the listing's remedy (A-17's one carrier).
+      const tokenless = withoutProof(narrowed);
+      if (!withheld.has(way.gate_id)) {
+        withheld.set(way.gate_id, {
+          verb: 'respond',
+          step: way.step,
+          code: 'door_withholds_answers',
+          facts: { party: 'agent' },
+          remedy: [tokenless],
+        });
+      }
+      return tokenless;
+    }
+    return narrowed;
+  };
   for (const way of composed.ways) {
-    const forParties = partiesAt(way, policy.serves);
+    const forParties = partiesAt(way, policy.serves, row);
     // Amendment 13 (Q4): the agent, served here, removed from an engine step's run_step — listed.
     if (isEngineStepWay(way) && policy.serves.includes('agent')) {
       removed.push({ ...doorCannotEnact(way, policy, 'engine_step'), party: 'agent' });
     }
     if (forParties.length > 0) {
-      ways.push({ ...way, for: forParties });
+      ways.push(narrow(way));
     } else if (!(isEngineStepWay(way) && policy.serves.includes('agent'))) {
       removed.push(doorCannotEnact(way, policy));
     }
   }
-  const unavailable = composed.unavailable.map((entry) => ({
-    ...entry,
-    remedy: entry.remedy.map((way) => withParties(way, policy.serves)),
-  }));
+  const unavailable: (Unavailable & { party?: Party })[] = [];
+  for (const entry of composed.unavailable) {
+    if (entry.verb === 'present' && entry.code === 'no_form_here') {
+      // #627 W: the door re-judges its own code — on `asked` with forms, from its form facts.
+      const verdict = presentDoorVerdict(
+        policy.answers,
+        entry.facts.gate_id,
+        formFacts?.(entry.facts.gate_id),
+      );
+      if ('offered' in verdict) {
+        const respond = entry.remedy.find((w): w is RespondWay => w.verb === 'respond');
+        if (respond !== undefined) {
+          ways.push(narrow(presentWayOfGate(respond.run_id, entry.facts.gate_id)));
+          continue;
+        }
+      } else if (verdict.code !== 'no_form_here') {
+        unavailable.push({
+          ...entry,
+          code: verdict.code,
+          facts: verdict.facts,
+          remedy: entry.remedy.map(narrow),
+        } as Unavailable);
+        continue;
+      }
+    }
+    unavailable.push({ ...entry, remedy: entry.remedy.map(narrow) } as Unavailable);
+  }
   return {
     ways,
-    unavailable: [...unavailable, ...removed],
+    unavailable: [...unavailable, ...removed, ...withheld.values()],
     basis: composed.basis,
     door: { name: policy.door, source: policy.source },
   };
 }
 
-/** A remedy narrowed for a door: its parties, minted by the same law. */
-function withParties(way: WayOn, serves: readonly Party[]): ForWay {
-  return { ...way, for: partiesAt(way, serves) };
+/** A narrowed `respond` way without its `proof` (correction 1, A5); any other way as it is. */
+function withoutProof(way: ForWay): ForWay {
+  if (way.verb !== 'respond' || way.proof === undefined) return way;
+  const { proof: _proof, ...rest } = way;
+  return rest;
+}
+
+/** A remedy narrowed for a door: its parties, minted by the same law — and #627 W's row. */
+function withParties(way: WayOn, serves: readonly Party[], row?: AnswersRow): ForWay {
+  const forParties = partiesAt(way, serves, row);
+  if (way.verb === 'respond' && row === 'fallback' && forParties.includes('agent')) {
+    // #627 W, §5.2 row 3: kept for the agent with the client's approval prompt (F30).
+    return { ...way, conditions: [...way.conditions, CLIENT_PROMPT], for: forParties };
+  }
+  return { ...way, for: forParties };
 }
 
 /** The entry a door lists for a way it cannot enact (the conservation law). */
@@ -578,10 +822,29 @@ export function agentRenderedList(
   const blockers = narrowed.unavailable.filter(
     (u) => (PROGRESS_VERBS as readonly string[]).includes(u.verb) && u.code !== 'door_cannot_enact',
   );
+  // #627 W: a question this door hands off to a person (its `respond` serves the asked person, not
+  // the agent — an await entry) waits on someone else: its own entries — the door's removal, the
+  // steps it holds, the question's step — are waits, as a step held elsewhere is.
+  const handedOff = new Set(
+    narrowed.ways
+      .filter(
+        (w): w is ForWay & RespondWay =>
+          w.verb === 'respond' && !w.for.includes('agent') && w.for.includes('asked_person'),
+      )
+      .map((w) => w.gate_id),
+  );
+  const waitsOnOthers = (u: Unavailable): boolean => {
+    if (u.code === 'held_elsewhere') return true;
+    if (u.code === 'door_withholds_answers') return true;
+    if (u.code === 'question_open' || u.code === 'gated_step') {
+      return handedOff.has(u.facts.gate_id);
+    }
+    return false;
+  };
   return {
     callable,
     run_ended: runEnded,
-    only_waits_on_others: blockers.length > 0 && blockers.every((u) => u.code === 'held_elsewhere'),
+    only_waits_on_others: blockers.length > 0 && blockers.every(waitsOnOthers),
   };
 }
 
@@ -811,7 +1074,14 @@ export function classifyStop(
  */
 export interface WaysContext {
   definition:
-    { ok: WorkflowDefinition } | { absent: DefinitionAbsence; workflow_id: string; path?: string };
+    | { ok: WorkflowDefinition }
+    | {
+        absent: DefinitionAbsence;
+        workflow_id: string;
+        path?: string;
+        /** #627 W: `newer` only (W-r2). */
+        format?: { schema_version: number; reads_up_to: number };
+      };
   enactor:
     | { kind: 'this_program'; registry: ExtensionRegistry }
     | { kind: 'observer' }
@@ -929,6 +1199,14 @@ export function respondWayOfGate(
     holds: [],
     presented: 'alone',
   };
+}
+
+/**
+ * #627 W (Amendment 2): the `present` way of one open gate — show its question again, as a form. The
+ * door offers it (`narrowForDoor`, the `asked`-with-forms row); core composes it as `no_form_here`.
+ */
+export function presentWayOfGate(runId: string, gateId: string): PresentWay {
+  return { verb: 'present', conditions: [], run_id: runId, gate_id: gateId };
 }
 
 /** The respond way of the run's open question, from the view (decision C103). */
@@ -1114,6 +1392,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       workflow_id: ctx.definition.workflow_id,
       cause: ctx.definition.absent,
       ...(ctx.definition.path !== undefined ? { path: ctx.definition.path } : {}),
+      ...(ctx.definition.format !== undefined ? { format: ctx.definition.format } : {}),
     };
     ways.push(register);
     if (run.terminal_state) {
@@ -1146,6 +1425,14 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       };
       unavailable.push({
         verb: 'respond',
+        step: gate.step_name,
+        code: 'definition_absent',
+        facts,
+        remedy: [register],
+      });
+      // #627 W (Amendment 5): `present` shares respond's snapshot code.
+      unavailable.push({
+        verb: 'present',
         step: gate.step_name,
         code: 'definition_absent',
         facts,
@@ -1190,7 +1477,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
   if (respond !== undefined) {
     if (pending.expiry_due !== undefined) {
       const advance = advanceWayOf(run, pending, definition);
-      unavailable.push({
+      const due: Unavailable = {
         verb: 'respond',
         step: respond.step,
         code: 'question_due',
@@ -1201,9 +1488,19 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
           on_expiry: pending.expiry_due.on_expiry,
         },
         remedy: advance !== undefined ? [advance] : [],
-      });
+      };
+      // #627 W (Amendment 5): `present` shares respond's snapshot code — its time is up.
+      unavailable.push(due, { ...due, verb: 'present' } as Unavailable);
     } else {
       ways.push(respond);
+      // #627 W: core sends no form, so `present` is `no_form_here`; the MCP door re-judges it.
+      unavailable.push({
+        verb: 'present',
+        step: respond.step,
+        code: 'no_form_here',
+        facts: { gate_id: respond.gate_id },
+        remedy: [asRemedy(respond)],
+      });
     }
   }
 
@@ -1755,6 +2052,75 @@ function judgeRespond(
 }
 
 /**
+ * #627 W: may the agent be shown the question on gate `gateId` again (Amendment 15's acts, `present`
+ * in place of `respond`)? On the snapshot: the run ended → `run_ended` (the operator's command, per
+ * its ending); the open gate → its listed `present` entry — `no_form_here` (core sends no form; the
+ * MCP door re-judges its own code, `presentDoorVerdict`), `question_due` (`[advance]`) or
+ * `definition_absent`; a settled gate → `question_settled` (the progress ways, else
+ * `already_settled`); else → `gate_not_open`, led on by the open gate's listed `present` entry
+ * only when it is due (`question_due` → its remedy), else `[inspect]` (correction 2, 3.4: core's
+ * door never offers `present`; the MCP door shows the open gate's offered `present` in its own
+ * listing). `question_past_deadline` is WRITE-tagged and `present` performs no settle, so it is
+ * none of `present`'s codes.
+ */
+function judgePresent(
+  snap: Snapshot,
+  ctx: WaysContext,
+  composed: ComposedWays,
+  gateId: string,
+): Admission {
+  const run = snap.record;
+  if (run.terminal_state) {
+    return {
+      verb: 'present',
+      code: 'run_ended',
+      facts: { phase: deriveRunPhase(run) },
+      remedy: [],
+      no_remedy: {
+        cause: 'operator_command_untyped',
+        command: endedRunCommand(run, 'ok' in ctx.definition ? ctx.definition.ok : undefined),
+      },
+    };
+  }
+  const gate = run.pending_gate;
+  if (gate !== undefined && gate.gate_id === gateId) {
+    const entry = listed(composed, 'present');
+    if (entry !== undefined) return entry;
+  }
+  const settled = Object.values(run.settled ?? {}).some(
+    (e) => e.outcome === 'gate' && e.token === gateId,
+  );
+  if (settled) {
+    const progress = composed.ways.filter((w) =>
+      (PROGRESS_VERBS as readonly string[]).includes(w.verb),
+    );
+    return {
+      verb: 'present',
+      code: 'question_settled',
+      facts: { gate_id: gateId },
+      remedy: progress,
+      ...(progress.length === 0 ? { no_remedy: { cause: 'already_settled' as const } } : {}),
+    };
+  }
+  const inspect = composed.ways.filter((w) => w.verb === 'inspect');
+  // Correction 1 (C2), correction 2 (3.4, MA 3's option (a)): the OPEN gate's listed `present` entry
+  // leads on only when it is due (`question_due` → its remedy, the advance); else [inspect]. Core's
+  // door never offers `present`; the MCP door shows the open gate's offered `present` in its own
+  // listing.
+  const open = gate !== undefined ? listed(composed, 'present') : undefined;
+  return {
+    verb: 'present',
+    ...(gate !== undefined ? { step: gate.step_name } : {}),
+    code: 'gate_not_open',
+    facts: {
+      gate_id: gateId,
+      ...(gate !== undefined ? { open_gate: { gate_id: gate.gate_id, step: gate.step_name } } : {}),
+    },
+    remedy: open?.code === 'question_due' && open.remedy.length > 0 ? open.remedy : inspect,
+  };
+}
+
+/**
  * The one admission (D3 A-6; R26): is this call — `verb` with `input` — admitted on this snapshot?
  * The caller's arguments first (P-5's input code), then the verb's judge on the snapshot: what
  * `composeWaysOn` offers is admitted, what it lists is refused with that entry, and a step named by
@@ -1832,6 +2198,9 @@ function judgeAdmission(
   }
   if (verb === 'respond') {
     return judgeRespond(snap, ctx, composed, String(input['gate_id']));
+  }
+  if (verb === 'present') {
+    return judgePresent(snap, ctx, composed, String(input['gate_id']));
   }
   // run_step
   const step = String(input['command']);
@@ -1998,6 +2367,10 @@ export const LIBRARY_WORDS: WayRenderer<string, LibraryHost> = {
   abandon: (way) => `end run '${way.run_id}' with abandonRun`,
   register: (way) =>
     `register workflow '${way.workflow_id}' again${way.path !== undefined ? ` from ${way.path}` : ' from its file'}`,
+  // #627 W (Amendment 4): the library sends no form; a library reply lists `present` as
+  // `unavailable` (`no_form_here`), so this entry renders only a way a door offered.
+  present: (way) =>
+    `the question on gate '${way.gate_id}' of run '${way.run_id}' is shown again only by an MCP server whose client shows forms (present_question)`,
 };
 
 /**

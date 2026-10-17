@@ -10,6 +10,21 @@ import { hostname, userInfo } from 'node:os';
 import { composeProgramIdentity, identityRefusalLine, type Attributed } from '@sensigo/realm';
 
 /**
+ * #627 W (§5.9): the OS login this process runs as — its name, uid and passwd home — for the
+ * separation check, which measures that login's reach. The home is the login's own (correction 1 D4:
+ * the agent-scoped paths are read from it, never from `$HOME`, which may point at Realm's store).
+ * Read here, the one file of this package that reads the OS user. `undefined` when the OS will not say.
+ */
+export function osLogin(): { name: string; uid: number; home: string } | undefined {
+  try {
+    const info = userInfo();
+    return { name: info.username, uid: info.uid, home: info.homedir };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Makes this program's identity once, for `channel` (a short word naming the command: `agent`,
  * `run`, `mcp-stdio`, `mcp-http`, `respond`, `drain`).
  *

@@ -9,20 +9,23 @@
 | `realm mcp`   | Over the standard input and output of the process. | The assistant's client, on your machine. | The client that started it. |
 | `realm serve` | Over HTTP.                                         | You.                                     | Anyone who has the token.   |
 
-Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
+Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`. Which answer tool is among them follows the server's gate-answers value and the client: `submit_human_response` under `offered` and under `asked` with a client that shows no forms, `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, which serves 10. See [Gate answers over MCP](../mcp/gate-answers.md). Added after version 0.47.0. For setting up a client, see [Connect an MCP client](../../guides/connect-an-mcp-client.md).
 
 ## `realm mcp`
 
 ```text
-realm mcp [--project <dir>] [--extensions-module <path>]
+realm mcp [--project <dir>] [--extensions-module <path>] [--gate-answers <value>] [--form-wait-seconds <seconds>] [--check]
 ```
 
-| Flag                         | Default | What it does                                                                           |
-| ---------------------------- | ------- | -------------------------------------------------------------------------------------- |
-| `--project <dir>`            | None    | The project whose `realm.yaml` applies to workflows that have no project of their own. |
-| `--extensions-module <path>` | None    | Loads this code file in place of the files named by every workflow's `extensions`.     |
+| Flag                            | Default | What it does                                                                                                                                                                                                             |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--project <dir>`               | None    | The project whose `realm.yaml` applies to workflows that have no project of their own.                                                                                                                                   |
+| `--extensions-module <path>`    | None    | Loads this code file in place of the files named by every workflow's `extensions`.                                                                                                                                       |
+| `--gate-answers <value>`        | `asked` | How the server handles gate answers: `asked`, `offered` or `withheld`. With `REALM_MCP_GATE_ANSWERS` also set, the most restrictive wins. Added after version 0.47.0.                                                    |
+| `--form-wait-seconds <seconds>` | `240`   | The longest a form waits for the person, from 30 to 3600. With `REALM_MCP_FORM_WAIT_SECONDS` also set, the smaller wins. Refused at start under `withheld` or `offered`, which send no form. Added after version 0.47.0. |
+| `--check`                       | Off     | Prints the gate-answers value the server would start with and the separation check, then exits without starting. Added after version 0.47.0.                                                                             |
 
-`realm mcp` prints nothing of its own. Its standard output carries the MCP messages, so nothing else may be written there. It runs until its input is closed, then exits with code 0.
+When it starts, `realm mcp` prints one line to standard error: the gate-answers value it runs with, where it came from, and what that means (added after version 0.47.0, which printed nothing). Its standard output carries the MCP messages, so nothing else may be written there. It runs until its input is closed, then exits with code 0. A gate-answers or form-wait value that is not valid stops it before it starts, with one line on standard error and exit code 1.
 
 A client that connects is told the server's name and version:
 
@@ -36,7 +39,7 @@ Other commands use the folder they are started in as the project. `realm mcp` do
 
 ### `realm-mcp`
 
-The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server with no flags. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked. `start_run` still creates the run and replies `status: ok`; the block is in its `warnings` (added after version 0.46.0, which replies `status: error`):
+The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr. It loads no project code: a step that needs a handler from a workflow's `extensions` is blocked. `start_run` still creates the run and replies `status: ok`; the block is in its `warnings` (added after version 0.46.0, which replies `status: error`):
 
 ```text
 Step 'fetch' is blocked: its handler 'fetch_record' is not registered in this runner. The run is NOT terminated — the step remains eligible, so a runner that provides this handler can execute it. …
@@ -49,7 +52,7 @@ The same run started through `realm mcp` ran the step.
 ## `realm serve`
 
 ```text
-realm serve [--port <number>] [--host <address>] [--dev] [--project <dir>] [--extensions-module <path>]
+realm serve [--port <number>] [--host <address>] [--dev] [--project <dir>] [--extensions-module <path>] [--gate-answers <value>] [--check]
 ```
 
 | Flag                         | Default            | What it does                                                                           |
@@ -59,6 +62,10 @@ realm serve [--port <number>] [--host <address>] [--dev] [--project <dir>] [--ex
 | `--dev`                      | Off                | Turns the token check off.                                                             |
 | `--project <dir>`            | The current folder | The project whose `realm.yaml` applies to workflows that have no project of their own. |
 | `--extensions-module <path>` | None               | Loads this code file in place of the files named by every workflow's `extensions`.     |
+| `--gate-answers <value>`     | `asked`            | As for `realm mcp`. Added after version 0.47.0.                                        |
+| `--check`                    | Off                | As for `realm mcp`. Added after version 0.47.0.                                        |
+
+`realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `offered`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.
 
 | Environment variable | What it does                                                          |
 | -------------------- | --------------------------------------------------------------------- |
@@ -81,7 +88,7 @@ Warning: Running in dev mode — authentication is disabled. Do not expose this 
 Realm MCP server listening on http://127.0.0.1:3001/
 ```
 
-After these lines, `realm serve` prints nothing for the requests it handles.
+After these lines, `realm serve` prints the gate-answers value it runs with, and, in dev mode when that value is not `withheld`, `Warning: dev mode — authentication is disabled: any process on this machine can call this server's tools, the gate answer tool included.` (added after version 0.47.0). Then it prints nothing for the requests it handles.
 
 ### Requests
 

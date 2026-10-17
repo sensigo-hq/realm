@@ -712,7 +712,10 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about MCP repli
   });
 
   it('packages/mcp-server/README.md: the server exposes 11 tools, advance_run among them', async () => {
-    claim('packages/mcp-server/README.md', 'Exposes 11 workflow tools over stdio or HTTP');
+    claim(
+      'packages/mcp-server/README.md',
+      'Exposes 11 workflow tools (10 under `withheld`) over stdio or HTTP',
+    );
     claim(
       'packages/mcp-server/README.md',
       "- `advance_run` — run what a run owes the engine: an expired question's declared `on_expiry`, then its guards and `auto` steps",

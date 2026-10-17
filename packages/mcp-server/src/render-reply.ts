@@ -13,23 +13,30 @@ import {
   agentActionOf,
   agentRenderedList,
   cannotGoOnUntilCorrected,
+  doorWithholdsAnswers,
   generateSchemaSkeleton,
   narrowForDoor,
   raceClausesOf,
   withFullStop,
+  answersRowOf,
+  AUTHOR_TEXT_LABEL,
   DOOR_SERVES,
   PROGRESS_VERBS,
   TERMINAL_PHASES,
   WAY_PARTIES,
   type AgentAction,
   type Basis,
+  type DoorAnswers,
+  type DoorFormFacts,
   type DoorPolicy,
   type EngineReply,
   type ForWay,
   type GateInfo,
   type Narrowed,
   type ProgressVerb,
+  type RegisterWay,
   type RenderedList,
+  type RespondWay,
   type Source,
   type Unavailable,
   type WayOf,
@@ -52,9 +59,27 @@ export interface McpInstruction {
   call_with: Record<string, unknown>;
 }
 
+/**
+ * #627 W (the await entry): a question this door hands to the person — what it is, never a way to
+ * answer it (no claim token, no tool). Built from the `respond` way minus its `proof`.
+ */
+export interface McpAwaiting {
+  run_id: string;
+  gate_id: string;
+  step: string;
+  choices: string[];
+  /** The question's stored deadline, when it has one. */
+  expires_at?: string;
+}
+
 /** One entry of `next_actions` (a progress way the agent can take) or of `also`. */
 export interface McpNextAction {
   instruction: McpInstruction | null;
+  /**
+   * #627 W: set instead of `instruction` (which is `null`) on an await entry — a question the person
+   * answers outside this conversation. Its text says what to tell the user and how to pace.
+   */
+  awaiting?: McpAwaiting;
   human_readable: string;
   /** Current state orientation — what state the run is in. */
   orientation: string;
@@ -117,6 +142,8 @@ export type McpEnvelope = Omit<
   error?: { about: string };
   blocked_reason?: { eligible_steps: string[]; suggestion?: string };
   gate?: GateInfo;
+  /** #627 W (W-e1): set on the reply Realm held back — repeating the call is never the remedy. */
+  retryable?: false;
 };
 
 // ─── The host ───────────────────────────────────────────────────────────────────────────────────
@@ -135,6 +162,22 @@ export interface OperatorRoute {
 /** The MCP door's static settings. */
 export interface McpHost {
   operatorRoute?: OperatorRoute;
+  /**
+   * #627 W: this server's gate answers — the effective value with its source, and whether this
+   * session's client shows forms. Absent ⇒ the door narrows as PR-0 did (the agent's `respond` kept).
+   */
+  answers?: DoorAnswers;
+  /**
+   * #627 W (§5.2b): what this server process has sent for a question (`sent_here`, the come-back
+   * count, the asks left) — per gate, never on the run record. Read by `narrowForDoor` to judge
+   * `present`, and by the await entry's words.
+   */
+  formFacts?: (gateId: string) => DoorFormFacts | undefined;
+  /**
+   * #627 W (correction 1, E4): the run version this call read before it acted, when the tool knows
+   * it (a read). W-e1 says "it changed nothing" only when the reply's version is still that one.
+   */
+  readVersion?: number;
 }
 
 /** P-2: how long an agent waits before reading the run again, on every `await` reply (a constant). */
@@ -150,6 +193,7 @@ export function mcpDoorPolicy(host: McpHost): DoorPolicy {
     ...(host.operatorRoute !== undefined
       ? { operator_route: { renderer: 'cli', source: host.operatorRoute.source } }
       : {}),
+    ...(host.answers !== undefined ? { answers: host.answers } : {}),
   };
 }
 
@@ -195,7 +239,7 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
     // on the reply whose own call opened the question.
     const token = way.proof !== undefined ? { claim_token: way.proof.claim_token } : {};
     const choices = way.choice.one_of;
-    return {
+    const entry: McpNextAction = {
       instruction: {
         tool: 'submit_human_response',
         params: { run_id: way.run_id, gate_id: way.gate_id, ...token },
@@ -217,6 +261,11 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
       // #729 PR-0 (Part B, W-CENSUS-06): the choices are the way's data; no prose repeats them.
       orientation: `Run is paused at gate '${way.gate_id}'.`,
     };
+    // #627 W (F30, §5.2 row 3): on the fallback the client is asked to have the person approve the
+    // call (the `client_prompt` condition); the entry says what a refusal leaves (W-g1).
+    return way.conditions.some((c) => c.code === 'client_prompt')
+      ? { ...entry, human_readable: `${entry.human_readable} ${approvalGuidance(way.step)}` }
+      : entry;
   },
   run_step: (way) => {
     const brief = way.brief;
@@ -287,7 +336,90 @@ export const MCP_WAYS: WayRenderer<McpNextAction, McpHost> = {
   }),
   // An operator's way: never an agent's instruction on this door (A-10; an elsewhere entry).
   register: () => null,
+  // #627 W (§5.2b): show the waiting question again, as a form in the user's app — offered only on
+  // the `asked`-with-forms row (`narrowForDoor`'s door verdict). Its words are the tool's own (W-q1).
+  present: (way) => ({
+    instruction: {
+      tool: 'present_question',
+      params: { run_id: way.run_id, gate_id: way.gate_id },
+      call_with: { run_id: way.run_id, gate_id: way.gate_id },
+    },
+    human_readable: PRESENT_QUESTION_DESCRIPTION,
+    orientation: `Run is paused at gate '${way.gate_id}'.`,
+  }),
 };
+
+/** #627 W (W-q1): `present_question`'s description, and the words of its call entry. */
+export const PRESENT_QUESTION_DESCRIPTION =
+  "Send the waiting question to the user's app as a form. Call it when the question has not been sent in this session yet, or when the user asks to see it again. You cannot answer the question yourself.";
+
+/**
+ * #627 W (W-g1): the approval prompt's guidance on the fallback — the client may ask the person to
+ * approve the answer call, and a refused call leaves the run waiting.
+ */
+export function approvalGuidance(step: string): string {
+  return `Your client may ask the user to approve this call (Claude Code does in interactive sessions and refuses it in headless runs; other clients may not ask). If the call is refused, the run keeps waiting at step '${step}': tell the user so.`;
+}
+
+/** #627 W (W-a3): the orientation of a question answered outside this conversation. */
+function handedOffOrientation(way: Pick<RespondWay, 'gate_id' | 'step'>): string {
+  return `Run is paused at gate '${way.gate_id}' on step '${way.step}', waiting for an answer outside this conversation.`;
+}
+
+/** #627 W: the await entry's pacing clause; its time clause iff the question has a deadline (cell 15). */
+function pacingClause(way: Pick<RespondWay, 'expires_at'>): string {
+  return `Check again no sooner than poll_after_ms${way.expires_at !== undefined ? '; when until passes, tell the user' : ''}.`;
+}
+
+/** `1 time`, `2 times`. */
+const times = (n: number): string => `${n} ${n === 1 ? 'time' : 'times'}`;
+
+/**
+ * #627 W: the await entry — a question this door hands to the person (its `respond` serves the asked
+ * person, never the agent). Under `asked` with forms it says what this server SENT (W-a1f, from the
+ * door's facts, never what the person saw); under `withheld`, W-a1 on a reply that carries the
+ * question's `gate`, else W-a2. No text names a tool that answers, or a person; no claim token.
+ */
+function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
+  const awaiting: McpAwaiting = {
+    run_id: way.run_id,
+    gate_id: way.gate_id,
+    step: way.step,
+    choices: [...way.choice.one_of],
+    ...(way.expires_at !== undefined ? { expires_at: way.expires_at } : {}),
+  };
+  const pacing = pacingClause(way);
+  let words: string;
+  if (answersRowOf(host.answers) === 'asked_forms') {
+    const facts = host.formFacts?.(way.gate_id);
+    const sent = facts?.sent_here ?? 'never';
+    if (sent === 'never') {
+      words = `The question on step '${way.step}' of run ${way.run_id} has not been sent to the user in this session. Call present_question to send it to their app as a form. An answer given in this chat is not recorded.`;
+    } else if (sent === 'open') {
+      words = `A form for the question on step '${way.step}' of run ${way.run_id} was sent to the user's app, and Realm is waiting for the answer. It may not be on their screen. An answer given in this chat is not recorded.`;
+    } else {
+      const left = facts?.asks_left ?? 0;
+      const again =
+        left > 0
+          ? ` If the user wants to answer, call present_question (${left} left in this session).`
+          : '';
+      words = `The form for step '${way.step}' of run ${way.run_id} ended without an answer ${times(facts?.came_back ?? 0)}.${again} An answer given in this chat is not recorded.`;
+    }
+  } else {
+    const show =
+      way.presented === 'with_gate'
+        ? 'Show the user gate.display'
+        : // Correction 2 (2.1): no command; the separator the walk found missing.
+          "Show the user the question — get_run_state's pending_gate.resolved_message when the gate declares a message; otherwise it is shown to them where they answer it —";
+    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show} and tell them it is waiting for their answer; an answer they give here is not recorded.`;
+  }
+  return {
+    instruction: null,
+    awaiting,
+    human_readable: `${words} ${pacing}`,
+    orientation: handedOffOrientation(way),
+  };
+}
 
 /** One way, by its verb's renderer. */
 function renderWay(way: WayOn, basis: Basis | undefined, host: McpHost): McpNextAction | null {
@@ -300,16 +432,31 @@ function renderWay(way: WayOn, basis: Basis | undefined, host: McpHost): McpNext
 }
 
 /** The words of an elsewhere entry: the operator's way and why this door cannot enact it. */
-function elsewhereWords(entry: Unavailable): string {
+function elsewhereWords(entry: Unavailable, host: McpHost): string {
   const way = entry.remedy[0];
-  if (way?.verb === 'register') {
-    return `An operator registers workflow '${way.workflow_id}' again${way.path !== undefined ? ` from ${way.path}` : ''}, outside this conversation.`;
-  }
+  if (way?.verb === 'register') return registerWords(way, host);
   if (way?.verb === 'run_step') {
     // PR0-CONTRACT Amendment 14 (Q12): a fact, never a schedule.
     return `'${way.step}' takes its input from an operator, checked against its input_schema; no realm command supplies it.`;
   }
   return `An operator can take this way (${entry.verb}), outside this conversation.`;
+}
+
+/**
+ * Correction 2 (3.1, 3.2): a `register` way's words — the operator's repair, outside this
+ * conversation. A copy that cannot be used is named as such, never as a file to register from. On a
+ * door that hands questions to the person, the question then waits for an answer outside this
+ * conversation too.
+ */
+function registerWords(way: RegisterWay, host: McpHost): string {
+  const repair =
+    way.path !== undefined
+      ? `Workflow '${way.workflow_id}''s registered copy (${way.path}) cannot be used; an operator repairs it, outside this conversation.`
+      : `An operator registers workflow '${way.workflow_id}' again, outside this conversation.`;
+  if (!doorWithholdsAnswers(mcpDoorPolicy(host))) return repair;
+  return way.path !== undefined
+    ? `${repair} Once the copy is repaired, the question waits for an answer outside this conversation.`
+    : `${repair} Once it is registered, the question waits for an answer outside this conversation.`;
 }
 
 // ─── The lists a reply renders ──────────────────────────────────────────────────────────────────
@@ -325,12 +472,54 @@ function agentProgressWays(narrowed: Narrowed | undefined): ForWay[] {
   return [...ways].sort((a, b) => rank(a) - rank(b));
 }
 
+/**
+ * #627 W: the questions this door hands to the person — a `respond` whose `for` holds the asked
+ * person and not the agent (§5.2's rows 2 and 4). Each renders as an await entry.
+ */
+function handedOffWays(narrowed: Narrowed | undefined): (ForWay & RespondWay)[] {
+  return (narrowed?.ways ?? []).filter(
+    (w): w is ForWay & RespondWay =>
+      w.verb === 'respond' && !forAgent(w) && w.for.includes('asked_person'),
+  );
+}
+
+/** #627 W: the `present` ways the door offers the agent (only on the `asked`-with-forms row). */
+function presentWays(narrowed: Narrowed | undefined): ForWay[] {
+  return (narrowed?.ways ?? []).filter((w) => w.verb === 'present' && forAgent(w));
+}
+
+/**
+ * `next_actions`: the agent's progress entries in their order — steps, the answer, the act — with
+ * #627 W's await entry (a handed-off question) in the answer's place and its `present_question`
+ * entry right after it.
+ */
+function nextActionsOf(
+  narrowed: Narrowed | undefined,
+  basis: Basis | undefined,
+  host: McpHost,
+): McpNextAction[] {
+  const progress = agentProgressWays(narrowed);
+  const entries: { rank: number; entry: McpNextAction | null }[] = [
+    ...progress.map((w) => ({
+      rank: w.verb === 'run_step' ? 0 : w.verb === 'respond' ? 1 : 3,
+      entry: renderWay(w, basis, host),
+    })),
+    ...handedOffWays(narrowed).map((w) => ({ rank: 1, entry: awaitEntryOf(w, host) })),
+    ...presentWays(narrowed).map((w) => ({ rank: 2, entry: renderWay(w, basis, host) })),
+  ];
+  return entries
+    .sort((a, b) => a.rank - b.rank)
+    .map((e) => e.entry)
+    .filter((e): e is McpNextAction => e !== null);
+}
+
 /** The narrowed ways of a reply, or none when it judged none. */
 function narrowReply(reply: EngineReply, host: McpHost): Narrowed | undefined {
   if (reply.basis === undefined) return undefined;
   return narrowForDoor(
     { ways: reply.ways, unavailable: reply.unavailable, basis: reply.basis },
     mcpDoorPolicy(host),
+    host.formFacts,
   );
 }
 
@@ -348,12 +537,19 @@ function renderedListOf(
   return agentRenderedList(narrowed ?? { ways: [], unavailable: [] }, ended);
 }
 
-/** P-2: the deadline the record states for what an `await` waits on (the earliest), if any. */
+/**
+ * P-2: the deadline the record states for what an `await` waits on (the earliest), if any — a step
+ * held elsewhere, and (#627 W) a question handed to the person, by its stored deadline.
+ */
 function untilOf(narrowed: Narrowed | undefined): string | undefined {
-  const stated = (narrowed?.unavailable ?? [])
-    .filter((u) => u.code === 'held_elsewhere' && u.clears_at !== undefined)
-    .map((u) => u.clears_at!)
-    .sort();
+  const stated = [
+    ...(narrowed?.unavailable ?? [])
+      .filter((u) => u.code === 'held_elsewhere' && u.clears_at !== undefined)
+      .map((u) => u.clears_at!),
+    ...handedOffWays(narrowed)
+      .filter((w) => w.expires_at !== undefined)
+      .map((w) => w.expires_at!),
+  ].sort();
   return stated[0];
 }
 
@@ -449,6 +645,9 @@ function nextSentence(narrowed: Narrowed | undefined, ended: boolean): string {
         : `; ${quoteList(waiting)} ${waiting.length === 1 ? 'waits' : 'wait'} for its answer`;
     sentence += ` Waiting on the question on step '${respond.step}' (choices: ${respond.choice.one_of.join(', ')}) — answer it with submit_human_response${waitingWords}.`;
   }
+  // #627 W: a question handed to the person is waited on, never answered here (W-a3's words).
+  const handedOff = respond === undefined ? handedOffWays(narrowed)[0] : undefined;
+  if (handedOff !== undefined) sentence += ` ${handedOffOrientation(handedOff)}`;
   const steps = progress.filter((w): w is ForWay & WayOf<'run_step'> => w.verb === 'run_step');
   if (steps.length > 0) sentence += ` Ready for the agent: ${quoteList(steps.map((w) => w.step))}.`;
   const advance = progress.find((w): w is ForWay & WayOf<'advance'> => w.verb === 'advance');
@@ -529,17 +728,26 @@ function gateMismatchTail(refusal: Unavailable, narrowed: Narrowed | undefined):
   return ` The open question is on step '${open.step}' (gate '${open.gate_id}')${answer}.`;
 }
 
-/** The sentence an error's remedy adds (an answer, reading the run, the act). */
-function remedyWords(remedy: readonly WayOn[], replyRunId: string): string {
+/**
+ * The sentence an error's remedy adds (an answer, reading the run, the act). #627 W: a `respond`
+ * remedy is narrowed by the door's one predicate — where the door hands questions to the person, it
+ * is waited on (W-a3), never answered with a tool.
+ */
+function remedyWords(remedy: readonly WayOn[], replyRunId: string, host: McpHost): string {
+  const handedOff = doorWithholdsAnswers(mcpDoorPolicy(host));
   return remedy
     .map((way) => {
       switch (way.verb) {
         case 'respond':
-          return ` Answer it: submit_human_response {run_id: '${way.run_id}', gate_id: '${way.gate_id}', choice: <one of: ${way.choice.one_of.join(', ')}>}.`;
+          return handedOff
+            ? ` ${handedOffOrientation(way)}`
+            : ` Answer it: submit_human_response {run_id: '${way.run_id}', gate_id: '${way.gate_id}', choice: <one of: ${way.choice.one_of.join(', ')}>}.`;
         case 'advance':
           return ` Call advance_run with run_id '${way.run_id}'.`;
         case 'inspect':
           return way.run_id === replyRunId ? '' : ` Read run '${way.run_id}' with get_run_state.`;
+        case 'register':
+          return ` ${registerWords(way, host)}`;
         default:
           return '';
       }
@@ -548,7 +756,12 @@ function remedyWords(remedy: readonly WayOn[], replyRunId: string): string {
 }
 
 /** The reply's `context_hint`: what happened (core's), then the door's words of what comes next. */
-function hintOf(reply: EngineReply, narrowed: Narrowed | undefined, ended: boolean): string {
+function hintOf(
+  reply: EngineReply,
+  narrowed: Narrowed | undefined,
+  ended: boolean,
+  host: McpHost,
+): string {
   let hint = reply.context_hint;
   const refusal = reply.refusal;
   if (refusal !== undefined && refusal.code === 'gate_not_open') {
@@ -598,7 +811,7 @@ function hintOf(reply: EngineReply, narrowed: Narrowed | undefined, ended: boole
         : hint + next;
   }
   if (reply.status === 'error' && refusal === undefined && reply.error !== undefined) {
-    hint += remedyWords(reply.error.remedy, reply.run_id);
+    hint += remedyWords(reply.error.remedy, reply.run_id, host);
   }
   // issue #729 (the Q3 unit, C1; R3): a step this program lacks the code for failed at its dispatch —
   // core says what is so (blocked, not terminated); the way out is this door's, in its one producer
@@ -614,7 +827,11 @@ function hintOf(reply: EngineReply, narrowed: Narrowed | undefined, ended: boole
 }
 
 /** `blocked_reason.suggestion` (C94, C104, C136, C149), from the refusal and the rendered list. */
-function suggestionOf(reply: EngineReply, progress: readonly ForWay[]): string {
+function suggestionOf(
+  reply: EngineReply,
+  progress: readonly ForWay[],
+  narrowed: Narrowed | undefined,
+): string {
   const refusal = reply.refusal;
   if (refusal?.code === 'refused_before_claim' && refusal.facts.precondition !== undefined) {
     // E1 (b): the value read, through the one escaped, bounded value renderer.
@@ -623,6 +840,11 @@ function suggestionOf(reply: EngineReply, progress: readonly ForWay[]): string {
   }
   if (reply.error_code === 'STATE_STEP_ALREADY_CLAIMED') {
     return 'Step is already in progress. Wait for it to complete.';
+  }
+  const handedOff = handedOffWays(narrowed)[0];
+  if (progress.length === 0 && handedOff !== undefined && presentWays(narrowed).length === 0) {
+    // #627 W (W-a5): only the await entry remains.
+    return `Nothing can be called now: the question on step '${handedOff.step}' is answered outside this conversation, as next_actions says.`;
   }
   if (progress.length === 0) return 'No other step can be called now.';
   if (progress.some((w) => w.verb === 'respond')) {
@@ -660,12 +882,13 @@ export interface RenderedReply {
  * the person block with an operator's commands, only when the launching door injected an operator
  * route (P-6). One egress assertion at the exit: no claim token outside the opening reply's answer.
  */
-export function renderReply(reply: EngineReply, host: McpHost = {}): RenderedReply {
+export function renderReply(reply: EngineReply, host: McpHost): RenderedReply {
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
-  const next_actions = progress
-    .map((w) => renderWay(w, reply.basis, host))
-    .filter((e): e is McpNextAction => e !== null);
+  const next_actions = nextActionsOf(narrowed, reply.basis, host);
+  // #627 W: an await entry is paced wherever it renders — on a `confirm_required` reply too, whose
+  // `agent_action` D-8 leaves unset (its text tells the agent to wait poll_after_ms).
+  const awaits = handedOffWays(narrowed).length > 0;
   const also = (narrowed?.ways ?? [])
     .filter((w) => (w.verb === 'inspect' || w.verb === 'abandon') && forAgent(w))
     .map((w) => ({ verb: w.verb as 'inspect' | 'abandon', ...renderWay(w, reply.basis, host)! }));
@@ -678,12 +901,13 @@ export function renderReply(reply: EngineReply, host: McpHost = {}): RenderedRep
     instruction: null,
     for: 'operator',
     reason: 'door_cannot_enact',
-    human_readable: elsewhereWords(u),
+    human_readable: elsewhereWords(u, host),
   }));
   const ended = reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase);
   const rendered = renderedListOf(reply, narrowed, progress);
   const agentAction = agentActionOf(reply.intrinsic_action, reply.reply_kind, rendered);
-  const until = agentAction === 'await' ? untilOf(narrowed) : undefined;
+  const paced = agentAction === 'await' || awaits;
+  const until = paced ? untilOf(narrowed) : undefined;
   const details = errorDetailsOf(reply);
   const {
     ways: _ways,
@@ -702,26 +926,80 @@ export function renderReply(reply: EngineReply, host: McpHost = {}): RenderedRep
     ...rest,
     ...(details !== undefined ? { error_details: details } : {}),
     ...(agentAction !== undefined ? { agent_action: agentAction } : {}),
-    context_hint: hintOf(reply, narrowed, ended),
+    context_hint: hintOf(reply, narrowed, ended, host),
     next_actions,
     ...(also.length > 0 ? { also } : {}),
     ...(elsewhere.length > 0 ? { elsewhere } : {}),
-    ...(agentAction === 'await' ? { poll_after_ms: MCP_POLL_AFTER_MS } : {}),
+    ...(paced ? { poll_after_ms: MCP_POLL_AFTER_MS } : {}),
     ...(until !== undefined ? { until } : {}),
     ...(error?.about !== undefined ? { error: { about: error.about } } : {}),
     ...(blocked_reason !== undefined
       ? {
           blocked_reason: {
             eligible_steps: blocked_reason.eligible_steps,
-            suggestion: suggestionOf(reply, progress),
+            suggestion: suggestionOf(reply, progress, narrowed),
           },
         }
       : {}),
-    ...(gate !== undefined ? { gate } : {}),
+    ...(gate !== undefined ? { gate: withAuthorLabel(gate) } : {}),
   };
-  assertTokenEgress(envelope, reply);
+  if (tokenStrayed(envelope, narrowed)) return heldBackReply(reply, host);
   const person = personBlockOf(elsewhereEntries, reply.basis, host);
   return { envelope, ...(person !== undefined ? { person } : {}) };
+}
+
+/**
+ * #627 W (F31, W-t1): the gate's `agent_hint` is the workflow author's text (the gated step's
+ * `instructions`), forwarded marked as the author's under every answers value.
+ */
+function withAuthorLabel(gate: GateInfo): GateInfo {
+  return gate.agent_hint !== undefined
+    ? { ...gate, agent_hint: `${AUTHOR_TEXT_LABEL} ${gate.agent_hint}` }
+    : gate;
+}
+
+/**
+ * #627 W (W-e1, W-e2): the reply Realm returns in place of one that would have carried a claim token
+ * it never sends — the egress assertion's outcome, no longer a throw. It says whether the call wrote
+ * only where the reply shows it: a `respond` way with `proof` is carried only by the reply whose own
+ * call opened the question (a write, at `run_version`); otherwise it claims neither. The log line
+ * names the tool and the run, never the token.
+ */
+function heldBackReply(reply: EngineReply, host: McpHost): RenderedReply {
+  const opened = reply.ways.some((w) => w.verb === 'respond' && w.proof !== undefined);
+  // Correction 1 (E4): W-e1's two arms — the opening reply's write, or a read whose version is
+  // unchanged; otherwise neither is claimed.
+  const wrote = opened
+    ? ` and changed the run (version ${reply.run_version})`
+    : host.readVersion !== undefined && host.readVersion === reply.run_version
+      ? '; it changed nothing'
+      : '';
+  // Correction 1 (E4): the clause by row — "a question this session cannot answer" only where the
+  // door withholds answers; elsewhere the token strayed outside the opening reply's answer.
+  const withholds = doorWithholdsAnswers(mcpDoorPolicy(host));
+  const where = withholds
+    ? 'for a question this session cannot answer, which this server never sends'
+    : 'outside the answer instruction of the reply that opened the question';
+  console.error(
+    `realm: held back a ${reply.command} reply for run ${reply.run_id}: it carried a claim_token ${withholds ? 'on a handed-off question' : 'outside the answer instruction of the reply that opened the question'}. This is a bug in Realm or in the program embedding it; please report it with this line.`,
+  );
+  return {
+    envelope: {
+      command: reply.command,
+      run_id: reply.run_id,
+      run_version: reply.run_version,
+      status: 'error',
+      data: {},
+      evidence: [],
+      warnings: [],
+      errors: [],
+      error_code: 'ENGINE_INTERNAL',
+      agent_action: 'report_to_user',
+      retryable: false,
+      context_hint: `Realm held back this reply: it carried a claim token ${where}. The call itself ran${wrote}. This is a fault in Realm or in the program that embeds it, and it was logged. Do not repeat this call: tell the user, and call get_run_state to see where the run stands.`,
+      next_actions: [],
+    },
+  };
 }
 
 /**
@@ -742,33 +1020,37 @@ function personBlockOf(
       const command = route.render(way, basis);
       return command === null
         ? undefined
-        : `${elsewhereWords(u)} The operator's command: ${command}`;
+        : `${elsewhereWords(u, host)} The operator's command: ${command}`;
     })
     .filter((line): line is string => line !== undefined);
   return lines.length > 0 ? lines.join('\n') : undefined;
 }
 
 /**
- * A-17's egress assertion: a claim token leaves this door only inside the `submit_human_response`
- * instruction of the reply whose own call opened the question (its `respond` way's `proof`) — never
- * in the gate object, never on any other entry.
+ * A-17's egress assertion, as it checks: a claim token is never in the gate object, never on an
+ * `also` entry, and — on a reply whose own call did not open the question for the agent — never on
+ * any `next_actions` entry. On the opening reply (a `respond` way with its `proof`, for the agent) it
+ * does not check which `next_actions` entry carries the token (correction 2, 8.6 (b)). The opening
+ * reply is read from the NARROWED ways: on a row that hands the question to the person (#627 W) the
+ * agent has no `respond`, so there is no opening reply and any carrier strays (W's guard). True when
+ * a token strayed; the reply is then held back (W-e1).
+ *
+ * Correction 1 (E5): the two carriers W had added beside PR-0's are gone — an await entry never
+ * copies `proof` (`awaitEntryOf`), and only a `respond` way carries one, so neither could fire.
+ * Exported for the cell that pins the narrowed opening on a constructed envelope.
  */
-function assertTokenEgress(envelope: McpEnvelope, reply: EngineReply): void {
-  const opening = reply.ways.some((w) => w.verb === 'respond' && w.proof !== undefined);
-  const carriers = envelope.next_actions.filter(
-    (a) => a.instruction !== null && 'claim_token' in a.instruction.params,
+export function tokenStrayed(envelope: McpEnvelope, narrowed: Narrowed | undefined): boolean {
+  const opening = (narrowed?.ways ?? []).some(
+    (w) => w.verb === 'respond' && w.proof !== undefined && forAgent(w),
   );
-  const stray =
+  const carries = (a: McpNextAction): boolean =>
+    a.instruction !== null && 'claim_token' in a.instruction.params;
+  const carriers = envelope.next_actions.filter(carries);
+  return (
     (envelope.gate !== undefined && 'claim_token' in (envelope.gate as object)) ||
-    (envelope.also ?? []).some(
-      (a) => a.instruction !== null && 'claim_token' in a.instruction.params,
-    ) ||
-    (!opening && carriers.length > 0);
-  if (stray) {
-    throw new Error(
-      "renderReply: a claim token reached the wire outside the opening reply's answer",
-    );
-  }
+    (envelope.also ?? []).some(carries) ||
+    (!opening && carriers.length > 0)
+  );
 }
 
 // ─── Replies that are not an engine reply ───────────────────────────────────────────────────────
@@ -776,7 +1058,7 @@ function assertTokenEgress(envelope: McpEnvelope, reply: EngineReply): void {
 /** The rendered `next_actions`, `also` and `elsewhere` of one composition, for a view that is not a reply. */
 export function renderWaysOf(
   composed: Pick<EngineReply, 'ways' | 'unavailable' | 'basis'>,
-  host: McpHost = {},
+  host: McpHost,
 ): {
   narrowed: Narrowed | undefined;
   next_actions: McpNextAction[];
@@ -802,9 +1084,7 @@ export function renderWaysOf(
   } as EngineReply;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
-  const next_actions = progress
-    .map((w) => renderWay(w, composed.basis, host))
-    .filter((e): e is McpNextAction => e !== null);
+  const next_actions = nextActionsOf(narrowed, composed.basis, host);
   const also = (narrowed?.ways ?? [])
     .filter((w) => (w.verb === 'inspect' || w.verb === 'abandon') && forAgent(w))
     .map((w) => ({
@@ -820,7 +1100,7 @@ export function renderWaysOf(
     instruction: null,
     for: 'operator',
     reason: 'door_cannot_enact',
-    human_readable: elsewhereWords(u),
+    human_readable: elsewhereWords(u, host),
   }));
   const rendered = renderedListOf(reply, narrowed, progress);
   const until = untilOf(narrowed);

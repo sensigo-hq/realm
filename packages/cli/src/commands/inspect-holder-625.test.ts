@@ -3,7 +3,7 @@
 //
 //   * the claim line of an in-progress step, and every word it can show for a name that is not there;
 //   * the attempt line — "Taken by" for work, "Question opened through" for a question;
-//   * the answer line — the choice, the answerer (as stated, not verified), the proof in WORDS;
+//   * the answer line — the choice, the answerer (as stated), how it arrived (#627 W), the token in WORDS;
 //   * the read bound — a hand-planted escape sequence prints no byte of itself, on one line.
 //
 // Every phrase is pinned on the output of `inspectRun` over a hand-built record (no model, no
@@ -305,7 +305,7 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
     [
       'absent (door-neutral)',
       { claim_proof: { proof: 'absent' } },
-      'no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)',
+      "none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)",
     ],
     [
       'mismatch',
@@ -344,16 +344,16 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
       { claim_proof: { proof: 'not-a-verdict' } },
       'the recorded proof cannot be read',
     ],
-  ])('proof: %s', async (_label, extra, phrase) => {
+  ])('token: %s', async (_label, extra, phrase) => {
     const line = answerLine(await render(withAnswer(extra)));
     // (a) red when the phrase changes, or the verdict word leaks instead of words; (b) prints it.
-    expect(line.endsWith(`proof: ${phrase}`)).toBe(true);
+    expect(line.endsWith(`token: ${phrase}`)).toBe(true);
     expect(line).not.toMatch(/\bunverifiable\b|\bmismatch\b|\bspent\b/);
   });
 
   it('the answerer: a stated name is labelled "as stated, not verified"', async () => {
     expect(answerLine(await render(withAnswer({ responded_by: 'alice' })))).toContain(
-      'Answer: approve · answered by alice (as stated, not verified) · proof:',
+      'Answer: approve · answered by alice (as stated) · how it arrived was not recorded · token:',
     );
   });
 
@@ -361,21 +361,23 @@ describe('the answer line — the choice, the answerer, the proof in words', () 
     for (const responded_by of [undefined, '', '   ']) {
       const extra = responded_by === undefined ? {} : { responded_by };
       expect(answerLine(await render(withAnswer(extra)))).toContain(
-        'answered by (not stated) · proof:',
+        'answered by (not stated) · how it arrived was not recorded · token:',
       );
     }
   });
 
   it('the answerer: an escape sequence prints the ONE phrase with NO outer parentheses, and no byte of the value', async () => {
     const out = await render(withAnswer({ responded_by: `${ESC}[2Jevil` }));
-    expect(answerLine(out)).toContain(`answered by ${PHRASE_UNSHOWABLE} · proof:`);
+    expect(answerLine(out)).toContain(
+      `answered by ${PHRASE_UNSHOWABLE} · how it arrived was not recorded · token:`,
+    );
     expect(out).not.toContain(ESC);
     expect(out).not.toContain('evil');
   });
 
   it('the answerer: an over-long stored name is shown capped with the marker', async () => {
     const line = answerLine(await render(withAnswer({ responded_by: 'n'.repeat(300) })));
-    expect(line).toContain(`${'n'.repeat(200)}…[truncated] (as stated, not verified)`);
+    expect(line).toContain(`${'n'.repeat(200)}…[truncated] (as stated)`);
   });
 
   it('one answer, one line — the common gate step (one execution entry, then its answer) prints its answer', async () => {
@@ -440,9 +442,10 @@ describe('review correction C1 — each answer is printed ONCE, whatever the lay
   /** Every `Answer:` line of the output, whole lines. */
   const answerLines = (out: string): string[] =>
     out.split('\n').filter((l) => /^\s*Answer: /.test(l));
-  const LINE = '     Answer: approve · answered by (not stated) · proof: none recorded';
+  const LINE =
+    '     Answer: approve · answered by (not stated) · how it arrived was not recorded · token: none recorded';
   const LINE_BOB =
-    '     Answer: approve · answered by bob (as stated, not verified) · proof: none recorded';
+    '     Answer: approve · answered by bob (as stated) · how it arrived was not recorded · token: none recorded';
   const layout = (evidence: Record<string, unknown>[]): RunRecord =>
     baseRun({ completed_steps: ['confirm'], evidence });
 
@@ -553,7 +556,7 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     expect(lines.slice(from).filter((l) => /^ {5}(Choice|Answer|Output|Message):/.test(l))).toEqual(
       [
         '     Output: {}',
-        '     Answer: reject · answered by bob (as stated, not verified) · proof: none recorded',
+        '     Answer: reject · answered by bob (as stated) · how it arrived was not recorded · token: none recorded',
       ],
     );
   });
@@ -562,7 +565,7 @@ describe('review correction C2 — an answer the gate’s expiry wrote reads as 
     const out = await render(expiryRun({ responded_by: 'timeout' }));
     // (a) red when the reading keys on the literal `timeout` instead of `resolution`; (b) prints it.
     expect(answerLine(out)).toBe(
-      '     Answer: approve · answered by timeout (as stated, not verified) · proof: none recorded',
+      '     Answer: approve · answered by timeout (as stated) · how it arrived was not recorded · token: none recorded',
     );
   });
 });
@@ -641,7 +644,8 @@ describe('review correction C7 — "Question opened through" only under the atte
 });
 
 describe("walk 2 — every layout: the question, then the answer; the step's output once; an abort expiry prints nothing", () => {
-  const LINE = '     Answer: approve · answered by (not stated) · proof: none recorded';
+  const LINE =
+    '     Answer: approve · answered by (not stated) · how it arrived was not recorded · token: none recorded';
   const ASKED = '     Message:  "Ship it?"';
   // Every gate entry here carries the question's text, so a `Message:` line has something to print.
   const ans = (extra: Record<string, unknown> = {}) =>
@@ -701,7 +705,7 @@ describe("walk 2 — every layout: the question, then the answer; the step's out
         '     Output: {}',
         ASKED,
         LINE,
-        '     Answer: approve · answered by bob (as stated, not verified) · proof: none recorded',
+        '     Answer: approve · answered by bob (as stated) · how it arrived was not recorded · token: none recorded',
       ],
     ],
   ])('%s', async (_label, evidence, expected) => {

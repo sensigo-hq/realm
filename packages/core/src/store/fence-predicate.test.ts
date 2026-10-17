@@ -562,6 +562,38 @@ describe('evaluateFence — every refusal, field by field (issue #616 PR-0)', ()
     });
   });
 
+  it('#627 W correction 2 (8.1): a step waiting at its OWN open question is not "held by another call" — the refusal says so, and its remedy is that question’s respond way', () => {
+    const gate = {
+      gate_id: 'g-8',
+      step_name: STEP_ID,
+      preview: {},
+      choices: ['approve', 'reject'],
+      opened_at: '2026-10-17T10:00:00.000Z',
+    };
+    let thrown: unknown;
+    try {
+      evaluateFence(
+        { kind: 'step_open_for_trace', run_version: 5 },
+        run({ in_progress_steps: [STEP_ID], pending_gate: gate } as Partial<RunRecord>),
+        RUN_ID,
+        STEP_ID,
+      );
+    } catch (err) {
+      thrown = err;
+    }
+    const err = thrown as WorkflowError;
+    // (a) red when the step at its own question reads "held by another call", or its remedy is not
+    //     the question's respond way; (b) prints the message and the remedy's verb and gate.
+    expect({
+      message: err.message,
+      remedy: (err.remedy ?? []).map((w) => [w.verb, w.verb === 'respond' ? w.gate_id : undefined]),
+    }).toEqual({
+      message:
+        "Step 'step-a' is waiting for an answer to its question (gate 'g-8'); a trace can no longer be added to it.",
+      remedy: [['respond', 'g-8']],
+    });
+  });
+
   it('isStepScopedFence is true for exactly the two step members', () => {
     expect(
       FENCE_PREDICATE_KINDS.filter((kind) => isStepScopedFence({ kind } as FencePredicate)),
