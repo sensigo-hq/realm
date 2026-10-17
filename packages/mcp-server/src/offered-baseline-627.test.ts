@@ -1,17 +1,20 @@
 // offered-baseline-627.test.ts — #627 W, cell 3: an `offered` server's replies are byte-identical to
-// PR-0's head (6ecdb715) on one fixed corpus of calls, except the differences W names: W-t1's label
-// on forwarded author text (`gate.agent_hint`, a gated step's protocol instructions) and W-p4, the
-// await rule appended to the protocol under every value. The baseline is a build of 6ecdb715 in the
-// folder `REALM_627_BASELINE` names; without it the cell is skipped by name (the implementer's log
-// runs it). Ids and instants are masked; nothing else is.
+// the main commit this branch sits on, on one fixed corpus of calls, except the differences W names:
+// W-t1's label on forwarded author text (`gate.agent_hint`, a gated step's protocol instructions) and
+// W-p4, the await rule appended to the protocol under every value. The baseline is a build of that
+// commit in the folder `REALM_627_BASELINE` names; without it the cell is skipped by name (the
+// implementer's log runs it). Ids and instants are masked; nothing else is. Correction 1 (rail 3):
+// the cell prints the baseline's sha and asserts it is the commit the branch sits on.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // call and the first differing reply — never a token (ids are masked).
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as W_CORE from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -20,6 +23,7 @@ import { createRealmMcpServer } from './server.js';
 const BASE = process.env['REALM_627_BASELINE'];
 const BASE_MCP = join(BASE ?? '', 'packages/mcp-server/dist/index.js');
 const BASE_CORE = join(BASE ?? '', 'packages/core/dist/index.js');
+const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const YAML = [
   'id: base627',
@@ -132,6 +136,17 @@ const ready = BASE !== undefined && existsSync(BASE_MCP) && existsSync(BASE_CORE
 describe.skipIf(!ready)(
   '#627 W — cell 3: offered is PR-0’s head, byte for byte, but for the named differences (REALM_627_BASELINE)',
   () => {
+    it('the baseline is the main commit this branch sits on (printed, and asserted)', () => {
+      const git = (cwd: string, ...args: string[]): string =>
+        execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
+      const baseline = git(BASE!, 'rev-parse', 'HEAD');
+      const parent = git(ROOT, 'merge-base', 'HEAD', 'origin/main');
+      console.log(`cell 3: baseline ${baseline}; this branch sits on ${parent}`);
+      // (a) red when the baseline folder holds another commit than the one this branch sits on (the
+      //     comparison would then measure the wrong base); (b) prints both shas.
+      expect(baseline).toBe(parent);
+    });
+
     it('the corpus, call by call', async () => {
       const base = (await import(BASE_MCP)) as { createRealmMcpServer: Factory };
       const baseCore = (await import(BASE_CORE)) as Core;

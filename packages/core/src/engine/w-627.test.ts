@@ -8,9 +8,11 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // verbs, parties, texts — never a token.
 import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   admitWay,
   agentActionOf,
@@ -882,6 +884,25 @@ describe('#627 W — W-l1: a load note for author text that names an answer tool
       respond: notes(AUTHOR_YAML('Respond to the user, then respond to the reviewer.')),
       ordinary: notes(AUTHOR_YAML('Call submit_human_response.', { gated: false })),
     }).toEqual({ respond: [], ordinary: [] });
+  });
+
+  it('correction 1 (F3): no shipped example’s author text names an answer tool (example 03 told the agent to call submit_human_response)', () => {
+    const examples = fileURLToPath(new URL('../../../../examples/', import.meta.url));
+    const found = readdirSync(examples, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+      .map((dir) => ({
+        dir,
+        notes: notes(readFileSync(join(examples, dir, 'workflow.yaml'), 'utf8')),
+      }));
+    // (a) red when an example's gated step or protocol.rules names an answer tool again (under forms
+    //     an answer given in chat is not recorded); (b) prints each example's notes. The count checks
+    //     the instrument read all nine.
+    expect({
+      read: found.length,
+      noted: found.filter((f) => f.notes.length > 0),
+    }).toEqual({ read: 9, noted: [] });
   });
 
   it('protocol.rules: one note for the field, with the line of `rules`', () => {
