@@ -201,12 +201,21 @@ describe('a definition stored with a root $async is refused at its first check o
       trace: [{ seq: 1, event: 'e' }],
     });
     const warnings = (reply['warnings'] as string[] | undefined) ?? [];
-    // (a) red when the detection is removed (an asynchronous check runs) or the warn arm throws;
-    //     (b) prints the status and a boolean.
+    const warning = warnings.find((w) =>
+      w.startsWith("Trace schema for step 'a' was not checked: "),
+    );
+    // (a) red when the detection is removed (an asynchronous check runs), the warn arm throws, or
+    //     the warning carries the run-time form's remedy (retry, abandon) instead of its own; (b)
+    //     prints the status and booleans.
     expect({
       status: reply['status'],
-      warned: warnings.some((w) => w.startsWith("Trace schema for step 'a' was not checked: ")),
-    }).toEqual({ status: 'ok', warned: true });
+      warned: warning !== undefined,
+      ownRemedy: String(warning).endsWith(
+        "Remove `$async` from the trace schema and register the workflow again; this step's " +
+          'trace was kept unchecked.',
+      ),
+      runTimeRemedy: /retry|abandon/.test(String(warning)),
+    }).toEqual({ status: 'ok', warned: true, ownRemedy: true, runTimeRemedy: false });
   });
 
   it('4. params: start_run is refused, no run was created', async () => {
@@ -227,6 +236,41 @@ describe('a definition stored with a root $async is refused at its first check o
       code: 'VALIDATION_WORKFLOW_SCHEMA',
       validity: true,
       noRun: true,
+      runs: 0,
+    });
+  });
+
+  it('4. params, start_run_batch: the typed refusal, never "N item(s) failed schema validation"', async () => {
+    const { call, workflowStore, runStore } = await connect();
+    await workflowStore.register(
+      def('par-batch', { a: agent() }, { params_schema: ASYNC as never }),
+    );
+    const reply = await call('start_run_batch', {
+      workflow_id: 'par-batch',
+      items: [{ params: {} }, { params: { x: 1 } }],
+    });
+    const message = firstError(reply);
+    // (a) red when the batch loop's rethrow is removed (VALIDATION_BATCH_ITEMS, provide_input,
+    //     "2 item(s) failed schema validation"); (b) prints the status, code, agent action and
+    //     booleans. The run count pins the message's claim "No run was created": it is green
+    //     before the fix too, by design (the misnamed refusal also creates none).
+    expect({
+      status: reply['status'],
+      code: reply['error_code'],
+      agentAction: reply['agent_action'],
+      paramsForm: message.startsWith("Workflow 'par-batch' declares a params_schema with "),
+      validity: message.includes(asyncSchemaValidity(true)),
+      noRunSaid: message.includes('No run was created'),
+      itemsFailed: message.includes('item(s) failed'),
+      runs: (await runStore.list()).length,
+    }).toEqual({
+      status: 'error',
+      code: 'VALIDATION_WORKFLOW_SCHEMA',
+      agentAction: 'stop',
+      paramsForm: true,
+      validity: true,
+      noRunSaid: true,
+      itemsFailed: false,
       runs: 0,
     });
   });
@@ -252,7 +296,9 @@ describe('a definition stored with a root $async is refused at its first check o
     await call('execute_step', { run_id: other['run_id'], command: 'a', params: { x: 1 } });
     const abandoned = await call('abandon_run', { run_id: other['run_id'] });
     // (a) red when a definition registered again under its id is not read by the run, or a refused
-    //     run cannot be abandoned; (b) prints the two statuses and the abandoned run's phase.
+    //     run cannot be abandoned; (b) prints the two statuses and the abandoned run's phase. The
+    //     abandon half pins the message's claim ("… and abandon this one"): abandon_run works on
+    //     any running run, so that half is green before the fix too, by design.
     expect({
       refused: refused['status'],
       retried: retried['status'],

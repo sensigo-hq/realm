@@ -975,9 +975,11 @@ describe('#586 schema admission — the four authored keys', () => {
 // =================================================================================================
 describe('the loader refuses a schema block whose root carries a truthy $async', () => {
   const generic = ['is not a valid JSON Schema', 'fix the schema', 'so this check cannot run'];
-  const clauses = (message: string, key: keyof typeof SCHEMA_KEY_CONSEQUENCE, line: number) => ({
+  // A trace schema in warn mode (the default) is left unchecked at run time, never failed.
+  const TRACE_WARN = 'Every trace for this step would go unchecked at run time';
+  const clauses = (message: string, consequence: string, line: number) => ({
     validity: message.includes(asyncSchemaValidity(true)),
-    consequence: message.includes(SCHEMA_KEY_CONSEQUENCE[key]),
+    consequence: message.includes(consequence),
     remedy: message.includes('remove `$async` from the schema'),
     line: message.includes(`(line ${line})`),
     generic: generic.filter((g) => message.includes(g)),
@@ -985,35 +987,72 @@ describe('the loader refuses a schema block whose root carries a truthy $async',
   const FOUR = { validity: true, consequence: true, remedy: true, line: true, generic: [] };
 
   it.each([
-    ['params_schema', { extra: 'params_schema:\n  $async: true\n  type: object\n' }, 4, false],
+    [
+      'params_schema',
+      { extra: 'params_schema:\n  $async: true\n  type: object\n' },
+      4,
+      false,
+      SCHEMA_KEY_CONSEQUENCE.params_schema,
+    ],
     [
       'input_schema',
       { stepExtra: '    input_schema:\n      $async: true\n      type: object\n' },
       8,
       false,
+      SCHEMA_KEY_CONSEQUENCE.input_schema,
     ],
     [
       'output_schema',
       { stepExtra: '    output_schema:\n      $async: true\n      type: object\n' },
       8,
       true,
+      SCHEMA_KEY_CONSEQUENCE.output_schema,
     ],
+    // No `trace_validation_mode`: warn, the engine's default — the trace is left unchecked.
     [
       'trace_schema',
       { stepExtra: '    trace_schema:\n      $async: true\n      type: array\n' },
       8,
       true,
+      TRACE_WARN,
     ],
-  ] as const)('2. %s: refused in four clauses on the key’s line', (key, opts, line, agent) => {
-    const yaml = wf(opts);
-    const { message } = refusalOf(
-      agent ? yaml.replace('execution: auto', 'execution: agent') : yaml,
-    );
-    // (a) red when the loader's arm is removed (the generic arm forwards the run-time message
-    //     under "is not a valid JSON Schema … fix the schema"); (b) prints each clause's boolean
-    //     and the generic phrases found.
-    expect(clauses(message, key, line)).toEqual(FOUR);
-  });
+  ] as const)(
+    '2. %s: refused in four clauses on the key’s line',
+    (_key, opts, line, agent, consequence) => {
+      const yaml = wf(opts);
+      const { message } = refusalOf(
+        agent ? yaml.replace('execution: auto', 'execution: agent') : yaml,
+      );
+      // (a) red when the loader's arm is removed (the generic arm forwards the run-time message
+      //     under "is not a valid JSON Schema … fix the schema"); (b) prints each clause's boolean
+      //     and the generic phrases found.
+      expect(clauses(message, consequence, line)).toEqual(FOUR);
+    },
+  );
+
+  it.each([
+    ['missing (warn, the default)', '', TRACE_WARN],
+    ['warn', '    trace_validation_mode: warn\n', TRACE_WARN],
+    ['enforce', '    trace_validation_mode: enforce\n', SCHEMA_KEY_CONSEQUENCE.trace_schema],
+    // An invalid mode is refused on its own; this block keeps the shared consequence.
+    ['invalid', '    trace_validation_mode: sometimes\n', SCHEMA_KEY_CONSEQUENCE.trace_schema],
+  ] as const)(
+    '2. trace_schema, mode %s: the consequence that mode makes true',
+    (_mode, modeLine, consequence) => {
+      const yaml = wf({
+        stepExtra: '    trace_schema:\n      $async: true\n      type: array\n' + modeLine,
+      }).replace('execution: auto', 'execution: agent');
+      const { message } = refusalOf(yaml);
+      const other = consequence === TRACE_WARN ? SCHEMA_KEY_CONSEQUENCE.trace_schema : TRACE_WARN;
+      // (a) red when every mode gets the shared consequence (warn reads "would fail with that
+      //     error", untrue of an unchecked trace), or warn's wording reaches enforce; (b) prints
+      //     two booleans.
+      expect({
+        says: message.includes(`. ${consequence}; remove \`$async\` from the schema.`),
+        saysTheOther: message.includes(other),
+      }).toEqual({ says: true, saysTheOther: false });
+    },
+  );
 
   it('2. a YAML `$async: yes` is refused', () => {
     const { message } = refusalOf(

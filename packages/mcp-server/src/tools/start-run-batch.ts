@@ -7,6 +7,7 @@ import {
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   validateRunParams,
+  isAsyncSchemaRefusal,
   hashParams,
   unmetCapabilities,
   capabilityWarning,
@@ -132,6 +133,9 @@ export async function handleStartRunBatch(
         // item and nothing that grepped `item[0]` in a log loses it.
         validateRunParams(args.items[i]!.params, definition.params_schema, definition.id);
       } catch (err) {
+        // A params_schema that cannot be checked at all is the workflow's fault, not an item's:
+        // the typed refusal ends the call as start_run's does, never "N item(s) failed".
+        if (isAsyncSchemaRefusal(err)) throw err;
         if (err instanceof WorkflowError) {
           failures.push({ index: i, reason: `item[${i}]: ${err.message}` });
         }

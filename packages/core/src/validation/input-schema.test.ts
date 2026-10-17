@@ -176,7 +176,8 @@ describe('validateTraceSchema', () => {
 });
 
 // ---------------------------------------------------------------------------
-// issue #224 — validateAgentSubmission (the provider-replicate non-throwing validator)
+// issue #224 — validateAgentSubmission (the provider-replicate validator: it answers a verdict;
+// its one throw is the `$async` refusal, cell 1e below)
 // ---------------------------------------------------------------------------
 
 describe('validateAgentSubmission (issue #224)', () => {
@@ -394,10 +395,19 @@ describe('a schema whose root carries a truthy $async is refused', () => {
   });
 
   it('1b. a root $async of 0, null or false compiles, and the validator answers with a boolean', () => {
-    const answers = [0, null, false].map((v) => typeof compileSchema(asyncObject(v))({}));
-    // (a) red when the detection is keyed on the key's presence (these are refused); (b) prints
-    //     the answers' types.
-    expect(answers).toEqual(['boolean', 'boolean', 'boolean']);
+    const answers = [0, null, false].map((v) => {
+      let answer: string | undefined;
+      const err = caught(() => {
+        answer = typeof compileSchema(asyncObject(v))({});
+      });
+      return { refused: isAsyncSchemaRefusal(err), threw: err !== undefined, answer };
+    });
+    // (a) red when the detection is keyed on the key's presence (these are refused); (b) prints,
+    //     per value, whether it was refused, whether anything threw, and the answer's type — the
+    //     refusal is caught, so a red cell reports instead of throwing.
+    expect(answers).toEqual(
+      Array.from({ length: 3 }, () => ({ refused: false, threw: false, answer: 'boolean' })),
+    );
   });
 
   it('1c. the same async schema object compiled twice is refused both times, as two errors', () => {
@@ -446,14 +456,41 @@ describe('a schema whose root carries a truthy $async is refused', () => {
     const entries: TraceEntry[] = [{ seq: 1, event: 'e' }];
     const warned = validateTraceSchema(entries, trace, 's', 'warn');
     const enforced = caught(() => validateTraceSchema(entries, trace, 's', 'enforce'));
-    // (a) red when the warn arm is removed (warn mode throws); (b) prints the count, two booleans
-    //     and whether enforce refused.
+    // (a) red when the warn arm is removed (warn mode throws), or when the warning carries the
+    //     run-time form's remedy (retry, abandon) instead of its own; (b) prints the count, the
+    //     warning (test values only) and whether enforce refused.
     expect({
       errorCount: warned.errorCount,
-      namesStep: warned.warning.startsWith("Trace schema for step 's' was not checked: "),
-      namesAsync: warned.warning.includes('`$async: true`'),
+      warning: warned.warning,
       enforceRefused: isAsyncSchemaRefusal(enforced),
-    }).toEqual({ errorCount: 1, namesStep: true, namesAsync: true, enforceRefused: true });
+    }).toEqual({
+      errorCount: 1,
+      warning:
+        `Trace schema for step 's' was not checked: ${asyncSchemaValidity(true)}. Remove ` +
+        "`$async` from the trace schema and register the workflow again; this step's trace was " +
+        'kept unchecked.',
+      enforceRefused: true,
+    });
+  });
+
+  it('1h. the validity shows the value as written: a string quoted, cut at 30 code points, escaped', () => {
+    const shown = (v: unknown) =>
+      /^`\$async: (.*)`, which Realm does not support/s.exec(asyncSchemaValidity(v))?.[1];
+    // (a) red when a string is rendered raw (unquoted, uncut, unescaped), or cut at 30 UTF-16
+    //     units instead of code points; (b) prints each shown value (test values only).
+    expect([
+      shown('false'),
+      shown('x'.repeat(200)),
+      shown('a\u202Eb\u0085c\u2028d`e'),
+      shown('\u{1F600}'.repeat(40)),
+      shown(true),
+    ]).toEqual([
+      '"false"',
+      `"${'x'.repeat(30)}"…`,
+      '"a\\u202eb\\u0085c\\u2028d\\u0060e"',
+      `"${'\u{1F600}'.repeat(30)}"…`,
+      'true',
+    ]);
   });
 
   it('1g. validateRunParams refuses an async params_schema in its own words: no run was created', () => {
