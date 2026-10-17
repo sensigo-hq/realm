@@ -11,6 +11,11 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { load as loadYaml } from 'js-yaml';
+import * as core from '../index.js';
+import { CheckQuotesHandler } from '../handlers/check-quotes.js';
+import { QUOTE_STATES, locateQuote } from '../handlers/primitives/locate-quote.js';
+import { createDefaultRegistry } from '../extensions/default-registry.js';
 import {
   advanceRun,
   executeChain,
@@ -1225,5 +1230,248 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     expect(page('docs/reference/run-record-and-export.md')).toContain(
       `the ${fields} fields of an evidence entry (29 rows below: two rows hold two fields each),`,
     );
+  });
+});
+
+// issue #760: the sentences `docs/reference/handlers.md` adds or changes about `check_quotes` and
+// `locateQuote`, each quoted and then executed; and the CHANGELOG's #760 bullets under their
+// headings. What a failing cell prints: the sentence, or the values it compares.
+describe('#760 — handlers.md: check_quotes and locateQuote', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const raw = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  const flatten = (t: string) => t.replace(/\s+/g, ' ');
+  /** (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+  const claimOn = (p: string, sentence: string): void => {
+    expect(flatten(raw(p)), `${p} no longer says: ${sentence}`).toContain(flatten(sentence));
+  };
+  /** The fenced block of the page that holds `marker`. */
+  const block = (p: string, marker: string): string => {
+    const blocks = raw(p)
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1);
+    return blocks.find((b) => b.includes(marker)) ?? '';
+  };
+  /** The body rows of the page's table whose header row starts with `header`, as cell lists. */
+  const rows = (p: string, header: string): string[][] => {
+    const lines = raw(p).split('\n');
+    const top = lines.findIndex((l) => l.startsWith(`| ${header}`));
+    const body: string[][] = [];
+    for (let i = top + 2; top >= 0 && lines[i]?.startsWith('|'); i++) {
+      body.push(
+        lines[i]!.split('|')
+          .slice(1, -1)
+          .map((c) => c.trim()),
+      );
+    }
+    return body;
+  };
+
+  const DOC = 'The rent is €48,000 a year, paid quarterly in advance on the usual quarter days.';
+
+  it(':135 — `realm run inspect` prints a handler warning on its Warn: line; `realm agent` does not', () => {
+    // The Warn: line itself is pinned by the CLI's `inspect.test.ts` ("the Warn: line (issue #760)").
+    claimOn(
+      HANDLERS,
+      "A caller over MCP gets it in the reply's `warnings` list. `realm run inspect` prints it on the step's `Warn:` line; `realm agent` does not print it. To read it afterwards, use `realm run export`.",
+    );
+  });
+
+  it(':339 — check_quotes is registered; the two old names never were', () => {
+    claimOn(
+      HANDLERS,
+      '`check_quotes` is registered from this release (see [Built-in handlers](#built-in-handlers)). `validate_verbatim_quotes` and `validate_field_match` were never registered: a step naming them fails at execute as any missing handler does.',
+    );
+    const registry = createDefaultRegistry();
+    // (a) red when check_quotes is not registered, or an old name is; (b) prints three booleans.
+    expect([
+      registry.has('handler', 'check_quotes'),
+      registry.has('handler', 'validate_verbatim_quotes'),
+      registry.has('handler', 'validate_field_match'),
+    ]).toEqual([true, false, false]);
+  });
+
+  it(':343 — six helper functions, the import block names them, and each is exported', () => {
+    claimOn(HANDLERS, '`@sensigo/realm` exports 6 functions for use inside handlers.');
+    const names = [...block(HANDLERS, '  partitionBySubstring,').matchAll(/^ {2}(\w+),$/gm)].map(
+      (m) => m[1]!,
+    );
+    const exported = core as unknown as Record<string, unknown>;
+    // (a) red when the count, the list or an export drifts; (b) prints the names and their kinds.
+    expect(names.map((n) => [n, typeof exported[n]])).toEqual(
+      [
+        'resolveResource',
+        'walkField',
+        'partitionBySubstring',
+        'countResults',
+        'compareStrings',
+        'locateQuote',
+      ].map((n) => [n, 'function']),
+    );
+  });
+
+  it('the config table lists the handler’s keys, with its defaults', async () => {
+    const table = rows(HANDLERS, '`config` key');
+    const result = await new CheckQuotesHandler().execute(
+      { params: {} },
+      {
+        run_id: 'r',
+        run_params: {},
+        config: { source_step: 'doc', candidates_step: 'extract' },
+        resources: {
+          doc: { text: DOC },
+          extract: {
+            candidates: [{ field: 'f', quote: 'paid quarterly in advance on the usual' }],
+          },
+        },
+      },
+    );
+    const state = (result.data?.['results'] as Array<{ quote_check: { state: string } }>)[0]!
+      .quote_check.state;
+    // (a) red when a key is missing from the table, a default differs, or the defaults are not the
+    //     handler's (the defaulted fields would not be read); (b) prints the rows' key and default,
+    //     and the state.
+    expect({ table: table.map((c) => [c[0], c[1]]), state }).toEqual({
+      table: [
+        ['`source_step`', 'required'],
+        ['`source_field`', '`text`'],
+        ['`candidates_step`', 'required'],
+        ['`candidates_field`', '`candidates`'],
+        ['`quote_field`', '`quote`'],
+        ['`min_part_chars`', '`20`'],
+      ],
+      state: 'exact',
+    });
+  });
+
+  it('the states table lists the six states, in order', () => {
+    claimOn(HANDLERS, "The state describes the quote's match, never the value's correctness.");
+    // (a) red when a state is renamed, added or dropped on one side only; (b) prints both lists.
+    expect(rows(HANDLERS, 'State').map((c) => c[0]!.replace(/`/g, ''))).toEqual([...QUOTE_STATES]);
+  });
+
+  it('the record and the warning shown are what the step returns for that document', async () => {
+    const shown = JSON.parse(block(HANDLERS, '"candidates_found"')) as {
+      results: Array<Record<string, unknown>>;
+    };
+    const candidates = shown.results.map(({ quote_check: _qc, ...c }) => c);
+    const result = await new CheckQuotesHandler().execute(
+      { params: {} },
+      {
+        run_id: 'r',
+        run_params: {},
+        config: {
+          source_step: 'extract_fields',
+          source_field: 'document',
+          candidates_step: 'extract_fields',
+          candidates_field: 'fields',
+        },
+        resources: { extract_fields: { document: DOC, fields: candidates } },
+      },
+    );
+    claimOn(HANDLERS, `The step's output, for a document \`${DOC}\` and two values:`);
+    // (a) red when the shown output or warning drifts from what the step returns; (b) prints both.
+    expect({ data: result.data, warning: result.warn?.message }).toEqual({
+      data: shown,
+      warning: block(HANDLERS, 'Quote check: 1 of 2').trim(),
+    });
+  });
+
+  it('the guard pattern: the guard depends on the check, and the pattern stops the run `aborted`', async () => {
+    claimOn(
+      HANDLERS,
+      "The guard needs `depends_on: [quote_check]`. Without it the guard is checked when the run starts, before the check has an output, and the run ends `failed` with a resolution error instead of `aborted`. With it, the run ends `aborted` and the check's record is kept.",
+    );
+    // "Without it … `failed`" is pinned by `check-quotes.test.ts` ("without depends_on the guard
+    // runs first and the run FAILS").
+    const pattern = loadYaml(block(HANDLERS, 'handler: check_quotes')) as Record<string, unknown>;
+    const def = {
+      id: 'docs-760',
+      name: 'D',
+      version: 1,
+      steps: {
+        fetch_document: { description: 'F', execution: 'agent', depends_on: [] },
+        extract_fields: { description: 'E', execution: 'agent', depends_on: ['fetch_document'] },
+        ...pattern,
+      },
+    } as unknown as WorkflowDefinition;
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-')));
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const drive = (command: string, input: Record<string, unknown>) =>
+      executeChain(store, def, {
+        runId: run.id,
+        command,
+        registry: createDefaultRegistry(),
+        input,
+        dispatcher: async (_n, i) => ({ ...i }),
+      });
+    await drive('fetch_document', { text: DOC });
+    await drive('extract_fields', {
+      fields: [{ field: 'payment', value: 'quarterly', quote: 'the rent is paid quarterly' }],
+    });
+    const after = await store.get(run.id);
+    const check = after.evidence.find((e) => e.step_id === 'quote_check');
+    // (a) red when the pattern's guard cannot stop the run, or the record is lost; (b) prints the
+    //     phase, the seal and the record's flag.
+    expect({
+      phase: after.run_phase,
+      sealedBy: after.sealed_by?.arm,
+      all_found: (check?.output_summary as { all_found?: boolean } | undefined)?.all_found,
+    }).toEqual({ phase: 'aborted', sealedBy: 'guard_abort', all_found: false });
+  });
+
+  it('the locateQuote table is what it returns', () => {
+    const text = 'Payment is due in 30 days.';
+    const table = raw(HANDLERS)
+      .split('\n')
+      .filter((l) => l.startsWith('| `locateQuote('))
+      .map((l) =>
+        l
+          .split('|')
+          .slice(1, -1)
+          .map((c) => c.trim()),
+      );
+    const results = table.map(([call, returns]) => {
+      const quote = /locateQuote\('([^']*)'/.exec(call!)![1]!;
+      return [JSON.stringify(locateQuote(quote, text)), returns!.replace(/`/g, '')];
+    });
+    // (a) red when a row's result drifts from the function's; (b) prints each pair.
+    expect(results.map(([got]) => got)).toEqual(results.map(([, shown]) => shown));
+    expect(results).toHaveLength(3);
+  });
+
+  it('what the step does not check, the quote instruction, and where the record is read', () => {
+    claimOn(
+      HANDLERS,
+      'The step checks quotes, not meaning. A value whose quote is in the document may still be wrong: the quote can say `4.5%` while the value says `5%`.',
+    );
+    claimOn(
+      HANDLERS,
+      'Ask the model for one contiguous span copied character for character, or two spans joined by `…`.',
+    );
+    // `realm run export` is pinned by the CLI's `docs-claims-625.test.ts` (#760 cell); `get_run_state`
+    // carrying no step output by `step-view.ts`'s StepView (F760-AUD-06).
+    claimOn(
+      HANDLERS,
+      "The per-value record is the step's output: read it afterwards with `realm run export <run-id>`, which writes the whole run. `get_run_state` does not carry a step's output, and `realm run inspect` prints only the warning, on the step's `Warn:` line.",
+    );
+  });
+
+  it('CHANGELOG: the #760 bullets sit under [Unreleased] → Added and → Changed', () => {
+    const log = raw('CHANGELOG.md');
+    const start = log.indexOf('## [Unreleased]');
+    const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
+    const section = (h: string) => {
+      const at = unreleased.indexOf(`\n### ${h}\n`);
+      const next = unreleased.indexOf('\n### ', at + 1);
+      return unreleased.slice(at, next < 0 ? undefined : next);
+    };
+    const count = (h: string) => (section(h).match(/\(issue #760\)/g) ?? []).length;
+    // (a) red when a bullet lands under the wrong heading or is lost; (b) prints the counts.
+    expect({ added: count('Added'), changed: count('Changed'), fixed: count('Fixed') }).toEqual({
+      added: 3,
+      changed: 1,
+      fixed: 0,
+    });
   });
 });

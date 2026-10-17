@@ -1493,6 +1493,8 @@ export async function inspectRun(
       lines.push(`     Output: ${formatSummary(lastSnap.output_summary)}`);
       const lastSource = outputSourceLine(lastSnap, definition);
       if (lastSource !== undefined) lines.push(`     ${lastSource}`);
+      // issue #760: a handler's warning, whole — a sentence the operator reads in full, never cut.
+      if (lastSnap.warn !== undefined) lines.push(`     Warn: ${lastSnap.warn}`);
       if (lastSnap.trace !== undefined) {
         lines.push(`     Trace:  ${lastSnap.trace.length} entries (not hashed).`);
         if (lastSnap.trace_summary?.truncated) {
@@ -1595,6 +1597,8 @@ export async function inspectRun(
         lines.push(`     Output: ${formatSummary(snap.output_summary)}`);
         const source = outputSourceLine(snap, definition);
         if (source !== undefined) lines.push(`     ${source}`);
+        // issue #760: a handler's warning, whole — a sentence the operator reads in full, never cut.
+        if (snap.warn !== undefined) lines.push(`     Warn: ${snap.warn}`);
         if (snap.trace !== undefined) {
           lines.push(`     Trace:  ${snap.trace.length} entries (not hashed).`);
           if (snap.trace_summary?.truncated) {

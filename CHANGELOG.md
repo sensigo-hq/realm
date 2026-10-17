@@ -8,6 +8,17 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`check_quotes`: a built-in handler that checks each extracted value's quote against the source
+  document (issue #760).** It records, per value, how the quote was found — `exact`,
+  `reformatted`, `stitched`, `stitched_out_of_order`, `not_found` or `unquoted` — with offsets into
+  the document, and counts them in `by_state` and `all_found`. When a quote is not found, the step
+  completes with a warning naming each one by field, quote and nearest offsets, never the
+  document's text. The step never stops the run; a guard on its `all_found`, with
+  `depends_on` on the check, does. Registered on every runner.
+- **`locateQuote`, the sixth helper `@sensigo/realm` exports for handlers (issue #760).** The rule
+  `check_quotes` uses, for a handler of your own.
+- **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full.
+
 - **`error_count`: the total number of problems a refusal found (issue #759).** On the MCP
   reply's `error_details` for `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, beside the
   first 10 `errors`; on each record `realm run attempts` reads; and as `last_error_count` in a
@@ -137,6 +148,9 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   `realm run list --stuck` labels it `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)`.
 
 ### Changed
+
+- **The handlers reference no longer describes `validate_verbatim_quotes`, which was never
+  registered (issue #760).** Authors use `check_quotes`.
 
 - **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
   an `auto` step the engine could run is refused before anything is claimed: `blocked`,

@@ -27,6 +27,11 @@ import { readFileSync as readDoc625 } from 'node:fs';
 import { join as joinDoc625, dirname as dirDoc625 } from 'node:path';
 import { fileURLToPath as urlDoc625 } from 'node:url';
 import { lagless } from '../test-support/lag.js';
+import { executeChain, createDefaultRegistry, FailedAttemptStore } from '@sensigo/realm';
+import { JsonTraceBufferStore } from '@sensigo/realm-mcp';
+import { inspectRun } from './inspect.js';
+import { buildExportBundle } from './export.js';
+import { declared } from '../test-support/declared.js';
 
 /** C174: (a) red when the page no longer holds the sentence word for word; (b) prints it. */
 function claimDoc625(page: string, sentence: string): void {
@@ -646,3 +651,76 @@ describe(
     });
   },
 );
+
+// issue #760: `realm-run-reading.md`'s `Warn` row and `handlers.md`'s "read it afterwards with
+// `realm run export`", on a real run — the check warns, inspect prints the warning whole on its
+// `Warn:` line, and the export bundle carries the check's per-value record. What a failing cell
+// prints: booleans and the record's length.
+describe('#760 — a handler warning on `realm run inspect`, and the record in `realm run export`', () => {
+  it('the Warn row is true of a real run, and the export holds the record', async () => {
+    claimDoc625(
+      'docs/reference/cli/realm-run-reading.md',
+      "| `Warn` | The step's handler returned a warning | The warning, whole; it is never cut. Added after version 0.47.1. |",
+    );
+    claimDoc625(
+      'docs/reference/handlers.md',
+      'read it afterwards with `realm run export <run-id>`, which writes the whole run.',
+    );
+    const dir = mkdtempSync(join(tmpdir(), 'realm-760-cli-'));
+    try {
+      const runStore = new JsonFileStore(dir);
+      const def = {
+        id: 'quotes-760',
+        name: 'Q',
+        version: 1,
+        steps: {
+          extract: { description: 'E', execution: 'agent', depends_on: [] },
+          quote_check: {
+            description: 'C',
+            execution: 'auto',
+            handler: 'check_quotes',
+            depends_on: ['extract'],
+            config: { source_step: 'extract', candidates_step: 'extract' },
+          },
+        },
+      } as unknown as WorkflowDefinition;
+      const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      await executeChain(runStore, def, {
+        runId: run.id,
+        command: 'extract',
+        registry: createDefaultRegistry(),
+        input: {
+          text: 'The rent is forty-eight thousand euro a year, paid quarterly in advance.',
+          candidates: [
+            { field: 'deposit', value: '24000', quote: 'a deposit of twenty-four thousand euro' },
+          ],
+        },
+        dispatcher: async (_n, input) => ({ ...input }),
+      });
+      const warn = (await runStore.get(run.id)).evidence.find(
+        (e) => e.step_id === 'quote_check',
+      )?.warn;
+      const out = await inspectRun(
+        run.id,
+        runStore,
+        declared({ register: async () => {}, get: async () => def, list: async () => [def] }),
+      );
+      const { bundle } = await buildExportBundle(run.id, {
+        runStore,
+        failedAttemptStore: new FailedAttemptStore(dir),
+        traceBufferStore: new JsonTraceBufferStore(dir, runStore),
+      });
+      const exported = bundle.run.evidence.find((e) => e.step_id === 'quote_check')
+        ?.output_summary as { results?: unknown[] } | undefined;
+      // (a) red when inspect prints no Warn: line (or cuts it), or the export drops the record; (b)
+      //     prints the booleans and the record's length.
+      expect({
+        warned: warn !== undefined && warn.length > 120,
+        printedWhole: out.split('\n').some((l) => l.trim() === `Warn: ${warn}`),
+        exportedResults: exported?.results?.length,
+      }).toEqual({ warned: true, printedWhole: true, exportedResults: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
