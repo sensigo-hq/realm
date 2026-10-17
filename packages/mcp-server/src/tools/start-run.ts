@@ -113,12 +113,14 @@ export function formDepsOf(
 /** #627 W: one tool call's own facts — its cancel signal and its start, on the door's clock. */
 export function formCallOf(
   stores: Pick<HandleRunStores, 'door'> | undefined,
-  extra: { signal?: AbortSignal } | undefined,
+  extra: { signal?: AbortSignal; requestId?: string | number } | undefined,
 ): FormCall | undefined {
   if (stores?.door === undefined) return undefined;
   return {
     started: stores.door.monotonicNow(),
     ...(extra?.signal !== undefined ? { signal: extra.signal } : {}),
+    // Correction 1 (B9): the call's own request id, so its form rides the call's stream.
+    ...(extra?.requestId !== undefined ? { requestId: extra.requestId } : {}),
   };
 }
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
@@ -366,16 +368,20 @@ export async function handleStartRun(
       // walk 2: the hint is what an agent reads first; a supersede must be said there, not only
       // carried as a key below the next_actions block. It, or the ended run's ways back in, follow
       // the door's next sentence, as before #729 PR-0.
-      const tail =
-        finalRun.rerun_of !== undefined
-          ? ` This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`
-          : endedRunWaysSentence(finalRun, definition, new Date());
       // #627 W (§5.2b): the run this call created reached a question — its form is sent here.
       const after = await withQuestionForm(
         ranReply,
         formDepsOf(stores, runStore, definition, registry),
         call,
       );
+      // Correction 1 (B7): the ended run's ways back in are read from the record as it stands after
+      // the form's wait — a run that ended during the form gets them.
+      const afterRun =
+        after === ranReply ? finalRun : await runStore.get(run.id).catch(() => finalRun);
+      const tail =
+        finalRun.rerun_of !== undefined
+          ? ` This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`
+          : endedRunWaysSentence(afterRun, definition, new Date());
       return {
         ...mcpReplyOf(withHintTail(renderReply(after, mcpHostOf(stores)), tail)),
         deduped,
@@ -426,11 +432,9 @@ export async function handleStartRun(
     // decisions C45, C57, C64: the hand-back says what comes next on a live run (the renderer's).
     ...(createdRun.terminal_state ? {} : { names_next: true as const }),
   };
-  // #627 W (§5.2b): only the creating call sends a form — never a deduped match.
-  const after = deduped
-    ? handBack
-    : await withQuestionForm(handBack, formDepsOf(stores, runStore, definition, registry), call);
-  return { ...mcpReplyOf(renderReply(after, mcpHostOf(stores))), deduped };
+  // #627 W (§5.2b; correction 1, B10): a hand-back sends no form. A created run reaches a question only
+  // by running a step — the branch above sends that form — and a deduped match never sends one.
+  return { ...mcpReplyOf(renderReply(handBack, mcpHostOf(stores))), deduped };
 }
 
 /** Registers the start_run MCP tool on the server. */

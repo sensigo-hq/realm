@@ -23,7 +23,9 @@ import {
   isWriterNonceRequired,
   writerNonceRequiredError,
 } from './execute-step.js';
-import { mcpReplyOf, renderReply, toolContentOf } from '../render-reply.js';
+import { mcpReplyOf, renderReply, toolContentOf, type OperatorRoute } from '../render-reply.js';
+import type { McpDoor } from '../door.js';
+import { mcpHostOf } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
@@ -35,6 +37,12 @@ export interface HandleAppendTraceStores {
   /** The trace buffer the entries land in. Its run reader must read the same runs as `runStore`:
    *  the write-time fence reads the trace buffer's own reader (issue #616), never `runStore`. */
   traceBufferStore?: TraceBufferStore;
+  /** #627 W (correction 1, A2): the server's door, so an error reply's `respond` remedy is worded by
+   *  the door's one predicate (`doorWithholdsAnswers`) — never as the answer call where the session
+   *  has no answer tool. */
+  door?: McpDoor;
+  /** The operator's route, as every other tool's host carries it. */
+  operatorRoute?: OperatorRoute;
 }
 
 export type AppendTraceOkResult = { status: 'ok' } & AppendResult & {
@@ -440,6 +448,7 @@ export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceS
             workflowErr,
             contextHint,
           ),
+          mcpHostOf(opts),
         );
         return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
       }

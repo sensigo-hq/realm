@@ -13,6 +13,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  ExtensionRegistry,
   JsonFileStore,
   JsonWorkflowStore,
   advanceRun,
@@ -28,7 +29,14 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createRealmMcpServer, type RealmMcpServerOptions } from './server.js';
-import { renderOutcome, sendQuestionForm, type ElicitFn, type FormDeps } from './form-path.js';
+import {
+  renderOutcome,
+  sendQuestionForm,
+  SDK_TIMEOUT_MARGIN_MS,
+  WITHDRAWN,
+  type ElicitFn,
+  type FormDeps,
+} from './form-path.js';
 import { McpDoor } from './door.js';
 
 type Reply = Record<string, unknown>;
@@ -68,6 +76,8 @@ interface Session {
   elicited: () => number;
   /** How many requests the SERVER cancelled on the wire (a withdrawn form). */
   withdrawn: () => number;
+  /** The `reason` of each cancel the server sent (correction 1, B11). */
+  reasons: () => string[];
   setHandler: (h: Handler) => void;
   workflowId: string;
 }
@@ -76,11 +86,13 @@ async function session(
   options: Omit<RealmMcpServerOptions, 'runStore' | 'workflowStore'> = {},
   handler: Handler = async () => ({ action: 'decline' }),
   timeout?: number,
+  // Correction 1: a workflow of the cell's own, and a store of its own (B5's failing settle).
+  own: { yaml?: string; runStore?: (dir: string) => RunStore } = {},
 ): Promise<Session> {
   const dir = await mkdtemp(join(tmpdir(), 'realm-form-627-'));
-  const runStore = new JsonFileStore(join(dir, 'runs'));
+  const runStore = own.runStore?.(dir) ?? new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const def = loadWorkflowFromString(WORKFLOW(timeout));
+  const def = loadWorkflowFromString(own.yaml ?? WORKFLOW(timeout));
   await workflowStore.register(def);
   const server = createRealmMcpServer({ runStore, workflowStore, ...options });
   const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -95,12 +107,18 @@ async function session(
     return current({ params: req.params as never, signal: extra.signal });
   });
   await Promise.all([server.connect(st), client.connect(ct)]);
-  // The server's withdrawal is its `notifications/cancelled` on the wire: SDK 1.31's client ignores
-  // a cancellation for request id 0 (`!requestId`), so the client's own signal cannot show it.
+  // The server's withdrawal is its `notifications/cancelled` on the wire, counted here with its
+  // reason. SDK 1.31's client ignores a cancel for request id 0 (`!requestId`); since correction 1's
+  // B2 the server spends id 0 on a ping, so the client's own handler signal shows it too (B2's cells).
   let withdrawn = 0;
+  const reasons: string[] = [];
   const deliver = ct.onmessage;
   ct.onmessage = (message, extra) => {
-    if ((message as { method?: string }).method === 'notifications/cancelled') withdrawn++;
+    const m = message as { method?: string; params?: { reason?: unknown } };
+    if (m.method === 'notifications/cancelled') {
+      withdrawn++;
+      reasons.push(String(m.params?.reason));
+    }
     deliver?.(message, extra);
   };
   await new Promise((r) => setTimeout(r, 20));
@@ -124,6 +142,7 @@ async function session(
     workflowStore,
     elicited: () => elicited,
     withdrawn: () => withdrawn,
+    reasons: () => reasons,
     setHandler: (h) => {
       current = h;
     },
@@ -443,10 +462,17 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     const { runId, gateId } = await openedElsewhere(s);
     const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
     await new Promise((r) => setTimeout(r, 100));
-    // (a) red when the form stays open after the settle, or the reply is W-f2; (b) prints both.
-    expect({ withdrawn: s.withdrawn(), hint: hintOf(reply) }).toEqual({
+    // (a) red when the form stays open after the settle, the reply is W-f2, or the reply names the
+    //     CLI's answer command anywhere (correction 1, A1: the agent's route words name no command);
+    //     (b) prints the withdrawal count, the hint and whether the command appears.
+    expect({
+      withdrawn: s.withdrawn(),
+      hint: hintOf(reply),
+      namesCommand: JSON.stringify(reply).includes('run respond'),
+    }).toEqual({
       withdrawn: 1,
-      hint: "Meanwhile, the question on step 'q' was answered — approve, by \"alice\" (as stated), through a terminal (realm run respond). Ready for the agent: 'after'.",
+      hint: "Meanwhile, the question on step 'q' was answered — approve, by \"alice\" (as stated), through a terminal. Ready for the agent: 'after'.",
+      namesCommand: false,
     });
   }, 20_000);
 
@@ -470,7 +496,7 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
       hint: hintOf(reply),
       choices: (await answers(s, runId)).map((e) => e.input_summary?.['choice']),
     }).toEqual({
-      hint: "Not recorded: the question on step 'q' was answered — reject, through a terminal (realm run respond). Ready for the agent: 'after'.",
+      hint: "Not recorded: the question on step 'q' was answered — reject, through a terminal. Ready for the agent: 'after'.",
       choices: ['reject'],
     });
   });
@@ -486,7 +512,9 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     const spy2 = vi.spyOn(timed.server.server, 'elicitInput');
     const o = await openedElsewhere(timed);
     await timed.call('present_question', { run_id: o.runId, gate_id: o.gateId });
-    const waited = (spy2.mock.calls[0]?.[1] as { timeout?: number } | undefined)?.timeout;
+    // Correction 1 (B11): Realm's own timer is the wait; the SDK's timeout sits a margin above it.
+    const sdkTimeout = (spy2.mock.calls[0]?.[1] as { timeout?: number } | undefined)?.timeout;
+    const waited = sdkTimeout === undefined ? undefined : sdkTimeout - SDK_TIMEOUT_MARGIN_MS;
     const late = [0, 225_000];
     let j = 0;
     const tight = await session({ monotonicNow: () => late[Math.min(j++, late.length - 1)]! });
@@ -526,8 +554,10 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     // (a) red when the wait reads the stamp inline (NaN), says nothing, or a due question gets a
     //     form; (b) prints the wait, the stderr line and the forms sent.
     expect({
+      // Correction 1 (B11): Realm's wait is the SDK's timeout less the margin.
       waited: ((t) => t !== undefined && t > 59_000 && t <= 60_000)(
-        (spy.mock.calls[0]?.[1] as { timeout?: number } | undefined)?.timeout,
+        ((spy.mock.calls[0]?.[1] as { timeout?: number } | undefined)?.timeout ?? NaN) -
+          SDK_TIMEOUT_MARGIN_MS,
       ),
       said: lines.some((l) =>
         l.includes('has a deadline this version cannot read; its form waits the cap alone (60 s)'),
@@ -697,5 +727,314 @@ describe('#627 W — renderOutcome', () => {
       engine:
         "Meanwhile, the question on step 'q' was closed because step 'check' aborted the run.",
     });
+  });
+});
+
+// ─── correction 1: the form path's defects the review found (B1–B11) ────────────────────────────
+
+/** A workflow of this file's shape with its own gate lines and steps after `q`. */
+const SHAPE = (gate: string[], after: string[]) =>
+  [
+    'id: form627',
+    'name: form627',
+    'version: 1',
+    'steps:',
+    '  q:',
+    '    description: Ask.',
+    '    execution: auto',
+    '    trust: human_confirmed',
+    '    gate:',
+    ...gate.map((l) => `      ${l}`),
+    ...after,
+  ].join('\n');
+
+/** Waits until `check` holds, or `ms` passes. */
+async function until(check: () => boolean, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check() && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+}
+
+describe('#627 W correction 1 — the form path', () => {
+  it('B1: an accepted form’s reply holds no claim_token sentence', async () => {
+    const s = await session({}, async () => ({ action: 'accept', content: { choice: 'approve' } }));
+    const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+    // (a) red when core composes the token sentence for a form's answer; (b) prints the warnings.
+    expect({
+      recorded: (await answers(s, String(started['run_id']))).length,
+      tokenText: JSON.stringify(started).includes('claim_token'),
+      warnings: started['warnings'],
+    }).toEqual({ recorded: 1, tokenText: false, warnings: [] });
+  });
+
+  it.each([
+    [
+      'a CLI settle',
+      WITHDRAWN.settled,
+      undefined as number | undefined,
+      async (s: Session) => {
+        const run = (await s.runStore.list())[0]!;
+        await submitHumanResponse(s.runStore, loadWorkflowFromString(WORKFLOW()), {
+          runId: run.id,
+          gateId: run.pending_gate!.gate_id,
+          choice: 'approve',
+          route: 'cli',
+        });
+      },
+    ],
+    ['Realm’s timeout', WITHDRAWN.timeout, 3, async () => undefined],
+  ] as const)(
+    'B2/B11: the FIRST form of a fresh session, withdrawn by %s, is withdrawn on the client too, with its plain reason',
+    async (_label, reason, timeout, act) => {
+      let aborted = false;
+      const box: { s?: Session } = {};
+      const s = await session(
+        {},
+        (req) =>
+          new Promise<ElicitReply>((resolve) => {
+            req.signal.addEventListener('abort', () => {
+              aborted = true;
+              resolve({ action: 'cancel' });
+            });
+            void act(box.s!);
+          }),
+        timeout,
+      );
+      box.s = s;
+      await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+      await until(() => aborted, 3_000);
+      // (a) red when the id-0 ping is removed (the first form is id 0, whose cancel the SDK client
+      //     ignores), or a withdrawal sends the SDK's raw string; (b) prints both.
+      expect({ aborted, reasons: s.reasons() }).toEqual({ aborted: true, reasons: [reason] });
+    },
+    20_000,
+  );
+
+  it('B2/B11: the first form of a fresh session is withdrawn on the client when the client cancels the call', async () => {
+    let aborted = false;
+    const cancel = new AbortController();
+    const s = await session(
+      {},
+      (req) =>
+        new Promise<ElicitReply>((resolve) => {
+          req.signal.addEventListener('abort', () => {
+            aborted = true;
+            resolve({ action: 'cancel' });
+          });
+          cancel.abort();
+        }),
+    );
+    await s
+      .call('start_run', { workflow_id: s.workflowId, params: {} }, cancel.signal)
+      .catch(() => undefined);
+    await until(() => aborted, 3_000);
+    // (a) red when the id-0 ping is removed, or the cancel's reason is the SDK's raw string;
+    //     (b) prints both.
+    expect({ aborted, reasons: s.reasons() }).toEqual({
+      aborted: true,
+      reasons: [WITHDRAWN.cancelled],
+    });
+  }, 20_000);
+
+  it('B3: a gate with no message gets a form whose message is the reply’s gate.display', async () => {
+    let message: string | undefined;
+    const s = await session(
+      {},
+      async (req) => {
+        message = req.params.message;
+        return { action: 'decline' };
+      },
+      undefined,
+      {
+        yaml: [
+          'id: form627',
+          'name: form627',
+          'version: 1',
+          'steps:',
+          '  q:',
+          '    description: Ask.',
+          '    execution: auto',
+          '    trust: human_confirmed',
+          '    prompt: Ship the release to production?',
+          '    gate:',
+          '      choices: [approve, reject]',
+        ].join('\n'),
+      },
+    );
+    const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+    const display = (started['gate'] as { display?: string } | undefined)?.display;
+    // (a) red when the form falls back to the fixed line; (b) prints the form's message and display.
+    expect({ message, display }).toEqual({
+      message: 'Ship the release to production?',
+      display: 'Ship the release to production?',
+    });
+  });
+
+  it('B4: a form accepted after the run reached a SECOND gate records nothing on it', async () => {
+    const yaml = SHAPE(
+      ['choices: [approve, reject]'],
+      [
+        '  q2:',
+        '    description: Ask again.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    depends_on: [q]',
+        '    gate:',
+        '      choices: [approve, reject]',
+      ],
+    );
+    const box: { s?: Session } = {};
+    const s = await session(
+      {},
+      async () => {
+        const run = (await box.s!.runStore.list())[0]!;
+        const def = loadWorkflowFromString(yaml);
+        await submitHumanResponse(box.s!.runStore, def, {
+          runId: run.id,
+          gateId: run.pending_gate!.gate_id,
+          choice: 'reject',
+          route: 'cli',
+        });
+        await advanceRun(box.s!.runStore, def, { runId: run.id });
+        return { action: 'accept', content: { choice: 'approve' } };
+      },
+      undefined,
+      { yaml },
+    );
+    box.s = s;
+    const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+    const record = await s.runStore.get(String(started['run_id']));
+    // (a) red when the door submits the fresh pending_gate's id (the stale form answers gate 2);
+    //     (b) prints the open gate's step and the answers recorded per step.
+    expect({
+      open: record.pending_gate?.step_name,
+      answers: record.evidence
+        .filter((e) => e.kind === 'gate_response')
+        .map((e) => [e.step_id, e.input_summary?.['choice']]),
+    }).toEqual({ open: 'q2', answers: [['q', 'reject']] });
+  });
+
+  it('B5: an accepted form whose settle fails counts as came back', async () => {
+    class FailingSettle extends JsonFileStore {
+      // Only the answer's settle fails; opening the gate goes through.
+      override async settleStep(
+        ...args: Parameters<JsonFileStore['settleStep']>
+      ): ReturnType<JsonFileStore['settleStep']> {
+        if (args[1].kind === 'settle_gate') throw new Error('the store is full');
+        return super.settleStep(...args);
+      }
+    }
+    const s = await session(
+      {},
+      async () => ({ action: 'accept', content: { choice: 'approve' } }),
+      undefined,
+      { runStore: (dir) => new FailingSettle(join(dir, 'runs')) },
+    );
+    const { runId, gateId } = await openedElsewhere(s);
+    await s.call('present_question', { run_id: runId, gate_id: gateId }).catch(() => undefined);
+    const read = await s.call('get_run_state', { run_id: runId });
+    const words = String(firstEntry(read)?.human_readable);
+    // (a) red when the form counts as answered before its answer is recorded ("0 times"); (b) prints
+    //     the await entry's words.
+    expect(words).toContain('came back without an answer 1 time');
+  });
+
+  it('B6: start_run’s pre-flight warning survives an accepted first form (guardrail 7(b))', async () => {
+    const s = await session(
+      {},
+      async () => ({ action: 'accept', content: { choice: 'approve' } }),
+      undefined,
+      {
+        yaml: SHAPE(
+          ['choices: [approve, reject]', 'message: Ship it?'],
+          [
+            '  h:',
+            '    description: Uses a handler this server lacks.',
+            '    execution: auto',
+            '    handler: not_installed_627',
+            '    depends_on: [q]',
+          ],
+        ),
+      },
+    );
+    const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+    // (a) red when an accepted form's reply drops the pre-wait warnings; (b) prints the warnings.
+    expect((started['warnings'] as string[]).some((w) => w.includes('not_installed_627'))).toBe(
+      true,
+    );
+  });
+
+  it('B7: a run that ends during the form gets start_run’s ways-back-in sentence', async () => {
+    const yaml = SHAPE(
+      ['choices: [approve, reject]', 'message: Ship it?'],
+      [
+        '  f:',
+        '    description: Fails.',
+        '    execution: auto',
+        '    handler: fails_627',
+        '    depends_on: [q]',
+      ],
+    );
+    const box: { s?: Session } = {};
+    const s = await session(
+      {},
+      async () => {
+        const run = (await box.s!.runStore.list())[0]!;
+        const def = loadWorkflowFromString(yaml);
+        const registry = new ExtensionRegistry();
+        registry.register('handler', 'fails_627', {
+          id: 'fails_627',
+          execute: async () => {
+            throw new Error('the step failed');
+          },
+        });
+        await submitHumanResponse(box.s!.runStore, def, {
+          runId: run.id,
+          gateId: run.pending_gate!.gate_id,
+          choice: 'approve',
+          route: 'cli',
+        });
+        await advanceRun(box.s!.runStore, def, { runId: run.id, registry });
+        return { action: 'decline' };
+      },
+      undefined,
+      { yaml },
+    );
+    box.s = s;
+    const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+    const record = await s.runStore.get(String(started['run_id']));
+    // (a) red when the tail is read from the record before the wait; (b) prints the phase and hint.
+    expect({ ended: record.terminal_state, hint: hintOf(started) }).toEqual({
+      ended: true,
+      hint: expect.stringContaining('realm run resume'),
+    });
+  }, 20_000);
+
+  it('B8: a call its client already cancelled gets no form', async () => {
+    const d = await direct();
+    const cancelled = new AbortController();
+    cancelled.abort();
+    let sent = 0;
+    const result = await sendQuestionForm(
+      d.deps(async () => {
+        sent++;
+        return { action: 'decline' };
+      }),
+      d.runId,
+      d.gateId,
+      { started: d.door.monotonicNow(), signal: cancelled.signal },
+      false,
+    );
+    // (a) red when the form is sent for a cancelled call; (b) prints the result and the sends.
+    expect({ result, sent }).toEqual({ result: { kind: 'not_sent', why: 'cancelled' }, sent: 0 });
+  });
+
+  it('B9: the form carries the tool call’s request id (relatedRequestId)', async () => {
+    const s = await session();
+    const spy = vi.spyOn(s.server.server, 'elicitInput');
+    await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+    const related = (spy.mock.calls[0]?.[1] as { relatedRequestId?: unknown } | undefined)
+      ?.relatedRequestId;
+    // (a) red when the elicitation is sent without the call's id; (b) prints the id's type.
+    expect(typeof related).toBe('number');
   });
 });

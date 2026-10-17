@@ -15,7 +15,6 @@ import {
   resumeWay,
   shellWord,
 } from '@sensigo/realm';
-import { routePhraseOf } from '@sensigo/realm-mcp';
 import type {
   AnswerArrival,
   AnswerView,
@@ -387,6 +386,23 @@ function arrivalPhrase(arrival: AnswerArrival): string {
     return `through a route its program did not declare, ${recordedByPhrase(arrival.recorded_by, 'as recorded by')}`;
   }
   return 'how it arrived was not recorded';
+}
+
+/**
+ * #627 W (W-i10): how a route is named to the OPERATOR on inspect. Its own table, not the MCP door's:
+ * the operator's `cli` phrase names the command; the agent's never does (correction 1, A1).
+ */
+function routePhraseOf(route: string): string {
+  switch (route) {
+    case 'mcp_form':
+      return "the user's app, as a form";
+    case 'mcp':
+      return "Realm's MCP answer tool";
+    case 'cli':
+      return 'a terminal (realm run respond)';
+    default:
+      return `route '${route}'`;
+  }
 }
 
 /** #627 W (W-i8): the transport's principal, by kind — nothing for the absences that name no one. */

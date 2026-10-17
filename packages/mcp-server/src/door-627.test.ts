@@ -13,6 +13,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   ARGS,
   JsonFileStore,
@@ -28,7 +30,11 @@ import {
   ElicitRequestSchema,
   ToolListChangedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { createRealmMcpServer, type RealmMcpServerOptions } from './server.js';
+import {
+  createRealmMcpServer,
+  REALM_MCP_TAKES_NO_FLAGS,
+  type RealmMcpServerOptions,
+} from './server.js';
 import { effectiveGateAnswers } from './door.js';
 import { renderReply } from './render-reply.js';
 
@@ -767,6 +773,26 @@ describe('#627 W — Part I: a token for a handed-off question is held back', ()
       logged: [
         `realm: held back a ${opening.command} reply for run ${run.id}: it carried a claim_token on a handed-off question. This is a bug in Realm or in the program embedding it; please report it with this line.`,
       ],
+    });
+  });
+});
+
+describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', () => {
+  it('`realm-mcp --gate-answers withheld` refuses the start: one line, exit 1', async () => {
+    const bin = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+    const home = await mkdtemp(join(tmpdir(), 'realm-door-627-bin-'));
+    const r = spawnSync(process.execPath, [bin, '--gate-answers', 'withheld'], {
+      env: { PATH: process.env['PATH'] ?? '', HOME: home },
+      input: '',
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+    // (a) red when the bin ignores the flag and starts (it then serves `asked`, the agent keeping an
+    //     answer tool in apps without forms); (b) prints the exit and stderr — the server's own
+    //     line, never an environment.
+    expect({ code: r.status, stderr: r.stderr.trim() }).toEqual({
+      code: 1,
+      stderr: REALM_MCP_TAKES_NO_FLAGS,
     });
   });
 });

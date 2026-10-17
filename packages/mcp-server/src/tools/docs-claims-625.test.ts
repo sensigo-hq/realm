@@ -2889,7 +2889,7 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       }),
     } as EngineReply;
     const shape = (r: EngineReply) => {
-      const a = answerOf(renderReply(r).envelope as Record<string, unknown>)!;
+      const a = answerOf(renderReply(r, {}).envelope as Record<string, unknown>)!;
       return {
         params: 'claim_token' in a.instruction.params,
         call_with: 'claim_token' in a.instruction.call_with,

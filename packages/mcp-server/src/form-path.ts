@@ -40,13 +40,18 @@ export type ElicitFn = (
       required: string[];
     };
   },
-  options: { signal: AbortSignal; timeout: number },
+  // `relatedRequestId` (correction 1, B9): the tool call's own request id, so a stateful-HTTP embedder's
+  // form rides that call's stream (the SDK's HTTP transport drops a request with none when no GET
+  // stream is open).
+  options: { signal: AbortSignal; timeout: number; relatedRequestId?: string | number },
 ) => Promise<{ action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }>;
 
-/** One tool call's own facts: the client's cancel signal and when the call started (monotonic ms). */
+/** One tool call's own facts: the client's cancel signal, when the call started (monotonic ms), and
+ *  the call's JSON-RPC request id. */
 export interface FormCall {
   signal?: AbortSignal;
   started: number;
+  requestId?: string | number;
 }
 
 /** What sending a form needs: the door, its send function, the stores and the answer's facts. */
@@ -67,7 +72,7 @@ const ANSWER_FIELD = 'choice';
 export type FormResult =
   /** No form was sent: the question is not open, it is due, the call's budget is below the floor,
    *  a form for it is open, it was already sent (a first send only), or no asks are left. */
-  | { kind: 'not_sent'; why: 'not_open' | 'due' | 'budget' | 'taken' }
+  | { kind: 'not_sent'; why: 'not_open' | 'due' | 'budget' | 'cancelled' | 'taken' }
   /** An answer came back and was submitted: the answer's own reply (recorded, or not — `outcome`). */
   | { kind: 'answered'; reply: EngineReply; step: string; expires_at?: string }
   /** The form came back without an answer; `waited_s` when Realm's own timeout ended it. */
@@ -86,6 +91,9 @@ export async function sendQuestionForm(
   gateId: string,
   call: FormCall,
   firstOnly: boolean,
+  // Correction 1 (B3): the opening reply's `gate.display` — the message, else the step's prompt
+  // rendered when the gate opened — for a gate with no `resolved_message`.
+  display?: string,
 ): Promise<FormResult> {
   const snap = await loadSnapshot(deps.runStore, runId);
   const gate = snap.record.pending_gate;
@@ -109,6 +117,8 @@ export async function sendQuestionForm(
   }
   const budgetMs = capMs - (deps.door.monotonicNow() - call.started);
   if (budgetMs < FORM_WAIT_FLOOR_SECONDS * 1000) return { kind: 'not_sent', why: 'budget' };
+  // Correction 1 (B8): a call its client has already cancelled gets no form.
+  if (call.signal?.aborted === true) return { kind: 'not_sent', why: 'cancelled' };
   if (!deps.door.claimSend(gateId, firstOnly)) return { kind: 'not_sent', why: 'taken' };
   // ── the form is now marked open: from here every path closes it ──────────────────────────────
   const timeout = Math.max(1, Math.floor(Math.min(budgetMs, leftMs ?? budgetMs)));
@@ -116,18 +126,22 @@ export async function sendQuestionForm(
     run_id: runId,
     gate_id: gate.gate_id,
     choices: [...gate.choices],
-    shown_text: questionText(gate),
+    shown_text: questionText(gate, display),
   };
+  // Correction 1 (B11): Realm owns the form's timer. Each withdrawal aborts with its own plain reason,
+  // which the SDK sends the client as the cancel's `reason`; the SDK's own timeout is set above
+  // Realm's (never left unset — its default is 60 s), so Realm's timer is the one that ends the wait.
   const withdraw = new AbortController();
-  const onCancel = (): void => withdraw.abort();
+  const onCancel = (): void => withdraw.abort(WITHDRAWN.cancelled);
   call.signal?.addEventListener('abort', onCancel, { once: true });
+  const timer = setTimeout(() => withdraw.abort(WITHDRAWN.timeout), timeout);
   // The settle poll (a host timer; no stored instant compared): the form is withdrawn once the
   // question is gone — a settle deletes `pending_gate`, and so does an abort's gate cancel.
   const poll = setInterval(() => {
     deps.runStore
       .get(runId)
       .then((record: RunRecord) => {
-        if (record.pending_gate?.gate_id !== gateId) withdraw.abort();
+        if (record.pending_gate?.gate_id !== gateId) withdraw.abort(WITHDRAWN.settled);
       })
       .catch(() => undefined);
   }, FORM_SETTLE_POLL_MS);
@@ -147,13 +161,16 @@ export async function sendQuestionForm(
             required: [ANSWER_FIELD],
           },
         },
-        { signal: withdraw.signal, timeout },
+        {
+          signal: withdraw.signal,
+          timeout: timeout + SDK_TIMEOUT_MARGIN_MS,
+          ...(call.requestId !== undefined ? { relatedRequestId: call.requestId } : {}),
+        },
       );
-    } catch (err) {
+    } catch {
       // A JSON-RPC error (the SDK's InvalidParams on `{}`, a client's own failure), a withdrawn form,
-      // or Realm's own timeout: a non-answer. The SDK rejects a withdrawn request with the same code
-      // as a timeout, so only a wait this call did not withdraw is Realm's timeout.
-      const timedOut = !withdraw.signal.aborted && isTimeout(err);
+      // or Realm's own timeout: a non-answer. Realm's timeout is the withdrawal its own timer made.
+      const timedOut = withdraw.signal.reason === WITHDRAWN.timeout;
       return {
         kind: 'came_back',
         step: gate.step_name,
@@ -175,13 +192,11 @@ export async function sendQuestionForm(
         ...(gate.expires_at !== undefined ? { expires_at: gate.expires_at } : {}),
       };
     }
-    // The gate-id fence: the evidence is the question as sent, checked against this call's request
-    // state before anything is recorded. No claim token: the binding is the request state.
+    // The fence is the engine's write (correction 1, B4): the answer is submitted for the REQUEST
+    // STATE's gate — the gate this form was sent for — never a gate re-read after the wait, which would
+    // let a stale form answer a NEW question. The engine refuses it when that gate is no longer open.
+    // No claim token: the binding is the request state.
     const evidence = shownViewEvidence(gate, MCP_FORM_RENDERER);
-    if (evidence.gate_id !== request.gate_id) {
-      return { kind: 'came_back', step: gate.step_name, gate_id: gateId };
-    }
-    answered = true;
     const reply = await submitHumanResponse(deps.runStore, deps.definition, {
       runId,
       gateId: request.gate_id,
@@ -192,6 +207,12 @@ export async function sendQuestionForm(
       ...(deps.registry !== undefined ? { registry: deps.registry } : {}),
       ...(deps.driver !== undefined ? { driver: deps.driver } : {}),
     });
+    // Correction 1 (B5): answered only when the reply RECORDED it; else the form came back.
+    answered =
+      reply.status !== 'error' &&
+      reply.status !== 'blocked' &&
+      reply.answer_recorded !== false &&
+      reply.outcome === undefined;
     return {
       kind: 'answered',
       reply,
@@ -199,25 +220,38 @@ export async function sendQuestionForm(
       ...(gate.expires_at !== undefined ? { expires_at: gate.expires_at } : {}),
     };
   } finally {
+    clearTimeout(timer);
     clearInterval(poll);
     call.signal?.removeEventListener('abort', onCancel);
     deps.door.closeSend(gateId, answered);
   }
 }
 
-/** The form's message: the frozen question — the gate's resolved message, else a plain line. */
-function questionText(gate: PendingGate): string {
+/** Correction 1 (B11): why a form was withdrawn — the cancel's `reason` the client is sent. */
+export const WITHDRAWN = {
+  timeout: "the question's time ran out",
+  settled: 'the question was settled elsewhere',
+  cancelled: 'the call was cancelled',
+} as const;
+
+/** How far the SDK's own timeout sits above Realm's timer (so Realm's ends the wait). */
+export const SDK_TIMEOUT_MARGIN_MS = 5000;
+
+/** The form's message: the frozen question — the gate's resolved message, else the opening reply's
+ *  display (the step's prompt, B3), else a plain line. */
+function questionText(gate: PendingGate, display?: string): string {
   return (
-    gate.resolved_message ?? `The question on step '${gate.step_name}' is waiting for your answer.`
+    gate.resolved_message ??
+    display ??
+    `The question on step '${gate.step_name}' is waiting for your answer.`
   );
 }
 
-/** Whether a failed elicitation ended on Realm's own timeout (the SDK's RequestTimeout, -32001). */
-function isTimeout(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === -32001;
-}
-
-/** #627 W (W-i10, MCP's copy of the door's route words): how a route is named to the agent. */
+/**
+ * #627 W (W-i10): how a route is named to the AGENT, in the reply after a form (W-f3). The operator's
+ * table is the CLI's own (inspect, `holder-render.ts`): only there does the `cli` route name its
+ * command — an agent is never told how to answer a gate from a terminal (correction 1, A1).
+ */
 export function routePhraseOf(route: string): string {
   switch (route) {
     case 'mcp_form':
@@ -225,7 +259,7 @@ export function routePhraseOf(route: string): string {
     case 'mcp':
       return "Realm's MCP answer tool";
     case 'cli':
-      return 'a terminal (realm run respond)';
+      return 'a terminal';
     default:
       return `route '${route}'`;
   }
@@ -291,7 +325,12 @@ export async function replyAfterForm(
   deps: FormDeps,
 ): Promise<EngineReply> {
   if (result.kind === 'answered') {
-    const reply = { ...result.reply, command: before.command };
+    // Correction 1 (B6): the reply that preceded the wait keeps its warnings (a pre-flight warning).
+    const reply = {
+      ...result.reply,
+      command: before.command,
+      warnings: [...before.warnings, ...result.reply.warnings],
+    };
     if (reply.outcome !== undefined) {
       // The form was accepted and its answer was not recorded: what settled the question.
       return {
@@ -380,7 +419,14 @@ export async function withQuestionForm(
   const respond = reply.ways.find((w) => w.verb === 'respond');
   if (respond === undefined || respond.verb !== 'respond') return reply;
   if (deps.door.formFacts(respond.gate_id).sent > 0) return reply;
-  const result = await sendQuestionForm(deps, reply.run_id, respond.gate_id, call, true);
+  const result = await sendQuestionForm(
+    deps,
+    reply.run_id,
+    respond.gate_id,
+    call,
+    true,
+    reply.gate?.gate_id === respond.gate_id ? reply.gate.display : undefined,
+  );
   if (result.kind === 'not_sent') return reply;
   return replyAfterForm(reply, result, deps);
 }

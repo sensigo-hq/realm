@@ -375,6 +375,9 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     runStore: effectiveRunStore,
     ...(options?.workflowStore !== undefined ? { workflowStore: options.workflowStore } : {}),
     traceBufferStore,
+    // #627 W (correction 1, A2): the door, as every other tool gets it from `effectiveOptions`.
+    door,
+    ...(options?.operatorRoute !== undefined ? { operatorRoute: options.operatorRoute } : {}),
   });
 
   // #627 W (§5.2b): the session's forms, negotiated at `initialize` — form elicitation declared by
@@ -391,6 +394,11 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
       presentTool?.enable();
       abandonTool.update({ description: ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL });
     }
+    // Correction 1 (B2): the first request a server sends a client has JSON-RPC id 0, and SDK 1.31's
+    // client ignores a cancel for a falsy id (`shared/protocol.js` `_oncancel`), so a session's first
+    // form could never be withdrawn on such a client. A ping spends id 0; `request()` takes its id
+    // synchronously, so no form can take it first. Nothing is awaited here (rail 3).
+    if (shown) void server.server.ping().catch(() => undefined);
   };
 
   return server;
@@ -408,6 +416,19 @@ function isRunDirectly(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * #627 W (correction 1, A4): the `realm-mcp` bin reads no flags. A flag given to it would be ignored —
+ * `--gate-answers withheld` would start `asked`, the agent keeping an answer tool in apps without
+ * forms, with nothing said — so any argument refuses the start, with one line and exit code 1.
+ */
+export const REALM_MCP_TAKES_NO_FLAGS =
+  "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS in your MCP client's env block, or run `realm mcp --gate-answers <value>`.";
+
+if (isRunDirectly() && process.argv.length > 2) {
+  console.error(REALM_MCP_TAKES_NO_FLAGS);
+  process.exit(1);
 }
 
 if (isRunDirectly()) {

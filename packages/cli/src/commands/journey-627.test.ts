@@ -32,7 +32,10 @@ const CLI = join(ROOT, 'packages/cli/dist/index.js');
 const EXAMPLES = join(ROOT, 'examples');
 
 type Reply = Record<string, unknown>;
-type Session = 'withheld' | 'forms' | 'fallback';
+// Correction 1 (A3): two more forms clients — one accepts the form, one has the person answer in the
+// CLI before the form comes back — so the replies after an accepted form and after a mid-form settle
+// are scanned too.
+type Session = 'withheld' | 'forms' | 'fallback' | 'forms-accept' | 'forms-settle';
 
 let github: GitHubMockServerHandle;
 let slack: Server;
@@ -155,7 +158,10 @@ function forbidden(session: Session, reply: Reply, person: string): string[] {
     ['claim_token', text.includes('claim_token')],
     ['Available choices', all.includes('Available choices')],
     ['run respond', all.includes('run respond')],
-    ['present_question (not row 2)', session !== 'forms' && all.includes('present_question')],
+    [
+      'present_question (not row 2)',
+      !session.startsWith('forms') && all.includes('present_question'),
+    ],
   ];
   for (const [name, hit] of list) if (hit) found.push(name);
   const elsewhere =
@@ -335,6 +341,12 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
               params: {},
             });
             await call('advance_run:corrupt', 'advance_run', { run_id: runId });
+            // Correction 1 (A2/A3): append_trace is a registrar site too; its error reply is the door's.
+            await call('append_trace:corrupt', 'append_trace', {
+              run_id: runId,
+              step_id: downstream ?? gate.step_name,
+              entries: [{ event: 'journey' }],
+            });
             writeFileSync(copy, good);
             // Settled by the person's CLI answer.
             const answered = await realm(home, proj, [
@@ -367,6 +379,123 @@ describe('#627 W — cell 2: the journey scan over examples 03, 07, 08, 09 × th
           rmSync(proj, { recursive: true, force: true });
         }
       }, 120_000);
+    }
+  }
+});
+
+describe('#627 W correction 1 (A3) — the replies after an accepted form and after a mid-form settle', () => {
+  for (const c of CASES) {
+    for (const session of ['forms-accept', 'forms-settle'] as const) {
+      it(`${c.dir} · ${session}`, async () => {
+        const home = mkdtempSync(join(tmpdir(), 'realm-journey-627-home-'));
+        const proj = mkdtempSync(join(tmpdir(), 'realm-journey-627-proj-'));
+        try {
+          cpSync(join(EXAMPLES, c.dir), proj, { recursive: true });
+          if ('manifest' in c) writeFileSync(join(proj, 'realm.yaml'), c.manifest());
+          const reg = await realm(home, proj, [
+            'workflow',
+            'register',
+            join(proj, 'workflow.yaml'),
+          ]);
+          expect(reg.code, reg.out).toBe(0);
+          const fixture = loadFixtureFromFile(join(proj, 'fixtures', c.fixture));
+          const def: WorkflowDefinition = loadWorkflowFromFile(join(proj, 'workflow.yaml'));
+          const client = new Client(
+            { name: 'journey-627', version: '0' },
+            { capabilities: { elicitation: { form: {} } } },
+          );
+          let forms = 0;
+          client.setRequestHandler(ElicitRequestSchema, async (req) => {
+            forms++;
+            const schema = req.params as {
+              requestedSchema?: { properties?: { choice?: { enum?: string[] } } };
+            };
+            const choice = schema.requestedSchema?.properties?.choice?.enum?.[0] ?? '';
+            if (session === 'forms-settle') {
+              // The person answers in the CLI while the form is open; the form then comes back.
+              const runs = await new JsonFileStore(join(home, '.realm', 'runs')).list();
+              const open = runs.find((r) => r.pending_gate !== undefined);
+              if (open !== undefined) {
+                await realm(home, proj, [
+                  'run',
+                  'respond',
+                  open.id,
+                  '--gate',
+                  open.pending_gate!.gate_id,
+                  '--choice',
+                  choice,
+                ]);
+              }
+            }
+            return { action: 'accept', content: { choice } };
+          });
+          const transport = new StdioClientTransport({
+            command: process.execPath,
+            args: [CLI, 'mcp', '--project', proj],
+            cwd: proj,
+            env: { ...process.env, HOME: home } as Record<string, string>,
+            stderr: 'pipe',
+          });
+          let stderr = '';
+          transport.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
+          await client.connect(transport);
+          const results: { probe: string; class: string; found: string[] }[] = [];
+          try {
+            const call = async (probe: string, name: string, args: Reply): Promise<Reply> => {
+              const r = (await client.callTool({ name, arguments: args }, undefined, {
+                timeout: 600_000,
+              })) as { content: Array<{ text?: string }>; isError?: boolean };
+              const reply = JSON.parse(r.content[0]?.text ?? '{}') as Reply;
+              results.push({
+                probe,
+                class:
+                  reply['error_code'] === 'ENGINE_INTERNAL'
+                    ? 'internal_error'
+                    : String(reply['status'] ?? (r.isError === true ? 'tool_error' : 'none')),
+                found: forbidden(session, reply, r.content[1]?.text ?? ''),
+              });
+              return reply;
+            };
+            // Drive the run, calling only what next_actions names; the form is answered inside the
+            // call that reaches the gate.
+            let reply = await call('start_run', 'start_run', {
+              workflow_id: def.id,
+              params: realParams(fixture.params ?? {}, proj),
+            });
+            const runId = String(reply['run_id']);
+            for (let i = 0; i < 20; i++) {
+              const action = (
+                reply['next_actions'] as
+                  Array<{ instruction: { tool: string; call_with: Reply } | null }> | undefined
+              )?.[0];
+              if (action === undefined || action.instruction === null) break;
+              const { tool, call_with } = action.instruction;
+              if (tool === 'submit_human_response' || tool === 'present_question') break;
+              const args: Reply = { ...call_with };
+              if (tool === 'execute_step')
+                args['params'] = fixture.agent_responses?.[call_with['command'] as string] ?? {};
+              reply = await call(`drive:${tool}`, tool, args);
+            }
+            await call('get_run_state', 'get_run_state', { run_id: runId });
+          } finally {
+            await client.close();
+          }
+          // (a) red when the reply after an accepted form or a mid-form settle names an answer way
+          //     (the token sentence, the CLI command), a probe internal-errors, or no form was sent;
+          //     (b) prints each offending probe and the forms sent.
+          expect({
+            formSent: forms > 0,
+            offending: results
+              .filter((r) => r.found.length > 0)
+              .map((r) => `${r.probe}: ${r.found.join(', ')}`),
+            internal: results.filter((r) => r.class === 'internal_error').map((r) => r.probe),
+            heldBack: (stderr.match(/realm: held back a /g) ?? []).length,
+          }).toEqual({ formSent: true, offending: [], internal: [], heldBack: 0 });
+        } finally {
+          rmSync(home, { recursive: true, force: true });
+          rmSync(proj, { recursive: true, force: true });
+        }
+      }, 180_000);
     }
   }
 });

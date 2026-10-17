@@ -858,7 +858,7 @@ export interface RenderedReply {
  * the person block with an operator's commands, only when the launching door injected an operator
  * route (P-6). One egress assertion at the exit: no claim token outside the opening reply's answer.
  */
-export function renderReply(reply: EngineReply, host: McpHost = {}): RenderedReply {
+export function renderReply(reply: EngineReply, host: McpHost): RenderedReply {
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
   const next_actions = nextActionsOf(narrowed, reply.basis, host);
@@ -1018,7 +1018,7 @@ function tokenStrayed(envelope: McpEnvelope, narrowed: Narrowed | undefined): bo
 /** The rendered `next_actions`, `also` and `elsewhere` of one composition, for a view that is not a reply. */
 export function renderWaysOf(
   composed: Pick<EngineReply, 'ways' | 'unavailable' | 'basis'>,
-  host: McpHost = {},
+  host: McpHost,
 ): {
   narrowed: Narrowed | undefined;
   next_actions: McpNextAction[];

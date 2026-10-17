@@ -41,7 +41,7 @@ function def(steps: Record<string, StepDefinition>, extra?: Partial<WorkflowDefi
 }
 
 /** The envelope an agent reads for an engine reply. */
-const out = (reply: EngineReply) => renderReply(reply).envelope;
+const out = (reply: EngineReply) => renderReply(reply, {}).envelope;
 
 /** The sentence of what comes next for a record, as the MCP door says it. */
 const nextSentenceOf = (
@@ -51,6 +51,7 @@ const nextSentenceOf = (
 ): string =>
   renderWaysOf(
     composeWaysAt(run, new Date(), { definition, ...(registry !== undefined ? { registry } : {}) }),
+    {},
   ).next_sentence;
 
 /** An open run with nothing in flight and no question open. */
@@ -257,6 +258,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
           b: { description: 'B', execution: 'auto', depends_on: [] },
         }),
       }),
+      {},
     );
     expect(two.next_actions[0]!.human_readable).toBe(
       "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
@@ -265,6 +267,7 @@ describe('#729 PR-0 — the MCP door words what comes next (formerly core descri
       composeWaysAt(openRun(), new Date(), {
         definition: def({ a: { description: 'A', execution: 'auto', depends_on: [] } }),
       }),
+      {},
     );
     expect(one.next_actions[0]!.human_readable).toBe(
       "Call advance_run to run the step the engine owes: 'a'. It runs it with this server's extensions and environment.",
@@ -453,7 +456,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
           workflowVersion: 1,
           params: {},
         });
-        const action = renderWaysOf(composeWaysAt(run, new Date(), { definition: def }))
+        const action = renderWaysOf(composeWaysAt(run, new Date(), { definition: def }), {})
           .next_actions[0]!;
         expect(action.instruction!.tool).toBe('execute_step');
         expect(Object.keys(action)).not.toContain('expected_timeout');
@@ -487,7 +490,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
         });
         // issue #625 PR-2a (decision C5): an auto step is never its own next action — its handler is
         // no tool a client can call; the one act is `advance_run`.
-        const action = renderWaysOf(composeWaysAt(run, new Date(), { definition: def }))
+        const action = renderWaysOf(composeWaysAt(run, new Date(), { definition: def }), {})
           .next_actions[0]!;
         expect(action.instruction!.tool).toBe('advance_run');
         expect(Object.keys(action)).not.toContain('expected_timeout');
@@ -519,6 +522,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
 
         const actions = renderWaysOf(
           composeWaysAt(run, new Date(), { definition: agentStepDef }),
+          {},
         ).next_actions;
         expect(actions).toHaveLength(1);
         const action = actions[0]!;
@@ -568,6 +572,7 @@ describe('#729 PR-0 — the run_step and advance instructions an agent reads', (
         // issue #625 PR-2a: an auto step is never its own next action — the one act runs it
         const actions = renderWaysOf(
           composeWaysAt(run, new Date(), { definition: autoStepDef }),
+          {},
         ).next_actions;
         expect(actions).toHaveLength(1);
         expect(actions[0]!.instruction!.tool).toBe('advance_run');

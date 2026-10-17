@@ -5407,6 +5407,9 @@ function withGateClaim(
   storeKeepsClaims: boolean,
   answerRecorded: boolean,
   tokenPresented: boolean,
+  // #627 W (correction 1, B1): the answer's route. A form's answer carries no token BY DESIGN, so a
+  // sentence about not passing one would be false — none is composed for `mcp_form`.
+  route?: string | undefined,
 ): EngineReply {
   if (gateClaim === undefined || envelope.status !== 'ok') return envelope;
   let openedBy: Attributed | ActorAbsent;
@@ -5420,7 +5423,10 @@ function withGateClaim(
     openedBy =
       'holder' in described ? described.holder : { by: null, absent_cause: described.absent_cause };
   }
-  const sentence = composeGateClaimSentence(gateClaim, answerRecorded, tokenPresented);
+  const sentence =
+    route === 'mcp_form'
+      ? undefined
+      : composeGateClaimSentence(gateClaim, answerRecorded, tokenPresented);
   return {
     ...envelope,
     gate_claim: {
@@ -5659,7 +5665,11 @@ async function composeExpiredGateEnvelope(
   expireResult: SettlementResult,
   // issue #625: the verdict the late answer already earned (judged when its gate id matched,
   // before the expiry was found) and the engine inputs the reply's sentence needs.
-  answerClaim: { verdict: AnswerClaim | undefined; tokenPresented: boolean },
+  answerClaim: {
+    verdict: AnswerClaim | undefined;
+    tokenPresented: boolean;
+    route?: string | undefined;
+  },
   // decision C151: the call this late answer is — named on the expiry line when it carried it out.
   via: AnswerCaller,
   // F1: the question's `expires_at` as read BEFORE the expiry's write (the settled record no longer
@@ -5702,6 +5712,7 @@ async function composeExpiredGateEnvelope(
     store.persistsClaims === true,
     false,
     answerClaim.tokenPresented,
+    answerClaim.route,
   );
   const ending = guardEndingOf(expireResult);
   // decision C211 (the architect's addendum, round 28 note 7): a late answer whose expiry ended the
@@ -6078,7 +6089,11 @@ export async function submitHumanResponse(
             options.choice,
             now,
             expireResult,
-            { verdict: result.gateClaim, tokenPresented: options.claimToken !== undefined },
+            {
+              verdict: result.gateClaim,
+              tokenPresented: options.claimToken !== undefined,
+              route: options.route,
+            },
             via,
             // F1: the question as the refusal read it (fresh), else as this call read it.
             [result.run.pending_gate, run.pending_gate].find((g) => g?.gate_id === options.gateId)
@@ -6156,6 +6171,7 @@ export async function submitHumanResponse(
             store.persistsClaims === true,
             !gateSettledByTimeout(noopRun, stepName),
             options.claimToken !== undefined,
+            options.route,
           );
         }
         case 'gate_choice_conflict': {
@@ -6411,6 +6427,7 @@ export async function submitHumanResponse(
       store.persistsClaims === true,
       true,
       options.claimToken !== undefined,
+      options.route,
     );
   }
 
@@ -6518,7 +6535,7 @@ export async function submitHumanResponse(
         options.choice,
         now,
         expireOutcome,
-        { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
+        { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented, route: options.route },
         via,
         run.pending_gate.expires_at,
       );
@@ -6554,7 +6571,7 @@ export async function submitHumanResponse(
       options.choice,
       now,
       { ...expireOutcome, run: persistedExpiry },
-      { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented },
+      { verdict: legacyGateClaim, tokenPresented: legacyTokenPresented, route: options.route },
       via,
       run.pending_gate.expires_at,
     );
@@ -6721,6 +6738,7 @@ export async function submitHumanResponse(
     store.persistsClaims === true,
     true,
     legacyTokenPresented,
+    options.route,
   );
 }
 

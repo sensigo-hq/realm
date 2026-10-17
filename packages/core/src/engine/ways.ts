@@ -690,15 +690,19 @@ export function narrowForDoor(
   const narrow = (way: WayOn): ForWay => {
     const narrowed = withParties(way, policy.serves, row);
     if (way.verb === 'respond' && withholdsAnswers(row) && policy.serves.includes('agent')) {
+      // Correction 1 (A5): the opening claim token is the agent's, and the agent is removed here — so
+      // it rides neither the person's kept way nor the listing's remedy (A-17's one carrier).
+      const tokenless = withoutProof(narrowed);
       if (!withheld.has(way.gate_id)) {
         withheld.set(way.gate_id, {
           verb: 'respond',
           step: way.step,
           code: 'door_withholds_answers',
           facts: { party: 'agent' },
-          remedy: [narrowed],
+          remedy: [tokenless],
         });
       }
+      return tokenless;
     }
     return narrowed;
   };
@@ -747,6 +751,13 @@ export function narrowForDoor(
     basis: composed.basis,
     door: { name: policy.door, source: policy.source },
   };
+}
+
+/** A narrowed `respond` way without its `proof` (correction 1, A5); any other way as it is. */
+function withoutProof(way: ForWay): ForWay {
+  if (way.verb !== 'respond' || way.proof === undefined) return way;
+  const { proof: _proof, ...rest } = way;
+  return rest;
 }
 
 /** A remedy narrowed for a door: its parties, minted by the same law — and #627 W's row. */

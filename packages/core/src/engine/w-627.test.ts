@@ -19,6 +19,7 @@ import {
   narrowForDoor,
   presentDoorVerdict,
   presentWayOfGate,
+  DOOR_SERVES,
   renderDefinitionAbsent,
   LIBRARY_WORDS,
   type DoorAnswers,
@@ -112,9 +113,10 @@ const answersOf = (value: DoorAnswers['value'], shown: boolean): DoorAnswers => 
   forms: { shown, source: { kind: 'negotiated', ref: 'test' } },
 });
 
+// Correction 1 (C5a): the parties come from the MCP door's own table, so a change to it reaches cell 23.
 const mcpDoor = (answers?: DoorAnswers): DoorPolicy => ({
   door: 'mcp',
-  serves: ['agent', 'asked_person'],
+  serves: [...DOOR_SERVES.mcp],
   route: 'mcp',
   source: SRC,
   ...(answers !== undefined ? { answers } : {}),
@@ -193,6 +195,24 @@ describe('#627 W — narrowForDoor applies §5.2’s four-row table', () => {
         present: 'no_form_here',
       },
     });
+  });
+
+  it('correction 1 (A5): on the withholding rows the opening claim token rides nowhere in Narrowed; where the agent answers it stays on its way', async () => {
+    const { def, record } = await atGate();
+    const composed = composeWaysOn(writtenSnapshot(record, new Date()), {
+      ...ctxOf(def),
+      opening_token: 'tok-627-a5',
+    });
+    const carries = (answers: DoorAnswers) =>
+      JSON.stringify(narrowForDoor(composed, mcpDoor(answers), () => NEVER)).includes('tok-627-a5');
+    // (a) red when the strip is removed (the token rides the person's kept way and the listing's
+    //     remedy on rows 2 and 4); (b) prints, per row, whether the token is anywhere in Narrowed.
+    expect({
+      offered: carries(ROWS.offered),
+      asked_forms: carries(ROWS.asked_forms),
+      fallback: carries(ROWS.fallback),
+      withheld: carries(ROWS.withheld),
+    }).toEqual({ offered: true, asked_forms: false, fallback: true, withheld: false });
   });
 
   it('the asked person’s respond never becomes door_cannot_enact, on any row', async () => {
