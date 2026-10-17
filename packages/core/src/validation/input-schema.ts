@@ -32,54 +32,87 @@ import {
  * unattributed and unciteable; `realm run` would have printed it twice in two voices. `false` is
  * verdict-neutral (executed on ajv 8.20.0: every compile-error class still throws).
  *
- * Issue #560: the compiled-validator cache is built HERE. A schema whose content is exactly JSON
- * (`keyOf`) is compiled once per process for the run-time checks, from its own frozen copy, and the
- * validator is reused by every later call with the same content — so a caller reads `.errors` right
- * after its own call (every caller in this file does, synchronously). A schema that is not exactly
- * JSON is compiled fresh each time, as before, and so is one whose text alone is heavier than the
- * whole bound (it could never be kept). The silent path reads and writes the cache; the capturing
- * path (`onStrictLog`, the loader at admission) compiles fresh so its strict-mode lines are captured
- * on every load, then writes the cache and never reads it. A compile that throws is not cached. The
- * cache is bounded by entries and by weight (its key, its JSON values and the compiled code it
- * keeps), least recently used first. Issue #552's seam — an admission-time cost bound on a
- * legal-but-enormous schema — still belongs here, and is still not built.
+ * Issue #560: THIS exported function is uncached — a fresh validator on every call, compiled from
+ * the caller's own object and shared with no one, so its `.errors` belong to the caller. The
+ * compiled-validator cache serves only this file's own run-time checks (`compileCached`) and the
+ * loader's admission (`compileCapturing`); every entry compiles through the one inner compile,
+ * `compileInner`. Issue #552's seam — an admission-time cost bound on a legal-but-enormous schema —
+ * still belongs there, and is still not built.
  */
 export function compileSchema(
   schema: JsonSchema,
   opts?: { onStrictLog?: (line: string) => void },
 ): ValidateFunction {
-  const onStrictLog = opts?.onStrictLog;
-  const keyed = keyOf(schema);
-  // A schema whose text alone is heavier than the whole bound can never be kept, so it is compiled
-  // from the caller's object like a schema with no key: no parse, no frozen copy, no cache. Its
-  // key's `JSON.stringify` is still paid on every call (issue #552's bound would refuse it first).
-  const cacheable =
-    keyed !== undefined && keyed.key.length <= MAX_CACHED_WEIGHT ? keyed : undefined;
-  // The silent path (run time) reads the cache; the capturing path never does (decision D7: the
-  // strict-mode lines are captured on every load).
-  if (cacheable !== undefined && onStrictLog === undefined) {
-    const hit = compiledSchemas.get(cacheable.key);
-    if (hit !== undefined) {
-      compiledSchemas.delete(cacheable.key);
-      compiledSchemas.set(cacheable.key, hit);
-      return hit.validate;
-    }
-  }
+  return compileInner(schema as object, opts?.onStrictLog);
+}
+
+/**
+ * Issue #560 — the ONE inner compile every entry goes through: the exported `compileSchema`, the
+ * run-time checks' `compileCached` and the loader's `compileCapturing`. Any refusal that follows a
+ * compile belongs HERE, before anything is returned or cached.
+ */
+function compileInner(source: object, onStrictLog?: (line: string) => void): ValidateFunction {
   // ONE constructor call, always — the source-text witness counts the construction shape in this
   // file (comments stripped) and that count IS the load-≡-run guarantee, so a ternary over two
-  // constructor calls is forbidden here. The whole conditional lives in the OPTIONS OBJECT. A
-  // cacheable schema is compiled from its own frozen copy: Ajv reads object-valued `enum`/`const`
-  // members at validate time and its error rows alias them, so a shared validator must never see
-  // a caller change its schema. A throw propagates before anything is cached.
-  const validate = newAjv(onStrictLog).compile(
-    cacheable === undefined
-      ? (schema as object)
-      : (deepFreeze(JSON.parse(cacheable.key)) as object),
-  );
-  if (cacheable !== undefined) {
-    rememberCompiled(cacheable.key, validate, weightOf(cacheable.key, cacheable.nodes, validate));
+  // constructor calls is forbidden here. The whole conditional lives in the OPTIONS OBJECT. A throw
+  // propagates before anything is cached.
+  return newAjv(onStrictLog).compile(source);
+}
+
+/**
+ * Issue #560 — the run-time checks' compile: a schema whose content is exactly JSON (`keyOf`) and
+ * that can be kept (`cacheableKey`) is compiled once per process, from its own frozen copy, and the
+ * validator is reused by every later check with the same content. Each check clears the errors the
+ * validator keeps right after its last read (`releaseErrors`), so a kept validator keeps no error
+ * rows between checks. Any other schema is compiled fresh from the caller's object, as before. A
+ * compile that throws is not cached. Internal: exported for the loader and the tests, never from
+ * the package.
+ */
+export function compileCached(schema: JsonSchema): ValidateFunction {
+  const cacheable = cacheableKey(schema);
+  if (cacheable === undefined) return compileInner(schema as object);
+  const hit = compiledSchemas.get(cacheable.key);
+  if (hit !== undefined) {
+    compiledSchemas.delete(cacheable.key);
+    compiledSchemas.set(cacheable.key, hit);
+    return hit.validate;
   }
+  // The frozen copy: Ajv reads object-valued `enum`/`const` members at validate time and its error
+  // rows alias them, so a kept validator must never see a caller change its schema.
+  const validate = compileInner(deepFreeze(JSON.parse(cacheable.key)) as object);
+  rememberCompiled(cacheable.key, validate, weightOf(cacheable.key, cacheable.nodes, validate));
   return validate;
+}
+
+/**
+ * Issue #560, decision D7 — the loader's compile at admission: it compiles fresh on every call, so
+ * the strict-mode lines are captured on every load, then writes the cache when the schema can be
+ * kept, and never reads it — so the run time's first check reuses admission's compile. Internal,
+ * like `compileCached`.
+ */
+export function compileCapturing(
+  schema: JsonSchema,
+  onStrictLog: (line: string) => void,
+): ValidateFunction {
+  const cacheable = cacheableKey(schema);
+  if (cacheable === undefined) return compileInner(schema as object, onStrictLog);
+  const validate = compileInner(deepFreeze(JSON.parse(cacheable.key)) as object, onStrictLog);
+  rememberCompiled(cacheable.key, validate, weightOf(cacheable.key, cacheable.nodes, validate));
+  return validate;
+}
+
+/**
+ * The key of a schema the cache could keep, or `undefined`. An entry whose key and JSON values
+ * alone (`key.length + NODE_WEIGHT × nodes`, known before any compile) are over the whole bound can
+ * never be kept, so it is compiled from the caller's object like a schema with no key: no parse, no
+ * frozen copy, no cache. Its key's `JSON.stringify` is still paid on every call (issue #552's bound
+ * would refuse it first).
+ */
+function cacheableKey(schema: JsonSchema): { key: string; nodes: number } | undefined {
+  const keyed = keyOf(schema);
+  return keyed !== undefined && keyed.key.length + NODE_WEIGHT * keyed.nodes <= MAX_CACHED_WEIGHT
+    ? keyed
+    : undefined;
 }
 
 /** A workflow declares tens of schemas; 256 holds every schema of many workflows at once. */
@@ -92,11 +125,13 @@ const MAX_CACHED_SCHEMAS = 256;
  * its own, and compiles it as a separate function (which the root's source never shows) when it
  * does; and a schema of many small JSON values holds more per character than its text.
  *
- * Measured 2026-10-17 (Node 24.21, Ajv 8.20 with `allErrors`, each kept validator called 2,000
- * times): 1.96 to 4.79 bytes of heap per weight character across five shapes (code copied per
- * reference, references compiled apart, 50,000 JSON values, 3,000 plain properties, non-Latin
- * text), plus about 2.9 MB for 256 small schemas — so about 23 MB at the bound in the heaviest case
- * measured.
+ * Measured 2026-10-17 (Node 24.21, Ajv 8.20 with `allErrors`; each kept validator called 2,000
+ * times with a passing input, then once refused through its check, the larger heap reading kept):
+ * 1.99 to 6.49 bytes of heap per weight character across six shapes (code copied per reference,
+ * references compiled apart, 50,000 JSON values, 3,000 plain properties, non-Latin text, 2,000
+ * properties each with its own `pattern`), plus about 3.1 MB for 256 small schemas — so at most
+ * about 30 MB at the bound in the heaviest case measured (6.49 × 4 Mi + 3.12 MB). A kept validator
+ * keeps no error rows between checks (`releaseErrors`).
  */
 const MAX_CACHED_WEIGHT = 4 * 1024 * 1024;
 /** The weight of one JSON value in a schema. A value holds more memory than its few characters of
@@ -136,16 +171,33 @@ function rememberCompiled(key: string, validate: ValidateFunction, weight: numbe
  * already in its source).
  */
 function weightOf(key: string, nodes: number, validate: ValidateFunction): number {
-  const functions = new Set<unknown>([validate]);
+  let code = 0;
+  for (const fn of keptFunctions(validate)) code += fn.toString().length;
+  return key.length + NODE_WEIGHT * nodes + code;
+}
+
+/** The DISTINCT compiled functions one validator keeps: itself and each separately compiled
+ *  reference target (`schemaEnv.root.refs[*].validate`). ONE list, read by the weight and by
+ *  `releaseErrors`, so what is weighed and what is cleared cannot drift apart. */
+function keptFunctions(validate: ValidateFunction): Set<ValidateFunction> {
+  const functions = new Set<ValidateFunction>([validate]);
   for (const ref of Object.values(validate.schemaEnv.root.refs)) {
     if (ref !== null && typeof ref === 'object') {
       const sub = (ref as { validate?: unknown }).validate;
-      if (typeof sub === 'function') functions.add(sub);
+      if (typeof sub === 'function') functions.add(sub as ValidateFunction);
     }
   }
-  let code = 0;
-  for (const fn of functions) code += (fn as () => unknown).toString().length;
-  return key.length + NODE_WEIGHT * nodes + code;
+  return functions;
+}
+
+/**
+ * Issue #560 — Ajv stores every call's full error list ON the validator function, and on each
+ * reference target compiled as its own function; a kept validator would hold its last refused
+ * call's rows (and a passing call's failed `anyOf`/`oneOf` branch rows) until its next check. Each
+ * run-time check calls this in a `finally`, after its last read: the rows it keeps are copies.
+ */
+function releaseErrors(validate: ValidateFunction): void {
+  for (const fn of keptFunctions(validate)) fn.errors = null;
 }
 
 /** Thrown inside `keyOf`'s replacer to void a key. */
@@ -204,7 +256,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** The ONE construction (see `compileSchema`); every authored-block check goes through it. */
+/** The ONE construction (see `compileInner`); every authored-block compile goes through it. */
 function newAjv(onStrictLog?: (line: string) => void): Ajv {
   const fwd = (...args: unknown[]): void => onStrictLog?.(args.map(String).join(' '));
   const ajv = new Ajv({
@@ -500,19 +552,23 @@ export function validateInputSchema(
   schema: JsonSchema,
   stepId: string,
 ): void {
-  const validate = compileSchema(schema);
-  const valid = validate(input);
-  if (!valid) {
-    throw new WorkflowError(`Invalid input for step '${stepId}'`, {
-      code: 'VALIDATION_INPUT_SCHEMA',
-      category: 'VALIDATION',
-      agentAction: 'provide_input',
-      retryable: false,
-      // issue #759 (Amendment 11): the rows are this code's typed facts — capped, with the total;
-      // `details` keeps no second copy of the list.
-      facts: validationFactsOf(validate.errors ?? []),
-      stepId,
-    });
+  const validate = compileCached(schema);
+  try {
+    const valid = validate(input);
+    if (!valid) {
+      throw new WorkflowError(`Invalid input for step '${stepId}'`, {
+        code: 'VALIDATION_INPUT_SCHEMA',
+        category: 'VALIDATION',
+        agentAction: 'provide_input',
+        retryable: false,
+        // issue #759 (Amendment 11): the rows are this code's typed facts — capped, with the
+        // total; `details` keeps no second copy of the list.
+        facts: validationFactsOf(validate.errors ?? []),
+        stepId,
+      });
+    }
+  } finally {
+    releaseErrors(validate);
   }
 }
 
@@ -525,19 +581,23 @@ export function validateOutputSchema(
   schema: JsonSchema,
   stepId: string,
 ): void {
-  const validate = compileSchema(schema);
-  const valid = validate(output);
-  if (!valid) {
-    throw new WorkflowError(`Output validation failed for step '${stepId}'`, {
-      code: 'VALIDATION_OUTPUT_SCHEMA',
-      category: 'VALIDATION',
-      agentAction: 'provide_input',
-      retryable: false,
-      // issue #759 (Amendment 11): the rows are this code's typed facts — capped, with the total;
-      // `details` keeps no second copy of the list.
-      facts: validationFactsOf(validate.errors ?? []),
-      stepId,
-    });
+  const validate = compileCached(schema);
+  try {
+    const valid = validate(output);
+    if (!valid) {
+      throw new WorkflowError(`Output validation failed for step '${stepId}'`, {
+        code: 'VALIDATION_OUTPUT_SCHEMA',
+        category: 'VALIDATION',
+        agentAction: 'provide_input',
+        retryable: false,
+        // issue #759 (Amendment 11): the rows are this code's typed facts — capped, with the
+        // total; `details` keeps no second copy of the list.
+        facts: validationFactsOf(validate.errors ?? []),
+        stepId,
+      });
+    }
+  } finally {
+    releaseErrors(validate);
   }
 }
 
@@ -575,7 +635,7 @@ export function validateRunParams(
 ): void {
   let validate: ValidateFunction;
   try {
-    validate = compileSchema(schema);
+    validate = compileCached(schema);
   } catch (err) {
     // The GRANDFATHERED population (#586 walk, finding D2): `start_run` / `start_run_batch` read
     // the REGISTERED copy, which the loader never sees again — so a stored `params_schema` that
@@ -611,23 +671,27 @@ export function validateRunParams(
       },
     );
   }
-  if (validate(params)) return;
-  const errors = validate.errors ?? [];
-  // issue #759 (r1.2): every problem, in this site's pointer words (`(root) <message>` /
-  // `<instancePath> <message>`; an extra property by its key, `/<key> is not allowed` — #759
-  // correction 1) — any other first clause byte-identical to the single one before; with no usable
-  // row, today's `(root) is invalid`.
-  const sentence = renderProblemsSentence(describeValidationProblems(errors, 'pointer'));
-  throw new WorkflowError(
-    `Invalid params for workflow '${workflowId}': ${sentence === '' ? '(root) is invalid' : sentence}`,
-    {
-      code: 'VALIDATION_INPUT_SCHEMA',
-      category: 'VALIDATION',
-      agentAction: 'provide_input',
-      retryable: false,
-      facts: validationFactsOf(errors),
-    },
-  );
+  try {
+    if (validate(params)) return;
+    const errors = validate.errors ?? [];
+    // issue #759 (r1.2): every problem, in this site's pointer words (`(root) <message>` /
+    // `<instancePath> <message>`; an extra property by its key, `/<key> is not allowed` — #759
+    // correction 1) — any other first clause byte-identical to the single one before; with no
+    // usable row, today's `(root) is invalid`.
+    const sentence = renderProblemsSentence(describeValidationProblems(errors, 'pointer'));
+    throw new WorkflowError(
+      `Invalid params for workflow '${workflowId}': ${sentence === '' ? '(root) is invalid' : sentence}`,
+      {
+        code: 'VALIDATION_INPUT_SCHEMA',
+        category: 'VALIDATION',
+        agentAction: 'provide_input',
+        retryable: false,
+        facts: validationFactsOf(errors),
+      },
+    );
+  } finally {
+    releaseErrors(validate);
+  }
 }
 
 /**
@@ -638,9 +702,10 @@ export function validateRunParams(
  * against the WRONG major version and the wrong shape (or fail to resolve the named export at
  * all). This alias is exported FROM CORE (so it resolves against core's own ajv@8) — `cli` must
  * import `RawValidationError` from `@sensigo/realm`, never `from 'ajv'` directly. Runtime rows are
- * always ajv@8 (issue #586: this module now has exactly ONE construction site, `compileSchema`
- * above — bare, ajv@8 — used by `validateInputSchema`/`validateOutputSchema`/`validateTraceSchema`,
- * by `validateRunParams`, by the loader's admission check and by `create_workflow`) — this type is
+ * always ajv@8 (issue #586: this module has exactly ONE construction site, `compileInner` above —
+ * bare, ajv@8 — used by every entry: `compileCached` for `validateInputSchema` /
+ * `validateOutputSchema` / `validateTraceSchema` / `validateRunParams`, `compileCapturing` for the
+ * loader's admission check, and the exported `compileSchema` for `create_workflow`) — this type is
  * a type-resolution fix only, not a runtime behavior change.
  */
 export type RawValidationError = import('ajv').ErrorObject;
@@ -671,7 +736,7 @@ export interface AgentSubmissionValidation {
  * mirroring the engine's Step 2b→2c order and its INPUT-FIRST SHORT-CIRCUIT (an input-schema
  * rejection returns immediately; output_schema is never checked that call, exactly like the
  * engine's own single-increment-per-rejection behavior). Both this function and the engine's Step
- * 2b/2c bottom on the SAME two functions + the same `compileSchema` construction (issue #586; see
+ * 2b/2c bottom on the SAME two functions + the same inner compile, `compileInner` (issue #586; see
  * `validateInputSchema`/`validateOutputSchema` above) — this is what makes the AJV verdict
  * divergence-proof between the provider's in-conversation check and the engine's drive-time gate,
  * WITHOUT touching or unifying the engine's own Step 2b/2c (issue #220's counting/exhaustion/
@@ -760,37 +825,41 @@ export function validateTraceSchema(
   stepId: string,
   mode: 'warn' | 'enforce',
 ): TraceSchemaWarnResult | void {
-  const validate = compileSchema(schema);
-  const valid = validate(entries);
-  if (valid) {
-    if (mode === 'warn') return { errorCount: 0, warning: '' };
-    return;
-  }
+  const validate = compileCached(schema);
+  try {
+    const valid = validate(entries);
+    if (valid) {
+      if (mode === 'warn') return { errorCount: 0, warning: '' };
+      return;
+    }
 
-  if (mode === 'enforce') {
-    throw new WorkflowError(`Trace schema validation failed for step '${stepId}'`, {
-      code: 'VALIDATION_TRACE_SCHEMA',
-      category: 'VALIDATION',
-      agentAction: 'provide_input',
-      retryable: false,
-      // issue #759 (rail 4): the untyped bag carries the capped rows and their total, under the
-      // typed codes' key names.
-      details: {
-        errors: (validate.errors ?? []).slice(0, VALIDATION_PROBLEMS_SHOWN),
-        error_count: (validate.errors ?? []).length,
-      },
-      stepId,
-    });
-  }
+    if (mode === 'enforce') {
+      throw new WorkflowError(`Trace schema validation failed for step '${stepId}'`, {
+        code: 'VALIDATION_TRACE_SCHEMA',
+        category: 'VALIDATION',
+        agentAction: 'provide_input',
+        retryable: false,
+        // issue #759 (rail 4): the untyped bag carries the capped rows and their total, under the
+        // typed codes' key names.
+        details: {
+          errors: (validate.errors ?? []).slice(0, VALIDATION_PROBLEMS_SHOWN),
+          error_count: (validate.errors ?? []).length,
+        },
+        stepId,
+      });
+    }
 
-  // warn mode — return error details without throwing. issue #759 (r1.6): the same composer, in the
-  // pointer words (a root violation reads `(root) <message>`; an extra property its own pointer,
-  // `/0/seq is not allowed`), capped, with `; and N more`; the count is the true total.
-  const problems = describeValidationProblems(validate.errors ?? [], 'pointer');
-  return {
-    errorCount: problems.total,
-    warning: `Trace schema violation for step '${stepId}': ${renderProblemsSentence(problems)}`,
-  };
+    // warn mode — return error details without throwing. issue #759 (r1.6): the same composer, in
+    // the pointer words (a root violation reads `(root) <message>`; an extra property its own
+    // pointer, `/0/seq is not allowed`), capped, with `; and N more`; the count is the true total.
+    const problems = describeValidationProblems(validate.errors ?? [], 'pointer');
+    return {
+      errorCount: problems.total,
+      warning: `Trace schema violation for step '${stepId}': ${renderProblemsSentence(problems)}`,
+    };
+  } finally {
+    releaseErrors(validate);
+  }
 }
 
 /**

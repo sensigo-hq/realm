@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   compileSchema,
+  compileCached,
+  compileCapturing,
   validateInputSchema,
   validateOutputSchema,
   validateRunParams,
@@ -354,9 +356,11 @@ describe('validateAgentSubmission (issue #224)', () => {
 
 // =================================================================================================
 // issue #560 — the run-time checks reuse each authored schema's compiled validator instead of
-// compiling it on every check. The cache key is the schema's JSON text when its content is exactly
-// JSON; the entry is compiled from its own frozen copy; the capturing path (the loader) writes the
-// cache and never reads it; the bound is 256 entries and 4 Mi of weight. What a failing cell
+// compiling it on every check, through the internal `compileCached`; the exported `compileSchema`
+// compiles a fresh validator on every call. The cache key is the schema's JSON text when its
+// content is exactly JSON; the entry is compiled from its own frozen copy; the capturing path
+// (`compileCapturing`, the loader) writes the cache and never reads it; each check clears the
+// errors a kept validator holds; the bound is 256 entries and 4 Mi of weight. What a failing cell
 // prints: function identities as booleans, verdicts, error counts and instance paths — never a
 // value.
 // =================================================================================================
@@ -367,18 +371,18 @@ describe('issue #560 — the compiled-validator cache', () => {
     // (a) red when every call compiles afresh (the base), or the key confuses two contents; (b)
     //     prints three booleans.
     expect({
-      sameObjectTwice: compileSchema(s1) === compileSchema(s1),
-      jsonEqualObjects: compileSchema(s1) === compileSchema(s2),
-      differentContent: compileSchema({ type: 'string' }) === compileSchema({ type: 'number' }),
+      sameObjectTwice: compileCached(s1) === compileCached(s1),
+      jsonEqualObjects: compileCached(s1) === compileCached(s2),
+      differentContent: compileCached({ type: 'string' }) === compileCached({ type: 'number' }),
     }).toEqual({ sameObjectTwice: true, jsonEqualObjects: true, differentContent: false });
   });
 
   it('2. the capturing path captures every time — after a silent call put the content in the cache', () => {
     const union = { type: ['string', 'number'], description: 'c560-2' } as unknown as JsonSchema;
-    compileSchema(union); // silent first: the cache now holds this content
+    compileCached(union); // silent first: the cache now holds this content
     const capture = () => {
       const lines: string[] = [];
-      compileSchema(union, { onStrictLog: (line) => lines.push(line) });
+      compileCapturing(union, (line) => lines.push(line));
       return lines.filter((l) => l.includes('strict mode: use allowUnionTypes')).length;
     };
     // (a) red when the capturing path reads the cache (no compile, no line); (b) prints the count
@@ -388,17 +392,17 @@ describe('issue #560 — the compiled-validator cache', () => {
 
   it('3. admission → run time compiles once: a capturing call, then a silent call on the same content, return one function', () => {
     const block: JsonSchema = { type: 'object', required: ['c560b'] };
-    const captured = compileSchema(block, { onStrictLog: () => {} });
+    const captured = compileCapturing(block, () => {});
     // (a) red when the capturing compile is not written to the cache (the run time compiles the
     //     same schema a second time); (b) prints a boolean.
-    expect(compileSchema(JSON.parse(JSON.stringify(block)) as JsonSchema) === captured).toBe(true);
+    expect(compileCached(JSON.parse(JSON.stringify(block)) as JsonSchema) === captured).toBe(true);
   });
 
   it('4. a compile that throws is not cached: two calls throw two errors; a valid schema after it is unaffected', () => {
     const bad = { type: 'object', c560NotAKeyword: true } as unknown as JsonSchema;
     const thrown = () => {
       try {
-        compileSchema(bad);
+        compileCached(bad);
         return undefined;
       } catch (err) {
         return err;
@@ -412,7 +416,7 @@ describe('issue #560 — the compiled-validator cache', () => {
       firstThrew: first instanceof Error,
       secondThrew: second instanceof Error,
       sameError: first === second,
-      validAfter: compileSchema({ type: 'string', description: 'c560-4' })('ok'),
+      validAfter: compileCached({ type: 'string', description: 'c560-4' })('ok'),
     }).toEqual({ firstThrew: true, secondThrew: true, sameError: false, validAfter: true });
   });
 
@@ -424,14 +428,14 @@ describe('issue #560 — the compiled-validator cache', () => {
     () => {
       const nth = (i: number): JsonSchema => ({ type: 'string', description: `c560-5a-${i}` });
       const first: ValidateFunctionLike[] = [];
-      for (let i = 1; i <= 256; i++) first[i] = compileSchema(nth(i));
-      compileSchema(nth(1)); // a hit: #1 becomes the most recent
-      compileSchema(nth(257));
+      for (let i = 1; i <= 256; i++) first[i] = compileCached(nth(i));
+      compileCached(nth(1)); // a hit: #1 becomes the most recent
+      compileCached(nth(257));
       // (a) red when the cache does not keep #1–#256 (the base compiles afresh), does not refresh
       //     a hit's recency, or evicts past the bound; (b) prints two booleans.
       expect({
-        firstKept: compileSchema(nth(1)) === first[1],
-        secondEvicted: compileSchema(nth(2)) !== first[2],
+        firstKept: compileCached(nth(1)) === first[1],
+        secondEvicted: compileCached(nth(2)) !== first[2],
       }).toEqual({ firstKept: true, secondEvicted: true });
     },
   );
@@ -483,13 +487,13 @@ describe('issue #560 — the compiled-validator cache', () => {
     '5b-i. the weight counts the compiled code: two schemas whose code is over 4 Mi together cannot both stay',
     { timeout: 60_000 },
     () => {
-      const a = compileSchema(inlined(60, 1));
-      const b = compileSchema(inlined(60, 2));
+      const a = compileCached(inlined(60, 1));
+      const b = compileCached(inlined(60, 2));
       // (a) red when the weight counts no compiled code (both stay: their keys are 4,498 characters);
       //     (b) prints two booleans.
       expect({
-        secondKept: compileSchema(inlined(60, 2)) === b,
-        firstEvicted: compileSchema(inlined(60, 1)) !== a,
+        secondKept: compileCached(inlined(60, 2)) === b,
+        firstEvicted: compileCached(inlined(60, 1)) !== a,
       }).toEqual({ secondKept: true, firstEvicted: true });
     },
   );
@@ -498,15 +502,15 @@ describe('issue #560 — the compiled-validator cache', () => {
     '5b-ii. the weight counts the sub-validators a reference compiles apart: three indirect schemas cannot all stay',
     { timeout: 60_000 },
     () => {
-      const d1 = compileSchema(indirect(40, 1));
-      const d2 = compileSchema(indirect(40, 2));
-      const d3 = compileSchema(indirect(40, 3));
+      const d1 = compileCached(indirect(40, 1));
+      const d2 = compileCached(indirect(40, 2));
+      const d3 = compileCached(indirect(40, 3));
       // (a) red when the weight counts the root validator's source only (each root is 674
       //     characters, so all three stay); (b) prints three booleans.
       expect({
-        thirdKept: compileSchema(indirect(40, 3)) === d3,
-        secondKept: compileSchema(indirect(40, 2)) === d2,
-        firstEvicted: compileSchema(indirect(40, 1)) !== d1,
+        thirdKept: compileCached(indirect(40, 3)) === d3,
+        secondKept: compileCached(indirect(40, 2)) === d2,
+        firstEvicted: compileCached(indirect(40, 1)) !== d1,
       }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true });
     },
   );
@@ -516,13 +520,13 @@ describe('issue #560 — the compiled-validator cache', () => {
     { timeout: 60_000 },
     () => {
       const small = (): JsonSchema => ({ type: 'string', description: 'c560-5b-iii' });
-      const s = compileSchema(small());
-      const h = compileSchema(inlined(120, 3));
+      const s = compileCached(small());
+      const h = compileCached(inlined(120, 3));
       // (a) red when the guard is removed (the heavy entry evicts everything, then itself); (b)
       //     prints two booleans.
       expect({
-        olderKept: compileSchema(small()) === s,
-        heavyNeverCached: compileSchema(inlined(120, 3)) !== h,
+        olderKept: compileCached(small()) === s,
+        heavyNeverCached: compileCached(inlined(120, 3)) !== h,
       }).toEqual({ olderKept: true, heavyNeverCached: true });
     },
   );
@@ -531,15 +535,15 @@ describe('issue #560 — the compiled-validator cache', () => {
     '5b-iv. the weight counts the JSON values: three schemas of 50,000 values cannot all stay',
     { timeout: 60_000 },
     () => {
-      const c1 = compileSchema(constOf(50_000, 1));
-      const c2 = compileSchema(constOf(50_000, 2));
-      const c3 = compileSchema(constOf(50_000, 3));
+      const c1 = compileCached(constOf(50_000, 1));
+      const c2 = compileCached(constOf(50_000, 2));
+      const c3 = compileCached(constOf(50_000, 3));
       // (a) red when the weight counts no JSON values (each key is 150,049 characters, so all three
       //     stay); (b) prints three booleans.
       expect({
-        thirdKept: compileSchema(constOf(50_000, 3)) === c3,
-        secondKept: compileSchema(constOf(50_000, 2)) === c2,
-        firstEvicted: compileSchema(constOf(50_000, 1)) !== c1,
+        thirdKept: compileCached(constOf(50_000, 3)) === c3,
+        secondKept: compileCached(constOf(50_000, 2)) === c2,
+        firstEvicted: compileCached(constOf(50_000, 1)) !== c1,
       }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true });
     },
   );
@@ -552,10 +556,58 @@ describe('issue #560 — the compiled-validator cache', () => {
       // (a) red when such a schema is parsed and frozen like any keyable one (the validator's
       //     schema is then a copy); (b) prints three booleans.
       expect({
-        schemaIsCallers: compileSchema(huge).schema === huge,
+        schemaIsCallers: compileCached(huge).schema === huge,
         callersFrozen: Object.isFrozen(huge),
-        neverCached: compileSchema(huge) !== compileSchema(huge),
+        neverCached: compileCached(huge) !== compileCached(huge),
       }).toEqual({ schemaIsCallers: true, callersFrozen: false, neverCached: true });
+      // The pre-check counts what is known before the compile (D5): a key of about 420 K plus
+      // 32 × 140,004 JSON values ≈ 4.9 M is over the bound before any code is counted.
+      const values = constOf(140_000, 1);
+      // (a) `schemaIsCallers` is red when the pre-check reads the text length only (the entry is
+      //     then parsed and frozen, and the validator's schema is the copy); `neverCached` has no
+      //     single break that turns it red — the weight guard also refuses this entry (registry
+      //     560-AUD3-11); (b) prints two booleans.
+      expect({
+        schemaIsCallers: compileCached(values).schema === values,
+        neverCached: compileCached(values) !== compileCached(values),
+      }).toEqual({ schemaIsCallers: true, neverCached: true });
+    },
+  );
+
+  it(
+    '5b-vi. the weight counts the key’s characters: three schemas of 1.5 Mi text cannot all stay',
+    { timeout: 60_000 },
+    () => {
+      const text = (tag: string): JsonSchema => ({
+        type: 'string',
+        description: `${tag}:` + 'x'.repeat(1.5 * 1024 * 1024),
+      });
+      const t1 = compileCached(text('c560-5b-vi-1'));
+      const t2 = compileCached(text('c560-5b-vi-2'));
+      const t3 = compileCached(text('c560-5b-vi-3'));
+      // (a) red when the weight leaves out the key (each entry's code and values are small, so all
+      //     three stay); (b) prints three booleans.
+      expect({
+        thirdKept: compileCached(text('c560-5b-vi-3')) === t3,
+        secondKept: compileCached(text('c560-5b-vi-2')) === t2,
+        firstEvicted: compileCached(text('c560-5b-vi-1')) !== t1,
+      }).toEqual({ thirdKept: true, secondKept: true, firstEvicted: true });
+    },
+  );
+
+  it(
+    '5b-vii. a refresh subtracts the weight it replaces: a capturing compile of kept content stays kept',
+    { timeout: 60_000 },
+    () => {
+      const a = compileCached(inlined(60, 9));
+      const c = compileCapturing(inlined(60, 9), () => {}); // the same content, refreshed
+      // (a) red when a refresh does not subtract the entry it replaces (the leftover weight pushes
+      //     the total over the bound and evicts the refreshed entry itself); (b) prints two
+      //     booleans.
+      expect({
+        replaced: c !== a,
+        refreshedKept: compileCached(inlined(60, 9)) === c,
+      }).toEqual({ replaced: true, refreshedKept: true });
     },
   );
 
@@ -581,9 +633,9 @@ describe('issue #560 — the compiled-validator cache', () => {
       ],
     ];
     const verdicts = pairs.map(([name, odd, json, input]) => {
-      const oddFirst = [compileSchema(odd())(input), compileSchema(json())(input)];
-      const jsonFirst = [compileSchema(json())(input), compileSchema(odd())(input)].reverse();
-      const oddCompiledEachTime = compileSchema(odd()) !== compileSchema(odd());
+      const oddFirst = [compileCached(odd())(input), compileCached(json())(input)];
+      const jsonFirst = [compileCached(json())(input), compileCached(odd())(input)].reverse();
+      const oddCompiledEachTime = compileCached(odd()) !== compileCached(odd());
       return { name, oddFirst, jsonFirst, oddCompiledEachTime };
     });
     // (a) red when the key is `JSON.stringify` plain (the odd schema and its JSON copy share a key,
@@ -638,7 +690,7 @@ describe('issue #560 — the compiled-validator cache', () => {
 
   it('8. the frozen copy: a caller changing its schema after a compile does not change the verdict; an error row cannot change the cache; the caller’s schema stays unfrozen', () => {
     const mine = { enum: [{ c560k: 1 }] } as unknown as JsonSchema;
-    const validate = compileSchema(mine);
+    const validate = compileCached(mine);
     (mine as unknown as { enum: Array<{ c560k: number }> }).enum[0]!.c560k = 2;
     const stillValid = validate({ c560k: 1 });
     validate('nope');
@@ -670,7 +722,7 @@ describe('issue #560 — the compiled-validator cache', () => {
     let threw = false;
     let unknownKeyword = false;
     try {
-      compileSchema(withFunction);
+      compileCached(withFunction);
     } catch (err) {
       threw = true;
       unknownKeyword = err instanceof Error && err.message.includes('strict mode: unknown keyword');
@@ -686,8 +738,8 @@ describe('issue #560 — the compiled-validator cache', () => {
       value: () => ({ type: 'number' }),
       enumerable: false,
     });
-    const v1 = compileSchema(disguised as JsonSchema);
-    const v2 = compileSchema(disguised as JsonSchema);
+    const v1 = compileCached(disguised as JsonSchema);
+    const v2 = compileCached(disguised as JsonSchema);
     // (a) red when the key ignores `toJSON` (the key becomes the `toJSON` result: the verdict
     //     flips to `number`, and it is cached); (b) prints two verdicts and a boolean.
     expect({ abcValid: v1('abc'), oneValid: v1(1), twoFunctions: v1 !== v2 }).toEqual({
@@ -703,7 +755,7 @@ describe('issue #560 — the compiled-validator cache', () => {
     let isRangeError = false;
     let startsWithMaxCallStack = false;
     try {
-      compileSchema(cyclic as JsonSchema);
+      compileCached(cyclic as JsonSchema);
     } catch (err) {
       isRangeError = err instanceof RangeError;
       startsWithMaxCallStack =
@@ -714,6 +766,130 @@ describe('issue #560 — the compiled-validator cache', () => {
     expect({ isRangeError, startsWithMaxCallStack }).toEqual({
       isRangeError: true,
       startsWithMaxCallStack: true,
+    });
+  });
+
+  /** An input that fails every leaf property of `indirect(40, k)`: 40 × 40 type errors. */
+  const failingIndirect = (): Record<string, unknown> => ({
+    m: Object.fromEntries(
+      Array.from({ length: 40 }, (_, r) => [
+        `r${r}`,
+        Object.fromEntries(Array.from({ length: 40 }, (_, f) => [`f${f}`, 1])),
+      ]),
+    ),
+  });
+  /** The functions besides `v` that `v` keeps: its separately compiled reference targets. */
+  const subValidators = (v: ValidateFunctionLike): ValidateFunctionLike[] => [
+    ...new Set(
+      Object.values(v.schemaEnv.root.refs)
+        .map((ref) => (ref as { validate?: unknown } | null)?.validate)
+        .filter((f): f is ValidateFunctionLike => typeof f === 'function' && f !== v),
+    ),
+  ];
+
+  it(
+    '10. a kept validator keeps no errors: a refused check clears the validator and its separately compiled reference target, after the refusal took its rows',
+    { timeout: 60_000 },
+    () => {
+      const s = indirect(40, 7);
+      const kept = compileCached(s); // the check below reuses this validator
+      let refusal: WorkflowError | undefined;
+      try {
+        validateInputSchema(failingIndirect(), s, 's');
+      } catch (err) {
+        refusal = err as WorkflowError;
+      }
+      const v = compileCached(s);
+      const subs = subValidators(v);
+      // (a) red when `releaseErrors` clears the root only (`subCleared`), when the `finally` is
+      //     removed from `validateInputSchema` (`rootCleared`, `subCleared`), or when the errors are
+      //     cleared before the facts are read (`refusalKeptRows` — cell 7 too); (b) prints booleans
+      //     and the count of reference targets.
+      expect({
+        hit: v === kept,
+        subs: subs.length,
+        rootCleared: v.errors === null,
+        subCleared: subs.every((f) => f.errors === null),
+        refusalKeptRows:
+          ((refusal?.facts as ValidationErrorFacts | undefined)?.errors.length ?? 0) > 0,
+      }).toEqual({
+        hit: true,
+        subs: 1,
+        rootCleared: true,
+        subCleared: true,
+        refusalKeptRows: true,
+      });
+    },
+  );
+
+  it(
+    '10. the other checks clear it too: output, params, trace in warn mode and in enforce mode',
+    { timeout: 60_000 },
+    () => {
+      const s = indirect(40, 8);
+      const v = compileCached(s);
+      const clearedAfter = (check: () => unknown): boolean => {
+        try {
+          check();
+        } catch {
+          // refused, as each check here is
+        }
+        return compileCached(s) === v && v.errors === null;
+      };
+      const entries: TraceEntry[] = [{ seq: 1, event: 'e' }];
+      // (a) red when the `finally` is removed from that one check (its validator keeps the
+      //     refused call's rows); (b) prints four booleans.
+      expect({
+        output: clearedAfter(() => validateOutputSchema(failingIndirect(), s, 's')),
+        params: clearedAfter(() => validateRunParams(failingIndirect(), s, 'w')),
+        traceWarn: clearedAfter(() => validateTraceSchema(entries, s, 's', 'warn')),
+        traceEnforce: clearedAfter(() => validateTraceSchema(entries, s, 's', 'enforce')),
+      }).toEqual({ output: true, params: true, traceWarn: true, traceEnforce: true });
+    },
+  );
+
+  it('11. the exported compileSchema is uncached again: a fresh validator per call, from the caller’s object; the internal entry shares', () => {
+    const s: JsonSchema = { type: 'object', description: 'c560-11' };
+    const a = compileSchema(s);
+    const b = compileSchema(s);
+    // (a) red when `compileSchema` is routed through the cache (`fresh`, `schemaIsCallers`); (b)
+    //     prints three booleans.
+    expect({
+      fresh: a !== b,
+      schemaIsCallers: a.schema === s,
+      cachedIsShared: compileCached(s) === compileCached(s),
+    }).toEqual({ fresh: true, schemaIsCallers: true, cachedIsShared: true });
+  });
+
+  it('12. one inner compile: every entry calls compileInner, and `.compile(` appears only in compileInner and describeSchemaFailure', () => {
+    // The #586 witness's reading: comments stripped.
+    const stripped = readFileSync(
+      fileURLToPath(new URL('./input-schema.ts', import.meta.url)),
+      'utf8',
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const body = (name: string): string => {
+      const start = stripped.search(new RegExp(`function ${name}\\(`));
+      return start === -1 ? '' : stripped.slice(start, stripped.indexOf('\n}\n', start));
+    };
+    const count = (text: string, needle: string): number => text.split(needle).length - 1;
+    const entries = ['compileSchema', 'compileCached', 'compileCapturing'];
+    // (a) red when an entry compiles directly (`newAjv().compile` in `compileCached`): it then
+    //     holds `.compile(` and the file's count no longer equals the two named functions'; (b)
+    //     prints booleans and counts.
+    expect({
+      entriesCallInner: entries.map((n) => body(n).includes('compileInner(')),
+      entriesCompileDirectly: entries.map((n) => body(n).includes('.compile(')),
+      inInner: count(body('compileInner'), '.compile('),
+      inDescribe: count(body('describeSchemaFailure'), '.compile('),
+      inFile: count(stripped, '.compile('),
+    }).toEqual({
+      entriesCallInner: [true, true, true],
+      entriesCompileDirectly: [false, false, false],
+      inInner: 1,
+      inDescribe: 1,
+      inFile: 2,
     });
   });
 });

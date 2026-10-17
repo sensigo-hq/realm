@@ -870,7 +870,7 @@ describe('#586 schema admission — the four authored keys', () => {
     const end = loader.indexOf('\n    };', start);
     expect(end).toBeGreaterThan(start);
     const slice = loader.slice(start, end);
-    expect(slice).toContain('compileSchema(');
+    expect(slice).toContain('compileCapturing(');
     expect(slice).not.toContain('new Ajv(');
   });
 
