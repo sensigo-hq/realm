@@ -71,6 +71,10 @@ export type ErrorCode =
   // `failed`/an aborted sweep) — not expected to surface in any envelope.
   | 'STATE_RUN_RESURRECTED'
   | 'STATE_LEGACY_FORMAT'
+  // #627 W (R25, W-r2): a registered workflow written by a LATER Realm (its `schema_version` is above
+  // what this version reads) — refused at read, since this version would ignore requirements it
+  // cannot read. Its facts are typed (`NewerDefinitionFacts`); `details` is empty.
+  | 'STATE_NEWER_FORMAT'
   | 'STATE_STEP_ALREADY_CLAIMED'
   | 'STATE_STEP_NOT_ELIGIBLE'
   // issue #279 (increment 1, PR-B): a settle_step delta refused because the step's settled entry
@@ -253,6 +257,21 @@ export interface ErrorFactsByCode {
   STATE_LEGACY_FORMAT: Extract<StoredFileErrorFacts, { scope: 'file' }>;
   VALIDATION_INPUT_SCHEMA: ValidationErrorFacts;
   VALIDATION_OUTPUT_SCHEMA: ValidationErrorFacts;
+  STATE_NEWER_FORMAT: NewerDefinitionFacts;
+}
+
+/**
+ * #627 W (W-r2; MA 3's decision 2026-10-16, Amendment 11's rule — a code's facts enter with its
+ * owner): a registered workflow's copy written by a LATER Realm — the copy's path, the definition
+ * format it states, and the latest this version reads. Its own `scope`: the copy is not damaged, so
+ * the damaged-file readers (`unreadableFactsOf`, keyed on `scope: 'file'`) must never take it, and no
+ * damaged-file class (`legacy` is an OLDER format) is true of it.
+ */
+export interface NewerDefinitionFacts {
+  scope: 'newer_definition';
+  path: string;
+  schema_version: number;
+  reads_up_to: number;
 }
 
 /** The typed facts of one error code (`never` for a code with none yet). */
@@ -384,4 +403,15 @@ export function storedFileFactsOf(err: WorkflowError): StoredFileErrorFacts | un
   const facts = err.facts;
   if (facts === undefined || !('scope' in facts)) return undefined;
   return facts.scope === 'file' || facts.scope === 'files' ? facts : undefined;
+}
+
+/**
+ * #627 W (W-r2): the facts of a copy a later Realm registered, or `undefined` for any other error —
+ * narrowed by `scope`'s VALUE, as {@link storedFileFactsOf} narrows its family, so neither family's
+ * reader takes the other's facts.
+ */
+export function newerDefinitionFactsOf(err: WorkflowError): NewerDefinitionFacts | undefined {
+  const facts = err.facts;
+  if (facts === undefined || !('scope' in facts)) return undefined;
+  return facts.scope === 'newer_definition' ? facts : undefined;
 }

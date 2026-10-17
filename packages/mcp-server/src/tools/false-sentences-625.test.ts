@@ -240,10 +240,10 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     });
   });
 
-  it('F-R1: without protocol.rules, six standard rules and the two always added — eight', async () => {
+  it('F-R1: without protocol.rules, six standard rules and the four always added on this server — ten (#627 W: the await rule and the value line join the two)', async () => {
     claim(
       TOOLS,
-      "| `rules` | The rules to follow. The workflow's `protocol.rules`, or six standard rules; two rules about concurrent attempts are always added after either. |",
+      "| `rules` | The rules to follow. The workflow's `protocol.rules`, after the line `Rules from the workflow's author:`, or six standard rules. Realm's own rules are always added after either: the rule for an `awaiting` entry, a line for the server's gate-answers value (none under `offered`), and two rules about concurrent attempts. The line, the `awaiting` rule and the value line were added after version 0.47.0. |",
     );
     const { call, workflowStore } = await connect();
     const steps = {
@@ -257,14 +257,23 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     const own = (await call('get_workflow_protocol', { workflow_id: 'f17-own' }))[
       'rules'
     ] as string[];
-    // (a) red when the count is not six plus two, or the two are not added after the workflow's
-    //     own; (b) prints the counts and the shared tail.
+    // (a) red when the count is not six plus Realm's four (the default server, a client with no
+    //     forms: the await rule, the fallback's value line, the two about concurrent attempts), or
+    //     they are not added after the workflow's own, or its own lose the author's label; (b) prints
+    //     the counts and the shared tail.
     expect({
       plain: plain.length,
       own: own.length,
-      sameTail: JSON.stringify(plain.slice(6)) === JSON.stringify(own.slice(1)),
+      sameTail: JSON.stringify(plain.slice(6)) === JSON.stringify(own.slice(2)),
       ownFirst: own[0],
-    }).toEqual({ plain: 8, own: 3, sameTail: true, ownFirst: 'Mine.' });
+      ownSecond: own[1],
+    }).toEqual({
+      plain: 10,
+      own: 6,
+      sameTail: true,
+      ownFirst: "Rules from the workflow's author:",
+      ownSecond: 'Mine.',
+    });
   });
 
   // pre-Q3 title: F-R2: an auto step’s protocol text names advance_run and forbids nothing — execute_step called by name runs it

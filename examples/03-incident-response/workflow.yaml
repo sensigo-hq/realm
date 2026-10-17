@@ -144,7 +144,7 @@ steps:
       DRAFT MESSAGE
       {{ context.resources.draft_response.message }}
 
-      Send this message to the incident channel? Reply with 'send' to post or 'reject' to discard.
+      Send this message to the incident channel? Choose 'send' to post it or 'reject' to discard it.
     instructions: |
-      Present the display content to the user verbatim. Ask for their choice ('send' or 'reject').
-      Call submit_human_response with run_id, gate_id, and the user's choice.
+      Present the display content to the user verbatim. The person answers the question; follow
+      next_actions for what to do while it waits.

@@ -160,7 +160,7 @@ const server = createRealmMcpServer({
 await server.connect(transport);
 ```
 
-`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with the 11 tools (10 in version 0.46.0, which has no `advance_run`). Every option can be left out:
+`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with 11 tools, 10 under `withheld` (10 in version 0.46.0, which has no `advance_run`). Every option can be left out:
 
 | Option                | Default                                                                                                | Holds                                                                                                                                                                                                                                                                                                                                                   |
 | --------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

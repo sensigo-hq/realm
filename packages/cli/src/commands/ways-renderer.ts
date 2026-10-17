@@ -46,7 +46,10 @@ export const NO_DRIVE_FLAGS: CliHost = { driveFlags: '' };
  *   engine step's input supplied by an operator (T-17's lever) has no command (PR0-CONTRACT
  *   Amendment 14: a fact line, `operatorInputLine`);
  * - `advance`, `inspect`, `abandon`: `realm run <verb> <run>`;
- * - `register`: `realm workflow register <file>` — the file's path when the registry knows it.
+ * - `register`: `realm workflow register <file>` — the file's path when the registry knows it;
+ * - `present` (#627 W): `null` — showing a question again as a form in a chat app is the MCP door's
+ *   alone (its party is the agent, whom this door does not serve: `door_cannot_enact` here); a person
+ *   at a terminal reads the question with `realm run inspect`.
  */
 export const CLI_COMMANDS: WayRenderer<string, CliHost> = {
   respond: (way) =>
@@ -61,8 +64,14 @@ export const CLI_COMMANDS: WayRenderer<string, CliHost> = {
   advance: (way) => `realm run advance ${way.run_id}`,
   inspect: (way) => `realm run inspect ${way.run_id}`,
   abandon: (way) => `realm run abandon ${way.run_id}`,
+  // Correction 2 (3.2): `path` is the registered COPY that cannot be used — `register` takes a source,
+  // so the command for it reads why the copy cannot be used and its way out.
   register: (way) =>
-    `realm workflow register ${way.path !== undefined ? shellWord(way.path) : '<file>'}`,
+    way.path !== undefined
+      ? `realm workflow validate --registered ${shellWord(way.workflow_id)}`
+      : 'realm workflow register <file>',
+  // #627 W: no realm command shows a question as a chat app's form (see above).
+  present: () => null,
 };
 
 /** One way's command on this door, or `null` when no command takes it. */

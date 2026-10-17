@@ -271,6 +271,10 @@ export async function respondToGate(
     ...(driver !== undefined ? { driver } : {}),
     // decision C151: an expiry this late answer carries out names this command.
     caller: 'respond',
+    // #627 W (§5.8): the CLI door's route, and its principal's absence — a terminal is not a server
+    // door, so no transport authenticated anyone.
+    route: 'cli',
+    principal: { absent: 'not_a_server_door' },
   });
 
   if (result.status !== 'ok') {

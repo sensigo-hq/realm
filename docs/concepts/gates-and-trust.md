@@ -62,16 +62,17 @@ The branch that was not chosen is skipped, and the record says why.
 
 ## Who can answer
 
-A gate is answered by one call that names the run, the gate and the choice. There are four places it can come from:
+A gate is answered by one call that names the run, the gate and the choice. There are five places it can come from:
 
 - the command line: `realm run respond <run-id> --gate <gate-id> --choice <choice>`;
-- the MCP tool `submit_human_response`;
+- the MCP tool `submit_human_response`, on a server that lists it;
+- the form a chat app shows the person, on an MCP server whose gate-answers value is `asked`, the default (added after version 0.47.0);
 - a Slack thread, when `realm agent` is set up to post gates to Slack;
 - the prompt of `realm workflow run`, when you run by hand.
 
-**Realm does not check who answers.** It records the choice. It does not verify that a person made it, or which person. An AI assistant connected over MCP has `submit_human_response` among its tools, and the protocol asks it to show the gate to the user and pass on the user's choice. Nothing stops an assistant from answering on its own.
+**Realm does not check who answers.** It records the choice and how it arrived. It does not verify that a person made it, or which person. Whether an AI assistant connected over MCP can answer follows the server's [gate-answers value](../reference/mcp/gate-answers.md). Under the default `asked`, an app that shows forms asks the person in its own form, and the assistant gets no tool that records an answer; an app that shows no forms keeps `submit_human_response`, and the app is asked to have the person approve each call. On an HTTP server built per request — `realm serve`, or a program that builds a server per request or passes `statelessHttp` — no client gets forms: under `asked` every client keeps the answer tool, marked for approval. A program that keeps one server per HTTP session sends forms as stdio does. Under `offered` the assistant has `submit_human_response`, and nothing stops it from answering on its own. Under `withheld` no tool on the server records an answer.
 
-If the agent must not be able to approve its own work, drive the run with `realm agent` and answer gates from the command line or Slack. The model behind `realm agent` is given each step's task and returns its output. `realm agent` itself waits at a gate until an answer is recorded.
+If the agent must not be able to approve its own work, start the MCP server with `--gate-answers withheld` and answer from the command line, or drive the run with `realm agent` and answer gates from the command line or Slack. The model behind `realm agent` is given each step's task and returns its output. `realm agent` itself waits at a gate until an answer is recorded.
 
 ## When nobody answers
 

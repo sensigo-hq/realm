@@ -101,7 +101,7 @@ How long after opening the gate expires. Must be a whole number above 0:
 Invalid workflow: Step 'approve': 'gate.timeout_seconds' must be a positive integer (step at line 5)
 ```
 
-With `timeout_seconds` and no `on_expiry`, nothing is done when the time is up. The gate is reported as expired and still waits for a person.
+With `timeout_seconds` and no `on_expiry`, nothing is done when the time is up. The gate is reported as expired and still waits for a person. Under `asked`, such a question can still be sent as a form after its deadline; the form waits the server's form wait.
 
 ### `on_expiry`
 

@@ -53,6 +53,9 @@ import {
   runReadError,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { mcpHostOf } from './start-run.js';
+import type { McpDoor } from '../door.js';
+import { toolMeta } from '../tool-annotations.js';
 import {
   MCP_POLL_AFTER_MS,
   PERSON_BLOCK,
@@ -111,6 +114,11 @@ export interface HandleRunStateStores {
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
   /** issue #729 PR-0 (P-6): the operator route the launching program injected, if any. */
   operatorRoute?: OperatorRoute;
+  /**
+   * #627 W: this server's door — its gate answers and form facts. A read renders the await entry
+   * from them and NEVER sends a form (`get_run_state` stays read-only).
+   */
+  door?: McpDoor;
   /**
    * Issue #600 caching PR P: per-definition price resolution (the run's deployment root names its
    * economics file). Absent ⇒ every request is `no_price_source`: this function defaults nothing
@@ -517,7 +525,7 @@ export async function handleGetRunState(
               : { kind: 'observer' },
         store: { persistsClaims: runStore.persistsClaims === true },
       }),
-      stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {},
+      mcpHostOf(stores),
     );
     return rendered;
   };
@@ -880,11 +888,15 @@ export async function handleGetRunState(
 /** Registers the get_run_state MCP tool on the server. */
 export function registerGetRunState(server: McpServer, opts?: HandleRunStateStores): void {
   markServedByTool(opts);
-  server.tool(
+  server.registerTool(
     'get_run_state',
-    'Get the current state summary of a workflow run. Pass include_steps: true for each ' +
-      "step's model-call cost per attempt.",
-    { run_id: z.string(), include_steps: z.boolean().optional() },
+    {
+      ...toolMeta('get_run_state'),
+      description:
+        'Get the current state summary of a workflow run. Pass include_steps: true for each ' +
+        "step's model-call cost per attempt.",
+      inputSchema: { run_id: z.string(), include_steps: z.boolean().optional() },
+    },
     async (args) => {
       try {
         const result = await handleGetRunState(args, opts);
@@ -909,7 +921,7 @@ export function registerGetRunState(server: McpServer, opts?: HandleRunStateStor
         // else the untouched details.
         const rendered = renderReply(
           buildPreExecutionErrorEnvelope('get_run_state', args.run_id, 0, workflowErr, contextHint),
-          opts?.operatorRoute !== undefined ? { operatorRoute: opts.operatorRoute } : {},
+          mcpHostOf(opts),
         );
         // This reply's field set is as before PR-0: no run was read (no version), and an untyped
         // throw names no code.

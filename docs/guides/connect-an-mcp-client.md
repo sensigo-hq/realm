@@ -33,9 +33,28 @@ claude mcp add realm -- realm mcp
 
 Restart the assistant, or reload its MCP servers.
 
+To choose how gate answers are handled, put the flag in the same config. For example, to keep every assistant from answering a gate:
+
+```json
+{
+  "mcpServers": {
+    "realm": {
+      "command": "realm",
+      "args": ["mcp", "--gate-answers", "withheld"]
+    }
+  }
+}
+```
+
+```bash
+claude mcp add realm -- realm mcp --gate-answers withheld
+```
+
+Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell may not reach a server the assistant starts (the MCP SDK's client starts servers with a reduced environment). The default, `asked`, sends each question to the person as a form in an app that shows forms. See [Gate answers over MCP](../reference/mcp/gate-answers.md). Added after version 0.47.0.
+
 ## 2. Check what the assistant sees
 
-The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):
+The assistant now has ten tools under `withheld` (the value step 1's example sets); eleven under `asked` or `offered` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven:
 
 | Tool                    | What it does                                                                                   |
 | ----------------------- | ---------------------------------------------------------------------------------------------- |
@@ -50,6 +69,8 @@ The assistant now has eleven tools (`advance_run` was added after version 0.46.0
 | `abandon_run`           | Ends a run that should not continue.                                                           |
 | `create_workflow`       | Lets the assistant define a small workflow of its own and start it.                            |
 | `append_trace`          | Lets the assistant record notes while it works on a step.                                      |
+
+In an app that shows forms, under the default `asked`, `present_question` takes the place of `submit_human_response`; under `withheld` neither is listed (added after version 0.47.0).
 
 Ask the assistant to list the Realm workflows. With one workflow registered, `list_workflows` returns:
 
@@ -87,9 +108,13 @@ agent_action: provide_input
 
 ## 4. What happens at a human gate
 
-When the run reaches a gate, the reply has `status: confirm_required`, the text to show you, and the choices. The briefing instructs the assistant to show you that text, wait for your choice, and pass it on with `submit_human_response`.
+When the run reaches a gate, the reply has `status: confirm_required`, the text to show you, and the choices. What happens next follows the server's [gate-answers value](../reference/mcp/gate-answers.md):
 
-The assistant answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. That call includes the `claim_token` of the reply that opened the gate, which shows the answer comes from the conversation that opened it. It is never required.
+- Under the default `asked`, an app that shows forms asks you in its own form, and the assistant gets no tool that records an answer. An app that shows no forms keeps `submit_human_response`, and the app is asked to have you approve each call; some apps and settings skip that.
+- Under `offered`, the briefing instructs the assistant to show you that text, wait for your choice, and pass it on with `submit_human_response`.
+- Under `withheld`, you answer from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.
+
+Where it has the answer tool, the assistant answers by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. That call includes the `claim_token` of the reply that opened the gate, which shows the answer comes from the conversation that opened it. It is never required.
 
 Realm records the choice it is given. It does not check that you made it. If the assistant must not be able to approve its own work, see [Human gates and trust levels](../concepts/gates-and-trust.md#who-can-answer).
 

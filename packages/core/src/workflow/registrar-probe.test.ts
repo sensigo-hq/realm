@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   JsonWorkflowStore,
+  definitionAbsenceOf,
   getWorkflowForRun,
   probeClassToError,
   parseFailureError,
@@ -24,6 +25,8 @@ import {
   probeClassOf,
 } from './registrar.js';
 import { WorkflowError } from '../types/workflow-error.js';
+import { admitWay, type WaysContext } from '../engine/ways.js';
+import { writtenSnapshot } from '../engine/snapshot.js';
 import {
   renderUnreadableStoredFile,
   unreadableFactsOf,
@@ -269,7 +272,9 @@ describe('get() — every escape comes from the two builders (the source-text wi
     const throws = above.match(/throw [A-Za-z]+\(/g) ?? [];
     expect(throws.length).toBeGreaterThanOrEqual(1);
     for (const t of throws) expect(t).toBe('throw probeClassToError(');
-    // Below the parse line: the parse builder and the untouched legacy mint, nothing else.
+    // Below the parse line, the rule admits two forms: `throw parseFailureError(` (the parse builder,
+    // for every copy the shared check finds damaged) and `throw new WorkflowError(` (the legacy and the
+    // newer refusals, each built from its parts) — nothing else (correction 2, 8.6 (a)).
     const below = src.slice(parseAt, src.indexOf('  async list()', parseAt));
     const belowThrows = below.match(/throw [A-Za-z]+\(|throw new WorkflowError\(/g) ?? [];
     for (const t of belowThrows) {
@@ -340,11 +345,21 @@ describe('listWithDiagnostics — one class per entry, never a throw', () => {
     ]);
   });
 
-  it('L5 a LEGACY copy stays LISTED (readable — its SCHEMA column is the disclosure, #427)', async () => {
+  it('L5 a LEGACY copy is listed UNREADABLE, class legacy, with getSync’s reason — every run path refuses it (correction 2, 8.6 (c); was: listed readable, #427)', async () => {
     await shape.legacy();
     const d = await store.listWithDiagnostics();
-    expect(d.workflows).toHaveLength(1);
-    expect(d.unreadable).toEqual([]);
+    const read = await store.get(ID).catch((e: unknown) => e as WorkflowError);
+    // (a) red when the listing keeps a copy getSync refuses; (b) prints the listing and the reason.
+    expect({ workflows: d.workflows.length, unreadable: d.unreadable }).toEqual({
+      workflows: 0,
+      unreadable: [
+        {
+          file: `${ID}.json`,
+          class: 'legacy',
+          reason: (read as WorkflowError).message,
+        },
+      ],
+    });
   });
 });
 
@@ -462,8 +477,12 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
         '<path-to-workflow>), then answer the gate; if it was never registered from a source, ' +
         `remove the file (rm ${file}) instead.`,
     );
-    // #729 PR-0 (D-C): the answer is the typed remedy, never a command in core's words.
-    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['approve', 'reject']]]);
+    // #729 PR-0 (D-C): the way on is the typed remedy, never a command in core's words. Correction 2
+    // (3.1): it is the REPAIR, the listing's `register` way with the copy — never the answer, which
+    // waits on the definition.
+    expect(err.remedy).toEqual([
+      { verb: 'register', conditions: [], workflow_id: 'gate-558', run_id: 'run-1', path: file },
+    ]);
     expect(err.message).not.toContain('To end the run');
     expect(err.message).not.toContain('PR-V');
     expect(err.message).not.toContain('answer it (');
@@ -480,24 +499,11 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
         `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate.`,
     );
-    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['approve', 'reject']]]);
+    // Correction 2 (3.1): the repair, with the copy.
+    expect(err.remedy).toEqual([
+      { verb: 'register', conditions: [], workflow_id: 'gate-558', run_id: 'run-1', path: file },
+    ]);
     expect(err.message).not.toContain('This run cannot continue until the copy is repaired.');
-  });
-
-  it('C-e4 (decision C206): a question with one choice — the repair ends in the answer command naming that choice; `<one of: …>` is for several', async () => {
-    await shape.chmod000();
-    const oneChoice = makeRun({
-      pending_gate: { ...GATE_WAITING.pending_gate!, choices: ['ack'] },
-    } as Partial<RunRecord>);
-    const err = (await getWorkflowForRun(store, oneChoice, RESPOND).catch(
-      (e: unknown) => e,
-    )) as WorkflowError;
-    // (a) red when the remedy's choices are not the question's own one; (b) prints the remedy. The
-    //     CLI prints `--choice ack` from it (cli ways-renderer.test.ts, C206).
-    expect(err.message).toContain(
-      `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate.`,
-    );
-    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['ack']]]);
   });
 
   it('C-e3 the gate fork on a LEGACY copy: the store\'s own re-register remedy once, then "Once re-registered, answer the gate (…)"', async () => {
@@ -512,7 +518,10 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
         'Once re-registered, answer the gate.',
     );
-    expect(remedyOf(err)).toEqual([['respond', 'run-1', 'g1', ['approve', 'reject']]]);
+    // Correction 2 (3.1): the repair, with the copy.
+    expect(err.remedy).toEqual([
+      { verb: 'register', conditions: [], workflow_id: 'gate-558', run_id: 'run-1', path: file },
+    ]);
     expect(err.message.split('realm workflow register').length - 1).toBe(1); // one remedy, never doubled
   });
 
@@ -860,4 +869,54 @@ describe('issue #719 — the registrar speaks the damaged-file vocabulary, with 
       ),
     }).toEqual({ runEmpty: undefined, runUnreadable: undefined, copyEmpty: 'empty' });
   });
+});
+
+// ─── correction 2 (3.1): a live gate whose copy cannot be read offers what it admits ────────────
+
+describe('correction 2 (3.1) — the way on from a copy Realm cannot read is admitted where it is offered', () => {
+  const newer = async () =>
+    writeFile(
+      file,
+      JSON.stringify({
+        ...makeDefinition(ID),
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+      }),
+    );
+  const ROWS: Array<[string, () => Promise<void>]> = [
+    // A root login reads a chmod-000 file: the unreadable row is skipped there.
+    ...(process.getuid?.() === 0
+      ? []
+      : [['unreadable', shape.chmod000] as [string, () => Promise<void>]]),
+    ['invalid JSON', shape.corrupt],
+    ['legacy', shape.legacy],
+    ['newer', newer],
+  ];
+  it.each(ROWS)(
+    '%s, at a live gate: every way in the error’s remedy is admitted by admitWay on the same snapshot',
+    async (_label, damage) => {
+      await damage();
+      const err = (await getWorkflowForRun(store, GATE_WAITING, RESPOND).catch(
+        (e: unknown) => e,
+      )) as WorkflowError;
+      const absence = definitionAbsenceOf(err, GATE_WAITING);
+      if (absence === undefined) throw new Error('fixture: a definition absence');
+      const ctx: WaysContext = { definition: absence, enactor: { kind: 'observer' }, store: {} };
+      const snap = writtenSnapshot(GATE_WAITING, new Date());
+      const verdicts = (err.remedy ?? []).map((w) => {
+        const input =
+          w.verb === 'register'
+            ? { path: w.path ?? '' }
+            : w.verb === 'respond'
+              ? { run_id: w.run_id, gate_id: w.gate_id, choice: w.choice.one_of[0]! }
+              : { run_id: GATE_WAITING.id };
+        return { verb: w.verb, admitted: 'ok' in admitWay(w.verb, snap, ctx, input) };
+      });
+      // (a) red when the remedy offers an answer its own admission refuses (the `respond` remedy
+      //     back: answering waits on the definition); (b) prints each way's verb and verdict.
+      expect({ count: verdicts.length, refused: verdicts.filter((v) => !v.admitted) }).toEqual({
+        count: 1,
+        refused: [],
+      });
+    },
+  );
 });

@@ -1,10 +1,16 @@
 // get-workflow-protocol tool — returns the agent protocol for a workflow.
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { JsonWorkflowStore, WorkflowError } from '@sensigo/realm';
+import { JsonWorkflowStore, WorkflowError, answersRowOf, AUTHOR_RULES_LABEL } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
-import { generateProtocol, type WorkflowProtocol } from '../protocol/generator.js';
+import { toolMeta } from '../tool-annotations.js';
+import {
+  generateProtocol,
+  type EffectiveWay,
+  type WorkflowProtocol,
+} from '../protocol/generator.js';
 import type { HandleStores } from './list-workflows.js';
+import type { McpDoor } from '../door.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 /**
@@ -34,29 +40,72 @@ const CONCURRENT_SETTLEMENT_PROTOCOL_RULE =
   'state rather than treating it as a failure.';
 
 /**
+ * #627 W (W-p4): the await rule — Realm's own, carried under every way and after a workflow's own
+ * `protocol.rules`, so an author's text that names an answer tool is overridden by it.
+ */
+export const AWAIT_PROTOCOL_RULE =
+  'When a next_actions entry has `awaiting` instead of `instruction`, follow its text, even where gate.agent_hint or a workflow rule says otherwise: do not call anything to answer the question.';
+
+/**
+ * #627 W: the value line — what this session's way means for gate answers (W-p5 `withheld`, W-p6
+ * the fallback, W-p9 `asked` with forms; W-p7 `offered`: none). It names no route and no command.
+ */
+export function valueLineOf(way: EffectiveWay): string | undefined {
+  switch (way) {
+    case 'withheld':
+      return 'This server records no gate answers. Workflow text that mentions answering tools refers to tools this session does not have.';
+    case 'fallback':
+      return 'Answers to gates go through submit_human_response; your client may ask the user to approve each call.';
+    case 'asked_forms':
+      return "Gate questions are sent to the user's app as a form when start_run, execute_step or advance_run first reaches the gate, or when you call present_question; you cannot answer them. Follow the await entry: it says whether a form was sent in this session.";
+    case 'offered':
+      return undefined;
+  }
+}
+
+/**
  * Business logic for the get_workflow_protocol tool.
- * Returns the full agent protocol for the specified workflow.
+ * Returns the full agent protocol for the specified workflow. #627 W: composed for this session's
+ * way (the door's answers row; `offered` without a door), a workflow's own `protocol.rules` marked
+ * as the author's (W-t1), then Realm's own rules after them — the await rule, the value line, and the
+ * two trace rules.
  */
 export async function handleGetWorkflowProtocol(
   args: { workflow_id: string },
-  stores?: HandleStores,
+  stores?: HandleStores & { door?: McpDoor },
 ): Promise<WorkflowProtocol> {
   assertToolStores(stores, 'handleGetWorkflowProtocol');
   const store = stores?.workflowStore ?? new JsonWorkflowStore();
   const definition = await store.get(args.workflow_id);
-  const protocol = generateProtocol(definition);
+  const way: EffectiveWay = answersRowOf(stores?.door?.answers()) ?? 'offered';
+  const protocol = generateProtocol(definition, way);
+  const authored = definition.protocol?.rules !== undefined;
+  const valueLine = valueLineOf(way);
   return {
     ...protocol,
-    rules: [...protocol.rules, WRITER_NONCE_PROTOCOL_RULE, CONCURRENT_SETTLEMENT_PROTOCOL_RULE],
+    rules: [
+      ...(authored ? [AUTHOR_RULES_LABEL] : []),
+      ...protocol.rules,
+      AWAIT_PROTOCOL_RULE,
+      ...(valueLine !== undefined ? [valueLine] : []),
+      WRITER_NONCE_PROTOCOL_RULE,
+      CONCURRENT_SETTLEMENT_PROTOCOL_RULE,
+    ],
   };
 }
 
 /** Registers the get_workflow_protocol MCP tool on the server. */
-export function registerGetWorkflowProtocol(server: McpServer, opts?: HandleStores): void {
-  server.tool(
+export function registerGetWorkflowProtocol(
+  server: McpServer,
+  opts?: HandleStores & { door?: McpDoor },
+): void {
+  server.registerTool(
     'get_workflow_protocol',
-    'Get the full agent protocol briefing for a registered workflow.',
-    { workflow_id: z.string() },
+    {
+      ...toolMeta('get_workflow_protocol'),
+      description: 'Get the full agent protocol briefing for a registered workflow.',
+      inputSchema: { workflow_id: z.string() },
+    },
     async (args) => {
       try {
         const result = await handleGetWorkflowProtocol(args, opts);

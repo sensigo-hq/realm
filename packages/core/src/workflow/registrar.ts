@@ -4,14 +4,19 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
-import { WorkflowError, storedFileFactsOf } from '../types/workflow-error.js';
+import {
+  WorkflowError,
+  newerDefinitionFactsOf,
+  storedFileFactsOf,
+  type WorkflowErrorOptions,
+} from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
 import { withFullStop } from '../engine/pending.js';
 import {
   renderDefinitionAbsent,
-  respondWayOfGate,
   type DefinitionAbsence,
+  type RegisterWay,
   type WayOn,
 } from '../engine/ways.js';
 import { atomicWriteFile } from '../store/atomic-write.js';
@@ -19,6 +24,7 @@ import { brandClass, REALM_BRAND } from '../brand.js';
 import { admitEntry } from '../admission.js';
 import {
   jsonShapeOf,
+  type WorkflowCopyFault,
   renderUnreadableStoredFile,
   type UnreadableFileFacts,
 } from '../store/run-file.js';
@@ -108,8 +114,12 @@ function storedFileFacts(err: WorkflowError): UnreadableFileFacts | undefined {
 }
 
 /** issue #719 (C3): what is wrong with a registered copy's bytes — they are not JSON, or they are
- *  JSON that is not an object (`shape`: `null`, `array`, `string`, `number` or `boolean`). */
-export type WorkflowCopyParseFault = { kind: 'not_json' } | { kind: 'not_object'; shape: string };
+ *  JSON that is not an object (`shape`: `null`, `array`, `string`, `number` or `boolean`), or
+ *  (#627 W correction 2, 3.7 and 8.6 (d)) an object that is not a workflow (`fault`). */
+export type WorkflowCopyParseFault =
+  | { kind: 'not_json' }
+  | { kind: 'not_object'; shape: string }
+  | { kind: 'not_a_workflow'; fault: WorkflowCopyFault };
 
 /**
  * issue #558 PR-T — ONE builder for the parse class, so a corrupt copy speaks with one voice on
@@ -125,14 +135,66 @@ export function parseFailureError(path: string, fault: WorkflowCopyParseFault): 
     class: 'parse',
     path,
     ...(fault.kind === 'not_object' ? { shape: fault.shape } : {}),
+    ...(fault.kind === 'not_a_workflow' ? { fault: fault.fault } : {}),
   });
 }
 
-/** The parse fault of a value that parsed: `undefined` when it is an object. */
-function notObjectFault(value: unknown): WorkflowCopyParseFault | undefined {
-  return value === null || typeof value !== 'object' || Array.isArray(value)
-    ? { kind: 'not_object', shape: jsonShapeOf(value) }
-    : undefined;
+/**
+ * The parse fault of a value that parsed — the ONE check `getSync` and the listing both run, so a
+ * copy is damaged at both or at neither (#627 W correction 2, 3.7 and 8.6 (d)): not an object; a
+ * `schema_version` that is present, not `null` and not a number; no string `id`. `undefined` for an
+ * object that can be read as a workflow — legacy (no `schema_version`, `null`, or a number below
+ * current), current or newer. No `steps` is NOT a fault here: the registered copies an older Realm
+ * wrote (the schema_version-less cohort, #427) carry no `steps` key at all, and they are legacy.
+ */
+function copyFault(value: unknown): WorkflowCopyParseFault | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { kind: 'not_object', shape: jsonShapeOf(value) };
+  }
+  const copy = value as Record<string, unknown>;
+  const version = copy['schema_version'];
+  if (version !== undefined && version !== null && typeof version !== 'number') {
+    return { kind: 'not_a_workflow', fault: 'schema_version_not_number' };
+  }
+  if (typeof copy['id'] !== 'string') return { kind: 'not_a_workflow', fault: 'no_id' };
+  return undefined;
+}
+
+/** #627 W correction 2 (3.7): the ONE reading of "a later Realm registered this copy" — a number above
+ *  the format this version reads. Both `getSync` and the listing ask it. */
+export function isNewerDefinition(copy: { schema_version?: unknown }): boolean {
+  return (
+    typeof copy.schema_version === 'number' && copy.schema_version > CURRENT_WORKFLOW_SCHEMA_VERSION
+  );
+}
+
+/** A legacy copy (no `schema_version`, `null`, or a number below current) — an older version of Realm
+ *  registered it. */
+function isLegacyDefinition(copy: { schema_version?: unknown }): boolean {
+  return (
+    copy.schema_version === undefined ||
+    copy.schema_version === null ||
+    (typeof copy.schema_version === 'number' &&
+      copy.schema_version < CURRENT_WORKFLOW_SCHEMA_VERSION)
+  );
+}
+
+/** The refusal of a copy an older Realm registered — one owner of its words for the registry read and
+ *  the listing (#627 W correction 2, 8.6 (c)); the arguments of `new WorkflowError(…)`. */
+function legacyDefinitionParts(filePath: string): [string, WorkflowErrorOptions] {
+  return [
+    'This workflow was registered with an older version of Realm. ' +
+      'Re-register it with: realm workflow register <path-to-workflow>',
+    {
+      code: 'STATE_LEGACY_FORMAT',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      // #729 PR-0 (T-21): the copy's path — the register way's `path` (a legacy copy is one the
+      // registry knows the file of).
+      details: { path: filePath },
+    },
+  ];
 }
 
 /**
@@ -390,25 +452,23 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     } catch {
       throw parseFailureError(filePath, { kind: 'not_json' });
     }
-    const notObject = notObjectFault(parsedUnknown);
-    if (notObject !== undefined) throw parseFailureError(filePath, notObject);
+    // Correction 2 (3.7, 8.6 (d)): the shared check — a copy that is not a workflow is damaged here
+    // and in the listing alike, never read as legacy.
+    const fault = copyFault(parsedUnknown);
+    if (fault !== undefined) throw parseFailureError(filePath, fault);
     const parsed = parsedUnknown as WorkflowDefinition;
-    if (
-      parsed.schema_version === undefined ||
-      parsed.schema_version < CURRENT_WORKFLOW_SCHEMA_VERSION
-    ) {
+    if (isLegacyDefinition(parsed)) {
+      throw new WorkflowError(...legacyDefinitionParts(filePath));
+    }
+    // #627 W (R25, W-r2): the upper bound beside the lower one. A definition a LATER Realm wrote
+    // (V bumps `schema_version` for the definitions that use `gate.answer_via`) may carry
+    // requirements this version cannot read; reading it anyway would run it with those requirements
+    // ignored — fail open. Refused here, so every reader (start, step, answer, inspect) refuses it
+    // through this one gate and no gate it would open is ever opened. Its own code: the copy is not
+    // legacy (STATE_LEGACY_FORMAT's meaning and remedy are for an OLDER format) and not damaged.
+    if (isNewerDefinition(parsed)) {
       throw new WorkflowError(
-        'This workflow was registered with an older version of Realm. ' +
-          'Re-register it with: realm workflow register <path-to-workflow>',
-        {
-          code: 'STATE_LEGACY_FORMAT',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: false,
-          // #729 PR-0 (T-21): the copy's path — the register way's `path` (a legacy copy is one the
-          // registry knows the file of).
-          details: { path: filePath },
-        },
+        ...newerDefinitionParts(workflowId, filePath, parsed.schema_version as number),
       );
     }
     return parsed;
@@ -441,7 +501,9 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     workflows: WorkflowDefinition[];
     unreadable: Array<{
       file: string;
-      class: ProbeFailureClass | 'parse';
+      /** `newer` (#627 W correction 1, C3): a copy a later Realm registered — it parses, and this
+       *  version refuses it at read (W-r2), so it is listed here with W-r2's reason, never as readable. */
+      class: ProbeFailureClass | 'parse' | 'newer' | 'legacy';
       /** issue #558 PR-T — present only for the OS-error classes; `workflow list`'s per-class
        *  sentence names it. Absent for `parse`, `empty` and `not_a_file` (a directory is not an
        *  OS error — fabricating an errno is a false statement about the operating system). */
@@ -457,7 +519,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     const workflows: WorkflowDefinition[] = [];
     const unreadable: Array<{
       file: string;
-      class: ProbeFailureClass | 'parse';
+      class: ProbeFailureClass | 'parse' | 'newer' | 'legacy';
       errno?: string;
       reason: string;
     }> = [];
@@ -542,16 +604,40 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
         });
         continue;
       }
-      const notObject = notObjectFault(parsedUnknown);
-      if (notObject !== undefined) {
+      const fault = copyFault(parsedUnknown);
+      if (fault !== undefined) {
         unreadable.push({
           file: entry,
           class: 'parse',
-          reason: parseFailureError(entryPath, notObject).message,
+          reason: parseFailureError(entryPath, fault).message,
         });
         continue;
       }
       const parsed = parsedUnknown as WorkflowDefinition;
+      // Correction 2 (8.6 (c)): a copy an older Realm registered is listed with getSync's reason —
+      // every run path refuses it, so the listing never shows it as readable.
+      if (isLegacyDefinition(parsed)) {
+        unreadable.push({
+          file: entry,
+          class: 'legacy',
+          ...reasonAndRepair(new WorkflowError(...legacyDefinitionParts(entryPath))),
+        });
+        continue;
+      }
+      // Correction 1 (C3): a copy a later Realm registered is listed with W-r2's reason — every run
+      // path refuses it (`getSync`), so the listing never shows it as readable.
+      if (isNewerDefinition(parsed)) {
+        unreadable.push({
+          file: entry,
+          class: 'newer',
+          ...reasonAndRepair(
+            new WorkflowError(
+              ...newerDefinitionParts(id, entryPath, parsed.schema_version as number),
+            ),
+          ),
+        });
+        continue;
+      }
       workflows.push(parsed);
       if (entry !== `${String(parsed.id)}.json`) {
         mismatched.push({ file: entry, id: String(parsed.id) });
@@ -564,6 +650,38 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
 brandClass(JsonWorkflowStore, Symbol.for('@sensigo/realm/JsonWorkflowStore'), REALM_BRAND);
 
 /**
+ * #627 W (W-r2): the refusal of a copy a LATER Realm registered — one owner of its words and facts
+ * for the registry read (`getSync`) and the listing (`listWithDiagnostics`, correction 1 C3), so both
+ * say the same. The arguments of `new WorkflowError(…)`, so each site keeps that form.
+ */
+function newerDefinitionParts(
+  workflowId: string,
+  filePath: string,
+  schemaVersion: number,
+): [string, WorkflowErrorOptions] {
+  return [
+    `Workflow '${workflowId}' was registered by a later version of Realm (definition format ` +
+      `${String(schemaVersion)}; this version reads up to ` +
+      `${CURRENT_WORKFLOW_SCHEMA_VERSION}) — refused: this version would ignore requirements ` +
+      'it cannot read. Use the Realm version that registered it, or register the ' +
+      "workflow's source again with this version. Nothing was run.",
+    {
+      code: 'STATE_NEWER_FORMAT',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      // Typed facts (MA 3, 2026-10-16): `details` stays empty for this code.
+      facts: {
+        scope: 'newer_definition',
+        path: filePath,
+        schema_version: schemaVersion,
+        reads_up_to: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      },
+    },
+  ];
+}
+
+/**
  * issue #729 PR-0 (D3 A-5, D4 T-21): why a run's definition is absent, from the error a definition
  * read threw — the `definition_absent` entry's cause, one per {@link getWorkflowForRun} arm, and the
  * stored file's path where the store knows it (the unreadable, invalid and legacy copies; a workflow
@@ -573,8 +691,25 @@ brandClass(JsonWorkflowStore, Symbol.for('@sensigo/realm/JsonWorkflowStore'), RE
 export function definitionAbsenceOf(
   err: unknown,
   run: Pick<RunRecord, 'workflow_id'>,
-): { absent: DefinitionAbsence; workflow_id: string; path?: string } | undefined {
+):
+  | {
+      absent: DefinitionAbsence;
+      workflow_id: string;
+      path?: string;
+      format?: { schema_version: number; reads_up_to: number };
+    }
+  | undefined {
   if (!(err instanceof WorkflowError)) return undefined;
+  // #627 W (W-r2): a copy a later Realm wrote — the mirror of `legacy`, read from its typed facts.
+  const newer = err.code === 'STATE_NEWER_FORMAT' ? newerDefinitionFactsOf(err) : undefined;
+  if (newer !== undefined) {
+    return {
+      absent: 'newer',
+      workflow_id: run.workflow_id,
+      path: newer.path,
+      format: { schema_version: newer.schema_version, reads_up_to: newer.reads_up_to },
+    };
+  }
   const filed = storedFileFacts(err)?.path ?? err.details['path'];
   const path = typeof filed === 'string' ? { path: filed } : {};
   switch (err.code) {
@@ -642,11 +777,23 @@ export async function getWorkflowForRun(
     return await store.get(run.workflow_id);
   } catch (err) {
     if (!(err instanceof WorkflowError)) throw err;
-    // #729 PR-0 (Part B): the way on from a run that waits on a question is its answer — carried
-    // as data on the error (`remedy`, rendered by each door), never a command in the message.
+    // #729 PR-0 (Part B): the way on from a run that waits on a question is carried as data on the
+    // error (`remedy`, rendered by each door), never a command in the message. Correction 2 (3.1): it
+    // is the REPAIR, not the answer — answering waits on the definition, as core's own listing says
+    // (`respond` is `definition_absent`, remedy `[register]`) — so the remedy is the listing's
+    // `register` way, with the copy's file when the error carries one.
     const gateRemedy = (): readonly WayOn[] | undefined => {
       const live = run.terminal_state === true ? undefined : run.pending_gate;
-      return live === undefined ? undefined : [respondWayOfGate(run.id, live)];
+      if (live === undefined) return undefined;
+      const path = definitionAbsenceOf(err, run)?.path;
+      const register: RegisterWay = {
+        verb: 'register',
+        conditions: [],
+        workflow_id: run.workflow_id,
+        run_id: run.id,
+        ...(path !== undefined ? { path } : {}),
+      };
+      return [register];
     };
     const copy = (message: string, remedy?: readonly WayOn[]): WorkflowError => {
       const ways = remedy ?? gateRemedy();
@@ -773,6 +920,17 @@ export async function getWorkflowForRun(
       case 'STATE_LEGACY_FORMAT':
         // The store's own message already carries the re-register remedy (wrapping it again would
         // double-remedy — this function's JSDoc); a gate-waiting run is told what comes after it.
+        throw copy(
+          join(
+            withFullStop(err.message),
+            terminal ? undefined : disposalSentence('To end the run instead:'),
+            terminal || gate === undefined ? undefined : 'Once re-registered, answer the gate.',
+          ),
+        );
+      case 'STATE_NEWER_FORMAT':
+        // #627 W (W-r2): the mirror of the legacy arm — the message carries its own two remedies
+        // (the Realm version that registered it, or registering the source again with this one);
+        // a gate-waiting run is told what comes after it.
         throw copy(
           join(
             withFullStop(err.message),

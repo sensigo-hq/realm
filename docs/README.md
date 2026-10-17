@@ -67,6 +67,7 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm as
 
 - [MCP tools](reference/mcp/tools.md)
 - [Run state and health findings](reference/mcp/run-state-and-health.md)
+- [Gate answers over MCP](reference/mcp/gate-answers.md)
 
 ## Reference: code and settings
 

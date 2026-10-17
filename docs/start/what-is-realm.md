@@ -47,6 +47,8 @@ A field the step never asked for is refused the same way. A refused answer is no
 Step 'post_approval' cannot be called now: it waits on the question on step 'confirm_review' (choices: approve, request_changes) — answer it with submit_human_response.
 ```
 
+That is a session whose assistant has the answer tool. Under `withheld`, or in an app that shows forms, the refusal names no answer (see [Gate answers](../reference/mcp/gate-answers.md)).
+
 **A record.** Every step that runs leaves an entry: what went in, what came out, how long it took, and a hash (a short fingerprint) of the output. A step that was skipped has its reason recorded, for example:
 
 ```text

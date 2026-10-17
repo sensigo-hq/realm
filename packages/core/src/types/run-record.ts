@@ -589,12 +589,33 @@ export interface EvidenceSnapshot {
    * Holder slice (PR-H): which PROGRAM's code and credentials did this work — the name the host
    * that ran the step gave itself (`REALM_OPERATOR`, or the OS user and host name), how that name is
    * known, and the host's channel. Written on the entries where a program's code ran (a step's own
-   * entries and the cleanup steps a drain runs); absent on every entry the engine builds without
-   * running anyone's code (guards, expiries, the answer's own entry, the reclaim audit line) and on
-   * records written before this field. A label for people and replies — never compared, never
-   * enforced; it is not a person and not a process.
+   * entries and the cleanup steps a drain runs) and — #627 W (§5.8) — on a `gate_response` entry an
+   * ANSWER wrote, naming the program that recorded it; absent on every entry the engine builds
+   * without running anyone's code (guards, expiries, the reclaim audit line), on an answer whose
+   * caller passed no driver, and on records written before this field. A label for people and
+   * replies — never compared, never enforced; it is not a person and not a process.
    */
   driven_by?: Attributed;
+  /**
+   * #627 W (§5.8): how a gate answer arrived, as the door that recorded it declared — its route
+   * (`mcp_form`, `mcp`, `cli`, or another door's id), and, for a form, what showed it — or
+   * `{ absent: 'route_not_declared' }` when a library caller declared none. Present only on a
+   * `gate_response` entry an answer wrote from this version on: an entry without it reads
+   * `recorded_without_route` (which makes no claim about when it was written — an older binary may
+   * write after this one), an expiry's entry `settled_by_expiry`. Never in `evidence_hash`.
+   */
+  answer?: AnswerOnRecord;
+  /**
+   * #627 W (§5.2 row 3, F30): the answer came through the MCP door's fallback, whose answer tool asks
+   * the client to have its user approve each call. Realm cannot see whether anyone approved.
+   */
+  client_prompt_requested?: true;
+  /**
+   * #627 W (§5.8, F29): what the door's transport authenticated for this answer — an API key's id,
+   * `realm serve`'s one shared token (which names no one), or why the door names none. Written by the
+   * door into the answer's own write; never a secret.
+   */
+  principal?: Principal;
   /**
    * Issue #625 PR-2a (decision C3): on a BARE `auto` step's entry only — where its output came
    * from, a member of {@link OUTPUT_SOURCES}. Absent on every other entry and on entries written
@@ -1354,3 +1375,43 @@ export interface RunRecord {
     }
   >;
 }
+
+// ─── #627 W (§5.8): how a gate answer arrived ───────────────────────────────────────────────────
+
+/** #627 W: the routes this version's own doors declare (a door may declare another id). */
+export const ANSWER_ROUTES = ['mcp_form', 'mcp', 'cli'] as const;
+export type AnswerRoute = (typeof ANSWER_ROUTES)[number];
+
+/** #627 W: a recorded answer's route as its door declared it, and what showed a form. */
+export interface AnswerFacts {
+  route: string;
+  /** Present only on an answer from a form: the renderer that showed the question. */
+  shown?: { renderer: string };
+}
+
+/** #627 W: what an answer's entry holds about its route — the facts, or a library caller's absence. */
+export type AnswerOnRecord = AnswerFacts | { absent: 'route_not_declared' };
+
+/** #627 W: why an answer's entry names no route — one vocabulary for the record and `outcome.via`. */
+export const ANSWER_ROUTE_ABSENCES = [
+  'settled_by_expiry',
+  'recorded_without_route',
+  'route_not_declared',
+] as const;
+export type AnswerRouteAbsence = (typeof ANSWER_ROUTE_ABSENCES)[number];
+
+/** #627 W (§5.8's table): why a door names no principal. */
+export const PRINCIPAL_ABSENCES = [
+  'door_authentication_disabled',
+  'principal_not_passed',
+  'door_authenticates_no_principal',
+  'not_a_server_door',
+] as const;
+export type PrincipalAbsence = (typeof PRINCIPAL_ABSENCES)[number];
+
+/**
+ * #627 W (F29): what a door's transport authenticated — an API key by its id (realm-cloud), the one
+ * shared token of `realm serve` (no id: it names no one), or the door's typed absence. Never a secret.
+ */
+export type Principal =
+  { kind: 'api_key'; id: string } | { kind: 'shared_token' } | { absent: PrincipalAbsence };

@@ -69,7 +69,9 @@ const mode = vi.hoisted(() => ({
   calls: 0,
   refusal: undefined as Error | undefined,
 }));
-vi.mock('@sensigo/realm-mcp', () => ({
+// Correction 2 (4.1): a passthrough — the bins' settings now come from this package too.
+vi.mock('@sensigo/realm-mcp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@sensigo/realm-mcp')>()),
   createRealmMcpServer: () => {
     mode.calls += 1;
     if (mode.value === 'after-first' && mode.calls === 1) return {};

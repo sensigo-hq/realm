@@ -72,17 +72,22 @@ describe('realm workflow list (issue #427)', () => {
     expect(sorted.map((w) => w.id)).toEqual(['alpha', 'mid', 'zebra']);
   });
 
-  it('L2 a legacy entry is marked, with the remedy in the cell', async () => {
+  it('L2 a legacy entry is named on the older-version ⚠ line, never a table row; a current one is in the table (correction 2, 8.6 (c); was: marked in the table)', async () => {
     plant('ancient', { id: 'ancient', name: 'Ancient', version: 2, steps: {} });
     plant('modern', definition('modern'));
 
     await workflowListCommand.parseAsync([], { from: 'user' });
 
     const out = stdout();
-    expect(out).toContain('legacy (re-register)');
-    expect(out).toContain('1 (current)');
-    // An absent schema_version has no number to print; `undefined — legacy` would be worse.
-    expect(out).not.toContain('undefined');
+    // Correction 2 (8.6 (c)): every run path refuses a legacy copy, so the table never lists it.
+    expect({
+      ancientRow: out.split('\n').some((l) => l.startsWith('ancient')),
+      modern: out.includes('1 (current)'),
+      undefinedWord: out.includes('undefined'),
+      warned: stderr().includes(
+        '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json',
+      ),
+    }).toEqual({ ancientRow: false, modern: true, undefinedWord: false, warned: true });
   });
 
   it('L3 an unparseable file is REPORTED, and the exit stays 0', async () => {
