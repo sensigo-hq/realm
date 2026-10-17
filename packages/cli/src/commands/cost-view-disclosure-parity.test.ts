@@ -16,7 +16,8 @@
 // Issue #600 PR 2 adds four `CostView` rows (`models`, `cache_requested`, `cache_write_5m`,
 // `cache_write_1h`) and the `CacheRequestedEntry` registry, rendered on both contexts with no waiver;
 // the two lifetime splits are probed on a fixture where the written lifetime differs from the one
-// asked, the only place their text appears.
+// asked, the only place their text appears. Issue #600's lifetime unit adds the entry's `auto` (the
+// evidence `--prompt-cache auto` chose by), probed on the fixture listen's default asked for.
 //
 // Issue #600 caching PR P adds two `CostView` rows (`money`, `endpoints`), `StepView.total`, and the
 // `Money` and `RunCost` registries, rendered with no waiver. Money exists only when a price source is
@@ -91,7 +92,7 @@ const PRICES: PriceSource = {
   },
 };
 
-// issue #600 caching PR P: the priced fixtures' requests. `GATEWAY` asked for 1h on a custom endpoint
+// issue #600 caching PR P: the priced fixtures' requests. `GATEWAY` asked for 1 hour on a custom endpoint
 // and nothing was written or read; `MIXED` holds one request per source and one with no model.
 const GATEWAY_REQUEST = {
   request_index: 0,
@@ -338,8 +339,9 @@ const oldGateAnswer = {
 };
 
 // issue #600 PR 2: three steps whose one request carries the request facts. `asked_1h_step` asked
-// for 1h and its write was kept for 5m; `asked_5m_step` asked for 5m and its write was kept for 1h —
-// the two mismatch fixtures, where the splits' text appears. `asked_off_step` asked for nothing.
+// for 1 hour and its write was kept for 5 minutes; `asked_5m_step` asked for 5 minutes — by listen's
+// default `auto`, whose gaps chose the short lifetime — and its write was kept for 1 hour: the two
+// mismatch fixtures, where the splits' text appears. `asked_off_step` asked for nothing.
 const askedStep = (stepId: string, request: Record<string, unknown>) => ({
   step_id: stepId,
   kind: 'execution' as const,
@@ -378,6 +380,7 @@ const asked5mStep = askedStep('asked_5m_step', {
   cache_ttl_sent: false,
   cache_requested_source: 'runner_default',
   cache_requested_by: 'realm listen',
+  cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [10, 10, 10, 7200, 7200] },
   provider: 'anthropic',
   cache_creation_input_tokens: 30,
   cache_creation: { ephemeral_1h_input_tokens: 30 },
@@ -471,17 +474,21 @@ const STEP_LINE_COST_VIEW = {
   cache_requested: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain('request); asked for 1h (sent as 1h; stated on realm agent)'),
+      expect(out).toContain('request); asked for 1 hour (sent as 1 hour; stated on realm agent)'),
   },
   cache_write_5m: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain('; 70 of the tokens written were kept for 5m, not the 1h asked'),
+      expect(out).toContain(
+        '; 70 of the tokens written were kept for 5 minutes, not the 1 hour asked',
+      ),
   },
   cache_write_1h: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain('; 30 of the tokens written were kept for 1h, not the 5m asked'),
+      expect(out).toContain(
+        '; 30 of the tokens written were kept for 1 hour, not the 5 minutes asked',
+      ),
   },
   // issue #600 caching PR P: on the priced render.
   money: {
@@ -508,17 +515,28 @@ const STEP_LINE_CACHE_REQUESTED_ENTRY = {
     // `off` reads as its own words; `lifetime` and `provider_rules` read otherwise.
     probe: (out) => expect(out).toContain('; asked for no caching (stated on realm agent)'),
   },
-  lifetime_s: { surface: 'rendered', probe: (out) => expect(out).toContain('; asked for 5m (') },
+  lifetime_s: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('; asked for 5 minutes ('),
+  },
   ttl_sent: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain("(the provider's default lifetime; realm listen's default)"),
+      expect(out).toContain("(the provider's default lifetime; realm listen's default; auto: "),
   },
   source: {
     surface: 'rendered',
-    probe: (out) => expect(out).toContain("; realm listen's default)"),
+    probe: (out) => expect(out).toContain("; realm listen's default; auto: "),
   },
   by: { surface: 'rendered', probe: (out) => expect(out).toContain('stated on realm agent') },
+  // issue #600 (the lifetime unit): the evidence `auto` chose by, inside the ask's parentheses.
+  auto: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain(
+        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours)",
+      ),
+  },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 
 const STEP_LINE_COST_FIGURE = {
@@ -965,7 +983,8 @@ const ENTRY_B = {
       request_index: 0,
       request_start: '2026-01-01T00:04:59.000Z',
       uncached_input_tokens: 60,
-      // issue #600 PR 2: the request facts; asked for 1h, the write kept for 5m (a mismatch).
+      // issue #600 PR 2: the request facts; asked for 1 hour, the write kept for 5 minutes (a
+      // mismatch).
       model: 'claude-x-20260101',
       cache_requested: 'lifetime',
       cache_lifetime_s: 3600,
@@ -977,7 +996,8 @@ const ENTRY_B = {
     },
   ],
 };
-// issue #600 PR 2: asked for 5m by listen's default, the write kept for 1h (the other mismatch).
+// issue #600 PR 2: asked for 5 minutes by listen's default `auto` (its gaps chose the short
+// lifetime), the write kept for 1 hour (the other mismatch).
 const ENTRY_C = {
   at: '2026-01-01T00:06:00.000Z',
   step: 'classify',
@@ -996,6 +1016,7 @@ const ENTRY_C = {
       cache_ttl_sent: false,
       cache_requested_source: 'runner_default',
       cache_requested_by: 'realm listen',
+      cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [10, 10, 10, 7200, 7200] },
       provider: 'anthropic',
       cache_creation: { ephemeral_1h_input_tokens: 30 },
     },
@@ -1075,18 +1096,22 @@ const FAILURE_COST_VIEW = {
     surface: 'rendered',
     probe: (out) =>
       expect(out).toContain(
-        '; model claude-x-20260101; asked for 1h (sent as 1h; stated on realm agent)',
+        '; model claude-x-20260101; asked for 1 hour (sent as 1 hour; stated on realm agent)',
       ),
   },
   cache_write_5m: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain('; 70 of the tokens written were kept for 5m, not the 1h asked'),
+      expect(out).toContain(
+        '; 70 of the tokens written were kept for 5 minutes, not the 1 hour asked',
+      ),
   },
   cache_write_1h: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain('; 30 of the tokens written were kept for 1h, not the 5m asked'),
+      expect(out).toContain(
+        '; 30 of the tokens written were kept for 1 hour, not the 5 minutes asked',
+      ),
   },
   // issue #600 caching PR P: on the priced render.
   money: {
@@ -1172,19 +1197,30 @@ const FAILURE_CACHE_REQUESTED_ENTRY = {
     surface: 'rendered',
     probe: (out) => expect(out).toContain(', then asked for no caching (stated on realm agent)'),
   },
-  lifetime_s: { surface: 'rendered', probe: (out) => expect(out).toContain('; asked for 5m (') },
+  lifetime_s: {
+    surface: 'rendered',
+    probe: (out) => expect(out).toContain('; asked for 5 minutes ('),
+  },
   ttl_sent: {
     surface: 'rendered',
     probe: (out) =>
-      expect(out).toContain("(the provider's default lifetime; realm listen's default)"),
+      expect(out).toContain("(the provider's default lifetime; realm listen's default; auto: "),
   },
   source: {
     surface: 'rendered',
-    probe: (out) => expect(out).toContain("; realm listen's default)"),
+    probe: (out) => expect(out).toContain("; realm listen's default; auto: "),
   },
   by: {
     surface: 'rendered',
-    probe: (out) => expect(out).toContain('(sent as 1h; stated on realm agent)'),
+    probe: (out) => expect(out).toContain('(sent as 1 hour; stated on realm agent)'),
+  },
+  // issue #600 (the lifetime unit): the evidence `auto` chose by, inside the ask's parentheses.
+  auto: {
+    surface: 'rendered',
+    probe: (out) =>
+      expect(out).toContain(
+        "; auto: the last 5 gaps between this workflow's triggers were about 10 seconds, 10 seconds, 10 seconds, 2 hours and 2 hours)",
+      ),
   },
 } satisfies Record<keyof CacheRequestedEntry, DisclosureRoute>;
 

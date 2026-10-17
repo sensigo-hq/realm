@@ -16,7 +16,6 @@ import {
   composeWaysAt,
   CACHE_BASES,
   CACHE_STATES,
-  PROMPT_CACHE_LIFETIMES,
   SEAL_ARMS,
   WorkflowError,
   classifyRunHealth,
@@ -73,6 +72,7 @@ import type {
   RunCost,
 } from '@sensigo/realm';
 import { recomputeIdentity } from '../extensions/extension-identity.js';
+import { autoEvidence, lifetimeText } from '../agent/prompt-cache.js';
 import {
   ABSENCE_WORDS,
   UNSHOWABLE_NAME,
@@ -423,17 +423,15 @@ function nameForTerminal(name: string): string {
 const MAX_LIFETIME_S = 604_800;
 
 /**
- * Issue #600 PR 2 (D3) — a stored lifetime as the operator reads it, or `undefined` when it is not a
- * whole number of seconds from 1 to 7 days. The flag's word (`5m`, `1h`) when it is one of its
- * lifetimes, else the exact seconds (`90s`): core's `formatDuration` would round 90 s to `1m`.
+ * Issue #600 (D3; the lifetime unit) — a stored lifetime as the operator reads it, or `undefined`
+ * when it is not a whole number of seconds from 1 to 7 days: exact words (`5 minutes`, `1 hour`,
+ * `90 seconds` — `lifetimeText`, the start line's own); core's `formatDuration` would round 90 s to
+ * `1m`.
  */
 function lifetimeWord(seconds: number | undefined): string | undefined {
   if (seconds === undefined || !Number.isInteger(seconds)) return undefined;
   if (seconds < 1 || seconds > MAX_LIFETIME_S) return undefined;
-  for (const [word, value] of Object.entries(PROMPT_CACHE_LIFETIMES)) {
-    if (value === seconds) return word;
-  }
-  return `${seconds}s`;
+  return lifetimeText(seconds);
 }
 
 /** Issue #600 PR 2 (D3) — where an ask's setting came from, and which runner chose it. */
@@ -447,9 +445,13 @@ function askSourceText(entry: CacheRequestedEntry): string {
   return `unrecognized source ${quotedForTerminal(entry.source)}`;
 }
 
-/** Issue #600 PR 2 (D3) — one distinct ask, in words. */
+/**
+ * Issue #600 PR 2 (D3) — one distinct ask, in words; the lifetime unit: when `auto` chose it, what it
+ * read (`; auto: <evidence>`, the start line's words).
+ */
 function askEntryText(entry: CacheRequestedEntry): string {
-  if (entry.value === 'off') return `asked for no caching (${askSourceText(entry)})`;
+  const auto = entry.auto !== undefined ? `; auto: ${autoEvidence(entry.auto)}` : '';
+  if (entry.value === 'off') return `asked for no caching (${askSourceText(entry)}${auto})`;
   if (entry.value === 'provider_rules') {
     return "asked for nothing (the provider's own caching, if any, applies)";
   }
@@ -463,7 +465,7 @@ function askEntryText(entry: CacheRequestedEntry): string {
       : entry.ttl_sent
         ? `sent as ${lifetime}`
         : "the provider's default lifetime";
-  return `asked for ${lifetime} (${sent}; ${askSourceText(entry)})`;
+  return `asked for ${lifetime} (${sent}; ${askSourceText(entry)}${auto})`;
 }
 
 /**
@@ -501,9 +503,13 @@ function requestFactsText(cost: CostView): { model?: string; ask?: string } {
       const kept5m = cost.cache_write_5m?.value ?? 0;
       const kept1h = cost.cache_write_1h?.value ?? 0;
       if (only.lifetime_s === 3600 && kept5m > 0) {
-        clauses.push(`${kept5m} of the tokens written were kept for 5m, not the 1h asked`);
+        clauses.push(
+          `${kept5m} of the tokens written were kept for 5 minutes, not the 1 hour asked`,
+        );
       } else if (only.lifetime_s === 300 && kept1h > 0) {
-        clauses.push(`${kept1h} of the tokens written were kept for 1h, not the 5m asked`);
+        clauses.push(
+          `${kept1h} of the tokens written were kept for 1 hour, not the 5 minutes asked`,
+        );
       }
     }
     const zeroFromEvery = (fig: CostFigure | undefined): boolean =>

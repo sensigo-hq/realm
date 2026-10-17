@@ -3,8 +3,10 @@
 // `cache_requested_source` are an adapter's or a provider module's (a module may write any string);
 // `cache_requested_by` and `provider` a runner's. Each passes through the one rule a stored name
 // obeys (`readStoredName`: trimmed, no control character, at most 200 characters with the house
-// marker).
+// marker). Issue #600 (the lifetime unit): `cache_auto`, an object, is normalised to its one shape
+// (`normalizeCacheAuto`) or dropped.
 import { readStoredName } from './holder.js';
+import { normalizeCacheAuto } from '../economics/cache-lifetime.js';
 
 /** The request fields that hold free text, bounded at the write. */
 const NAME_FIELDS = [
@@ -19,7 +21,8 @@ const NAME_FIELDS = [
  * Bounds the free text on each request record: for each entry that is a plain object, `model`,
  * `cache_requested`, `cache_requested_source`, `cache_requested_by` and `provider` go through
  * `readStoredName`, and a field it refuses is dropped. A valid word (`lifetime`, `stated`) is
- * unchanged.
+ * unchanged. An entry's own `cache_auto` is replaced by its normalised form (`normalizeCacheAuto`:
+ * `{ basis }` or `{ basis, gaps_s }`, extra keys gone) or deleted when that is `undefined`.
  * Every other field, and every entry that is not an object (a `null`, a number), passes through
  * unchanged. Total: it never throws, because it runs inside `recordDriveFailure`'s fence, where a
  * throw loses the record. It returns new objects; the input is not changed.
@@ -33,6 +36,11 @@ export function boundRequestFacts(requests: readonly unknown[]): unknown[] {
       const read = readStoredName(out[field]);
       if (read === undefined) delete out[field];
       else out[field] = read;
+    }
+    if (Object.hasOwn(out, 'cache_auto')) {
+      const auto = normalizeCacheAuto(out['cache_auto']);
+      if (auto === undefined) delete out['cache_auto'];
+      else out['cache_auto'] = auto;
     }
     return out;
   });

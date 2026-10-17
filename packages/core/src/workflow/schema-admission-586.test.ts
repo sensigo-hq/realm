@@ -11,7 +11,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { loadWorkflowFromString, loadWorkflowFromStringWithDiagnostics } from './yaml-loader.js';
+import {
+  loadWorkflowFromString,
+  loadWorkflowFromStringWithDiagnostics,
+  SCHEMA_KEY_CONSEQUENCE,
+} from './yaml-loader.js';
 import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
 import {
   compileSchema,
@@ -19,6 +23,7 @@ import {
   composeSchemaFailure,
   validateInputSchema,
   validateOutputSchema,
+  asyncSchemaValidity,
 } from '../validation/input-schema.js';
 
 /** A workflow with one auto step; `extra` is spliced at the top level, `stepExtra` into the step. */
@@ -970,5 +975,191 @@ describe('#586 schema admission — the four authored keys', () => {
         'wf-id',
       ),
     ).not.toThrow();
+  });
+});
+
+// =================================================================================================
+// A root `$async` in any authored schema block is refused at load in four clauses: the validity
+// (`asyncSchemaValidity`), the key's consequence, the remedy, and the key's line — never the
+// generic validator phrasing. What a failing cell prints: booleans per clause.
+// =================================================================================================
+describe('the loader refuses a schema block whose root carries a truthy $async', () => {
+  const generic = ['is not a valid JSON Schema', 'fix the schema', 'so this check cannot run'];
+  // A trace schema in warn mode (the default) is left unchecked at run time, never failed.
+  const TRACE_WARN = 'Every trace for this step would go unchecked at run time';
+  const clauses = (message: string, consequence: string, line: number) => ({
+    validity: message.includes(asyncSchemaValidity(true)),
+    consequence: message.includes(consequence),
+    remedy: message.includes('remove `$async` from the schema'),
+    line: message.includes(`(line ${line})`),
+    generic: generic.filter((g) => message.includes(g)),
+  });
+  const FOUR = { validity: true, consequence: true, remedy: true, line: true, generic: [] };
+
+  it.each([
+    [
+      'params_schema',
+      { extra: 'params_schema:\n  $async: true\n  type: object\n' },
+      4,
+      false,
+      SCHEMA_KEY_CONSEQUENCE.params_schema,
+    ],
+    [
+      'input_schema',
+      { stepExtra: '    input_schema:\n      $async: true\n      type: object\n' },
+      8,
+      false,
+      SCHEMA_KEY_CONSEQUENCE.input_schema,
+    ],
+    [
+      'output_schema',
+      { stepExtra: '    output_schema:\n      $async: true\n      type: object\n' },
+      8,
+      true,
+      SCHEMA_KEY_CONSEQUENCE.output_schema,
+    ],
+    // No `trace_validation_mode`: warn, the engine's default — the trace is left unchecked.
+    [
+      'trace_schema',
+      { stepExtra: '    trace_schema:\n      $async: true\n      type: array\n' },
+      8,
+      true,
+      TRACE_WARN,
+    ],
+  ] as const)(
+    '2. %s: refused in four clauses on the key’s line',
+    (_key, opts, line, agent, consequence) => {
+      const yaml = wf(opts);
+      const { message } = refusalOf(
+        agent ? yaml.replace('execution: auto', 'execution: agent') : yaml,
+      );
+      // (a) red when the loader's arm is removed (the generic arm forwards the run-time message
+      //     under "is not a valid JSON Schema … fix the schema"); (b) prints each clause's boolean
+      //     and the generic phrases found.
+      expect(clauses(message, consequence, line)).toEqual(FOUR);
+    },
+  );
+
+  it.each([
+    ['missing (warn, the default)', '', TRACE_WARN],
+    ['warn', '    trace_validation_mode: warn\n', TRACE_WARN],
+    ['enforce', '    trace_validation_mode: enforce\n', SCHEMA_KEY_CONSEQUENCE.trace_schema],
+    // An invalid mode is refused on its own; this block keeps the shared consequence.
+    ['invalid', '    trace_validation_mode: sometimes\n', SCHEMA_KEY_CONSEQUENCE.trace_schema],
+  ] as const)(
+    '2. trace_schema, mode %s: the consequence that mode makes true',
+    (_mode, modeLine, consequence) => {
+      const yaml = wf({
+        stepExtra: '    trace_schema:\n      $async: true\n      type: array\n' + modeLine,
+      }).replace('execution: auto', 'execution: agent');
+      const { message } = refusalOf(yaml);
+      const other = consequence === TRACE_WARN ? SCHEMA_KEY_CONSEQUENCE.trace_schema : TRACE_WARN;
+      // (a) red when every mode gets the shared consequence (warn reads "would fail with that
+      //     error", untrue of an unchecked trace), or warn's wording reaches enforce; (b) prints
+      //     two booleans.
+      expect({
+        says: message.includes(`. ${consequence}; remove \`$async\` from the schema.`),
+        saysTheOther: message.includes(other),
+      }).toEqual({ says: true, saysTheOther: false });
+    },
+  );
+
+  it('2. a YAML `$async: yes` is refused', () => {
+    const { message } = refusalOf(
+      wf({ stepExtra: '    input_schema:\n      $async: yes\n      type: object\n' }),
+    );
+    // (a) red when the detection reads `$async === true` only; (b) prints a boolean.
+    expect(message.includes(asyncSchemaValidity('yes'))).toBe(true);
+  });
+
+  it('2. an async output_schema with a default_output is refused, and the process lives', async () => {
+    const yaml =
+      `id: w\nname: W\nversion: 1\nsteps:\n  ask:\n    description: Ask.\n    execution: agent\n` +
+      `    output_schema:\n      $async: true\n      type: object\n      required: [x]\n` +
+      `    validation_exhaustion:\n      mode: default\n      default_output: {}\n`;
+    const { message, errors } = refusalOf(yaml);
+    // A tick for any stray rejection: with the detection removed, the default_output proof runs the
+    // async validator, its rejection goes unhandled, and the test run reports it as an error.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // (a) red when the detection is removed (not refused), or when the loader's arm does not mark
+    //     the key refused (the default_output proof then restates the refusal as a second error,
+    //     "… does not validate against the step's own 'output_schema': undefined"); (b) prints a
+    //     boolean and the count of default_output errors.
+    expect({
+      refused: message.includes(asyncSchemaValidity(true)),
+      defaultOutputErrors: errors.filter((e) =>
+        e.includes("'validation_exhaustion.default_output'"),
+      ).length,
+    }).toEqual({ refused: true, defaultOutputErrors: 0 });
+  });
+});
+
+// =================================================================================================
+// 6. The docs rows about a root `$async`, quoted from the pages (whitespace folded) and executed: the
+// loader refuses the block with the quoted words, a stored one is refused at its check with
+// `VALIDATION_WORKFLOW_SCHEMA`. What a failing cell prints: booleans per row and execution.
+// =================================================================================================
+describe('6. the docs rows about a root $async are true of the build', () => {
+  const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+  const flat = (t: string) => t.replace(/\s+/g, ' ');
+  const page = (p: string) => flat(readFileSync(join(ROOT, p), 'utf8'));
+  // The accepted row's "except a `trace_schema` in warn mode (the default), which is reported and
+  // left unchecked" is executed by core's cell 1f (`input-schema.test.ts`) and the MCP cell 4
+  // "trace, warn" (`async-schema-runtime.test.ts`); the rest of the row, here.
+  const accepted =
+    '| `$async` | No. A schema Realm checks must answer at once: a root `$async` (any true value) is refused when the workflow is loaded or created, and a workflow stored by an earlier version is refused at its first check, except a `trace_schema` in warn mode (the default), which is reported and left unchecked. |';
+  const traceWarnRow =
+    '| `trace_schema` with a root `$async`, in warn mode (the default) | `Every trace for this step would go unchecked at run time` |';
+  const refusedHead =
+    "'input_schema' declares `$async: true`, which Realm does not support: it checks data against a schema synchronously and cannot wait for an asynchronous check.";
+  const refusedTail = 'remove `$async` from the schema.';
+  const refusedRow = `| A root \`$async\` (any true value) | \`\`${refusedHead} … ${refusedTail}\`\` |`;
+  const codeRow =
+    "| `VALIDATION_WORKFLOW_SCHEMA` | A workflow file is refused by the loader, a stored workflow's schema cannot be used at run time, or a `realm.yaml` is in the wrong folder.";
+
+  it('the accepted table, the loader table and the error-code row say it, and the build does it', () => {
+    const blocks = page('docs/reference/workflow/json-schema-blocks.md');
+    const codes = page('docs/reference/error-codes.md');
+    const atLoad = refusalOf(
+      wf({ stepExtra: '    input_schema:\n      $async: true\n      type: object\n' }),
+    ).message;
+    const yes = refusalOf(
+      wf({ stepExtra: '    input_schema:\n      $async: yes\n      type: object\n' }),
+    ).message;
+    const traceWarn = refusalOf(
+      wf({ stepExtra: '    trace_schema:\n      $async: true\n      type: array\n' }).replace(
+        'execution: auto',
+        'execution: agent',
+      ),
+    ).message;
+    let storedCode: string | undefined;
+    try {
+      compileSchema({ $async: true, type: 'object' } as never);
+    } catch (err) {
+      storedCode = (err as WorkflowError).code;
+    }
+    // (a) red when a row's quoted text changes, or the build stops doing what a row says; (b)
+    //     prints a boolean per row and per execution, and the stored check's code.
+    expect({
+      acceptedRow: blocks.includes(flat(accepted)),
+      refusedRow: blocks.includes(flat(refusedRow)),
+      codeRow: codes.includes(flat(codeRow)),
+      traceWarnRow: blocks.includes(flat(traceWarnRow)),
+      loadSaysIt: atLoad.includes(refusedHead) && atLoad.includes(refusedTail),
+      anyTrueValue: yes.includes('declares `$async: "yes"`'),
+      traceWarnSaysIt: traceWarn.includes(
+        '. Every trace for this step would go unchecked at run time; remove `$async`',
+      ),
+      storedCode,
+    }).toEqual({
+      acceptedRow: true,
+      refusedRow: true,
+      codeRow: true,
+      traceWarnRow: true,
+      loadSaysIt: true,
+      anyTrueValue: true,
+      traceWarnSaysIt: true,
+      storedCode: 'VALIDATION_WORKFLOW_SCHEMA',
+    });
   });
 });

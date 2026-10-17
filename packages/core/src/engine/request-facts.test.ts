@@ -163,4 +163,76 @@ describe('issue #600 PR 2 — request names are bounded on the stored record (A3
     // The input is not changed.
     expect(input[3]).toEqual({ model: 'claude-x\n', prompt_tokens: 1 });
   });
+
+  // Cell 2 (the lifetime unit): `cache_auto` is a record fact a provider module may write, so it is
+  // kept only in the shape the record keeps — read on the stored record. (a) red when a malformed
+  // `cache_auto` is stored, an extra key survives, or the bound stops applying to the names beside
+  // it; (b) prints the stored `cache_auto` and name of each request (test values only).
+  it('cache_auto on the stored record: a malformed one is dropped; a valid one comes back normalised, its extra key gone', async () => {
+    const storedAuto = async (cache_auto: unknown, model?: string) => {
+      const { run } = await store.create({ workflowId: DEF.id, workflowVersion: 1, params: {} });
+      const usage = {
+        request_index: 0,
+        request_start: '2026-10-16T00:00:00.000Z',
+        prompt_tokens: 10,
+        ...(model !== undefined ? { model } : {}),
+        cache_auto,
+      } as unknown as UsageRecord;
+      await executeStep(store, DEF, {
+        runId: run.id,
+        command: 'work',
+        input: {},
+        dispatcher: echo,
+        stepMeta: { usage: [usage] },
+      });
+      const request = (await store.get(run.id)).evidence[0]!.diagnostics!.cache!.requests[0]!;
+      return {
+        has: Object.hasOwn(request, 'cache_auto'),
+        cache_auto: request.cache_auto,
+        keys: Object.keys(request.cache_auto ?? {}),
+        model: request.model,
+        prompt_tokens: request.prompt_tokens,
+      };
+    };
+    expect([
+      await storedAuto({ basis: 'guessed' }),
+      await storedAuto({ basis: 'listen_trigger_gaps', gaps_s: [1, 2, 3, 4, 5, 6] }),
+      await storedAuto('no_measurement'),
+      await storedAuto(
+        { extra: 'x', gaps_s: [420, 720], basis: 'listen_trigger_gaps' },
+        'claude-x-20260101\n',
+      ),
+      await storedAuto({ basis: 'no_measurement' }, 'claude-\u001bx'),
+    ]).toEqual([
+      { has: false, cache_auto: undefined, keys: [], model: undefined, prompt_tokens: 10 },
+      { has: false, cache_auto: undefined, keys: [], model: undefined, prompt_tokens: 10 },
+      { has: false, cache_auto: undefined, keys: [], model: undefined, prompt_tokens: 10 },
+      {
+        has: true,
+        cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+        keys: ['basis', 'gaps_s'],
+        model: 'claude-x-20260101',
+        prompt_tokens: 10,
+      },
+      {
+        has: true,
+        cache_auto: { basis: 'no_measurement' },
+        keys: ['basis'],
+        model: undefined,
+        prompt_tokens: 10,
+      },
+    ]);
+  });
+
+  // Cell 2, called directly. (a) red when the function changes its input's `cache_auto` in place;
+  // (b) prints the returned array and the input.
+  it('cache_auto, called directly: normalised in a new entry; the input is not changed', () => {
+    const entry = { cache_auto: { gaps_s: [7], basis: 'listen_trigger_gaps', extra: true } };
+    expect(boundRequestFacts([entry])).toEqual([
+      { cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [7] } },
+    ]);
+    expect(entry).toEqual({
+      cache_auto: { gaps_s: [7], basis: 'listen_trigger_gaps', extra: true },
+    });
+  });
 });

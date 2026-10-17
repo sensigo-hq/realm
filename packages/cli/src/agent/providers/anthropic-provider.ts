@@ -3,8 +3,12 @@
 import {
   WorkflowError,
   validateAgentSubmission,
-  PROMPT_CACHE_LIFETIMES,
+  chooseCacheLifetime,
+  normalizeCacheAuto,
+  type CacheAutoBasis,
+  type CacheChoice,
   type CacheRequestSource,
+  type CacheTiers,
   type JsonSchema,
   type PromptCacheSetting,
   type StructuredOutputMeta,
@@ -113,19 +117,35 @@ export const MAX_NONSTREAMING_TOKENS = 21_333;
 export const ANTHROPIC_DEFAULT_BASE_URL = 'https://api.anthropic.com';
 
 /**
+ * Issue #600 (the lifetime unit) — Anthropic's cache prices and lifetimes, as multiples of its input
+ * price, for `chooseCacheLifetime` (core holds no price and names no provider; the adapter declares
+ * them). The lifetimes are Anthropic's two: 5 minutes (the default, sent without a `ttl`) and 1 hour
+ * (sent with `ttl: '1h'`). The writes are Anthropic's published 1.25× and 2× of input (vendored doc
+ * `plans/issue-558/axes/sources/framework-decisions/anthropic-prompt-caching.md:259-260`). Reads cost
+ * 0.025× to 0.1× by model, and the choice barely moves across that range, so the highest is used —
+ * the provider's rules, not a per-model table.
+ */
+export const ANTHROPIC_CACHE_TIERS: CacheTiers = {
+  read: 0.1,
+  short: { lifetime_s: 300, write: 1.25 },
+  long: { lifetime_s: 3600, write: 2 },
+};
+
+/**
  * Issue #600 PR 2 (B1) — the single-shot request's `system`: the plain string when nothing is asked
  * to be cached (byte-for-byte the request before caching), else one text block whose
  * `cache_control` marks the whole fixed part — the profile, Realm's instructions and the schema —
- * as the part to cache. `5m` sends no `ttl` (the provider's default lifetime, 5 minutes); `1h`
- * sends `ttl: '1h'`. The tools path never calls this.
+ * as the part to cache. `short` sends no `ttl` (the provider's default lifetime, 5 minutes); `long`
+ * sends `ttl: '1h'` — byte-identical to the two bodies sent before the lifetime unit. The tools path never
+ * calls this.
  */
 function systemWithCache(
   systemPrompt: string,
-  setting: PromptCacheSetting,
+  choice: CacheChoice,
 ): string | Array<{ type: 'text'; text: string; cache_control: Record<string, string> }> {
-  if (setting === 'off') return systemPrompt;
+  if (choice === 'off') return systemPrompt;
   const cacheControl: Record<string, string> =
-    setting === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
+    choice === 'long' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
   return [{ type: 'text', text: systemPrompt, cache_control: cacheControl }];
 }
 
@@ -381,20 +401,40 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
     value: PromptCacheSetting;
     source?: CacheRequestSource;
     by?: string;
+    auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
   };
+  /** Issue #600 (the lifetime unit) — the ONE choice this instance asks for, resolved at build. */
+  private readonly cacheChoice: CacheChoice;
 
   /**
-   * `promptCache` (issue #600 PR 2): what the single-shot request asks to cache. Without it the
-   * provider asks for nothing (`off`) — the request is byte-for-byte the one before caching.
+   * `promptCache` (issue #600): what the single-shot request asks to cache. Without it the provider
+   * asks for nothing (`off`) — the request is byte-for-byte the one before caching. `off`, `short`
+   * and `long` ask for that; `auto` asks for what `chooseCacheLifetime` chooses from `auto.gaps_s`
+   * and {@link ANTHROPIC_CACHE_TIERS}, with the short lifetime as the prior for a drive with no
+   * measurement and the long one for a drive `realm listen` started.
    */
   constructor(
     private readonly model: string,
     opts?: {
-      promptCache?: { value: PromptCacheSetting; source?: CacheRequestSource; by?: string };
+      promptCache?: {
+        value: PromptCacheSetting;
+        source?: CacheRequestSource;
+        by?: string;
+        auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+      };
     },
   ) {
     super();
     this.promptCache = opts?.promptCache ?? { value: 'off' };
+    const { value, auto } = this.promptCache;
+    this.cacheChoice =
+      value === 'auto'
+        ? chooseCacheLifetime(
+            auto?.gaps_s,
+            ANTHROPIC_CACHE_TIERS,
+            auto === undefined || auto.basis === 'no_measurement' ? 'short' : 'long',
+          )
+        : value;
   }
 
   /**
@@ -408,12 +448,16 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * via a `response_format` json_object mode.
    */
   capabilities(): ProviderCapabilities {
-    // issue #600 PR 2 (B2): what the single-shot request asks to cache, always — `off` included.
+    // issue #600 PR 2 (B2): what the single-shot request asks to cache, always — `off` included;
+    // the lifetime unit: the one resolved choice, as `'off'` or its lifetime in seconds.
     return {
       jsonMode: false,
       toolArgsStrict: true,
       providerId: 'anthropic',
-      promptCache: this.promptCache.value,
+      promptCache:
+        this.cacheChoice === 'off'
+          ? 'off'
+          : { lifetime_s: ANTHROPIC_CACHE_TIERS[this.cacheChoice].lifetime_s },
     };
   }
 
@@ -421,23 +465,29 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
    * Issue #600 PR 2 (B3) — what realm asked for on a single-shot request, and where it sent it:
    * the response's `model`, the ask (`lifetime` with its seconds and whether the lifetime was sent,
    * or `off`), its source and runner when given, the endpoint, and that Anthropic reports a
-   * lifetime split. Never `provider`: `realm agent` stamps that.
+   * lifetime split. Never `provider`: `realm agent` stamps that. The lifetime unit: when the setting
+   * is `auto`, also `cache_auto` — the basis of the choice and the gaps it read (`no_measurement`
+   * when none was given) — whatever it chose, `off` included.
    */
   private requestFacts(response: unknown, client: unknown): Partial<UsageRecord> {
-    const { value, source, by } = this.promptCache;
+    const { value, source, by, auto } = this.promptCache;
+    const choice = this.cacheChoice;
     const model = responseModel(response);
     const endpoint = endpointOf(client, ANTHROPIC_DEFAULT_BASE_URL);
+    const cacheAuto =
+      value === 'auto' ? normalizeCacheAuto(auto ?? { basis: 'no_measurement' }) : undefined;
     return {
       ...(model !== undefined ? { model } : {}),
-      ...(value === 'off'
+      ...(choice === 'off'
         ? { cache_requested: 'off' as const }
         : {
             cache_requested: 'lifetime' as const,
-            cache_lifetime_s: PROMPT_CACHE_LIFETIMES[value],
-            cache_ttl_sent: value === '1h',
+            cache_lifetime_s: ANTHROPIC_CACHE_TIERS[choice].lifetime_s,
+            cache_ttl_sent: choice === 'long',
           }),
       ...(source !== undefined ? { cache_requested_source: source } : {}),
       ...(by !== undefined ? { cache_requested_by: by } : {}),
+      ...(cacheAuto !== undefined ? { cache_auto: cacheAuto } : {}),
       ...(endpoint !== undefined ? { endpoint } : {}),
       cache_split_offered: true,
     };
@@ -569,7 +619,7 @@ export class AnthropicProvider extends ToolCapableLlmProvider {
         const opts: Record<string, unknown> = {
           model: this.model,
           max_tokens: resolveMaxTokens(this.model),
-          system: systemWithCache(systemPrompt, this.promptCache.value),
+          system: systemWithCache(systemPrompt, this.cacheChoice),
           messages: [{ role: 'user', content: userContent }],
         };
         if (submitTool !== undefined) {

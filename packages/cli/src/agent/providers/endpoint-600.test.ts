@@ -72,7 +72,7 @@ describe('endpoint through the real SDKs (issue #600 PR 2, G10)', () => {
       process.env['ANTHROPIC_BASE_URL'] = stub.baseUrl;
       process.env['ANTHROPIC_API_KEY'] = 'sk-ant-dummy-600-0000';
       const provider = new AnthropicProvider('claude-x', {
-        promptCache: { value: '5m', source: 'stated', by: 'realm agent' },
+        promptCache: { value: 'short', source: 'stated', by: 'realm agent' },
       });
       const { usage } = await provider.callStepWithMeta('prompt', SCHEMA);
       const stored = JSON.stringify(usage);

@@ -48,18 +48,19 @@ On an agent step, `input_schema` and `output_schema` are both checked against th
 
 Realm checks with draft-07 of JSON Schema, in a strict mode that refuses what it does not understand.
 
-| Feature                                                                                                         | Accepted                                                   |
-| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `type`, `properties`, `required`, `additionalProperties`, `items`, `enum`, `const`                              | Yes                                                        |
-| `minLength`, `maxLength`, `pattern`, `minimum`, `maximum`, `minItems`, `maxItems` and the other draft-07 checks | Yes                                                        |
-| `anyOf`, `oneOf`, `allOf`, `not`                                                                                | Yes                                                        |
-| `$ref` to `#/definitions/<name>` or `#/$defs/<name>` in the same block                                          | Yes                                                        |
-| `$ref` to another file or address                                                                               | No. Realm does not fetch schemas.                          |
-| `format`                                                                                                        | No, whatever its value. Use `pattern`.                     |
-| A list of types, such as `type: [string, number]`                                                               | Accepted with a warning. Write `anyOf`.                    |
-| Keywords of later drafts, such as `prefixItems`                                                                 | No                                                         |
-| `$schema` naming a later draft                                                                                  | No                                                         |
-| Your own keywords, including ones that start with `x-`                                                          | No. `x-` fields are for the top of the workflow file only. |
+| Feature                                                                                                         | Accepted                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`, `properties`, `required`, `additionalProperties`, `items`, `enum`, `const`                              | Yes                                                                                                                                                                                                                                                                                                     |
+| `minLength`, `maxLength`, `pattern`, `minimum`, `maximum`, `minItems`, `maxItems` and the other draft-07 checks | Yes                                                                                                                                                                                                                                                                                                     |
+| `anyOf`, `oneOf`, `allOf`, `not`                                                                                | Yes                                                                                                                                                                                                                                                                                                     |
+| `$ref` to `#/definitions/<name>` or `#/$defs/<name>` in the same block                                          | Yes                                                                                                                                                                                                                                                                                                     |
+| `$ref` to another file or address                                                                               | No. Realm does not fetch schemas.                                                                                                                                                                                                                                                                       |
+| `format`                                                                                                        | No, whatever its value. Use `pattern`.                                                                                                                                                                                                                                                                  |
+| A list of types, such as `type: [string, number]`                                                               | Accepted with a warning. Write `anyOf`.                                                                                                                                                                                                                                                                 |
+| Keywords of later drafts, such as `prefixItems`                                                                 | No                                                                                                                                                                                                                                                                                                      |
+| `$schema` naming a later draft                                                                                  | No                                                                                                                                                                                                                                                                                                      |
+| `$async`                                                                                                        | No. A schema Realm checks must answer at once: a root `$async` (any true value) is refused when the workflow is loaded or created, and a workflow stored by an earlier version is refused at its first check, except a `trace_schema` in warn mode (the default), which is reported and left unchecked. |
+| Your own keywords, including ones that start with `x-`                                                          | No. `x-` fields are for the top of the workflow file only.                                                                                                                                                                                                                                              |
 
 ## What the loader refuses
 
@@ -77,15 +78,17 @@ Each block is compiled when the file is loaded, with the same validator that che
 | An empty `enum`                            | `… 'enum' must not be empty ('enum: []' here) … add at least one value to 'enum', or remove it.`                                                                                                                                |
 | `required` that is not a list              | `… 'required' must be a list ('required: summary' here) … give 'required' a list.`                                                                                                                                              |
 | Nothing under the key                      | `'input_schema' is null, not a schema (a JSON-Schema block is an object, or the boolean true/false); write a schema under 'input_schema', or remove it.`                                                                        |
+| A root `$async` (any true value)           | ``'input_schema' declares `$async: true`, which Realm does not support: it checks data against a schema synchronously and cannot wait for an asynchronous check. … remove `$async` from the schema.``                           |
 
 The middle of each message names the consequence for that block:
 
-| Block           | Consequence named in the message                                                           |
-| --------------- | ------------------------------------------------------------------------------------------ |
-| `params_schema` | `Every run start would be refused with that error at run time`                             |
-| `input_schema`  | `Every execute_step submission to this step would be rejected with that error at run time` |
-| `output_schema` | `Every agent submission to this step would be rejected with that error at run time`        |
-| `trace_schema`  | `Every trace submission for this step would fail with that error at run time`              |
+| Block                                                           | Consequence named in the message                                                           |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `params_schema`                                                 | `Every run start would be refused with that error at run time`                             |
+| `input_schema`                                                  | `Every execute_step submission to this step would be rejected with that error at run time` |
+| `output_schema`                                                 | `Every agent submission to this step would be rejected with that error at run time`        |
+| `trace_schema`                                                  | `Every trace submission for this step would fail with that error at run time`              |
+| `trace_schema` with a root `$async`, in warn mode (the default) | `Every trace for this step would go unchecked at run time`                                 |
 
 ## What the loader warns about
 

@@ -652,6 +652,56 @@ describe('composeCostView — the request facts (issue #600 PR 2)', () => {
     });
   });
 
+  // Cell 3 (the lifetime unit): an ask carries the evidence `auto` chose by. Two requests whose
+  // `cache_auto` differ only in key order are ONE ask; a different `cache_auto` is another ask; a
+  // malformed one is not carried. (a) red when `auto` is not carried, when the dedup key is built
+  // from the stored key order, or when `auto` is left out of the dedup key; (b) prints
+  // `cache_requested`.
+  it('cache_requested carries auto: equal auto in any key order is one ask, a different auto another', () => {
+    const asked = {
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 3600,
+      cache_ttl_sent: true,
+      cache_requested_source: 'runner_default',
+      cache_requested_by: 'realm listen',
+    };
+    const view = composeCostView([
+      req({ ...asked, cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] } }, 0),
+      req({ ...asked, cache_auto: { gaps_s: [420, 720], basis: 'listen_trigger_gaps' } }, 1),
+      req({ ...asked, cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [] } }, 2),
+      req({ ...asked, cache_auto: { basis: 'guessed' } }, 3),
+    ]);
+    expect(view!.cache_requested).toEqual({
+      entries: [
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+          auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+        },
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+          auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+        },
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+        },
+      ],
+      reported: 4,
+      of: 4,
+    });
+  });
+
   // A4. (a) red when the split is not summed from `cache_creation`; (b) prints the two figures.
   it('cache_write_5m and cache_write_1h are summed from the cache_creation split, as CostFigures', () => {
     const view = composeCostView([

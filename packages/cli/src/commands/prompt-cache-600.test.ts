@@ -197,9 +197,10 @@ async function driveAgainstStandIn(extra: string[]) {
 }
 
 describe('realm agent asks Anthropic to cache, and records the ask (issue #600 PR 2)', () => {
-  // G15. (a) red when an operator's drive resolves as a listen child (1h, realm listen); (b) prints
-  // the system field sent, the stored request facts and the start line.
-  it('G15 no flag: 5m is asked (no ttl), and the record holds lifetime, 300, false, runner_default, realm agent, the answered model, anthropic', async () => {
+  // G15. (a) red when an operator's drive resolves as a listen child (its long prior, realm listen),
+  // or `auto`'s basis is not recorded; (b) prints the system field sent, the stored request facts
+  // and the start line.
+  it('G15 no flag: auto asks for the short lifetime (no ttl), and the record holds lifetime, 300, false, runner_default, realm agent, cache_auto no_measurement, the answered model, anthropic', async () => {
     const { r, stub, text, request, port } = await driveAgainstStandIn([]);
     expect(
       (stub.requests[0]!['system'] as Array<{ cache_control: unknown }>)[0]!.cache_control,
@@ -213,6 +214,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       cache_ttl_sent: request.cache_ttl_sent,
       cache_requested_source: request.cache_requested_source,
       cache_requested_by: request.cache_requested_by,
+      cache_auto: request.cache_auto,
       provider: request.provider,
       endpoint: request.endpoint,
       cache_split_offered: request.cache_split_offered,
@@ -223,6 +225,7 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       cache_ttl_sent: false,
       cache_requested_source: 'runner_default',
       cache_requested_by: 'realm agent',
+      cache_auto: { basis: 'no_measurement' },
       provider: 'anthropic',
       endpoint: 'custom',
       cache_split_offered: true,
@@ -233,13 +236,13 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       port: false,
     });
     expect(r.stdout).toContain(
-      "Caching: Anthropic is asked to cache each step's fixed instructions for 5m (realm agent's default; turn it off with --prompt-cache off).",
+      "Caching: Anthropic is asked to cache each step's fixed instructions for 5 minutes (auto: a drive realm agent starts on its own has no trigger history; realm agent's default; turn it off with --prompt-cache off).",
     );
   }, 30_000);
 
   // G16. (a) red when resolveProvider drops the value; (b) prints the system field and the facts.
-  it("G16 --prompt-cache 1h: ttl '1h' is sent, and the source is stated", async () => {
-    const { r, stub, request } = await driveAgainstStandIn(['--prompt-cache', '1h']);
+  it("G16 --prompt-cache long: ttl '1h' is sent, the source is stated, and no cache_auto is recorded", async () => {
+    const { r, stub, request } = await driveAgainstStandIn(['--prompt-cache', 'long']);
     expect(
       (stub.requests[0]!['system'] as Array<{ cache_control: unknown }>)[0]!.cache_control,
     ).toEqual({
@@ -250,18 +253,19 @@ describe('realm agent asks Anthropic to cache, and records the ask (issue #600 P
       request.cache_lifetime_s,
       request.cache_ttl_sent,
       request.cache_requested_source,
-    ]).toEqual([3600, true, 'stated']);
+      request.cache_auto,
+    ]).toEqual([3600, true, 'stated', undefined]);
     expect(r.stdout).toContain(
-      "Caching: Anthropic is asked to cache each step's fixed instructions for 1h (set by --prompt-cache 1h).",
+      "Caching: Anthropic is asked to cache each step's fixed instructions for 1 hour (set by --prompt-cache long).",
     );
   }, 30_000);
 });
 
 describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C3)', () => {
   // G17. (a) red when the capability refusal is removed; (b) prints stderr.
-  it('G17 --prompt-cache 1h --provider openai → refused, no run file; with --run-id the run is not changed', async () => {
+  it('G17 --prompt-cache long --provider openai → refused, no run file; with --run-id the run is not changed', async () => {
     const r = await runCli(
-      ['agent', ...wf('wf'), '--provider', 'openai', '--model', 'gpt-x', '--prompt-cache', '1h'],
+      ['agent', ...wf('wf'), '--provider', 'openai', '--model', 'gpt-x', '--prompt-cache', 'long'],
       OPENAI(),
     );
     expect({ code: r.code, stderr: r.stderr.trim(), runs: runFiles() }).toEqual({
@@ -287,7 +291,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
         '--model',
         'gpt-x',
         '--prompt-cache',
-        '1h',
+        'long',
       ],
       OPENAI(),
     );
@@ -301,7 +305,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
   // G18. (a) red when promptCache is dropped from the sibling condition; (b) prints stderr.
   it('G18 --provider-module with --prompt-cache → refused with the sibling message', async () => {
     const r = await runCli(
-      ['agent', ...wf('wf'), '--provider-module', './p.mjs', '--prompt-cache', '5m'],
+      ['agent', ...wf('wf'), '--provider-module', './p.mjs', '--prompt-cache', 'short'],
       env(),
     );
     expect({ code: r.code, stderr: r.stderr.trim(), runs: runFiles() }).toEqual({
@@ -314,7 +318,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
 
   // G19. (a) red when listen's refusal is removed (listen then starts listening); (b) prints the
   // exit code and both streams.
-  it('G19 realm listen --provider openai --prompt-cache 1h → refused at startup, nothing listening', async () => {
+  it('G19 realm listen --provider openai --prompt-cache long → refused at startup, nothing listening', async () => {
     const r = await runCli(
       [
         'listen',
@@ -326,7 +330,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
         '--model',
         'gpt-x',
         '--prompt-cache',
-        '1h',
+        'long',
         '--dedup-store',
         'memory',
       ],
@@ -349,9 +353,9 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
   it('G19b a workflow with no agent step, or only tool-calling ones → refused, for any stated value, off included; no run file', async () => {
     const results = [];
     for (const [dir, id, value] of [
-      ['auto', 'prompt-cache-600-auto', '5m'],
+      ['auto', 'prompt-cache-600-auto', 'short'],
       ['auto', 'prompt-cache-600-auto', 'off'],
-      ['tools', 'prompt-cache-600-tools', '1h'],
+      ['tools', 'prompt-cache-600-tools', 'long'],
     ] as const) {
       const r = await runCli(
         ['agent', ...wf(dir), '--model', 'claude-x', '--prompt-cache', value],
@@ -400,7 +404,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
       const file = join(runsDir(), `${run.id}.json`);
       const before = readFileSync(file);
       const r = await runCli(
-        ['agent', '--run-id', run.id, '--model', 'claude-x', '--prompt-cache', '5m'],
+        ['agent', '--run-id', run.id, '--model', 'claude-x', '--prompt-cache', 'short'],
         ANTHROPIC(CLOSED_PORT),
       );
       seen.push({
@@ -423,7 +427,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
 
   // G19b, the controls. (a) red when the flag-less command is refused, or the listen child's
   // exemption is removed; (b) prints both streams.
-  it('G19b the same command without --prompt-cache is not refused; a --spawned-by-listen child given 5m is not refused and prints F4b', async () => {
+  it('G19b the same command without --prompt-cache is not refused; a --spawned-by-listen child given short is not refused and prints F4b', async () => {
     const plain = await runCli(
       ['agent', ...wf('auto'), '--model', 'claude-x'],
       ANTHROPIC(CLOSED_PORT),
@@ -437,7 +441,7 @@ describe('realm agent refuses a setting that can never apply (issue #600 PR 2, C
         '--model',
         'claude-x',
         '--prompt-cache',
-        '5m',
+        'short',
         '--spawned-by-listen',
       ],
       ANTHROPIC(CLOSED_PORT),
@@ -453,7 +457,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
     /re-attach \(`(realm agent --run-id \S+ [^`]*)`\)/.exec(r.stderr)?.[1];
 
   // (a) red when the re-attach command prints --spawned-by-listen; (b) prints the command.
-  it('a listen child on Anthropic given 1h: the command repeats --prompt-cache 1h, never --spawned-by-listen', async () => {
+  it('a listen child on Anthropic given long: the command repeats --prompt-cache long, never --spawned-by-listen', async () => {
     const r = await runCli(
       [
         'agent',
@@ -463,20 +467,20 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
         '--model',
         'claude-x',
         '--prompt-cache',
-        '1h',
+        'long',
         '--spawned-by-listen',
       ],
       ANTHROPIC(CLOSED_PORT),
     );
     const runId = runFiles()[0]!.replace(/\.json$/, '');
     expect(blockedCommand(r), r.stderr).toBe(
-      `realm agent --run-id ${runId} --provider anthropic --model claude-x --prompt-cache 1h`,
+      `realm agent --run-id ${runId} --provider anthropic --model claude-x --prompt-cache long`,
     );
   }, 30_000);
 
   // (a) red when the command repeats a setting the provider cannot apply; (b) prints the command
   // and the start line.
-  it("a listen child that picked OpenAI, given 1h: the command does not repeat it, and the start line says listen's flag applies only to Anthropic", async () => {
+  it("a listen child that picked OpenAI, given long: the command does not repeat it, and the start line says listen's flag applies only to Anthropic", async () => {
     const r = await runCli(
       [
         'agent',
@@ -486,7 +490,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
         '--model',
         'gpt-x',
         '--prompt-cache',
-        '1h',
+        'long',
         '--spawned-by-listen',
       ],
       OPENAI(),
@@ -496,7 +500,7 @@ describe('the re-attach command and a listen child (issue #600 PR 2, C6, G22)', 
       `realm agent --run-id ${runId} --provider openai --model gpt-x`,
     );
     expect(r.stdout).toContain(
-      'Caching: Realm asks OpenAI for no caching; any caching it does is its own. realm listen --prompt-cache 1h applies only to Anthropic.',
+      'Caching: Realm asks OpenAI for no caching; any caching it does is its own. realm listen --prompt-cache long applies only to Anthropic.',
     );
   }, 30_000);
 

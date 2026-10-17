@@ -173,13 +173,13 @@ describe('provider conformance — toolArgsStrict is a promise about the wire (i
 // =========================================================================
 describe('provider conformance — promptCache is a promise about the wire (issue #600 PR 2)', () => {
   const SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' } } };
-  const settings = ['off', '5m', '1h'] as const;
+  const settings = ['off', 'short', 'long'] as const;
 
   // G5. (a) red when the tools path builds its system through the cache helper; (b) prints the
   // setting and the requests' bodies that carried the marker.
-  it('guard: G5 — the tools path carries no cache_control under 5m and 1h', async () => {
+  it('guard: G5 — the tools path carries no cache_control under short and long', async () => {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
-    for (const value of ['5m', '1h'] as const) {
+    for (const value of ['short', 'long'] as const) {
       anthropicCreate.mockReset();
       anthropicCreate.mockResolvedValue({ content: [{ type: 'text', text: '{"ok":true}' }] });
       const p = new AnthropicProvider('claude-sonnet-4-5', {
@@ -214,6 +214,33 @@ describe('provider conformance — promptCache is a promise about the wire (issu
           }),
         sent: () => anthropicCreate.mock.calls[0]![0],
       })),
+      // The lifetime unit: `auto` keeps the promise for what it chose — off, and a lifetime.
+      {
+        name: 'anthropic auto (chose off)',
+        make: () =>
+          new AnthropicProvider('claude-sonnet-4-5', {
+            promptCache: {
+              value: 'auto',
+              source: 'stated',
+              by: 'realm agent',
+              auto: { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] },
+            },
+          }),
+        sent: () => anthropicCreate.mock.calls[0]![0],
+      },
+      {
+        name: 'anthropic auto (chose short)',
+        make: () =>
+          new AnthropicProvider('claude-sonnet-4-5', {
+            promptCache: {
+              value: 'auto',
+              source: 'stated',
+              by: 'realm agent',
+              auto: { basis: 'no_measurement' },
+            },
+          }),
+        sent: () => anthropicCreate.mock.calls[0]![0],
+      },
       {
         name: 'openai',
         make: () => new OpenAIProvider('gpt-4o'),
@@ -245,8 +272,9 @@ describe('provider conformance — promptCache is a promise about the wire (issu
     );
     // Non-vacuity: the cells include a declarer that does place the marker.
     expect(seen.filter((c) => c.declared && c.onWire).map((c) => c.name)).toEqual([
-      'anthropic 5m',
-      'anthropic 1h',
+      'anthropic short',
+      'anthropic long',
+      'anthropic auto (chose short)',
     ]);
   });
 });

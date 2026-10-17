@@ -49,6 +49,8 @@ import {
   composeSchemaFailure,
   renderAuthoredValue,
   knownSchemaKeywords,
+  isAsyncSchemaRefusal,
+  asyncSchemaValidity,
 } from '../validation/input-schema.js';
 import {
   describeValidationProblems,
@@ -800,6 +802,14 @@ export const SCHEMA_KEY_CONSEQUENCE = {
 >;
 
 /**
+ * The consequence of a root `$async` on a `trace_schema` in warn mode (`trace_validation_mode`
+ * missing, the engine's default, or `warn`): the check is not run, so a trace is kept unchecked —
+ * never failed (`validateTraceSchema`'s warn arm). Enforce mode keeps the shared
+ * `SCHEMA_KEY_CONSEQUENCE.trace_schema`; an invalid mode, refused on its own, keeps it too.
+ */
+const ASYNC_TRACE_WARN_CONSEQUENCE = 'Every trace for this step would go unchecked at run time';
+
+/**
  * Ajv prefixes every strict-mode sentence with this. Issue #586 drops it from the head of a
  * REFUSAL's validity clause and re-attributes it at the tail (` (Ajv strict mode)`), because
  * `realm workflow validate` has its own `--strict` flag with a different meaning and an author
@@ -1173,6 +1183,9 @@ function parseWorkflowString(
       key: string,
       stepName: string | undefined,
       consequence: string | undefined,
+      // The step's `trace_validation_mode` as written (`undefined` for a workflow-level block); it
+      // is read by the `$async` arm only, for a `trace_schema`.
+      traceMode: unknown,
     ): boolean => {
       const where = stepName === undefined ? '' : `Step '${stepName}': `;
       const blockPath = stepName === undefined ? [key] : ['steps', stepName, key];
@@ -1227,6 +1240,28 @@ function parseWorkflowString(
       try {
         compileCapturing(block as JsonSchema, (line) => strictLines.push(line));
       } catch (err) {
+        // A root `$async`: refused in its own four clauses, by type (never by the message the
+        // arms below read) — the validity once, the key's consequence, the remedy.
+        if (isAsyncSchemaRefusal(err)) {
+          const validity = asyncSchemaValidity((block as Record<string, unknown>)['$async']);
+          // A trace schema in warn mode is never failed at run time, only left unchecked: the
+          // shared "would fail with that error" would not be true of it.
+          const said =
+            key === 'trace_schema' &&
+            consequence !== undefined &&
+            (traceMode === undefined || traceMode === 'warn')
+              ? ASYNC_TRACE_WARN_CONSEQUENCE
+              : consequence;
+          errors.push(
+            cite(
+              said === undefined
+                ? `${where}'${key}' declares ${validity}; remove \`$async\` from the schema.`
+                : `${where}'${key}' declares ${validity}. ${said}; remove \`$async\` ` +
+                    `from the schema.`,
+            ),
+          );
+          return true;
+        }
         // Ajv's own sentence, UNTOUCHED, is the input to three deterministic LOAD-ONLY transforms
         // below. Every arm keyed on it reads THIS raw string, never a transformed one — the
         // transforms rewrite exactly the tokens the arms match on.
@@ -1499,7 +1534,7 @@ function parseWorkflowString(
 
     for (const key of SCHEMA_TYPED_WORKFLOW_KEYS) {
       if (doc[key] !== undefined) {
-        admitSchemaBlock(doc[key], key, undefined, SCHEMA_KEY_CONSEQUENCE[key]);
+        admitSchemaBlock(doc[key], key, undefined, SCHEMA_KEY_CONSEQUENCE[key], undefined);
       }
     }
 
@@ -1544,6 +1579,7 @@ function parseWorkflowString(
               key,
               stepName,
               kindProhibited ? undefined : SCHEMA_KEY_CONSEQUENCE[key],
+              step['trace_validation_mode'],
             )
           ) {
             refusedSchemaKeys.add(key);

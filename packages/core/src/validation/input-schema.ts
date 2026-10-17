@@ -38,12 +38,90 @@ import {
  * loader's admission (`compileCapturing`); every entry compiles through the one inner compile,
  * `compileInner`. Issue #552's seam — an admission-time cost bound on a legal-but-enormous schema —
  * still belongs there, and is still not built.
+ *
+ * A schema whose ROOT carries a truthy `$async` compiles (Ajv) to a validator that answers with a
+ * Promise. Realm checks data synchronously, so such a schema is refused in `compileInner`, read
+ * off the compiled validator (`$async === true`, which Ajv sets exactly when the root `$async` is
+ * truthy) — never off the key — with a typed `WorkflowError` (`isAsyncSchemaRefusal`). Every door
+ * and every check kind compiles through `compileInner`, so none can run such a check.
  */
 export function compileSchema(
   schema: JsonSchema,
   opts?: { onStrictLog?: (line: string) => void },
 ): ValidateFunction {
   return compileInner(schema as object, opts?.onStrictLog);
+}
+
+/** `details.reason` of the refusal of a schema whose root carries a truthy `$async`. */
+const ASYNC_SCHEMA_REASON = 'async_schema';
+
+/**
+ * The validity clause of a schema whose root carries a truthy `$async`, with the value as the
+ * author wrote it. ONE home: the run-time refusal, the loader and `create_workflow` all state it.
+ */
+export function asyncSchemaValidity(value: unknown): string {
+  return (
+    `\`$async: ${renderAsyncValue(value)}\`, which Realm does not support: it checks data ` +
+    `against a schema synchronously and cannot wait for an asynchronous check`
+  );
+}
+
+/** Characters a terminal or a Markdown code span would act on, written as `\uXXXX` in a shown
+ *  string: C1 controls and DEL, the line and paragraph separators, the bidirectional embeddings,
+ *  overrides and isolates, and the backtick that would close the code span around the value. */
+const SHOWN_STRING_ESCAPES = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069`]/g;
+
+/**
+ * The `$async` value as written, for the validity clause. A string is quoted, so the refused
+ * string `"false"` never reads as the accepted boolean `false`; it is cut at 30 code points (a
+ * `…` after the closing quote says so) and every character a terminal or a Markdown code span
+ * would act on is escaped (`SHOWN_STRING_ESCAPES`; `JSON.stringify` already escapes C0 controls,
+ * the quote and the backslash). Any other value renders as `renderAuthoredValue` renders it.
+ */
+function renderAsyncValue(value: unknown): string {
+  if (typeof value !== 'string') return renderAuthoredValue(value);
+  const codePoints = Array.from(value);
+  const quoted = JSON.stringify(codePoints.slice(0, 30).join('')).replace(
+    SHOWN_STRING_ESCAPES,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+  return codePoints.length > 30 ? `${quoted}…` : quoted;
+}
+
+/** The root `$async` of an authored schema block, as written (`undefined` for a boolean schema). */
+function rootAsyncValue(schema: unknown): unknown {
+  return schema !== null && typeof schema === 'object'
+    ? (schema as Record<string, unknown>)['$async']
+    : undefined;
+}
+
+/** Whether `err` is the refusal of a schema whose root carries a truthy `$async` — by type and
+ *  `details.reason`, never by message text. */
+export function isAsyncSchemaRefusal(err: unknown): err is WorkflowError {
+  return (
+    err instanceof WorkflowError &&
+    err.code === 'VALIDATION_WORKFLOW_SCHEMA' &&
+    err.details['reason'] === ASYNC_SCHEMA_REASON
+  );
+}
+
+/** The run-time form: what a check of a definition stored before this refusal existed replies. A
+ *  YAML workflow heals by registering it again (a run reads its definition by id); a workflow
+ *  made by `create_workflow` gets a new id when created again, so its old run is abandoned. */
+function asyncSchemaRefusal(schema: unknown): WorkflowError {
+  return new WorkflowError(
+    `This schema declares ${asyncSchemaValidity(rootAsyncValue(schema))}, so this check ` +
+      `cannot run. Remove \`$async\` from the schema and register the workflow again, then ` +
+      `retry; for a workflow made by \`create_workflow\`, create it again without \`$async\`, ` +
+      `start a new run on it, and abandon this one.`,
+    {
+      code: 'VALIDATION_WORKFLOW_SCHEMA',
+      category: 'VALIDATION',
+      agentAction: 'stop',
+      retryable: false,
+      details: { reason: ASYNC_SCHEMA_REASON },
+    },
+  );
 }
 
 /**
@@ -56,7 +134,9 @@ function compileInner(source: object, onStrictLog?: (line: string) => void): Val
   // file (comments stripped) and that count IS the load-≡-run guarantee, so a ternary over two
   // constructor calls is forbidden here. The whole conditional lives in the OPTIONS OBJECT. A throw
   // propagates before anything is cached.
-  return newAjv(onStrictLog).compile(source);
+  const validate = newAjv(onStrictLog).compile(source);
+  if ((validate as { $async?: unknown }).$async === true) throw asyncSchemaRefusal(source);
+  return validate;
 }
 
 /**
@@ -637,6 +717,23 @@ export function validateRunParams(
   try {
     validate = compileCached(schema);
   } catch (err) {
+    // A root `$async`: realm's own sentence for this cause, never the generic opener (which is
+    // false here — the schema is valid JSON Schema) and never the run-time form's remedy twice.
+    if (isAsyncSchemaRefusal(err)) {
+      const value = (schema as Record<string, unknown>)['$async'];
+      throw new WorkflowError(
+        `Workflow '${workflowId}' declares a params_schema with ${asyncSchemaValidity(value)}. ` +
+          `No run was created. Remove \`$async\` from params_schema and register the workflow ` +
+          `again.`,
+        {
+          code: 'VALIDATION_WORKFLOW_SCHEMA',
+          category: 'VALIDATION',
+          agentAction: 'stop',
+          retryable: false,
+          details: { reason: ASYNC_SCHEMA_REASON },
+        },
+      );
+    }
     // The GRANDFATHERED population (#586 walk, finding D2): `start_run` / `start_run_batch` read
     // the REGISTERED copy, which the loader never sees again — so a stored `params_schema` that
     // this release refuses at load is still compiled HERE, for the first time, at run-creation.
@@ -729,12 +826,15 @@ export interface AgentSubmissionValidation {
 }
 
 /**
- * issue #224 — a NON-THROWING validator for the provider's IN-CONVERSATION correction loop
- * (never the engine — see below). PROVIDER-REPLICATE, not a unification: calls the exact same two
- * exported THROWING validators above, SEQUENTIALLY — `validateInputSchema` (when `inputSchema` is
- * given) THEN `validateOutputSchema` (when `outputSchema` is given) — each in its own try/catch,
- * mirroring the engine's Step 2b→2c order and its INPUT-FIRST SHORT-CIRCUIT (an input-schema
- * rejection returns immediately; output_schema is never checked that call, exactly like the
+ * issue #224 — a validator that ANSWERS (a verdict, never a throw) for the provider's
+ * IN-CONVERSATION correction loop (never the engine — see below). Its one throw is the refusal of a
+ * schema that cannot be checked at all (`isAsyncSchemaRefusal`): that is not the model's mistake,
+ * so it is never turned into a correction request. PROVIDER-REPLICATE, not a unification: calls
+ * the exact same two exported THROWING validators above, SEQUENTIALLY — `validateInputSchema`
+ * (when `inputSchema` is given) THEN `validateOutputSchema` (when `outputSchema` is given) — each
+ * in its own try/catch, mirroring the engine's Step 2b→2c order and its INPUT-FIRST
+ * SHORT-CIRCUIT (an input-schema rejection returns immediately; output_schema is never checked
+ * that call, exactly like the
  * engine's own single-increment-per-rejection behavior). Both this function and the engine's Step
  * 2b/2c bottom on the SAME two functions + the same inner compile, `compileInner` (issue #586; see
  * `validateInputSchema`/`validateOutputSchema` above) — this is what makes the AJV verdict
@@ -771,6 +871,8 @@ export function validateAgentSubmission(
     try {
       validateInputSchema(effectiveObj, schemas.inputSchema, stepId);
     } catch (err) {
+      // A schema that cannot be checked is not the model's mistake: never a correction request.
+      if (isAsyncSchemaRefusal(err)) throw err;
       return { valid: false, ...extractRawErrors(err) };
     }
   }
@@ -778,6 +880,7 @@ export function validateAgentSubmission(
     try {
       validateOutputSchema(effectiveObj, schemas.outputSchema, stepId);
     } catch (err) {
+      if (isAsyncSchemaRefusal(err)) throw err;
       return { valid: false, ...extractRawErrors(err) };
     }
   }
@@ -825,7 +928,25 @@ export function validateTraceSchema(
   stepId: string,
   mode: 'warn' | 'enforce',
 ): TraceSchemaWarnResult | void {
-  const validate = compileCached(schema);
+  let validate: ValidateFunction;
+  try {
+    validate = compileCached(schema);
+  } catch (err) {
+    // Warn mode never throws (the engine's contract): a trace schema that cannot be checked is
+    // reported as one problem, naming the step, the cause and its own remedy — the trace was kept
+    // unchecked, so there is nothing to retry and no run to abandon (the run-time form's remedy
+    // would say both); enforce mode refuses.
+    if (mode === 'warn' && isAsyncSchemaRefusal(err)) {
+      return {
+        errorCount: 1,
+        warning:
+          `Trace schema for step '${stepId}' was not checked: ` +
+          `${asyncSchemaValidity(rootAsyncValue(schema))}. Remove \`$async\` from the trace ` +
+          `schema and register the workflow again; this step's trace was kept unchecked.`,
+      };
+    }
+    throw err;
+  }
   try {
     const valid = validate(entries);
     if (valid) {
