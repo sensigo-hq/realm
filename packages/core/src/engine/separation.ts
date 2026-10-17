@@ -66,14 +66,15 @@ const measuredNo = (r: ConditionReading): boolean => r.basis === 'measured' && r
 const measuredYes = (r: ConditionReading): boolean => r.basis === 'measured' && r.answer === 'yes';
 
 /**
- * The mode, derived — never guessed (§5.9; correction 1 D1): `separate_user` only when condition 1
- * is measured "no" AND the store belongs to another OS user; when condition 1 is measured "yes", the
- * same login — `sandbox_configured` if the agent's app configures a sandbox (the "no" would come only
- * through it), else `same_account`; otherwise `not_measured`.
+ * The mode, derived — never guessed (§5.9; correction 1 D1; correction 2, 5.4): the store belongs to
+ * another OS user → `separate_user`, whatever condition 1 reads (the "cannot record" claim still
+ * needs condition 1 measured "no": {@link separationPrevents}); else condition 1 measured "yes" —
+ * this login owns the store — `sandbox_configured` if the agent's app configures a sandbox (the "no"
+ * would come only through it), else `same_account`; otherwise `not_measured`.
  */
 export function separationModeOf(e: SeparationEvidence): SeparationMode {
   const reach = e.conditions.store_reach;
-  if (measuredNo(reach) && e.store_owned_by_other) return 'separate_user';
+  if (e.store_owned_by_other) return 'separate_user';
   if (measuredYes(reach)) {
     return e.conditions.agent_sandbox.basis === 'configured_not_enforced'
       ? 'sandbox_configured'

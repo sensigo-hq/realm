@@ -783,6 +783,13 @@ describe('#627 W — R25: the loader and the registry refuse what this version c
       'an empty object': {},
       'an object with no id': { a: 1 },
       'no schema_version (legacy)': { ...gated(), id: 'old' },
+      // The schema_version-less cohort's own shape (#427: no `steps` key at all) — legacy, never
+      // damaged (validate-registered.test.ts R4 pins the same shape through the CLI).
+      'no schema_version and no steps (the #427 cohort)': {
+        id: 'ancient',
+        name: 'Ancient',
+        version: 2,
+      },
     };
     const files = Object.keys(copies).map((_, i) => `c${i}`);
     for (const [i, value] of Object.values(copies).entries()) {
@@ -813,6 +820,7 @@ describe('#627 W — R25: the loader and the registry refuse what this version c
       ['an empty object', 'RESOURCE_FORMAT_INVALID', 'parse'],
       ['an object with no id', 'RESOURCE_FORMAT_INVALID', 'parse'],
       ['no schema_version (legacy)', 'STATE_LEGACY_FORMAT', 'legacy'],
+      ['no schema_version and no steps (the #427 cohort)', 'STATE_LEGACY_FORMAT', 'legacy'],
     ]);
     // The words name what the copy lacks.
     const reasonOf = (file: string) =>
@@ -1101,30 +1109,37 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
     });
   });
 
-  it('the mode: same_account when this login reaches the store; separate_user only with condition 1 measured no and another owner; sandbox_configured when a sandbox is configured and the store is reachable from outside it', () => {
+  it('the mode: same_account when this login reaches its own store; separate_user for another user’s store whatever condition 1 reads (correction 2, 5.4); sandbox_configured when a sandbox is configured and the store is reachable from outside it; the sandbox cross (5.8)', () => {
     // (a) red when same_account is derived with condition 1 "no" and another owner, or from a
     //     condition 1 that is not measured "yes" (correction 1, D1: an unknown, or "no" on an owned
     //     store, is `not_measured`); (b) prints each mode.
+    // Correction 2 (5.4): the reach, unknown and sandbox rows are this login's own store
+    // (`store_owned_by_other: false`), so they keep their subject; another user's store is
+    // `separate_user` whatever condition 1 reads; 5.8, the sandbox cross: a configured sandbox with
+    // condition 1 not measured is `not_measured`, never `sandbox_configured`.
+    const own = { store_owned_by_other: false };
+    const CONFIGURED: ConditionReading = {
+      basis: 'configured_not_enforced',
+      detail: 'Claude Code',
+    };
     expect({
       separate: separationModeOf(evidence()),
-      reach: separationModeOf(evidence({}, { store_reach: YES })),
-      unknown: separationModeOf(evidence({}, { store_reach: UNKNOWN })),
-      ownStore: separationModeOf(evidence({ store_owned_by_other: false })),
-      sandbox: separationModeOf(
-        evidence(
-          {},
-          {
-            store_reach: YES,
-            agent_sandbox: { basis: 'configured_not_enforced', detail: 'Claude Code' },
-          },
-        ),
+      otherReadable: separationModeOf(evidence({}, { store_reach: YES })),
+      reach: separationModeOf(evidence(own, { store_reach: YES })),
+      unknown: separationModeOf(evidence(own, { store_reach: UNKNOWN })),
+      ownStore: separationModeOf(evidence(own)),
+      sandbox: separationModeOf(evidence(own, { store_reach: YES, agent_sandbox: CONFIGURED })),
+      sandboxCross: separationModeOf(
+        evidence(own, { store_reach: UNKNOWN, agent_sandbox: CONFIGURED }),
       ),
     }).toEqual({
       separate: 'separate_user',
+      otherReadable: 'separate_user',
       reach: 'same_account',
       unknown: 'not_measured',
       ownStore: 'not_measured',
       sandbox: 'sandbox_configured',
+      sandboxCross: 'not_measured',
     });
   });
 
