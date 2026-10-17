@@ -740,6 +740,13 @@ export { walkField } from './handlers/primitives/walk-field.js';
 export { partitionBySubstring } from './handlers/primitives/partition-by-substring.js';
 export { countResults } from './handlers/primitives/count-results.js';
 export { compareStrings } from './handlers/primitives/compare-strings.js';
+export {
+  locateQuote,
+  QUOTE_STATES,
+  DEFAULT_MIN_PART_CHARS,
+  MIN_PART_CHARS_LEAST,
+} from './handlers/primitives/locate-quote.js';
+export type { QuoteCheck, QuoteState, QuoteSpan } from './handlers/primitives/locate-quote.js';
 
 // Trace buffer store (B-lite)
 export type {

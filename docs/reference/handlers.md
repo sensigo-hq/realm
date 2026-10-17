@@ -132,7 +132,7 @@ The message is stored in the step's entry in the run's record, as `warn`:
 }
 ```
 
-A caller over MCP gets it in the reply's `warnings` list. `realm agent` and `realm run inspect` do not print it. To read it afterwards, use `realm run export`.
+A caller over MCP gets it in the reply's `warnings` list. `realm run inspect` prints it on the step's `Warn:` line; `realm agent` does not print it. To read it afterwards, use `realm run export`.
 
 ### `abort`
 
@@ -336,11 +336,116 @@ The re-attach command repeats the flags the drive was started with: the model fl
 
 The run stays open, and the step can be run later by a process that has the handler.
 
-This is also what happens to a step that names `validate_verbatim_quotes` or `validate_field_match`. Earlier versions of this page described those two as built in. Neither is registered.
+`check_quotes` is registered from this release (see [Built-in handlers](#built-in-handlers)). `validate_verbatim_quotes` and `validate_field_match` were never registered: a step naming them fails at execute as any missing handler does.
+
+## Built-in handlers
+
+Every runner has these without loading a file.
+
+### `check_quotes`
+
+Checks, for each value an earlier step extracted, that the value's quote appears in a source document, and records how it was found. The step never stops the run and never judges whether a value is correct; a guard on its `all_found` stops the run (below).
+
+| `config` key       | Default      | What it names                                                                          |
+| ------------------ | ------------ | -------------------------------------------------------------------------------------- |
+| `source_step`      | required     | The step whose output holds the document.                                              |
+| `source_field`     | `text`       | The field of that output that holds the document's text.                               |
+| `candidates_step`  | required     | The step whose output holds the extracted values.                                      |
+| `candidates_field` | `candidates` | The field of that output that holds the values, a list of objects.                     |
+| `quote_field`      | `quote`      | The field of each value that holds its quote.                                          |
+| `min_part_chars`   | `20`         | The shortest part a stitched quote may rest on, in canonical characters; at least `4`. |
+
+Both steps are read from the run's record by their ids, never from the step's input, so list the step that produces the values in `depends_on`. Any other key, a missing required key, a step with no output yet, a document that is not text, or values that are not a list of objects ends the run `failed` with `ENGINE_HANDLER_FAILED` and a message saying what to change.
+
+Each value gets a `quote_check` with one of six states. The state describes the quote's match, never the value's correctness.
+
+| State                   | Means                                                                                                                                                                                                                                                                                    |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exact`                 | The quote is in the document character for character.                                                                                                                                                                                                                                    |
+| `reformatted`           | The quote is in the document once letter case, punctuation, quotation marks, dash variants and spacing are set aside. Digits, the separators between two digits, `%`, `‰`, `°` and currency symbols never are: `9.5` is not `9-5`, `2,000` is not `2.000`, and `$1,200` is not `£1,200`. |
+| `stitched`              | The quote joins parts of the document, in the document's order: split at `…` or `...` when it has one, else where the text stops matching. Every part is at least `min_part_chars` long. A few words dropped between two long parts is `stitched` too.                                   |
+| `stitched_out_of_order` | Every part is in the document, but not in the order quoted.                                                                                                                                                                                                                              |
+| `not_found`             | A part is not in the document, or is shorter than `min_part_chars`; or the value has no quote.                                                                                                                                                                                           |
+| `unquoted`              | The value has neither a quote nor a value (`null`, `""` or absent). It does not count as missing.                                                                                                                                                                                        |
+
+A digit never matches inside a longer number or next to a letter: `clause 9` is not found in `clause 9a`, nor `9,20` in `9,200`. A reviewer can trust `exact` more than `reformatted`, and `reformatted` more than `stitched`.
+
+The step's output, for a document `The rent is €48,000 a year, paid quarterly in advance on the usual quarter days.` and two values:
+
+```json
+{
+  "results": [
+    {
+      "field": "annual_rent",
+      "value": "48000",
+      "quote": "The rent is €48,000 a year",
+      "quote_check": { "state": "exact", "parts": [{ "start": 0, "end": 26 }], "occurrences": 1 }
+    },
+    {
+      "field": "payment",
+      "value": "quarterly",
+      "quote": "the rent is paid quarterly",
+      "quote_check": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0,
+        "nearest": { "start": 28, "end": 42 }
+      }
+    }
+  ],
+  "by_state": {
+    "exact": 1,
+    "reformatted": 0,
+    "stitched": 0,
+    "stitched_out_of_order": 0,
+    "not_found": 1,
+    "unquoted": 0
+  },
+  "all_found": false,
+  "candidates_found": 2
+}
+```
+
+`parts` are where each part was found, as offsets into the document (`text.slice(start, end)`). `occurrences` is how many times the whole quote occurs; it is `0` when the quote is stitched or not found. `nearest` is where the longest piece of the quote that is in the document lies; it is absent when no piece is.
+
+When any quote is not found, the step completes with a warning that names each one: its field, the quote's first 80 characters, and the offsets of its nearest match. It never quotes the document. It names ten at most, then `and N more`:
+
+```text
+Quote check: 1 of 2 quotes not found in 'extract_fields.document': payment — "the rent is paid quarterly" (nearest match at 28–42).
+```
+
+To stop the run when a quote is missing, follow the check with a guard on `all_found`:
+
+```yaml
+quote_check:
+  description: Check each value's quote against the document
+  execution: auto
+  handler: check_quotes
+  depends_on: [extract_fields]
+  config:
+    source_step: fetch_document
+    candidates_step: extract_fields
+    candidates_field: fields
+
+stop_if_unquoted:
+  description: Stop when a quote is not in the document
+  execution: guard
+  depends_on: [quote_check]
+  abort_unless: ['quote_check.all_found']
+  abort_message: A quote is not in the document; check the values against the source.
+```
+
+The guard needs `depends_on: [quote_check]`. Without it the guard is checked when the run starts, before the check has an output, and the run ends `failed` with a resolution error instead of `aborted`. With it, the run ends `aborted` and the check's record is kept.
+
+The step checks quotes, not meaning. A value whose quote is in the document may still be wrong: the quote can say `4.5%` while the value says `5%`. A model-based check, such as Azure AI Content Safety's groundedness detection, can catch that; this step cannot. Nor does it know whether a later part of the document, such as a deed of variation, changed the clause it quotes.
+
+Ask the model for one contiguous span copied character for character, or two spans joined by `…`.
+
+The per-value record is the step's output: read it afterwards with `realm run export <run-id>`, which writes the whole run. `get_run_state` does not carry a step's output, and `realm run inspect` prints only the warning, on the step's `Warn:` line.
 
 ## Helper functions
 
-`@sensigo/realm` exports 5 functions for use inside handlers. The list comes from the package's exports.
+`@sensigo/realm` exports 6 functions for use inside handlers. The list comes from the package's exports.
 
 ```js
 import {
@@ -349,6 +454,7 @@ import {
   partitionBySubstring,
   countResults,
   compareStrings,
+  locateQuote,
 } from '@sensigo/realm';
 ```
 
@@ -400,6 +506,24 @@ Splits a list of objects in two. An object is `accepted` if its `quoteField` is 
 | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `partitionBySubstring(candidates, 'quote', 'Payment is due in 30 days.')` | `{"accepted":[{"quote":"due in 30 days"}],"rejected":[{"quote":"due in 60 days"},{"quote":30},{"other":"x"},{"quote":"payment"}]}` |
 | `partitionBySubstring([{ quote: '' }], 'quote', 'abc')`                   | `{"accepted":[{"quote":""}],"rejected":[]}`                                                                                        |
+
+### `locateQuote(quote, source, options)`
+
+Finds `quote` in `source` and says how, as `check_quotes` does for each value; it is the one rule that handler uses. It returns `{ state, parts, occurrences, nearest? }`, with the offsets into `source`. The first rule that holds wins:
+
+1. `exact`: `quote` is a substring of `source`.
+2. `reformatted`: their canonical forms match (below).
+3. `stitched`: the quote's parts, split at `…` or `...` or else where the text stops matching, are each at least `options.minPartChars` long (default `20`, at least `4`) and found in order.
+4. `stitched_out_of_order`: the parts are all found, not in order.
+5. `not_found`: otherwise, with `nearest` when part of the quote is in `source`.
+
+The canonical form is the text after Unicode NFKC normalisation, in lower case, with `–`, `—` and `−` read as `-`, every punctuation mark and quotation mark dropped and spaces collapsed, keeping letters, digits, `%`, `‰`, `°`, currency symbols, a `-` directly before a digit, and the separators between two digits. A digit never matches next to another digit or a letter of `source`. An empty `source`, or a `quote` with no letter or digit, is `not_found` with no parts.
+
+| Call                                                  | Returns                                                                            |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `locateQuote('due in 30 days', resources.fetch.text)` | `{"state":"exact","parts":[{"start":11,"end":25}],"occurrences":1}`                |
+| `locateQuote('PAYMENT is due', resources.fetch.text)` | `{"state":"reformatted","parts":[{"start":0,"end":14}],"occurrences":1}`           |
+| `locateQuote('due in 60 days', resources.fetch.text)` | `{"state":"not_found","parts":[],"occurrences":0,"nearest":{"start":11,"end":17}}` |
 
 ### `countResults(accepted, rejected)`
 
