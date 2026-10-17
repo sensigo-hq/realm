@@ -17,7 +17,8 @@ import {
   type RunRecord,
   type WorkflowDefinition,
   type ExtensionIdentityEntry,
-  answerAction,
+  type Unavailable,
+  type WayOn,
   abandonRun,
   advanceRun,
   reclaimStep,
@@ -26,7 +27,29 @@ import {
   type Attributed,
   type StepHandlerResult,
 } from '@sensigo/realm';
-import { FIT_WORDS, fitWords, stoppedReasons, advanceRunFromShell } from './run-advance.js';
+import { FIT_WORDS, fitWords, advanceRunFromShell } from './run-advance.js';
+import { stopReasons } from './ways-renderer.js';
+
+// #729 PR-0 (A-10, T-14): `stoppedReasons` is replaced by the CLI renderer's `stopReasons`, which reads
+// the run's ways. These cells hand it ways as core composes them (a literal per member).
+const ways = (offered: WayOn[] = [], unavailable: Unavailable[] = []) => ({
+  ways: offered,
+  unavailable,
+});
+const agentStep = (step: string): WayOn => ({
+  verb: 'run_step',
+  conditions: [],
+  run_id: 'r',
+  step,
+  brief: { execution: 'agent', description: step },
+});
+const refused = (step: string, check: 'trust' | 'precondition', refusal: string): Unavailable => ({
+  verb: 'run_step',
+  step,
+  code: 'refused_before_claim',
+  facts: { step, check, refusal },
+  remedy: [],
+});
 import { inspectRun } from './inspect.js';
 import { resumeRun } from './resume.js';
 import { sweepExpiredGates } from './listen.js';
@@ -58,125 +81,78 @@ describe('#625 PR-2a — realm run advance: the words', () => {
     });
   });
 
-  it('stoppedReasons, every member, one reason each and both when a refused step and agent steps hold', () => {
-    const base = {
-      id: 'r',
-      params: {},
-      completed_steps: [],
-      in_progress_steps: [],
-      failed_steps: [],
-      skipped_steps: [],
-      evidence: [],
-      terminal_state: false,
-    } as unknown as RunRecord;
-    const none = {
-      agent_actions: [],
-      agent_steps: [],
-      agent_refused: [],
-      pending_guards: [],
-      engine_runnable: [],
-      cannot_run: [],
-    };
+  it('stopReasons (was stoppedReasons), every member, one reason each and both when a refused step and agent steps hold', () => {
+    // (a) red when a member's words change or the order of the members changes; (b) prints them.
     expect(
-      stoppedReasons(
+      stopReasons(
+        ways(
+          [],
+          [{ verb: 'run_step', code: 'run_ended', facts: { phase: 'completed' }, remedy: [] }],
+        ),
         'r',
-        {
-          ...base,
-          terminal_state: true,
-          sealed_by: { arm: 'complete' },
-          terminal_reason: 'Workflow completed.',
-        } as RunRecord,
-        none,
+        'completed',
       ),
     ).toEqual(['the run has ended (completed)']);
-    // decision C103: the open question's line is rendered from an answer act core composes (its
-    // gate) — after a call the reply's; at the preview, `answerAction` from the record read (F7 (a));
-    // F6: its choices are read from the record's open question with that gate id (structured, never
-    // split off the act's `<a|b>` text) — a choice holding `|` stays one choice, each quoted.
-    const atQuestion = {
-      ...base,
-      pending_gate: {
-        gate_id: 'g2',
-        step_name: 's',
-        choices: ['x|y', 'z'],
-        opened_at: '',
-        preview: {},
-      },
-    } as RunRecord;
+    // decision C103: the open question's line is rendered from its respond way (its gate); F6: its
+    // choices are the way's (structured, never split off a text) — a choice holding `|` stays one
+    // choice, each quoted (T-7).
+    const respond: WayOn = {
+      verb: 'respond',
+      conditions: [],
+      run_id: 'r',
+      gate_id: 'g2',
+      step: 's',
+      choice: { one_of: ['x|y', 'z'] },
+      holds: [],
+      presented: 'alone',
+    };
+    expect(stopReasons(ways([respond]), 'r', 'gate_waiting')).toEqual([
+      "a question is open — realm run respond r --gate g2 --choice <one of: 'x|y', z>",
+    ]);
+    // A question the ways list but do not offer (its time is up): no command — where to read it.
+    // (a) red when a listed question still prints a respond command; (b) prints the reason.
     expect(
-      stoppedReasons('r', atQuestion, none, [
-        answerAction('r', { step: 's', gate_id: 'g2', choices: ['x|y', 'z'] }),
-      ]),
-    ).toEqual(["a question is open — realm run respond r --gate g2 --choice <one of: 'x|y', z>"]);
-    // F6: an act naming a question the record does not hold gives no command (its choices are the
-    // record's to give) — (a) red when the act's own text is split for them again; (b) prints it.
-    expect(
-      stoppedReasons(
+      stopReasons(
+        ways(
+          [],
+          [
+            {
+              verb: 'respond',
+              step: 's',
+              code: 'question_due',
+              facts: { gate_id: 'g2', step: 's', expires_at: '', on_expiry: 'abort' },
+              remedy: [],
+            },
+          ],
+        ),
         'r',
-        { ...atQuestion, pending_gate: { ...atQuestion.pending_gate!, gate_id: 'g1' } },
-        none,
-        [answerAction('r', { step: 's', gate_id: 'g2', choices: ['x|y', 'z'] })],
+        'gate_waiting',
       ),
     ).toEqual(['a question is open — see realm run inspect r']);
-    // (a) red when a reply with no answer act still prints a respond command; (b) prints the reason.
-    expect(stoppedReasons('r', atQuestion, none)).toEqual([
-      'a question is open — see realm run inspect r',
-    ]);
     expect(
-      stoppedReasons('r', base, {
-        ...none,
-        engine_runnable: [
-          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
-          { step: 'y', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
-        ],
-        cannot_run: [
-          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
-          { step: 'y', runnable_here: false, refused_by: 'precondition', refusal: 'no' },
-        ],
-      }),
+      stopReasons(
+        ways([], [refused('x', 'trust', 'bad trust'), refused('y', 'precondition', 'no')]),
+        'r',
+        'running',
+      ),
     ).toEqual(["'x' cannot run (trust): bad trust", "'y' cannot run (precondition): no"]);
-    expect(stoppedReasons('r', base, { ...none, agent_steps: ['a', 'b'] })).toEqual([
+    expect(stopReasons(ways([agentStep('a'), agentStep('b')]), 'r', 'running')).toEqual([
       "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r --provider <provider> --model <model>",
     ]);
     expect(
-      stoppedReasons('r', base, {
-        ...none,
-        agent_steps: ['a'],
-        engine_runnable: [
-          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
-        ],
-        cannot_run: [
-          { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad trust' },
-        ],
-      }),
+      stopReasons(ways([agentStep('a')], [refused('x', 'trust', 'bad trust')]), 'r', 'running'),
     ).toEqual([
       "'x' cannot run (trust): bad trust",
       "an agent step is ready: 'a' — drive it with realm agent --run-id r --provider <provider> --model <model>",
     ]);
-    expect(stoppedReasons('r', base, none)).toEqual(['nothing is ready to run now']);
+    expect(stopReasons(ways(), 'r', 'running')).toEqual(['nothing is ready to run now']);
   });
 
   it('C59: one ready agent step is said in the singular (an agent step is ready … drive it), two in the plural (agent steps are ready … drive them)', () => {
-    const base = {
-      terminal_state: false,
-      completed_steps: [],
-      in_progress_steps: [],
-      failed_steps: [],
-      skipped_steps: [],
-      evidence: [],
-    } as unknown as RunRecord;
-    const none = {
-      agent_actions: [],
-      agent_steps: [],
-      agent_refused: [],
-      pending_guards: [],
-      engine_runnable: [],
-      cannot_run: [],
-    };
-    expect(stoppedReasons('r', base, { ...none, agent_steps: ['ask'] })).toEqual([
+    expect(stopReasons(ways([agentStep('ask')]), 'r', 'running')).toEqual([
       "an agent step is ready: 'ask' — drive it with realm agent --run-id r --provider <provider> --model <model>",
     ]);
-    expect(stoppedReasons('r', base, { ...none, agent_steps: ['a', 'b'] })).toEqual([
+    expect(stopReasons(ways([agentStep('a'), agentStep('b')]), 'r', 'running')).toEqual([
       "agent steps are ready: 'a', 'b' — drive them with realm agent --run-id r --provider <provider> --model <model>",
     ]);
   });
@@ -561,7 +537,9 @@ describe("#625 PR-2a — listen's sweeper names the owed steps an expiry leaves"
       );
       const line = logged.find(([m]) => m === 'listen: sweeper enacted an expired gate');
       expect((line?.[1] as Record<string, unknown>)['owed']).toEqual(['after']);
-      expect(describePending(d, await runs.get(run.id), undefined, new Date()).act).toBeDefined();
+      expect(describePending(d, await runs.get(run.id), undefined, new Date()).owed).toEqual([
+        { step: 'after' },
+      ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -849,26 +827,24 @@ describe('#625 PR-2a, C43 and C44 — realm run advance: the opening says whethe
     }
   });
 
-  it("C43: stoppedReasons' in-flight member — no holder or time, what to do", () => {
-    const run = {
-      id: 'r',
-      params: {},
-      completed_steps: [],
-      in_progress_steps: ['z'],
-      failed_steps: [],
-      skipped_steps: [],
-      evidence: [],
-      terminal_state: false,
-    } as unknown as RunRecord;
+  it("C43: stopReasons' in-flight member — no holder or time, what to do", () => {
     expect(
-      stoppedReasons('r', run, {
-        agent_actions: [],
-        agent_steps: [],
-        agent_refused: [],
-        pending_guards: [],
-        engine_runnable: [],
-        cannot_run: [],
-      }),
+      stopReasons(
+        ways(
+          [],
+          [
+            {
+              verb: 'run_step',
+              step: 'z',
+              code: 'held_elsewhere',
+              facts: { step: 'z', deadline: { absent: 'unknown_age' } },
+              remedy: [],
+            },
+          ],
+        ),
+        'r',
+        'running',
+      ),
     ).toEqual(["'z' is in flight in another program — wait for it, or see realm run inspect r"]);
   });
 });

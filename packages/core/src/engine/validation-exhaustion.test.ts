@@ -10,10 +10,11 @@ import { executeStep, DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD } from './executio
 import type { StepDispatcher } from './execution-loop.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { InMemoryTraceBufferStore } from '../store/trace-buffer-store.js';
-import { WorkflowError } from '../types/workflow-error.js';
+import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { RunStore, LoadBearingRunRecordField } from '../store/store-interface.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 const echoDispatcher: StepDispatcher = async (_step, input) => ({ ...input });
 
@@ -369,7 +370,7 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     // field, which is observationally inert on this specific path (see the mint-site comment in
     // execution-loop.ts). A mint-site mutant will NOT redden this assertion; only a mutation to
     // the terminal-branch translation itself will.
-    expect(envelope.agent_action).toBe('stop');
+    expect(agentActionFor(envelope)).toBe('stop');
   });
 
   it('(j) success-settle stamp: reject twice then succeed ⇒ the settle evidence carries diagnostics.validation_rejections === 2', async () => {
@@ -445,8 +446,9 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
     });
     expect(first.status).toBe('error');
     expect(first.error_code).toBe('VALIDATION_OUTPUT_SCHEMA');
-    expect(first.error_details?.['rejections']).toBe(1);
-    expect(first.error_details?.['threshold']).toBe(2);
+    // issue #759 (Amendment 11): a refusal's countdown rides its typed facts, not `error_details`.
+    expect((first.error?.facts as ValidationErrorFacts | undefined)?.rejections).toBe(1);
+    expect((first.error?.facts as ValidationErrorFacts | undefined)?.threshold).toBe(2);
 
     const second = await executeStep(store, def, {
       runId: run.id,
@@ -502,7 +504,8 @@ describe('issue #220 PR-1 — bounded validation-rejection exhaustion', () => {
       input: INVALID_OUTPUT,
       dispatcher: echoDispatcher,
     });
-    expect(following.error_details?.['rejections']).toBe(1);
+    // issue #759 (Amendment 11): a refusal's countdown rides its typed facts, not `error_details`.
+    expect((following.error?.facts as ValidationErrorFacts | undefined)?.rejections).toBe(1);
     const afterFollowing = await store.get(run.id);
     expect(afterFollowing.validation_rejections?.['draft']).toBe(1);
   });

@@ -192,7 +192,7 @@ describe('#625 PR-2a, F16 — realm agent: a run that has not ended is never sai
   it('a first step whose `when` is never true: the drive stops with nothing ready, in realm run advance’s words, with inspect and abandon', async () => {
     claim(
       'docs/reference/cli/realm-agent.md',
-      "A run that has not ended is never said to have ended: when the drive stops with nothing ready, it prints `✗ The drive stops: <why>. Run <id> stays open (phase '<phase>'): see realm run inspect <id> — or end it: realm run abandon <id>`, its reason in `realm run advance`'s words (`nothing is ready to run now` when a first step's `when` is never true, for one).",
+      "A run that has not ended is never said to have ended: when the drive stops with nothing ready, it prints `✗ The drive stops — run <id> stays open (phase '<phase>'):`, then each reason on a line of its own, in `realm run advance`'s words (`nothing is ready to run now.` when a first step's `when` is never true, for one), then `To read it: realm run inspect <id>` and `To end it: realm run abandon <id>`, each command on its own line.",
     );
     const d = await drive(
       wf('f16-when', {
@@ -210,7 +210,9 @@ describe('#625 PR-2a, F16 — realm agent: a run that has not ended is never sai
     expect(d).toEqual({
       result: 'failed',
       phase: 'running',
-      last: "error: \n✗ The drive stops: nothing is ready to run now. Run <run> stays open (phase 'running'): see realm run inspect <run> — or end it: realm run abandon <run>",
+      // #729 PR-0 (T-14, E1 (a)): the stop reasons from the ways, one per line; each command on
+      // its own line, no stop after it (the `.;` is gone).
+      last: "error: \n✗ The drive stops — run <run> stays open (phase 'running'):\n  nothing is ready to run now.\n  To read it: realm run inspect <run>\n  To end it: realm run abandon <run>",
     });
   });
 

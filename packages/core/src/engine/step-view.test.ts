@@ -5,8 +5,10 @@ import {
   composeCostView,
   composeStepViews,
   composeDriveFailureCosts,
+  composeRunCost,
   isAnswerEntry,
 } from './step-view.js';
+import type { PriceSource } from '../economics/price-source.js';
 import type { RunRecord } from '../types/run-record.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 
@@ -292,6 +294,11 @@ describe('composeDriveFailureCosts', () => {
     expect(composeDriveFailureCosts(run)[0]!.cost).toEqual({
       requests: 1,
       prompt: { value: 5, reported: 1, of: 1, only_request_index: 0 },
+      // issue #600 PR 2 (A5): the request carries no `provider`, so both facts predate PR 2.
+      models: { absent_cause: 'predates_request_facts' },
+      cache_requested: { absent_cause: 'predates_request_facts' },
+      // issue #600 caching PR P (A4): no request records an endpoint, and none carries `provider`.
+      endpoints: { absent_cause: 'predates_request_facts' },
     });
   });
 });
@@ -513,5 +520,374 @@ describe('composeStepViews — issue #625: answers', () => {
       by: 'timeout',
       by_source: 'stated',
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// issue #600 PR 2 (A4, A5): the request facts on the composed `CostView`. On a failing CI host each
+// cell prints the composed fields: test values only.
+// ---------------------------------------------------------------------------------------------
+describe('composeCostView — the request facts (issue #600 PR 2)', () => {
+  const ESC_MODEL = 'claude-\u001b[31mx';
+
+  // G13. (a) red when composeCostView reads `model` without `readStoredName`; (b) prints `models`.
+  it('a stored model that readStoredName refuses is not named, and not counted as reported', () => {
+    const view = composeCostView([
+      req({ model: 'claude-x-20260101' }, 0),
+      req({ model: ESC_MODEL }, 1),
+      req({ model: 'claude-x-20260101\n' }, 2),
+    ]);
+    expect(view!.models).toEqual({ names: ['claude-x-20260101'], reported: 2, of: 3 });
+  });
+
+  // G13, through the run record: a record written by hand (or an older build) is read the same way.
+  it('a run record written directly with a bad model renders none through composeStepViews', () => {
+    const run = makeRun([
+      {
+        step_id: 's',
+        status: 'success',
+        attempt: 1,
+        diagnostics: {
+          input_token_estimate: 1,
+          precondition_trace: [],
+          cache: {
+            state: 'unobservable',
+            basis: 'unobservable',
+            requests: [req({ model: ESC_MODEL, provider: 'anthropic', cache_requested: 'off' })],
+          },
+        },
+      },
+    ]);
+    const cost = composeStepViews(run)['s']?.attempts[0]?.cost;
+    expect({ models: cost?.models, asked: cost?.cache_requested }).toEqual({
+      models: { absent_cause: 'none_readable' },
+      asked: { entries: [{ value: 'off' }], reported: 1, of: 1 },
+    });
+  });
+
+  // G26. (a) red when the two causes are swapped; (b) prints the two absences.
+  it("A5: 'predates_request_facts' without provider, 'none_readable' with it (a refused model included)", () => {
+    const old = composeCostView([req({ prompt_tokens: 5 })]);
+    const driven = composeCostView([req({ prompt_tokens: 5, provider: 'module:p.mjs' })]);
+    const refused = composeCostView([req({ model: ESC_MODEL, provider: 'anthropic' })]);
+    expect({
+      old: [old!.models, old!.cache_requested],
+      driven: [driven!.models, driven!.cache_requested],
+      refused: refused!.models,
+    }).toEqual({
+      old: [{ absent_cause: 'predates_request_facts' }, { absent_cause: 'predates_request_facts' }],
+      driven: [{ absent_cause: 'none_readable' }, { absent_cause: 'none_readable' }],
+      refused: { absent_cause: 'none_readable' },
+    });
+    // No requests: no request facts at all.
+    expect(composeCostView([])).toEqual({ requests: 0 });
+  });
+
+  // A4. (a) red when entries are not distinct, lose their order, or keep a refused `by`; (b) prints
+  // `cache_requested`.
+  it('cache_requested: the distinct asks in request order, each field kept by its own rule', () => {
+    const view = composeCostView([
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: 3600,
+          cache_ttl_sent: true,
+          cache_requested_source: 'runner_default',
+          cache_requested_by: 'realm listen',
+        },
+        0,
+      ),
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: 300,
+          cache_ttl_sent: false,
+          cache_requested_source: 'stated',
+          cache_requested_by: 'realm agent',
+        },
+        1,
+      ),
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: 3600,
+          cache_ttl_sent: true,
+          cache_requested_source: 'runner_default',
+          cache_requested_by: 'realm listen',
+        },
+        2,
+      ),
+      req(
+        {
+          cache_requested: 'lifetime',
+          cache_lifetime_s: -5,
+          cache_ttl_sent: 'yes',
+          cache_requested_source: 7,
+          cache_requested_by: 'x\u001by',
+        },
+        3,
+      ),
+      req({ prompt_tokens: 1 }, 4),
+    ]);
+    expect(view!.cache_requested).toEqual({
+      entries: [
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+        },
+        {
+          value: 'lifetime',
+          lifetime_s: 300,
+          ttl_sent: false,
+          source: 'stated',
+          by: 'realm agent',
+        },
+        { value: 'lifetime', lifetime_s: -5 },
+      ],
+      reported: 4,
+      of: 5,
+    });
+  });
+
+  // Cell 3 (the lifetime unit): an ask carries the evidence `auto` chose by. Two requests whose
+  // `cache_auto` differ only in key order are ONE ask; a different `cache_auto` is another ask; a
+  // malformed one is not carried. (a) red when `auto` is not carried, when the dedup key is built
+  // from the stored key order, or when `auto` is left out of the dedup key; (b) prints
+  // `cache_requested`.
+  it('cache_requested carries auto: equal auto in any key order is one ask, a different auto another', () => {
+    const asked = {
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 3600,
+      cache_ttl_sent: true,
+      cache_requested_source: 'runner_default',
+      cache_requested_by: 'realm listen',
+    };
+    const view = composeCostView([
+      req({ ...asked, cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] } }, 0),
+      req({ ...asked, cache_auto: { gaps_s: [420, 720], basis: 'listen_trigger_gaps' } }, 1),
+      req({ ...asked, cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [] } }, 2),
+      req({ ...asked, cache_auto: { basis: 'guessed' } }, 3),
+    ]);
+    expect(view!.cache_requested).toEqual({
+      entries: [
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+          auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+        },
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+          auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+        },
+        {
+          value: 'lifetime',
+          lifetime_s: 3600,
+          ttl_sent: true,
+          source: 'runner_default',
+          by: 'realm listen',
+        },
+      ],
+      reported: 4,
+      of: 4,
+    });
+  });
+
+  // A4. (a) red when the split is not summed from `cache_creation`; (b) prints the two figures.
+  it('cache_write_5m and cache_write_1h are summed from the cache_creation split, as CostFigures', () => {
+    const view = composeCostView([
+      req({ cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 0 } }, 0),
+      req({ cache_creation: { ephemeral_5m_input_tokens: 2 } }, 1),
+      req({ prompt_tokens: 1 }, 2),
+    ]);
+    expect({ m5: view!.cache_write_5m, h1: view!.cache_write_1h }).toEqual({
+      m5: { value: 42, reported: 2, of: 3 },
+      h1: { value: 0, reported: 1, of: 3, only_request_index: 0 },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// issue #600 caching PR P (G4, G5): money, derived at read. A fake source prices each request at
+// its prompt in dollars (total) against twice that with no caching, so every sum is checkable by
+// eye; a request whose model is `unknown-model` is not priced. On a failing CI host each cell prints
+// the composed money: test figures only.
+// ---------------------------------------------------------------------------------------------
+const FAKE: PriceSource = {
+  price(input) {
+    if (input.model === 'unknown-model') return { not_priced: 'model_unknown' };
+    return {
+      priced: {
+        total: input.usage.prompt_tokens,
+        uncached_counterfactual: input.usage.prompt_tokens * 2,
+      },
+      priced_by: {
+        source_class: 'economics',
+        source_ref: '/srv/economics.yaml',
+        matched_model: input.model,
+        date_basis: input.model === 'dated-model' ? 'dated' : 'current',
+      },
+    };
+  },
+};
+const priced = (prompt: number, model = 'm', index = 0): Record<string, unknown> =>
+  req({ model, prompt_tokens: prompt, output_tokens: 0 }, index);
+
+describe('composeCostView — money (issue #600 caching PR P, G4)', () => {
+  // (a) red when money is minted without a source (the seven `requests` pins redden too, by
+  // design); (b) prints the view.
+  it('no source: no money key', () => {
+    expect('money' in composeCostView([priced(1)])!).toBe(false);
+  });
+
+  // (a) red when net's sign is flipped, or not-priced requests are summed, or one source's two
+  // models are two source totals; (b) prints the money.
+  it('with a source: priced of of, the sums over priced requests only, net, sources, source totals and not_priced counts', () => {
+    const view = composeCostView(
+      [
+        priced(1, 'm', 0),
+        priced(2, 'dated-model', 1),
+        priced(4, 'unknown-model', 2),
+        req({ prompt_tokens: 3 }, 3),
+      ],
+      undefined,
+      { priceSource: FAKE },
+    );
+    expect(view!.money).toEqual({
+      total: 3,
+      uncached_counterfactual: 6,
+      net: 3,
+      priced: 2,
+      of: 4,
+      dated: 1,
+      sources: [
+        {
+          source_class: 'economics',
+          source_ref: '/srv/economics.yaml',
+          matched_model: 'm',
+          count: 1,
+          dated: 0,
+        },
+        {
+          source_class: 'economics',
+          source_ref: '/srv/economics.yaml',
+          matched_model: 'dated-model',
+          count: 1,
+          dated: 1,
+        },
+      ],
+      source_totals: [
+        { source_class: 'economics', source_ref: '/srv/economics.yaml', count: 2, dated: 1 },
+      ],
+      not_priced: [
+        { cause: 'model_unknown', count: 1 },
+        { cause: 'model_not_recorded', count: 1 },
+      ],
+    });
+  });
+
+  // (a) red when the requests are summed before pricing (the tier of a summed prompt); (b) prints
+  // the total. Each request priced singly at Haiku 5.5's list rates (input 0.1, output 0.5 per
+  // million; 0.5 and 2.5 above 100,000 prompt tokens): three 40k requests with 1,000 out each.
+  it('each request is priced on its own, never their sum', () => {
+    const haiku: PriceSource = {
+      price(input) {
+        const tier = input.usage.prompt_tokens > 100000;
+        const total =
+          (input.usage.prompt_tokens * (tier ? 0.5 : 0.1) +
+            input.usage.output_tokens * (tier ? 2.5 : 0.5)) /
+          1e6;
+        return {
+          priced: { total, uncached_counterfactual: total },
+          priced_by: {
+            source_class: 'economics',
+            source_ref: 'x',
+            matched_model: input.model,
+            date_basis: 'current',
+          },
+        };
+      },
+    };
+    const three = [0, 1, 2].map((i) =>
+      req({ model: 'claude-haiku-5-5', prompt_tokens: 40000, output_tokens: 1000 }, i),
+    );
+    const money = composeCostView(three, undefined, { priceSource: haiku })!.money!;
+    expect(Number(money.total.toFixed(9))).toBe(0.0135);
+  });
+
+  // (a) red when the endpoints count is not derived, or its absence is not by cause; (b) prints it.
+  it('endpoints: the custom count of all requests; the typed absence when none records one', () => {
+    expect([
+      composeCostView([
+        req({ endpoint: 'custom' }, 0),
+        req({ endpoint: 'default' }, 1),
+        req({}, 2),
+      ])!.endpoints,
+      composeCostView([req({ provider: 'anthropic' })])!.endpoints,
+      composeCostView([])!.endpoints,
+    ]).toEqual([{ custom: 1, of: 3 }, { absent_cause: 'none_readable' }, undefined]);
+  });
+});
+
+describe('composeRunCost and StepView.total (issue #600 caching PR P, G5)', () => {
+  const run = makeRun(
+    [
+      { step_id: 'a', status: 'error', diagnostics: { cache: { requests: [priced(1)] } } },
+      { step_id: 'a', status: 'success', diagnostics: { cache: { requests: [priced(2)] } } },
+      { step_id: 'b', status: 'success', tool_calls: [] },
+      { step_id: 'c', status: 'success', agent_profile: 'p' },
+      { step_id: 'd', status: 'success', diagnostics: { cache: { requests: 'not-a-list' } } },
+    ],
+    {
+      drive_failures: {
+        first_failed_at: '2026-01-01T00:00:00.000Z',
+        total: 8,
+        entries: [
+          { at: 'x', step: 'a', usage: [priced(4)] },
+          // No usage figures: a request that failed on the wire may have billed.
+          { at: 'y', step: 'a' },
+        ],
+      },
+    } as never,
+  );
+
+  // (a) red when a step's total is not across its attempts; (b) prints the total.
+  it('a step total is across its attempts, only with a source', () => {
+    expect([
+      composeStepViews(run, { priceSource: FAKE })['a']!.total?.total,
+      composeStepViews(run)['a']!.total,
+    ]).toEqual([3, undefined]);
+  });
+
+  // (a) red when a drive failure's billed requests are dropped, `total − entries` is not computed,
+  // a failed drive with no usage figures is not counted, or an unmeasured cause is not counted;
+  // (b) prints the run cost.
+  it('the run: every step plus the failed drives on the record; failed drives not on the record; the three unmeasured counts', () => {
+    const cost = composeRunCost(run, { priceSource: FAKE })!;
+    expect({
+      total: cost.total.total,
+      priced: cost.total.priced,
+      of: cost.total.of,
+      failed_drives_not_on_record: cost.failed_drives_not_on_record,
+      failed_drives_without_usage: cost.failed_drives_without_usage,
+      unmeasured: cost.unmeasured,
+    }).toEqual({
+      total: 7,
+      priced: 3,
+      of: 3,
+      failed_drives_not_on_record: 6,
+      failed_drives_without_usage: 1,
+      unmeasured: { tool_calling_step: 1, not_measured_by_realm: 1, cost_unreadable: 1 },
+    });
+    expect(composeRunCost(run)).toBeUndefined();
   });
 });

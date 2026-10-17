@@ -11,8 +11,16 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDefaultRegistry, type StepHandler } from '@sensigo/realm';
+import {
+  createDefaultRegistry,
+  executeStep,
+  CURRENT_WORKFLOW_SCHEMA_VERSION,
+  type StepHandler,
+  type WorkflowDefinition,
+} from '@sensigo/realm';
 import { runFixtureTests } from './test-runner.js';
+import { createGateResponder } from '../mocks/mock-gate.js';
+import { InMemoryStore } from '../store/in-memory-store.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const PAGE = 'docs/reference/testing-package.md';
@@ -162,5 +170,72 @@ describe('#625 PR-2a, F10 — realm-testing’s runner records what the engine r
       result: { name: 'one', passed: false, error: "Handler 'missing_h' is not registered" },
       ran: ['file'],
     });
+  });
+});
+
+// #729 PR-0 correction (C2): testing-package.md's `createGateResponder` sentence, by execution.
+describe('createGateResponder (testing-package.md)', () => {
+  it('answers the open gate with the choice for its step, or approve; returns an EngineReply; throws with no open gate', async () => {
+    claim(
+      PAGE,
+      "Answers the run's open gate with the choice in `gateResponses` for the gate's step, or `approve` if there is none, and returns the engine's reply, an `EngineReply` (added after version 0.47.0, which returned a `ResponseEnvelope`). Pass `registry` if the answer can complete the run and the workflow has cleanup steps. If the run has no open gate, it throws `createGateResponder: run has no pending gate`.",
+    );
+    const def: WorkflowDefinition = {
+      id: 'responder-c2',
+      name: 'responder-c2',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        q: {
+          description: 'Ask.',
+          execution: 'auto',
+          trust: 'human_confirmed',
+          gate: { choices: ['approve', 'reject'] },
+        },
+      },
+    } as WorkflowDefinition;
+    const store = new InMemoryStore();
+    const answered = async (gateResponses: Record<string, string>) => {
+      const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+      await executeStep(store, def, {
+        runId: run.id,
+        command: 'q',
+        input: {},
+        dispatcher: async () => ({}),
+      });
+      const reply = await createGateResponder(store, def, run.id, gateResponses);
+      const after = await store.get(run.id);
+      const entry = [...after.evidence].reverse().find((e) => e.kind === 'gate_response');
+      return {
+        reply,
+        choice: (entry?.output_summary as { choice?: unknown } | undefined)?.choice,
+        runId: run.id,
+      };
+    };
+    const named = await answered({ q: 'reject' });
+    const fallback = await answered({});
+    // (a) red when the step's choice is not the one recorded, `approve` is not the fallback, or the
+    //     reply is not an EngineReply (the ways as data; none of the door's words); (b) prints the
+    //     choices and the reply's field names.
+    expect({
+      named: named.choice,
+      fallback: fallback.choice,
+      engineReply: [
+        Array.isArray(named.reply.ways),
+        Array.isArray(named.reply.unavailable),
+        typeof named.reply.reply_kind,
+      ],
+      doorWords: ['next_actions', 'agent_action'].filter((k) => k in named.reply),
+    }).toEqual({
+      named: 'reject',
+      fallback: 'approve',
+      engineReply: [true, true, 'string'],
+      doorWords: [],
+    });
+    // (a) red when an answer to a run with no open gate does not throw the page's message;
+    //     (b) prints the message.
+    await expect(createGateResponder(store, def, named.runId, {})).rejects.toThrow(
+      'createGateResponder: run has no pending gate',
+    );
   });
 });

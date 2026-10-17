@@ -5,16 +5,25 @@ import {
   JsonWorkflowStore,
   JsonFileStore,
   submitHumanResponse,
-  withPendingCleanup,
+  endedRunWaysSentence,
+  pendingCleanupSentence,
+  pendingCleanupWay,
   TERMINAL_PHASES,
   WorkflowError,
   boundStatedName,
   identityRefusalLine,
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
-  type ResponseEnvelope,
 } from '@sensigo/realm';
-import type { HandleRunStores } from './start-run.js';
+import { mcpHostOf, type HandleRunStores } from './start-run.js';
+import {
+  mcpReplyOf,
+  renderReply,
+  toolContentOf,
+  withHintTail,
+  type McpEnvelope,
+  type WithPersonBlock,
+} from '../render-reply.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
@@ -75,7 +84,7 @@ export const submitHumanResponseArgsSchema = z
       .string()
       .optional()
       .describe(
-        'The value from gate.claim_token on the reply that opened this question. Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
+        'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
       ),
   })
   .passthrough();
@@ -93,7 +102,7 @@ export async function handleSubmitHumanResponse(
     claim_token?: string | undefined;
   },
   stores?: HandleRunStores,
-): Promise<ResponseEnvelope> {
+): Promise<WithPersonBlock<McpEnvelope>> {
   // issue #620 PR-C + the admission order (framework v1.27 §4): what the host handed in is checked
   // first, then what this caller sent.
   assertToolStores(stores, 'handleSubmitHumanResponse');
@@ -118,7 +127,9 @@ export async function handleSubmitHumanResponse(
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
-  // WorkflowError, or ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
+  // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
+  // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
+  // untyped throw, ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
   const run = await runStore.get(args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });
@@ -160,10 +171,26 @@ export async function handleSubmitHumanResponse(
   });
   // decision C211 (walk c14 W3-4's class): an answer that ended the run with cleanup steps left
   // pending says the command that runs them (the reply carries the resume offer already).
-  if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) return reply;
+  const host = mcpHostOf(stores);
+  if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) {
+    return mcpReplyOf(renderReply(reply, host));
+  }
   const ended = await runStore.get(args.run_id).catch(() => undefined);
-  // F6: the cleanup sentence goes before the resume offer, whose command ends the hint.
-  return ended === undefined ? reply : withPendingCleanup(reply, ended, definition, new Date());
+  if (ended === undefined) return mcpReplyOf(renderReply(reply, host));
+  // #729 PR-0: the ended run's ways back in follow the door's own sentence of what comes next, as
+  // before PR-0 (withPendingCleanup's rule, kept whole): the cleanup sentence once — never when the
+  // hint already names its command (F11) — and, when core's hint ends with the resume offer, the
+  // offer after it, so its command ends the hint (F6). Both are said after the door's sentence.
+  const now = new Date();
+  const cleanup = pendingCleanupSentence(ended, now);
+  const cleanupWay = pendingCleanupWay(ended, now);
+  const named = cleanupWay !== undefined && reply.context_hint.includes(`'${cleanupWay.command}'`);
+  const offer = endedRunWaysSentence(ended, definition, now).slice(cleanup.length);
+  const hint = reply.context_hint;
+  const moved = offer !== '' && hint.endsWith(offer);
+  const own = moved ? { ...reply, context_hint: hint.slice(0, hint.length - offer.length) } : reply;
+  const tail = `${named ? '' : cleanup}${moved ? offer : ''}`;
+  return mcpReplyOf(withHintTail(renderReply(own, host), tail));
 }
 
 /** Registers the submit_human_response MCP tool on the server. */
@@ -183,21 +210,17 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
       try {
         const result = await handleSubmitHumanResponse(args, opts);
         const unknown = unknownKeyWarnings(args as Record<string, unknown>);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify({
-                ...result,
-                data: {},
-                evidence: [],
-                // An unknown argument is named FIRST: a caller that sent `claimToken` reads the
-                // did-you-mean before the reply's own "No claim_token was passed" sentence.
-                ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
-              }),
-            },
-          ],
-        };
+        return toolContentOf(
+          {
+            ...result,
+            data: {},
+            evidence: [],
+            // An unknown argument is named FIRST: a caller that sent `claimToken` reads the
+            // did-you-mean before the reply's own "No claim_token was passed" sentence.
+            ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
+          },
+          sseJsonStringify,
+        );
       } catch (err) {
         const workflowErr =
           err instanceof WorkflowError
@@ -214,21 +237,17 @@ export function registerSubmitHumanResponse(server: McpServer, opts?: HandleRunS
             : workflowErr.code === 'STATE_RUN_NOT_FOUND'
               ? `Run '${args.run_id}' not found.`
               : `An error occurred before gate response could be submitted.`;
-        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
-          'submit_human_response',
-          args.run_id,
-          0,
-          workflowErr,
-          contextHint,
+        const rendered = renderReply(
+          buildPreExecutionErrorEnvelope(
+            'submit_human_response',
+            args.run_id,
+            0,
+            workflowErr,
+            contextHint,
+          ),
+          mcpHostOf(opts),
         );
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify(envelope),
-            },
-          ],
-        };
+        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
       }
     },
   );

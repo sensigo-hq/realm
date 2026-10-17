@@ -190,7 +190,25 @@ const REFUSALS: Array<{
     expected: {
       ...NOT_ELIGIBLE,
       agentAction: 'resolve_precondition',
-      message: "Step 'step-a' is currently being executed by execute_step.",
+      // #729 PR-0 (T-1, T-11): held elsewhere, in the one vocabulary — never a tool's name.
+      message: "Step 'step-a' is held by another call; no deadline is recorded for it.",
+      details: { step_id: 'step-a', step_state: 'in_progress', run_version: 7 },
+    },
+  },
+  {
+    label:
+      'step_open_for_trace × the step is in progress under a claim with a deadline (#729 PR-0)',
+    fence: { kind: 'step_open_for_trace', run_version: 5 },
+    record: run({
+      in_progress_steps: [STEP_ID],
+      claims: { [STEP_ID]: { deadline: '2026-10-16T12:00:00.000Z' } },
+    } as never),
+    stepId: STEP_ID,
+    expected: {
+      ...NOT_ELIGIBLE,
+      agentAction: 'resolve_precondition',
+      // (a) red when the claim's deadline is not said; (b) prints the message.
+      message: "Step 'step-a' is held by another call until 2026-10-16T12:00:00.000Z.",
       details: { step_id: 'step-a', step_state: 'in_progress', run_version: 7 },
     },
   },

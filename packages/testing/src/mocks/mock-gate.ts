@@ -3,7 +3,7 @@ import {
   submitHumanResponse,
   type RunStore,
   type WorkflowDefinition,
-  type ResponseEnvelope,
+  type EngineReply,
   type ExtensionRegistry,
 } from '@sensigo/realm';
 
@@ -25,7 +25,7 @@ export async function createGateResponder(
   runId: string,
   gateResponses: Record<string, string>,
   registry?: ExtensionRegistry,
-): Promise<ResponseEnvelope> {
+): Promise<EngineReply> {
   const run = await store.get(runId);
   if (run.pending_gate === undefined) {
     throw new Error('createGateResponder: run has no pending gate');

@@ -18,7 +18,7 @@
 | [`reconcile`](#reconcile) | Rebuilds the index of idempotency keys.                       | Unless `--dry-run` is given |
 | [`migrate`](#migrate)     | Records the ending of runs that were written by old versions. | Only with `--force`         |
 
-A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1.
+A duration is a whole number followed by `d`, `h` or `m`: `30d`, `6h`, `10m`. A run ID that is not in the store gets `Run not found: <id>` and exit code 1. A run ID whose file cannot be read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) gets a message naming the file, what is wrong with it and the way out, and exit code 1 (added after version 0.47.0); `purge <id> --force` then deletes nothing, as before.
 
 When the `@sensigo/realm` the workflow's code imports is not the version the command runs, the command prints [`REALM_RELEASE_LINE_MISMATCH`](../workflow/loader-diagnostics.md#warning-codes) to stderr once per copy and goes on. This was added in 0.46.0.
 
@@ -68,11 +68,12 @@ If a realm workflow run or realm agent is still waiting on this run, it goes on 
 
 After the lines that name a command — `Owed to the engine: …`, `An agent step is ready: …` — one more line says that a `realm workflow run` or `realm agent` still waiting on the run goes on by itself (`the lines above are` when there are two): the run's record does not show whether one is waiting, so the line holds either way. Added after version 0.46.0.
 
-When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0:
+When the answer leaves nothing that can run from here — no agent step ready, no owed step that can run, only `auto` steps that cannot run — each such step is named, then the way out. Added after version 0.46.0. A step refused for its input that builds no input from an `input_map`, like `compute` here, gets one more line: an operator supplies its input, checked against its `input_schema`, and no `realm` command does (added after version 0.47.0):
 
 ```text
 Responded: 77772f0c-a80d-49d3-b665-4ac186186fd1 | choice 'approve' | new state 'running'
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+'compute' takes its input from an operator, checked against its input_schema; no realm command supplies it.
 Run 77772f0c-a80d-49d3-b665-4ac186186fd1 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 77772f0c-a80d-49d3-b665-4ac186186fd1 — or end it: realm run abandon 77772f0c-a80d-49d3-b665-4ac186186fd1
 ```
 
@@ -229,10 +230,10 @@ realm run resume 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 --from fetch
 ```text
 Resumed run '8d4053bf-ceb4-4bde-bbde-3595715fd7c5': step 'fetch' re-enabled and run reset to 'running'.
 Drive it with: realm agent --run-id 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 --provider <provider> --model <model>
-Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 shows the extension module the run loaded).
+Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect 8d4053bf-ceb4-4bde-bbde-3595715fd7c5 shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).
 ```
 
-Fill in `<provider>` and `<model>` before you run the second line. `<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout` or `--mint-writer-nonce` if you used them. Realm does not record the model or most of those flags: `realm run inspect` shows the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line.
+Fill in `<provider>` and `<model>` before you run the second line. `<model>` is the model to drive the run with. Give the flags you drove the run with: the model flags (`--provider-module`, or `--provider`, `--model`, `--base-url` and `--strict-base-url`) as you used them, and `--extensions-module`, `--project`, `--schema-retries`, `--llm-timeout`, `--mint-writer-nonce` or `--prompt-cache` if you used them. Realm records the model each request named and the caching it asked for, but not the other flags: `realm run inspect` shows the model and the caching setting of each request on its cost line (added after version 0.47.0), the provider of a drive failure, and the extension module the run loaded under `Extension Identity`. A run started by `realm workflow run` was never driven by a model: name any provider and model you want. Version 0.45.0 prints the second line without `--provider <provider> --model <model>`, and no third line. The third line's `--prompt-cache` and its words about the model and caching were added after version 0.47.0.
 
 When the step that is ready again is one only the engine runs, one line names it (`the step` / `the steps`, and for more than one, `until a step opens a question, fails or ends the run,` before `without a model`) and the call that runs it without a model, and the `Drive it with:` lines are printed only when an agent step is ready too. Added after version 0.46.0, which prints the `Drive it with:` lines in this case too:
 
@@ -246,6 +247,7 @@ When the step that is ready again cannot run — the workflow was registered aga
 ```text
 Resumed run '729eaab3-6203-46cb-9c5c-3714070723a8': step 'a' re-enabled and run reset to 'running'.
 'a' cannot run (input_schema): Invalid input for step 'a': the input must have required property 'n'.
+'a' takes its input from an operator, checked against its input_schema; no realm command supplies it.
 Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): for 'a', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 729eaab3-6203-46cb-9c5c-3714070723a8 — or end it: realm run abandon 729eaab3-6203-46cb-9c5c-3714070723a8
 ```
 
@@ -291,10 +293,10 @@ Abandoning a run that is already abandoned changes nothing, and the first line s
 
 **Exit code:** 0 if the run is abandoned, otherwise 1:
 
-| Case                         | Message                                                                                                                                                                                              |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The run is waiting at a gate | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); answer it before abandoning. Answer it: realm run respond 4233aa3c-… --gate 70d76b3b-… --choice <one of: approve, reject>.` |
-| The run ended in another way | `Run '08c61d5d-…' is already terminal (failed); cannot abandon a finished run.`                                                                                                                      |
+| Case                         | Message                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The run is waiting at a gate | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Answer it: realm run respond 4233aa3c-… --gate 70d76b3b-… --choice <one of: approve, reject>` |
+| The run ended in another way | `Run '08c61d5d-…' is already terminal (failed); cannot abandon a finished run.`                                                                                                                                           |
 
 ## `cleanup`
 
@@ -324,7 +326,7 @@ abandon is a kill — declared finalizers (if any) did NOT run and will not for 
 
 Without `--dry-run`, the first line reads `Marked 4 run(s) as abandoned.` A run it abandons shows `Sealed by: cleanup_sweep` and `Cause: Marked abandoned by realm cleanup` in `realm run inspect`.
 
-**Exit code:** 0, also when no run matches. 1 for a duration that cannot be read.
+**Exit code:** 0, also when no run matches. 1 for a duration that cannot be read. A run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run cleanup did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0).
 
 ## `reclaim`
 
@@ -399,7 +401,7 @@ Reclaimed 1/1 selected claim(s).
 
 When nothing is selected, it prints `No auto-reclaimable claims found (idempotent ∧ concrete-past-deadline ∧ non-gated).` A run with no step in progress gets `Run '<id>' (running) has no in-progress claims. Nothing to reclaim.`, and a run that has ended gets `Run '<id>' is terminal (completed); it has no reclaimable claim.`
 
-**Exit code:** 0, also when there is nothing to free. 1 for a combination that cannot be used:
+**Exit code:** 0, also when there is nothing to free. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run reclaim --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 for a combination that cannot be used:
 
 ```text
 Provide a <run-id> to inspect/reclaim, or use --all for batch mode.
@@ -513,6 +515,7 @@ When it leaves nothing that can run from here, the steps that cannot run and the
 ✓ gate enacted (settle_default 'approve').
 Run '1d703406-777f-4bc6-a6bc-6058b4d8f490' is not terminal (phase: 'running') — nothing further to drain.
 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.
+'compute' takes its input from an operator, checked against its input_schema; no realm command supplies it.
 Run 1d703406-777f-4bc6-a6bc-6058b4d8f490 stays open (phase 'running'): for 'compute', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, realm run advance 1d703406-777f-4bc6-a6bc-6058b4d8f490 — or end it: realm run abandon 1d703406-777f-4bc6-a6bc-6058b4d8f490
 ```
 
@@ -550,7 +553,7 @@ Run '03431f4f-7b71-4ad0-98b1-f1d51cc5c4c8' has no pending finalizers. Nothing to
 Run 'cba9901c-fa22-47dd-97e2-47439238d01f' is not terminal (phase: 'running') — nothing to drain. To end the run: realm run abandon cba9901c-fa22-47dd-97e2-47439238d01f
 Run 'daeede5e-c0dd-4b88-9caf-6efa089902dd' is not terminal (phase: 'running') — nothing to drain. To run the step the engine owes ('after'): realm run advance daeede5e-c0dd-4b88-9caf-6efa089902dd
 To end the run instead: realm run abandon daeede5e-c0dd-4b88-9caf-6efa089902dd
-Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
+Run '573ff99d-44fc-42c9-98e8-c394fed45e6e' is not terminal (phase: 'running') — nothing to drain. 'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'. 'compute' takes its input from an operator, checked against its input_schema; no realm command supplies it. Run 573ff99d-44fc-42c9-98e8-c394fed45e6e stays open (phase 'running'): for 'compute', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance 573ff99d-44fc-42c9-98e8-c394fed45e6e — or end it: realm run abandon 573ff99d-44fc-42c9-98e8-c394fed45e6e
 Run 'e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68' is not terminal (phase: 'running') — nothing to drain. An agent step is ready: 'write' — drive it with realm agent --run-id e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68 --provider <provider> --model <model>
 To end the run instead: realm run abandon e1a7c2b4-6d90-4f3e-8b25-0c7d9e1f4a68
 Run '5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25' is not terminal (phase: 'running') — nothing to drain. 'fetch' is in flight in another program — wait for it, or see realm run inspect 5b3f90de-2c47-4a18-9e6d-f81a0b7c3d25
@@ -564,7 +567,7 @@ No runs with an actionable pending finalizer.
 
 The runs after the second — the work the engine owes, a step that cannot run and the way out, an agent step that is ready, a step in flight in another program, each with the way out after it — were added after version 0.46.0, which prints the second line's `To end the run: realm run abandon <id>` for every run in `running`. The second line is now for a run with none of these. A command ends its line: where the way out follows it, it is the next line (added after version 0.46.0, which printed them on one line, the command followed by a full stop). At a question, the second line says that after the answer `realm run respond` names what the run owes next (added after version 0.46.0, which named only `realm run abandon` for a run still open after the answer).
 
-**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
+**Exit code:** 0 if every cleanup step it tried ran, and when there is nothing to do. With `--all`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run drain --all did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0, which crashed). 1 if a cleanup step is left owed after `--force`, if `--force` prints one of the seven `is not terminal … nothing to drain` lines above, or for one of:
 
 ```text
 Provide a <run-id>, or use --all for batch mode.
@@ -631,7 +634,7 @@ Re-run with --force to actually delete.
 
 When no run is old enough, it prints `No eligible runs found to purge.`
 
-**Exit code:** 0, also when a run was blocked or nothing matched. 1 if a run could not be deleted because of an error, or for one of:
+**Exit code:** 0, also when a run was blocked or nothing matched. With `--older-than`, a run file that cannot be read as a run, except a copy of a run whose own file reads, is not acted on: it is named on standard error with what is wrong with it and the way out, then `⚠ <n> run file(s) in '<runs folder>' could not be read; realm run purge did not act on them.`, and the exit code is that of the runs acted on (added after version 0.47.0). 1 if a run could not be deleted because of an error, or for one of:
 
 ```text
 Provide a <run-id> to purge, or use --older-than for batch mode.
@@ -700,7 +703,7 @@ No stale-phase records found to heal.
 
 Correcting a record sets its time of last change to now. `realm run purge --older-than` and `realm run cleanup --older-than` read that time.
 
-**Exit code:** 0. 1 if a file could not be read or deleted, or for:
+**Exit code:** 0. 1 if a file could not be read or deleted (with `--heal`, a run file that cannot be read as a run, except a copy of a run whose own file reads: one error names every such file and what is wrong with it, nothing is healed, and it says to run the same command, flags included, again; added after version 0.47.0, which failed on a file that was not JSON with the parser's message, naming no file, and on a file it could not read with the system's error, which named the file), or for:
 
 ```text
 --older-than must be at least 1h (got '30m'). gc refuses to reap crash residue younger than that, even with --force.
@@ -729,7 +732,7 @@ Would write 1 pointer(s) across 1 key group(s); 0 already current.
 
 Without `--dry-run`, the line starts with `Wrote`. Run again, it prints `Wrote 0 pointer(s) across 1 key group(s); 1 already current.` A key group is one key of one workflow. See [Idempotency and batches](../../guides/idempotency-and-batches.md) for a store where two runs hold one key.
 
-**Exit code:** 0.
+**Exit code:** 0. 1 when a run file cannot be read as a run, except a copy of a run whose own file reads (one error names every such file, or with `--workflow` every such file that can concern that workflow, and what is wrong with it, and says to run the same command, flags included, again; nothing is written; added after version 0.47.0), or when the store fails. Up to version 0.47.0 this page said 0 for every case; a failure exited 1 then too.
 
 ## `migrate`
 
@@ -739,11 +742,11 @@ realm run migrate --stamp-seals [--force] [--detailed-exitcode]
 
 Since version 0.39, a run that ends records what ended it, which `realm run inspect` prints as `Sealed by`. `migrate --stamp-seals` works out that value for finished runs written by older versions and stores it. It does not change a run's time of last change.
 
-| Flag                  | Required | What it does                                                                                                                |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                 |
-| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                    |
-| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending. |
+| Flag                  | Required | What it does                                                                                                                                                                                                       |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--stamp-seals`       | Yes      | The only kind of migration.                                                                                                                                                                                        |
+| `--force`             | No       | Writes. Without it, `migrate` lists what it would write.                                                                                                                                                           |
+| `--detailed-exitcode` | No       | Exits with 2 if a finished run is left whose ending cannot be worked out, or whose record disagrees with its stored ending, or if a run file cannot be read as a run, except a copy of a run whose own file reads. |
 
 On two runs written by version 0.38:
 
@@ -779,7 +782,7 @@ Nothing would be stamped — every terminal run already carries its seal arm.
 Residue: 0 terminal run(s) still without a recorded seal arm.
 ```
 
-**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above.
+**Exit code:** 0. 1 if a write failed, or if `--stamp-seals` was not given. 2 only with `--detailed-exitcode`, as described above. A run file that cannot be read as a run, except a copy of a run whose own file reads, is listed in its own group (`<n> run file(s) could not be read and were left untouched:`) with what is wrong with it, and named on standard error with its way out; the residue line counts it apart from the terminal runs (`Residue: <n> terminal run(s) still without a recorded seal arm; <m> run file(s) could not be read.`), and it makes `--detailed-exitcode` give 2 (added after version 0.47.0).
 
 ## See also
 

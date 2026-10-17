@@ -18,7 +18,8 @@ import {
   type RunStore,
   type TraceBufferStore,
 } from '@sensigo/realm';
-import type { WorkflowDefinition } from '@sensigo/realm';
+import type { PriceSource, WorkflowDefinition } from '@sensigo/realm';
+import { loadPriceSource, withSourceNote } from './price-source.js';
 import { JsonTraceBufferStore } from './json-trace-buffer-store.js';
 import { VERSION } from './version.js';
 import { composeBinIdentity } from './bin-identity.js';
@@ -34,6 +35,7 @@ import { registerAbandonRun } from './tools/abandon-run.js';
 import { registerCreateWorkflow } from './tools/create-workflow.js';
 import { registerAppendTrace } from './tools/append-trace.js';
 import { registerStartRunBatch } from './tools/start-run-batch.js';
+import type { OperatorRoute } from './render-reply.js';
 
 export interface RealmMcpServerOptions {
   /** Extension registry for resolving service adapters and step handlers at runtime. */
@@ -45,6 +47,12 @@ export interface RealmMcpServerOptions {
    * provider wins. Additive — absent provider preserves existing behavior.
    */
   registryProvider?: (definition: WorkflowDefinition) => Promise<ExtensionRegistry>;
+  /**
+   * Issue #600 caching PR P: per-definition prices for `get_run_state`'s money (`loadPriceSource`
+   * with the economics file the run's deployment root names). Absent ⇒ the installed price list
+   * only, and every figure says no economics file is configured on this server.
+   */
+  priceSourceProvider?: (definition: WorkflowDefinition) => Promise<PriceSource>;
   /** Pre-populated workflow store. When provided, tools use this instead of creating
    *  a new JsonWorkflowStore() pointing at ~/.realm/workflows/. */
   workflowStore?: JsonWorkflowStore;
@@ -94,6 +102,14 @@ export interface RealmMcpServerOptions {
    * refused by the engine (`VALIDATION_ACTOR_INVALID`) on the first call. Absent ⇒ none recorded.
    */
   driver?: Attributed;
+  /**
+   * issue #729 PR-0 (D2 §5, D4 P-6): the operator route the program that launches this server
+   * injects — `realm mcp` and `realm serve` hand the CLI's renderer, so the block of a reply addressed
+   * to the person (`audience: ["user"]`) can name the command an operator runs for a way only an
+   * operator can take. Never in a structured entry the model reads. The standalone `realm-mcp` bin
+   * injects none: its replies name no operator command at all.
+   */
+  operatorRoute?: OperatorRoute;
 }
 
 /**
@@ -113,7 +129,7 @@ export interface RealmMcpServerOptions {
 export { createDefaultRegistry };
 
 /**
- * Creates and configures the Realm MCP server with all 10 workflow tools.
+ * Creates and configures the Realm MCP server with all 11 workflow tools.
  *
  * When no `registry` is provided, `FileSystemAdapter` is pre-registered automatically
  * under the name `filesystem`. Pass a custom `registry` to add your own handlers and
@@ -233,7 +249,12 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   // issue #625 PR-2a: the one call that runs what the engine owes — beside execute_step, with its stores.
   registerAdvanceRun(server, { ...effectiveOptions, traceBufferStore });
   registerSubmitHumanResponse(server, effectiveOptions);
-  registerGetRunState(server, effectiveOptions);
+  // issue #600 caching PR P: with no provider, the installed list only (loaded once per process).
+  const priceSourceProvider =
+    options?.priceSourceProvider ??
+    (async (): Promise<PriceSource> =>
+      withSourceNote(await loadPriceSource({}), 'no economics file is configured on this server'));
+  registerGetRunState(server, { ...effectiveOptions, priceSourceProvider });
   registerAbandonRun(server, effectiveOptions);
   registerCreateWorkflow(server, effectiveOptions);
   registerAppendTrace(server, {

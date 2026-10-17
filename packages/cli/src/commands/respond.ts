@@ -6,6 +6,7 @@ import type {
   ExtensionRegistry,
   Attributed,
   AnswerView,
+  EngineReply,
   RunRecord,
   WorkflowDefinition,
 } from '@sensigo/realm';
@@ -20,9 +21,8 @@ import {
   lateAnswerOutcome,
   deriveRunPhase,
   describePending,
-  owedList,
-  owedWords,
-  cannotGoOnLines,
+  composeWaysAt,
+  deriveRunPhase as derivePhase,
   sentenceEnd,
   pendingCleanupLine,
   pendingCleanupWay,
@@ -33,6 +33,7 @@ import {
 } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { answererPhrase, recordedAnswer } from '../lib/holder-render.js';
+import { CLI_COMMANDS, NO_DRIVE_FLAGS, cannotGoOnLines, owedItems } from './ways-renderer.js';
 import {
   agentReadyReason,
   attendingLine,
@@ -67,18 +68,26 @@ function nextLines(
   registry: ExtensionRegistry,
   hasCode: boolean,
 ): string[] {
-  const pending = describePending(workflow, run, registry, new Date());
+  const now = new Date();
+  const pending = describePending(workflow, run, registry, now);
+  // #729 PR-0 (A-10): the run's ways, composed by core and rendered by the CLI's one renderer.
+  const ways = composeWaysAt(run, now, { definition: workflow, registry });
   // decisions C62, C64: when the answer leaves nothing that can run from here, each engine step
-  // that cannot run and the way out — core's lines, never a copy.
-  const cannotGoOn = cannotGoOnLines(run, pending, workflow);
+  // that cannot run and the way out — the renderer's lines, never a copy.
+  const cannotGoOn = cannotGoOnLines(ways, runId, derivePhase(run));
   const ready = agentReadyReason(runId, pending.agent_steps);
-  // decision C207: with several owed, where the call stops — never a promise that all of them run.
-  const { them, until } = owedWords(pending);
+  const advance = ways.ways.find((w) => w.verb === 'advance');
   const commands = [
-    ...(pending.act !== undefined
-      ? [
-          `Owed to the engine: ${owedList(pending)} — realm run advance ${runId} runs ${them}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
-        ]
+    ...(advance !== undefined && advance.verb === 'advance'
+      ? (() => {
+          // decision C207: with several owed, where the call stops — never a promise that all run.
+          const items = owedItems(advance);
+          const one = items.length === 1;
+          const until = one ? '' : ' until a step opens a question, fails or ends the run';
+          return [
+            `Owed to the engine: ${items.join(', ')} — ${CLI_COMMANDS.advance(advance, undefined, NO_DRIVE_FLAGS)} runs ${one ? 'it' : 'them'}${until}, with ${laterAdvanceCodeWhere(workflow, hasCode)}, in the environment of the shell it runs in.`,
+          ];
+        })()
       : []),
     // decision C212: the ready line ends with its command — no full stop.
     ...(ready !== undefined
@@ -119,6 +128,38 @@ function withCleanupLine(lines: string[], run: RunRecord): string[] {
     (command !== undefined && lines.some((l) => l.includes(`'${command}'`)))
     ? lines
     : [...lines, cleanup];
+}
+
+/**
+ * #729 PR-0 correction (C5; A-2 row 6, Table rows 33–34): the way on from an answer that names a
+ * gate which is not the open one — the refusal's typed remedy (`error.remedy`), worded by the CLI's
+ * one renderer, as the MCP door words it: the open question's answer; the advance that carries out
+ * the open question's expiry when its time is up (Q18 (a)); with no question open, reading the run.
+ * The lead comes from the refusal's facts (`open_gate`), never from which verb the remedy names.
+ * C212: each line ends with its command, with no stop after it.
+ */
+function gateMismatchLines(result: EngineReply): string[] {
+  const refusal = result.refusal;
+  if (refusal === undefined || refusal.code !== 'gate_not_open') return [];
+  const open = refusal.facts.open_gate;
+  return (result.error?.remedy ?? []).flatMap((way) => {
+    if (way.verb === 'respond') {
+      return [
+        `The open question is on step '${way.step}' — answer it: ${CLI_COMMANDS.respond(way, undefined, NO_DRIVE_FLAGS)}`,
+      ];
+    }
+    if (way.verb === 'advance' && open !== undefined) {
+      return [
+        `The open question on step '${open.step}' can no longer be answered: its time is up — to carry out its expiry: ${CLI_COMMANDS.advance(way, undefined, NO_DRIVE_FLAGS)}`,
+      ];
+    }
+    if (way.verb === 'inspect' && open === undefined) {
+      return [
+        `No question is open on this run — to read it: ${CLI_COMMANDS.inspect(way, undefined, NO_DRIVE_FLAGS)}`,
+      ];
+    }
+    return [];
+  });
 }
 
 /**
@@ -237,9 +278,10 @@ export async function respondToGate(
     // gate whose expiry settled a choice enacts that expiry itself, and the expiry's write may
     // have settled guards — passed, or ended the run. A person who wanted the other choice must
     // learn what the run is doing now: refusal → guard lines → `Not recorded:`. Every other
-    // refusal prints exactly what it printed before (plus the ending, should the reply carry one).
+    // refusal prints exactly what it printed before (plus the ending, should the reply carry one),
+    // and an answer naming a gate that is not the open one its way on (#729 PR-0 correction, C5).
     const refusal = result.errors[0] ?? 'Gate response failed';
-    let lines = [refusal, ...describeEndedBy(result)];
+    let lines = [refusal, ...gateMismatchLines(result), ...describeEndedBy(result)];
     if (result.answer_recorded === false) {
       const lateRun = await runStore.get(runId);
       const late = lateAnswerOutcome(result, lateRun);

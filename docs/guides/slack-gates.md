@@ -103,6 +103,7 @@ It prints:
 ```text
 Realm Agent — Slack gate test v1
 Run ID: 71b0ed55-f198-41b1-a6e2-e9234b1fab1c
+Caching: no step is cached; this workflow has no agent step.
 
 → [auto] review
 
@@ -113,6 +114,8 @@ Run ID: 71b0ed55-f198-41b1-a6e2-e9234b1fab1c
    Waiting for approval...
   ℹ  Socket Mode connected.
 ```
+
+The `Caching:` line says that no request asks to be cached: this workflow has no agent step (the line was added after version 0.47.0; see [`realm agent`](../reference/cli/realm-agent.md#what-it-prints)).
 
 Notice `Socket Mode connected`. Realm is now listening. In Slack, the channel shows a message headed "Workflow gate waiting for approval", with the gate's name, your gate message, and the choices.
 
@@ -172,7 +175,7 @@ Every Slack gate can also be answered with `realm run respond`. The Slack messag
 
 - **`Error: realm agent requires an LLM API key. Set OPENAI_API_KEY or ANTHROPIC_API_KEY. Nothing was started.`** `realm agent` needs a model provider key to start, even for a workflow whose steps need no model. Set one of the two variables.
 - **`Error: --model is required: realm has no default model. ANTHROPIC_API_KEY is set, so the provider is Anthropic; name one of its models (Anthropic lists them at https://platform.claude.com/docs/en/models/overview). Nothing was started.`** `realm agent` needs `--model` to start, even for a workflow whose steps need no model. Add `--model` with a model the provider lists. The message names the provider Realm chose; it reads differently when another key is set or `--provider` is given. Version 0.45.0 does not print it: it has a default model.
-- **`Workflow not found: slack-test — most often this run was created from a file without --register.`** You answered with `realm run respond`, but the workflow was started from a file and never registered. Run `realm workflow register ./`, then answer again.
+- **`Workflow 'slack-test' is not registered in this workflow store, and the store does not know the file it came from, so no path to it is recorded.`** You answered with `realm run respond`, but the workflow was started from a file and never registered. Run `realm workflow register ./`, then answer again.
 - **The gate message appears in Slack, but a reply does nothing.** Check that the reply is in the thread, that it is exactly one of the choices, and that the app's Event Subscriptions include `message.channels`.
 
 ## See also

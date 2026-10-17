@@ -6,7 +6,16 @@
 // warns against ("avoids circular dependency with run-agent.ts"). Shared by all THREE wait-sites:
 // slack-gate-notifier.ts's `handleBidirectionalGate`, run-agent.ts's non-Slack poll loop, and
 // run.ts's interactive prompt.
-import { applySettlement, describeGuardLines, drainFinalizers } from '@sensigo/realm';
+import {
+  applySettlement,
+  describeGuardLines,
+  drainFinalizers,
+  expiryCarriedOutLine,
+  expiryReceiptLine,
+  expiryReceiptOf,
+  unreadableFactsOf,
+  WorkflowError,
+} from '@sensigo/realm';
 import type {
   EnactedVia,
   RunStore,
@@ -77,11 +86,12 @@ export function scheduleGateExpiryTimer(
     try {
       const delta = { kind: 'expire_gate' as const, gateId: gate.gate_id };
       let outcome: SettlementResult;
+      const firedAt = new Date();
       if (deps.store.settleStep !== undefined) {
-        outcome = await deps.store.settleStep(runId, delta, deps.definition, { now: new Date() });
+        outcome = await deps.store.settleStep(runId, delta, deps.definition, { now: firedAt });
       } else {
         const fresh = await deps.store.get(runId);
-        const pure = applySettlement(fresh, delta, deps.definition, { now: new Date() });
+        const pure = applySettlement(fresh, delta, deps.definition, { now: firedAt });
         outcome = pure.applied ? { ...pure, run: await deps.store.update(pure.run) } : pure;
       }
       if (outcome.applied) {
@@ -91,8 +101,25 @@ export function scheduleGateExpiryTimer(
         // otherwise a passed line per guard. (The legacy branch above never sets the option, so
         // it reports none.)
         const guardLines = describeGuardLines(outcome);
+        // #729 PR-0 (T-2, G7-18): the timer's line is the expiry receipt's — core's ONE line
+        // composer, the same words every enactor's line carries (no second composer here).
+        const settledEntry = outcome.run.settled?.[gate.step_name];
+        const carried =
+          settledEntry?.resolved_by === 'timeout'
+            ? {
+                on_expiry: 'settle_default' as const,
+                choice: settledEntry.choice ?? gate.default_choice ?? '',
+              }
+            : { on_expiry: 'abort' as const };
+        const receipt = expiryReceiptOf(
+          { gate_id: gate.gate_id, step: gate.step_name, expires_at: gate.expires_at },
+          carried,
+          TIMER_VIA,
+          firedAt,
+          true,
+        );
         console.log(
-          `⏰ gate '${gate.gate_id}' on run '${runId}' expired — enacted via the attending-process timer (enacted_via: ${TIMER_VIA}).` +
+          `⏰ ${receipt !== undefined ? expiryReceiptLine(receipt) : expiryCarriedOutLine(gate.gate_id, gate.step_name, carried, TIMER_VIA, undefined)}` +
             (guardLines.length > 0 ? ` ${guardLines.join(' ')}` : ''),
         );
         if (outcome.transitioned) {
@@ -111,10 +138,21 @@ export function scheduleGateExpiryTimer(
       // another enactment point — silently absorbed, exactly like enactExpiredGateIfDue's own
       // advisory-not-crash posture.
     } catch (err) {
+      // issue #719 (C2, F6.4): when the run's own file cannot be read, every enactment point reads
+      // that same file — none can catch the gate until it can be read (a read error) or is repaired
+      // (damaged bytes), or is moved out. A retryable read error (EBUSY, EIO) may pass: another
+      // enactment point may still catch it.
+      const facts = unreadableFactsOf(err);
+      const stuck = facts !== undefined && !(err instanceof WorkflowError && err.retryable);
+      const until =
+        facts?.class === 'unreadable' ? 'can be read or is moved out' : 'is repaired or moved out';
+      const tail = stuck
+        ? ` — no enactment point can read this run until its file ${until}.`
+        : ' — another enactment point (submit/execute_step/reclaim/drain --expired/listen) will ' +
+          'still catch it.';
       console.warn(
         `⚠ realm: the attending-process gate-expiry timer failed for run '${runId}' ` +
-          `(${err instanceof Error ? err.message : String(err)}) — another enactment point ` +
-          `(submit/execute_step/reclaim/drain --expired/listen) will still catch it.`,
+          `(${err instanceof Error ? err.message : String(err)})${tail}`,
       );
     }
   };

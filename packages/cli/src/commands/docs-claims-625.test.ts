@@ -408,7 +408,7 @@ describe(
     it('C166, W1-Y3: realm run respond, advance and drain act on a run only once its workflow is registered', async () => {
       claim(
         'cli/realm-workflow.md',
-        'Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow not found: <id> — …`, and `realm listen` skips the run.',
+        "Those read the workflow from the registry, so they act on the run only once it is registered (`realm workflow register <file>`): for a workflow never registered, `realm run respond`, `realm run advance` and `realm run drain` are refused with `Workflow '<id>' is not registered in this workflow store, …`, and `realm listen` skips the run.",
       );
       const def = gateThenAuto('dc-unregistered', 'settle_default');
       const { run } = await runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
@@ -432,8 +432,9 @@ describe(
       ]) {
         const r = realm(...args);
         // (a) red when one of them acts on a run whose workflow is not registered; (b) prints stderr.
+        // #729 PR-0 (T-21): what is so, by cause.
         expect([...r.out, ...r.err].join('\n'), args.join(' ')).toContain(
-          `Workflow not found: ${def.id} — `,
+          `Workflow '${def.id}' is not registered in this workflow store, `,
         );
       }
       expect((await runStore.get(run.id)).pending_gate?.gate_id).toBe(gateId);

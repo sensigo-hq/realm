@@ -17,14 +17,17 @@ import {
   executeEngineStep,
   executeStep,
   submitHumanResponse,
-  buildNextActions,
   pendingGateQuestion,
+  runReadError,
 } from './execution-loop.js';
 import { describePending } from './pending.js';
 import { JsonFileStore } from '../store/json-file-store.js';
+import { unreadableRunFileError } from '../store/run-file.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
+import { agentActionFor, nextCalls, owedOf } from '../test-support/ways-view.js';
+import { composeWaysAt } from './ways.js';
 
 const PAGE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -188,16 +191,16 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     ],
     [
       'submitHumanResponse',
-      '`submitHumanResponse` (the default), `submit_human_response`, `respond`, `run` or `agent`; any other value throws as above',
+      '`submitHumanResponse` (the default), `submit_human_response`, `respond`, `run` or `agent`; any other value rejects as above',
       ['submitHumanResponse', 'submit_human_response', 'respond', 'run', 'agent'],
     ],
     [
       'executeEngineStep',
-      'optionally `caller`: `executeEngineStep` (the default) or `agent`; any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`, before anything is read or written.',
+      'optionally `caller`: `executeEngineStep` (the default) or `agent`; any other value rejects with a `WorkflowError` with the code `VALIDATION_CALLER_INVALID`, naming `executeEngineStep`, before anything is read or written.',
       ['executeEngineStep', 'agent'],
     ],
   ] as const)(
-    'C155/C163: %s takes exactly the words its row lists; any other throws VALIDATION_CALLER_INVALID naming it, nothing read or written',
+    'C155/C163: %s takes exactly the words its row lists; any other rejects VALIDATION_CALLER_INVALID naming it, nothing read or written',
     async (fn, sentence, words) => {
       claim(sentence);
       claim(
@@ -205,7 +208,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       );
       claim('The call the expiry line names when this call carries out an expired question first.');
       claim(
-        'Any other value throws a `WorkflowError` with the code `VALIDATION_CALLER_INVALID` before anything is read or written.',
+        'Any other value rejects with a `WorkflowError` with the code `VALIDATION_CALLER_INVALID` before anything is read or written.',
       );
       const d = gated();
       const { runId, gateId } = await atQuestion(d);
@@ -287,14 +290,14 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     claim('Answering a question does not run an `auto` step that comes after it.');
     claim('Then `submitHumanResponse` replies `status: ok` with `run_phase: running`.');
     claim(
-      "Its `context_hint` says `Gate 'decide' resolved with choice 'approve'. Owed to the engine: 'file' — call advance_run.`, and its `next_actions` holds `advance_run`.",
+      "Its `context_hint` says `Gate 'decide' resolved with choice 'approve'.`, and its `ways` hold an `advance` way whose `owed` names `file`.",
     );
     claim('It runs no `auto` step: call `advanceRun` for the steps the answer made ready.');
     claim(
-      'Their hints and `next_actions` name MCP tools — `get_run_state` to read the run, `advance_run` to run what the engine owes — which a program does not have.',
+      'The replies are `EngineReply`: the fields of an MCP tool reply (see [MCP tools](mcp/tools.md)) without `next_actions`, `agent_action` and `blocked_reason.suggestion`, and with what can be done next as data',
     );
     claim(
-      'A program reads the run with `store.get(runId)`, asks `describePending` what the run is waiting for, and calls `advanceRun` where a hint names `advance_run`, or `submitHumanResponse` where `next_actions` names `submit_human_response`',
+      'A program reads the run with `store.get(runId)`, and takes a way with the function that matches it: `executeStep` for a `run_step` way, `advanceRun` for an `advance` way, `submitHumanResponse` for a `respond` way; `LIBRARY_WORDS` says each way in those words.',
     );
     claim(
       'Your program then calls `advanceRun` (also imported from `@sensigo/realm`), which runs `file`:',
@@ -326,17 +329,21 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       gateId,
       choice: 'approve',
     });
-    // (a) red when the answer runs `file`, or its hint or next_actions change; (b) prints the reply.
+    // (a) red when the answer runs `file`, or its hint or ways change; (b) prints the reply.
     expect([
       answered.status,
       answered.run_phase,
       answered.context_hint,
-      answered.next_actions.map((n) => n.instruction?.tool),
+      answered.names_next,
+      nextCalls(answered),
+      owedOf(answered),
     ]).toEqual([
       'ok',
       'running',
-      "Gate 'decide' resolved with choice 'approve'. Owed to the engine: 'file' — call advance_run.",
-      ['advance_run'],
+      "Gate 'decide' resolved with choice 'approve'.",
+      true,
+      ['advance'],
+      ['file'],
     ]);
     expect((await store.get(run.id)).completed_steps).not.toContain('file');
     const advanced = await advanceRun(store, d, { runId: run.id });
@@ -518,9 +525,11 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     const r = await advanceRun(store, d, { runId, now: LATER() });
     // (a) red when the hint says "no step ran" beside the guards that ran, names one of two, or
     //     the singular for two; (b) prints the hint.
-    expect(r.context_hint).toBe(
-      `Run '${runId}': its expired question was carried out as declared, and that decided guards 'e1', 'e2' (see warnings); no other step ran. Ready for the agent: 'w'.`,
-    );
+    expect([r.context_hint, r.names_next, nextCalls(r)]).toEqual([
+      `Run '${runId}': its expired question was carried out as declared, and that decided guards 'e1', 'e2' (see warnings); no other step ran.`,
+      true,
+      ['run_step:w'],
+    ]);
   });
 
   it.each(['settleStep', 'legacy update'] as const)(
@@ -587,7 +596,17 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
 
   // --- C156: a run advanceRun cannot read -----------------------------------------------------
   const CANNOT_READ =
-    'A run it cannot read gets an error reply, as from `executeStep`, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist; an error the store throws as a `WorkflowError` keeps its code, and any other is `ENGINE_STORE_FAILED`, naming its cause (a `JsonFileStore` record that is not JSON, for one).';
+    'A run it cannot read gets an error reply, as from `executeStep`, never a throw: `STATE_RUN_NOT_FOUND` for a run that does not exist; an error the store throws as a `WorkflowError` keeps its code (a `JsonFileStore` run file that cannot be read as a run, for one: `RESOURCE_FORMAT_INVALID`, `STATE_LEGACY_FORMAT` or `ENGINE_STORE_FAILED`, naming the file and its way out), and any other is `ENGINE_STORE_FAILED`, naming its cause.';
+  /** issue #719: a store whose every read throws something that is not a Realm error. */
+  const untyped = () => {
+    const raw = Object.create(store) as RunStore;
+    Object.assign(raw, {
+      get: async () => {
+        throw new Error('the disk is gone');
+      },
+    });
+    return raw;
+  };
   it.each(['advanceRun', 'executeStep'] as const)(
     'C156, W1-Y2: %s on a run that does not exist — an error reply STATE_RUN_NOT_FOUND, run_version 0, never a throw',
     async (fn) => {
@@ -598,7 +617,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
           ? await advanceRun(store, d, { runId: 'nope' })
           : await executeStep(store, d, { runId: 'nope', command: 'after', input: {}, dispatcher });
       // (a) red when advanceRun throws again, or its reply differs from executeStep's; (b) prints it.
-      expect([r.status, r.error_code, r.run_id, r.run_version, r.agent_action]).toEqual([
+      expect([r.status, r.error_code, r.run_id, r.run_version, agentActionFor(r)]).toEqual([
         'error',
         'STATE_RUN_NOT_FOUND',
         'nope',
@@ -609,35 +628,65 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     },
   );
 
-  it('C156: advanceRun on a record that is not JSON — ENGINE_STORE_FAILED; a WorkflowError the store throws keeps its code', async () => {
+  it('C156: advanceRun on a run file that is not JSON — RESOURCE_FORMAT_INVALID naming the file; a WorkflowError the store throws keeps its code; any other is ENGINE_STORE_FAILED naming its cause', async () => {
     claim(CANNOT_READ);
     const d = gated();
     await writeFile(join(dir, 'broken.json'), '{not json');
     const broken = await advanceRun(store, d, { runId: 'broken' });
+    const lost = await advanceRun(untyped(), d, { runId: 'r' });
     const typed = Object.create(store) as RunStore;
     Object.assign(typed, {
       get: async () => {
         throw new WorkflowError('the store is offline', {
           code: 'ENGINE_STORE_FAILED',
           category: 'ENGINE',
-          agentAction: 'wait_for_human',
+          agentAction: 'wait_for_service',
           retryable: true,
         });
       },
     });
     const offline = await advanceRun(typed, d, { runId: 'r' });
     // (a) red when advanceRun throws, or loses the store's own code; (b) prints the replies.
-    expect([broken.status, broken.error_code]).toEqual(['error', 'ENGINE_STORE_FAILED']);
-    expect(broken.errors[0]).toMatch(/^Failed to load run from store: .*JSON/);
+    expect([broken.status, broken.error_code]).toEqual(['error', 'RESOURCE_FORMAT_INVALID']);
+    expect(broken.errors[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. Restore /);
     expect([offline.status, offline.error_code, offline.errors]).toEqual([
       'error',
       'ENGINE_STORE_FAILED',
       ['the store is offline'],
     ]);
+    expect([lost.status, lost.error_code, lost.errors]).toEqual([
+      'error',
+      'ENGINE_STORE_FAILED',
+      ['Failed to load run from store: the disk is gone'],
+    ]);
+  });
+
+  it('issue #719 (C2), error-codes.md: which ENGINE_STORE_FAILED reads are worth retrying — EBUSY and EIO; not another errno, nor the untyped wrap', () => {
+    const sentence =
+      'A JSON-store read that failed with `EBUSY` or `EIO` is worth retrying; any other read is not, nor is `Failed to load run from store: …`.';
+    const page = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference/error-codes.md'),
+      'utf8',
+    );
+    expect(flat(page), `error-codes.md no longer says: ${sentence}`).toContain(flat(sentence));
+    const read = (errno: string) =>
+      unreadableRunFileError({
+        resource: 'run_file',
+        class: 'unreadable',
+        path: '/r/x.json',
+        errno,
+      }).retryable;
+    // (a) red when the retry rule the sentence states changes for any of them; (b) prints the four.
+    expect({
+      EBUSY: read('EBUSY'),
+      EIO: read('EIO'),
+      EACCES: read('EACCES'),
+      untyped: runReadError(new Error('the disk is gone')).retryable,
+    }).toEqual({ EBUSY: true, EIO: true, EACCES: false, untyped: false });
   });
 
   const STEP_CANNOT_READ =
-    "`executeStep`, `executeChain` and `submitHumanResponse` answer a run they cannot read with an error reply, never a throw (`submitHumanResponse`'s names `command: submit_gate`): `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError`, and `ENGINE_STORE_FAILED` for any other, naming its cause (`Failed to load run from store: <its message>`; a `JsonFileStore` record that is not JSON, for one).";
+    "`executeStep`, `executeChain` and `submitHumanResponse` answer a run they cannot read with an error reply, never a throw (`submitHumanResponse`'s names `command: submit_gate`): `STATE_RUN_NOT_FOUND` for a run that does not exist, the store's own code for an error it throws as a `WorkflowError` (a `JsonFileStore` run file that cannot be read as a run, for one: `RESOURCE_FORMAT_INVALID`, `STATE_LEGACY_FORMAT` or `ENGINE_STORE_FAILED`, naming the file and its way out), and `ENGINE_STORE_FAILED` for any other, naming its cause (`Failed to load run from store: <its message>`).";
   const NO_PHASE = 'Such a reply names no `run_phase`: no run was read.';
   /** A store whose every read throws the store's own typed error. */
   const offline = () => {
@@ -647,7 +696,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         throw new WorkflowError('the store is offline', {
           code: 'ENGINE_STORE_FAILED',
           category: 'ENGINE',
-          agentAction: 'wait_for_human',
+          agentAction: 'wait_for_service',
           retryable: true,
         });
       },
@@ -656,7 +705,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   };
 
   it.each(['executeStep', 'executeChain', 'submitHumanResponse'] as const)(
-    'C156 class (finding 3 built; C168): %s on a run it cannot read — not found, the store’s own WorkflowError, a record that is not JSON — an error reply each, naming the cause, no run_phase, never a throw',
+    'C156 class (finding 3 built; C168): %s on a run it cannot read — not found, the store’s own WorkflowError, a run file that is not JSON, an untyped failure — an error reply each, naming the cause, no run_phase, never a throw',
     async (fn) => {
       claim(STEP_CANNOT_READ);
       claim(NO_PHASE);
@@ -672,6 +721,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
         await call(store, 'nope'),
         await call(offline(), 'r'),
         await call(store, 'broken'),
+        await call(untyped(), 'r'),
       ];
       const command = fn === 'submitHumanResponse' ? 'submit_gate' : 'after';
       // (a) red when the call throws for any of them, a code changes, the cause is dropped, or the
@@ -679,33 +729,29 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       expect(replies.map((r) => [r.status, r.error_code, r.command, r.run_phase])).toEqual([
         ['error', 'STATE_RUN_NOT_FOUND', command, undefined],
         ['error', 'ENGINE_STORE_FAILED', command, undefined],
+        ['error', 'RESOURCE_FORMAT_INVALID', command, undefined],
         ['error', 'ENGINE_STORE_FAILED', command, undefined],
       ]);
       expect(replies.map((r) => r.errors[0])).toEqual([
         'Run not found: nope',
         'the store is offline',
-        expect.stringMatching(/^Failed to load run from store: .*JSON/),
+        expect.stringMatching(/^The run file '.*broken\.json' is not JSON\. Restore /),
+        'Failed to load run from store: the disk is gone',
       ]);
     },
   );
 
   // --- now (lines 102, 119: C150, C157) -------------------------------------------------------
-  it('C163 line 102: advanceRun given a number or a string as now throws a TypeError at an open question that declares on_expiry, before anything is written; with none it runs its steps', async () => {
+  it('C163 line 102: advanceRun given a number, a string or an invalid Date as now rejects VALIDATION_OPTION_INVALID before anything is read or written — at an open question and on a run with none', async () => {
     claim(
       "`now` is a `Date`, the time the call judges a question's expiry by (default: the current time).",
     );
     claim(
-      'Pass a `Date`: given a number or a string, a call that meets an open question that declares `on_expiry` throws a `TypeError` (`now.getTime is not a function`) before anything is written; any other call runs as given.',
+      'Given anything else (a number, a string, or a `Date` that is not a valid time), the call rejects with `VALIDATION_OPTION_INVALID` before anything is read or written.',
     );
     const d = gated();
     const { runId } = await atQuestion(d);
     const before = JSON.stringify(await store.get(runId));
-    for (const now of [Date.now(), new Date().toISOString()]) {
-      await expect(advanceRun(store, d, { runId, now: now as never })).rejects.toThrow(
-        'now.getTime is not a function',
-      );
-    }
-    expect(JSON.stringify(await store.get(runId))).toBe(before);
     const plain: WorkflowDefinition = {
       id: 'dc-plain',
       name: 'p',
@@ -713,8 +759,30 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       steps: { only: { description: 'O.', execution: 'auto', depends_on: [] } },
     };
     const { run } = await store.create({ workflowId: plain.id, workflowVersion: 1, params: {} });
-    const ran = await advanceRun(store, plain, { runId: run.id, now: Date.now() as never });
-    expect([ran.status, ran.run_phase]).toEqual(['ok', 'completed']);
+    const plainBefore = JSON.stringify(await store.get(run.id));
+    for (const [now, type] of [
+      [Date.now(), 'number'],
+      [new Date().toISOString(), 'string'],
+      [new Date(Number.NaN), 'Date (invalid)'],
+    ] as const) {
+      // (a) red when a call runs on such a `now`, or throws anything else; (b) prints the rejection.
+      for (const [def, id] of [
+        [d, runId],
+        [plain, run.id],
+      ] as const) {
+        await expect(
+          advanceRun(store, def, { runId: id, now: now as never }),
+        ).rejects.toMatchObject({
+          code: 'VALIDATION_OPTION_INVALID',
+          details: { invalid: [{ option: 'options.now', given_type: type }] },
+        });
+      }
+    }
+    // issue #719 (C5): booleans — a failure prints whether each record is unchanged, never it.
+    expect([
+      JSON.stringify(await store.get(runId)) === before,
+      JSON.stringify(await store.get(run.id)) === plainBefore,
+    ]).toEqual([true, true]);
   });
 
   const NOW_ROW =
@@ -783,9 +851,12 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     });
   });
 
-  it('C169, W3-Y2: executeEngineStep, given run, answers a run that does not exist or cannot be read as executeStep does; without run it throws a TypeError', async () => {
+  it('C169, W3-Y2: executeEngineStep, given run, answers a run that does not exist or cannot be read as executeStep does; without a run record it rejects VALIDATION_OPTION_INVALID naming the fields', async () => {
     claim(
-      "A run that does not exist or cannot be read gets the error reply `executeStep` gives (below). `run` is required: without it the call throws a `TypeError` (`Cannot read properties of undefined (reading '<field>')`, the first field of the record it reads).",
+      'A run that does not exist or cannot be read gets the error reply `executeStep` gives (below).',
+    );
+    claim(
+      "`run` is required, and must be a run record (each of the record's required fields, with its type): otherwise the call rejects with `VALIDATION_OPTION_INVALID` before anything is read or written, naming, when `run` is an object, each field that is missing or of the wrong type.",
     );
     const d = gated();
     const { runId } = await atQuestion(d);
@@ -805,13 +876,41 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     expect([missing.error_code, missing.errors[0], broken.error_code]).toEqual([
       'STATE_RUN_NOT_FOUND',
       'Run not found: nope',
-      'ENGINE_STORE_FAILED',
+      'RESOURCE_FORMAT_INVALID',
     ]);
-    expect(broken.errors[0]).toMatch(/^Failed to load run from store: .*JSON/);
-    await expect(executeEngineStep(store, d, { runId, step: 'after' } as never)).rejects.toThrow(
-      "Cannot read properties of undefined (reading 'evidence')",
-    );
-    // C174: a step with no `depends_on` reads the run's params first — another field, the same throw.
+    expect(broken.errors[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. Restore /);
+    const before = JSON.stringify(await store.get(runId));
+    // (a) red when a call runs without a run record, or throws anything else; (b) prints the rejection.
+    await expect(
+      executeEngineStep(store, d, { runId, step: 'after' } as never),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_OPTION_INVALID',
+      details: { invalid: [{ option: 'options.run', given_type: 'undefined' }] },
+    });
+    await expect(
+      executeEngineStep(store, d, { runId, step: 'after', run: { id: runId } } as never),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_OPTION_INVALID',
+      message: expect.stringContaining(
+        'options.run must be a run record (got object) (workflow_id is missing; ',
+      ),
+    });
+    // issue #719 (C2): the fields are named only when `run` is an object — a `null` run, none.
+    const nullRun = (await executeEngineStep(store, d, {
+      runId,
+      step: 'after',
+      run: null,
+    } as never).catch((e: unknown) => e)) as WorkflowError;
+    const first = (nullRun.details['invalid'] as Array<Record<string, unknown>>)[0] ?? {};
+    // (a) red when a field list is claimed for a run that is not an object; (b) prints the code
+    //     and whether a field list was named.
+    expect({ code: nullRun.code, fieldsNamed: 'fields' in first }).toEqual({
+      code: 'VALIDATION_OPTION_INVALID',
+      fieldsNamed: false,
+    });
+    // issue #719 (C5): a boolean — a failure prints whether the record is unchanged, never it.
+    expect(JSON.stringify(await store.get(runId)) === before).toBe(true);
+    // C174: a step with no `depends_on` — the same refusal, before any read.
     const lone: WorkflowDefinition = {
       id: 'dc-lone',
       name: 'l',
@@ -825,11 +924,13 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     });
     await expect(
       executeEngineStep(store, lone, { runId: loneRun.id, step: 'only' } as never),
-    ).rejects.toThrow(/^Cannot read properties of undefined \(reading '(params|evidence)'\)$/);
+    ).rejects.toMatchObject({ code: 'VALIDATION_OPTION_INVALID' });
   });
 
-  it('C163 line 104: executeEngineStep on an agent step throws a WorkflowError and writes nothing', async () => {
-    claim('For an agent, guard or finalizer step it throws a `WorkflowError` and writes nothing.');
+  it('C163 line 104: executeEngineStep on an agent step rejects with a WorkflowError and writes nothing', async () => {
+    claim(
+      'For an agent, guard or finalizer step it rejects with a `WorkflowError` and writes nothing.',
+    );
     const d: WorkflowDefinition = {
       id: 'dc-agent',
       name: 'a',
@@ -849,8 +950,10 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'A function Realm calls for the step `command` names when it is an agent step, or an `auto` step with neither `uses_service` nor `handler`.',
     );
     claim('`executeChain` does not call it for the steps it runs after that one.');
+    // issue #719 (C4): "as a plain value" is pinned by dispatcher-timer-719.test.ts (b) — a plain
+    // object returned by the dispatcher is the step's recorded output.
     claim(
-      "What it returns is recorded as the agent step's answer, or as that `auto` step's output.",
+      "What it returns, as a plain value or through a promise, is recorded as the agent step's answer, or as that `auto` step's output.",
     );
     const d: WorkflowDefinition = {
       id: 'dc-disp',
@@ -898,7 +1001,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
   it('C163 line 103: describePending says what a run waits for, with every field the row names', async () => {
     claim('`registry` may be `undefined`; `now` is required — pass `new Date()`.');
     claim(
-      'Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer) and `agent_actions` (the call for each), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why),',
+      'Says what a run is waiting for, as an object with: `agent_steps` (the agent steps ready for an answer), `agent_refused` (the ready agent steps the run refuses before their claim, and why), `pending_guards` (the guard steps ready to be decided), `engine_runnable` (the `auto` steps it owes, each with `runnable_here`), `cannot_run` (every step that cannot run, and why),',
     );
     const d = gated();
     const { runId, gateId } = await atQuestion(d);
@@ -906,7 +1009,7 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
     // (a) red when a field the row names is dropped; (b) prints the keys.
     for (const k of [
       'agent_steps',
-      'agent_actions',
+      'owed',
       'agent_refused',
       'pending_guards',
       'engine_runnable',
@@ -920,14 +1023,17 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       choices: ['approve', 'reject'],
     });
     expect(describePending(d, await store.get(runId), undefined, LATER()).expiry_due).toBeDefined();
-    expect(describePending(d, await store.get(runId), undefined, LATER()).act).toBeDefined();
-    expect(describePending(d, await store.get(runId), undefined, new Date()).act).toBeUndefined();
+    // #729 PR-0 (D-L): what the engine owes is `owed` (it replaced `act`): the due expiry first.
+    expect(describePending(d, await store.get(runId), undefined, LATER()).owed).toEqual([
+      { expiry: { gate_id: gateId, step: 'q', on_expiry: 'settle_default' } },
+    ]);
+    expect(describePending(d, await store.get(runId), undefined, new Date()).owed).toEqual([]);
     await submitHumanResponse(store, d, { runId, gateId, choice: 'approve' });
     const owed = describePending(d, await store.get(runId), undefined, new Date());
     expect(owed.engine_runnable.map((e) => [e.step, typeof e.runnable_here])).toEqual([
       ['after', 'boolean'],
     ]);
-    expect(owed.act).toBeDefined();
+    expect(owed.owed).toEqual([{ step: 'after' }]);
   });
 
   // --- driver (lines 125–133) -----------------------------------------------------------------
@@ -944,10 +1050,10 @@ describe('#625 PR-2a, C163 — core-library.md, sentence by sentence, through th
       'Invalid driver.channel: not 1–64 characters of [a-z0-9_-].',
     ],
   ] as const)(
-    'C163 line 133: a driver whose %s is not one the table lists throws VALIDATION_ACTOR_INVALID naming the field, nothing read or written — from each of the four functions',
+    'C163 line 133: a driver whose %s is not one the table lists rejects VALIDATION_ACTOR_INVALID naming the field, nothing read or written — from each of the four functions',
     async (_field, driver, message) => {
       claim(
-        'Any other value throws a `WorkflowError` with the code `VALIDATION_ACTOR_INVALID` before anything is read or written, naming the field',
+        'With any other value the call rejects with a `WorkflowError` with the code `VALIDATION_ACTOR_INVALID` before anything is read or written, naming the field',
       );
       claim(
         "`executeStep`, `executeChain`, `submitHumanResponse` and `advanceRun` take an optional `driver`, your program's name: `{ by, by_source, channel }`.",
@@ -1002,6 +1108,23 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
   const page = (p: string) => readFileSync(join(ROOT, p), 'utf8').replace(/\s+/g, ' ');
   let store: JsonFileStore;
+
+  it('handlers.md (#729 PR-0, Amendment 12): the agentAction row lists exactly the AgentAction type’s members', () => {
+    const types = readFileSync(join(ROOT, 'packages/core/src/types/workflow-error.ts'), 'utf8');
+    const decl = types.slice(types.indexOf('export type AgentAction'));
+    const members = [...decl.slice(0, decl.indexOf(';')).matchAll(/'([a-z_]+)'/g)].map(
+      (m) => m[1]!,
+    );
+    const row =
+      page('docs/reference/handlers.md').match(/\| `agentAction` \| Yes \|([^|]*)\|/)?.[1] ?? '';
+    const listed = [...row.split('(')[0]!.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]!);
+    // (a) red when the page's list and the type's members differ (a member added or renamed in one
+    //     only — `wait_for_human`, `await`); (b) prints both, sorted.
+    expect(listed.sort()).toEqual(members.sort());
+    // Not vacuous: the type has its seven members, `await` and `wait_for_service` among them.
+    expect(members).toEqual(expect.arrayContaining(['await', 'wait_for_service']));
+    expect(members).toHaveLength(7);
+  });
   beforeEach(async () => {
     store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-sweep-625-')));
   });
@@ -1011,9 +1134,9 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     return { runId: run.id };
   }
 
-  it('packages/core/README.md: buildNextActions builds the calls for what the run waits on — agent steps, advance_run, the open question', async () => {
+  it('packages/core/README.md: the reply is an EngineReply — its ways say what can be done next: agent steps, the engine’s owed work, the open question (#729 PR-0; buildNextActions died)', async () => {
     const sentence =
-      "| `buildNextActions` | Build `NextAction[]` for what the run waits on: the agent steps that can be called, `advance_run` when the engine owes work, or the open question's `submit_human_response`. |";
+      "Each `executeStep` call advances the run and returns an `EngineReply`: the run's state, and in `ways` what can be done next (in `unavailable`, what cannot, and why).";
     expect(page('packages/core/README.md'), 'README no longer says it').toContain(sentence);
     const owes: WorkflowDefinition = {
       id: 'dc-owes',
@@ -1025,19 +1148,27 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
       },
     };
     const { run } = await store.create({ workflowId: owes.id, workflowVersion: 1, params: {} });
-    const toolsOf = (a: ReturnType<typeof buildNextActions>) => a.map((n) => n.instruction?.tool);
     const d = gated();
     const { runId } = await atQuestion(d);
-    // (a) red when advance_run or the question's answer is left out; (b) prints both lists.
+    const reply = await executeStep(store, owes, {
+      runId: run.id,
+      command: 'zz-not-a-step',
+      input: {},
+      dispatcher,
+    });
+    // (a) red when the agent step, the owed work or the question's answer is left out of the ways;
+    //     (b) prints both lists.
     expect([
-      toolsOf(buildNextActions(owes, await store.get(run.id), undefined, new Date())),
-      toolsOf(buildNextActions(d, await store.get(runId), undefined, new Date())),
-    ]).toEqual([['execute_step', 'advance_run'], ['submit_human_response']]);
+      nextCalls(reply),
+      nextCalls(composeWaysAt(await store.get(runId), new Date(), { definition: d })),
+    ]).toEqual([['run_step:x', 'advance'], ['respond']]);
+    // The call's own verdict rides `refusal` (D-A); the reply's ways stay the run's.
+    expect(reply.refusal?.code).toBe('not_a_step');
   });
 
   it('packages/core/README.md (C184, walk c8, W3-a): the Engine table lists advanceRun — it carries out an expired question, then the guards and auto steps owed', async () => {
     const sentence =
-      "| `advanceRun` | Run what a run owes the engine — an expired question's declared `on_expiry`, then its guards and `auto` steps. Returns `ResponseEnvelope`. |";
+      "| `advanceRun` | Run what a run owes the engine — an expired question's declared `on_expiry`, then its guards and `auto` steps. Returns `EngineReply`. |";
     // (a) red when the README's Engine table drops the row or rewords it; (b) prints the row.
     expect(
       page('packages/core/README.md').replace(/ +\|/g, ' |'),
@@ -1092,7 +1223,7 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
       .filter((l) => /^ {2}[a-z_]+\??:/.test(l)).length;
     // (a) red when the page's count is not the type's; (b) prints both.
     expect(page('docs/reference/run-record-and-export.md')).toContain(
-      `the ${fields} fields of an evidence entry (28 rows below: two rows hold two fields each),`,
+      `the ${fields} fields of an evidence entry (29 rows below: two rows hold two fields each),`,
     );
   });
 });

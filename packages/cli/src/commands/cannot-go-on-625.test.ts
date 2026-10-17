@@ -73,6 +73,13 @@ const needsN = (deps: string[]): StepDefinition => ({
 
 const REFUSAL = "Invalid input for step 'compute': the input must have required property 'n'";
 const clause = `'compute' cannot run (input_schema): ${REFUSAL}.`;
+/**
+ * #729 PR-0 (PR0-CONTRACT Amendment 14, Q12): `compute` consumes no `input_map`, so an operator may
+ * supply its input (T-17's lever) — the CLI prints that as a fact, with no command (none exists).
+ */
+const LEVER_FACT =
+  "'compute' takes its input from an operator, checked against its input_schema; no realm command supplies it";
+const LEVER = `${LEVER_FACT}.`;
 const wayOut = (id: string): string =>
   `Run ${id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${id} — or end it: realm run abandon ${id}`;
 /** F15: the way out when `compute` is refused for its input — by whether it has `depends_on`. */
@@ -130,7 +137,7 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
         new ExtensionRegistry(),
       );
       expect(out.lastLine).toBe(
-        `Responded: ${id} | choice 'approve' | new state 'running'\n${clause}\n${inputWayOut(id, true)}`,
+        `Responded: ${id} | choice 'approve' | new state 'running'\n${clause}\n${LEVER}\n${inputWayOut(id, true)}`,
       );
       // Control: an agent step is ready after the answer — the run can go on; no cannot-run line and
       // no way out, only the ready line `realm run advance` prints (decision C96).
@@ -167,7 +174,8 @@ describe('#625 PR-2a, C62 — realm run respond and realm run inspect in the "ca
       const lines = (await inspectRun(run.id, runs, workflows)).split('\n');
       const at = lines.indexOf(`Cannot run 'compute' (input_schema): ${REFUSAL}`);
       expect(at).toBeGreaterThan(-1);
-      expect(lines[at + 1]).toBe(inputWayOut(run.id, false));
+      expect(lines[at + 1]).toBe(LEVER_FACT);
+      expect(lines[at + 2]).toBe(inputWayOut(run.id, false));
       const { run: c } = await runs.create({
         workflowId: ready.id,
         workflowVersion: 1,
@@ -197,7 +205,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       const r = realm(home, ['run', 'drain', run.id]);
       expect(r.status).toBe(0);
       expect(r.stdout.trim()).toBe(
-        `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ${clause} ${inputWayOut(run.id, false)}`,
+        `Run '${run.id}' is not terminal (phase: 'running') — nothing to drain. ${clause} ${LEVER} ${inputWayOut(run.id, false)}`,
       );
       const { run: c } = await runs.create({
         workflowId: ready.id,
@@ -224,7 +232,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       const r = realm(home, ['run', 'drain', id, '--expired', '--force']);
       expect(r.status).toBe(0);
       expect(r.stdout).toContain(
-        `Run '${id}' is not terminal (phase: 'running') — nothing further to drain.\n${clause}\n${inputWayOut(id, true)}\n`,
+        `Run '${id}' is not terminal (phase: 'running') — nothing further to drain.\n${clause}\n${LEVER}\n${inputWayOut(id, true)}\n`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -317,7 +325,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
       expect(r.stdout).toBe(
         `Resumed run '${run.id}': step 'a' re-enabled and run reset to 'running'.\n` +
           `Drive it with: realm agent --run-id ${run.id} --provider <provider> --model <model>\n` +
-          `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${run.id} shows the extension module the run loaded).\n`,
+          `Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect ${run.id} shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).\n`,
       );
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -351,7 +359,7 @@ describe('#625 PR-2a, C64 — the census: drain, resume and the sweeper name the
         logged.find(
           ([m, f]) => m === 'listen: sweeper enacted an expired gate' && f['run_id'] === runId,
         )?.[1];
-      expect(fields(id)?.['cannot_go_on']).toEqual([clause, inputWayOut(id, true)]);
+      expect(fields(id)?.['cannot_go_on']).toEqual([clause, LEVER, inputWayOut(id, true)]);
       expect(fields(cid)).toBeDefined();
       expect(fields(cid)?.['cannot_go_on']).toBeUndefined();
     } finally {

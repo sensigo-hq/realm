@@ -13,12 +13,16 @@ import {
   capabilityWarning,
   createDefaultRegistry,
   deriveRunPhase,
-  buildNextActions,
-  type ResponseEnvelope,
   type RunPhase,
-  type NextAction,
 } from '@sensigo/realm';
-import { handBackHint, type HandleRunStores } from './start-run.js';
+import { composeToolWays, handBackHint, mcpHostOf, type HandleRunStores } from './start-run.js';
+import {
+  mcpReplyOf,
+  renderReply,
+  renderWaysOf,
+  toolContentOf,
+  type McpNextAction,
+} from '../render-reply.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
@@ -45,7 +49,7 @@ export interface StartRunBatchResult {
      * issue #625 PR-2a: what this run owes first — its agent steps, then the `advance_run` act when
      * engine work is owed (`buildNextActions`). No step runs in this tool; empty for a terminal run.
      */
-    next_actions: NextAction[];
+    next_actions: McpNextAction[];
     /**
      * issue #625 PR-2a (decision C65): the sentence `start_run`'s reply would carry for this run on
      * which nothing ran — `Run '<id>' created …` or `Matched existing run …`, then what comes next,
@@ -210,8 +214,13 @@ export async function handleStartRunBatch(
       }
     }
 
-    // decision C117: one clock for the entry's next_actions and its hint.
+    // decision C117: one clock for the entry's ways and its hint. #729 PR-0: the ways composed by
+    // core, rendered by the MCP door (next_actions, and on a live run the sentence of what comes next).
     const now = new Date();
+    const rendered = renderWaysOf(
+      composeToolWays(runStore, definition, run, registry, now),
+      mcpHostOf(stores),
+    );
     started.push({
       run_id: run.id,
       ...(item.idempotency_key !== undefined ? { idempotency_key: item.idempotency_key } : {}),
@@ -220,15 +229,8 @@ export async function handleStartRunBatch(
       run_phase: derivedPhase,
       ...(run.terminal_reason !== undefined ? { terminal_reason: run.terminal_reason } : {}),
       warnings,
-      next_actions: run.terminal_state ? [] : buildNextActions(definition, run, registry, now),
-      context_hint: handBackHint({
-        run,
-        current: run,
-        definition,
-        ...(registry !== undefined ? { registry } : {}),
-        deduped,
-        now,
-      }),
+      next_actions: rendered.next_actions,
+      context_hint: `${handBackHint({ run, current: run, definition, deduped })}${run.terminal_state ? '' : rendered.next_sentence}`,
     });
   }
   if (dedupHits > 0) {
@@ -263,14 +265,7 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
     async (args) => {
       try {
         const result = await handleStartRunBatch(args, opts);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify(result),
-            },
-          ],
-        };
+        return toolContentOf(result as unknown as Record<string, unknown>, sseJsonStringify);
       } catch (err) {
         const workflowErr =
           err instanceof WorkflowError
@@ -289,21 +284,11 @@ export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores)
               : workflowErr.code === 'VALIDATION_BATCH_ITEMS'
                 ? `One or more items failed schema validation. No runs were created.`
                 : `An error occurred before any runs were created.`;
-        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
-          'start_run_batch',
-          '',
-          0,
-          workflowErr,
-          contextHint,
+        const rendered = renderReply(
+          buildPreExecutionErrorEnvelope('start_run_batch', '', 0, workflowErr, contextHint),
+          mcpHostOf(opts),
         );
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: sseJsonStringify(envelope),
-            },
-          ],
-        };
+        return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
       }
     },
   );

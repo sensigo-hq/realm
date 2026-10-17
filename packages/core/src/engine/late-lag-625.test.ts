@@ -107,10 +107,10 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
     ['settle_default', 'reject', 'error'],
     ['abort', 'approve', 'error'],
   ] as const)(
-    'submitHumanResponse, %s, the answer %s: the line names the call and the lag (15s); error_details carries expired_at and overdue_ms — on both store kinds',
+    'submitHumanResponse, %s, the answer %s: the line names the call and the lag (15s); the expiry receipt carries expired_at and the lag (#729 PR-0, T-2: no longer error_details) — on both store kinds',
     async (onExpiry, choice, status) => {
       changelogSays(
-        "A late answer that finds the expired question still open gets `error_details.expired_at` (the question's `expires_at`) and `error_details.overdue_ms`;",
+        "A late answer's expiry is the reply's `expiry` receipt (`ExpiryReceipt`: `gate_id`, `step`, `on_expiry`, `choice`, `enacted_via`, `by_this_call`, `expired_at`, `overdue`); `error_details` no longer carries `expired_at` or `overdue_ms`.",
       );
       for (const legacy of [false, true]) {
         const d = gated(onExpiry);
@@ -131,14 +131,18 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
           legacy,
           status: reply.status,
           line: reply.warnings[0],
-          expired_at: reply.error_details?.['expired_at'],
-          overdue_ms: reply.error_details?.['overdue_ms'],
+          expired_at: reply.expiry?.expired_at,
+          overdue: reply.expiry?.overdue,
+          by_this_call: reply.expiry?.by_this_call,
+          details: [reply.error_details?.['expired_at'], reply.error_details?.['overdue_ms']],
         }).toEqual({
           legacy,
           status,
           line: `gate '${gateId}' on 'q' had expired 15s before this call — this submitHumanResponse call first carried out its declared ${did} (enacted_via: submitHumanResponse).`,
           expired_at: expiresAt,
-          overdue_ms: 15_000,
+          overdue: { ms: 15_000 },
+          by_this_call: true,
+          details: [undefined, undefined],
         });
       }
     },
@@ -168,9 +172,14 @@ describe('#625 PR-2a, F1 — the late answer says how late it was', () => {
       now: at(42_000),
     });
     // (a) red when the race form drops the lag or measures it to the other call; (b) prints it.
-    expect({ line: reply.warnings[0], overdue_ms: reply.error_details?.['overdue_ms'] }).toEqual({
+    expect({
+      line: reply.warnings[0],
+      overdue: reply.expiry?.overdue,
+      by_this_call: reply.expiry?.by_this_call,
+    }).toEqual({
       line: `gate '${gateId}' on 'q' had expired 42s before this call — another call had already carried out its declared settle_default: the default choice 'approve' was recorded.`,
-      overdue_ms: 42_000,
+      overdue: { ms: 42_000 },
+      by_this_call: false,
     });
   });
 

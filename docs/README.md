@@ -2,7 +2,7 @@
 
 <!-- description: Documentation for Realm, the workflow engine an AI agent calls: getting started, concepts, guides, and reference for the workflow file, CLI and MCP tools. -->
 
-Realm is a workflow engine that an AI agent calls. These pages describe Realm as it is on the `main` branch; the published version is 0.47.0. Where a page shows something added after version 0.46.0, the page says so; it is in 0.47.0 unless the page says otherwise. Every command and output in them came from a run. User names, host names and folders in the outputs may be placeholders, such as `ops@server-1`, `/srv/shop` or `/home/you`.
+Realm is a workflow engine that an AI agent calls. These pages describe Realm as it is on the `main` branch; the published version is 0.47.0. Where a page shows something added after version 0.46.0, the page says so; it is in 0.47.0 unless the page says otherwise. Something marked as added after version 0.47.0 is not in a published version yet. Every command and output in them came from a run. User names, host names and folders in the outputs may be placeholders, such as `ops@server-1`, `/srv/shop` or `/home/you`.
 
 ## Start here
 
@@ -73,6 +73,7 @@ Realm is a workflow engine that an AI agent calls. These pages describe Realm as
 - [Adapters](reference/adapters.md)
 - [Handlers](reference/handlers.md)
 - [Deployment manifest (`realm.yaml`)](reference/deployment-manifest.md)
+- [Cache economics file](reference/cache-economics.md)
 - [Project extensions](reference/project-extensions.md)
 - [Testing package](reference/testing-package.md)
 - [Core library: stores and the store contract](reference/core-library.md)

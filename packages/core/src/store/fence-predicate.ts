@@ -150,18 +150,28 @@ export function stepStateOf(
   return undefined;
 }
 
-/** `append_trace`'s refusal (issue #207 PR-2) — see `StepEligibilityState`. */
+/**
+ * `append_trace`'s refusal (issue #207 PR-2) — see `StepEligibilityState`. #729 PR-0 (T-1, T-11): an
+ * in-flight step is `held_elsewhere` in the one vocabulary — held by another call until its claim's
+ * deadline, or with no deadline recorded (no claim, or a claim without one); never a tool's name,
+ * never a liveness word (rule 10).
+ */
 export function stepNotEligibleError(
   stepId: string,
   runVersion: number,
   stepState: StepEligibilityState,
   extraDetails?: Record<string, unknown>,
+  claimDeadline?: string,
 ): WorkflowError {
+  const held =
+    claimDeadline !== undefined
+      ? `Step '${stepId}' is held by another call until ${claimDeadline}.`
+      : `Step '${stepId}' is held by another call; no deadline is recorded for it.`;
   const messages: Record<StepEligibilityState, string> = {
     completed: `Step '${stepId}' has already completed.`,
     failed: `Step '${stepId}' has already failed.`,
     skipped: `Step '${stepId}' was skipped.`,
-    in_progress: `Step '${stepId}' is currently being executed by execute_step.`,
+    in_progress: held,
     run_terminal: `Run is terminal — trace entries can no longer be adopted by any step.`,
     run_not_found: `Run not found at write time — trace entries can no longer be adopted.`,
   };
@@ -420,7 +430,13 @@ function evaluateChecked(
       }
       const state = stepStateOf(run, step);
       if (state !== undefined) {
-        throw stepNotEligibleError(step, run.version, state);
+        throw stepNotEligibleError(
+          step,
+          run.version,
+          state,
+          undefined,
+          run.claims?.[step]?.deadline ?? undefined,
+        );
       }
       return;
     }

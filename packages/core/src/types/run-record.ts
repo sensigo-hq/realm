@@ -360,8 +360,75 @@ export const CACHE_BASES = ['provider_reported', 'unobservable'] as const;
 export type CacheBasis = (typeof CACHE_BASES)[number];
 
 /**
- * Issue #600 — one entry per wire request a step made, in wire order. Every optional field means
- * THE PROVIDER DID NOT REPORT IT; none is ever defaulted to `0`.
+ * Issue #600 — the words `--prompt-cache` takes (`realm agent`, `realm listen`): `auto` (the default:
+ * realm chooses per drive — {@link CACHE_AUTO_BASES}), `short` and `long` (the provider's own
+ * shortest and longest lifetimes), `off`. Produced by the CLI's `parsePromptCache`; never stored —
+ * the record stores the class it resolves to ({@link CACHE_REQUESTS}) and the seconds asked for
+ * (`UsageRecord.cache_lifetime_s`).
+ */
+export const PROMPT_CACHE_SETTINGS = ['auto', 'short', 'long', 'off'] as const;
+export type PromptCacheSetting = (typeof PROMPT_CACHE_SETTINGS)[number];
+
+/**
+ * Issue #600 PR 2 — what realm asked a provider to cache on a request, as stored
+ * (`UsageRecord.cache_requested`): `off` (asked for nothing; the Anthropic adapter with
+ * `--prompt-cache off`, or `auto` choosing off), `lifetime` (asked for a cache lifetime; the Anthropic
+ * adapter with `short`, `long`, or `auto` choosing one), `provider_rules` (realm sends no cache field and the provider's own caching rules apply;
+ * the OpenAI and o1 adapters).
+ */
+export const CACHE_REQUESTS = ['off', 'lifetime', 'provider_rules'] as const;
+export type CacheRequest = (typeof CACHE_REQUESTS)[number];
+
+/**
+ * Issue #600 PR 2 — where a request's cache setting came from (`UsageRecord.cache_requested_source`):
+ * `stated` (`--prompt-cache` was given) or `runner_default` (the runner's own default). Produced by
+ * the CLI's `resolvePromptCache` and written by the Anthropic adapter it is handed to.
+ */
+export const CACHE_REQUEST_SOURCES = ['stated', 'runner_default'] as const;
+export type CacheRequestSource = (typeof CACHE_REQUEST_SOURCES)[number];
+
+/**
+ * Issue #600 (the lifetime unit) — on what `--prompt-cache auto` chose a request's lifetime
+ * (`UsageRecord.cache_auto.basis`). Each member's producer is the CLI's `resolvePromptCache`, and the
+ * Anthropic adapter writes it:
+ * - `no_measurement` — the setting was `auto` and the drive was not started by `realm listen`: no
+ *   gaps exist, so the short lifetime (the runner's prior) is asked for;
+ * - `listen_trigger_gaps` — `realm listen` started the drive and passed the gaps it measured between
+ *   that workflow's recent triggers (possibly none yet — the long lifetime is then the prior);
+ * - `listen_gaps_unreadable` — `realm listen` started the drive and passed a value the agent could
+ *   not read; the long lifetime (the prior) is asked for and the drive goes on.
+ */
+export const CACHE_AUTO_BASES = [
+  'no_measurement',
+  'listen_trigger_gaps',
+  'listen_gaps_unreadable',
+] as const;
+export type CacheAutoBasis = (typeof CACHE_AUTO_BASES)[number];
+
+/**
+ * Issue #600 PR 2 — which kind of endpoint a request went to (`UsageRecord.endpoint`): the
+ * provider SDK's own default address (`default`) or another one (`custom`: `--base-url`,
+ * `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`). Produced by each adapter from its SDK client's
+ * `baseURL`; the address itself is never stored.
+ */
+export const REQUEST_ENDPOINTS = ['default', 'custom'] as const;
+export type RequestEndpoint = (typeof REQUEST_ENDPOINTS)[number];
+
+/**
+ * Issue #600 PR 2 — why a step's `CostView` has no readable value for a request fact (`models`,
+ * `cache_requested`), derived at read and never written (framework §5 E1): `none_readable` (realm
+ * drove the requests — at least one carries `provider` — and holds no readable value: none was
+ * stated, or the one stated was refused) or `predates_request_facts` (written by Realm 0.47.0 or
+ * earlier, or by a host that does not record it). Produced by core's `composeCostView`.
+ */
+export const REQUEST_FACT_ABSENT_CAUSES = ['predates_request_facts', 'none_readable'] as const;
+export type RequestFactAbsentCause = (typeof REQUEST_FACT_ABSENT_CAUSES)[number];
+
+/**
+ * Issue #600 — one entry per wire request a step made, in wire order. The token counters and
+ * `cache_creation` are what THE PROVIDER REPORTED: an absent one was not reported, and none is ever
+ * defaulted to `0`. `model` is what the provider's response named. The other request fields (issue
+ * #600 PR 2) are what realm asked for and where it sent the request.
  *
  * ENGINE semantics, not either provider's own field names — no consumer of this record may need to
  * know which provider produced it (R21). The two providers' "input tokens" mean OPPOSITE things:
@@ -405,6 +472,54 @@ export interface UsageRecord {
    * this record never needs to re-derive that sum from the split.
    */
   cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+  /**
+   * Issue #600 PR 2 — the model the provider's response named (a dated id, for one), when the
+   * response named one. Written by the adapter; bounded where it enters the record
+   * (`boundRequestFacts`). Not redacted.
+   */
+  model?: string;
+  /**
+   * Issue #600 PR 2 — what realm asked the provider to cache on this request. Written by the
+   * adapter; bounded where it enters the record (`boundRequestFacts`).
+   */
+  cache_requested?: CacheRequest;
+  /** Issue #600 PR 2 — the lifetime asked for, in seconds; present iff `cache_requested` is `lifetime`. */
+  cache_lifetime_s?: number;
+  /**
+   * Issue #600 PR 2 — whether realm sent that lifetime on the wire (`true`), or asked for the
+   * provider's default one (`false`); present iff `cache_requested` is `lifetime`.
+   */
+  cache_ttl_sent?: boolean;
+  /**
+   * Issue #600 PR 2 — where the setting came from, when the adapter was given it. Bounded where it
+   * enters the record (`boundRequestFacts`).
+   */
+  cache_requested_source?: CacheRequestSource;
+  /**
+   * Issue #600 PR 2 — the runner that chose the setting (`realm agent`, `realm listen`), when given.
+   * Bounded where it enters the record (`boundRequestFacts`).
+   */
+  cache_requested_by?: string;
+  /**
+   * Issue #600 (the lifetime unit) — present iff the setting was `auto`: the basis of the choice,
+   * and the gaps it read. `gaps_s` is present iff `basis` is `listen_trigger_gaps`: 0 to 5 whole
+   * seconds, each from 0 to 604 800, oldest first. Normalised where it enters the record
+   * (`boundRequestFacts` → `normalizeCacheAuto`).
+   */
+  cache_auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+  /**
+   * Issue #600 PR 2 — the provider that served the request. Stamped by `realm agent` from its one
+   * provider fact (`anthropic`, `openai`, `openai-reasoning`, `module:<file>`), never by an adapter.
+   * Bounded where it enters the record (`boundRequestFacts`).
+   */
+  provider?: string;
+  /** Issue #600 PR 2 — which kind of endpoint the request went to. Written by the adapter. */
+  endpoint?: RequestEndpoint;
+  /**
+   * Issue #600 PR 2 — whether the provider reports a lifetime split of its cache writes
+   * (`cache_creation`). Written by the adapter whenever it writes `cache_requested`.
+   */
+  cache_split_offered?: boolean;
 }
 
 /** Issue #600 — the per-step roll-up plus the per-request detail. */
@@ -413,6 +528,19 @@ export interface StepCacheDetail {
   basis: CacheBasis;
   requests: UsageRecord[];
 }
+
+/**
+ * issue #729 PR-0 (T-17 (ii)): the parties that supply a step's input or output, as an evidence
+ * entry records them (`supplied_by`). PR-0's producer is the agent's answer to an agent step; a door
+ * through which an operator supplies an engine step's input adds `operator` with it (the membership
+ * rule — no member is reserved).
+ */
+export const SUPPLIER_ROLES = ['agent'] as const;
+export type SupplierRole = (typeof SUPPLIER_ROLES)[number];
+
+/** Why an entry names no supplier (#729 PR-0, §5 E1 (ii)). */
+export const SUPPLIER_ABSENT_CAUSES = ['engine_input', 'not_recorded'] as const;
+export type SupplierAbsentCause = (typeof SUPPLIER_ABSENT_CAUSES)[number];
 
 /**
  * Issue #625 PR-2a (decision C3; the last prompt's F4, framework §5 E1): where a BARE `auto` step's
@@ -474,11 +602,24 @@ export interface EvidenceSnapshot {
    */
   output_source?: OutputSource;
   /**
+   * issue #729 PR-0 (T-17 (ii); §5 E1): who supplied this entry's input or output — the PARTY of
+   * the door the call came through, beside `driven_by` (the program). `agent`: an agent step's answer.
+   * (i) Written only at its mint, on the entry of an agent step's own attempt; (ii) absent on every
+   * entry whose input the engine built and on entries written before this field — read through
+   * `readSupplier`, which names why (`engine_input`, `not_recorded`); (iii) said on `realm run
+   * inspect`'s attribution line BY RULE — only when the role differs from the party the step is
+   * designed for (an engine step given an operator's input); the expected case (an agent's answer to
+   * an agent step) and every absence print nothing, and in PR-0 no path writes a differing role;
+   * (iv) the run-store fidelity contract's SUPPLIER_ROUND_TRIPS law. A
+   * role, never a name: realm never claims who was on the other end.
+   */
+  supplied_by?: SupplierRole;
+  /**
    * Holder slice (PR-H): present only on a `gate_response` entry the ANSWER wrote, and only when the
    * answer was recorded (verdict rows 1–5; a settled question has no entry to carry `spent`).
-   * Whether the caller passed back the `claim_token` of the reply that opened the question, judged
-   * inside the answer's own write. It decides nothing: the answer is recorded the same with any
-   * token or none.
+   * Whether the caller passed back the claim token the reply that opened the question carried (#729
+   * PR-0: its `respond` way's `proof`), as `claim_token`, judged inside the answer's own write. It
+   * decides nothing: the answer is recorded the same with any token or none.
    */
   claim_proof?: GateClaimVerdict;
   /**
@@ -670,7 +811,8 @@ export interface ClaimRecord {
    * pass back (`claim_token`) to show it comes from the conversation that opened the question. It is
    * not a secret — it guards against accidents and races, not malice; anyone who can read the store
    * can read it, and realm has no authentication. It leaves the engine on ONE reply only: the reply
-   * of the call whose `claimStep` minted it.
+   * of the call whose `claimStep` minted it, inside that reply's `respond` way as `proof` (#729 PR-0,
+   * A-17).
    */
   token?: string;
   /**

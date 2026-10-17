@@ -8,6 +8,7 @@ import { JsonFileStore } from '../store/json-file-store.js';
 import { executeStep } from '../engine/execution-loop.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { StepHandler } from '../extensions/step-handler.js';
+import { agentActionFor } from '../test-support/ways-view.js';
 
 const WORKFLOW_YAML = `
 id: e2e-test
@@ -118,7 +119,7 @@ describe('workflow end-to-end', () => {
     });
 
     expect(result.status).toBe('blocked');
-    expect(result.agent_action).toBe('resolve_precondition');
+    expect(agentActionFor(result)).toBe('resolve_precondition');
   });
 
   it('forwards step config to handler context', async () => {
@@ -211,7 +212,7 @@ describe('workflow_context integration', () => {
     expect(finalRun.workflow_context_snapshots!['rules']!.content).toBe('# Rules\nBe concise.');
   });
 
-  it('{{ workflow.context.NAME }} in step prompt resolves to XML-wrapped content in next_actions', async () => {
+  it('{{ workflow.context.NAME }} in step prompt resolves to XML-wrapped content in the step’s way (its brief)', async () => {
     const contextPath = join(wfDir, 'schema.md');
     await writeFile(contextPath, '{"type":"object"}', 'utf-8');
     await writeFile(
@@ -240,16 +241,14 @@ describe('workflow_context integration', () => {
     // Snapshot was loaded at step_one — verify it exists.
     expect(res1Run.workflow_context_snapshots?.['schema']?.content).toBe('{"type":"object"}');
 
-    // next_actions after step_one should include step_two with resolved prompt.
-    const stepTwoAction = res1.next_actions.find(
-      (a) =>
-        (a.instruction?.call_with as Record<string, unknown> | undefined)?.['command'] ===
-        'step_two',
-    );
-    expect(stepTwoAction).toBeDefined();
-    expect(stepTwoAction!.prompt).toContain('<schema>');
-    expect(stepTwoAction!.prompt).toContain('{"type":"object"}');
-    expect(stepTwoAction!.prompt).toContain('</schema>');
+    // The ways after step_one include step_two with its prompt resolved (#729 PR-0: its run_step
+    // way's brief — next_actions is the MCP door's rendering of it).
+    const stepTwoWay = res1.ways.find((w) => w.verb === 'run_step' && w.step === 'step_two');
+    const stepTwoPrompt = stepTwoWay?.verb === 'run_step' ? stepTwoWay.brief.prompt : undefined;
+    expect(stepTwoPrompt).toBeDefined();
+    expect(stepTwoPrompt).toContain('<schema>');
+    expect(stepTwoPrompt).toContain('{"type":"object"}');
+    expect(stepTwoPrompt).toContain('</schema>');
   });
 
   it('file read failure: error snapshot recorded, step still executes, {{ }} left unresolved', async () => {

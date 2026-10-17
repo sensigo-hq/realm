@@ -13,6 +13,7 @@
 // untouched at exactly the moment it stopped being driven.
 import {
   WorkflowError,
+  boundRequestFacts,
   type DriveFailureRecord,
   type DriveFailuresField,
   type RunStore,
@@ -239,6 +240,20 @@ function workflowErrorCode(err: unknown): string | undefined {
 }
 
 /**
+ * Issue #600 PR 2 (C4) — stamps `provider` on each request record, overriding anything an adapter
+ * or a provider module wrote; `undefined` stamps nothing. Total, like core's `boundRequestFacts`:
+ * an entry that is not a plain object (a provider module's `null`) passes through unchanged — a
+ * spread would turn it into `{ provider }`. Returns new objects.
+ */
+export function stampRequestProvider<T>(requests: readonly T[], provider: string | undefined): T[] {
+  return requests.map((entry) =>
+    provider === undefined || entry === null || typeof entry !== 'object' || Array.isArray(entry)
+      ? entry
+      : ({ ...entry, provider } as T),
+  );
+}
+
+/**
  * THE FENCE. Appends one entry to the run's drive-failure ring, and never lets its own failure
  * become the operator's problem.
  *
@@ -257,6 +272,21 @@ export async function recordDriveFailure(
   entry: DriveFailureRecord,
 ): Promise<void> {
   try {
+    // issue #600 PR 2 (C4, A3 b): the requests this failure billed carry the provider that served
+    // them (none when it is 'unknown'), and their names are bounded before the write. Both are
+    // total, so neither can lose the record inside this fence.
+    const stored: DriveFailureRecord =
+      entry.usage === undefined
+        ? entry
+        : {
+            ...entry,
+            usage: boundRequestFacts(
+              stampRequestProvider(
+                entry.usage,
+                entry.provider === 'unknown' ? undefined : entry.provider,
+              ),
+            ) as UsageRecord[],
+          };
     for (let i = 0; i < WRITE_ATTEMPTS; i++) {
       const run = await store.get(runId);
       // A sealed run already tells its story; adding to it would be noise, and writing to it
@@ -268,7 +298,7 @@ export async function recordDriveFailure(
         first_failed_at: prev?.first_failed_at ?? entry.at,
         // Monotonic and OUTSIDE the ring: a run that failed forty times must not read as five.
         total: (prev?.total ?? 0) + 1,
-        entries: [...(prev?.entries ?? []), entry].slice(-RING_CAP),
+        entries: [...(prev?.entries ?? []), stored].slice(-RING_CAP),
       };
 
       try {
@@ -288,6 +318,21 @@ export async function recordDriveFailure(
     console.error(lostLine(runId, entry));
   } catch (err) {
     if (workflowErrorCode(err) === 'STATE_RUN_NOT_FOUND') return;
-    console.error(lostLine(runId, entry));
+    // issue #719: a typed store error says why the record was lost — a run file that cannot be
+    // read names the file and its way out — so its message rides the one line, unchanged. An
+    // untyped error is not echoed: its text is not Realm's to vouch for. issue #719 (C6): when the
+    // failure being recorded IS that store error (the same file failed both reads), the entry's
+    // message already carries it — said once. issue #719 (F2): said once, and whole — the store's
+    // own text (built from the file's facts, never quoting it), not the entry's capped, sanitised
+    // copy, which cut the way out and hid the runs folder.
+    const said =
+      err instanceof WorkflowError && entry.message === sanitizeError(err).slice(0, MESSAGE_CAP);
+    console.error(
+      !(err instanceof WorkflowError)
+        ? lostLine(runId, entry)
+        : said
+          ? lostLine(runId, { ...entry, message: err.message })
+          : `${lostLine(runId, entry)} — ${err.message}`,
+    );
   }
 }

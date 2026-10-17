@@ -423,9 +423,11 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
     expect(
       calls.some(
         (line: string) =>
-          line.startsWith(`Workflow not found: ${run.workflow_id} — most often`) &&
+          // #729 PR-0 (T-21): what is so, by cause (was "Workflow not found: … — most often …").
+          line.startsWith(
+            `Workflow '${run.workflow_id}' is not registered in this workflow store`,
+          ) &&
           !line.includes('Error loading extensions') && // review fold C5: the heading was false
-          line.includes('most often') &&
           line.includes('drain again.'),
       ),
     ).toBe(true);
@@ -471,9 +473,10 @@ describe('runDrainAction (issue #279, increment 1, PR-B) — explicit store inje
       expect(
         calls.some(
           (line: string) =>
-            line.includes(`  ✗ ${run.id}: Workflow not found`) &&
+            line.includes(
+              `  ✗ ${run.id}: Workflow '${run.workflow_id}' is not registered in this workflow store`,
+            ) &&
             !line.includes('Error loading extensions') && // review fold C5
-            line.includes('most often') &&
             line.includes('drain again.'),
         ),
       ).toBe(true);

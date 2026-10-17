@@ -70,7 +70,7 @@ function advisoryFor(version: string, path: string, by: string): string {
   return (
     `⚠ Your project's @sensigo/realm is ${version} (${path}, installed by ${by}); this realm command runs @sensigo/realm ${ENGINE_VERSION}. ` +
     `Realm objects do not cross versions: a WorkflowError your handlers or adapters throw is not recognised — its step fails after one attempt, without that error's own code and retry setting. ` +
-    `Install @sensigo/realm@${ENGINE_VERSION} (and every other @sensigo package the project has, at ${ENGINE_VERSION}) in the project your code imports it from, or, when you run the realm command, run version ${version} there: npm install --save-dev @sensigo/realm-cli@${version}, then npx realm.`
+    `Install @sensigo/realm@${ENGINE_VERSION} (and every other @sensigo package the project has, at ${ENGINE_VERSION}) in the project your code imports it from, or, when you run the realm command, run version ${version} there: 'npm install --save-dev @sensigo/realm-cli@${version}', then 'npx realm'.`
   );
 }
 

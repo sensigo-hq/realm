@@ -16,13 +16,14 @@ import type {
   SettlementResult,
   Attributed,
 } from '@sensigo/realm';
+import { CLI_COMMANDS, NO_DRIVE_FLAGS, cannotGoOnLines } from './ways-renderer.js';
 import {
   describePending,
   owedList,
   owedWords,
-  respondCommand,
+  respondWayOfGate,
+  composeWaysAt,
   sentenceEnd,
-  cannotGoOnLines,
   type PendingView,
   WorkflowError,
   applySettlement,
@@ -40,6 +41,7 @@ import {
 import { loadProjectExtensions } from '../extensions/load-project-extensions.js';
 import { resolveProgramIdentity } from '../lib/program-identity.js';
 import { agentReadyReason, inFlightReasons } from './run-advance.js';
+import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 
 /**
  * issue #558 PR-C: ONE mint, rendered by BOTH surfaces that can find nothing to drain — the
@@ -93,11 +95,19 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
   if (gate === undefined) {
     // decision C64: when nothing can run from here, each engine step that cannot run and the way
     // out — core's lines (`correct the workflow …` for a refusal before the claim).
-    const cannotGoOn = pending === undefined ? [] : cannotGoOnLines(run, pending, pending.workflow);
+    // #729 PR-0 (A-10): the CLI renderer's lines over the ways core composes.
+    const cannotGoOn =
+      pending === undefined
+        ? []
+        : cannotGoOnLines(
+            composeWaysAt(run, now, { definition: pending.workflow }),
+            runId,
+            deriveRunPhase(run),
+          );
     if (cannotGoOn.length > 0) return [cannotGoOn.join(' ')];
     // issue #625 PR-2a (decision C7): with engine work owed, the way on is `advance` — `abandon`
     // stays the alternative, never the only way out named.
-    if (pending?.act !== undefined) {
+    if (pending !== undefined && pending.owed.length > 0) {
       // decision C207: with several owed, where the call stops — never a promise that all run.
       const { steps, until } = owedWords(pending);
       return [
@@ -125,7 +135,7 @@ const wayOutOf = (runId: string, run: RunRecord, now: Date, pending?: OwedView):
   // drive, or nothing when the answer ended the run — and `abandon` is the way to end it then (it
   // refuses a run that waits on a question).
   return [
-    `To go on, answer its question first: ${respondCommand(runId, gate.gate_id, gate.choices)}`,
+    `To go on, answer its question first: ${CLI_COMMANDS.respond(respondWayOfGate(runId, gate), undefined, NO_DRIVE_FLAGS)}`,
     `The answer can end the run by itself; if it does not, realm run respond names what the run ` +
       `owes next, and realm run abandon ${runId} ends it.`,
   ];
@@ -582,7 +592,23 @@ export async function runDrainAction(
       console.error('Cannot combine a <run-id> with --all. Use one or the other.');
       process.exit(1);
     }
-    const runs = await runStore.list();
+    // issue #719 (B3): its own `try` — a listing that throws is rendered like every other failure
+    // here, never an unhandled rejection. The readable runs are acted on; a damaged run file is
+    // reported, not acted on.
+    let runs: RunRecord[];
+    try {
+      const listing = await listRunsDiagnosed(runStore);
+      runs = listing.records;
+      for (const line of unreadableRunLines(
+        listing.unreadable,
+        '; realm run drain --all did not act on them.',
+      )) {
+        console.error(line);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
     const finalizerActionable = runs.filter((r) => r.terminal_state && isBatchActionable(r, now));
     // issue #291 ([F5]): OPT-IN — without --expired, batch mode is byte-stable terminal-only
     // (a non-terminal run with an expired gate is invisible to bare `drain --all`, exactly as
@@ -839,7 +865,7 @@ export async function runDrainAction(
       );
       // issue #625 PR-2a (decision C7): the expiry left steps owed to the engine — name the call.
       const owed = await ownedWork(workingRun);
-      if (owed?.act !== undefined) {
+      if (owed !== undefined && owed.owed.length > 0) {
         // decision C207: with several owed, where the call stops.
         const { steps, until } = owedWords(owed);
         // decision C212: the line ends with its command — no full stop.
@@ -848,11 +874,18 @@ export async function runDrainAction(
         );
       }
       // decision C64: the expiry left nothing that can run from here — the steps and the way out.
-      const cannotGoOn = owed === undefined ? [] : cannotGoOnLines(workingRun, owed, owed.workflow);
+      const cannotGoOn =
+        owed === undefined
+          ? []
+          : cannotGoOnLines(
+              composeWaysAt(workingRun, now, { definition: owed.workflow }),
+              runId,
+              deriveRunPhase(workingRun),
+            );
       for (const line of cannotGoOn) console.log(line);
       // decision C205: with no engine work and nothing that cannot run, an agent step ready (the
       // drive) or a step in flight in another program (wait for it).
-      if (owed !== undefined && owed.act === undefined && cannotGoOn.length === 0) {
+      if (owed !== undefined && owed.owed.length === 0 && cannotGoOn.length === 0) {
         for (const line of waysOnWithoutEngineWork(runId, workingRun, owed)) console.log(line);
       }
       return;

@@ -10,8 +10,55 @@ import {
   probeClassOf,
   shellWord,
 } from '@sensigo/realm';
-import type { RunStore, RunPhase, RunHealthFinding, FailedAttemptReadResult } from '@sensigo/realm';
+import type {
+  RunStore,
+  RunPhase,
+  RunHealthFinding,
+  FailedAttemptReadResult,
+  RunListing,
+  UnreadableRunFileEntry,
+  WorkflowDefinition,
+} from '@sensigo/realm';
+import { dirname } from 'node:path';
 import { parseDuration } from '../lib/parse-duration.js';
+
+/**
+ * issue #719 (B3): a run store as Realm's commands list it — the JSON store's
+ * `listWithDiagnostics` when the store has it (every production command builds one), else
+ * `list()`, which has nothing more to say.
+ */
+export type ListableRunStore = Pick<RunStore, 'list'> & {
+  listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
+};
+
+/** issue #719 (B3): every readable run, and the run files that could not be read as runs. */
+export async function listRunsDiagnosed(
+  store: ListableRunStore,
+  workflowId?: string,
+): Promise<RunListing> {
+  if (typeof store.listWithDiagnostics === 'function') {
+    return store.listWithDiagnostics(workflowId);
+  }
+  return { records: await store.list(workflowId), unreadable: [], copies: [] };
+}
+
+/**
+ * issue #719 (B3): the stderr lines for the run files a command could not read — one per file
+ * (`⚠ <reason> <way out>`), then the count, ending with `tail`: `' and are not listed.'` for a
+ * listing, `'; <command> did not act on them.'` for a command that acts on runs. Empty when every
+ * file was read.
+ */
+export function unreadableRunLines(
+  unreadable: readonly UnreadableRunFileEntry[],
+  tail: string,
+): string[] {
+  if (unreadable.length === 0) return [];
+  const folder = dirname(unreadable[0]!.path);
+  return [
+    ...unreadable.map((u) => `⚠ ${u.reason} ${u.repair}`),
+    `⚠ ${unreadable.length} run file(s) in '${folder}' could not be read${tail}`,
+  ];
+}
 
 /** Returns a chalk-coloured phase label — `phase` is the caller's already-DERIVED value (issue
  *  #279, increment 2, PR-C — D-3 leg vi: render sweep), never a raw `run.run_phase` read here. */
@@ -125,16 +172,22 @@ function renderFindingLabel(f: RunHealthFinding): string | undefined {
     // needs `--force` to delete (its dry-run selects and reports either way).
     case 'terminal_with_stale_gate':
       return `${f.step}=stale_gate (realm run purge)`;
+    // issue #729 (the operator-side stuck marker): the step and the check that refused it, in the
+    // house grammar. The residual group below appends the `inspect` pointer, which names the way
+    // out (R9) — the label is built from the finding's own facts only (the #221 S4 rule).
+    case 'cannot_go_on':
+      return `${f.step}=cannot_go_on(${f.reason})`;
     // These kinds carry no --stuck label, and issue #406 settled why for each — this is a
     // decision, not a status quo. `never_claimed_idle` IS the listing reason itself; the
     // threshold header already says it, and a per-step label would restate the line.
-    // `guard_awaiting_settlement` AND `trust_value_invalid` (issue #508) cannot reach
-    // this surface at all: both producers require a workflow definition and `list` classifies
-    // definition-free, so a label for either would be dead code.
-    // `completed_with_failed_steps` and `structured_output_downgraded` are EXCLUDED from --stuck
-    // selection (issues #302/#316, the filter below) — either can only co-ride a run selected by
-    // some other finding, which renders its own label, so a label here would never be the reason
-    // a reader is looking at the line.
+    // `guard_awaiting_settlement` and `trust_value_invalid` (issue #508) reach `listRuns` since
+    // issue #729 (the probe's parsed definition is passed), but both are EXCLUDED from --stuck
+    // selection (the filter below): a guard awaiting settlement has `advance` offered — the run
+    // is not stuck — and a refused trust value makes the run `cannot_go_on`, whose label carries
+    // the line. `completed_with_failed_steps` and `structured_output_downgraded` are EXCLUDED too
+    // (issues #302/#316). Each of the four can only co-ride a run selected by some other finding,
+    // which renders its own label, so a label here would never be the reason a reader is looking
+    // at the line.
     case 'never_claimed_idle':
     case 'guard_awaiting_settlement':
     case 'completed_with_failed_steps':
@@ -213,13 +266,17 @@ export function renderCauseSegment(result: FailedAttemptReadResult): string {
 
 /**
  * issue #558 PR-T — what the `--stuck` definition probe reports per workflow id: a typed failure
- * (which becomes a `definition_unresolvable` finding) or `uninspected` for a copy over the listing
+ * (which becomes a `definition_unresolvable` finding), `uninspected` for a copy over the listing
  * cap (which becomes the stderr footer and NEVER a finding — an unread copy is a check that did not
- * run, not a broken copy; review fold C4).
+ * run, not a broken copy; review fold C4), or (issue #729) the parsed definition, which the
+ * classifier judges the run's ways with.
  */
 export type StuckDefinitionProbe =
   | { code: string; message: string; class?: string }
-  | { uninspected: { bytes: number; capBytes: number } };
+  | { uninspected: { bytes: number; capBytes: number } }
+  // issue #729: the copy parsed — the definition itself, kept for `classifyRunHealth` (no
+  // second read: the probe already parsed it).
+  | { definition: WorkflowDefinition };
 
 /**
  * Lists runs from the store, sorted by updated_at descending.
@@ -240,6 +297,11 @@ export type StuckDefinitionProbe =
  * @param workflowProbe     issue #558 PR-T: the `--stuck` definition probe (memoised per workflow
  *                          id by the caller, which holds the registrar); see
  *                          {@link StuckDefinitionProbe}. `undefined` ⇒ zero findings, no footer.
+ * @param listing           issue #719 (R15): the whole listing (`listRunsDiagnosed`), when the
+ *                          caller has read it — then `store.list()` is not called, so one damaged
+ *                          run file never hides the rest. When damaged files exist and no
+ *                          readable run matches, the output says `No readable runs found` (with
+ *                          the filter); the caller prints the damaged files.
  * @returns                 Formatted output string.
  */
 export async function listRuns(
@@ -250,8 +312,12 @@ export async function listRuns(
   idleThresholdMs?: number,
   failedAttemptStore?: FailedAttemptStore,
   workflowProbe?: (workflowId: string) => StuckDefinitionProbe | undefined,
+  listing?: RunListing,
 ): Promise<string> {
-  const runs = await store.list(workflowId);
+  const runs = listing !== undefined ? listing.records : await store.list(workflowId);
+  // issue #719 (C2): with damaged run files in the store, an empty result says "readable" — stdout
+  // alone (piped, or with stderr gone) must not say no run matched when a damaged file may be one.
+  const damaged = listing !== undefined && listing.unreadable.length > 0;
   const effectiveIdleThresholdMs = idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
 
   let filtered = runs;
@@ -261,8 +327,8 @@ export async function listRuns(
   if (stuck === true) {
     filtered = runs.filter((r) => {
       // issue #221: classifyRunHealth is the SAME shared predicate get_run_state/inspect (the
-      // OTHER two READ surfaces) derive from — no drift. Definition-free (list has no workflow
-      // context to load).
+      // OTHER two READ surfaces) derive from — no drift. issue #729: with the definition the probe
+      // parsed (no second read), so a run that cannot go on is found at any age.
       //
       // Note: `realm run reclaim` is a separate, independent consumer of the underlying record
       // facts (settle sets, capability_blocks, reclaim-audit evidence) — it does NOT call this
@@ -277,9 +343,12 @@ export async function listRuns(
         uninspected.set(r.workflow_id, entry);
       }
       const definitionError = probed !== undefined && 'code' in probed ? probed : undefined;
+      const definition =
+        probed !== undefined && 'definition' in probed ? probed.definition : undefined;
       const findings = classifyRunHealth(r, {
         idleThresholdMs: effectiveIdleThresholdMs,
         ...(definitionError !== undefined ? { definitionError } : {}),
+        ...(definition !== undefined ? { definition } : {}),
       });
       if (findings.length > 0) findingsByRun.set(r.id, findings);
       // issue #302: a completed run is not stuck — deliberately INVERTS the
@@ -295,9 +364,17 @@ export async function listRuns(
       // by other means), but this kind fires on LIVE runs too — without this exclusion, a
       // perfectly healthy in-flight run that merely downgraded strict on one step would
       // misreport as --stuck.
+      //
+      // issue #729: `guard_awaiting_settlement` and `trust_value_invalid` join the exclusion now
+      // that the definition is passed — neither has a label, and a guard awaiting settlement has
+      // `advance` offered (selected alone, it would print a silent line at age 0). A refused trust
+      // value selects the run through `cannot_go_on`, which co-fires and is labelled.
       return findings.some(
         (f) =>
-          f.kind !== 'completed_with_failed_steps' && f.kind !== 'structured_output_downgraded',
+          f.kind !== 'completed_with_failed_steps' &&
+          f.kind !== 'structured_output_downgraded' &&
+          f.kind !== 'guard_awaiting_settlement' &&
+          f.kind !== 'trust_value_invalid',
       );
     });
   } else if (statusFilter !== undefined) {
@@ -323,7 +400,7 @@ export async function listRuns(
       console.error(
         `⚠ workflow definition ${id} (${(u.bytes / (1024 * 1024)).toFixed(1)} MiB, ${u.runs} run${one ? '' : 's'}) ` +
           `was not inspected by --stuck (over the ${capMb} MiB listing cap): ` +
-          `${one ? 'this run was' : 'these runs were'} not checked for a broken definition; ` +
+          `${one ? 'this run was' : 'these runs were'} not checked for a broken definition or for whether it can go on; ` +
           `realm run list --workflow ${shellWord(id)} lists ${one ? 'it' : 'them'}, ` +
           `realm workflow validate --registered ${shellWord(id)} reads the copy.`,
       );
@@ -342,9 +419,18 @@ export async function listRuns(
 
   if (filtered.length === 0) {
     const scope = workflowId !== undefined ? ` for workflow '${workflowId}'` : '';
-    return stuck === true
-      ? `No stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`
-      : `No runs found${scope}.`;
+    const readable = damaged ? 'readable ' : '';
+    if (stuck === true) {
+      return `No ${readable}stuck runs found${scope} (threshold ${formatThreshold(effectiveIdleThresholdMs)}${skipped}).`;
+    }
+    if (!damaged) return `No runs found${scope}.`;
+    const filters = [
+      ...(workflowId !== undefined ? [`workflow '${workflowId}'`] : []),
+      ...(statusFilter !== undefined ? [`status '${statusFilter}'`] : []),
+    ];
+    return filters.length > 0
+      ? `No readable runs found for ${filters.join(' and ')}.`
+      : 'No readable runs found.';
   }
 
   filtered.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -440,8 +526,10 @@ export async function listRuns(
       const residualLabels = findings
         .filter((f) => !groupedKinds.has(f.kind))
         .map((f) =>
-          f.kind === 'definition_unresolvable'
-            ? // A gate-waiting run cannot be abandoned (abandon-run.ts refuses it) — its copy
+          f.kind === 'definition_unresolvable' || f.kind === 'cannot_go_on'
+            ? // issue #729: `cannot_go_on` points at `inspect` too — it prints the refusal and the
+              // three ways out (correct and register, then advance; or abandon).
+              // A gate-waiting run cannot be abandoned (abandon-run.ts refuses it) — its copy
               // must be repaired before the gate can be answered, and `inspect` carries that
               // sentence with the path and the answer command (review fold C13).
               // R9 (walk 2): EVERY live run points at `inspect` — the surface that names the repair,
@@ -499,7 +587,10 @@ export const listCommand = new Command('list')
   .description('List all runs, sorted by most recent first')
   .option('--workflow <id>', 'Filter by workflow ID')
   .option('--status <phase>', `Filter by run phase (${VALID_PHASES.join(', ')})`)
-  .option('--stuck', 'Show only wedged/idle runs (typed run-health classification — issue #221)')
+  .option(
+    '--stuck',
+    'Show only runs with a health finding (realm run inspect names it) — among them a run that cannot go on until its workflow is corrected, at any age, and an open run idle past --older-than',
+  )
   .option(
     '--older-than <duration>',
     'With --stuck: idle-age threshold for the never-claimed-idle check (e.g. 24h, 7d); default ' +
@@ -547,7 +638,8 @@ export const listCommand = new Command('list')
             };
           } else {
             try {
-              wfStore.getSync(workflowId);
+              // issue #729: the parse is kept — the classifier judges the run's ways with it.
+              result = { definition: wfStore.getSync(workflowId) };
             } catch (err) {
               // Narrowed with `instanceof` — never duck-typed on `err.code` (house rule). A
               // non-WorkflowError escape (a TOCTOU remnant) is reported, never a crash.
@@ -614,6 +706,9 @@ export const listCommand = new Command('list')
       }
 
       try {
+        // issue #719 (B3): the readable runs on stdout; each run file that could not be read, with
+        // its way out, on stderr; exit 0 (as `realm workflow list`).
+        const listing = await listRunsDiagnosed(store, opts.workflow);
         const output = await listRuns(
           opts.workflow,
           store,
@@ -622,8 +717,15 @@ export const listCommand = new Command('list')
           idleThresholdMs,
           failedAttemptStore,
           workflowProbe,
+          listing,
         );
         console.log(output);
+        // issue #719 (F5): a copy of a run whose own file reads is named with its way out, and
+        // not counted among the files that could not be read.
+        for (const c of listing.copies) console.error(`⚠ ${c.reason} ${c.repair}`);
+        for (const line of unreadableRunLines(listing.unreadable, ' and are not listed.')) {
+          console.error(line);
+        }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(1);

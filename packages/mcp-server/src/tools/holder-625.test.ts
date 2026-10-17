@@ -21,7 +21,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { JsonFileStore, JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
-import type { Attributed, ResponseEnvelope, WorkflowDefinition } from '@sensigo/realm';
+import type { Attributed, WorkflowDefinition } from '@sensigo/realm';
+import type { McpEnvelope } from '../render-reply.js';
 import { handleStartRun } from './start-run.js';
 import {
   handleSubmitHumanResponse,
@@ -64,7 +65,7 @@ interface Opened {
   runId: string;
   gateId: string;
   token: string;
-  reply: ResponseEnvelope;
+  reply: McpEnvelope;
 }
 
 /** Starts the run (the gate opens in the chained reply), taken by `driver`. */
@@ -77,7 +78,8 @@ async function openGate(driver: Attributed | null = DRIVER): Promise<Opened> {
   return {
     runId: reply.run_id,
     gateId: run.pending_gate!.gate_id,
-    token: reply.gate?.claim_token ?? '',
+    // #729 PR-0 (A-17): the answer instruction is the token's one carrier; gate.claim_token is gone.
+    token: String(reply.next_actions[0]?.instruction?.params['claim_token'] ?? ''),
     reply,
   };
 }
@@ -107,16 +109,17 @@ async function withTool<T>(
 async function callTool(
   client: Client,
   args: Record<string, unknown>,
-): Promise<ResponseEnvelope & Record<string, unknown>> {
+): Promise<McpEnvelope & Record<string, unknown>> {
   const result = await client.callTool({ name: 'submit_human_response', arguments: args });
   const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
-  return JSON.parse(text) as ResponseEnvelope & Record<string, unknown>;
+  return JSON.parse(text) as McpEnvelope & Record<string, unknown>;
 }
 
 describe('the opening reply hands the claim’s token out — ONE door — and the claim names the program', () => {
-  it('start_run: gate.claim_token and both instruction renderings carry the same token; the claim names the driver', async () => {
+  it('start_run: both instruction renderings carry the same token, the gate none (#729 PR-0, A-17); the claim names the driver', async () => {
     const o = await openGate();
-    expect(o.token).not.toBe('');
+    expect(o.token !== '').toBe(true);
+    expect(o.reply.gate).not.toHaveProperty('claim_token');
     const action = o.reply.next_actions[0]!;
     // (a) red when the opening reply stops carrying the token, or carries it in only one rendering;
     //     (b) prints the reply’s actions (synthetic ids only).
@@ -134,7 +137,7 @@ describe('the opening reply hands the claim’s token out — ONE door — and t
 
   it('start_run with NO driver: the claim carries since and no holder; the token is still handed out', async () => {
     const o = await openGate(null);
-    expect(o.token).not.toBe('');
+    expect(o.token !== '').toBe(true);
     const claim = (await runStore.get(o.runId)).claims!['step-one']!;
     expect('holder' in claim).toBe(false);
     expect(typeof claim.since).toBe('string');
@@ -240,7 +243,7 @@ describe('the REGISTERED tool — the SDK’s argument handling, never a reason 
     const props = (tool.inputSchema as { properties: Record<string, Record<string, unknown>> })
       .properties;
     expect(props['claim_token']!['description']).toBe(
-      'The value from gate.claim_token on the reply that opened this question. Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
+      'The claim_token in the answer instruction of the reply that opened this question (its next_actions entry). Pass it back unchanged; it shows this answer comes from the conversation that opened the question. Never required.',
     );
     expect(props['responded_by']!['description']).toBe(
       'Who made the choice, as the caller states it — not verified. At most 200 characters, no control characters.',
@@ -480,7 +483,7 @@ describe('createRealmMcpServer({ driver }) threads the program’s name to the t
         arguments: { workflow_id: definition.id },
       });
       const text = (result.content as Array<{ type: string; text: string }>)[0]!.text;
-      const reply = JSON.parse(text) as ResponseEnvelope;
+      const reply = JSON.parse(text) as McpEnvelope;
       expect((await runStore.get(reply.run_id)).claims?.['step-one']?.holder).toEqual(DRIVER);
     } finally {
       await client.close();
@@ -503,11 +506,12 @@ describe('the protocol text tells the model to copy the call', () => {
 });
 
 describe('CLAIM_TOKEN_ONE_DOOR — on the MCP surface the token is where the opening reply puts it, and nowhere else', () => {
-  it('start_run’s opening reply carries it in EXACTLY three places; chained_auto_steps and every other field carry none', async () => {
+  it('start_run’s opening reply carries it in EXACTLY two places (the answer instruction’s params and call_with; #729 PR-0 removed gate.claim_token); chained_auto_steps and every other field carry none', async () => {
     const o = await openGate();
-    // (a) red when a fourth place (chained_auto_steps, context_hint, a finding) starts carrying it;
-    //     (b) prints the count.
-    expect(JSON.stringify(o.reply).split(o.token).length - 1).toBe(3);
+    expect(o.token !== '').toBe(true);
+    // (a) red when a third place (gate, chained_auto_steps, context_hint, a finding) starts carrying
+    //     it; (b) prints the count.
+    expect(JSON.stringify(o.reply).split(o.token).length - 1).toBe(2);
     expect(JSON.stringify(o.reply.chained_auto_steps ?? [])).not.toContain(o.token);
   });
 

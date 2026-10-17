@@ -13,6 +13,9 @@ import {
   type ProviderFlags,
 } from './llm-provider.js';
 
+// issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
+const TEST_PROMPT_CACHE = { value: 'short', source: 'runner_default', by: 'realm agent' } as const;
+
 const ANTHROPIC_LIST = 'https://platform.claude.com/docs/en/models/overview';
 const OPENAI_LIST = 'https://developers.openai.com/api/docs/models';
 const LEAD = '--model is required: realm has no default model.';
@@ -92,93 +95,170 @@ describe('resolveProvider — no default model (issue #676)', () => {
   it('--base-url given, no --model → the --base-url sentence', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
     expect(
-      await thrownBy(() => resolveProvider('openai', undefined, 'https://compat.example')),
+      await thrownBy(() =>
+        resolveProvider({
+          provider: 'openai',
+          model: undefined,
+          baseUrl: 'https://compat.example',
+          promptCache: TEST_PROMPT_CACHE,
+        }),
+      ),
     ).toBe(MSG.baseUrl);
   });
 
   it('--provider anthropic, no --model → name an Anthropic model', async () => {
     setKeys({ ANTHROPIC_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider('anthropic', undefined))).toBe(MSG.namedAnthropic);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({
+          provider: 'anthropic',
+          model: undefined,
+          promptCache: TEST_PROMPT_CACHE,
+        }),
+      ),
+    ).toBe(MSG.namedAnthropic);
   });
 
   it('--provider openai, no --model → name an OpenAI model', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider('openai', undefined))).toBe(MSG.namedOpenai);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: 'openai', model: undefined, promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.namedOpenai);
   });
 
   it('no --provider, only ANTHROPIC_API_KEY → the provider is Anthropic', async () => {
     setKeys({ ANTHROPIC_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider(undefined, undefined))).toBe(MSG.onlyAnthropic);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: undefined, model: undefined, promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.onlyAnthropic);
   });
 
   it('no --provider, only OPENAI_API_KEY → the provider is OpenAI', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider(undefined, undefined))).toBe(MSG.onlyOpenai);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: undefined, model: undefined, promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.onlyOpenai);
   });
 
   it('no --provider, both keys → the provider is OpenAI, or choose Anthropic', async () => {
     setKeys({ OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider(undefined, undefined))).toBe(MSG.bothKeys);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: undefined, model: undefined, promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.bothKeys);
   });
 
   // ---- a blank --model counts as missing (the same rule as a key) ---------------------------
   it('an empty --model counts as missing', async () => {
     setKeys({ ANTHROPIC_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider('anthropic', ''))).toBe(MSG.namedAnthropic);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: 'anthropic', model: '', promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.namedAnthropic);
   });
 
   it('a --model of only spaces counts as missing', async () => {
     setKeys({ ANTHROPIC_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider('anthropic', '   '))).toBe(MSG.namedAnthropic);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: 'anthropic', model: '   ', promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.namedAnthropic);
   });
 
   // ---- a key that is empty or holds only spaces counts as not set ----------------------------
   it('an empty ANTHROPIC_API_KEY beside an OpenAI key → the "only OPENAI_API_KEY" message', async () => {
     setKeys({ OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: '' });
-    expect(await thrownBy(() => resolveProvider(undefined, undefined))).toBe(MSG.onlyOpenai);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: undefined, model: undefined, promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.onlyOpenai);
   });
 
   it('an ANTHROPIC_API_KEY of only spaces beside an OpenAI key → the "only OPENAI_API_KEY" message', async () => {
     setKeys({ OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: '   ' });
-    expect(await thrownBy(() => resolveProvider(undefined, undefined))).toBe(MSG.onlyOpenai);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: undefined, model: undefined, promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.onlyOpenai);
   });
 
   it('both keys empty → the no-key message', async () => {
     setKeys({ OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '' });
-    expect(await thrownBy(() => resolveProvider(undefined, 'any-model'))).toBe(MSG.noKey);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({
+          provider: undefined,
+          model: 'any-model',
+          promptCache: TEST_PROMPT_CACHE,
+        }),
+      ),
+    ).toBe(MSG.noKey);
   });
 
   // ---- a named provider whose own key is not set ---------------------------------------------
   it('--provider anthropic with only OPENAI_API_KEY → the named-provider key message', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider('anthropic', 'claude-x'))).toBe(
-      MSG.anthropicKeyMissing,
-    );
+    expect(
+      await thrownBy(() =>
+        resolveProvider({
+          provider: 'anthropic',
+          model: 'claude-x',
+          promptCache: TEST_PROMPT_CACHE,
+        }),
+      ),
+    ).toBe(MSG.anthropicKeyMissing);
   });
 
   it('--provider openai with only ANTHROPIC_API_KEY → the named-provider key message', async () => {
     setKeys({ ANTHROPIC_API_KEY: 'k' });
-    expect(await thrownBy(() => resolveProvider('openai', 'gpt-x'))).toBe(MSG.openaiKeyMissing);
+    expect(
+      await thrownBy(() =>
+        resolveProvider({ provider: 'openai', model: 'gpt-x', promptCache: TEST_PROMPT_CACHE }),
+      ),
+    ).toBe(MSG.openaiKeyMissing);
   });
 
   // ---- a given model builds the provider with that model -------------------------------------
   it('with --model given, the Anthropic provider is built with that model', async () => {
     setKeys({ ANTHROPIC_API_KEY: 'k' });
-    const p = await resolveProvider(undefined, 'claude-given-676');
+    const p = await resolveProvider({
+      provider: undefined,
+      model: 'claude-given-676',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(p.capabilities().providerId).toBe('anthropic');
     expect((p as unknown as Record<string, unknown>)['model']).toBe('claude-given-676');
   });
 
   it('with --model given, the OpenAI provider is built with that model', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
-    const p = await resolveProvider('openai', 'gpt-given-676');
+    const p = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-given-676',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(p.capabilities().providerId).toBe('openai');
     expect((p as unknown as Record<string, unknown>)['model']).toBe('gpt-given-676');
   });
 
   it('the o1 route is still taken for o1-mini', async () => {
     setKeys({ OPENAI_API_KEY: 'k' });
-    const p = await resolveProvider('openai', 'o1-mini');
+    const p = await resolveProvider({
+      provider: 'openai',
+      model: 'o1-mini',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(p.capabilities().providerId).toBe('openai-reasoning');
   });
 

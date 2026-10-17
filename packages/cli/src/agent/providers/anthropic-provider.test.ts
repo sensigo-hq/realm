@@ -1,9 +1,14 @@
 // anthropic-provider.test.ts — Tests for AnthropicProvider callStep and callStepWithTools.
 // All tests mock the @anthropic-ai/sdk package — no real API calls are made.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AnthropicProvider } from './anthropic-provider.js';
-import { WorkflowError } from '@sensigo/realm';
-import { CLASS_B_NO_TEXT_MARKER, setAdditionalRedactionValues } from './agent-utils.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { AnthropicProvider, ANTHROPIC_DEFAULT_BASE_URL } from './anthropic-provider.js';
+import { WorkflowError, type CacheAutoBasis } from '@sensigo/realm';
+import {
+  CLASS_B_NO_TEXT_MARKER,
+  buildSystemPrompt,
+  setAdditionalRedactionValues,
+} from './agent-utils.js';
 import { leakedForms } from '../test-support/redaction-oracle.js';
 import type { ToolDefinition } from '../mcp/mcp-extensions.js';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -1080,6 +1085,8 @@ describe('AnthropicProvider.capabilities', () => {
       jsonMode: false,
       toolArgsStrict: true,
       providerId: 'anthropic',
+      // issue #600 PR 2: always declared; a provider built without a setting asks for nothing.
+      promptCache: 'off',
     });
   });
 });
@@ -1653,5 +1660,265 @@ describe('cut after hiding (GHSA-gxfq cell 17)', () => {
       .catch((e: unknown) => e);
     // (a) red when this site cuts the model text before hiding it.
     expect(facts(err, 'max_tool_calls reached; final extraction failed: ')).toEqual(HIDDEN);
+  });
+});
+
+// =========================================================================
+// issue #600 PR 2 — what the single-shot request asks Anthropic to cache (B1, B2), and what each
+// request records (B3, B4). On a failing CI host each cell prints the request's `system` field or
+// the recorded request facts: prompt text and field values, never an environment, header or key.
+// =========================================================================
+describe('AnthropicProvider — the cache request and the request facts (issue #600 PR 2)', () => {
+  const SCHEMA = { type: 'object', properties: { x: { type: 'string' } } };
+  const at = (
+    value: 'auto' | 'short' | 'long' | 'off',
+    auto?: { basis: CacheAutoBasis; gaps_s?: number[] },
+  ) =>
+    new AnthropicProvider('claude-sonnet-4-5', {
+      promptCache: {
+        value,
+        source: 'stated',
+        by: 'realm agent',
+        ...(auto !== undefined ? { auto } : {}),
+      },
+    });
+  // The three single-shot requests `buildOpts` builds: the first, the strict ladder's retry after
+  // a 400, and the non-JSON retry. Returns every request body the SDK was handed, in order.
+  const threeRequests = async (
+    provider: AnthropicProvider,
+  ): Promise<Array<Record<string, unknown>>> => {
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    await provider.callStep('prompt', SCHEMA);
+    mockCreate
+      .mockRejectedValueOnce(Object.assign(new Error('rejected'), { status: 400 }))
+      .mockResolvedValueOnce(makeTextResponse('{"x":"b"}'));
+    await provider.callStepWithMeta('prompt', SCHEMA, undefined, { structuredOutputStrict: true });
+    mockCreate
+      .mockResolvedValueOnce(makeTextResponse('not JSON'))
+      .mockResolvedValueOnce(makeTextResponse('{"x":"c"}'));
+    await provider.callStep('prompt', SCHEMA);
+    return mockCreate.mock.calls.map((c) => c[0] as Record<string, unknown>);
+  };
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+  });
+
+  // G1 (cell 6: the body before the lifetime unit, as a literal). (a) red when the helper returns the
+  // plain string for short, or gives it a ttl; (b) prints each request's system.
+  it('G1 — short: all three single-shot requests carry exactly cache_control { type: ephemeral }', async () => {
+    const bodies = await threeRequests(at('short'));
+    expect(bodies).toHaveLength(5);
+    const system = buildSystemPrompt(SCHEMA, undefined, true);
+    for (const body of bodies) {
+      expect(body['system']).toEqual([
+        { type: 'text', text: system, cache_control: { type: 'ephemeral' } },
+      ]);
+    }
+  });
+
+  // G2. (a) red when long drops its ttl; (b) prints each request's system.
+  it("G2 — long: all three requests carry cache_control { type: ephemeral, ttl: '1h' }", async () => {
+    const bodies = await threeRequests(at('long'));
+    const system = buildSystemPrompt(SCHEMA, undefined, true);
+    for (const body of bodies) {
+      expect(body['system']).toEqual([
+        { type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } },
+      ]);
+    }
+  });
+
+  // G3. (a) red when off still builds the block; (b) prints the two bodies.
+  it("guard: G3 — off: the plain string, and the body deep-equals a provider's built with no setting", async () => {
+    const off = await threeRequests(at('off'));
+    const today = await threeRequests(new AnthropicProvider('claude-sonnet-4-5'));
+    expect(off).toEqual(today);
+    const system = buildSystemPrompt(SCHEMA, undefined, true);
+    for (const body of off) expect(body['system']).toBe(system);
+  });
+
+  // G4. (a) red when short sends a ttl; (b) prints the cache_control sent.
+  it('G4 — short sends no ttl key at all', async () => {
+    const bodies = await threeRequests(at('short'));
+    for (const body of bodies) {
+      const block = (body['system'] as Array<{ cache_control: Record<string, unknown> }>)[0]!;
+      expect(Object.keys(block.cache_control)).toEqual(['type']);
+    }
+  });
+
+  const facts = async (provider: AnthropicProvider) => {
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const { usage } = await provider.callStepWithMeta('prompt', SCHEMA);
+    const { request_index: _i, request_start: _s, ...rest } = usage![0]!;
+    return rest;
+  };
+
+  // G7 (Anthropic). (a) red when ANTHROPIC_CACHE_TIERS' short lifetime is 3600, when ttl_sent is
+  // true for short, when off writes a lifetime, or when a stated word records `cache_auto`; (b)
+  // prints the recorded request facts.
+  it('G7 — each stated word writes its B3 row on the record, with no cache_auto', async () => {
+    expect(await facts(at('short'))).toEqual({
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 300,
+      cache_ttl_sent: false,
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      cache_split_offered: true,
+    });
+    expect(await facts(at('long'))).toEqual({
+      cache_requested: 'lifetime',
+      cache_lifetime_s: 3600,
+      cache_ttl_sent: true,
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      cache_split_offered: true,
+    });
+    expect(await facts(at('off'))).toEqual({
+      cache_requested: 'off',
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      cache_split_offered: true,
+    });
+    // Built with no setting: off, and no source or runner, because none was given.
+    expect(await facts(new AnthropicProvider('claude-sonnet-4-5'))).toEqual({
+      cache_requested: 'off',
+      cache_split_offered: true,
+    });
+  });
+
+  // Cell 6 (the lifetime unit): `auto` with each basis records `cache_auto` — whatever it chose,
+  // `off` included — and asks for what `chooseCacheLifetime` chose (the short prior for no
+  // measurement, the long one for a drive listen started). (a) red when `auto` records no
+  // `cache_auto`, chooses `off` without recording it, or uses the wrong prior; (b) prints the facts
+  // and the capability (test values only).
+  it('auto — each basis: the choice, its record, and cache_auto (an auto choosing off records both)', async () => {
+    const row = async (provider: AnthropicProvider) => ({
+      facts: await facts(provider),
+      promptCache: provider.capabilities().promptCache,
+    });
+    const asked = (lifetime: 300 | 3600) => ({
+      cache_requested: 'lifetime',
+      cache_lifetime_s: lifetime,
+      cache_ttl_sent: lifetime === 3600,
+    });
+    const common = {
+      cache_requested_source: 'stated',
+      cache_requested_by: 'realm agent',
+      cache_split_offered: true,
+    };
+    expect([
+      await row(at('auto', { basis: 'no_measurement' })),
+      await row(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [] })),
+      await row(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] })),
+      await row(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] })),
+      await row(at('auto', { basis: 'listen_gaps_unreadable' })),
+      await row(at('auto')),
+    ]).toEqual([
+      {
+        facts: { ...asked(300), ...common, cache_auto: { basis: 'no_measurement' } },
+        promptCache: { lifetime_s: 300 },
+      },
+      {
+        facts: {
+          ...asked(3600),
+          ...common,
+          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [] },
+        },
+        promptCache: { lifetime_s: 3600 },
+      },
+      {
+        facts: {
+          ...asked(3600),
+          ...common,
+          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [420, 720] },
+        },
+        promptCache: { lifetime_s: 3600 },
+      },
+      {
+        facts: {
+          cache_requested: 'off',
+          ...common,
+          cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] },
+        },
+        promptCache: 'off',
+      },
+      {
+        facts: { ...asked(3600), ...common, cache_auto: { basis: 'listen_gaps_unreadable' } },
+        promptCache: { lifetime_s: 3600 },
+      },
+      // `auto` handed no basis: the short prior, recorded as no measurement
+      {
+        facts: { ...asked(300), ...common, cache_auto: { basis: 'no_measurement' } },
+        promptCache: { lifetime_s: 300 },
+      },
+    ]);
+  });
+
+  // Cell 6: what `auto` sends is the body of the word it chose. (a) red when `auto` sends a body other
+  // than its choice's; (b) prints the system sent.
+  it("auto — the body sent is the chosen word's: off the plain string, short no ttl, long ttl '1h'", async () => {
+    const sent = async (provider: AnthropicProvider) => {
+      mockCreate.mockReset();
+      mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+      await provider.callStep('prompt', SCHEMA);
+      return (mockCreate.mock.calls[0]![0] as Record<string, unknown>)['system'];
+    };
+    const system = buildSystemPrompt(SCHEMA, undefined, true);
+    expect([
+      await sent(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [7200, 7200, 7200] })),
+      await sent(at('auto', { basis: 'no_measurement' })),
+      await sent(at('auto', { basis: 'listen_trigger_gaps', gaps_s: [420, 720] })),
+    ]).toEqual([
+      system,
+      [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+      [{ type: 'text', text: system, cache_control: { type: 'ephemeral', ttl: '1h' } }],
+    ]);
+  });
+
+  // Cell 6: the capability per stated word. (a) red when a stated word's capability is not its
+  // lifetime; (b) prints the capability.
+  it('capabilities().promptCache — off, short and long', () => {
+    expect([
+      at('off').capabilities().promptCache,
+      at('short').capabilities().promptCache,
+      at('long').capabilities().promptCache,
+    ]).toEqual(['off', { lifetime_s: 300 }, { lifetime_s: 3600 }]);
+  });
+
+  // G8 (Anthropic). (a) red when `model` is read from the requested model instead of the response;
+  // (b) prints the recorded model.
+  it("G8 — model is the response's own (a dated id), never the requested one; none without one", async () => {
+    mockCreate.mockResolvedValueOnce({
+      ...makeTextResponse('{"x":"a"}'),
+      model: 'claude-sonnet-4-5-20260101',
+    });
+    const answered = await at('short').callStepWithMeta('prompt', SCHEMA);
+    expect(answered.usage![0]!.model).toBe('claude-sonnet-4-5-20260101');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const unnamed = await at('short').callStepWithMeta('prompt', SCHEMA);
+    expect(unnamed.usage![0]).not.toHaveProperty('model');
+  });
+
+  // G10 (Anthropic, the SDK mocked). The real SDK's environment-variable route is
+  // `endpoint-600.test.ts`'s. (a) red when endpoint is always 'default'; (b) prints the endpoint.
+  it("G10 — endpoint: 'default' at the SDK's own address, 'custom' elsewhere, absent without baseURL", async () => {
+    const withBase = (baseURL: string) =>
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return { messages: { create: mockCreate }, baseURL };
+      } as never);
+    withBase(ANTHROPIC_DEFAULT_BASE_URL);
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const native = await at('short').callStepWithMeta('prompt', SCHEMA);
+    expect(native.usage![0]!.endpoint).toBe('default');
+    withBase('https://gateway.example/anthropic');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const gateway = await at('short').callStepWithMeta('prompt', SCHEMA);
+    expect(gateway.usage![0]!.endpoint).toBe('custom');
+    expect(JSON.stringify(gateway.usage)).not.toContain('gateway.example');
+    mockCreate.mockResolvedValueOnce(makeTextResponse('{"x":"a"}'));
+    const mocked = await at('short').callStepWithMeta('prompt', SCHEMA);
+    expect(mocked.usage![0]).not.toHaveProperty('endpoint');
   });
 });

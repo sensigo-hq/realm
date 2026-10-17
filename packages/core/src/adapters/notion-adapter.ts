@@ -117,7 +117,7 @@ export class NotionAdapter implements ServiceAdapter {
       throw new WorkflowError(message, {
         code: 'NETWORK_UNREACHABLE',
         category: 'NETWORK',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_for_service',
         retryable: networkRetryable,
       });
     }
@@ -214,7 +214,7 @@ export class NotionAdapter implements ServiceAdapter {
       throw new WorkflowError('Notion service temporarily unavailable (HTTP 503)', {
         code: 'SERVICE_HTTP_5XX',
         category: 'SERVICE',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_for_service',
         retryable: true,
         details: {
           ...baseDetails,

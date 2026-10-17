@@ -28,13 +28,19 @@ import {
 import { Socket } from 'node:net';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { Command, InvalidArgumentError } from 'commander';
 // issue #409: the SAME parser `realm agent --llm-timeout` uses — never a second copy, so the two
 // flags cannot drift on what they accept. The listen→agent edge is one-way and cycle-free.
 import { parseLlmTimeout, parseProvider } from './agent.js';
 import { hasText, listenModelRefusal, type ProviderName } from '../agent/providers/llm-provider.js';
+// issue #600 PR 2: the SAME parser `realm agent --prompt-cache` uses.
+import { parsePromptCache } from '../agent/prompt-cache.js';
 import {
+  AUTO_GAPS_KEPT,
+  CACHE_GAP_MAX_S,
+  type PromptCacheSetting,
   loadWorkflowFromFile,
   JsonFileStore,
   JsonWorkflowStore,
@@ -44,10 +50,12 @@ import {
   renderLoaderWarning,
   describePending,
   owedNames,
-  cannotGoOnLines,
+  composeWaysAt,
   deriveRunPhase,
   hashParams,
+  isPastDeadline,
 } from '@sensigo/realm';
+import { cannotGoOnLines } from './ways-renderer.js';
 import type {
   WorkflowDefinition,
   WebhookTrigger,
@@ -55,6 +63,8 @@ import type {
   FilterCondition,
   DedupConfig,
   RunStore,
+  RunListing,
+  UnreadableRunFileEntry,
   WorkflowRegistrar,
 } from '@sensigo/realm';
 import {
@@ -65,6 +75,7 @@ import {
 } from '../lib/webhook-verifiers.js';
 import { extractParams, extractDedupId, resolveDotPath } from '../lib/webhook-params.js';
 import { FileDedupStore, InMemoryDedupStore, type DedupStore } from '../lib/dedup-store.js';
+import { listRunsDiagnosed } from './list.js';
 import {
   loadProjectExtensions,
   onceReleaseLineSink,
@@ -93,11 +104,17 @@ export interface ListenDeps {
   // issue #291 (Deliverable 4f): widened to add 'list' (the sweep's own store-scan) + 'settleStep'
   // (the enactment write). Both OPTIONAL-shaped on the real RunStore interface already — Pick
   // preserves that optionality, so a store that doesn't declare settleStep still satisfies this.
-  runStore: Pick<RunStore, 'create' | 'get' | 'update' | 'list' | 'settleStep'>;
+  // issue #719 (B3): the JSON store's `listWithDiagnostics`, optional — when present the sweep acts
+  // on the readable runs and logs each run file it cannot read instead of failing every pass.
+  runStore: Pick<RunStore, 'create' | 'get' | 'update' | 'list' | 'settleStep'> & {
+    listWithDiagnostics?: (workflowId?: string) => Promise<RunListing>;
+  };
   dedupStoreFor: (workflowId: string) => DedupStore;
   // issue #744: settles once Node has said whether the agent started (`'spawn'`) or not
   // (`'error'`, which for a missing or unenterable folder comes on the next tick, not as a throw).
-  spawnAgent: (runId: string, cwd: string) => Promise<SpawnResult>;
+  // issue #600 (the lifetime unit): the workflow id keys the spawner's trigger gaps; optional, so a
+  // double that ignores it still fits.
+  spawnAgent: (runId: string, cwd: string, workflowId?: string) => Promise<SpawnResult>;
   clock: () => number;
   logger: Logger;
 }
@@ -694,7 +711,7 @@ export function makeListenHandler(
       // `try`, so a start Node refuses later, or a rejection, takes the same path.
       let spawnResult: SpawnResult;
       try {
-        spawnResult = await deps.spawnAgent(run.id, entry.workflowDir);
+        spawnResult = await deps.spawnAgent(run.id, entry.workflowDir, entry.definition.id);
       } catch (err) {
         spawnResult = { error: err instanceof Error ? err : new Error(String(err)) };
       }
@@ -894,6 +911,65 @@ export interface SweepResult {
 }
 
 /**
+ * issue #719 (B3): the run files the expiry sweeper has already logged, by path — so a damaged file
+ * is logged on first sight and again only when its class, size, mtime or way out changes, never
+ * once per pass. The listen server makes one and hands it to every pass.
+ */
+export type SweepSeenFiles = Map<
+  string,
+  { class: string; size: number | undefined; mtimeMs: number | undefined; repair: string }
+>;
+
+/**
+ * Logs the run files a sweep pass could not read (issue #719, B3, C2): `warn` for a file not seen
+ * before, or changed since, with its way out; one `debug` line with the count when the pass skipped
+ * any. Called on EVERY pass, so a file no longer damaged is forgotten even on a pass that skipped
+ * none.
+ */
+async function logSkippedRunFiles(
+  logger: Logger,
+  unreadable: readonly UnreadableRunFileEntry[],
+  seen: SweepSeenFiles | undefined,
+): Promise<void> {
+  const now = new Set(unreadable.map((u) => u.path));
+  if (seen !== undefined) {
+    for (const path of [...seen.keys()]) if (!now.has(path)) seen.delete(path);
+  }
+  for (const entry of unreadable) {
+    let size: number | undefined;
+    let mtimeMs: number | undefined;
+    try {
+      const st = await stat(entry.path);
+      size = st.size;
+      mtimeMs = st.mtimeMs;
+    } catch {
+      // A file that cannot be stat'ed is compared by its class alone.
+    }
+    const prior = seen?.get(entry.path);
+    // issue #719 (F6.9): its way out too — a copy whose held file changes (missing, then present
+    // but damaged) keeps its own bytes, and its last logged advice must not outlive the change.
+    const changed =
+      prior === undefined ||
+      prior.class !== entry.class ||
+      prior.size !== size ||
+      prior.mtimeMs !== mtimeMs ||
+      prior.repair !== entry.repair;
+    if (changed) {
+      logger.warn('listen: run file skipped by the expiry sweeper', {
+        path: entry.path,
+        class: entry.class,
+        reason: entry.reason,
+        repair: entry.repair,
+      });
+      seen?.set(entry.path, { class: entry.class, size, mtimeMs, repair: entry.repair });
+    }
+  }
+  if (unreadable.length > 0) {
+    logger.debug('listen: expiry sweeper skipped run files', { count: unreadable.length });
+  }
+}
+
+/**
  * Issue #291 (Deliverable 4f, Amendment 4 — the `realm listen` opt-in sweeper): one store-wide
  * scan for expired, enactable gates across EVERY run this store holds (not just the workflows
  * THIS `listen` process has mounted — a gate opened by any process on the same store is
@@ -907,7 +983,9 @@ export interface SweepResult {
  * `now`-injectable for deterministic tests.
  */
 export async function sweepExpiredGates(
-  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'>,
+  deps: Pick<ListenDeps, 'runStore' | 'workflowStore' | 'logger'> & {
+    sweepSeen?: SweepSeenFiles;
+  },
   now: Date = new Date(),
 ): Promise<SweepResult> {
   const result: SweepResult = {
@@ -919,13 +997,17 @@ export async function sweepExpiredGates(
   };
   if (deps.runStore.settleStep === undefined) return result;
 
-  const runs = await deps.runStore.list();
+  // issue #719 (B3): the readable runs are swept; a run file that cannot be read is logged, never
+  // allowed to fail the whole pass.
+  const { records: runs, unreadable } = await listRunsDiagnosed(deps.runStore);
+  await logSkippedRunFiles(deps.logger, unreadable, deps.sweepSeen);
   for (const run of runs) {
     if (run.terminal_state || run.pending_gate === undefined) continue;
     const gate = run.pending_gate;
     // Finding-only (no on_expiry) or no enforce clock at all — nothing this sweep can enact.
     if (gate.expires_at === undefined || gate.on_expiry === undefined) continue;
-    if (now.getTime() < new Date(gate.expires_at).getTime()) continue;
+    // #729 PR-0 (A2): core's one due test of a stored deadline.
+    if (!isPastDeadline(gate.expires_at, now)) continue;
 
     result.scanned += 1;
 
@@ -954,14 +1036,22 @@ export async function sweepExpiredGates(
           ? undefined
           : describePending(definition, outcome.run, undefined, now);
         // decision C64: an expiry that leaves nothing able to run from here names the steps and the
-        // way out — core's lines.
+        // way out — the CLI renderer's lines over the ways core composes (#729 PR-0, A-10).
         const cannotGoOn =
-          owedView === undefined ? [] : cannotGoOnLines(outcome.run, owedView, definition);
+          owedView === undefined
+            ? []
+            : cannotGoOnLines(
+                composeWaysAt(outcome.run, now, { definition }),
+                outcome.run.id,
+                deriveRunPhase(outcome.run),
+              );
         deps.logger.info('listen: sweeper enacted an expired gate', {
           run_id: run.id,
           gate_id: gate.gate_id,
           disposition: gate.on_expiry,
-          ...(owedView?.act !== undefined ? { owed: owedNames(owedView) } : {}),
+          ...(owedView !== undefined && owedView.owed.length > 0
+            ? { owed: owedNames(owedView) }
+            : {}),
           ...(cannotGoOn.length > 0 ? { cannot_go_on: cannotGoOn } : {}),
         });
         if (outcome.transitioned) {
@@ -1177,13 +1267,16 @@ export function startListen(
   });
 
   // issue #291 (Deliverable 4f): the opt-in expired-gate sweeper — a coarse setInterval, started
-  // only when the operator explicitly requested it. A pass's own errors never crash the server
-  // (sweepExpiredGates itself never throws — every failure is caught+logged per-run internally);
-  // this outer catch is defensive-only.
+  // only when the operator explicitly requested it. A pass's own errors never crash the server:
+  // each run's failure is caught and logged inside the pass, and a pass that throws (its listing
+  // failed — issue #719: e.g. the runs folder cannot be read; a damaged run FILE is logged and
+  // skipped, never thrown) is caught and logged here. One `sweepSeen` map for the server's life,
+  // so a damaged file is logged once until it changes.
+  const sweepSeen: SweepSeenFiles = new Map();
   const sweepTimer =
     options.sweepExpiredGatesIntervalMs !== undefined
       ? setInterval(() => {
-          sweepExpiredGates(deps).catch((err) => {
+          sweepExpiredGates({ ...deps, sweepSeen }).catch((err) => {
             deps.logger.error('listen: sweeper pass failed', { error: String(err) });
           });
         }, options.sweepExpiredGatesIntervalMs)
@@ -1222,6 +1315,13 @@ export type AgentArgvOptions = {
   model: string;
   provider?: ProviderName;
   llmTimeoutSeconds?: number;
+  /** Issue #600 PR 2: listen's `--prompt-cache`, only when the operator stated it. */
+  promptCache?: PromptCacheSetting;
+  /**
+   * Issue #600 (the lifetime unit): the gaps, in whole seconds, between the recent triggers of the
+   * child's workflow, when `auto` measures and at least one exists.
+   */
+  cacheGaps?: readonly number[];
 };
 
 /**
@@ -1238,6 +1338,13 @@ export type AgentArgvOptions = {
  * in-memory clock, which is true — the operator did set it. That label is never persisted; what
  * the run record carries is the CONSEQUENCE: `declared_per_attempt_ms` present, and a fired
  * ceiling naming `--llm-timeout` as the lever.
+ *
+ * CACHING (issue #600): a stated `--prompt-cache` is passed on as given; unstated, nothing is
+ * passed and the child uses `auto`. `--cache-gaps` (the lifetime unit) follows it when listen
+ * measured at least one gap between the workflow's recent triggers — `auto` reads them; never when
+ * empty. `--spawned-by-listen` is always passed, so the child knows listen started it: its `auto`
+ * reads listen's measurement (its prior is the long lifetime), its runner is recorded as `realm
+ * listen`, and a setting its provider cannot apply is disclosed on its start line, never refused.
  */
 export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] {
   const argv = ['agent', '--run-id', runId];
@@ -1246,6 +1353,11 @@ export function buildAgentArgv(runId: string, opts: AgentArgvOptions): string[] 
   if (opts.llmTimeoutSeconds !== undefined) {
     argv.push('--llm-timeout', String(opts.llmTimeoutSeconds));
   }
+  if (opts.promptCache !== undefined) argv.push('--prompt-cache', opts.promptCache);
+  if (opts.cacheGaps !== undefined && opts.cacheGaps.length > 0) {
+    argv.push('--cache-gaps', opts.cacheGaps.join(','));
+  }
+  argv.push('--spawned-by-listen');
   // issue #620 PR-C: listen tells the operator once at startup; a child per webhook would repeat it.
   argv.push('--no-release-line-advisory');
   return argv;
@@ -1315,26 +1427,88 @@ export function defaultSpawnAgent(
  * unchanged — the value is closed over here rather than threaded through it.
  * issue #676: and the model (always) and the provider (when given), the same way.
  * issue #744: an error the agent process reports after it started is logged, never fatal.
+ * issue #600 PR 2: and a stated `--prompt-cache`, the same way.
+ * issue #600 (the lifetime unit): under `auto` (unstated or stated), the spawner measures. It keeps,
+ * per workflow id (else per folder), the start times of its last `AUTO_GAPS_KEPT + 1` spawns on a
+ * monotonic clock (`monotonicMs`; listen's own clock is the wall clock); synchronously on entry it
+ * computes the gaps between them and now (whole seconds, clamped to `[0, CACHE_GAP_MAX_S]`, the last
+ * `AUTO_GAPS_KEPT`), records now, and passes the gaps as `--cache-gaps`; a spawn that fails removes
+ * the start it recorded. Under any other setting it keeps nothing and passes no gaps.
  */
 export function makeAgentSpawner(
-  listenOpts: { model: string; provider?: ProviderName; llmTimeout?: number },
+  listenOpts: {
+    model: string;
+    provider?: ProviderName;
+    llmTimeout?: number;
+    promptCache?: PromptCacheSetting;
+  },
   logger: Logger,
   spawnFn: typeof nodeSpawn = nodeSpawn,
-): (runId: string, cwd: string) => Promise<SpawnResult> {
+  monotonicMs: () => number = () => performance.now(),
+): (runId: string, cwd: string, workflowId?: string) => Promise<SpawnResult> {
   const agentOpts: AgentArgvOptions = {
     model: listenOpts.model,
     ...(listenOpts.provider !== undefined ? { provider: listenOpts.provider } : {}),
     ...(listenOpts.llmTimeout !== undefined ? { llmTimeoutSeconds: listenOpts.llmTimeout } : {}),
+    ...(listenOpts.promptCache !== undefined ? { promptCache: listenOpts.promptCache } : {}),
   };
-  return (runId, cwd) =>
+  const measures = listenOpts.promptCache === undefined || listenOpts.promptCache === 'auto';
+  const starts = new Map<string, number[]>();
+  const spawn = (runId: string, cwd: string, opts: AgentArgvOptions): Promise<SpawnResult> =>
     defaultSpawnAgent(
       runId,
       cwd,
-      agentOpts,
+      opts,
       (err) =>
         logger.error('webhook: agent process error', { run_id: runId, cwd, error: String(err) }),
       spawnFn,
     );
+  return (runId, cwd, workflowId) => {
+    if (!measures) return spawn(runId, cwd, agentOpts);
+    const key = workflowId ?? cwd;
+    const now = monotonicMs();
+    const times = [...(starts.get(key) ?? []), now];
+    const gaps = times
+      .slice(1)
+      .map((t, i) => Math.min(CACHE_GAP_MAX_S, Math.max(0, Math.round((t - times[i]!) / 1000))))
+      .slice(-AUTO_GAPS_KEPT);
+    starts.set(key, times.slice(-(AUTO_GAPS_KEPT + 1)));
+    return spawn(runId, cwd, gaps.length > 0 ? { ...agentOpts, cacheGaps: gaps } : agentOpts).then(
+      (result) => {
+        if ('error' in result) {
+          const kept = starts.get(key) ?? [];
+          const at = kept.lastIndexOf(now);
+          if (at !== -1) kept.splice(at, 1);
+        }
+        return result;
+      },
+    );
+  };
+}
+
+/**
+ * Issue #600 (D2; the lifetime unit) — what listen's startup line says each provider is asked to
+ * cache. A child that uses Anthropic asks for the stated setting, or listen's default, `auto` (off,
+ * 5 minutes or 1 hour per workflow, by the gaps between its recent triggers); Realm asks OpenAI for
+ * no caching. With `--provider`, only that provider's agents are started, so the other is named
+ * only as `not used` (OpenAI) or not at all (Anthropic).
+ */
+export function listenCachingFacts(
+  provider: ProviderName | undefined,
+  promptCache: PromptCacheSetting | undefined,
+): Record<string, string> {
+  if (provider === 'openai') return { openai: 'asked for no caching', anthropic: 'not used' };
+  const words: Record<PromptCacheSetting, string> = {
+    auto: 'auto: off, 5 minutes or 1 hour for each workflow, by the gaps between its recent triggers',
+    short: '5 minutes',
+    long: '1 hour',
+    off: 'off',
+  };
+  const anthropic = {
+    anthropic: words[promptCache ?? 'auto'],
+    set_by: promptCache === undefined ? "realm listen's default" : `--prompt-cache ${promptCache}`,
+  };
+  return provider === 'anthropic' ? anthropic : { ...anthropic, openai: 'asked for no caching' };
 }
 
 function resolveWorkflowFile(input: string): string {
@@ -1415,6 +1589,13 @@ export const listenCommand = new Command('listen')
       'No default: absent means each drive uses its own 600s fallback.',
     parseLlmTimeout,
   )
+  // issue #600 PR 2: no Commander default. Unstated, nothing is passed and each child uses
+  // listen's default (`auto`), recorded as `runner_default`.
+  .option(
+    '--prompt-cache <setting>',
+    'Passed to each realm agent it starts: auto, short, long or off. auto (the default): each agent asks Anthropic for off, 5 minutes or 1 hour, by the gaps between the recent triggers of its workflow. short: 5 minutes. long: 1 hour. off: nothing. Other providers are asked for no caching.',
+    parsePromptCache,
+  )
   .option(
     '--sweep-expired-gates <seconds>',
     'OPT-IN (issue #291): store-wide sweep interval (seconds) that enacts expired, enactable ' +
@@ -1436,6 +1617,7 @@ export const listenCommand = new Command('listen')
         llmTimeout?: number;
         provider?: ProviderName;
         model?: string;
+        promptCache?: PromptCacheSetting;
       },
     ) => {
       // issue #676: first, before any workflow is loaded, registered or mounted. Every run listen
@@ -1456,6 +1638,16 @@ export const listenCommand = new Command('listen')
       const model = opts.model;
       if (!hasText(model)) {
         console.error(listenModelRefusal(opts.provider));
+        process.exit(1);
+        return;
+      }
+      // issue #600 PR 2 (C3c): with `--provider openai` every agent listen starts uses OpenAI, so a
+      // caching setting can never apply. Refused here, before anything listens, rather than
+      // disclosed by every child it would start.
+      if (opts.provider === 'openai' && opts.promptCache !== undefined) {
+        console.error(
+          'Error: --prompt-cache sets caching only for Anthropic; with --provider openai every agent realm listen starts uses OpenAI, which Realm asks for no caching, so the flag would change nothing. Remove --prompt-cache, or use --provider anthropic.',
+        );
         process.exit(1);
         return;
       }
@@ -1567,6 +1759,8 @@ export const listenCommand = new Command('listen')
         deps,
       );
 
+      // issue #600 PR 2 (D2): what each provider's agents are asked to cache.
+      logger.info('listen: caching', listenCachingFacts(opts.provider, opts.promptCache));
       const addr = handle.server.address() as { port: number } | null;
       logger.info(
         `realm listen on ${host}:${addr?.port ?? opts['port']} — ${routes.size} workflow(s) mounted`,

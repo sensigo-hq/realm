@@ -10,6 +10,7 @@
 // mocked (the #447 harness of run-prompt-625.test.ts): each prompt is answered by its own text.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure.
+import { lagless } from '../test-support/lag.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -27,6 +28,8 @@ import {
   JsonWorkflowStore,
   ExtensionRegistry,
   advanceRun,
+  createDefaultRegistry,
+  executeChain,
   executeStep,
   loadWorkflowFromString,
 } from '@sensigo/realm';
@@ -248,11 +251,20 @@ describe(
         RD_PAGE,
         "When nothing else can run — no agent step ready, nothing owed that can run, nothing in flight — and a step is refused before its claim (an invalid `trust`, a failed precondition, an input its schema refuses), the way out follows the `Cannot run` lines — correct the workflow and register it again for a refused `trust` or precondition, and each step's own way for an input its schema refuses (a new run with params that fit, or a corrected `input_schema`; for a step that builds its input with an `input_map`, a corrected `input_map` or `input_schema`, or a new run with params that fit when the key its schema refuses is built from `run.params`):",
       );
+      // #729 PR-0 correction (C2): the sentence under the screen, pinned by this cell's execution —
+      // the stuck run's `Cannot run` line, then the operator's input fact (`head(shown.stuck)`
+      // below, against the page's screen). A step that builds its input with an `input_map` gets
+      // no such line: its entry carries no lever (`ways.test.ts`, "refused_before_claim
+      // (input_schema)", the mapped half), and the line is the lever's alone.
+      claim(
+        RD_PAGE,
+        'For a step refused for its input that builds no input from an `input_map`, like `compute` here, the line after `Cannot run` says that an operator supplies its input, checked against its `input_schema`, and that no `realm` command does (added after version 0.47.0).',
+      );
       const STAYS = ' stays open (phase ';
-      /** The `Cannot run` line and the line that follows it. */
+      /** The `Cannot run` line and the two that follow it (#729 PR-0: the operator's input fact, then the way out). */
       const head = (lines: string[]) => {
         const at = lines.findIndex((l) => l.startsWith('Cannot run '));
-        return lines.slice(at, at + 2);
+        return lines.slice(at, at + 3);
       };
       // Each workflow its own id: inspect reads the registered copy, so one id would share one copy.
       const needsN = (id: string, extra: string[] = []) =>
@@ -615,11 +627,14 @@ describe(
       // blank line is readline's own end of the prompt's line (readline is mocked here).
       // (a) red when the timer's line or the close line differs from the page's (ids aside), or the
       //     prompt does not close; (b) prints both.
-      expect([`${choicePrompt ?? ''}${timer ?? ''}`, closed]).toEqual(
-        put(block(WF_PAGE, 'This prompt is closed: the question on'), {
-          "'02ebe774-…'": `'${gateId}'`,
-          "'81771ac5-…'": `'${id}'`,
-        }),
+      // #729 PR-0 (T-2; Table rows 35, 50): the timer's line is the receipt's — its lag follows the
+      // clock, so both sides read `<lag>` in its place.
+      expect(lagless([`${choicePrompt ?? ''}${timer ?? ''}`, closed ?? ''])).toEqual(
+        lagless(
+          put(block(WF_PAGE, 'This prompt is closed: the question on'), {
+            "'02ebe774-…'": `'${gateId}'`,
+          }),
+        ),
       );
       // In the words of `realm run inspect`: its `Answer:` line, word for word.
       const inspected = realm(home, ['run', 'inspect', id]).out.map((l) => l.trim());
@@ -942,16 +957,18 @@ describe(
         run_phase: 'running',
       } as never;
       // decision C202: the map offers `Drive it:` where the run's view has an agent step ready.
+      // #729 PR-0 (D-L): the view names what is owed (`owed`); the map composes the run's ways from
+      // the whole definition.
       const view = (agentSteps: string[]) => ({
         pending: {
-          agent_actions: [],
+          owed: [],
           agent_steps: agentSteps,
           agent_refused: [],
           pending_guards: [],
           engine_runnable: [],
           cannot_run: [],
         },
-        workflow: { steps: {} },
+        workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
       });
       const stalled = renderDetachMap(record, 'x', view(['x']), {
         headline: 'Workflow stalled',
@@ -1222,7 +1239,13 @@ describe(
         expect({
           code,
           map: mapLines(id),
-          before: [before.code, before.err.join(' ').startsWith('Workflow not found: leave-fetch')],
+          // #729 PR-0 (T-21): the words by cause (was "Workflow not found: …").
+          before: [
+            before.code,
+            before.err
+              .join(' ')
+              .startsWith("Workflow 'leave-fetch' is not registered in this workflow store"),
+          ],
           registered: registered.code,
           after: [after.code, after.out.filter((l) => l.startsWith('→ ') || l.startsWith('Run '))],
         }).toEqual({
@@ -1272,7 +1295,7 @@ describe(
       it('an `auto` step whose input its schema refuses, left at its prompt: each step that cannot run and the way out, then `Inspect`', async () => {
         claim(
           WF_PAGE,
-          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.` and `Run <id> stays open (phase 'running'): for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>`; for a step that builds its input with an `input_map`, `for '<step>', correct its input_map or its input_schema and register the workflow again`), then `Inspect`;",
+          "When neither holds: a run that cannot go on from here (an `auto` step whose input its schema refuses, left at its prompt, for one) gets the lines `realm run respond` prints for such a run, each step that cannot run and then the way out (for that step, `'<step>' cannot run (input_schema): <why>.`, then — for a step that builds no input from an `input_map` — `'<step>' takes its input from an operator, checked against its input_schema; no realm command supplies it.` (added after version 0.47.0), and `Run <id> stays open (phase 'running'): for '<step>', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>`; for a step that builds its input with an `input_map`, `for '<step>', correct its input_map or its input_schema and register the workflow again`), then `Inspect`;",
         );
         mocks.question.mockImplementation(async () => {
           throw leave();
@@ -1299,6 +1322,8 @@ describe(
           map: [
             "Prompt cancelled — detached from run '<id>' at step 'c' (phase: running). The run is saved.",
             "  'c' cannot run (input_schema): Invalid input for step 'c': the input must have required property 'n'.",
+            // #729 PR-0 (Amendment 14, Q12): `c` builds no input from an `input_map` — the lever's fact.
+            "  'c' takes its input from an operator, checked against its input_schema; no realm command supplies it.",
             // F15: `c` is refused for its input, with no `depends_on`: its own way out
             "  Run <id> stays open (phase 'running'): for 'c', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance <id> — or end it: realm run abandon <id>",
             '  Inspect:   realm run inspect <id>',
@@ -1444,3 +1469,84 @@ describe(
     });
   },
 );
+
+// issue #729 — the operator-side stuck marker on realm-run-reading.md's `--stuck` section: the
+// `--older-than` row and the idle-line sentence, quoted; the example line for a run that cannot go
+// on, compared with what the built `realm run list --stuck` prints for the same run (the crown's W2,
+// driven to stuck through the library). What a failing cell prints: the page's line and the built
+// line, ids and the local time put in place.
+describe('issue #729 — realm-run-reading.md, `--stuck` names a run that cannot go on', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'realm-729-pin-rd-'));
+    mkdirSync(join(home, '.realm', 'workflows'), { recursive: true });
+    mkdirSync(join(home, '.realm', 'runs'), { recursive: true });
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it('the --older-than row and the idle-line sentence: the limit applies to the idle finding alone', () => {
+    claim(
+      RD_PAGE,
+      '| `--older-than <duration>` | With `--stuck`: how long an open run must have been idle to be listed for the idle finding (`never_claimed_idle`); every other finding lists its run at any age. Default `24h`. |',
+    );
+    claim(
+      RD_PAGE,
+      'A line with nothing after `idle:` is an open run with no step in progress that has not changed for the limit or longer: the limit applies to that finding (`never_claimed_idle`) alone, and every other finding lists its run at any age, with its label. A run that cannot go on is listed the moment it cannot, with `<step>=cannot_go_on(<check>)` and `realm run inspect <run-id>`, which prints the refusal and the ways out (added after version 0.47.0).',
+    );
+  });
+
+  it(
+    'the example line: a run that cannot go on, listed at age 0 with its label and the inspect pointer, as the built realm prints it',
+    { timeout: 60_000 },
+    async () => {
+      const W2 = wf([
+        'id: w2-crown',
+        'name: w2 crown',
+        'version: 1',
+        'steps:',
+        '  summarize:',
+        '    description: Summarize the text.',
+        '    execution: agent',
+        '    depends_on: []',
+        '  publish:',
+        '    description: Publish.',
+        '    execution: auto',
+        '    depends_on: [summarize]',
+        '    handler: h',
+        '    input_map:',
+        '      text: context.resources.summarize.summary',
+        '    input_schema:',
+        '      type: object',
+        '      required: [text]',
+        '      properties:',
+        '        text: { type: string }',
+      ]);
+      const runStore = new JsonFileStore(join(home, '.realm', 'runs'));
+      await new JsonWorkflowStore(join(home, '.realm', 'workflows')).register(W2);
+      const { run } = await runStore.create({
+        workflowId: 'w2-crown',
+        workflowVersion: 1,
+        params: {},
+      });
+      const registry = createDefaultRegistry();
+      registry.register('handler', 'h', { id: 'h', execute: async () => ({ data: {} }) });
+      // summarize returns no `summary`, so publish's input cannot be built: the run cannot go on.
+      await executeChain(runStore, W2, {
+        runId: run.id,
+        command: 'summarize',
+        input: { other: 'x' },
+        dispatcher: async (_step, input) => input,
+        registry,
+      });
+      const pageLine = block(RD_PAGE, 'Stuck runs (threshold 0m):').find((l) =>
+        l.includes('cannot_go_on'),
+      );
+      const pageId = pageLine?.split(' ')[0] ?? '';
+      const time = (l: string) => l.replace(/\d+\/\d+\/\d+, \d+:\d+:\d+ [AP]M/, '<time>');
+      const built = realm(home, ['run', 'list', '--stuck']).out.find((l) => l.startsWith(run.id));
+      // (a) red when the built line differs from the page's (the label, the pointer, the parse
+      //     shape — `idle:` and the counts), or the run is not listed at age 0; (b) prints both.
+      expect(time(built ?? '')).toBe(time((pageLine ?? '').replaceAll(pageId, run.id)));
+    },
+  );
+});

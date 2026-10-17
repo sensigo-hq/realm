@@ -156,7 +156,7 @@ describe('#688 — the docs sentences it adds about the way out and an unresolve
     //     each states is driven by cell 8 above and by core's input-map-688.test.ts (cells 4, 5).
     claim(
       'docs/concepts/step-kinds.md',
-      "for a step that builds its input with an `input_map` (one with a `handler` or a `uses_service`), its schema checks what the map builds, and the way is `for '<step>', correct its input_map or its input_schema and register the workflow again`, with `start a run with params that fit, or ` before `correct` when the key its schema refuses is built from `run.params` — joined by `; `,",
+      "for a step that builds its input with an `input_map` (one with a `handler` or a `uses_service`), its schema checks what the map builds, and the way is `for '<step>', correct its input_map or its input_schema and register the workflow again`, with `start a run with params that fit (its param '<param>'), or ` before `correct` when the key its schema refuses is built from `run.params` (the param named after version 0.47.0) — joined by `; `,",
     );
     claim(
       'docs/reference/workflow/input-map-and-templates.md',
@@ -164,12 +164,12 @@ describe('#688 — the docs sentences it adds about the way out and an unresolve
     );
   });
 
-  it('json-schema-blocks.md: a mapped auto step called by name is refused with report_to_user (#688 correction, item 5)', () => {
+  it('json-schema-blocks.md: a mapped auto step called by name is refused, routed as every refusal before the claim (#688 correction, item 5; #729 PR-0, T-13 (a))', () => {
     // (a) red when the page no longer says it (the docs flip); (b) prints the sentence. The
     //     behaviour is executed by the MCP input-map-688.test.ts cells 4 (b) and 6.
     claim(
       'docs/reference/workflow/json-schema-blocks.md',
-      'When the `input_schema` check refuses an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`), and the step was called by name, the reply is `VALIDATION_INPUT_SCHEMA` with `report_to_user`: its schema checks what the map builds, not the input sent with the call.',
+      'When the `input_schema` check refuses an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`), and the step was called by name, the reply is `VALIDATION_INPUT_SCHEMA` and routes as every refusal before the claim: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which always said `report_to_user`). Its schema checks what the map builds, not the input sent with the call.',
     );
   });
 });

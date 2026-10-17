@@ -117,7 +117,7 @@ describe('abandonRun (JsonFileStore)', () => {
     expect(reloaded.claims).toEqual({});
   });
 
-  it('the LIVE gate refusal names the gate, carries it in details, and names no surface verb', async () => {
+  it('the LIVE gate refusal names the gate, carries the answer as its remedy (#729 PR-0, D-C), and names no surface verb', async () => {
     const run = await freshRunning();
     await store.update({
       ...run,
@@ -130,7 +130,7 @@ describe('abandonRun (JsonFileStore)', () => {
       },
     });
     await expect(abandonRun(store, run.id)).rejects.toThrow(
-      `Run '${run.id}' is waiting on human gate 'review_changes' (gate 'g-approve-1'); answer it before abandoning.`,
+      `Run '${run.id}' is waiting on human gate 'review_changes' (gate 'g-approve-1'); it cannot be abandoned while its question is open.`,
     );
     try {
       await abandonRun(store, run.id);
@@ -145,10 +145,14 @@ describe('abandonRun (JsonFileStore)', () => {
         // agree; on a record whose persisted label is stale they do not, and a reader must be able
         // to tell which number the refusal was computed from.
         persisted_run_phase: 'gate_waiting',
-        gate_id: 'g-approve-1',
-        step_name: 'review_changes',
-        choices: ['approve', 'reject'],
       });
+      // #729 PR-0 (D-C, Amendment 11): the gate, its step and its choices moved from `details` to
+      // the typed remedy — the respond way the doors word as their answer command.
+      expect(
+        (e.remedy ?? []).map((w) =>
+          w.verb === 'respond' ? [w.verb, w.run_id, w.gate_id, w.step, w.choice.one_of] : [w.verb],
+        ),
+      ).toEqual([['respond', run.id, 'g-approve-1', 'review_changes', ['approve', 'reject']]]);
       // Core names NEITHER surface's verb — the three-walk finding.
       expect(e.message).not.toContain('submit_human_response');
       expect(e.message).not.toContain('realm run respond');

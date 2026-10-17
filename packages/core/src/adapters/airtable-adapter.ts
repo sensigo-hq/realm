@@ -134,7 +134,7 @@ export class AirtableAdapter implements ServiceAdapter {
       throw new WorkflowError(message, {
         code: 'NETWORK_UNREACHABLE',
         category: 'NETWORK',
-        agentAction: 'wait_for_human',
+        agentAction: 'wait_for_service',
         retryable: true,
       });
     }

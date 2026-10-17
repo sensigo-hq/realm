@@ -18,12 +18,13 @@ import {
   assessStructuredOutputEligibility,
   renderIneligibleMessage,
   type WorkflowDefinition,
-  type ResponseEnvelope,
   type JsonSchema,
   type LoaderWarning,
   type RunStore,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
 } from '@sensigo/realm';
+// #729 PR-0 (Amendment 12): the MCP wire's reply type (the core reply is `EngineReply`).
+import type { McpEnvelope } from '../render-reply.js';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores } from './assert-tool-stores.js';
@@ -127,7 +128,7 @@ export interface CreateWorkflowArgs {
   extensions?: unknown;
 }
 
-function makeErrorEnvelope(errors: string[]): ResponseEnvelope {
+function makeErrorEnvelope(errors: string[]): McpEnvelope {
   return {
     command: 'create_workflow',
     run_id: '',
@@ -408,7 +409,7 @@ function buildWorkflowDefinition(workflowId: string, args: CreateWorkflowArgs): 
 export async function handleCreateWorkflow(
   args: CreateWorkflowArgs,
   stores?: { workflowStore?: JsonWorkflowStore; runStore?: RunStore },
-): Promise<ResponseEnvelope> {
+): Promise<McpEnvelope> {
   assertToolStores(stores, 'handleCreateWorkflow');
   const { errors, caveats: structuredOutputCaveats } = validateArgs(args);
   if (errors.length > 0) {

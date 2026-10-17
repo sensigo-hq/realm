@@ -1,8 +1,12 @@
 // ended-run-refusal.test.ts — #744 follow-up E1: the refusal `realm agent --run-id` gives a run
 // that has ended. Both carriers throw it — the pre-attach check (`resolveRunAttach`) and the agent
-// loop (`runAgent`) — and it ends with ONE mark: a reason that already ends a sentence keeps its
-// own (decision C37), and with no recorded reason the phase is worked out from the record
-// (PHASE_IS_GENERATED). Every cell asserts the whole message.
+// loop (`runAgent`). #729 PR-0 (E1 (d), (e), (j)): it is the run-a-step family's `run_ended` — "Run
+// <id> has already ended (<phase>)", the phase worked out from the record (PHASE_IS_GENERATED), then
+// who ended it from the record; Realm's sentence ends with Realm's stop; a recorded reason is stored
+// text, printed on its own line after `Reason:` through the one escaped, bounded value renderer,
+// with no stop added (a completed run's reason restates its phase and is not printed); the cleanup
+// steps left pending end their own line with the command, no stop after it. Every cell asserts the
+// whole message.
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
@@ -73,15 +77,15 @@ const completed = (run: RunRecord): void => {
   run.terminal_reason = 'Workflow completed.';
 };
 
-// (a) red when the refusal adds its own stop again, renders the stored phase, or a carrier's
-//     message differs from the other's; (b) prints the whole message.
+// (a) red when the refusal adds a stop to stored text or after a command, renders the stored phase,
+//     or a carrier's message differs from the other's; (b) prints the whole message.
 describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
   it('E1 R1: a completed run, through the pre-attach check', async () => {
     const store = new InMemoryStore();
     const runId = await endedRun(store, completed);
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} is already in terminal state: Workflow completed.`,
+      `Run ${runId} has already ended (completed).`,
     );
   });
 
@@ -90,7 +94,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     const runId = await endedRun(store, completed);
     await expect(agent(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} is already in terminal state: Workflow completed.`,
+      `Run ${runId} has already ended (completed).`,
     );
   });
 
@@ -102,11 +106,11 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} is already in terminal state: Workflow completed. 1 finalizer(s) not yet delivered — realm run drain ${runId}.`,
+      `Run ${runId} has already ended (completed).\n1 cleanup step is not yet delivered — to deliver it: realm run drain ${runId}`,
     );
   });
 
-  it('E1 R3: a reason with no end mark gets one', async () => {
+  it('E1 R3: a reason is stored text — after its label, as written, no stop added', async () => {
     const store = new InMemoryStore();
     const runId = await endedRun(store, (run) => {
       run.terminal_state = true;
@@ -114,7 +118,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} is already in terminal state: spawn_failed.`,
+      `Run ${runId} has already ended (failed).\nReason: "spawn_failed"`,
     );
   });
 
@@ -128,7 +132,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} is already in terminal state: aborted.`,
+      `Run ${runId} has already ended (aborted).`,
     );
   });
 
@@ -150,12 +154,10 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
       terminal_state: true,
       aborted_at: { step_id: 's1' },
     } as RunRecord;
-    expect(terminalRunRefusal('r1', rec).message).toBe(
-      'Run r1 is already in terminal state: aborted.',
-    );
+    expect(terminalRunRefusal('r1', rec).message).toBe('Run r1 has already ended (aborted).');
   });
 
-  it('E1 R6: a reason that ends with a question mark gets no full stop', async () => {
+  it('E1 R6: a reason that ends with a question mark is printed as written — no stop added; who ended the run from the record', async () => {
     const store = new InMemoryStore();
     const runId = await endedRun(store, (run) => {
       run.terminal_state = true;
@@ -163,7 +165,7 @@ describe('E1 — the ended-run refusal, one mark, on both carriers', () => {
     });
     await expect(attach(store, runId)).rejects.toHaveProperty(
       'message',
-      `Run ${runId} is already in terminal state: Held?`,
+      `Run ${runId} has already ended (abandoned): an operator ended it.\nReason: "Held?"`,
     );
   });
 });

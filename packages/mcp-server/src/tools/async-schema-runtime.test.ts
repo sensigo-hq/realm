@@ -108,7 +108,7 @@ describe('a definition stored with a root $async is refused at its first check o
     });
   });
 
-  it('4. input, engine-supplied (mapped): the agent’s step completes, the next cannot run, nothing left to call, with the run-time form', async () => {
+  it('4. input, engine-supplied (mapped): the agent’s step completes, the next cannot run, report_to_user, with the run-time form', async () => {
     const { call, workflowStore } = await connect();
     await workflowStore.register(
       def('in-engine', {
@@ -132,21 +132,16 @@ describe('a definition stored with a root $async is refused at its first check o
     const hint = String(reply['context_hint']);
     const later = await call('get_run_state', { run_id: started['run_id'] });
     // (a) red when the detection is removed (b runs on input its schema never checked); (b) prints
-    //     the status, agent action, next actions, booleans and the steps.
-    // 0.47.0 backport: this release's `ok` reply carries no `agent_action` (main's reply renderer
-    // added it after 0.47.0, as `report_to_user` here). Its way of telling the agent to report is
-    // an empty `next_actions`: nothing it can call. Both are pinned as 0.47.0 returns them.
+    //     the status, agent action, booleans and the steps.
     expect({
       status: reply['status'],
       agentAction: reply['agent_action'],
-      nextActions: reply['next_actions'],
       cannotRunLine: hint.includes("'b' cannot run (input_schema): "),
       ...runTimeForm(hint),
       completed: later['completed_steps'],
     }).toEqual({
       status: 'ok',
-      agentAction: undefined,
-      nextActions: [],
+      agentAction: 'report_to_user',
       cannotRunLine: true,
       ...ALL,
       completed: ['a'],

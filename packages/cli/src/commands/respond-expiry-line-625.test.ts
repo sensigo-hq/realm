@@ -149,7 +149,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
         'confirm',
         { on_expiry: 'settle_default', choice: 'approve' },
         'respond',
-        0,
+        { ms: 0 },
       ),
     );
     // (a) red when the late arm drops the line, prints it after the refusal, or names another call;
@@ -173,7 +173,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     const code = await respond(runId, gateId, 'approve');
     // (a) red when the same-choice arm drops the line or prints it later; (b) prints stdout.
     expect(stdout().slice(0, 3)).toEqual([
-      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'respond', 0))}`,
+      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'settle_default', choice: 'approve' }, 'respond', { ms: 0 }))}`,
       'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
       `Not recorded: ${runId} | gate settled by timeout with choice 'approve' | state 'running'`,
     ]);
@@ -185,7 +185,7 @@ describe('#625 PR-2a, C146/C147 — a late `realm run respond` says which call c
     const code = await respond(runId, gateId, 'reject');
     // (a) red when the abort arm drops the line or names another call; (b) prints stderr.
     expect(stderr()).toEqual([
-      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'abort' }, 'respond', 0))}`,
+      `⚠ ${lagless(expiryCarriedOutLine(gateId, 'confirm', { on_expiry: 'abort' }, 'respond', { ms: 0 }))}`,
       `Gate '${gateId}' on 'confirm' expired and the run aborted per the workflow's declared on_expiry — your choice was NOT recorded.`,
     ]);
     expect({ code, stdout: stdout() }).toEqual({ code: 1, stdout: [] });

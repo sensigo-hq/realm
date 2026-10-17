@@ -7,7 +7,40 @@ export * from './types/workflow-definition.js';
 export * from './store/store-interface.js';
 export { persistsField } from './store/store-fidelity.js';
 export { JsonFileStore } from './store/json-file-store.js';
-export type { ReconcileSummary } from './store/json-file-store.js';
+export type {
+  ReconcileSummary,
+  RunListing,
+  UnreadableRunFileEntry,
+} from './store/json-file-store.js';
+// issue #719: a damaged stored JSON file — its facts (the typed `facts` of its error, keyed on
+// `scope` since #729 PR-0) and their ONE reader, the ONE composer of its message, the error one such
+// file gives (exported so no caller restates core's retry rule, #729 PR-0) and the one a decision
+// over every run fails closed with and its reader, the scope predicate of every workflow-scoped
+// read, how a file-held id is shown, the side files a run keeps beside it and their kinds.
+export {
+  describeStoredFileFault,
+  renderUnreadableStoredFile,
+  unreadableRunFileError,
+  unreadableRunFilesError,
+  unreadableFactsOf,
+  unreadableRunFilesOf,
+  damagedFileConcerns,
+  isCopyOfReadableRun,
+  displayId,
+  RUN_ID_LENGTH,
+  TRACE_BUFFER_FILE_PREFIX,
+  SEALED_TRACE_FILE_PREFIX,
+  TRACE_FILE_SUFFIX,
+  SIDE_FILE_KINDS,
+} from './store/run-file.js';
+export type {
+  UnreadableFileFacts,
+  UnreadableRunFilesFacts,
+  StoredFileClass,
+  SideFileKind,
+} from './store/run-file.js';
+// issue #719: the one check that a value is a run record (admission's `run`, the store's reader).
+export { isRunRecordShape } from './types/run-record-shape.js';
 export type {
   PerRunArtifactStore,
   ArtifactDeletionReport,
@@ -82,9 +115,12 @@ export type {
  * whole cli suite green.
  */
 export { deriveCacheDetail } from './engine/execution-loop.js';
+// issue #600 PR 2 (A3): the names a request record carries, bounded where the record is written.
+export { boundRequestFacts } from './engine/request-facts.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,
+  moreOf,
   serializeFailedAttemptLine,
 } from './observability/failed-attempt-record.js';
 export type {
@@ -101,9 +137,9 @@ export type { StepDispatcher, ExecuteStepOptions } from './engine/execution-loop
 export {
   submitHumanResponse,
   executeChain,
-  buildNextActions,
   buildPreExecutionErrorEnvelope,
   DEFAULT_VALIDATION_EXHAUSTION_THRESHOLD,
+  raceClausesOf,
 } from './engine/execution-loop.js';
 export type { SubmitGateOptions, ExecuteChainOptions } from './engine/execution-loop.js';
 // Issue #625 (PR-1, PR-2a). `advanceRun` runs what the engine owes on a run (settle eligible
@@ -124,6 +160,9 @@ export {
   finalizerOutcomeLines,
   lateAnswerOutcome,
   expiryCarriedOutLine,
+  // issue #729 PR-0 (T-2): the expiry receipt, and its one line.
+  expiryReceiptOf,
+  expiryReceiptLine,
   runReadError,
   terminalAnswerRefusalMessage,
   withResumeOffer,
@@ -149,13 +188,84 @@ export { bareStepOutput, executeEngineStep, guardEndingOfRun } from './engine/ex
 export {
   OUTPUT_SOURCE_ABSENT_CAUSES,
   isBareAutoStep,
+  callsHostDispatcher,
   outputSourceOf,
 } from './engine/output-source.js';
 export type { OutputSourceAbsentCause } from './engine/output-source.js';
-// F7: the one rule for "another program got there first" — the stop kinds and the classifier every
-// loop reads.
-export { STOP_KINDS, classifyStop, isRaceStop, stopAbout } from './engine/stop-kind.js';
+// issue #729 PR-0: the ways on — one vocabulary judged once in core (PR0-CONTRACT §1–§4): the verbs,
+// the parties, the codes and their facts, the one input contract per verb, the composer, the one
+// admission, the narrowing for a door, the one derivation of an agent's action word, and (T-1) the
+// one vocabulary for "another program got there first" every loop reads.
+export {
+  PARTIES,
+  WAY_VERBS,
+  PROGRESS_VERBS,
+  WAY_PARTIES,
+  CODE_TAGS,
+  UNAVAILABLE_CODES,
+  DEFINITION_ABSENCES,
+  NO_REMEDY_CAUSES,
+  ARGS,
+  DOOR_SERVES,
+  REPLY_KINDS,
+  STOP_KINDS,
+  composeWaysOn,
+  composeWaysAt,
+  respondWayOfGate,
+  admitWay,
+  narrowForDoor,
+  agentActionOf,
+  agentRenderedList,
+  stepBrief,
+  basisOf,
+  classifyStop,
+  isRaceStop,
+  stopAbout,
+  renderDefinitionAbsent,
+  readSupplier,
+  cannotGoOnFrom,
+  cannotGoOnUntilCorrected,
+  LIBRARY_WORDS,
+  libraryCannotRunWords,
+} from './engine/ways.js';
 export type {
+  Party,
+  Slot,
+  Cond,
+  WayVerb,
+  ProgressVerb,
+  StepBrief,
+  RespondWay,
+  RunStepWay,
+  AdvanceWay,
+  InspectWay,
+  AbandonWay,
+  RegisterWay,
+  WayOn,
+  WayOf,
+  CodeTag,
+  UnavailableCode,
+  RefusedCheck,
+  DefinitionAbsence,
+  LoadErrorCode,
+  FactsByCode,
+  FactsOf,
+  NoRemedy,
+  Unavailable,
+  ArgSpec,
+  RouteId,
+  Source,
+  DoorPolicy,
+  ForWay,
+  Narrowed,
+  WayRenderer,
+  LibraryHost,
+  ReplyKind,
+  RenderedList,
+  WaysContext,
+  ComposedWays,
+  WayInput,
+  Admission,
   HaltStop,
   HaltStopKind,
   NotRecordedKind,
@@ -165,7 +275,10 @@ export type {
   StopKind,
   StopRecord,
   StopReply,
-} from './engine/stop-kind.js';
+} from './engine/ways.js';
+// issue #729 PR-0 (D3 A-9; #715 D6-16/17/18/59): one record and the reading it is judged at.
+export { loadSnapshot, writtenSnapshot, stampOf } from './engine/snapshot.js';
+export type { Snapshot, Stamp, Basis, EnactorBasis, DefinitionBasis } from './engine/snapshot.js';
 // Issue #625 PR-2a (decisions C133, C151): the words each engine entry's `caller` takes.
 export { ENTRY_CALLERS } from './engine/callers.js';
 // Issue #688: whether a step receives what its input_map builds, and what a refusal of that input names.
@@ -175,7 +288,8 @@ export {
   newRunCanChangeInput,
   type InputMapStep,
 } from './engine/input-map.js';
-// Issue #625 (PR-2a): what a run owes, read from its record, and the one act that runs it.
+// Issue #625 (PR-2a): what a run owes, read from its record. #729 PR-0: the instructions and way
+// sentences these once composed are the doors' (MCP `renderReply`, the CLI's `CLI_COMMANDS`).
 export {
   PRE_CLAIM_REFUSALS,
   AGENT_PRE_CLAIM_REFUSALS,
@@ -187,54 +301,39 @@ export {
   owedNames,
   owedList,
   owedWords,
-  owedRunsClause,
-  owedCallWords,
-  cannotRunWords,
-  cannotRunClause,
-  cannotRunWayOut,
-  cannotRunWayOutTools,
-  cannotRunWayOutApplies,
   cannotGoOnHere,
-  cannotGoOnLines,
   resumeWay,
   // F2: what a surface may OFFER to `realm run resume` (an engine failure only), and what it says in
   // the offer's place for a run an operator ended.
   offeredResumeWay,
   operatorEndingSentence,
   oneOf,
-  respondCommand,
   waitingOnAnswer,
-  waitingWords,
   pendingCleanupWay,
   pendingCleanupLine,
   pendingCleanupSentence,
   heldLeaseWords,
-  capabilityMarkerWayOut,
   withFullStop,
   endsWithCommand,
   sentenceEnd,
   ADVANCE_OWED,
   composeNextActionsStatusWord,
-  describeNext,
   PROGRAM_FITS,
   judgeProgramFit,
   describeRunDriver,
   dueExpiry,
   dueExpiryWords,
   callableSteps,
-  // decisions C103, C104: the open question, its one answer composer and its reader; why a step
-  // cannot be called.
+  // decision C103: the open question.
   openQuestionOf,
   answerableQuestion,
   openQuestionWords,
-  answerAction,
-  answerOf,
-  notCallableReason,
 } from './engine/pending.js';
 export type {
   PreClaimRefusal,
   AgentPreClaimRefusal,
   PreClaimRefused,
+  PreconditionFacts,
   CapabilityBasis,
   EngineRunnable,
   PendingView,
@@ -325,23 +424,65 @@ export type { ReclaimResult, ReclaimOutcome, ReclaimStepOptions } from './engine
 export { classifyRunHealth, DEFAULT_IDLE_THRESHOLD_MS } from './engine/run-health.js';
 export type { RunHealthFinding } from './engine/run-health.js';
 export { computeGateDueState } from './engine/gate-timing.js';
+// issue #729 PR-0 (D4 P-8, A-15): the one parser of stored instants and the one due test of a
+// stored deadline; ε, the one clock-skew constant.
+export {
+  readInstant,
+  isPastDeadline,
+  overdueOf,
+  recordStampedAheadSentence,
+  CLOCK_SKEW_EPSILON_MS,
+  INSTANT_CLASSES,
+} from './engine/instants.js';
+export type { InstantClass, InstantReading } from './engine/instants.js';
 // issue #600 PR 1b: one cost view per step, derived once and rendered by inspect + get_run_state.
 export {
   composeCostView,
   composeStepViews,
   composeDriveFailureCosts,
+  composeRunCost,
   COST_UNRECORDED_CAUSES,
   isAnswerEntry,
 } from './engine/step-view.js';
 export type {
   CostFigure,
   CostView,
+  CostModels,
+  CostCacheRequested,
+  CacheRequestedEntry,
+  CostEndpoints,
   CostUnrecordedCause,
   AttemptView,
   AnswerView,
   StepView,
   DriveFailureCost,
+  Money,
+  MoneySource,
+  MoneySourceTotal,
+  RunCost,
 } from './engine/step-view.js';
+// issue #600 caching PR P: the runner's economics file (format v1), its evaluator, and the port a
+// host prices through — money is derived at read, never stored.
+export {
+  CACHE_ECONOMICS_JSON_SCHEMA,
+  parseCacheEconomics,
+  priceFromEconomics,
+} from './economics/cache-economics.js';
+export type {
+  CacheEconomics,
+  CacheEconomicsPrice,
+  CacheEconomicsRates,
+  CacheEconomicsTier,
+} from './economics/cache-economics.js';
+export { NOT_PRICED_CAUSES, priceRequest } from './economics/price-source.js';
+export type {
+  NotPricedCause,
+  PriceInput,
+  PriceResult,
+  PriceSource,
+  PriceUsage,
+  PricedBy,
+} from './economics/price-source.js';
 export type { GateDueState } from './engine/gate-timing.js';
 export {
   requirementForStep,
@@ -359,7 +500,20 @@ export type { PreconditionResult } from './engine/precondition.js';
 export type { StepDiagnostics } from './types/run-record.js';
 // issue #600 PR 1a (D4): CACHE_STATES/CACHE_BASES/CacheState/CacheBasis/UsageRecord/StepCacheDetail
 // are already re-exported here via the top-of-file `export * from './types/run-record.js'` — the
-// wildcard is the export; this comment exists so a reader checking D4's requirement finds it.
+// wildcard is the export; this comment exists so a reader checking D4's requirement finds it. Issue
+// #600 PR 2's vocabularies — PROMPT_CACHE_SETTINGS, CACHE_REQUESTS, CACHE_REQUEST_SOURCES,
+// REQUEST_ENDPOINTS, REQUEST_FACT_ABSENT_CAUSES and their types — and the lifetime unit's
+// CACHE_AUTO_BASES are re-exported the same way, beside CACHE_STATES.
+// issue #600 (the lifetime unit): which cache lifetime `--prompt-cache auto` asks for — pure, the
+// prices are the caller's (an adapter's `CacheTiers`).
+export {
+  AUTO_GAPS_KEPT,
+  AUTO_LIFETIME_MARGIN,
+  CACHE_GAP_MAX_S,
+  chooseCacheLifetime,
+  normalizeCacheAuto,
+} from './economics/cache-lifetime.js';
+export type { CacheTier, CacheTiers, CacheChoice } from './economics/cache-lifetime.js';
 export { VERSION } from './version.js';
 // The release mark (issue #620 PR-B): every class a realm package exports carries one, so copies of
 // the same release recognise each other's objects.
@@ -398,6 +552,7 @@ export { createDefaultRegistry } from './extensions/default-registry.js';
 export type { ExtensionManifest, ExtensionModuleRef } from './extensions/manifest.js';
 export {
   validateDeploymentManifest,
+  parseDeploymentManifest,
   collectManifestSecretRefs,
   DEPLOYMENT_MANIFEST_JSON_SCHEMA,
 } from './manifest/deployment-manifest.js';
@@ -477,6 +632,21 @@ export type {
   AgentSubmissionValidation,
   SchemaFailure,
 } from './validation/input-schema.js';
+// issue #759: a refused answer names every problem — one list, one cap, one count, two renderings.
+export {
+  VALIDATION_PROBLEMS_SHOWN,
+  describeValidationProblems,
+  renderMore,
+  renderProblemsSentence,
+  renderProblemsLines,
+  validationListOf,
+  whitelistValidationRow,
+} from './validation/validation-problems.js';
+export type {
+  ValidationProblem,
+  ValidationProblems,
+  FieldWords,
+} from './validation/validation-problems.js';
 
 // Workflow
 export {
@@ -488,10 +658,17 @@ export {
   findTrustRoot,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   SCHEMA_KEY_CONSEQUENCE,
+  DEFAULT_GATE_CHOICES,
+  gateChoicesOf,
 } from './workflow/yaml-loader.js';
 export { JsonWorkflowStore } from './workflow/registrar.js';
 export type { WorkflowRegistrar } from './workflow/registrar.js';
-export { getWorkflowForRun } from './workflow/registrar.js';
+export { getWorkflowForRun, definitionAbsenceOf } from './workflow/registrar.js';
+// issue #729 PR-0: the skeleton of an input schema — the MCP renderer's `call_with` for a step's way.
+export { generateSchemaSkeleton } from './utils/schema-skeleton.js';
+// issue #729 PR-0 (E1 (b), (d)): the ONE escaped, bounded value renderer — a value read from a run or
+// stored text from elsewhere, printed as one line with no terminal escape (the doors use it).
+export { escapedBoundedValue } from './utils/redaction.js';
 // issue #558 PR-T — the classification table, its builders and the listing cap. The CLI's
 // `--stuck` probe closure mints the SAME errors `get()` does, so a corrupt or unreadable copy
 // speaks with one voice on every surface.
@@ -503,7 +680,11 @@ export {
   PROBE_FAILURE_CLASSES,
   STUCK_DEFINITION_PARSE_CAP_BYTES,
 } from './workflow/registrar.js';
-export type { ProbeResult, ProbeFailureClass } from './workflow/registrar.js';
+export type {
+  ProbeResult,
+  ProbeFailureClass,
+  WorkflowCopyParseFault,
+} from './workflow/registrar.js';
 export {
   GUARD_PROHIBITED_STEP_KEYS,
   FINALIZER_PROHIBITED_STEP_KEYS,

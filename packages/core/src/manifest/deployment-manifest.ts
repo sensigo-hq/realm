@@ -7,6 +7,7 @@
 // CONFIG. Trust model: manifest-write = credential-redirection = code-write-equivalent.
 import { Ajv } from 'ajv';
 import type { ErrorObject } from 'ajv';
+import { load } from 'js-yaml';
 import { findSecretRefSites } from './secret-refs.js';
 
 /** One adapter/handler/processor entry, keyed by REGISTRATION name in the manifest maps. */
@@ -53,6 +54,12 @@ export interface DeploymentManifest {
   handlers?: Record<string, ManifestEntry>;
   processors?: Record<string, ManifestEntry>;
   notifiers?: { slack_gate?: SlackGateNotifierConfig };
+  /**
+   * Issue #600 caching PR P — what the runner of this deployment configures for itself.
+   * `cache.economics`: the runner's price file (format v1, `cache-economics.ts`), a path relative to
+   * this manifest's folder, or absolute. No `${secret:…}`.
+   */
+  runner?: { cache?: { economics?: string } };
 }
 
 /**
@@ -125,6 +132,19 @@ export const DEPLOYMENT_MANIFEST_JSON_SCHEMA = {
                 escalation_threshold_ms: { type: 'integer', minimum: 1 },
               },
             },
+          },
+        },
+      },
+    },
+    runner: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        cache: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            economics: { type: 'string', minLength: 1 },
           },
         },
       },
@@ -241,6 +261,16 @@ function checkSecretRefPlacement(manifest: DeploymentManifest): string[] {
     }
   }
 
+  // issue #600 caching PR P: runner.cache.economics names a file; it cannot use a secret either.
+  if (manifest.runner?.cache?.economics !== undefined) {
+    const scan = findSecretRefSites(manifest.runner.cache.economics, 'runner.cache.economics');
+    for (const site of scan.sites) {
+      errors.push(
+        `${site.path}: '\${secret:${site.name}}' is not allowed here — secret references are legal only inside string values under 'config'.`,
+      );
+    }
+  }
+
   return errors;
 }
 
@@ -265,4 +295,33 @@ export function collectManifestSecretRefs(
     sites.push(...findSecretRefSites(slack, 'notifiers.slack_gate.config').sites);
   }
   return sites;
+}
+
+/**
+ * Issue #600 caching PR P — `realm.yaml`'s text, parsed and validated in ONE place: js-yaml's
+ * default load (as the CLI loader always read it), then `validateDeploymentManifest`. Pure. The
+ * two kinds of failure stay distinct: `yaml` carries js-yaml's message and the error itself as
+ * `cause`; `schema` carries the validation errors.
+ */
+export function parseDeploymentManifest(text: string):
+  | { document: DeploymentManifest }
+  | {
+      error:
+        { kind: 'yaml'; message: string; cause: unknown } | { kind: 'schema'; errors: string[] };
+    } {
+  let raw: unknown;
+  try {
+    raw = load(text);
+  } catch (err) {
+    return {
+      error: {
+        kind: 'yaml',
+        message: err instanceof Error ? err.message : String(err),
+        cause: err,
+      },
+    };
+  }
+  const errors = validateDeploymentManifest(raw);
+  if (errors.length > 0) return { error: { kind: 'schema', errors } };
+  return { document: raw as DeploymentManifest };
 }

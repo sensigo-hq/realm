@@ -60,15 +60,16 @@ describe('the MCP tools’ (retryVerb, verb) pair (issue #558 PR-T)', () => {
     );
   });
 
-  it('M2 on a LIVE run the agent still gets the #456 remedy, unchanged', async () => {
+  it('M2 on a LIVE run the agent still gets the #456 remedy — its words by cause since #729 PR-0 (T-21)', async () => {
     const err = (await getWorkflowForRun(notFound(), makeRun(), {
       retryVerb: 'retry',
       verb: 'retry',
     }).catch((e: unknown) => e)) as WorkflowError;
 
     expect(err.message).toBe(
-      'Workflow not found: wf — most often this run was created from a file without --register. ' +
-        'Register the workflow (realm workflow register <file>) and retry.',
+      "Workflow 'wf' is not registered in this workflow store, and the store does not know the file " +
+        'it came from, so no path to it is recorded. Register the workflow (realm workflow register ' +
+        '<file>) and retry.',
     );
   });
 

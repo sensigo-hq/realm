@@ -16,7 +16,7 @@ import {
   loadWorkflowFromStringWithDiagnostics,
   SCHEMA_KEY_CONSEQUENCE,
 } from './yaml-loader.js';
-import { WorkflowError } from '../types/workflow-error.js';
+import { WorkflowError, type ValidationErrorFacts } from '../types/workflow-error.js';
 import {
   compileSchema,
   validateRunParams,
@@ -859,6 +859,13 @@ describe('#586 schema admission — the four authored keys', () => {
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
     expect(stripped.split('new Ajv(').length - 1).toBe(1);
+    // (a') issue #759: that ONE construction's options object — from `new Ajv({` to its closing
+    // `})` — holds `allErrors: true` (a refused answer names every problem). Red: the option set
+    // outside the object, or left off.
+    const open = stripped.indexOf('new Ajv({');
+    expect(open).toBeGreaterThan(-1);
+    const options = stripped.slice(open, stripped.indexOf('})', open));
+    expect(options).toMatch(/\ballErrors: true,/);
     // (b) the loader's admission closure compiles through that helper and constructs nothing. The
     // three pre-existing loader constructions (extensions declaration, adapter config_schema,
     // service entry) compile CODE-declared schemas and are outside this slice by construction.
@@ -905,7 +912,10 @@ describe('#586 schema admission — the four authored keys', () => {
       expect(e.category).toBe('VALIDATION');
       expect(e.agentAction).toBe('provide_input');
       expect(e.retryable).toBe(false);
-      expect((e.details as { errors: unknown[] }).errors).toHaveLength(1);
+      // issue #759 (Amendment 11): the rows are the refusal's typed facts (one problem: no
+      // countdown on a params refusal).
+      expect((e.facts as ValidationErrorFacts).errors).toHaveLength(1);
+      expect((e.facts as ValidationErrorFacts).error_count).toBe(1);
       // The old call said `Invalid input for step '<id>'` — a false statement about what ran.
       expect(e.message).not.toContain('step');
     }
@@ -1081,5 +1091,75 @@ describe('the loader refuses a schema block whose root carries a truthy $async',
         e.includes("'validation_exhaustion.default_output'"),
       ).length,
     }).toEqual({ refused: true, defaultOutputErrors: 0 });
+  });
+});
+
+// =================================================================================================
+// 6. The docs rows about a root `$async`, quoted from the pages (whitespace folded) and executed: the
+// loader refuses the block with the quoted words, a stored one is refused at its check with
+// `VALIDATION_WORKFLOW_SCHEMA`. What a failing cell prints: booleans per row and execution.
+// =================================================================================================
+describe('6. the docs rows about a root $async are true of the build', () => {
+  const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+  const flat = (t: string) => t.replace(/\s+/g, ' ');
+  const page = (p: string) => flat(readFileSync(join(ROOT, p), 'utf8'));
+  // The accepted row's "except a `trace_schema` in warn mode (the default), which is reported and
+  // left unchecked" is executed by core's cell 1f (`input-schema.test.ts`) and the MCP cell 4
+  // "trace, warn" (`async-schema-runtime.test.ts`); the rest of the row, here.
+  const accepted =
+    '| `$async` | No. A schema Realm checks must answer at once: a root `$async` (any true value) is refused when the workflow is loaded or created, and a workflow stored by an earlier version is refused at its first check, except a `trace_schema` in warn mode (the default), which is reported and left unchecked. |';
+  const traceWarnRow =
+    '| `trace_schema` with a root `$async`, in warn mode (the default) | `Every trace for this step would go unchecked at run time` |';
+  const refusedHead =
+    "'input_schema' declares `$async: true`, which Realm does not support: it checks data against a schema synchronously and cannot wait for an asynchronous check.";
+  const refusedTail = 'remove `$async` from the schema.';
+  const refusedRow = `| A root \`$async\` (any true value) | \`\`${refusedHead} … ${refusedTail}\`\` |`;
+  const codeRow =
+    "| `VALIDATION_WORKFLOW_SCHEMA` | A workflow file is refused by the loader, a stored workflow's schema cannot be used at run time, or a `realm.yaml` is in the wrong folder.";
+
+  it('the accepted table, the loader table and the error-code row say it, and the build does it', () => {
+    const blocks = page('docs/reference/workflow/json-schema-blocks.md');
+    const codes = page('docs/reference/error-codes.md');
+    const atLoad = refusalOf(
+      wf({ stepExtra: '    input_schema:\n      $async: true\n      type: object\n' }),
+    ).message;
+    const yes = refusalOf(
+      wf({ stepExtra: '    input_schema:\n      $async: yes\n      type: object\n' }),
+    ).message;
+    const traceWarn = refusalOf(
+      wf({ stepExtra: '    trace_schema:\n      $async: true\n      type: array\n' }).replace(
+        'execution: auto',
+        'execution: agent',
+      ),
+    ).message;
+    let storedCode: string | undefined;
+    try {
+      compileSchema({ $async: true, type: 'object' } as never);
+    } catch (err) {
+      storedCode = (err as WorkflowError).code;
+    }
+    // (a) red when a row's quoted text changes, or the build stops doing what a row says; (b)
+    //     prints a boolean per row and per execution, and the stored check's code.
+    expect({
+      acceptedRow: blocks.includes(flat(accepted)),
+      refusedRow: blocks.includes(flat(refusedRow)),
+      codeRow: codes.includes(flat(codeRow)),
+      traceWarnRow: blocks.includes(flat(traceWarnRow)),
+      loadSaysIt: atLoad.includes(refusedHead) && atLoad.includes(refusedTail),
+      anyTrueValue: yes.includes('declares `$async: "yes"`'),
+      traceWarnSaysIt: traceWarn.includes(
+        '. Every trace for this step would go unchecked at run time; remove `$async`',
+      ),
+      storedCode,
+    }).toEqual({
+      acceptedRow: true,
+      refusedRow: true,
+      codeRow: true,
+      traceWarnRow: true,
+      loadSaysIt: true,
+      anyTrueValue: true,
+      traceWarnSaysIt: true,
+      storedCode: 'VALIDATION_WORKFLOW_SCHEMA',
+    });
   });
 });

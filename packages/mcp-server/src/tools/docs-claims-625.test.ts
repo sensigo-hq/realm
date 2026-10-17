@@ -21,11 +21,13 @@ import {
   executeStep,
   formatDuration,
   loadWorkflowFromString,
+  type EngineReply,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createRealmMcpServer } from '../server.js';
+import { renderReply } from '../render-reply.js';
 
 const DOCS = join(dirname(fileURLToPath(import.meta.url)), '../../../../docs/reference');
 const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -42,7 +44,7 @@ const lagless = (v: unknown): unknown =>
 
 /** (a) red when the page no longer holds the sentence word for word; (b) prints the sentence. */
 function claim(
-  page: 'mcp/tools.md' | 'workflow/gates.md' | 'core-library.md',
+  page: 'mcp/tools.md' | 'workflow/gates.md' | 'core-library.md' | 'glossary.md',
   sentence: string,
 ): void {
   expect(
@@ -53,11 +55,15 @@ function claim(
 
 type Reply = Record<string, unknown> & { _isError?: boolean; _text?: string };
 
-async function connect() {
+async function connect(registry?: ExtensionRegistry) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
-  const server = createRealmMcpServer({ runStore, workflowStore });
+  const server = createRealmMcpServer({
+    runStore,
+    workflowStore,
+    ...(registry !== undefined ? { registry } : {}),
+  });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'docs-claims-625', version: '0' });
   await Promise.all([server.connect(st), client.connect(ct)]);
@@ -345,7 +351,7 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
   it('C163 error_code: on an error — except create_workflow refusing its steps, whose errors say what is wrong', async () => {
     claim(
       'mcp/tools.md',
-      "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that carries no code",
+      "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that is not a Realm error (a store's own failure, such as a full disk or a permission error)",
     );
     const { call } = await connect();
     const r = await call('create_workflow', {
@@ -366,15 +372,18 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
   });
 
   it.each(['abandon_run'])(
-    'C163 error_code: a %s refusal of an error that carries no code (a record that is not JSON) has none',
+    'C163 error_code: a %s refusal of an error that is not a Realm error (a run store of the host’s own) has none',
     async (tool) => {
       claim(
         'mcp/tools.md',
-        "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that carries no code",
+        "On an error, except `create_workflow`'s refusal of its steps (its `errors` say what is wrong) and an `abandon_run` refusal of an error that is not a Realm error (a store's own failure, such as a full disk or a permission error)",
       );
-      const { call, dir } = await connect();
-      mkdirSync(join(dir, 'runs'), { recursive: true });
-      writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
+      const { call, runStore } = await connect();
+      // issue #719: a run file the JSON store cannot read is now its own typed error, with a code;
+      // an error that carries none comes from a store that throws something else.
+      runStore.get = async () => {
+        throw new Error('the disk is gone');
+      };
       const r = await call(tool, { run_id: 'broken' });
       // (a) red when such a refusal invents a code; (b) prints it.
       expect({ status: r['status'], has_code: 'error_code' in r, run_id: r['run_id'] }).toEqual({
@@ -386,8 +395,8 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
   );
 
   it('C163 agent_action: on every error and blocked reply; never on confirm_required', async () => {
-    claim('mcp/tools.md', 'On every `error` and `blocked` reply.');
-    claim('mcp/tools.md', 'Never on `confirm_required`');
+    claim('mcp/tools.md', 'On every `error` and `blocked` reply;');
+    claim('mcp/tools.md', 'never on `confirm_required`');
     const { call, workflowStore } = await connect();
     await workflowStore.register(gated('docs-aa'));
     await workflowStore.register(STEPS);
@@ -411,10 +420,12 @@ describe('#625 PR-2a, C163 — tools.md: the reply table, sentence by sentence, 
 });
 
 describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that has ended, as measured', () => {
+  // #729 PR-0 (T-22): the `agent_action` row's new words — `stop`, `report_to_user` and `await` on
+  // an `ok` reply; T-22 fires only on an OPEN run, so these ended-run cells stay green by construction.
   const ENDED_ROW =
-    "Never on `confirm_required`, and never on another `ok` reply: on a run that had ended before the call, `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the choice its gate recorded (`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).";
+    'never on `confirm_required`; on a run that had ended before the call `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the recorded choice';
   const OK_STOP =
-    'On an `ok` reply only as `stop`: from `execute_step` on a run that has already ended, and from a call that finds the run ended by another process meanwhile, at a guard step or at a step it picked (added after version 0.46.0 for a step it picked)';
+    'on an `ok` reply as `stop` (`execute_step` on a run that has already ended; a run found ended by another process meanwhile), as `report_to_user` (nothing can be called and the run is open: a step cannot run), or as `await` (a step in flight elsewhere)';
 
   it('C154 execute_step: ok with stop, no steps executed', async () => {
     claim('mcp/tools.md', OK_STOP);
@@ -640,11 +651,11 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
     },
   );
 
-  it('C163 blocked: the suggestion for steps only', async () => {
+  it('C163 blocked: the suggestion for steps only; eligible_steps names the ready engine steps too, which are run by advance_run, never by name (#729 Q3 correction 1, C3)', async () => {
     claim('mcp/tools.md', '`Call one of the steps indicated in next_actions instead.` for steps');
     claim(
       'mcp/tools.md',
-      '`eligible_steps`, the steps that can be called by name, and a `suggestion`.',
+      "`eligible_steps`, the steps that are ready and can run here (agent steps and the engine's — an engine step is run by `advance_run`, never by name), and a `suggestion`.",
     );
     claim('mcp/tools.md', 'On a run that has ended, each tool replies as follows:');
     const { call, runId } = await atB();
@@ -652,6 +663,46 @@ describe('#625 PR-2a, C163 — tools.md: blocked and resolve_precondition, sente
     expect((r['blocked_reason'] as { suggestion: string }).suggestion).toBe(
       'Call one of the steps indicated in next_actions instead.',
     );
+    // The engine-step case: `first` answered through the library (no chain), so the engine owes `u`.
+    const c = await connect();
+    const withEngine: WorkflowDefinition = {
+      id: 'docs-c3',
+      name: 'docs-c3',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        first: { description: 'First.', execution: 'agent', depends_on: [] },
+        u: { description: 'U.', execution: 'auto', depends_on: ['first'] },
+      },
+    } as WorkflowDefinition;
+    await c.workflowStore.register(withEngine);
+    const { run } = await c.runStore.create({
+      workflowId: withEngine.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeStep(c.runStore, withEngine, {
+      runId: run.id,
+      command: 'first',
+      input: {},
+      dispatcher: async () => ({ done: true }),
+    });
+    const again = await c.call('execute_step', { run_id: run.id, command: 'first', params: {} });
+    const byName = await c.call('execute_step', { run_id: run.id, command: 'u', params: {} });
+    // (a) red when eligible_steps leaves out the ready engine step, or naming it runs it; (b)
+    //     prints the statuses, the listed steps and the calls offered.
+    expect({
+      again: [
+        again['status'],
+        (again['blocked_reason'] as { eligible_steps: string[] }).eligible_steps,
+      ],
+      byName: [byName['status'], next(byName)],
+      ran: (await c.runStore.get(run.id)).completed_steps.includes('u'),
+    }).toEqual({
+      again: ['blocked', ['u']],
+      byName: ['blocked', ['advance_run:']],
+      ran: false,
+    });
   });
 
   it('C163 blocked: the suggestion for the answer to an open question', async () => {
@@ -964,13 +1015,18 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163 ok: next_actions empty when a step cannot run — the hint names it and why, and ends with the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`await`, with `poll_after_ms`; `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
     const runId = (await call('start_run', { workflow_id: STUCK.id }))['run_id'] as string;
     const r = await call('execute_step', { run_id: runId, command: 'b', params: { go: false } });
-    expect([r['status'], next(r)]).toEqual(['ok', []]);
+    claim(
+      'glossary.md',
+      "The field of a tool's reply that tells the caller what to do after an error or a block, and on an `ok` reply too: `stop` on a run that has ended, `report_to_user` when the run cannot go on, `await` when it waits on another process.",
+    );
+    // #729 PR-0 (T-22): the empty list's word — a step cannot run: `report_to_user`.
+    expect([r['status'], next(r), r['agent_action']]).toEqual(['ok', [], 'report_to_user']);
     expect(String(r['context_hint'])).toContain("'a' cannot run (precondition)");
     expect(String(r['context_hint']).endsWith(WAY_OUT)).toBe(true);
   });
@@ -978,7 +1034,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163 ok: next_actions empty while a step is in flight in another process — No step is ready, with the step and the wait (decision C205), step_claims names it', async () => {
     claim(
       'mcp/tools.md',
-      "When it is empty, nothing can be called now: the run has ended, a step cannot run (`context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
+      "When it is empty, nothing can be called now, and `agent_action` names which: the run has ended (`stop`, or none — see [A run that has ended](#a-run-that-has-ended)), a step cannot run (`report_to_user`; `context_hint` names it and why, and ends with the way out when the workflow must be corrected), or nothing is ready while a step is in flight in another process (`await`, with `poll_after_ms`; `No step is ready: '<step>' is in flight elsewhere — wait for it, then call get_run_state.`; `get_run_state`'s `step_claims` names the step).",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(STUCK);
@@ -986,10 +1042,19 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     await runStore.claimStep(runId, 'b', STUCK);
     const r = await call('advance_run', { run_id: runId });
     const state = await call('get_run_state', { run_id: runId });
-    expect([r['status'], next(r), r['context_hint']]).toEqual([
+    // #729 PR-0 (T-22, P-2): the empty list's word — a step in flight elsewhere: `await`, paced.
+    expect([
+      r['status'],
+      next(r),
+      r['context_hint'],
+      r['agent_action'],
+      r['poll_after_ms'],
+    ]).toEqual([
       'ok',
       [],
       `Run '${runId}': nothing ran. No step is ready: 'b' is in flight elsewhere — wait for it, then call get_run_state.`,
+      'await',
+      30_000,
     ]);
     expect(JSON.stringify(state['step_claims'])).toContain('"b"');
   });
@@ -1002,7 +1067,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     );
     claim(
       'mcp/tools.md',
-      '`blocked_reason.eligible_steps` lists the steps that can be called by name, and may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.',
+      "`blocked_reason.eligible_steps` lists the steps that are ready — agent steps and the engine's alike; an engine step is run by `advance_run`, never by name. It may differ from `next_actions`: for example, when the engine owes an `auto` step it can run, `next_actions` offers `advance_run` and `eligible_steps` names the step.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('docs-owed'));
@@ -1016,6 +1081,19 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
       (r['blocked_reason'] as { eligible_steps: string[] }).eligible_steps,
     ]).toEqual(['blocked', ['advance_run:'], ['after']]);
     expect(String(r['context_hint'])).toMatch(/^Step 'confirm' cannot be called now: /);
+    // #729 (the Q3 unit, D3): the engine step `eligible_steps` names is never run by name — the
+    // agent's execute_step naming it is refused and told advance_run, which runs it.
+    const byName = await call('execute_step', { run_id: runId, command: 'after', params: {} });
+    const notRun = (await runStore.get(runId)).completed_steps.includes('after');
+    await call('advance_run', { run_id: runId });
+    // (a) red when execute_step naming the engine step runs it, or advance_run does not;
+    //     (b) prints the status, the calls offered and whether the step ran.
+    expect([
+      byName['status'],
+      next(byName),
+      notRun,
+      (await runStore.get(runId)).completed_steps.includes('after'),
+    ]).toEqual(['blocked', ['advance_run:'], false, true]);
   });
 
   it('C163 blocked: the suggestion for steps and advance_run together', async () => {
@@ -1160,8 +1238,10 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
   it('C163: a step refused before its claim with nothing else to run — report_to_user and the way out', async () => {
     claim(
       'mcp/tools.md',
-      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input, and that reply is unchanged, except for an `auto` step that builds its input with `input_map` (one with a `handler` or a `uses_service`): its schema checks what the map builds, not the caller's input, so the reply says `report_to_user`, and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
+      "When nothing else can run, its `context_hint` ends with the way out: `Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.` An input its schema refuses is the caller's own input for an agent step, and that reply is unchanged. For an `auto` step the schema checks the input the engine builds — what its `input_map` builds; else the run's params (no `depends_on`) or an empty input (with `depends_on`) — never your `params`, so the reply routes as that refusal: `resolve_precondition` when another step can be called, else `report_to_user` (added after version 0.47.0, which said `report_to_user` for a step with an `input_map` and, for any other `auto` step, `provide_input` — or ran the step on params that fit), and when nothing else can run its `context_hint` ends with the way out, each refused step's own way first.",
     );
+    // #729 Q3 correction 1 (C6): the auto-step half is executed by q3-729.test.ts F1-a…F1-f; the
+    // agent step's own input (`ask` below) keeps `provide_input`.
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
     const runId = (await call('start_run', { workflow_id: STUCK.id }))['run_id'] as string;
@@ -1386,26 +1466,47 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     expect([opened['status'], opened['stopped_step']]).toEqual(['confirm_required', 'confirm']);
   });
 
-  it("C163 chained_auto_steps: an auto step's entry carries the expiry line of the execute_step call that carried out an expired question first; the reply's warnings list it too", async () => {
+  // pre-Q3 title: C163 chained_auto_steps: an auto step's entry carries the expiry line of the execute_step call that carried out an expired question first; the reply's warnings list it too
+  it("C163 chained_auto_steps: an auto step's entry carries its own call's warnings — a cleanup step left pending when that step ended the run; the reply's warnings list them too", async () => {
+    // #729 (the Q3 unit): the former example (an execute_step call naming an auto step that carried
+    // out an expired question first) is no longer reachable over MCP — an agent's execute_step naming
+    // an engine step is refused (its blocked reply carries the expiry line in its own `warnings`).
     claim(
       'mcp/tools.md',
-      "An `auto` step's entry also has `warnings` when that step's own call gave any (such as the expiry line of an `execute_step` call that carried out an expired question first); the reply's `warnings` lists them too.",
+      "An `auto` step's entry also has `warnings` when that step's own call gave any (such as `finalizer '<name>' left pending — handler not available on this surface`, when that step ended the run and this server lacks a cleanup step's handler); the reply's `warnings` lists them too.",
     );
-    const { call, workflowStore, runStore } = await connect();
-    await workflowStore.register(gated('docs-chained', 'settle_default'));
+    const { call, workflowStore } = await connect();
+    await workflowStore.register({
+      id: 'docs-chained',
+      name: 'docs-chained',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: {
+        a: { description: 'A.', execution: 'agent', depends_on: [] },
+        last: { description: 'Last.', execution: 'auto', depends_on: ['a'] },
+        tidy: {
+          description: 'Tidy.',
+          execution: 'finalizer',
+          on_outcome: 'complete',
+          handler: 'not_on_this_server',
+        },
+      },
+    } as WorkflowDefinition);
     const runId = (await call('start_run', { workflow_id: 'docs-chained' }))['run_id'] as string;
-    const gateId = (await runStore.get(runId)).pending_gate!.gate_id;
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
-    const r = await call('execute_step', { run_id: runId, command: 'after', params: {} });
-    const line = `gate '${gateId}' on 'confirm' had expired <lag> before this call — this execute_step call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: execute_step).`;
+    const r = await call('execute_step', { run_id: runId, command: 'a', params: {} });
+    const line = "finalizer 'tidy' left pending — handler not available on this surface";
     const entry = (r['chained_auto_steps'] as Array<{ step: string; warnings?: string[] }>).find(
-      (e) => e.step === 'after',
+      (e) => e.step === 'last',
     );
-    expect(lagless(entry?.warnings)).toContain(line);
-    expect(lagless(r['warnings'])).toContain(line);
+    // (a) red when the entry of the step that ended the run drops its own call's warning, or the
+    //     reply's warnings do not list it; (b) prints the entry's and the reply's warnings.
+    expect({ entry: entry?.warnings, reply: r['warnings'] }).toEqual({
+      entry: [line],
+      reply: [line],
+    });
   });
 
-  it('C163 submit_human_response: a gate ID that is not the open one — STATE_BLOCKED, the open question named and its answer offered, resolve_precondition', async () => {
+  it('C163 submit_human_response: a gate ID that is not the open one — STATE_BLOCKED, the open question named and its answer offered, report_to_user (A-2 row 6)', async () => {
     claim(
       'mcp/tools.md',
       "`Gate 'x' is not the open gate and matches no committed resolution.` See below.",
@@ -1416,7 +1517,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     );
     claim(
       'mcp/tools.md',
-      "Its `next_actions` holds that question's answer — or, when the question's time is up and it declares `on_expiry`, `advance_run`, since an answer could no longer be recorded — and its `agent_action` is `resolve_precondition` (`report_to_user` when `next_actions` is empty).",
+      "Its `next_actions` holds that question's answer — or, when the question's time is up and it declares `on_expiry`, `advance_run`, since an answer could no longer be recorded — and its `agent_action` is `report_to_user` (version 0.47.0 said `resolve_precondition` when `next_actions` named something).",
     );
     claim(
       'mcp/tools.md',
@@ -1435,7 +1536,8 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
     });
     expect([r['error_code'], r['agent_action'], next(r), r['context_hint']]).toEqual([
       'STATE_BLOCKED',
-      'resolve_precondition',
+      // #729 PR-0 (A-2 row 6, DESIGN-D3 §6): the gate-mismatch error's fixed action word.
+      'report_to_user',
       ['submit_human_response:'],
       `Gate 'x' is not the open gate and matches no committed resolution. The open question is on step 'confirm' (gate '${g}') — answer it as next_actions says.`,
     ]);
@@ -1447,7 +1549,7 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       gate_id: 'x',
       choice: 'approve',
     });
-    expect([late['agent_action'], next(late)]).toEqual(['resolve_precondition', ['advance_run:']]);
+    expect([late['agent_action'], next(late)]).toEqual(['report_to_user', ['advance_run:']]);
     expect(String(late['context_hint'])).toContain(
       `The question on step 'confirm' (gate '${ge}') can no longer be answered: its time is up — call advance_run to carry out its declared settle_default.`,
     );
@@ -1458,9 +1560,8 @@ describe('#625 PR-2a, C163 — tools.md: start_run, start_run_batch, submit_huma
       choice: 'approve',
     });
     expect(String(n['context_hint'])).toContain('No question is open on this run.');
-    expect(n['agent_action']).toBe(
-      next(n).length === 0 ? 'report_to_user' : 'resolve_precondition',
-    );
+    // #729 PR-0 (A-2 row 6): the gate-mismatch error's fixed action word, whatever next_actions holds.
+    expect(n['agent_action']).toBe('report_to_user');
   });
 
   it('C163 submit_human_response: an answer the expiry settled another choice for — report_to_user, the hint says what the run owes, next_actions holds it; the line names the tool', async () => {
@@ -2021,7 +2122,7 @@ describe('#625 PR-2a, C163 — tools.md: each tool and case a sentence names tha
   it('C163 submit_human_response: a gate ID that is not the open one with nothing to offer — report_to_user, No question is open on this run.', async () => {
     claim(
       'mcp/tools.md',
-      'and its `agent_action` is `resolve_precondition` (`report_to_user` when `next_actions` is empty).',
+      'and its `agent_action` is `report_to_user` (version 0.47.0 said `resolve_precondition` when `next_actions` named something).',
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(STUCK);
@@ -2276,11 +2377,11 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
   it('C171, W4-Y2: repeating the choice the question’s expiry recorded says it was settled by timeout, as the CLI does; a person’s recorded choice repeated still says already resolved', async () => {
     claim(
       'mcp/tools.md',
-      'or, when the question\'s expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.` with `answer_recorded: false` and `error_details` carrying `resolved_by: "timeout"`.',
+      'or, when the question\'s expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.` with `answer_recorded: false` and `outcome` carrying `by: { "kind": "timeout" }`.',
     );
     claim(
       'mcp/tools.md',
-      "(`… was already resolved with choice '<c>' — no action was taken.`, or the expiry's sentence when the question's expiry recorded it).",
+      "`ok` without `agent_action` when it repeats the choice its gate recorded: `Gate '<gate>' was already resolved with choice '<c>' — no action was taken.`, or, when the question's expiry recorded that choice, `the outcome matches your choice, but it was settled by timeout; your response was not recorded.`",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r21-exp', 'settle_default'));
@@ -2295,18 +2396,22 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     });
     // (a) red when the repeat reads as a person's recorded answer, or (decision C185) its fields do
     //     not say the expiry chose it; (b) prints it.
+    const outcome = r['outcome'] as { choice?: string; by?: unknown } | undefined;
     expect([
       r['status'],
       'agent_action' in r,
       r['answer_recorded'],
       r['context_hint'],
+      // #729 PR-0 (P-3, A-16; D-H): what decided the question is `outcome`, not `error_details`.
+      { choice: outcome?.choice, by: outcome?.by },
       r['error_details'],
     ]).toEqual([
       'ok',
       false,
       false,
       'the outcome matches your choice, but it was settled by timeout; your response was not recorded.',
-      { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
+      { choice: 'approve', by: { kind: 'timeout' } },
+      undefined,
     ]);
     const { call: c2, runId: done, gateId: g2 } = await endedRun();
     const human = await c2('submit_human_response', {
@@ -2321,27 +2426,44 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
   });
 
   const CANNOT_READ_MCP =
-    'A run whose record the store cannot read (a file that is not JSON, an I/O error) is refused by `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` with `ENGINE_STORE_FAILED` and `agent_action: "stop"`, naming the cause — `Failed to load run from store: <its message>` — as the library answers it;';
+    'A run whose file the JSON store cannot read as a run (empty, not JSON, not a run record, holding another run, in the format of an earlier Realm, or not readable) is refused by every tool that reads it with that file\'s code: `RESOURCE_FORMAT_INVALID` or `ENGINE_STORE_FAILED` with `agent_action: "stop"`, or `STATE_LEGACY_FORMAT` with `report_to_user`.';
+  const UNTYPED_MCP =
+    'Any other failure is refused by `execute_step`, `submit_human_response`, `advance_run` and `get_run_state` with `ENGINE_STORE_FAILED`, naming the cause (`Failed to load run from store: <its message>`), as the library answers it;';
   it.each([
     ['execute_step', { command: 'a', params: {} }],
     ['submit_human_response', { gate_id: 'g', choice: 'x' }],
     ['advance_run', {}],
     ['get_run_state', {}],
   ] as const)(
-    'C172: %s on a record that is not JSON — ENGINE_STORE_FAILED naming the cause, stop',
+    'C172: %s on a run file that is not JSON — RESOURCE_FORMAT_INVALID naming the file, stop; an untyped failure — ENGINE_STORE_FAILED naming the cause',
     async (tool, args) => {
       claim('mcp/tools.md', CANNOT_READ_MCP);
-      const { call, dir } = await connect();
+      claim(
+        'mcp/tools.md',
+        'The message names the file and its way out, and never quotes the file.',
+      );
+      claim('mcp/tools.md', UNTYPED_MCP);
+      const { call, dir, runStore } = await connect();
       mkdirSync(join(dir, 'runs'), { recursive: true });
       writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
       const r = await call(tool, { run_id: 'broken', ...args });
-      // (a) red when the tool answers ENGINE_INTERNAL again, or drops the cause; (b) prints it.
+      // (a) red when the tool answers ENGINE_INTERNAL or the parser's text again, or drops the
+      //     file; (b) prints it.
       expect([r['status'], r['error_code'], r['agent_action']]).toEqual([
         'error',
-        'ENGINE_STORE_FAILED',
+        'RESOURCE_FORMAT_INVALID',
         'stop',
       ]);
-      expect((r['errors'] as string[])[0]).toMatch(/^Failed to load run from store: .*JSON/);
+      expect((r['errors'] as string[])[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. /);
+      runStore.get = async () => {
+        throw new Error('the disk is gone');
+      };
+      const u = await call(tool, { run_id: 'broken', ...args });
+      expect([u['status'], u['error_code'], (u['errors'] as string[])[0]]).toEqual([
+        'error',
+        'ENGINE_STORE_FAILED',
+        'Failed to load run from store: the disk is gone',
+      ]);
     },
   );
 
@@ -2349,18 +2471,27 @@ describe('#625 PR-2a, round 21 — C170, C171, C172 over a real MCP client', () 
     ['append_trace', { step_id: 'a', entries: [] }, 'ENGINE_INTERNAL'],
     ['abandon_run', {}, undefined],
   ] as const)(
-    'C172 (outside #706’s files, reported): %s on a record that is not JSON — the bare message',
+    'C172 (outside #706’s files, reported): %s on a run file that is not JSON — its code; on an untyped failure — the bare message',
     async (tool, args, code) => {
+      claim('mcp/tools.md', CANNOT_READ_MCP);
       claim(
         'mcp/tools.md',
-        '`append_trace` and `abandon_run` refuse it with the bare message: `append_trace` with `ENGINE_INTERNAL`, `abandon_run` with no code.',
+        '`append_trace` refuses it with `ENGINE_INTERNAL`, and `abandon_run` with no code',
       );
-      const { call, dir } = await connect();
+      const { call, dir, runStore } = await connect();
       mkdirSync(join(dir, 'runs'), { recursive: true });
       writeFileSync(join(dir, 'runs', 'broken.json'), '{not json');
       const r = await call(tool, { run_id: 'broken', ...args });
-      expect([r['status'], r['error_code']]).toEqual(['error', code]);
-      expect((r['errors'] as string[])[0]).not.toMatch(/^Failed to load run from store/);
+      // (a) red when the damaged file loses its code, or the untyped failure gains one; (b)
+      //     prints the replies.
+      expect([r['status'], r['error_code']]).toEqual(['error', 'RESOURCE_FORMAT_INVALID']);
+      expect((r['errors'] as string[])[0]).toMatch(/^The run file '.*broken\.json' is not JSON\. /);
+      runStore.get = async () => {
+        throw new Error('the disk is gone');
+      };
+      const u = await call(tool, { run_id: 'broken', ...args });
+      expect([u['status'], u['error_code']]).toEqual(['error', code]);
+      expect((u['errors'] as string[])[0]).not.toMatch(/^Failed to load run from store/);
     },
   );
 });
@@ -2412,11 +2543,15 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     async (_case, earlier) => {
       claim(
         'mcp/tools.md',
-        "For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry's write decided, a `context_hint` that is the expiry's sentence, and `error_details` with the choice the expiry recorded (`winning_choice`), `resolved_by: \"timeout\"`, when the question's time was up (`expired_at`) and how long before this call (`overdue_ms`, in milliseconds); the line in `warnings` says that lag too. When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
+        'For a gate that settles its default choice, the reply has `answer_recorded: false`, the guards that the expiry\'s write decided, a `context_hint` that is the expiry\'s sentence, `expiry` — the receipt: when the question\'s time was up (`expired_at`), how long before this call (`overdue.ms`, in milliseconds), and that this call carried it out — and `outcome`, the choice the expiry recorded with `by: { "kind": "timeout" }`; the line in `warnings` says that lag too.',
       );
       claim(
         'mcp/tools.md',
-        'An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `error_details` and what the run owes included. Neither has the expiry line in `warnings`; that call printed it.',
+        "When one of those guards ended the run, the guard's sentence follows it; when the run goes on, what the run owes follows it, as above.",
+      );
+      claim(
+        'mcp/tools.md',
+        'An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `outcome` and what the run owes included. Neither has the expiry line in `warnings`, nor `expiry`; that call printed it.',
       );
       const { call, workflowStore, runStore } = await connect();
       const id = `r23-same-${earlier ? 'earlier' : 'this'}`;
@@ -2451,28 +2586,34 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
         choice: 'approve',
       });
       const expiryLine = `gate '${gateId}' on 'confirm' had expired <lag> before this call — this submit_human_response call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: submit_human_response).`;
-      // (a) red when the same-choice reply has no `resolved_by`, its hint stops before what the run
-      //     owes, or the expiry line is in the wrong reply; (b) prints the reply's fields.
+      // (a) red when the same-choice reply does not say the timeout decided it, its hint stops before
+      //     what the run owes, or the expiry line or receipt is in the wrong reply; (b) prints the
+      //     reply's fields.
+      const outcome = r['outcome'] as { choice?: string; by?: unknown } | undefined;
+      const expiry = r['expiry'] as
+        { expired_at?: string; overdue?: { ms?: unknown }; by_this_call?: boolean } | undefined;
       expect({
         status: r['status'],
         recorded: r['answer_recorded'],
         details: r['error_details'],
+        outcome: { choice: outcome?.choice, by: outcome?.by },
+        expiry:
+          expiry === undefined
+            ? undefined
+            : [expiry.expired_at, typeof expiry.overdue?.ms, expiry.by_this_call],
         hint: r['context_hint'],
         next: next(r),
         expiryLine: ((lagless(r['warnings']) as string[]) ?? []).includes(expiryLine),
       }).toEqual({
         status: 'ok',
         recorded: false,
-        // F1: the answer that found the expired question open is told when its time was up and how
-        // late it is; the answer after an earlier call carried the expiry out finds no such question
-        // (the settled record no longer holds `expires_at`) and carries neither.
-        details: {
-          runId,
-          gateId,
-          winning_choice: 'approve',
-          resolved_by: 'timeout',
-          ...(earlier ? {} : { expired_at: expiresAt, overdue_ms: expect.any(Number) }),
-        },
+        // #729 PR-0 (T-2, D-G/D-H): no `error_details` on this ok reply; the timeout's choice is
+        // `outcome`; F1: the answer that found the expired question open carries the receipt (when
+        // its time was up, how late, by this call); the answer after an earlier call carried the
+        // expiry out finds no such question and carries none.
+        details: undefined,
+        outcome: { choice: 'approve', by: { kind: 'timeout' } },
+        expiry: earlier ? undefined : [expiresAt, 'number', true],
         hint: "the outcome matches your choice, but it was settled by timeout; your response was not recorded. Ready for the agent: 'write'.",
         next: ['execute_step:write'],
         expiryLine: !earlier,
@@ -2480,10 +2621,10 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     },
   );
 
-  it('C185: tools.md’s `error_details` row and its late same-choice example (the guard ends the run) are the reply, field by field', async () => {
+  it('C185: tools.md’s `expiry` and `outcome` rows and its late same-choice example (the guard ends the run) are the reply, field by field', async () => {
     claim(
       'mcp/tools.md',
-      "| `error_details` | On some errors, and on a late answer that names the choice the question's expiry recorded | Details that depend on the code, such as the schema rules that were broken; on a late answer that found the expired question still open, when its time was up (`expired_at`) and how long before the call (`overdue_ms`); on that late answer, the choice the expiry recorded and `resolved_by`. |",
+      "A late answer's expiry and the choice it recorded are in `expiry` and `outcome` (added after version 0.47.0, which carried `expired_at`, `overdue_ms`, the recorded choice and `resolved_by` here).",
     );
     const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
     const blocks = page.split(/^```[a-z]*\n/m).filter((_, i) => i % 2 === 1);
@@ -2530,18 +2671,22 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       choice: 'hold',
     });
     // F1: the reply's time facts are this run's — the question's own `expires_at`, a lag in
-    // milliseconds, and the warning's lag written from it; then the page's values stand in for them.
-    const got = r['error_details'] as Reply;
-    const shown = example['error_details'] as Reply;
+    // milliseconds, the outcome's moment, and the warning's lag written from it; then the page's
+    // values stand in for them. #729 PR-0 (T-2, P-3): they are `expiry` and `outcome`.
+    type Receipt = { gate_id: string; expired_at: string; overdue: { ms: number } };
+    const got = r['expiry'] as Receipt;
+    const shown = example['expiry'] as Receipt;
+    const gotAt = String((r['outcome'] as { at?: string }).at);
+    const shownAt = String((example['outcome'] as { at?: string }).at);
     const lagOf = (w: unknown) => /had expired (.+?) before this call/.exec(String(w))?.[1];
-    // (a) red when the reply's `expired_at` is not the question's, `overdue_ms` is missing, or the
-    //     warning's lag is not `overdue_ms` written by the one formatter; (b) prints the three.
+    // (a) red when the receipt's `expired_at` is not the question's, its lag is missing, or the
+    //     warning's lag is not the receipt's written by the one formatter; (b) prints the three.
     expect({
-      expired_at: got['expired_at'],
+      expired_at: got.expired_at,
       lag: lagOf((r['warnings'] as string[])[0]),
     }).toEqual({
       expired_at: expiresAt,
-      lag: typeof got['overdue_ms'] === 'number' ? formatDuration(got['overdue_ms']) : '<none>',
+      lag: typeof got.overdue.ms === 'number' ? formatDuration(got.overdue.ms) : '<none>',
     });
     const ids = (v: unknown) =>
       JSON.parse(
@@ -2549,13 +2694,12 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
           .split(runId)
           .join(String(example['run_id']))
           .split(gateId)
-          .join(String(shown['gateId']))
-          .split(String(got['expired_at']))
-          .join(String(shown['expired_at']))
-          .replace(
-            `"overdue_ms":${String(got['overdue_ms'])}`,
-            `"overdue_ms":${String(shown['overdue_ms'])}`,
-          )
+          .join(shown.gate_id)
+          .split(got.expired_at)
+          .join(shown.expired_at)
+          .split(gotAt)
+          .join(shownAt)
+          .replace(`"overdue":{"ms":${got.overdue.ms}}`, `"overdue":{"ms":${shown.overdue.ms}}`)
           .replace(
             `had expired ${String(lagOf((r['warnings'] as string[])[0]))} before this call`,
             `had expired ${String(lagOf((example['warnings'] as string[])[0]))} before this call`,
@@ -2569,7 +2713,8 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       'guards',
       'ended_by',
       'answer_recorded',
-      'error_details',
+      'outcome',
+      'expiry',
     ] as const;
     // (a) red when the reply and the page's example differ in any field the example shows (the
     //     expiry line is compared as the example's first warning); (b) prints both.
@@ -2582,10 +2727,214 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
     });
   });
 
-  it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and error_details carries resolved_by; a person’s recorded choice is not', async () => {
+  /** The triage workflow of tools.md's examples: `classify`, then `draft`, whose answer opens a gate. */
+  const TRIAGE = [
+    'id: triage',
+    'name: triage',
+    'version: 1',
+    'steps:',
+    '  classify:',
+    '    description: Classify.',
+    '    execution: agent',
+    '  draft:',
+    '    description: Draft.',
+    '    execution: agent',
+    '    depends_on: [classify]',
+    '    trust: human_confirmed',
+    '    gate:',
+    '      choices: [send, discard]',
+    '',
+  ].join('\n');
+
+  /** The run of TRIAGE at its gate: the reply that opened it, and the ids the page stands in for. */
+  async function triageAtGate() {
+    const conn = await connect();
+    await conn.workflowStore.register(loadWorkflowFromString(TRIAGE));
+    const runId = (
+      await conn.call('start_run', { workflow_id: 'triage', params: { ticket: 101 } })
+    )['run_id'] as string;
+    await conn.call('execute_step', { run_id: runId, command: 'classify', params: {} });
+    const opened = await conn.call('execute_step', {
+      run_id: runId,
+      command: 'draft',
+      params: { reply: 'We have refunded the charge.' },
+    });
+    const gateId = (opened['gate'] as { gate_id: string }).gate_id;
+    return { ...conn, runId, gateId, opened };
+  }
+
+  it('#729 PR-0 correction (C1): tools.md\'s "A step with a gate" example is the opening reply, field by field — the hint says the pause only; the token rides the answer instruction alone', async () => {
     claim(
       'mcp/tools.md',
-      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `error_details`, `resolved_by: \"timeout\"` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `error_details` and what the run owes included. Neither has the expiry line in `warnings`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `error_details` have no `resolved_by`.",
+      `"context_hint": "Run is paused at gate '00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e'.",`,
+    );
+    const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
+    const found = page
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1)
+      .filter(
+        (b) => b.includes('"status": "confirm_required"') && b.includes('"step_name": "draft"'),
+      );
+    expect(found.length, 'the page has one "A step with a gate" example').toBe(1);
+    const example = JSON.parse(found[0]!.replace(/\n```[\s\S]*$/, '')) as Reply;
+    type Answer = { instruction: { params: Record<string, unknown> } };
+    const shownToken = String(
+      (example['next_actions'] as Answer[])[0]!.instruction.params['claim_token'],
+    );
+    const { runId, gateId, opened } = await triageAtGate();
+    const token = (opened['next_actions'] as Answer[] | undefined)?.[0]?.instruction.params[
+      'claim_token'
+    ];
+    // (a) red when the opening reply carries no token in its answer instruction; (b) prints a
+    //     boolean, never the token.
+    expect(
+      typeof token === 'string' && token !== '',
+      'the opening reply carries a claim token',
+    ).toBe(true);
+    // The run's ids and token replaced by the page's, so the comparison prints the page's stand-ins.
+    const ids = (v: unknown): unknown =>
+      v === undefined
+        ? v
+        : JSON.parse(
+            JSON.stringify(v)
+              .split(runId)
+              .join('7da561ee-5987-497d-83a5-1eded6dc9b63')
+              .split(gateId)
+              .join('00bb04f5-1bb7-4f38-91c5-14cdb17b3f0e')
+              .split(String(token))
+              .join(shownToken),
+          );
+    const fields = ['command', 'status', 'context_hint', 'run_phase', 'next_actions', 'gate'];
+    // (a) red when the reply and the page's example differ in any field the example shows — the
+    //     hint naming the choices again, the token leaving the answer instruction or riding `gate`;
+    //     (b) prints both, the run's ids and token put as the page's.
+    expect(Object.fromEntries(fields.map((f) => [f, ids(opened[f])]))).toEqual(
+      Object.fromEntries(fields.map((f) => [f, example[f]])),
+    );
+  });
+
+  it('#729 PR-0 correction (C2): tools.md — the opening reply alone carries the claim token, in both forms of the answer instruction, with its sentence; with no token, neither', async () => {
+    claim(
+      'mcp/tools.md',
+      "The reply that opens a gate carries the token of the claim that the opening call made on the gate's step, in both forms of the answer instruction, `instruction.params.claim_token` and `instruction.call_with.claim_token`, and the instruction's `human_readable` text says to pass it back.",
+    );
+    claim(
+      'mcp/tools.md',
+      'Up to version 0.47.0 it was also in `gate.claim_token`. When the store gave no token, the field and the sentence are left out. That reply is the only one that carries it. `get_run_state`, `realm run inspect` and every refusal leave it out.',
+    );
+    type Answer = {
+      instruction: {
+        tool: string;
+        params: Record<string, unknown>;
+        call_with: Record<string, unknown>;
+      };
+      human_readable: string;
+    };
+    const answerOf = (r: Record<string, unknown>) =>
+      ((r['next_actions'] as Answer[] | undefined) ?? []).find(
+        (n) => n.instruction?.tool === 'submit_human_response',
+      );
+    const SENTENCE = 'passing claim_token back unchanged';
+    const { call, runId, opened } = await triageAtGate();
+    const answer = answerOf(opened)!;
+    const token = String(answer.instruction.params['claim_token']);
+    const state = await call('get_run_state', { run_id: runId });
+    const refused = await call('submit_human_response', {
+      run_id: runId,
+      gate_id: 'not-the-open-gate',
+      choice: 'send',
+    });
+    expect(refused['status'], 'fixture: the answer naming another gate is refused').toBe('error');
+    // (a) red when the token leaves either form of the opening reply's answer, its sentence goes,
+    //     it rides `gate`, or get_run_state or a refusal carries it; (b) prints booleans only.
+    //     `realm run inspect` is cost-view-disclosure-parity.test.ts's "the claim token is withheld".
+    expect({
+      params: 'claim_token' in answer.instruction.params,
+      call_with: 'claim_token' in answer.instruction.call_with,
+      sentence: answer.human_readable.includes(SENTENCE),
+      gate: 'claim_token' in ((opened['gate'] as object | undefined) ?? {}),
+      state: JSON.stringify(state).includes(token),
+      refusal: JSON.stringify(refused).includes(token),
+    }).toEqual({
+      params: true,
+      call_with: true,
+      sentence: true,
+      gate: false,
+      state: false,
+      refusal: false,
+    });
+    // When the store gave no token: the opening reply's answer way carries no proof, and the one
+    // renderer leaves out both the field and the sentence.
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-docs-c2-')));
+    const def = loadWorkflowFromString(TRIAGE);
+    const { run } = await store.create({ workflowId: 'triage', workflowVersion: 1, params: {} });
+    await executeStep(store, def, {
+      runId: run.id,
+      command: 'classify',
+      input: {},
+      dispatcher: async () => ({}),
+    });
+    const lib = await executeStep(store, def, {
+      runId: run.id,
+      command: 'draft',
+      input: { reply: 'We have refunded the charge.' },
+      dispatcher: async () => ({}),
+    });
+    const noToken = {
+      ...lib,
+      ways: lib.ways.map((w) => {
+        if (w.verb !== 'respond') return w;
+        const { proof: _proof, ...rest } = w;
+        return rest;
+      }),
+    } as EngineReply;
+    const shape = (r: EngineReply) => {
+      const a = answerOf(renderReply(r).envelope as Record<string, unknown>)!;
+      return {
+        params: 'claim_token' in a.instruction.params,
+        call_with: 'claim_token' in a.instruction.call_with,
+        sentence: a.human_readable.includes(SENTENCE),
+      };
+    };
+    // (a) red when a reply with no token still prints the field or the sentence, or the control
+    //     (the same reply with its token) loses them; (b) prints booleans only.
+    expect({ withToken: shape(lib), noToken: shape(noToken) }).toEqual({
+      withToken: { params: true, call_with: true, sentence: true },
+      noToken: { params: false, call_with: false, sentence: false },
+    });
+  });
+
+  it('#729 PR-0 correction (C2): tools.md — abandon_run at an open question: the first line is errors[0], the second context_hint, as the page shows them', async () => {
+    claim(
+      'mcp/tools.md',
+      'The first line is `errors[0]`, the second `context_hint` (added after version 0.47.0, whose `errors[0]` carried both).',
+    );
+    const page = readFileSync(join(DOCS, 'mcp/tools.md'), 'utf8');
+    const found = page
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1)
+      .filter((b) => b.includes('it cannot be abandoned while its question is open'));
+    expect(found.length, 'the page has one block with the abandon refusal').toBe(1);
+    const shown = found[0]!
+      .replace(/\n```[\s\S]*$/, '')
+      .split('\n')
+      .filter((l) => l !== '');
+    const { call, runId, gateId } = await triageAtGate();
+    const r = await call('abandon_run', { run_id: runId });
+    // The page shortens the ids to their first group and an ellipsis.
+    const short = (t: unknown) =>
+      String(t).split(runId).join('7da561ee-…').split(gateId).join('00bb04f5-…');
+    // (a) red when errors[0] and context_hint are not the page's two lines (one carrying both, as
+    //     0.47.0 did, or the answer missing from the hint); (b) prints both, the ids shortened.
+    expect([short((r['errors'] as string[] | undefined)?.[0]), short(r['context_hint'])]).toEqual(
+      shown,
+    );
+  });
+
+  it('C178, W4-1: a different choice after an earlier call carried the expiry out is told the expiry chose — and outcome says the timeout (#729 PR-0); a person’s recorded choice says the answer', async () => {
+    claim(
+      'mcp/tools.md',
+      "When an earlier call carried the expiry out, an answer that names another choice is refused with the same words and the same `outcome`, `by: { \"kind\": \"timeout\" }` included: `Gate '<gate>' was settled by timeout with choice '<c>' — your choice '<other>' was not recorded.` An answer that names the choice the expiry recorded gets the `status: ok` reply above, its `outcome` and what the run owes included. Neither has the expiry line in `warnings`, nor `expiry`; that call printed it. A choice a person recorded first is refused with `Gate '<gate>' was already resolved with choice '<c>' — your choice '<other>' was not recorded.`, and its `outcome` says `by: { \"kind\": \"answer\", … }`.",
     );
     const { call, workflowStore, runStore } = await connect();
     await workflowStore.register(gated('r22-exp', 'settle_default'));
@@ -2599,19 +2948,25 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       choice: 'reject',
     });
     // (a) red when the refusal reads as a person's choice, or a program cannot tell from
-    //     error_details; (b) prints the reply.
+    //     `outcome`; (b) prints the reply.
+    const lateOutcome = late['outcome'] as { choice?: string; by?: unknown } | undefined;
     expect([
       late['error_code'],
       late['agent_action'],
       (late['errors'] as string[])[0],
       late['error_details'],
+      { choice: lateOutcome?.choice, by: lateOutcome?.by },
       late['answer_recorded'],
       ((late['warnings'] as string[] | undefined) ?? []).some((w) => w.includes('had expired')),
+      'expiry' in late,
     ]).toEqual([
       'STATE_BLOCKED',
       'report_to_user',
       `Gate '${gateId}' was settled by timeout with choice 'approve' — your choice 'reject' was not recorded.`,
-      { runId, gateId, winning_choice: 'approve', resolved_by: 'timeout' },
+      // Amendment 11: the moved facts leave `details`; what stays is the mint's own.
+      { runId, gateId },
+      { choice: 'approve', by: { kind: 'timeout' } },
+      false,
       false,
       false,
     ]);
@@ -2621,9 +2976,16 @@ describe('#625 PR-2a, round 22 — C177, C178 over a real MCP client', () => {
       gate_id: g2,
       choice: 'reject',
     });
-    expect([(person['errors'] as string[])[0], person['error_details']]).toEqual([
+    const personOutcome = person['outcome'] as
+      { choice?: string; by?: { kind?: string } } | undefined;
+    expect([
+      (person['errors'] as string[])[0],
+      person['error_details'],
+      [personOutcome?.choice, personOutcome?.by?.kind],
+    ]).toEqual([
       `Gate '${g2}' was already resolved with choice 'approve' — your choice 'reject' was not recorded.`,
-      { runId: done, gateId: g2, winning_choice: 'approve' },
+      { runId: done, gateId: g2 },
+      ['approve', 'answer'],
     ]);
   });
 });
@@ -2912,7 +3274,9 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
       workflowVersion: 1,
       params: {},
     });
-    const viaOwn = await call('execute_step', { run_id: own.id, command: 's', params: {} });
+    // #729 (the Q3 unit, E2 (a)): `s` is the engine's step — the call whose own step fails is the one
+    // that runs it, `advance_run` (an agent's execute_step naming it is refused, q3-729.test.ts).
+    const viaOwn = await call('advance_run', { run_id: own.id });
     // (a) red when a reply on the ended run lacks the way back in; (b) prints the hints.
     expect([
       started['context_hint'],
@@ -3091,6 +3455,243 @@ describe("#625 PR-2a, round 30 — C211 (the architect's addendum; walk c14 W2-2
       cleanup: { steps: ['tidy'], command: `realm run drain ${failed.id} --force` },
       waiting: ['z'],
       hint: `Run '${w.id}': nothing ran. Waiting on the question on step 'q' (choices: yes, no) — answer it with submit_human_response; 'z' waits for its answer.`,
+    });
+  });
+});
+
+// issue #729 (the Q3 unit, D1, D4, D8): tools.md's sentences about an `auto` step called by name —
+// each quoted, and the behaviour it states run over a real MCP client.
+describe('#729 Q3 — tools.md: an automatic step called by name is the engine’s', () => {
+  const q3 = (id: string, extra: WorkflowDefinition['steps']): WorkflowDefinition =>
+    ({
+      id,
+      name: id,
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { a: { description: 'A.', execution: 'agent', depends_on: [] }, ...extra },
+    }) as WorkflowDefinition;
+  /** A run with the agent step `a` answered through the library (no chain): what follows waits. */
+  async function answered(
+    c: Awaited<ReturnType<typeof connect>>,
+    d: WorkflowDefinition,
+  ): Promise<string> {
+    await c.workflowStore.register(d);
+    const { run } = await c.runStore.create({ workflowId: d.id, workflowVersion: 1, params: {} });
+    await executeStep(c.runStore, d, {
+      runId: run.id,
+      command: 'a',
+      input: {},
+      dispatcher: async () => ({ fromA: 1 }),
+    });
+    return run.id;
+  }
+
+  it('D1: an auto step the engine could run, called by name — blocked, the engine’s sentence, what it owes and advance_run; advance_run runs it with the engine’s input', async () => {
+    claim(
+      'mcp/tools.md',
+      "An `auto` step called by name that the engine could run — nothing refuses it before its claim — is not run on your call: the reply is `blocked`, `context_hint` begins `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.` and goes on to what the engine owes and the call to make (`Owed to the engine: … — call advance_run; …`), `next_actions` holds `advance_run` and `agent_action` is `resolve_precondition`.",
+    );
+    claim(
+      'mcp/tools.md',
+      "`advance_run` runs the step with the engine's input — what its `input_map` builds; else the run's params (a step with no `depends_on`) or an empty input (a step with `depends_on`) — never with your `params`. Added after version 0.47.0, which ran the step with your `params` as its input.",
+    );
+    const c = await connect();
+    const runId = await answered(
+      c,
+      q3('q3-d1', { b: { description: 'B.', execution: 'auto', depends_on: ['a'] } }),
+    );
+    const r = await c.call('execute_step', {
+      run_id: runId,
+      command: 'b',
+      params: { mine: 'AGENT' },
+    });
+    await c.call('advance_run', { run_id: runId });
+    const after = await c.runStore.get(runId);
+    const b = after.evidence.find((e) => e.step_id === 'b');
+    // (a) red when the step runs on the call, the hint or routing differ, or advance_run runs it on
+    //     the caller's params; (b) prints the fields and whether the params reached the record.
+    expect({
+      status: r['status'],
+      hint: r['context_hint'],
+      next: next(r),
+      action: r['agent_action'],
+      ran: after.completed_steps.includes('b'),
+      source: b?.output_source,
+      params: JSON.stringify(after.evidence).includes('AGENT'),
+    }).toEqual({
+      status: 'blocked',
+      hint: "Step 'b' cannot be called now: it is an automatic step: the engine runs it when it is owed. Owed to the engine: 'b' — call advance_run.",
+      next: ['advance_run:'],
+      action: 'resolve_precondition',
+      ran: true,
+      source: 'dependency',
+      params: false,
+    });
+    // A handler step WITH `depends_on` (#729 Q3 correction 1, C6): the engine gives it an EMPTY
+    // input — not its dependency's output, never the caller's params.
+    const seen: Array<Record<string, unknown>> = [];
+    const registry = new ExtensionRegistry();
+    registry.register('handler', 'h', {
+      id: 'h',
+      execute: async (input: { params: Record<string, unknown> }) => {
+        seen.push(input.params);
+        return { data: { ok: true } };
+      },
+    } as never);
+    const ch = await connect(registry);
+    const handlerRun = await answered(
+      ch,
+      q3('q3-d1-u', {
+        u: { description: 'U.', execution: 'auto', depends_on: ['a'], handler: 'h' },
+      }),
+    );
+    await ch.call('execute_step', { run_id: handlerRun, command: 'u', params: { mine: 'AGENT' } });
+    await ch.call('advance_run', { run_id: handlerRun });
+    // (a) red when the handler receives its dependency's output or the caller's params; (b) prints
+    //     the input's key names and whether the step completed.
+    expect({
+      inputKeys: seen.map((p) => Object.keys(p)),
+      ran: (await ch.runStore.get(handlerRun)).completed_steps.includes('u'),
+    }).toEqual({ inputKeys: [[]], ran: true });
+  });
+
+  // pre-Q3c1 title: 'D1: an auto step this server cannot run, called by name — nothing to call,
+  // report_to_user, the capability words; nothing claimed, no capability block recorded'
+  it('D1: an auto step this server cannot run, called by name — the capability words, nothing claimed, no capability block; next_actions names what else can be called (an agent step, advance_run), else nothing and report_to_user', async () => {
+    claim(
+      'mcp/tools.md',
+      "When this server cannot run the step (its handler or adapter is not loaded here), the hint ends with `'<step>' cannot run here (capability): …`, nothing is claimed and no capability block is recorded by your call; `next_actions` names what else can be called — an agent step that is ready, or `advance_run` when the engine owes a step it can run — and is empty, with `agent_action: report_to_user`, when nothing can be.",
+    );
+    const c = await connect();
+    const runId = await answered(
+      c,
+      q3('q3-d1-k', {
+        k: { description: 'K.', execution: 'auto', depends_on: ['a'], handler: 'missing' },
+      }),
+    );
+    const before = await c.runStore.get(runId);
+    const r = await c.call('execute_step', { run_id: runId, command: 'k', params: {} });
+    const after = await c.runStore.get(runId);
+    // (a) red when the call claims the step or records the block, or names a call; (b) prints them.
+    expect({
+      next: next(r),
+      action: r['agent_action'],
+      ends: String(r['context_hint']).includes("'k' cannot run here (capability): "),
+      written: [after.version === before.version, Object.keys(after.capability_blocks ?? {})],
+    }).toEqual({ next: [], action: 'report_to_user', ends: true, written: [true, []] });
+    // Beside a ready agent step, and beside an owed step the engine can run (#729 Q3 correction 1,
+    // C4; the audit's probe2): next_actions names the call, the routing leads on, and the hint still
+    // ends with the capability words.
+    const besideAgent = await answered(
+      c,
+      q3('q3-d1-k-agent', {
+        k: { description: 'K.', execution: 'auto', depends_on: ['a'], handler: 'missing' },
+        second: { description: 'Second.', execution: 'agent', depends_on: ['a'] },
+      }),
+    );
+    const ra = await c.call('execute_step', { run_id: besideAgent, command: 'k', params: {} });
+    const besideOwed = await answered(
+      c,
+      q3('q3-d1-k-owed', {
+        k: { description: 'K.', execution: 'auto', depends_on: ['a'], handler: 'missing' },
+        u: { description: 'U.', execution: 'auto', depends_on: ['a'] },
+      }),
+    );
+    const ro = await c.call('execute_step', { run_id: besideOwed, command: 'k', params: {} });
+    // (a) red when either reply names nothing to call or routes to report_to_user, or its hint drops
+    //     the step it can call or the capability words; (b) prints the calls, actions and hints.
+    expect({
+      agent: [
+        next(ra),
+        ra['agent_action'],
+        String(ra['context_hint']).includes("'second'"),
+        String(ra['context_hint']).includes("'k' cannot run here (capability): "),
+      ],
+      owed: [
+        next(ro),
+        ro['agent_action'],
+        String(ro['context_hint']).includes(
+          "Owed to the engine: 'u' — call advance_run. 'k' cannot run here (capability): ",
+        ),
+      ],
+    }).toEqual({
+      agent: [['execute_step:second'], 'resolve_precondition', true, true],
+      owed: [['advance_run:'], 'resolve_precondition', true],
+    });
+  });
+
+  it("D4: execute_step submits the assistant's answer to an agent step", async () => {
+    claim(
+      'mcp/tools.md',
+      "| [`execute_step`](#execute_step)                   | Submits the assistant's answer to an agent step.",
+    );
+    const c = await connect();
+    const d = q3('q3-d4', { b: { description: 'B.', execution: 'auto', depends_on: [] } });
+    await c.workflowStore.register(d);
+    const batch = await c.call('start_run_batch', { workflow_id: d.id, items: [{ params: {} }] });
+    const runId = (batch['started'] as Array<{ run_id: string }>)[0]!.run_id;
+    const answer = await c.call('execute_step', {
+      run_id: runId,
+      command: 'a',
+      params: { said: 1 },
+    });
+    const fresh = (await c.call('start_run_batch', { workflow_id: d.id, items: [{ params: {} }] }))[
+      'started'
+    ] as Array<{ run_id: string }>;
+    const engineStep = await c.call('execute_step', {
+      run_id: fresh[0]!.run_id,
+      command: 'b',
+      params: {},
+    });
+    // (a) red when an agent step's answer is not recorded, or an engine step is run by it; (b)
+    //     prints the statuses and what completed.
+    expect({
+      answer: [answer['status'], (await c.runStore.get(runId)).completed_steps.includes('a')],
+      engineStep: engineStep['status'],
+    }).toEqual({ answer: ['ok', true], engineStep: 'blocked' });
+  });
+
+  it('D8: a batch run waits for its first call — execute_step on an agent step, advance_run on an auto step that is ready', async () => {
+    claim(
+      'mcp/tools.md',
+      'each run waits for its first call — `execute_step` on an agent step, `advance_run` on an `auto` step that is ready — or for a driver.',
+    );
+    const c = await connect();
+    const autoFirst: WorkflowDefinition = {
+      id: 'q3-d8',
+      name: 'q3-d8',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { s: { description: 'S.', execution: 'auto', depends_on: [] } },
+    } as WorkflowDefinition;
+    await c.workflowStore.register(autoFirst);
+    const agentFirst = q3('q3-d8-agent', {});
+    await c.workflowStore.register(agentFirst);
+    const batch = await c.call('start_run_batch', {
+      workflow_id: autoFirst.id,
+      items: [{ params: {} }],
+    });
+    const entry = (batch['started'] as Reply[])[0]!;
+    const runId = entry['run_id'] as string;
+    const named = await c.call('execute_step', { run_id: runId, command: 's', params: {} });
+    await c.call('advance_run', { run_id: runId });
+    const agentBatch = await c.call('start_run_batch', {
+      workflow_id: agentFirst.id,
+      items: [{ params: {} }],
+    });
+    // (a) red when the batch run's first call is not advance_run for a ready auto step (or
+    //     execute_step for an agent step), execute_step runs the auto step, or advance_run does not;
+    //     (b) prints the calls named, the status and what ran.
+    expect({
+      first: next(entry),
+      named: named['status'],
+      ran: (await c.runStore.get(runId)).completed_steps,
+      agentFirst: next((agentBatch['started'] as Reply[])[0]!),
+    }).toEqual({
+      first: ['advance_run:'],
+      named: 'blocked',
+      ran: ['s'],
+      agentFirst: ['execute_step:a'],
     });
   });
 });

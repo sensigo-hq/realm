@@ -1,22 +1,20 @@
-// cannot-go-on-625.test.ts — issue #625 PR-2a, decisions C62 and C64: the one composer of what an
-// operator surface prints when a run cannot go on from here (`cannotGoOnLines`), its state
-// (`cannotGoOnHere`), and the capability marker's way out (`capabilityMarkerWayOut`). `realm run
-// respond`, `realm run drain`, `realm run resume`, `realm listen`'s sweeper and `realm workflow run`
-// print these lines; none composes its own. Whole-message pins for every branch, and a control for
-// each condition of the state.
+// cannot-go-on-625.test.ts — issue #625 PR-2a, decisions C62 and C64: WHEN a run cannot go on from
+// here. #729 PR-0: the state is core's one predicate over the ways (`cannotGoOnFrom`, with
+// `cannotGoOnUntilCorrected` for a step refused before its claim); the lines an operator surface
+// prints for it are the CLI door's (`cannotGoOnLines`, pinned whole in cli's ways-renderer.test.ts).
+// A cell per branch, and a control for each condition of the state.
 import { describe, it, expect } from 'vitest';
 import { mkdtemp as mkdtempP, rm as rmP } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import {
-  cannotGoOnHere,
-  cannotGoOnLines,
-  cannotRunWayOutApplies,
-  capabilityMarkerWayOut,
-  describePending,
-  type PendingView,
-} from './pending.js';
+  cannotGoOnFrom,
+  cannotGoOnUntilCorrected,
+  composeWaysAt,
+  type ComposedWays,
+  type Unavailable,
+} from './ways.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
@@ -50,36 +48,51 @@ const missing: StepDefinition = {
   depends_on: [],
   handler: 'missing_h',
 };
-const INPUT =
-  "'x' cannot run (input_schema): Invalid input for step 'x': the input must have required property 'n'.";
-// F15: `x` is refused for its input and has no `depends_on` (the engine gives it the run's params):
-// its own way out, then the run's once. Before F15 the line said "correct the workflow" for it.
-const wayOut = (id: string): string =>
-  `Run ${id} stays open (phase 'running'): for 'x', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, realm run advance ${id} — or end it: realm run abandon ${id}`;
-/** F15: the workflow the way out reads (`x`'s `depends_on`). */
-const ALL = def({ x: needsN, y: missing });
 
-describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
-  it('a refusal before the claim: each step that cannot run, then the way out (correct the workflow)', async () => {
+/** The ways of `run` under `d`, judged with an empty registry (this program) or none (an observer). */
+const ways = (run: RunRecord, d: WorkflowDefinition, registry?: ExtensionRegistry): ComposedWays =>
+  composeWaysAt(run, new Date(), {
+    definition: d,
+    ...(registry !== undefined ? { registry } : {}),
+  });
+
+/** Both predicates, and the codes of the steps that cannot run, in one object. */
+const state = (composed: ComposedWays) => ({
+  here: cannotGoOnFrom(composed),
+  corrected: cannotGoOnUntilCorrected(composed),
+  cannot_run: composed.unavailable
+    .filter(
+      (u) =>
+        u.verb === 'run_step' &&
+        (u.code === 'refused_before_claim' || u.code === 'capability_missing'),
+    )
+    .map((u) => `${u.step}:${u.code}`),
+});
+
+describe('#625 PR-2a, C64 — when a run cannot go on from here (the one predicate)', () => {
+  it('a refusal before the claim: the state, and it waits on a corrected workflow', async () => {
     await withRun(async (run) => {
-      const view = describePending(def({ x: needsN }), run, new ExtensionRegistry(), new Date());
-      expect(cannotGoOnHere(run, view)).toBe(true);
-      expect(cannotGoOnLines(run, view, ALL)).toEqual([INPUT, wayOut(run.id)]);
+      // (a) red when a step refused before its claim does not make the state; (b) prints it.
+      expect(state(ways(run, def({ x: needsN }), new ExtensionRegistry()))).toEqual({
+        here: true,
+        corrected: true,
+        cannot_run: ['x:refused_before_claim'],
+      });
     });
   });
 
-  it('a capability refusal alone (judged with a registry): the step with its own way out, then the alternative (abandon)', async () => {
+  it('a capability refusal alone (judged with a registry): the state, but not a corrected workflow — another runner can run it', async () => {
     await withRun(async (run) => {
-      const view = describePending(def({ y: missing }), run, new ExtensionRegistry(), new Date());
-      expect(cannotRunWayOutApplies(run, view)).toBe(false);
-      expect(cannotGoOnLines(run, view, ALL)).toEqual([
-        "'y' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-        `To end the run instead: realm run abandon ${run.id}`,
-      ]);
+      // (a) red when a capability counts as a refusal the workflow must correct; (b) prints it.
+      expect(state(ways(run, def({ y: missing }), new ExtensionRegistry()))).toEqual({
+        here: true,
+        corrected: false,
+        cannot_run: ['y:capability_missing'],
+      });
     });
   });
 
-  it("a capability refusal judged from the run's marker (no registry): the past tense, the marker's way out, then the alternative", async () => {
+  it("a capability refusal judged from the run's marker (no registry): the state", async () => {
     await withRun(async (run) => {
       const marked: RunRecord = {
         ...run,
@@ -91,105 +104,86 @@ describe('#625 PR-2a, C64 — cannotGoOnLines, the one composer', () => {
           },
         },
       };
-      const view = describePending(def({ y: missing }), marked, undefined, new Date());
-      expect(cannotGoOnLines(marked, view, ALL)).toEqual([
-        `'y' could not run (capability): handler 'missing_h' was not registered in the runner that last attempted it — from a program that has it: realm run advance ${run.id}`,
-        `To end the run instead: realm run abandon ${run.id}`,
-      ]);
-      expect(capabilityMarkerWayOut(run.id)).toBe(
-        ` — from a program that has it: realm run advance ${run.id}`,
-      );
-    });
-  });
-
-  it('both: a refusal before the claim and a capability refusal — both steps, then the way out that corrects the workflow', async () => {
-    await withRun(async (run) => {
-      const view = describePending(
-        def({ x: needsN, y: missing }),
-        run,
-        new ExtensionRegistry(),
-        new Date(),
-      );
-      expect(cannotGoOnLines(run, view, ALL)).toEqual([
-        INPUT,
-        "'y' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-        wayOut(run.id),
-      ]);
-    });
-  });
-
-  it('controls — the run can go on: an agent step ready, the act present, a step in flight, a question open, a terminal run: no lines', async () => {
-    await withRun(async (run) => {
-      const withAgent = describePending(
-        def({ x: needsN, a: { description: 'A', execution: 'agent', depends_on: [] } }),
-        run,
-        new ExtensionRegistry(),
-        new Date(),
-      );
-      expect(cannotGoOnLines(run, withAgent, ALL)).toEqual([]);
-      const withAct = describePending(
-        def({ x: needsN, b: { description: 'B', execution: 'auto', depends_on: [] } }),
-        run,
-        new ExtensionRegistry(),
-        new Date(),
-      );
-      expect(withAct.act).toBeDefined();
-      expect(cannotGoOnLines(run, withAct, ALL)).toEqual([]);
-      const stuck: PendingView = describePending(
-        def({ x: needsN }),
-        run,
-        new ExtensionRegistry(),
-        new Date(),
-      );
-      expect(cannotGoOnLines({ ...run, in_progress_steps: ['z'] }, stuck, ALL)).toEqual([]);
-      expect(
-        cannotGoOnLines(
-          { ...run, pending_gate: { gate_id: 'g' } } as unknown as RunRecord,
-          stuck,
-          ALL,
-        ),
-      ).toEqual([]);
-      expect(cannotGoOnLines({ ...run, terminal_state: true } as RunRecord, stuck, ALL)).toEqual(
-        [],
-      );
-      expect(cannotGoOnLines(run, stuck, ALL)).toEqual([INPUT, wayOut(run.id)]);
-    });
-  });
-
-  it('C71 — a live run with no question, no act, no agent step ready, nothing in flight and no engine step that cannot run (#537’s structurally dead run): not this state, no lines', async () => {
-    await withRun(async (run) => {
-      // Hand-built: the view of a run where nothing is eligible and nothing is refused. Every other
-      // conjunct of `cannotGoOnHere` holds here, so only "an engine step cannot run" decides it.
-      const nothing: PendingView = {
-        agent_actions: [],
-        agent_steps: [],
-        agent_refused: [],
-        pending_guards: [],
-        engine_runnable: [],
-        cannot_run: [],
-      };
-      // (a) red when `cannotGoOnHere` drops its last conjunct (every surface would then print a
-      //     bare "To end the run instead" with no reason); (b) prints the boolean and the lines.
-      expect({
-        here: cannotGoOnHere(run, nothing),
-        lines: cannotGoOnLines(run, nothing, ALL),
-      }).toEqual({
-        here: false,
-        lines: [],
+      const composed = ways(marked, def({ y: missing }));
+      expect(state(composed)).toEqual({
+        here: true,
+        corrected: false,
+        cannot_run: ['y:capability_missing'],
       });
-      // Not vacuous: the same run with one step that cannot run IS the state.
-      const refusedX = {
-        step: 'x',
-        runnable_here: false as const,
-        refused_by: 'precondition' as const,
-        refusal: 'no',
-      };
-      const oneRefused: PendingView = {
-        ...nothing,
-        engine_runnable: [refusedX],
-        cannot_run: [refusedX],
-      };
-      expect(cannotGoOnHere(run, oneRefused)).toBe(true);
+      // (a) red when the marker's basis is lost; (b) prints the basis.
+      const entry = composed.unavailable.find((u) => u.code === 'capability_missing');
+      expect(entry?.code === 'capability_missing' ? entry.facts.basis : undefined).toBe('marker');
     });
+  });
+
+  it('both: a refusal before the claim and a capability refusal — the state, waiting on a corrected workflow', async () => {
+    await withRun(async (run) => {
+      expect(state(ways(run, def({ x: needsN, y: missing }), new ExtensionRegistry()))).toEqual({
+        here: true,
+        corrected: true,
+        cannot_run: ['x:refused_before_claim', 'y:capability_missing'],
+      });
+    });
+  });
+
+  it('controls — the run can go on: an agent step ready, the act present, a step in flight, a question open, a terminal run: not the state', async () => {
+    await withRun(async (run) => {
+      const registry = new ExtensionRegistry();
+      const withAgent = def({
+        x: needsN,
+        a: { description: 'A', execution: 'agent', depends_on: [] },
+      });
+      expect(cannotGoOnFrom(ways(run, withAgent, registry))).toBe(false);
+      const withAct = def({
+        x: needsN,
+        b: { description: 'B', execution: 'auto', depends_on: [] },
+      });
+      const act = ways(run, withAct, registry);
+      expect(act.ways.some((w) => w.verb === 'advance')).toBe(true);
+      expect(cannotGoOnFrom(act)).toBe(false);
+      const stuck = def({ x: needsN });
+      expect(cannotGoOnFrom(ways({ ...run, in_progress_steps: ['x'] }, stuck, registry))).toBe(
+        false,
+      );
+      const atQuestion = {
+        ...run,
+        pending_gate: {
+          gate_id: 'g',
+          step_name: 'x',
+          choices: ['approve'],
+          opened_at: '2026-10-05T00:00:00.000Z',
+        },
+      } as unknown as RunRecord;
+      expect(cannotGoOnFrom(ways(atQuestion, stuck, registry))).toBe(false);
+      expect(
+        cannotGoOnFrom(ways({ ...run, terminal_state: true } as RunRecord, stuck, registry)),
+      ).toBe(false);
+      // Not vacuous: the same run, nothing else, IS the state.
+      expect(cannotGoOnFrom(ways(run, stuck, registry))).toBe(true);
+    });
+  });
+
+  it('C71 — a live run with no question, no act, no agent step ready, nothing in flight and no engine step that cannot run (#537’s structurally dead run): not this state', () => {
+    // Hand-built: ways where nothing is offered but reading and ending, and nothing is refused. Every
+    // other conjunct of `cannotGoOnFrom` holds here, so only "a step cannot run" decides it.
+    const nothing: Pick<ComposedWays, 'ways' | 'unavailable'> = {
+      ways: [
+        { verb: 'inspect', conditions: [], run_id: 'r' },
+        { verb: 'abandon', conditions: [], run_id: 'r' },
+      ],
+      unavailable: [],
+    };
+    // (a) red when `cannotGoOnFrom` drops its last conjunct (every surface would then print a bare
+    //     "To end the run instead" with no reason); (b) prints the boolean.
+    expect(cannotGoOnFrom(nothing)).toBe(false);
+    // Not vacuous: the same ways with one step that cannot run IS the state.
+    const refusedX: Unavailable = {
+      verb: 'run_step',
+      step: 'x',
+      code: 'refused_before_claim',
+      facts: { step: 'x', check: 'precondition', refusal: 'no' },
+      remedy: [],
+    };
+    expect(cannotGoOnFrom({ ...nothing, unavailable: [refusedX] })).toBe(true);
   });
 });

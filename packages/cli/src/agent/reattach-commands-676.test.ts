@@ -16,7 +16,7 @@ import {
   JsonFileStore,
   JsonWorkflowStore,
 } from '@sensigo/realm';
-import type { RunRecord, WorkflowDefinition } from '@sensigo/realm';
+import type { PendingView, RunRecord, WorkflowDefinition } from '@sensigo/realm';
 import { runAgent } from './run-agent.js';
 import type { AgentDeps } from './run-agent.js';
 import { LlmProvider } from './providers/llm-provider.js';
@@ -82,7 +82,7 @@ describe('realm run resume prints the model flags to fill in (issue #676)', () =
       // (a) red when that line is dropped or reworded; (b) prints the line after "Drive it with:".
       const lines = printed.join('\n').split('\n');
       expect(lines[lines.indexOf(line!) + 1]).toBe(
-        `Add the other flags the run was driven with, such as --extensions-module or --project (realm run inspect ${run.id} shows the extension module the run loaded).`,
+        `Add the other flags the run was driven with, such as --extensions-module, --project or --prompt-cache (realm run inspect ${run.id} shows the extension module the run loaded, and, where it recorded them, the model and caching setting of each request).`,
       );
     } finally {
       if (savedHome === undefined) delete process.env['HOME'];
@@ -109,16 +109,17 @@ describe('the dev-run detach map prints the model flags to fill in (issue #676)'
       updated_at: '2026-09-01T00:00:00.000Z',
     } as unknown as RunRecord;
     // decision C202: the map offers the drive where an agent step is ready — here, the step asked for.
-    const agentReady = {
+    const agentReady: { pending: PendingView; workflow: WorkflowDefinition } = {
       pending: {
-        agent_actions: [],
+        owed: [],
         agent_steps: ['summarise'],
         agent_refused: [],
         pending_guards: [],
         engine_runnable: [],
         cannot_run: [],
       },
-      workflow: { steps: {} },
+      // #729 PR-0: the map composes the run's ways from the whole definition.
+      workflow: { id: 'wf', name: 'wf', version: 1, steps: {} } as unknown as WorkflowDefinition,
     };
     const line = renderDetachMap(record, 'summarise', agentReady)
       .split('\n')
@@ -284,6 +285,130 @@ describe('buildReattachFlags (issue #676)', () => {
   it('a value with a space is single-quoted', () => {
     expect(buildReattachFlags({ providerModule: './my providers/p.mjs' })).toBe(
       "--provider-module './my providers/p.mjs'",
+    );
+  });
+
+  // issue #600 PR 2 (C6, G22). (a) red when a given value is not repeated, or lands before
+  // --mint-writer-nonce; (b) prints the flags.
+  it('--prompt-cache, when given, is repeated after --mint-writer-nonce; never when not given', () => {
+    expect(buildReattachFlags({ model: 'm', mintWriterNonce: true, promptCache: 'long' })).toBe(
+      '--model m --mint-writer-nonce --prompt-cache long',
+    );
+    expect(buildReattachFlags({ model: 'm' })).toBe('--model m');
+    // The hidden flags are never printed, whatever the options carry.
+    const opts = {
+      model: 'm',
+      spawnedByListen: true,
+      releaseLineAdvisory: false,
+    } as unknown as Parameters<typeof buildReattachFlags>[0];
+    expect(buildReattachFlags(opts)).toBe('--model m');
+  });
+});
+
+// #729 PR-0 (RE-CUT; caching PR 2's R6-1): the prompt-cache rule lives INSIDE the one builder — the
+// caller says only where the setting came from and whether the provider applies it.
+describe('#729 PR-0 — buildReattachFlags owns the prompt-cache rule', () => {
+  it('a stated setting the provider applies is repeated; a default, or one the provider cannot apply, never is', () => {
+    // (a) red when the rule is left at a caller (the builder repeats whatever it is given); (b)
+    //     prints the three flag strings.
+    expect([
+      buildReattachFlags({
+        model: 'm',
+        promptCache: 'long',
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: true,
+      }),
+      buildReattachFlags({
+        model: 'm',
+        promptCache: 'long',
+        promptCacheSource: 'default',
+        providerAppliesPromptCache: true,
+      }),
+      buildReattachFlags({
+        model: 'm',
+        promptCache: 'long',
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: false,
+      }),
+    ]).toEqual(['--model m --prompt-cache long', '--model m', '--model m']);
+  });
+
+  // Cell 9 (the lifetime unit), called as the command calls it — its parsed options spread, a
+  // listen child's `--cache-gaps` among them. (a) red when the builder repeats `--cache-gaps`, or
+  // drops a stated `auto`; (b) prints the flag strings.
+  it('a stated auto is repeated like any word; --cache-gaps never is', () => {
+    const parsed = {
+      model: 'm',
+      promptCache: 'auto',
+      spawnedByListen: true,
+      cacheGaps: '420,720',
+    } as unknown as Parameters<typeof buildReattachFlags>[0];
+    // The default: the command's options carry no `promptCache` at all.
+    const { promptCache: _stated, ...unstated } = parsed;
+    expect([
+      buildReattachFlags({
+        ...parsed,
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: true,
+      }),
+      buildReattachFlags({
+        ...unstated,
+        promptCacheSource: 'stated',
+        providerAppliesPromptCache: true,
+      }),
+    ]).toEqual(['--model m --prompt-cache auto', '--model m']);
+  });
+});
+
+// issue #600 PR 2 (C6, G22): the in-flight `Go on:` line (run-agent's goOnLine) carries the flags
+// built by buildReattachFlags, a stated --prompt-cache included. (a) red when the line drops it;
+// (b) prints the line.
+describe('the Go on: line repeats a stated --prompt-cache (issue #600 PR 2)', () => {
+  it("a step another program holds: the line ends with the drive's own flags", async () => {
+    const def: WorkflowDefinition = {
+      id: 'go-on-600',
+      name: 'Go on 600',
+      version: 1,
+      schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      steps: { write: { description: 'Write', execution: 'agent' } },
+    };
+    const store = new InMemoryStore();
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    await store.claimStep(run.id, 'write', def, {
+      by: 'someone-else',
+      by_source: 'stated',
+      channel: 'run',
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => {
+      lines.push(a.join(' '));
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const flags = buildReattachFlags({ model: 'claude-x', promptCache: 'long' });
+    await runAgent(
+      {
+        store,
+        workflowStore: { register: async () => {}, get: async () => def, list: async () => [def] },
+        provider: new (class extends LlmProvider {
+          async callStep(): Promise<Record<string, unknown>> {
+            throw new Error('not called');
+          }
+        })(),
+        registry: new ExtensionRegistry(),
+        reattachFlags: flags,
+      } as unknown as AgentDeps,
+      {
+        definition: def,
+        params: {},
+        existingRunId: run.id,
+        inFlightPollMs: 5,
+        inFlightWatchMs: 20,
+      },
+    );
+    vi.restoreAllMocks();
+    expect(lines.find((l) => l.includes('Go on:'))).toBe(
+      `  Go on:     once 'write' is no longer in flight, realm agent --run-id ${run.id} --model claude-x --prompt-cache long`,
     );
   });
 });

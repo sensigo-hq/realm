@@ -146,11 +146,20 @@ describe('handleSubmitHumanResponse — fires finalizers on gate completion', ()
     expect(updated.failed_steps).not.toContain('record_outcome');
     expect(updated.completed_steps).not.toContain('record_outcome');
     expect(updated.finalizer_ledger?.['record_outcome']?.status).toBe('pending');
+    // #729 PR-0 (the corpus parity): what comes next, then the ended run's way back in — the door's
+    // sentence first, the cleanup sentence after it, as before PR-0. (a) red when the cleanup
+    // sentence is said before the door's (it was, before the fix); (b) prints the hint's order.
+    const hint = String(result.context_hint);
+    expect([
+      hint.indexOf('Call get_run_state') > 0,
+      hint.indexOf('Cleanup step left pending') > hint.indexOf('Call get_run_state'),
+      hint.endsWith('runs it with code that has its handler.'),
+    ]).toEqual([true, true, true]);
   });
 });
 
 describe('handleSubmitHumanResponse — a workflow-absent run carries the remedy (issue #456)', () => {
-  it('C8 rejects with "most often" and "retry" (the workflow fetch at :26 precedes gate logic)', async () => {
+  it('C8 rejects with the T-21 words (#729 PR-0; was "most often") and "retry" (the workflow fetch at :26 precedes gate logic)', async () => {
     const runDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-missing-run-'));
     const workflowDir = await mkdtemp(join(tmpdir(), 'realm-mcp-shr-missing-wf-'));
     const runStore = new JsonFileStore(runDir);
@@ -167,7 +176,7 @@ describe('handleSubmitHumanResponse — a workflow-absent run carries the remedy
         { run_id: run.id, gate_id: 'g1', choice: 'approve' },
         { runStore, workflowStore },
       ),
-    ).rejects.toThrow(/most often/);
+    ).rejects.toThrow(/is not registered in this workflow store/); // #729 PR-0 (T-21): the words by cause
     await expect(
       handleSubmitHumanResponse(
         { run_id: run.id, gate_id: 'g1', choice: 'approve' },

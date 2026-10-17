@@ -8,7 +8,8 @@
 //     except beside a claim past its time, where the status is `claim_stale` and the act stays.
 //   - G6-R6: a step the engine refuses before its claim stops nothing; a step that fails, or a step
 //     called by name that is refused, does.
-//   - F-R1: five standard rules, plus two about concurrent attempts that are always added.
+//   - F-R1: six standard rules (#729 PR-0, A9: the sixth for `also`/`elsewhere`), plus two about
+//     concurrent attempts that are always added.
 //   - F-R2: the protocol no longer forbids `execute_step` for an `auto` step — called by name, it
 //     runs it.
 //   - F-R3: `create_workflow`, `submit_human_response` and `advance_run` name an unknown argument;
@@ -229,18 +230,20 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     expect({
       fork: [forked['status'], await done(fork)],
       fail: [failed['status'], await done(failId), (await runStore.get(failId)).failed_steps],
-      called: [refused['status'], await done(called)],
+      called: [refused['status'], await done(called), refused['agent_action']],
     }).toEqual({
       fork: ['ok', ['a', 'c']],
       fail: ['error', [], ['d']],
-      called: ['error', []],
+      // #729 Q3 correction 1: the named engine step is refused on the engine's input, routed like
+      // every refusal before the claim — beside the owed `c`, the way on is the engine's.
+      called: ['error', [], 'resolve_precondition'],
     });
   });
 
-  it('F-R1: without protocol.rules, five standard rules and the two always added — seven', async () => {
+  it('F-R1: without protocol.rules, six standard rules and the two always added — eight', async () => {
     claim(
       TOOLS,
-      "| `rules` | The rules to follow. The workflow's `protocol.rules`, or five standard rules; two rules about concurrent attempts are always added after either. |",
+      "| `rules` | The rules to follow. The workflow's `protocol.rules`, or six standard rules; two rules about concurrent attempts are always added after either. |",
     );
     const { call, workflowStore } = await connect();
     const steps = {
@@ -254,17 +257,18 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
     const own = (await call('get_workflow_protocol', { workflow_id: 'f17-own' }))[
       'rules'
     ] as string[];
-    // (a) red when the count is not five plus two, or the two are not added after the workflow's
-    //     own (F-R1: the page said six); (b) prints the counts and the shared tail.
+    // (a) red when the count is not six plus two, or the two are not added after the workflow's
+    //     own; (b) prints the counts and the shared tail.
     expect({
       plain: plain.length,
       own: own.length,
-      sameTail: JSON.stringify(plain.slice(5)) === JSON.stringify(own.slice(1)),
+      sameTail: JSON.stringify(plain.slice(6)) === JSON.stringify(own.slice(1)),
       ownFirst: own[0],
-    }).toEqual({ plain: 7, own: 3, sameTail: true, ownFirst: 'Mine.' });
+    }).toEqual({ plain: 8, own: 3, sameTail: true, ownFirst: 'Mine.' });
   });
 
-  it('F-R2: an auto step’s protocol text names advance_run and forbids nothing — execute_step called by name runs it', async () => {
+  // pre-Q3 title: F-R2: an auto step’s protocol text names advance_run and forbids nothing — execute_step called by name runs it
+  it('F-R2: an auto step’s protocol text names advance_run — execute_step naming the step is refused and told advance_run, which runs it (#729, the Q3 unit)', async () => {
     claim(
       'CHANGELOG.md',
       "an `auto` step's `agent_involvement` reads `none — the engine runs this step; when next_actions names advance_run, call it`. It said `… do NOT call execute_step for it`, but `execute_step` called by name runs it.",
@@ -289,17 +293,27 @@ describe('#625 PR-2a, F17 — the MCP pages say what the build does', () => {
       items: [{ params: {} }],
     });
     const id = String((batch['started'] as Reply[])[0]!['run_id']);
-    const ran = await call('execute_step', { run_id: id, command: 's', params: {} });
-    // (a) red when the protocol forbids the call that runs the step, or execute_step by name does
-    //     not run an owed auto step (F-R2); (b) prints the involvement, the status and what ran.
+    // The CHANGELOG line is 0.47.0's history; after #729's Q3 unit an agent's execute_step naming the
+    // engine's step is refused and told advance_run — which runs it, as the protocol text says.
+    const named = await call('execute_step', { run_id: id, command: 's', params: {} });
+    const notRun = (await runStore.get(id)).completed_steps;
+    const advanced = await call('advance_run', { run_id: id });
+    const tools = (r: Reply) =>
+      ((r['next_actions'] as Array<{ instruction: { tool: string } | null }>) ?? []).map(
+        (n) => n.instruction?.tool,
+      );
+    // (a) red when the protocol text changes, execute_step naming the step runs it (as 0.47.0 did)
+    //     or names another call, or advance_run does not run it; (b) prints the involvement, the
+    //     statuses, the calls named and what ran.
     expect({
       involvement: s.agent_involvement,
-      status: ran['status'],
-      done: (await runStore.get(id)).completed_steps,
+      named: [named['status'], tools(named), notRun],
+      advanced: [advanced['status'], (await runStore.get(id)).completed_steps],
     }).toEqual({
       involvement: 'none — the engine runs this step; when next_actions names advance_run, call it',
-      status: 'ok',
-      done: ['s'],
+      // the agent step `a` is ready too: next_actions offers it beside advance_run.
+      named: ['blocked', ['execute_step', 'advance_run'], []],
+      advanced: ['ok', ['s']],
     });
   });
 

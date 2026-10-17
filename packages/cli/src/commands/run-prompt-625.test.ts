@@ -288,8 +288,9 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       // The timer's own line reports the guard its write settled; the answer's lines follow.
       // (a) red when the late answer prints `✓ → running` (it reads as recorded), or the expiry
       //     sentence is missing; (b) prints what the prompt printed after the gate.
-      expect(afterTheGate().slice(0, 4)).toEqual([
-        `⏰ gate '${gateId()}' on run '${runId()}' expired — enacted via the attending-process timer (enacted_via: timer). Guard step 'check' passed.`,
+      // #729 PR-0 (T-2; Table rows 35, 50): the timer's line is the receipt's.
+      expect(lagless(afterTheGate().slice(0, 4))).toEqual([
+        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
         `  ${LATE_SAME_CHOICE}`,
         "  ✗ not recorded — gate settled by timeout with choice 'approve' → running\n",
         '→ [agent] finish: Finish',
@@ -316,8 +317,8 @@ describe('issue #625 — the terminal run prompt after a gate answer', () => {
       // stdout: the timer's line, then straight on to the next step — no `✓ →` for the answer.
       // (a) red when a state line claiming success is printed for the refused answer;
       //     (b) prints what the prompt printed after the gate.
-      expect(afterTheGate().slice(0, 2)).toEqual([
-        `⏰ gate '${gateId()}' on run '${runId()}' expired — enacted via the attending-process timer (enacted_via: timer). Guard step 'check' passed.`,
+      expect(lagless(afterTheGate().slice(0, 2))).toEqual([
+        `⏰ gate '${gateId()}' on 'confirm' had expired <lag> before this call — this timer call first carried out its declared settle_default: the default choice 'approve' was recorded (enacted_via: timer). Guard step 'check' passed.`,
         '→ [agent] finish: Finish',
       ]);
       expect(code).toBe(0);

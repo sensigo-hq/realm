@@ -77,7 +77,14 @@ const CANNOT_LINE: Record<Member, string> = {
     "log: • Step 'x' cannot run here (capability): handler 'missing_h' is not registered here — load the missing extension, or run the step on a runner that has it",
 };
 
-const HEADER = ['log: \nRealm Agent — c23 v1', 'log: Run ID: <run>\n'];
+// issue #600 PR 2 (D1): the drive's cache line follows `Run ID:`, then the blank line. This
+// stand-in provider declares no caching capability, so the line is form F2.
+const HEADER = [
+  'log: \nRealm Agent — c23 v1',
+  'log: Run ID: <run>',
+  'log: Caching: Realm asks this provider for no caching; any caching it does is its own.',
+  'log: ',
+];
 
 type PreClaimMember = 'trust' | 'precondition' | 'input_schema';
 const PRE_CLAIM: readonly Member[] = ['trust', 'precondition', 'input_schema'];
@@ -284,7 +291,7 @@ describe('#625 PR-2a, decision C23 — an engine step that cannot run here', () 
   it('MR-14: two steps that cannot run — the drive stops on the FIRST in definition order', async () => {
     claimDoc625(
       'docs/reference/cli/realm-agent.md',
-      "| `✗ Step '<step>' …`, `✗ The drive stops: …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
+      "| `✗ Step '<step>' …`, `✗ The drive stops: …` or `✗ The drive stops — …`, `⚠ Step '<step>' is blocked …` | The run cannot go on | The reason: a step that failed, a step refused before its claim with nothing else to run, or a handler or adapter this program has not registered. See [When it stops](#when-it-stops). |",
     );
     // `zeta` comes first in the definition and last by name, so neither the name order nor the
     // order the checks run in can pass for definition order.

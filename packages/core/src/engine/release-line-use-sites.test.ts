@@ -105,25 +105,22 @@ const SITES: Array<[string, WorkflowDefinition, string, string]> = [
 
 const LOCAL_VERSION = REALM_BRAND.version;
 const LOCAL_PATH = fileURLToPath(REALM_BRAND.url!).replace(/\/$/, '');
-const TODAY: Record<string, (thrown: string) => string> = {
-  ENGINE_ADAPTER_FAILED: (t) => `Adapter 'ad' threw: ${t}`,
-  ENGINE_HANDLER_FAILED: (t) => `Handler 'h' threw: ${t}`,
-  ENGINE_INTERNAL: (t) => `Dispatcher failed: ${t}`,
-};
 
 describe.each(SITES)('%s', (_name, def, code, role) => {
   it('foreign_line: ENGINE_RELEASE_LINE_MISMATCH, the whole message', async () => {
     const r = await run(def, foreignError());
     expect(r.code).toBe('ENGINE_RELEASE_LINE_MISMATCH');
     expect(r.message).toBe(
-      `${role} threw a WorkflowError from realm 9.9.9 (/tmp/other-realm); this engine runs realm ${LOCAL_VERSION} (${LOCAL_PATH}). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. Install @sensigo/realm@${LOCAL_VERSION} (and every other @sensigo package the project has, at ${LOCAL_VERSION}) in the project your code imports it from, or, when you run the realm command, run version 9.9.9 there: npm install --save-dev @sensigo/realm-cli@9.9.9, then npx realm.`,
+      `${role} threw a WorkflowError from realm 9.9.9 (/tmp/other-realm); this engine runs realm ${LOCAL_VERSION} (${LOCAL_PATH}). Realm objects do not cross versions, so its code 'SERVICE_RATE_LIMITED' and its retry setting were not used. Install @sensigo/realm@${LOCAL_VERSION} (and every other @sensigo package the project has, at ${LOCAL_VERSION}) in the project your code imports it from, or, when you run the realm command, run version 9.9.9 there: 'npm install --save-dev @sensigo/realm-cli@9.9.9', then 'npx realm'.`,
     );
   });
   it('unbranded_copy: the site’s own code with the hedged clause, what was lost and the remedy, the whole message', async () => {
     const r = await run(def, unbrandedError());
     expect(r.code).toBe(code);
     expect(r.message).toBe(
-      `${TODAY[code]!('rate limited')} — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code 'SERVICE_RATE_LIMITED' and its retry setting were not used: install @sensigo/realm@${LOCAL_VERSION} (and every other @sensigo package the project has, at ${LOCAL_VERSION}) in the project your code imports it from, or, when you run the realm command, run the version the project has: npm install --save-dev @sensigo/realm-cli@<that version>, then npx realm (npm ls @sensigo/realm shows that version).`,
+      // #729 PR-0 (E1 (j)): the thrown text is stored text — printed last, after its label, as
+      // written; each command delimited, so no stop reads as part of one.
+      `${role} threw a WorkflowError — it looks like realm's WorkflowError by its class name but carries no release mark: an older realm copy that does not mark its classes, or another library's class of the same name. If it is realm's, its code 'SERVICE_RATE_LIMITED' and its retry setting were not used: install @sensigo/realm@${LOCAL_VERSION} (and every other @sensigo package the project has, at ${LOCAL_VERSION}) in the project your code imports it from, or, when you run the realm command, run the version the project has: 'npm install --save-dev @sensigo/realm-cli@<that version>', then 'npx realm' (npm ls @sensigo/realm shows that version). Its message: rate limited`,
     );
   });
   it('not_realm: the site’s own code, unchanged text', async () => {

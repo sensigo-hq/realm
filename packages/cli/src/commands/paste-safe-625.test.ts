@@ -27,13 +27,13 @@ import {
   executeStep,
   describePending,
   oneOf,
-  respondCommand,
   sentenceEnd,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 import { renderDetachMap } from './run.js';
+import { CLI_COMMANDS, NO_DRIVE_FLAGS } from './ways-renderer.js';
 import { buildReattachFlags } from './agent.js';
 import { inFlightLine } from '../lib/holder-render.js';
 
@@ -229,7 +229,21 @@ describe('#625 PR-2a, F6 — a printed command is safe to paste', { timeout: 60_
   it('several choices still print one <one of: …> placeholder (preservation)', () => {
     // (a) red when several choices stop being one placeholder; (b) prints the commands.
     expect({
-      several: respondCommand('R', 'G', ['approve', 'reject']),
+      // #729 PR-0: core's respondCommand died; the CLI door's command for the respond way.
+      several: CLI_COMMANDS.respond(
+        {
+          verb: 'respond',
+          conditions: [],
+          run_id: 'R',
+          gate_id: 'G',
+          step: 's',
+          choice: { one_of: ['approve', 'reject'] },
+          holds: [],
+          presented: 'alone',
+        },
+        undefined,
+        NO_DRIVE_FLAGS,
+      ),
       fromSeveral: oneOf(['a', 'b']),
       one: oneOf(['approve']),
     }).toEqual({

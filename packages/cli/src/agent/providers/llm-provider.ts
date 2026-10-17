@@ -1,6 +1,13 @@
 // llm-provider.ts — LLM provider interface and factory function for realm agent.
 import { brandClass } from '@sensigo/realm';
-import type { StructuredOutputMeta, UsageRecord } from '@sensigo/realm';
+import type {
+  CacheAutoBasis,
+  CacheRequestSource,
+  PromptCacheSetting,
+  RequestEndpoint,
+  StructuredOutputMeta,
+  UsageRecord,
+} from '@sensigo/realm';
 import { REALM_CLI_BRAND } from '../../brand.js';
 import type { ToolDefinition, ToolExecutor, StepWithToolsResult } from '../mcp/mcp-extensions.js';
 import type { LlmClock } from './agent-utils.js';
@@ -53,6 +60,47 @@ export interface ProviderCapabilities {
    * why it is endpoint-scoped rather than named per-dimension.
    */
   strictGate?: 'compat_endpoint';
+  /**
+   * Issue #600 — what this provider instance asks its service to cache on its single-shot request:
+   * `'off'` (nothing), or `{ lifetime_s }` (the cache lifetime asked for, in whole seconds — the
+   * lifetime unit: the one choice the provider resolved, `auto` included). Absent means Realm asks
+   * this provider for no caching, and any caching it does is its own. The Anthropic provider declares
+   * it (`'off'` included); the OpenAI providers declare nothing; a provider module may declare either
+   * shape (the start line says what it reads, and that `--prompt-cache` does not reach a module).
+   */
+  promptCache?: 'off' | { lifetime_s: number };
+}
+
+/**
+ * Issue #600 PR 2 — the cache setting a runner hands the Anthropic provider: the value, where it came
+ * from, which runner chose it (`realm agent`, `realm listen`) and — the lifetime unit — when the value
+ * is `auto`, on what basis the provider chooses (the gaps `realm listen` measured, when it did).
+ */
+export interface PromptCacheRequest {
+  value: PromptCacheSetting;
+  source: CacheRequestSource;
+  by: string;
+  auto?: { basis: CacheAutoBasis; gaps_s?: number[] };
+}
+
+/**
+ * Issue #600 PR 2 (B4) — which kind of endpoint a request went to, from the SDK client it went
+ * through: `custom` when the client's `baseURL` is a string other than the SDK's own default
+ * address, `default` when it is that address, nothing when the client has no string `baseURL`. So
+ * `--base-url`, `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` all count. The address is never kept.
+ */
+export function endpointOf(client: unknown, defaultBaseUrl: string): RequestEndpoint | undefined {
+  if (typeof client !== 'object' || client === null) return undefined;
+  const base = (client as { baseURL?: unknown }).baseURL;
+  if (typeof base !== 'string') return undefined;
+  return base === defaultBaseUrl ? 'default' : 'custom';
+}
+
+/** Issue #600 PR 2 — the model a response named, when it named one as a string. */
+export function responseModel(response: unknown): string | undefined {
+  if (typeof response !== 'object' || response === null) return undefined;
+  const model = (response as { model?: unknown }).model;
+  return typeof model === 'string' ? model : undefined;
 }
 
 /**
@@ -400,14 +448,20 @@ export function listenModelRefusal(provider: ProviderName | undefined): string {
  * frequently"). The checks and their messages are `checkProviderFlags`'; this throws its message.
  * Also throws when the provider's SDK package is not installed.
  */
-export async function resolveProvider(
-  providerFlag: ProviderName | undefined,
-  modelFlag: string | undefined,
-  baseUrlFlag?: string,
+export async function resolveProvider(options: {
+  provider: ProviderName | undefined;
+  model: string | undefined;
+  baseUrl?: string | undefined;
   /** Issue #313: the author's attestation that the `--base-url` endpoint genuinely enforces
    *  strict. Only meaningful together with `--base-url` on the OpenAI provider. */
-  strictBaseUrlFlag?: boolean,
-): Promise<LlmProvider> {
+  strictBaseUrl?: boolean | undefined;
+  /** Issue #600 PR 2: the cache setting and its origin. Only the Anthropic provider takes it. */
+  promptCache: PromptCacheRequest;
+}): Promise<LlmProvider> {
+  const providerFlag = options.provider;
+  const modelFlag = options.model;
+  const baseUrlFlag = options.baseUrl;
+  const strictBaseUrlFlag = options.strictBaseUrl;
   const checked = checkProviderFlags({
     provider: providerFlag,
     model: modelFlag,
@@ -444,6 +498,6 @@ export async function resolveProvider(
     return new OpenAIProvider(model, baseUrlFlag, strictBaseUrlFlag === true);
   } else {
     const { AnthropicProvider } = await import('./anthropic-provider.js');
-    return new AnthropicProvider(model);
+    return new AnthropicProvider(model, { promptCache: options.promptCache });
   }
 }

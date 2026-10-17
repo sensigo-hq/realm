@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { executeStep, submitHumanResponse } from './execution-loop.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
+import { nextCalls } from '../test-support/ways-view.js';
 
 const def: WorkflowDefinition = {
   id: 'late-owed-wf',
@@ -44,7 +45,7 @@ async function opened(store: JsonFileStore) {
 }
 
 describe('#625 PR-2a — C9: a refused answer on a run that moved on names the owed work', () => {
-  it('the different-choice late answer (its own expiry write settled another default): next_actions ends with advance_run', async () => {
+  it('the different-choice late answer (its own expiry write settled another default): its ways end with advance (#729 PR-0: next_actions → ways)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'realm-late-625-'));
     try {
       const store = new JsonFileStore(dir);
@@ -57,13 +58,13 @@ describe('#625 PR-2a — C9: a refused answer on a run that moved on names the o
       });
       expect(reply.status).toBe('error');
       expect(reply.error_code).toBe('STATE_BLOCKED');
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
+      expect(nextCalls(reply)).toEqual(['advance']);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
-  it('gate_choice_conflict on a gate another writer expired: next_actions ends with advance_run', async () => {
+  it('gate_choice_conflict on a gate another writer expired: its ways end with advance (#729 PR-0: next_actions → ways)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'realm-late-625-'));
     try {
       const store = new JsonFileStore(dir);
@@ -76,7 +77,7 @@ describe('#625 PR-2a — C9: a refused answer on a run that moved on names the o
         now: afterExpiry,
       });
       expect(reply.status).toBe('error');
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
+      expect(nextCalls(reply)).toEqual(['advance']);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -89,7 +90,7 @@ describe('#625 PR-2a — C9: a refused answer on a run that moved on names the o
       const { runId, gateId } = await opened(store);
       const reply = await submitHumanResponse(store, def, { runId, gateId, choice: 'maybe' });
       expect(reply.status).toBe('error');
-      expect(reply.next_actions).toEqual([]);
+      expect(nextCalls(reply)).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -113,7 +114,7 @@ describe('#625 PR-2a — advanceRun on a terminal run', () => {
       expect(reply.context_hint).toBe(
         `Run '${run.id}' is already terminal (abandoned); nothing ran.`,
       );
-      expect(reply.next_actions).toEqual([]);
+      expect(nextCalls(reply)).toEqual([]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -454,7 +454,7 @@ describe('replayCommand — a workflow-absent run carries the remedy (issue #456
 
   const errored = (): string => errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
 
-  it('C5 carries "most often" and "replay again"', async () => {
+  it('C5 carries the T-21 words (#729 PR-0; was "most often") and "replay again"', async () => {
     // TERMINAL fixture — a non-terminal one adds the partial-replay warn line, which would
     // contaminate this cell's assertions without changing its point.
     const { JsonFileStore } = await import('@sensigo/realm');
@@ -475,7 +475,7 @@ describe('replayCommand — a workflow-absent run carries the remedy (issue #456
       'process.exit',
     );
 
-    expect(errored()).toContain('most often');
+    expect(errored()).toContain('is not registered in this workflow store');
     expect(errored()).toContain('replay again');
     // assert-the-call-never-the-count (the #466 idiom) — replay.ts's action has no outer
     // try/catch wrapping this fetch's own, so a single exit is expected here, but pinning the

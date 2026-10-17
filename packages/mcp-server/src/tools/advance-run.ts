@@ -8,14 +8,21 @@ import {
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   getWorkflowForRun,
-  withEndedRunWays,
+  endedRunWaysSentence,
   TERMINAL_PHASES,
-  type ResponseEnvelope,
   type Attributed,
   type ActorAbsent,
 } from '@sensigo/realm';
 import type { HandleRunStores } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import {
+  mcpReplyOf,
+  withHintTail,
+  renderReply,
+  toolContentOf,
+  type McpEnvelope,
+  type WithPersonBlock,
+} from '../render-reply.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   assertRegistryLine,
@@ -36,8 +43,10 @@ export function advanceRunUnknownKeyWarnings(args: Record<string, unknown>): str
 /** The tool's input schema. Pass-through, so an unknown key reaches the handler and is named. */
 export const advanceRunArgsSchema = z.object({ run_id: z.string() }).passthrough();
 
-/** `advanceRun`'s envelope plus who ran the steps: this server's driver. */
-export type AdvanceRunReply = ResponseEnvelope & { continued_by: Attributed | ActorAbsent };
+/** `advanceRun`'s reply as the MCP door renders it, plus who ran the steps: this server's driver. */
+export type AdvanceRunReply = WithPersonBlock<McpEnvelope> & {
+  continued_by: Attributed | ActorAbsent;
+};
 
 /**
  * Business logic for the advance_run tool: run what the engine owes on the run — its pending
@@ -52,7 +61,9 @@ export async function handleAdvanceRun(
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
-  // WorkflowError, or ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
+  // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
+  // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
+  // untyped throw, ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
   const run = await runStore.get(args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });
@@ -86,8 +97,19 @@ export async function handleAdvanceRun(
     result.run_phase !== undefined && TERMINAL_PHASES.has(result.run_phase)
       ? await runStore.get(args.run_id).catch(() => undefined)
       : undefined;
+  // #729 PR-0: the MCP door's one renderer (next_actions, agent_action, the way sentence); the ended
+  // run's ways back in follow the door's next sentence, as before.
+  const tail = ended === undefined ? '' : endedRunWaysSentence(ended, definition, new Date());
   return {
-    ...(ended === undefined ? result : withEndedRunWays(result, ended, definition, new Date())),
+    ...mcpReplyOf(
+      withHintTail(
+        renderReply(
+          result,
+          stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {},
+        ),
+        tail,
+      ),
+    ),
     continued_by:
       stores?.driver !== undefined
         ? stores.driver
@@ -110,21 +132,17 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
       try {
         const result = await handleAdvanceRun(args, opts);
         const unknown = advanceRunUnknownKeyWarnings(args as Record<string, unknown>);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              // decision C119: `data` and `evidence` are empty in MCP replies, as `execute_step`'s —
-              // the run's evidence is read with get_run_state.
-              text: sseJsonStringify({
-                ...result,
-                data: {},
-                evidence: [],
-                ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
-              }),
-            },
-          ],
-        };
+        // decision C119: `data` and `evidence` are empty in MCP replies, as `execute_step`'s — the
+        // run's evidence is read with get_run_state.
+        return toolContentOf(
+          {
+            ...result,
+            data: {},
+            evidence: [],
+            ...(unknown.length > 0 ? { warnings: [...unknown, ...result.warnings] } : {}),
+          },
+          sseJsonStringify,
+        );
       } catch (err) {
         const workflowErr =
           err instanceof WorkflowError
@@ -141,14 +159,11 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
             : workflowErr.code === 'STATE_RUN_NOT_FOUND'
               ? `Run '${args.run_id}' not found.`
               : `An error occurred before the run could be advanced.`;
-        const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
-          'advance_run',
-          args.run_id,
-          0,
-          workflowErr,
-          contextHint,
+        const envelope = renderReply(
+          buildPreExecutionErrorEnvelope('advance_run', args.run_id, 0, workflowErr, contextHint),
+          opts?.operatorRoute !== undefined ? { operatorRoute: opts.operatorRoute } : {},
         );
-        return { content: [{ type: 'text' as const, text: sseJsonStringify(envelope) }] };
+        return toolContentOf(mcpReplyOf(envelope), sseJsonStringify);
       }
     },
   );

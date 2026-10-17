@@ -4,6 +4,354 @@ All notable changes to this project are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`error_count`: the total number of problems a refusal found (issue #759).** On the MCP
+  reply's `error_details` for `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, beside the
+  first 10 `errors`; on each record `realm run attempts` reads; and as `last_error_count` in a
+  `VALIDATION_EXHAUSTED` reply's `error_details`, beside its `last_ajv_errors`. For programs:
+  `ValidationErrorFacts`, the typed facts of the two validation codes; `VALIDATION_PROBLEMS_SHOWN`
+  (10); the composer `describeValidationProblems` and its renderings `renderProblemsSentence`,
+  `renderProblemsLines` and `renderMore`, with `whitelistValidationRow`; `validationListOf`, which
+  reads a refusal's list from a reply; `moreOf`, which reads a failed-attempt record's remainder;
+  `storedFileFactsOf`; and `errorCount` on `AgentSubmissionValidation`.
+
+- **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
+  `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
+  `executeChain`, `executeEngineStep`, `advanceRun`, `submitHumanResponse`, `drainFinalizers`,
+  `abandonRun`, `reclaimStep`, `getWorkflowForRun`) handed a part that is missing or of the wrong
+  type (the store, the definition, the options or one of them, a `registry` that is not an extension
+  registry, a `run` that is not a run record, the `dispatcher` the named step needs), or an options
+  member its type does not have, rejects before anything is read or written, naming every defect of
+  those parts at once in its message and in `details.invalid` (`{ option, expected, given_type,
+fields? }`: type words only, never a value). Core exports `isRunRecordShape`, the one check that a
+  value is a run record, and `callsHostDispatcher`, whether Realm calls the host's dispatcher for
+  the step `command` names.
+- **`JsonFileStore.listWithDiagnostics(workflowId?)` (issue #719).** Every readable run, and each
+  run file that cannot be read as a run, with its file, path, class (`empty`, `parse`, `not_a_run`,
+  `mismatched`, `legacy`, `unreadable`), reason and way out, with a copy of a run whose own file
+  reads listed apart (`copies`); `workflowId` filters the records only, and every damaged file is
+  reported whatever the filter. Core exports `UnreadableFileFacts` (a damaged stored file's facts:
+  names, classes and type words, never its content) and `unreadableFactsOf`, their one reader;
+  `renderUnreadableStoredFile` and `describeStoredFileFault` (the one composer of its message, from
+  the facts alone); `unreadableRunFilesError` and `unreadableRunFilesOf`, its reader
+  (`{ command, folder, files }`); `damagedFileConcerns`, whether a damaged run file can concern a
+  workflow; `isCopyOfReadableRun`, whether it is a copy of a run whose own file reads;
+  `displayId`, how a run id a file holds is shown; the length of a run id (`RUN_ID_LENGTH`) and the
+  trace files' name parts (`TRACE_BUFFER_FILE_PREFIX`, `SEALED_TRACE_FILE_PREFIX`,
+  `TRACE_FILE_SUFFIX`); and the `RunListing`, `UnreadableRunFileEntry`, `UnreadableRunFilesFacts`,
+  `StoredFileClass` and `WorkflowCopyParseFault` types. The facts are an error's `details` for now;
+  a later version moves them to `facts`.
+- **`--prompt-cache` on `realm agent` and `realm listen` (issue #600 PR 2).** It sets what Anthropic
+  is asked to cache: `auto`, `short` (Anthropic's 5 minutes), `long` (its 1 hour) or `off`. `auto`,
+  the default on both commands, asks for 5 minutes on a drive `realm agent` starts on its own. On a
+  drive `realm listen` starts, it asks for 1 hour on the workflow's first trigger, then for
+  whichever of off, 5 minutes and 1 hour costs least over the gaps between that workflow's last five
+  triggers (a gap counts as read under a lifetime when it is under 90% of it).
+  `realm listen --prompt-cache` passes its value on to every agent it starts. Other providers are
+  asked for no caching.
+  `ProviderCapabilities.promptCache` (`'off'` or `{ lifetime_s }`) says what a provider instance
+  asks for on its single-shot request; absent, Realm asks that provider for no caching.
+- **The drive says what it asks to cache.** `realm agent` prints one `Caching:` line after
+  `Run ID:`: what the drive asks the provider to cache, where the setting came from, for `auto` what
+  it chose by, and, when it applies to no step, why. `realm listen` logs `listen: caching` at
+  startup with each provider's setting.
+- **Every model request records what was asked and what answered.** `UsageRecord` gains ten
+  optional fields: `model` (the model the response named), `cache_requested` (`off`, `lifetime` or
+  `provider_rules`), `cache_lifetime_s` and `cache_ttl_sent` (the lifetime asked, and whether Realm
+  sent it), `cache_requested_source` (`stated` or `runner_default`) and `cache_requested_by` (the
+  runner that chose it), `provider`, `endpoint` (`default` or `custom`; the address itself is never
+  stored), `cache_split_offered` (whether the provider reports a lifetime split) and `cache_auto`
+  (what `auto` chose by: `no_measurement`, `listen_trigger_gaps` with the gaps in seconds, or
+  `listen_gaps_unreadable`). `realm run inspect` shows the model and the ask on each cost line, and
+  says when a write was kept for another lifetime than the one asked, or when a lifetime was asked
+  and nothing was written or read. A record written by 0.47.0 or earlier prints as it did.
+- **The composed cost view carries them.** `CostView` gains `models`, `cache_requested`,
+  `cache_write_5m` and `cache_write_1h`; `models` and `cache_requested` carry a typed absence by
+  cause (`predates_request_facts`, `none_readable`) when no request holds a readable value, which
+  `get_run_state` returns and `realm run inspect` does not print. Core exports the type
+  `CacheRequestedEntry` (one ask, with what `auto` chose by) and the vocabularies
+  `PROMPT_CACHE_SETTINGS`, `CACHE_REQUESTS`, `CACHE_REQUEST_SOURCES`, `CACHE_AUTO_BASES`,
+  `REQUEST_ENDPOINTS` and `REQUEST_FACT_ABSENT_CAUSES`; `chooseCacheLifetime`, which lifetime `auto`
+  asks for, from the gaps and a provider's own prices and lifetimes (`CacheTiers`), and
+  `normalizeCacheAuto`, a `cache_auto` in the shape the record keeps; and `boundRequestFacts`, which
+  bounds the free text a request record carries (`model`, `cache_requested`,
+  `cache_requested_source`, `cache_requested_by`, `provider`) by the rule every stored name obeys
+  and keeps `cache_auto` only in its shape.
+- **A store law for the request record.** `@sensigo/realm-testing`'s store fidelity contract gains
+  `USAGE_RECORD_ROUNDTRIP`: a store must read back each of the ten fields, in a step's evidence and
+  in a failed drive's usage.
+- **What the model calls cost, worked out when a run is read (issue #600 caching PR P).**
+  `realm run inspect` ends each cost line with what its requests cost in US dollars: the
+  `Diagnostics` line, each `attempt i/n` line and the `usage` line under a drive failure. A step with
+  more than one attempt adds its total across them to its first line, and the run has a `Cost:`
+  line after `Phase:`. `get_run_state` with `include_steps` carries the same figures, unrounded:
+  `cost.money`, `cost.endpoints`, the step's `total` and the run's `run_cost`. A figure says where
+  its prices came from, whether they are the prices at the call's date or the current price, and
+  what caching saved or cost. A `≥` says the figure leaves something out: a request that could not
+  be priced, with the reason, an attempt with no usage figures, or a failed drive no longer on the
+  record. No money is stored: a run's record and `realm run export` hold none. A run recorded by
+  0.47.0 or earlier names no model, so it prints no figure.
+- **`runner.cache.economics` in `realm.yaml`: the prices the runner pays.** It names an economics
+  file, format v1: `version`, `currency: USD`, and for each model one or more prices, dated from
+  the second on, each with its rates per million tokens and optional tiers for a long prompt. A
+  model the file does not name is priced from the price list `@pydantic/genai-prices`, when it is
+  installed beside Realm; it is an optional peer dependency of `@sensigo/realm-mcp`. Realm ships no
+  prices. The `realm-mcp` program reads no `realm.yaml`, so it prices from the list only, and says
+  so on every figure. Older realms refuse the `runner` key. See the new page
+  `docs/reference/cache-economics.md`.
+- **For programs.** Core exports `parseCacheEconomics`, `priceFromEconomics` and
+  `CACHE_ECONOMICS_JSON_SCHEMA` (the format), the port `PriceSource` with `priceRequest` (the checks
+  around every price: a request whose usage is incomplete, or a price whose model is not the one
+  recorded, is not priced) and `NOT_PRICED_CAUSES`, `composeRunCost`, `parseDeploymentManifest`,
+  and the types `Money`, `MoneySource`, `MoneySourceTotal`, `RunCost`, `CostEndpoints`,
+  `PriceInput`, `PriceResult`, `PricedBy`, `PriceUsage`, `NotPricedCause` and the `CacheEconomics`
+  types. `CostView` gains `money` and `endpoints`, and `StepView` gains `total`; `composeCostView`,
+  `composeStepViews` and `composeDriveFailureCosts` take an optional price source, and add no money
+  without one. `@sensigo/realm-mcp` exports `loadPriceSource`, and `createRealmMcpServer` takes a
+  `priceSourceProvider`; `handleGetRunState` called on its own has no default, so every request
+  reads `no_price_source`.
+
+- **A program reads what it can do next on a run, and why not (issue #729).** Every reply of the
+  engine's functions carries `ways` and `unavailable` (see `EngineReply` below). Core exports
+  `composeWaysAt` (the ways of a run record a program holds), `LIBRARY_WORDS` (each way in the words
+  of the library function that takes it), `agentActionOf` and `agentRenderedList` (the action word a
+  surface derives from them), `cannotGoOnFrom` and `cannotGoOnUntilCorrected` (whether the run can go
+  on from here), `raceClausesOf`, and `readSupplier`, which says who supplied an evidence entry's
+  answer: an agent step's entry records `supplied_by: "agent"`, and an older entry, or one whose input
+  the engine built, says why it names none.
+- **MCP replies carry the reply's facts as data (issue #729).** Beside `next_actions`, a reply now
+  has `basis` (what its calls were judged on), `also` (reading the run and ending it, never a next
+  step), `elsewhere` (a way only an operator can take, with no instruction), `outcome` (what decided
+  a question an answer did not), `races`, `expiry`, and `poll_after_ms` and `until` with
+  `agent_action: "await"`. `get_run_state` gains `agent_action` when nothing can be called on an open
+  run, and `basis`, `also` and `elsewhere`.
+
+- **A run that cannot go on is named the moment it cannot (issue #729).**
+  `realm run list --stuck`, `realm run inspect` and `get_run_state` name a run that cannot go on the
+  moment it cannot — the step and the check that refused it — at any age; `realm run inspect` prints
+  the way out, and `list --stuck` points at it; the 24-hour idle finding stays as the second
+  detector. The finding is `cannot_go_on`;
+  `realm run list --stuck` labels it `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)`.
+
+### Changed
+
+- **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
+  an `auto` step the engine could run is refused before anything is claimed: `blocked`,
+  `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.`
+  followed by what the engine owes and the call to make, `next_actions` = `advance_run`,
+  `agent_action: resolve_precondition`; `advance_run` runs the step with the engine's input. A step
+  refused before its claim (its `trust`, a precondition, its `input_schema`) still returns that
+  refusal first, judged on the input the engine builds — never the assistant's `params` — and routed
+  like every refusal before the claim; a step this server cannot run is refused without a claim or a
+  capability block. The library, the CLI and the engine's own chain are unchanged. Such a refusal no
+  longer writes a failed-attempt record — the MCP server's `agent_step_attempt_failed` stderr line or
+  the run's attempts file: those record an agent step's own refused answers.
+
+- **BREAKING — for programs:** the rules a validation refusal broke moved to the error's typed facts
+  (issue #759). For `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, a `WorkflowError`'s
+  `details.errors` and the core reply's `error_details` are gone; the rows (the first 10),
+  `error_count`, `rejections` and `threshold` are on `error.facts` (`ValidationErrorFacts`). The MCP
+  reply's `error_details` keeps its keys.
+
+- **`realm run attempts` prints every problem of a refused answer (issue #759).** Each answer's line
+  ends with how many problems it had, and every rule it broke, up to 10, follows on its own line,
+  then `and N more`, instead of the first rule and `(+N more)`. In a step's trace summary,
+  `validation_errors` now counts every violation found; before, the check stopped at the first, so
+  it counted one (three for an `anyOf` miss). A run's params refusal, a trace-schema warning and the
+  loader's `default_output` error whose problem is an extra property now name its key
+  (`/zzextra is not allowed`) where 0.47.0 printed `(root) must NOT have additional properties` (or,
+  in the loader, the raw rows).
+
+- **BREAKING — a damaged run file of the JSON store has new codes, and its message never quotes the
+  file (issue #719).** A run file that is empty, not JSON, JSON but not an object, not a run record,
+  or holding another run is `RESOURCE_FORMAT_INVALID` (`stop`); one in the format of an earlier
+  Realm is `STATE_LEGACY_FORMAT` (`report_to_user`); one that cannot be read is
+  `ENGINE_STORE_FAILED` (`stop`, retryable for `EBUSY` and `EIO`), as is a runs folder that cannot
+  be read or made (`resource: 'run_folder'`). Its details are its facts (`resource: 'run_file'`,
+  `class`, `path`, and by class `errno`, `shape`, `held_id` and `held_file`, `side_files` or
+  `fields`, and `refused` on a keyed create), and its message names the file once, what is wrong
+  with it and the way out, with what that does to the run's key and, for a file named by a run id,
+  the side files it has, each named; a run id the file holds is shown only when it is a plain id.
+  These replace, per surface: `ENGINE_STORE_FAILED` with the parser's text (the library entries; MCP
+  `get_run_state`, `execute_step`, `advance_run`, `submit_human_response`), `ENGINE_INTERNAL`
+  (`append_trace`, a keyed `start_run`), no code (`abandon_run`), and the parser's raw error
+  (`abandonRun`, `reclaimStep`, `drainFinalizers`). The legacy message no longer says to delete
+  `~/.realm/runs/`, which freed every key. **Upgrading:** key on the new codes.
+- **BREAKING — `JsonFileStore`'s `list()` and `get()` refuse files they used to return (issue
+  #719).** `list()` throws the first damaged file's typed error, a copy of a run whose own file
+  reads aside: a file that is empty, not JSON, JSON but not an object, not a run record, holding
+  another run, in an earlier format, or not readable — where it returned a file that was not a run
+  record, held another run or was in an earlier format. `get()` refuses a file that is not a run
+  record or holds another run, which it returned. With a `workflowId`, `list(workflowId)` and
+  `reconcileKeys(workflowId)` refuse only a damaged file that can concern that workflow: one whose
+  content cannot be read, or an object naming no workflow or that one; JSON that is not an object,
+  an object naming another workflow, a folder named like a run file, and a copy of a run whose own
+  file reads, are skipped. Realm's own commands read through `listWithDiagnostics`. **Upgrading:** a
+  caller that must list past a damaged file calls `listWithDiagnostics`.
+- **BREAKING — the engine entries check the parts they are handed (issue #719).** `dispatcher` is
+  optional in `ExecuteStepOptions` and `ExecuteChainOptions`, and required for a step Realm calls it
+  for (an agent step, an `auto` step with neither handler nor service, or a step whose `execution`
+  is missing or unknown). A `run` given to `executeEngineStep` or `getWorkflowForRun` must be a run
+  record (each of its 14 required fields, with its type; `params` need only be present). Each
+  optional member an entry is given is type-checked (`now` a valid `Date`, `registry` an extension
+  registry, `dispatcher` a function, the callbacks functions, and so on); an optional member given
+  as `null` is refused (leave it out for the default); and an options member the entry's type does
+  not have is refused, so 0.46.0's `advanceRun({ dispatcher, input, … })` is refused where it was
+  ignored. A missing store is `VALIDATION_OPTION_INVALID` naming `store`, where it was
+  `ENGINE_RELEASE_LINE_UNDECLARED`. A defect rejects `VALIDATION_OPTION_INVALID` where a bare
+  `TypeError` came before (`now.getTime is not a function`, `Cannot read properties of undefined`),
+  or where the call ran. `StepDispatcher` may return the step's output as a plain value.
+  **Upgrading:** pass each part with its type, and no option the entry does not take.
+- **BREAKING — `parseFailureError(path, fault)` (issue #719).** It takes the copy's file and the
+  fault, stated: `{ kind: 'not_json' }`, or `{ kind: 'not_object', shape }` for JSON that is not an
+  object. It no longer takes the workflow id (the copy is named by its file) or the parser's error,
+  and its message no longer quotes it (`the registered copy of '<id>' is not JSON`). The registrar's
+  `RESOURCE_FORMAT_INVALID` details gain `resource: 'workflow_copy'` and `class` (`empty`, or
+  `parse` with `shape`); a copy holding only blanks is `empty`, as a run file is.
+  **Upgrading:** pass the path and the fault.
+- **BREAKING — Realm now asks Anthropic to cache each step's fixed instructions (issue #600
+  PR 2).** A drive `realm agent` starts on its own asks for 5 minutes; a drive `realm listen` starts
+  asks for 1 hour on its workflow's first trigger, then for off, 5 minutes or 1 hour by the gaps
+  between that workflow's recent triggers (`--prompt-cache auto`, above). What is cached is the
+  fixed part of a single-shot agent step's request: the step's profile, Realm's instructions and its
+  schema. The step's prompt is not cached, and nothing is cached on a
+  step that calls tools. Anthropic charges more than ordinary input for a cache write and much less
+  for a cache read, and a 1-hour write costs more than a 5-minute one
+  ([Anthropic's prompt-caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#pricing);
+  prices differ by model). So caching costs more for a step that runs less often than its lifetime:
+  each call writes and none reads; under `realm listen`, `auto` turns caching off for a workflow
+  whose triggers are that far apart. A repair pass within the lifetime reads what its step wrote,
+  unless the step's submit tool changed between them (the strict-output fallback) or the cached part
+  is shorter than the model's minimum. Realm asks OpenAI for no caching: OpenAI's own automatic
+  caching is unchanged, and `--prompt-cache off` does not turn it off. **Upgrading:** a gateway
+  behind `ANTHROPIC_BASE_URL` that rejects `cache_control` makes runs fail; run with
+  `--prompt-cache off`.
+- **`--prompt-cache` is refused where it can change nothing.** `realm agent --prompt-cache` is
+  refused, before any run is created or changed, for a provider Realm asks for no caching and for a
+  workflow with no agent step it could apply to (an agent step without tools). `realm listen` given
+  both `--provider openai` and `--prompt-cache` is refused at startup. `--provider-module` cannot be
+  combined with `--prompt-cache`.
+- The total across a step's attempts, which the 0.46.0 notes called issue #600 PR 2's job, moves to
+  the later change that prices model calls. That change is issue #600 caching PR P, above: the total
+  is the step's money across its attempts.
+- **`realm run inspect` shows the request's `provider` and `endpoint` (issue #600 caching PR P).**
+  They appear inside the money figure: `priced as anthropic's claude-sonnet-5-5`, and
+  `list price, your endpoint may bill differently` on a figure from the price list for a request
+  that went to an endpoint other than the provider's own. When a lifetime was asked and nothing was
+  written or read, the clause that says so adds `, or the endpoint dropped the request to cache` for
+  such a request only.
+- **BREAKING — the engine's reply is `EngineReply`, and what can be done next is data (issue #729).**
+  `ResponseEnvelope` is renamed `EngineReply`. It no longer carries `next_actions`, `agent_action`,
+  `blocked_reason.suggestion` or the sentence that named the next call. It carries `ways` (what can
+  be done next: `respond`, `run_step`, `advance`, `inspect`, `abandon` and `register`, each with what
+  it needs), `unavailable` (what cannot be done now, each with a code, its facts and the ways that
+  lead on, `remedy`) and `basis` (the record and the moment they were judged on). An error reply
+  carries `intrinsic_action` (the error's own action word) and `error.remedy`. Each surface words
+  the ways: the MCP tools' replies keep `next_actions`, `agent_action` and
+  `blocked_reason.suggestion`, made from them; the CLI prints the commands; a program reads them.
+- **BREAKING — `agent_action` gains `await`, and `wait_for_human` is renamed `wait_for_service`
+  (issue #729).** `await`: nothing can be called now because another process holds the step; the
+  MCP reply then carries `poll_after_ms`. An adapter's reply when its service fails says
+  `wait_for_service`. An `ok` reply on a run that has not ended and offers nothing to call now says
+  `report_to_user`, or `await`.
+- **BREAKING — the claim token rides the answer, not the gate (issue #729).** `gate.claim_token` is
+  removed. The reply that opened a question carries the token in its `respond` way's `proof`; the
+  MCP reply carries it in the answer's `claim_token` parameter, as before.
+- **BREAKING — a late answer's expiry moves to a receipt (issue #729).** A late answer's expiry is the reply's `expiry` receipt (`ExpiryReceipt`: `gate_id`, `step`, `on_expiry`, `choice`, `enacted_via`, `by_this_call`, `expired_at`, `overdue`); `error_details` no longer carries `expired_at` or `overdue_ms`.
+- **BREAKING — core no longer exports the next-step composers (issue #729).** `answerAction`,
+  `answerOf`, `buildNextActions`, `cannotGoOnLines`, `cannotRunClause`, `cannotRunWayOut`,
+  `cannotRunWayOutApplies`, `cannotRunWayOutTools`, `cannotRunWords`, `capabilityMarkerWayOut`,
+  `describeNext`, `notCallableReason`, `owedCallWords`, `owedRunsClause`, `respondCommand` and
+  `waitingWords` are removed. A program reads the reply's `ways` and `unavailable`; `LIBRARY_WORDS`
+  says each way in the library's own functions.
+- **BREAKING — `@sensigo/realm-testing`'s `createGateResponder` returns `EngineReply` (issue #729).**
+- **The CLI says what is so, and keeps commands apart from sentences (issue #729).** A run whose
+  workflow is not registered is refused with `Workflow '<id>' is not registered in this workflow
+store, …`, never "most often". `realm agent --run-id` on a run that has ended says `Run <id> has
+already ended (<phase>)`, who ended it when the record says, and the recorded reason on its own line
+  (`Reason: "…"`). A drive that stops with nothing ready prints each reason on its own line, then
+  `To read it:` and `To end it:` with their commands. A printed command is quoted or on its own line,
+  never followed by a full stop. For a step refused for its input that builds no input from an
+  `input_map`, the lines about a run that cannot go on add that an operator supplies its input, and
+  that no `realm` command does. The attending timer's line about an expired question is the same line
+  every surface prints.
+- **Agent routing (issue #729).** An answer whose gate ID is not the open one says
+  `agent_action: "report_to_user"` (it said `resolve_precondition` when something could be called).
+  An `auto` step that builds its input with `input_map`, refused for it when called by name, says
+  `resolve_precondition` when another step can be called. The protocol's standard rules are six: the
+  first says what to do when `next_actions` is empty, the sixth what `also` and `elsewhere` are.
+
+- `realm run list --stuck`'s not-inspected warning now says the copy's run was also not checked for
+  whether it can go on (issue #729).
+
+### Fixed
+
+- **The capability block's `context_hint` no longer says `then follow next_actions` beside an empty
+  list (issue #729).** The MCP reply ends with the step's own words (`'<step>' cannot run here
+(capability): …`).
+
+- **A refused answer names every problem, not only the first (issue #759).** The schema check
+  stopped at the first rule an answer broke, so an agent learned one problem per refusal and its
+  step could run out of tries before the answer was right. A refused step answer, a refused
+  `start_run`'s params and an input an `input_map` builds now name every problem, up to 10, with the
+  total; `realm agent`'s repair message, `realm run attempts` and the trace-schema warning carry the
+  same list in the same order, with `and N more` when there are more.
+
+- **A dispatcher's call no longer leaves its step's timer running (issue #719).** A dispatcher that
+  threw synchronously, or was not a function, left a `STEP_TIMEOUT` timer that rejected unhandled up
+  to an hour later and could end the host's process; one that returned a plain value failed with
+  `.then is not a function`. Now no timer outlives the reply, and a plain value is the step's
+  output.
+- **One damaged run file no longer takes a command down (issue #719).** `realm run list` lists the
+  readable runs and names each damaged file on standard error with its way out, exit 0, where it
+  failed, or crashed on a file that was JSON but not a run. `cleanup`, `purge --older-than`,
+  `reclaim --all`, `drain --all` and `migrate --stamp-seals` act on the readable runs and name the
+  rest; `drain --all` no longer crashes, and `migrate --stamp-seals` lists such a file in its own
+  group and counts it apart from the terminal runs in its residue line. Under a filter that no
+  readable run matches, `realm run list` says `No readable runs found for <the filter>.`.
+  `realm listen`'s expiry sweeper sweeps the readable runs and logs a damaged file once, with its
+  way out (again only when the file or its way out changes), where every pass failed on a file that
+  was empty, not JSON or not readable. `reconcile` and `gc --heal` refuse with one error naming
+  every damaged file and the command to run again, flags included, where they failed on a file
+  that was not JSON with the parser's message, naming no file, and on a file they could not read
+  with the system's error, which named the file. A copy of a run whose own file reads is not a
+  damaged file: `realm run list` names it with its way out and does not count it, and the other
+  commands that read every run (`cleanup`, `purge --older-than`, `reclaim --all`, `drain --all`,
+  `migrate`, `reconcile`, `gc --heal`, the sweeper) pass over it; a read by its own name still
+  refuses it.
+- **A keyed run creation is stopped only by a run file that can affect it (issue #719).** The
+  fallback scan reads each file through the one reader and the one scope rule. A file whose content
+  cannot be read (not readable, empty, not JSON) still refuses every new key, now with a message
+  naming it, its way out, and that every new key is refused; a file that is JSON but not an object,
+  or an object naming another workflow, does not stop it (0.47.0 created past them; a `null` file
+  threw), nor does a folder named like a run file; a readable object of this workflow (or naming
+  none) that is not a run record, holds another run, or is in an earlier format refuses only the key
+  it carries; and a copy of a run whose own file reads lets that run answer its key, as in 0.47.0.
+- **No message quotes a stored file's text (issue #719).** The parser's message, which quotes the
+  file around the fault (a param, a token), no longer reaches a run file's error, the registrar's
+  parse error, or the warning for a corrupt idempotency-key pointer.
+- **`realm agent`'s `drive-failure record LOST` line says why when the store refused with a Realm
+  error (issue #719)**, such as a run file that cannot be read, with its way out — once, when the
+  failure being recorded is that same refusal.
+- **The attending-process expiry timer no longer says another enactment point "will still catch"
+  a gate whose run file cannot be read (issue #719)**: every enactment point reads that file, and
+  the warning says none can read the run until its file is repaired (or, for a read error, can be
+  read) or is moved out. A read error that may pass (`EBUSY`, `EIO`) keeps "another enactment point
+  … will still catch it".
+- **`realm run reconcile`'s exit code is documented as it is (issue #719):** 1 on a failure; the
+  page said 0.
+- **`realm run inspect` escapes a cache basis or state word it does not recognise (issue #600
+  caching PR P).** A stored word holding a control character was printed to the terminal as it was;
+  it is now escaped (`unrecognized state "x\u001by"`).
+- **Docs:** `@sensigo/realm-testing`'s law table says `EVIDENCE_KEEPS_DRIVER_AND_PROOF` checks the
+  evidence entry's `output_source`, and the cli README lists `--strict-base-url` among the flags
+  `--provider-module` cannot be combined with.
+
+---
+
 ## [0.47.1] — 2026-10-17
 
 One security fix; nothing else changes.

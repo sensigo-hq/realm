@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 import { JsonFileStore } from '../store/json-file-store.js';
 import {
   advanceRun,
-  buildNextActions,
   executeChain,
   executeStep,
   submitHumanResponse,
@@ -24,34 +23,25 @@ import {
   ADVANCE_OWED,
   CAPABILITY_BASES,
   PRE_CLAIM_REFUSALS,
-  cannotRunWords,
-  cannotRunClause,
-  cannotRunWayOut,
-  cannotRunWayOutApplies,
-  cannotRunWayOutTools,
   checkPreClaim,
   composeNextActionsStatusWord,
-  describeNext,
   describePending,
   describeRunDriver,
   engineStepInput,
   judgeProgramFit,
   owedWords,
-  owedRunsClause,
   oneOf,
-  respondCommand,
   waitingOnAnswer,
-  waitingWords,
   pendingCleanupWay,
   pendingCleanupLine,
   pendingCleanupSentence,
-  owedCallWords,
   endsWithCommand,
   sentenceEnd,
   withFullStop,
-  type PendingView,
 } from './pending.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
+import { cannotGoOnUntilCorrected, composeWaysAt } from './ways.js';
+import { agentActionFor, nextCalls, owedOf } from '../test-support/ways-view.js';
 import type { StepDispatcher } from './execution-loop.js';
 import type { RunRecord, EvidenceSnapshot } from '../types/run-record.js';
 import type { WorkflowDefinition, StepDefinition } from '../types/workflow-definition.js';
@@ -72,18 +62,6 @@ async function withStore<T>(fn: (store: JsonFileStore) => Promise<T>): Promise<T
 function def(steps: Record<string, StepDefinition>, extra?: Partial<WorkflowDefinition>) {
   return { id: 'pending-wf', name: 'Pending', version: 1, steps, ...extra } as WorkflowDefinition;
 }
-
-/** The tools' way out, as a literal (decisions C51, C57, C60) — F15: for trust and precondition. */
-const TOOLS_WAY_OUT_TEXT =
-  'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
-/** F15: the tools' way out for a step refused for its input — with no `depends_on` (the run's params). */
-const inputWayOutParams = (step: string): string =>
-  `For '${step}', start a run with params that fit, or correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.`;
-/** F15: the same, for a step with `depends_on` (the engine gives it no input). */
-const inputWayOutDeps = (step: string): string =>
-  `For '${step}', the engine gives it no input, so correct its input_schema and register the workflow again; then, after a fix, call advance_run; or end the run with abandon_run.`;
-/** F15: the workflow the hand-built views read (`x`, with no `depends_on`). */
-const X_DEF = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
 
 /** An open run with nothing in flight and no question open — the run describeNext reads (C57). */
 const OPEN_RUN = {
@@ -152,124 +130,16 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         gateId: gate.gate_id,
         choice: 'approve',
       });
-      expect(answered.context_hint).toBe(
-        "Gate 'confirm' resolved with choice 'approve'. Owed to the engine: 'after' — call advance_run.",
-      );
-      expect(answered.next_actions).toHaveLength(1);
-      const act = answered.next_actions[0]!;
-      expect(act.instruction).toEqual({
-        tool: 'advance_run',
-        params: { run_id: run.id },
-        call_with: { run_id: run.id },
-      });
-      expect(act.human_readable).toBe(
-        "Call advance_run to run the step the engine owes: 'after'. It runs it with this server's extensions and environment.",
-      );
-      expect(act.orientation).toBe("Run is active. Engine work is owed: 'after'.");
+      // #729 PR-0: what happened is core's hint; what comes next is the reply's ways (the door words
+      // them — render-reply.test.ts keeps this cell's words).
+      expect(answered.context_hint).toBe("Gate 'confirm' resolved with choice 'approve'.");
+      expect(answered.names_next).toBe(true);
+      expect(nextCalls(answered)).toEqual(['advance']);
+      expect(owedOf(answered)).toEqual(['after']);
       const pending = describePending(gateThenAuto, await store.get(run.id), undefined, new Date());
       expect(composeNextActionsStatusWord(pending)).toBe(ADVANCE_OWED);
       expect(ADVANCE_OWED).toBe('advance_owed');
     });
-  });
-
-  it('describeNext, its four members: agent only, owed only, both, neither', () => {
-    const base = {
-      agent_actions: [],
-      agent_steps: [],
-      agent_refused: [],
-      pending_guards: [],
-      engine_runnable: [],
-      cannot_run: [],
-    };
-    const act = { instruction: null, human_readable: '', orientation: '' };
-    expect(describeNext({ ...base }, OPEN_RUN, X_DEF)).toBe(' No step is ready.');
-    expect(describeNext({ ...base, agent_steps: ['a', 'b'] }, OPEN_RUN, X_DEF)).toBe(
-      " Ready for the agent: 'a', 'b'.",
-    );
-    expect(
-      describeNext(
-        {
-          ...base,
-          pending_guards: ['g'],
-          engine_runnable: [{ step: 'x', runnable_here: true }],
-          act,
-        },
-        OPEN_RUN,
-        X_DEF,
-      ),
-    ).toBe(
-      " Owed to the engine: 'g', 'x' — call advance_run; it runs them until a step opens a question, fails or ends the run.",
-    );
-    expect(
-      describeNext(
-        {
-          ...base,
-          agent_steps: ['a'],
-          engine_runnable: [{ step: 'x', runnable_here: 'unknown' }],
-          act,
-        },
-        OPEN_RUN,
-        X_DEF,
-      ),
-    ).toBe(" Ready for the agent: 'a'. Owed to the engine: 'x' — call advance_run.");
-  });
-
-  it('C34: describeNext names each engine step that cannot run, one cell per member, after the other clauses', () => {
-    const base = {
-      agent_actions: [],
-      agent_steps: [],
-      agent_refused: [],
-      pending_guards: [],
-      engine_runnable: [],
-      cannot_run: [],
-    };
-    const act = { instruction: null, human_readable: '', orientation: '' };
-    const refused = (
-      check: 'trust' | 'precondition' | 'input_schema' | 'capability',
-      refusal: string,
-    ) => {
-      const entry = { step: 'x', runnable_here: false as const, refused_by: check, refusal };
-      return { ...base, engine_runnable: [entry], cannot_run: [entry] };
-    };
-    // decision C36: `here` for capability only — a runner with the handler could run it. Another
-    // runner can run it, so no way out follows (C57).
-    expect(
-      describeNext(refused('capability', "handler 'h' is not registered here"), OPEN_RUN, X_DEF),
-    ).toBe(" 'x' cannot run here (capability): handler 'h' is not registered here.");
-    // decision C57: a step refused before its claim with nothing else ready — the run cannot go on
-    // until its workflow is corrected, so the sentence ends with the way out.
-    expect(describeNext(refused('trust', 'bad trust'), OPEN_RUN, X_DEF)).toBe(
-      ` 'x' cannot run (trust): bad trust. ${TOOLS_WAY_OUT_TEXT}`,
-    );
-    // decision C37: a refusal that ends with a full stop gets no second one.
-    expect(
-      describeNext(refused('precondition', 'Resolved value: undefined.'), OPEN_RUN, X_DEF),
-    ).toBe(` 'x' cannot run (precondition): Resolved value: undefined. ${TOOLS_WAY_OUT_TEXT}`);
-    expect(describeNext(refused('input_schema', "'n' must be number"), OPEN_RUN, X_DEF)).toBe(
-      // F15: refused for its input, `x` with no `depends_on` — its own way out
-      ` 'x' cannot run (input_schema): 'n' must be number. ${inputWayOutParams('x')}`,
-    );
-    // After the agent and the owed clauses, in that order; `No step is ready.` never beside them.
-    expect(
-      describeNext(
-        {
-          ...base,
-          agent_steps: ['a'],
-          engine_runnable: [
-            { step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad' },
-            { step: 'y', runnable_here: true },
-          ],
-          cannot_run: [{ step: 'x', runnable_here: false, refused_by: 'trust', refusal: 'bad' }],
-          act,
-        },
-        OPEN_RUN,
-        X_DEF,
-      ),
-    ).toBe(
-      " Ready for the agent: 'a'. Owed to the engine: 'y' — call advance_run. 'x' cannot run (trust): bad.",
-    );
-    // Nothing else is said: only then `No step is ready.`
-    expect(describeNext({ ...base }, OPEN_RUN, X_DEF)).toBe(' No step is ready.');
   });
 
   it("C33 at the reply sites: an answer judges the capability check with the CALL's registry, as get_run_state does", async () => {
@@ -306,25 +176,30 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
           ...(registry !== undefined ? { registry } : {}),
         });
       });
+    // #729 PR-0: the judgement is the reply's ways (render-reply.test.ts keeps the words).
+    const capabilityOf = (reply: Awaited<ReturnType<typeof answer>>) =>
+      reply.unavailable.find((u) => u.verb === 'run_step' && u.code === 'capability_missing')
+        ?.facts;
     // A server that HAS the handler: the act, whatever the old marker says.
     const capable = await answer(has);
-    expect(capable.context_hint).toBe(
-      "Gate 'b' resolved with choice 'approve'. Owed to the engine: 'act' — call advance_run.",
-    );
-    expect(capable.next_actions.map((a) => a.instruction?.tool)).toEqual(['advance_run']);
+    expect(capable.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
+    expect(nextCalls(capable)).toEqual(['advance']);
     // A server that lacks it: no act, the step named as one this server cannot run.
     const lacking = await answer(new ExtensionRegistry());
-    expect(lacking.context_hint).toBe(
-      "Gate 'b' resolved with choice 'approve'. 'act' cannot run here (capability): handler 'note' is not registered here — load the missing extension, or run the step on a runner that has it.",
-    );
-    expect(lacking.next_actions).toEqual([]);
-    // A caller with no registry: the run's own marker is the freshest fact — past tense, since no
-    // runner was consulted (decision C41).
+    expect(nextCalls(lacking)).toEqual([]);
+    expect(capabilityOf(lacking)).toEqual({
+      step: 'act',
+      requirement: { kind: 'handler', name: 'note' },
+      basis: 'registry',
+    });
+    // A caller with no registry: the run's own marker is the freshest fact (decision C41).
     const none = await answer(undefined);
-    expect(none.context_hint).toBe(
-      "Gate 'b' resolved with choice 'approve'. 'act' could not run (capability): handler 'note' was not registered in the runner that last attempted it.",
-    );
-    expect(none.next_actions).toEqual([]);
+    expect(nextCalls(none)).toEqual([]);
+    expect(capabilityOf(none)).toEqual({
+      step: 'act',
+      requirement: { kind: 'handler', name: 'note' },
+      basis: 'marker',
+    });
   });
 
   it('C34 at the step sites: a completed step names a next step that cannot run, never "Waiting for other steps"', async () => {
@@ -346,11 +221,15 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         dispatcher: echo,
       });
       expect(reply.status).toBe('ok');
-      expect(reply.next_actions).toEqual([]);
-      // decision C57: nothing else is ready, so the reply ends with the way out.
-      expect(reply.context_hint).toBe(
-        `Step 'w' completed. 'x' cannot run (precondition): Precondition failed for step 'x'. Precondition failed: 'w.ok == true'. Resolved value: false. ${TOOLS_WAY_OUT_TEXT}`,
+      expect(nextCalls(reply)).toEqual([]);
+      // #729 PR-0: what happened, and the step that cannot run as data; the door says it (C34/C57)
+      // and, with nothing callable on an open run, `report_to_user` (T-22).
+      expect(reply.context_hint).toBe("Step 'w' completed.");
+      expect(reply.names_next).toBe(true);
+      expect(reply.unavailable.find((u) => u.verb === 'run_step' && u.step === 'x')?.code).toBe(
+        'refused_before_claim',
       );
+      expect(agentActionFor(reply)).toBe('report_to_user');
     });
   });
 
@@ -376,12 +255,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       them: 'them',
       until: ' until a step opens a question, fails or ends the run',
     });
-    expect(owedRunsClause(two)).toBe(
-      '; it runs them until a step opens a question, fails or ends the run',
-    );
-    expect(two.act!.human_readable).toBe(
-      "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
-    );
+    expect(two.owed).toEqual([{ step: 'a' }, { step: 'b' }]);
     const one = describePending(
       def({ a: { description: 'A', execution: 'auto', depends_on: [] } }),
       fresh,
@@ -389,10 +263,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       new Date(),
     );
     expect(owedWords(one)).toEqual({ steps: 'the step', them: 'it', until: '' });
-    expect(owedRunsClause(one)).toBe('');
-    expect(one.act!.human_readable).toBe(
-      "Call advance_run to run the step the engine owes: 'a'. It runs it with this server's extensions and environment.",
-    );
+    expect(one.owed).toEqual([{ step: 'a' }]);
   });
 
   it('with an agent step ready AND engine work owed: the agent action first, the act last, status ok', async () => {
@@ -402,8 +273,13 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     });
     await withStore(async (store) => {
       const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      const actions = buildNextActions(d, run, undefined, new Date());
-      expect(actions.map((x) => x.instruction?.tool)).toEqual(['execute_step', 'advance_run']);
+      // #729 PR-0: the run's ways, in the door's order — the agent's step first, the act last.
+      const composed = composeWaysAt(run, new Date(), { definition: d });
+      expect(
+        composed.ways
+          .filter((w) => w.verb === 'run_step' || w.verb === 'advance')
+          .map((w) => (w.verb === 'run_step' ? `run_step:${w.step}` : w.verb)),
+      ).toEqual(['run_step:a', 'advance']);
       expect(
         composeNextActionsStatusWord(describePending(d, run, undefined, new Date())),
       ).toBeUndefined();
@@ -433,7 +309,7 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
     } as unknown as RunRecord;
     const pending = describePending(d, run, undefined, new Date());
     expect(pending.pending_guards).toEqual(['g']);
-    expect(pending.act?.orientation).toBe("Run is active. Engine work is owed: 'g', 'x'.");
+    expect(pending.owed).toEqual([{ step: 'g' }, { step: 'x' }]);
   });
 
   it('a terminal run and a run with an open gate owe nothing', () => {
@@ -448,10 +324,10 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    expect(describePending(d, live, undefined, new Date()).act).toBeDefined();
+    expect(describePending(d, live, undefined, new Date()).owed).not.toEqual([]);
     expect(
-      describePending(d, { ...live, terminal_state: true }, undefined, new Date()).act,
-    ).toBeUndefined();
+      describePending(d, { ...live, terminal_state: true }, undefined, new Date()).owed,
+    ).toEqual([]);
     expect(
       describePending(
         d,
@@ -467,8 +343,8 @@ describe('#625 PR-2a — describePending, the act, the status word, the next sen
         } as RunRecord,
         undefined,
         new Date(),
-      ).act,
-    ).toBeUndefined();
+      ).owed,
+    ).toEqual([]);
   });
 });
 
@@ -519,7 +395,9 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       refusal:
         "Precondition failed for step 'x'. Precondition failed: 'w.ok == true'. Resolved value: false.",
       hint: "Precondition failed for step 'x'.",
-      suggestion: "Precondition failed: 'w.ok == true'. Resolved value: false.",
+      // #729 PR-0 (E1 (b)): the expression and the value read, through the one escaped, bounded value
+      // renderer — the facts the door renders the suggestion from.
+      precondition: { expression: 'w.ok == true', value: 'false' },
     });
   });
 
@@ -591,7 +469,7 @@ describe('#625 PR-2a — checkPreClaim, one cell per member of PRE_CLAIM_REFUSAL
       true,
     );
     // A refused step is never named, so with nothing else owed the act is withdrawn.
-    expect(describePending(d, live(), new ExtensionRegistry(), new Date()).act).toBeUndefined();
+    expect(describePending(d, live(), new ExtensionRegistry(), new Date()).owed).toEqual([]);
   });
 });
 
@@ -692,14 +570,15 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       // decision C124: a program's own call names itself.
       expect(reply.command).toBe('advanceRun');
       expect(reply.chained_auto_steps?.map((c) => c.step)).toEqual(['after']);
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
+      expect(nextCalls(reply)).toEqual(['run_step:finish']);
       // A repeat with nothing owed runs nothing and returns the view, never an error.
       const again = await advanceRun(store, gateThenAuto, { runId });
       expect(again.status).toBe('ok');
       expect(again.chained_auto_steps).toBeUndefined();
-      expect(again.context_hint).toBe(
-        `Run '${runId}': nothing ran. Ready for the agent: 'finish'.`,
-      );
+      // #729 PR-0: what happened; the agent's step is the reply's way (the door says "Ready…").
+      expect(again.context_hint).toBe(`Run '${runId}': nothing ran.`);
+      expect(again.names_next).toBe(true);
+      expect(nextCalls(again)).toEqual(['run_step:finish']);
     });
   });
 
@@ -721,7 +600,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       const after = await store.get(run.id);
       expect(after.completed_steps).toEqual(['b']);
       // L5: the act is withdrawn — only the refused step is left, and it is never named.
-      expect(describePending(d, after, undefined, new Date()).act).toBeUndefined();
+      expect(describePending(d, after, undefined, new Date()).owed).toEqual([]);
       expect(describePending(d, after, undefined, new Date()).engine_runnable).toEqual([
         expect.objectContaining({ step: 'a', runnable_here: false, refused_by: 'precondition' }),
       ]);
@@ -737,7 +616,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
       const reg = new ExtensionRegistry();
       // The act names only `b` (the view refuses `a` for capability)…
-      expect(describePending(d, run, reg, new Date()).act?.human_readable).toContain("'b'");
+      expect(describePending(d, run, reg, new Date()).owed).toEqual([{ step: 'b' }]);
       const steps: string[] = [];
       const first = await advanceRun(store, d, {
         runId: run.id,
@@ -758,7 +637,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       });
       expect(again).toEqual([]);
       expect(second.status).toBe('ok');
-      expect(describePending(d, await store.get(run.id), reg, new Date()).act).toBeUndefined();
+      expect(describePending(d, await store.get(run.id), reg, new Date()).owed).toEqual([]);
     });
   });
 
@@ -805,7 +684,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       expect(describePending(d, afterAnswer, undefined, new Date()).pending_guards).toEqual([
         'check',
       ]);
-      expect(describePending(d, afterAnswer, undefined, new Date()).act).toBeDefined();
+      expect(describePending(d, afterAnswer, undefined, new Date()).owed).not.toEqual([]);
       await advanceRun(store, d, { runId: run.id });
       expect((await store.get(run.id)).completed_steps).toContain('check');
     });
@@ -832,7 +711,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       await withStore(async (store) => {
         const { run } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
         const before = describePending(d, await store.get(run.id), undefined, new Date());
-        expect(before.act).toBeUndefined();
+        expect(before.owed).toEqual([]);
         expect(before.engine_runnable).toEqual([
           expect.objectContaining({ step: 'x', runnable_here: false, refused_by: member }),
         ]);
@@ -840,21 +719,17 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
         const reply = await advanceRun(store, d, { runId: run.id, onStep: (s) => steps.push(s) });
         expect(steps).toEqual([]);
         expect(reply.status).toBe('ok');
-        expect(reply.next_actions).toEqual([]);
-        // decision C34: the reply names the step that cannot run instead of `No step is ready.`;
-        // decision C37: one full stop, never two (the precondition refusal ends with its own).
-        const refusal = before.engine_runnable[0]!.refusal!;
-        // decision C51: nothing else is ready, so the reply ends with the way out in the tools' words.
-        expect(reply.context_hint).toBe(
-          `Run '${run.id}': nothing ran. 'x' cannot run (${member}): ${refusal}${refusal.endsWith('.') ? '' : '.'} ${
-            // F15: refused for its input (no `depends_on`): its own way out
-            member === 'input_schema' ? inputWayOutParams('x') : TOOLS_WAY_OUT_TEXT
-          }`,
-        );
-        expect(reply.context_hint).not.toContain('..');
+        expect(nextCalls(reply)).toEqual([]);
+        // #729 PR-0: what happened; the refused step is data the door words (C34, C51 — kept in
+        // render-reply.test.ts); Q11: advance is listed `refused_before_claim` here (more specific
+        // than `nothing_owed`), and with nothing callable on an open run, `report_to_user` (T-22).
+        expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran.`);
+        expect(reply.names_next).toBe(true);
         expect(
-          describePending(d, await store.get(run.id), undefined, new Date()).act,
-        ).toBeUndefined();
+          reply.unavailable.find((u) => u.verb === 'run_step' && u.step === 'x'),
+        ).toMatchObject({ code: 'refused_before_claim', facts: { check: member } });
+        expect(agentActionFor(reply)).toBe('report_to_user');
+        expect(describePending(d, await store.get(run.id), undefined, new Date()).owed).toEqual([]);
       });
     });
   }
@@ -893,30 +768,6 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
     });
   });
 
-  it("C205: describeNext with nothing ready but steps in flight elsewhere names them and the wait — one, and several (`are`, `them`); a question's own step is not in flight", async () => {
-    const d = def({
-      a: { description: 'A', execution: 'auto', depends_on: [] },
-      b: { description: 'B', execution: 'auto', depends_on: [] },
-    });
-    await withStore(async (store) => {
-      const other = {
-        by: 'other@host',
-        by_source: 'derived' as const,
-        channel: 'advance' as const,
-      };
-      const { run: one } = await store.create({ workflowId: d.id, workflowVersion: 1, params: {} });
-      await store.claimStep(one.id, 'a', d, other);
-      await store.claimStep(one.id, 'b', d, other);
-      const both = await store.get(one.id);
-      const sentence = describeNext(describePending(d, both, undefined, new Date()), both, d);
-      // (a) red when the steps in flight are not named, the plural words are wrong, or the wait is
-      //     dropped; (b) prints the sentence.
-      expect(sentence).toBe(
-        " No step is ready: 'a', 'b' are in flight elsewhere — wait for them, then call get_run_state.",
-      );
-    });
-  });
-
   it('D3.2: when the only owed step is taken, nothing ran — and the hint says what the record says now', async () => {
     const d = def({ x: { description: 'X', execution: 'auto', depends_on: [] } });
     await withStore(async (store) => {
@@ -936,12 +787,16 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       };
       const reply = await advanceRun(store, d, { runId: run.id });
       expect(reply.chained_auto_steps).toBeUndefined();
-      expect(reply.next_actions).toEqual([]);
-      // decision C25: the reply ends with one clause per step another process held; decision
-      // C205: nothing is ready because 'x' is in flight elsewhere — the sentence says to wait.
+      expect(nextCalls(reply)).toEqual([]);
+      // decision C25: the reply ends with one clause per step another process held; #729 PR-0: the
+      // wait (C205) is the door's sentence, from the `held_elsewhere` entry, and `await` (T-22).
       expect(reply.context_hint).toBe(
-        `Run '${run.id}': nothing ran. No step is ready: 'x' is in flight elsewhere — wait for it, then call get_run_state. 'x' was claimed by another process, so it did not run here.`,
+        `Run '${run.id}': nothing ran. 'x' was claimed by another process, so it did not run here.`,
       );
+      expect(reply.unavailable.some((u) => u.code === 'held_elsewhere' && u.step === 'x')).toBe(
+        true,
+      );
+      expect(agentActionFor(reply)).toBe('await');
     });
   });
 
@@ -988,8 +843,7 @@ describe('#625 PR-2a — advanceRun: one call runs what is owed; L5 progress-or-
       });
       expect(reply.status).toBe('error');
       expect(reply.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual(['execute_step']);
-      expect(reply.next_actions.some((a) => a.instruction?.tool === 'advance_run')).toBe(false);
+      expect(nextCalls(reply)).toEqual(['run_step:y']);
     });
   });
 });
@@ -1250,7 +1104,8 @@ describe('#625 PR-2a — L8 witnesses (source text)', () => {
     }
     // F7: no host keeps its own list of codes — the capability stop is core's classifier's kind.
     expect(ra.split("'ENGINE_HANDLER_NOT_REGISTERED' ||").length - 1).toBe(0);
-    expect(ra.split("resultStop?.kind === 'capability'").length - 1).toBe(1);
+    // #729 PR-0 (T-1): the one vocabulary — the classifier's kind is `capability_missing`.
+    expect(ra.split("resultStop?.kind === 'capability_missing'").length - 1).toBe(1);
   });
   it('the literal advance_owed appears in core only (code, comments stripped)', async () => {
     const { readdirSync } = await import('node:fs');
@@ -1342,13 +1197,10 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
     await withStore(async (store) => {
       const reply = await stepReply(store);
       expect(reply.status).toBe('ok');
-      expect(reply.context_hint).toBe(
-        "Step 'w' completed. Ready for the agent: 'b'. Owed to the engine: 'act' — call advance_run.",
-      );
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual([
-        'execute_step',
-        'advance_run',
-      ]);
+      // #729 PR-0: judged with the call's registry — the act offered, beside the agent's step.
+      expect(reply.context_hint).toBe("Step 'w' completed.");
+      expect(nextCalls(reply)).toEqual(['run_step:b', 'advance']);
+      expect(owedOf(reply)).toEqual(['act']);
     });
   });
 
@@ -1356,13 +1208,10 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
     await withStore(async (json) => {
       const reply = await stepReply(withoutSettle(json));
       expect(reply.status).toBe('ok');
-      expect(reply.context_hint).toBe(
-        "Step 'w' completed. Ready for the agent: 'b'. Owed to the engine: 'act' — call advance_run.",
-      );
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual([
-        'execute_step',
-        'advance_run',
-      ]);
+      // #729 PR-0: judged with the call's registry — the act offered, beside the agent's step.
+      expect(reply.context_hint).toBe("Step 'w' completed.");
+      expect(nextCalls(reply)).toEqual(['run_step:b', 'advance']);
+      expect(owedOf(reply)).toEqual(['act']);
     });
   });
 
@@ -1370,13 +1219,9 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
     await withStore(async (json) => {
       const reply = await answerReply(withoutSettle(json));
       expect(reply.status).toBe('ok');
-      expect(reply.context_hint).toBe(
-        "Gate 'b' resolved with choice 'approve'. Ready for the agent: 'w'. Owed to the engine: 'act' — call advance_run.",
-      );
-      expect(reply.next_actions.map((a) => a.instruction?.tool)).toEqual([
-        'execute_step',
-        'advance_run',
-      ]);
+      expect(reply.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
+      expect(nextCalls(reply)).toEqual(['run_step:w', 'advance']);
+      expect(owedOf(reply)).toEqual(['act']);
     });
   });
 
@@ -1400,7 +1245,7 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       // y is still eligible and unmarked: only the call's registry says it cannot run here.
       expect(after.terminal_state).toBe(false);
       expect(after.capability_blocks?.['y']).toBeUndefined();
-      expect(reply.next_actions.some((a) => a.instruction?.tool === 'advance_run')).toBe(false);
+      expect(nextCalls(reply)).not.toContain('advance');
     });
   });
 
@@ -1444,16 +1289,23 @@ describe('#625 PR-2a — round 5: one cell per reply site (C39), the C24 rebuild
       basis: 'marker',
     });
     expect(CAPABILITY_BASES).toEqual(['registry', 'marker']);
-    expect(cannotRunWords(byRegistry)).toBe('cannot run here (capability)');
-    expect(cannotRunWords(byMarker)).toBe('could not run (capability)');
-    expect(
-      describeNext(describePending(d, live, new ExtensionRegistry(), new Date()), live, d),
-    ).toBe(
-      " 'x' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.",
-    );
-    expect(describeNext(describePending(d, marked, undefined, new Date()), marked, d)).toBe(
-      " 'x' could not run (capability): handler 'h' was not registered in the runner that last attempted it.",
-    );
+    // #729 PR-0: the basis rides the `capability_missing` entry's facts; the doors word it (the
+    // MCP and CLI renderer tests keep the present- and past-tense words).
+    const capFacts = (r: RunRecord, registry?: ExtensionRegistry) =>
+      composeWaysAt(r, new Date(), {
+        definition: d,
+        ...(registry !== undefined ? { registry } : {}),
+      }).unavailable.find((u) => u.verb === 'run_step' && u.code === 'capability_missing')?.facts;
+    expect(capFacts(live, new ExtensionRegistry())).toEqual({
+      step: 'x',
+      requirement: { kind: 'handler', name: 'h' },
+      basis: 'registry',
+    });
+    expect(capFacts(marked)).toEqual({
+      step: 'x',
+      requirement: { kind: 'handler', name: 'h' },
+      basis: 'marker',
+    });
     // No basis on a refusal that is not capability's, nor on a runnable entry.
     const trust = def({
       x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
@@ -1546,8 +1398,6 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
     "'trust: \"nope\"' is not a recognized value — the engine will refuse this step at dispatch (VALIDATION_TRUST_VALUE). Accepts auto, human_confirmed, human_reviewed — correct the value and 'realm workflow register <path>'.";
   const DISPATCH_VOICE =
     "Step 'work': 'trust: \"nope\"' is not a recognized value — refused at dispatch: no gate opens and this step does not run; this run is now parked, non-terminal, until the value is corrected, and any step depending on this one returns 'blocked' in the meantime. A step's 'trust' accepts auto, human_confirmed, human_reviewed. Correct the value, then 'realm workflow register <path>' and retry this step — this run picks up the corrected definition.";
-  const TOOLS_WAY_OUT =
-    'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.';
 
   it("C49: the view's trust refusal is #508's read-time voice; executeStep's reply keeps the dispatch voice, byte for byte", async () => {
     const d = def({
@@ -1565,9 +1415,12 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
         refusal: FINDING_VOICE,
       });
       expect(entry.refusal).not.toContain('parked');
-      expect(describeNext(describePending(d, run, undefined, new Date()), run, d)).toBe(
-        ` Ready for the agent: 'ask'. 'work' cannot run (trust): ${FINDING_VOICE}`,
-      );
+      // #729 PR-0: the view's words ride the `refused_before_claim` entry's facts.
+      expect(
+        composeWaysAt(run, new Date(), { definition: d }).unavailable.find(
+          (u) => u.verb === 'run_step' && u.step === 'work',
+        )?.facts,
+      ).toEqual({ step: 'work', check: 'trust', refusal: FINDING_VOICE });
       // checkPreClaim carries both: the view's words, and the error executeStep returns.
       const verdict = checkPreClaim({ definition: d, run, step: 'work', input: {} });
       expect(verdict && 'refused_by' in verdict ? verdict.refusal : undefined).toBe(FINDING_VOICE);
@@ -1585,31 +1438,20 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       expect(reply.error_code).toBe('VALIDATION_TRUST_VALUE');
       expect(reply.errors).toEqual([DISPATCH_VOICE]);
       expect(reply.context_hint).toBe("Error during 'work'. Run phase: 'running'.");
-      // decision C94: what the caller can call instead — the view's, never the refused step.
-      expect(reply.agent_action).toBe('resolve_precondition');
-      expect(reply.next_actions.map((a) => a.instruction?.params['command'])).toEqual(['ask']);
+      // decision C94: what the caller can call instead — the view's, never the refused step. #729
+      // PR-0: the reply carries the refusal; D-8 row 4 gives `resolve_precondition` (a way to call).
+      expect(reply.reply_kind).toBe('refusal');
+      expect(reply.refusal).toMatchObject({ code: 'refused_before_claim', step: 'work' });
+      expect(agentActionFor(reply)).toBe('resolve_precondition');
+      expect(nextCalls(reply)).toEqual(['run_step:ask']);
       expect(reply.blocked_reason?.eligible_steps).toEqual(['ask']);
     });
   });
 
   it("C51: advance_run's nothing-ran reply ends with the tools' way out only when nothing else is ready and a step is refused before its claim", async () => {
-    // F15: the tools' way out for a trust refusal (its words unchanged).
-    const trustEntry = {
-      step: 'x',
-      runnable_here: false as const,
-      refused_by: 'trust' as const,
-      refusal: 'bad',
-    };
-    const trustView = {
-      agent_actions: [],
-      agent_steps: [],
-      agent_refused: [],
-      pending_guards: [],
-      engine_runnable: [trustEntry],
-      cannot_run: [trustEntry],
-    };
-    expect(cannotRunWayOutTools(OPEN_RUN, X_DEF, trustView)).toBe(TOOLS_WAY_OUT);
-    // Present: covered member by member by the three L5 cells (trust, precondition, input schema).
+    // #729 PR-0: the tools' way out is the MCP door's words (render-reply.test.ts); core says when
+    // it applies — `cannotGoOnUntilCorrected` over the ways. Present: covered member by member by the
+    // three L5 cells (trust, precondition, input schema).
     // Absent when an agent step is ready beside the refused step.
     const withAgent = def({
       x: {
@@ -1627,11 +1469,10 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
         params: {},
       });
       const reply = await advanceRun(store, withAgent, { runId: run.id });
-      expect(reply.context_hint).toBe(
-        `Run '${run.id}': nothing ran. Ready for the agent: 'ask'. 'x' cannot run (input_schema): Invalid input for step 'x': the input must have required property 'needed'.`,
-      );
+      expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran.`);
+      expect(nextCalls(reply)).toEqual(['run_step:ask']);
       expect(
-        cannotRunWayOutApplies(run, describePending(withAgent, run, undefined, new Date())),
+        cannotGoOnUntilCorrected(composeWaysAt(run, new Date(), { definition: withAgent })),
       ).toBe(false);
     });
     // Absent for capability: another runner can run the step.
@@ -1642,10 +1483,16 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       const first = await advanceRun(store, cap, { runId: run.id, registry: lacking });
       expect(first.error_code).toBe('ENGINE_HANDLER_NOT_REGISTERED');
       const second = await advanceRun(store, cap, { runId: run.id, registry: lacking });
-      expect(second.context_hint).toBe(
-        `Run '${run.id}': nothing ran. 'x' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it.`,
-      );
-      expect(second.context_hint).not.toContain(TOOLS_WAY_OUT);
+      expect(second.context_hint).toBe(`Run '${run.id}': nothing ran.`);
+      // A capability refusal is not one the workflow's correction fixes: no way out (C51).
+      expect(
+        cannotGoOnUntilCorrected(
+          composeWaysAt(await store.get(run.id), new Date(), {
+            definition: cap,
+            registry: lacking,
+          }),
+        ),
+      ).toBe(false);
     });
     // Absent while a step is in flight elsewhere (the CLI's condition, shared).
     const refused = def({
@@ -1661,38 +1508,13 @@ describe("#625 PR-2a — round 6: the view's trust voice (C49), the tools' way o
       evidence: [],
       terminal_state: false,
     } as unknown as RunRecord;
-    expect(
-      cannotRunWayOutApplies(live, describePending(refused, live, undefined, new Date())),
-    ).toBe(true);
+    expect(cannotGoOnUntilCorrected(composeWaysAt(live, new Date(), { definition: refused }))).toBe(
+      true,
+    );
     const inFlight = { ...live, in_progress_steps: ['other'] } as unknown as RunRecord;
     expect(
-      cannotRunWayOutApplies(inFlight, describePending(refused, inFlight, undefined, new Date())),
+      cannotGoOnUntilCorrected(composeWaysAt(inFlight, new Date(), { definition: refused })),
     ).toBe(false);
-  });
-
-  it("C53: a capability refusal judged from the caller's registry ends with its way out; one judged from the marker does not", () => {
-    expect(
-      cannotRunClause({
-        step: 'x',
-        runnable_here: false,
-        refused_by: 'capability',
-        refusal: "handler 'h' is not registered here",
-        basis: 'registry',
-      }),
-    ).toBe(
-      "'x' cannot run here (capability): handler 'h' is not registered here — load the missing extension, or run the step on a runner that has it",
-    );
-    expect(
-      cannotRunClause({
-        step: 'x',
-        runnable_here: false,
-        refused_by: 'capability',
-        refusal: "handler 'h' was not registered in the runner that last attempted it",
-        basis: 'marker',
-      }),
-    ).toBe(
-      "'x' could not run (capability): handler 'h' was not registered in the runner that last attempted it",
-    );
   });
 
   it('the eligibility path of D3.2: a step another process claimed before executeStep read the record is said as taken — never "not eligible"', async () => {
@@ -1751,8 +1573,6 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       },
     }) as unknown as RunStore;
   const needsN = { type: 'object', required: ['n'], properties: { n: { type: 'number' } } };
-  const REFUSAL =
-    "'compute' cannot run (input_schema): Invalid input for step 'compute': the input must have required property 'n'.";
   /** After `ask`, only `compute` is owed, and it is refused before its claim. */
   const afterStep = def({
     ask: { description: 'Ask', execution: 'agent', depends_on: [] },
@@ -1805,14 +1625,16 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
     await withStore(async (store) => {
       const reply = await stepReply(store, afterStep);
       expect(reply.status).toBe('ok');
-      expect(reply.next_actions).toEqual([]);
-      expect(reply.context_hint).toBe(
-        `Step 'ask' completed. ${REFUSAL} ${inputWayOutDeps('compute')}`,
-      );
+      expect(nextCalls(reply)).toEqual([]);
+      // #729 PR-0: what happened; the refusal is data the door words, with the way out (C57 — kept
+      // in render-reply.test.ts), since the run cannot go on until its workflow is corrected.
+      expect(reply.context_hint).toBe("Step 'ask' completed.");
+      expect(reply.names_next).toBe(true);
+      expect(cannotGoOnUntilCorrected(reply)).toBe(true);
       const control = await stepReply(store, afterStepWithAgent);
-      expect(control.context_hint).toBe(
-        `Step 'ask' completed. Ready for the agent: 'ask2'. ${REFUSAL}`,
-      );
+      expect(control.context_hint).toBe("Step 'ask' completed.");
+      expect(nextCalls(control)).toEqual(['run_step:ask2']);
+      expect(cannotGoOnUntilCorrected(control)).toBe(false);
     });
   });
 
@@ -1821,14 +1643,16 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       const store = withoutSettle(json);
       const reply = await stepReply(store, afterStep);
       expect(reply.status).toBe('ok');
-      expect(reply.next_actions).toEqual([]);
-      expect(reply.context_hint).toBe(
-        `Step 'ask' completed. ${REFUSAL} ${inputWayOutDeps('compute')}`,
-      );
+      expect(nextCalls(reply)).toEqual([]);
+      // #729 PR-0: what happened; the refusal is data the door words, with the way out (C57 — kept
+      // in render-reply.test.ts), since the run cannot go on until its workflow is corrected.
+      expect(reply.context_hint).toBe("Step 'ask' completed.");
+      expect(reply.names_next).toBe(true);
+      expect(cannotGoOnUntilCorrected(reply)).toBe(true);
       const control = await stepReply(store, afterStepWithAgent);
-      expect(control.context_hint).toBe(
-        `Step 'ask' completed. Ready for the agent: 'ask2'. ${REFUSAL}`,
-      );
+      expect(control.context_hint).toBe("Step 'ask' completed.");
+      expect(nextCalls(control)).toEqual(['run_step:ask2']);
+      expect(cannotGoOnUntilCorrected(control)).toBe(false);
     });
   });
 
@@ -1836,14 +1660,16 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
     await withStore(async (store) => {
       const reply = await answerReply(store, afterAnswer);
       expect(reply.status).toBe('ok');
-      expect(reply.next_actions).toEqual([]);
-      expect(reply.context_hint).toBe(
-        `Gate 'b' resolved with choice 'approve'. ${REFUSAL} ${inputWayOutDeps('compute')}`,
-      );
+      expect(nextCalls(reply)).toEqual([]);
+      // #729 PR-0: what happened; the refusal is data the door words, with the way out (C57 — kept
+      // in render-reply.test.ts), since the run cannot go on until its workflow is corrected.
+      expect(reply.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
+      expect(reply.names_next).toBe(true);
+      expect(cannotGoOnUntilCorrected(reply)).toBe(true);
       const control = await answerReply(store, afterAnswerWithAgent);
-      expect(control.context_hint).toBe(
-        `Gate 'b' resolved with choice 'approve'. Ready for the agent: 'w'. ${REFUSAL}`,
-      );
+      expect(control.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
+      expect(nextCalls(control)).toEqual(['run_step:w']);
+      expect(cannotGoOnUntilCorrected(control)).toBe(false);
     });
   });
 
@@ -1852,14 +1678,16 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
       const store = withoutSettle(json);
       const reply = await answerReply(store, afterAnswer);
       expect(reply.status).toBe('ok');
-      expect(reply.next_actions).toEqual([]);
-      expect(reply.context_hint).toBe(
-        `Gate 'b' resolved with choice 'approve'. ${REFUSAL} ${inputWayOutDeps('compute')}`,
-      );
+      expect(nextCalls(reply)).toEqual([]);
+      // #729 PR-0: what happened; the refusal is data the door words, with the way out (C57 — kept
+      // in render-reply.test.ts), since the run cannot go on until its workflow is corrected.
+      expect(reply.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
+      expect(reply.names_next).toBe(true);
+      expect(cannotGoOnUntilCorrected(reply)).toBe(true);
       const control = await answerReply(store, afterAnswerWithAgent);
-      expect(control.context_hint).toBe(
-        `Gate 'b' resolved with choice 'approve'. Ready for the agent: 'w'. ${REFUSAL}`,
-      );
+      expect(control.context_hint).toBe("Gate 'b' resolved with choice 'approve'.");
+      expect(nextCalls(control)).toEqual(['run_step:w']);
+      expect(cannotGoOnUntilCorrected(control)).toBe(false);
     });
   });
 
@@ -1874,85 +1702,48 @@ describe('#625 PR-2a — round 7: the way out at every site that says what comes
     await withStore(async (store) => {
       const { run } = await store.create({ workflowId: only.id, workflowVersion: 1, params: {} });
       const reply = await advanceRun(store, only, { runId: run.id });
-      expect(reply.context_hint).toBe(
-        `Run '${run.id}': nothing ran. ${REFUSAL} ${inputWayOutParams('compute')}`,
-      );
-      // Once: the way out is said by describeNext alone, never appended a second time.
-      expect(reply.context_hint.split(inputWayOutParams('compute'))).toHaveLength(2);
+      // #729 PR-0: what happened; the way out is the door's (render-reply.test.ts, C51).
+      expect(reply.context_hint).toBe(`Run '${run.id}': nothing ran.`);
+      expect(cannotGoOnUntilCorrected(reply)).toBe(true);
       const control = await store.create({
         workflowId: withAgent.id,
         workflowVersion: 1,
         params: {},
       });
       const controlReply = await advanceRun(store, withAgent, { runId: control.run.id });
-      expect(controlReply.context_hint).toBe(
-        `Run '${control.run.id}': nothing ran. Ready for the agent: 'ask'. ${REFUSAL}`,
-      );
+      expect(controlReply.context_hint).toBe(`Run '${control.run.id}': nothing ran.`);
+      expect(nextCalls(controlReply)).toEqual(['run_step:ask']);
+      expect(cannotGoOnUntilCorrected(controlReply)).toBe(false);
     });
   });
 
-  it('C57 describeNext itself: the way out follows the refusal only under cannotRunWayOutApplies (in flight, a question open, a terminal run: none)', () => {
+  it('C57: the way out applies only when the run cannot go on until its workflow is corrected (in flight, a question open, a terminal run: none)', () => {
     const only = def({
       compute: { description: 'C', execution: 'auto', depends_on: [], input_schema: needsN },
     });
-    const pending = describePending(only, OPEN_RUN, undefined, new Date());
-    // F15: `compute` here has no `depends_on` — its own way out names a run with params that fit
-    expect(describeNext(pending, OPEN_RUN, only)).toBe(
-      ` ${REFUSAL} ${inputWayOutParams('compute')}`,
+    const applies = (r: RunRecord) =>
+      cannotGoOnUntilCorrected(composeWaysAt(r, new Date(), { definition: only }));
+    expect(applies(OPEN_RUN)).toBe(true);
+    expect(applies({ ...OPEN_RUN, in_progress_steps: ['other'] } as unknown as RunRecord)).toBe(
+      false,
     );
-    const inFlight = { ...OPEN_RUN, in_progress_steps: ['other'] } as unknown as RunRecord;
-    expect(describeNext(pending, inFlight, only)).toBe(` ${REFUSAL}`);
-    const gated = {
-      ...OPEN_RUN,
-      pending_gate: { gate_id: 'g', step_name: 'b' },
-    } as unknown as RunRecord;
-    expect(describeNext(pending, gated, only)).toBe(` ${REFUSAL}`);
-    const ended = { ...OPEN_RUN, terminal_state: true } as unknown as RunRecord;
-    expect(describeNext(pending, ended, only)).toBe(` ${REFUSAL}`);
-  });
-
-  it('C60: cannotRunWayOut, the CLI form, is pinned whole in core — F15: the one fix for trust and precondition', async () => {
-    await withStore(async (store) => {
-      const { run } = await store.create({
-        workflowId: 'pending-wf',
-        workflowVersion: 1,
-        params: {},
-      });
-      const d = def({
-        x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
-      });
-      expect(cannotRunWayOut(run, d, describePending(d, run, undefined, new Date()))).toBe(
-        `Run ${run.id} stays open (phase 'running'): correct the workflow, register it again, then realm run advance ${run.id} — or end it: realm run abandon ${run.id}`,
-      );
-    });
-  });
-
-  it('C60: cannotRunWayOutTools, the tools form, is pinned whole in core — F15: the one fix for trust and precondition', () => {
-    const d = def({
-      x: { description: 'X', execution: 'auto', depends_on: [], trust: 'nope' as never },
-    });
     expect(
-      cannotRunWayOutTools(OPEN_RUN, d, describePending(d, OPEN_RUN, undefined, new Date())),
-    ).toBe(
-      'Correct the workflow and register it again, then call advance_run; or end the run with abandon_run.',
-    );
+      applies({
+        ...OPEN_RUN,
+        pending_gate: { gate_id: 'g', step_name: 'b', choices: ['ok'] },
+      } as unknown as RunRecord),
+    ).toBe(false);
+    expect(applies({ ...OPEN_RUN, terminal_state: true } as unknown as RunRecord)).toBe(false);
   });
 });
 
 describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where one advance call stops, the cleanup steps’ outcomes', () => {
-  it('C206 (walk c13 RED-1): oneOf and respondCommand — the value itself for one, `<one of: a, b>` for several, never `a|b`', () => {
-    // (a) red when one value is wrapped, several are joined with `|`, or the command differs; (b)
-    //     prints them.
-    expect({
-      one: oneOf(['ack']),
-      two: oneOf(['ship', 'hold']),
-      cmdTwo: respondCommand('r', 'g', ['ship', 'hold']),
-      cmdOne: respondCommand('r', 'g', ['ack']),
-    }).toEqual({
+  it('C206 (walk c13 RED-1): oneOf — the value itself for one, `<one of: a, b>` for several, never `a|b`', () => {
+    // (a) red when one value is wrapped or several are joined with `|`; (b) prints them. #729 PR-0:
+    // the answer command is the CLI renderer's (ways-renderer.test.ts keeps that half).
+    expect({ one: oneOf(['ack']), two: oneOf(['ship', 'hold']) }).toEqual({
       one: 'ack',
       two: '<one of: ship, hold>',
-      cmdTwo: 'realm run respond r --gate g --choice <one of: ship, hold>',
-      cmdOne: 'realm run respond r --gate g --choice ack',
     });
   });
 
@@ -1987,7 +1778,7 @@ describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where 
         });
         const after = await store.get(run.id);
         seen[name] = {
-          owed: view.act?.human_readable,
+          owed: view.owed.map((o) => ('step' in o ? o.step : `expiry:${o.expiry.gate_id}`)),
           ran: steps,
           status: reply.status,
           completed: after.completed_steps,
@@ -1999,19 +1790,19 @@ describe('#625 PR-2a, round 29 — C206, C207, C208: the one choice form, where 
     //     run; (b) prints them.
     expect(seen).toEqual({
       question: {
-        owed: "Call advance_run to run the steps the engine owes: 'approve', 'fetch'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
+        owed: ['approve', 'fetch'],
         ran: ['approve'],
         status: 'confirm_required',
         completed: [],
       },
       fails: {
-        owed: "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
+        owed: ['a', 'b'],
         ran: ['a'],
         status: 'error',
         completed: [],
       },
       plain: {
-        owed: "Call advance_run to run the steps the engine owes: 'a', 'b'. It runs them with this server's extensions and environment until a step opens a question, fails or ends the run.",
+        owed: ['a', 'b'],
         ran: ['a', 'b', 'c'],
         status: 'ok',
         completed: ['a', 'b', 'c'],
@@ -2112,19 +1903,13 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
     expect({
       waiting: waitingOnAnswer(def, open),
       view: view.waiting_on_answer,
-      words: waitingWords(view),
-      one: waitingWords({ waiting_on_answer: ['z'] } as PendingView),
       none: waitingOnAnswer(def, asRun({ completed_steps: ['g0'] })),
       ended: waitingOnAnswer(def, { ...open, terminal_state: true }),
-      noWords: waitingWords({} as PendingView),
     }).toEqual({
       waiting: ['z', 'y'],
       view: ['z', 'y'],
-      words: "'z', 'y' wait for its answer",
-      one: "'z' waits for its answer",
       none: [],
       ended: [],
-      noWords: undefined,
     });
   });
 
@@ -2160,42 +1945,6 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
       sentence:
         " Cleanup step left pending: 'tidy' — 'realm run drain r1 --force' runs it with code that has its handler.",
       live: [undefined, ''],
-    });
-  });
-
-  it('C211 (walk c14 W2-1): an expired question — owedRunsClause and owedCallWords say the call then runs what a declared default leaves owed; nothing for an abort', () => {
-    const view = (on_expiry: 'settle_default' | 'abort') =>
-      ({
-        pending_guards: [],
-        engine_runnable: [],
-        expiry_due: { step: 'g', gate_id: 'x', on_expiry },
-      }) as unknown as PendingView;
-    const several = {
-      pending_guards: [],
-      engine_runnable: [
-        { step: 'a', runnable_here: true },
-        { step: 'b', runnable_here: true },
-      ],
-    } as unknown as PendingView;
-    // (a) red when a default's call is said to stop at the expiry, an abort is said to run more, or
-    //     several owed lose their stop words; (b) prints them.
-    expect({
-      clause: [owedRunsClause(view('settle_default')), owedRunsClause(view('abort'))],
-      call: [
-        owedCallWords(view('settle_default')),
-        owedCallWords(view('abort')),
-        owedCallWords(several),
-      ],
-    }).toEqual({
-      clause: [
-        '; then it runs what that leaves owed until a step opens a question, fails or ends the run',
-        '',
-      ],
-      call: [
-        ' carries it out, then runs what that leaves owed until a step opens a question, fails or ends the run',
-        '',
-        ' runs them until a step opens a question, fails or ends the run',
-      ],
     });
   });
 
@@ -2252,5 +2001,79 @@ describe('#625 PR-2a, round 30 — C211, C212: the composers', () => {
       ['a。', 'a。'],
       ['must match pattern "^https?"', 'must match pattern "^https?".'],
     ]);
+  });
+
+  it('E1 (i): a closing quote or bracket after an end mark is never looked through — three rows', () => {
+    // (a) red when withFullStop looks through a closing quote or bracket (the look-through break):
+    //     each row would then lose its stop; (b) prints the pairs.
+    expect(
+      ['said "stop."', '(done.)', "the choice 'yes?'"].map((t) => [t, withFullStop(t)]),
+    ).toEqual([
+      ['said "stop."', 'said "stop.".'],
+      ['(done.)', '(done.).'],
+      ["the choice 'yes?'", "the choice 'yes?'."],
+    ]);
+  });
+});
+
+// issue #759 (Part C): the refusal names EVERY problem — the engine's message, then each problem in
+// C37's words, joined by `; ` — and its first clause is the one before #759, byte for byte (the
+// one-problem pins above stay green unedited). A failure prints the sentence: key names and rules.
+describe('issue #759 — the pending refusal names every problem', () => {
+  const run = (params: Record<string, unknown>) =>
+    ({
+      id: 'r',
+      params,
+      completed_steps: [],
+      in_progress_steps: [],
+      failed_steps: [],
+      skipped_steps: [],
+      evidence: [],
+      terminal_state: false,
+    }) as unknown as RunRecord;
+
+  it('three problems → the engine message + three clauses, in Ajv order (red: the first only)', () => {
+    const d = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: {
+          type: 'object',
+          required: ['alpha'],
+          properties: { n: { type: 'number' } },
+          additionalProperties: false,
+        },
+      },
+    });
+    expect(
+      describePending(d, run({ n: 'one', extra: true }), undefined, new Date()).engine_runnable[0]
+        ?.refusal,
+    ).toBe(
+      "Invalid input for step 'x': the input must have required property 'alpha'; 'extra' is not allowed; 'n' must be number",
+    );
+  });
+
+  it("thirteen problems → ten clauses and `; and 3 more`; `executeStep`'s own error message unchanged", () => {
+    const d = def({
+      x: {
+        description: 'X',
+        execution: 'auto',
+        depends_on: [],
+        input_schema: {
+          type: 'object',
+          required: Array.from({ length: 13 }, (_, i) => `f${String(i + 1).padStart(2, '0')}`),
+        },
+      },
+    });
+    const refusal =
+      describePending(d, run({}), undefined, new Date()).engine_runnable[0]?.refusal ?? '';
+    const verdict = checkPreClaim({ definition: d, run: run({}), step: 'x', input: {} });
+    expect({
+      clauses: refusal.split('; ').length,
+      tail: refusal.split('; ').at(-1),
+      engineMessage:
+        verdict !== undefined && 'error' in verdict ? verdict.error?.message : undefined,
+    }).toEqual({ clauses: 11, tail: 'and 3 more', engineMessage: "Invalid input for step 'x'" });
   });
 });

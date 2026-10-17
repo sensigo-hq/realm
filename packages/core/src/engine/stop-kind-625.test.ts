@@ -22,20 +22,21 @@ import { ExtensionRegistry } from '../extensions/registry.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { Attributed } from './holder.js';
 import type { RunRecord } from '../types/run-record.js';
-import type { ResponseEnvelope } from '../types/response-envelope.js';
+import type { EngineReply } from '../types/response-envelope.js';
+import { agentActionFor, nextCalls } from '../test-support/ways-view.js';
 import type { StepDefinition, WorkflowDefinition } from '../types/workflow-definition.js';
 
 /** F7's exports, read off the module so a cell runs before they exist (and fails on that). */
 const F7 = core as unknown as {
   STOP_KINDS?: readonly string[];
   classifyStop?: (
-    reply: Partial<ResponseEnvelope>,
+    reply: Partial<EngineReply>,
     step: string | undefined,
     record: Partial<RunRecord>,
   ) => unknown;
 };
 const classify = (
-  reply: Partial<ResponseEnvelope>,
+  reply: Partial<EngineReply>,
   step: string | undefined,
   record: Partial<RunRecord>,
 ): unknown => F7.classifyStop?.(reply, step, record) ?? (F7.classifyStop ? undefined : '<none>');
@@ -46,14 +47,15 @@ describe('#625 PR-2a, F7 — the stop kinds and the one classifier', () => {
   it('STOP_KINDS is one exported const: six race kinds, then the three that stop a loop', () => {
     // (a) red when a kind is added, dropped or renamed without the const, or it is not exported;
     //     (b) prints the const.
+    // #729 PR-0 (T-1): one vocabulary — the way codes, one spelling.
     expect(F7.STOP_KINDS).toEqual([
-      'taken',
-      'ran_elsewhere',
+      'held_elsewhere',
+      'step_settled',
       'run_ended',
       'claim_removed',
-      'question_opened',
+      'question_open',
       'not_eligible',
-      'capability',
+      'capability_missing',
       'failed',
       'refused',
     ]);
@@ -71,66 +73,60 @@ describe('#625 PR-2a, F7 — the stop kinds and the one classifier', () => {
   const QUESTION = {
     pending_gate: { gate_id: 'g', step_name: 'q', choices: ['ok'] },
   } as unknown as Partial<RunRecord>;
-  const blocked = (over: Partial<ResponseEnvelope> = {}): Partial<ResponseEnvelope> => ({
+  const blocked = (over: Partial<EngineReply> = {}): Partial<EngineReply> => ({
     status: 'blocked',
     stopped_step: 's',
     ...over,
   });
-  const error = (code: string, over: Partial<ResponseEnvelope> = {}): Partial<ResponseEnvelope> =>
+  const error = (code: string, over: Partial<EngineReply> = {}): Partial<EngineReply> =>
     ({
       status: 'error',
       error_code: code,
       stopped_step: 's',
       ...over,
-    }) as Partial<ResponseEnvelope>;
+    }) as Partial<EngineReply>;
 
-  /** A refusal of a guard of the chain: it names no `stopped_step`, only the guard in `error_details`. */
-  const guardError = (code: string): Partial<ResponseEnvelope> =>
+  /** A refusal of a guard of the chain: it names no `stopped_step`, only the guard as `error.about` (T-1). */
+  const guardError = (code: string): Partial<EngineReply> =>
     ({
       status: 'error',
       error_code: code,
-      error_details: { step: 'g' },
-    }) as Partial<ResponseEnvelope>;
+      error: { remedy: [], about: 'g' },
+    }) as Partial<EngineReply>;
 
   // One row of the table each (the row's number first): the reply, the step the loop picked or ran,
   // the re-read record, and what the classifier must name.
-  const ROWS: [
-    string,
-    Partial<ResponseEnvelope>,
-    string | undefined,
-    Partial<RunRecord>,
-    unknown,
-  ][] = [
+  const ROWS: [string, Partial<EngineReply>, string | undefined, Partial<RunRecord>, unknown][] = [
     [
       '1',
       blocked({ error_code: 'STATE_STEP_ALREADY_CLAIMED' }),
       's',
       rec(),
-      { kind: 'taken', ran_here: false },
+      { kind: 'held_elsewhere', ran_here: false },
     ],
     [
       '2 (in flight)',
       blocked(),
       's',
       rec({ in_progress_steps: ['s'] }),
-      { kind: 'taken', ran_here: false },
+      { kind: 'held_elsewhere', ran_here: false },
     ],
     [
       '2 (completed, the run ended — row 2 first)',
       blocked(),
       's',
       rec({ ...ENDED, completed_steps: ['s'] }),
-      { kind: 'taken', ran_here: false },
+      { kind: 'held_elsewhere', ran_here: false },
     ],
     [
       '2 (failed)',
       blocked(),
       's',
       rec({ failed_steps: ['s'] }),
-      { kind: 'taken', ran_here: false },
+      { kind: 'held_elsewhere', ran_here: false },
     ],
     ['2b', blocked(), 's', rec(ENDED), { kind: 'run_ended', ran_here: false }],
-    ['2c', blocked(), 's', rec(QUESTION), { kind: 'question_opened', ran_here: false }],
+    ['2c', blocked(), 's', rec(QUESTION), { kind: 'question_open', ran_here: false }],
     ['2d (a precondition block)', blocked(), 's', rec(), undefined],
     [
       '2 (another step’s blocked reply is not this one’s)',
@@ -144,7 +140,7 @@ describe('#625 PR-2a, F7 — the stop kinds and the one classifier', () => {
       error('STATE_CLAIM_LOST'),
       's',
       rec({ in_progress_steps: ['s'] }),
-      { kind: 'taken', ran_here: true },
+      { kind: 'held_elsewhere', ran_here: true },
     ],
     [
       '3 (not on an ended run: row 5)',
@@ -158,14 +154,14 @@ describe('#625 PR-2a, F7 — the stop kinds and the one classifier', () => {
       error('STATE_STEP_ALREADY_SETTLED'),
       's',
       rec({ completed_steps: ['s'] }),
-      { kind: 'ran_elsewhere', ran_here: true },
+      { kind: 'step_settled', ran_here: true },
     ],
     [
       '4 (before 5: settled, then the run ended)',
       error('STATE_STEP_ALREADY_SETTLED'),
       's',
       rec({ ...ENDED, failed_steps: ['s'] }),
-      { kind: 'ran_elsewhere', ran_here: true },
+      { kind: 'step_settled', ran_here: true },
     ],
     ['5', error('STATE_RUN_TERMINAL'), 's', rec(ENDED), { kind: 'run_ended', ran_here: true }],
     ['6', error('STATE_CLAIM_LOST'), 's', rec(), { kind: 'claim_removed', ran_here: true }],
@@ -181,14 +177,26 @@ describe('#625 PR-2a, F7 — the stop kinds and the one classifier', () => {
       error('STATE_STEP_NOT_ELIGIBLE'),
       's',
       rec(QUESTION),
-      { kind: 'question_opened', ran_here: false },
+      { kind: 'question_open', ran_here: false },
     ],
     ['9', error('STATE_STEP_NOT_ELIGIBLE'), 's', rec(), { kind: 'not_eligible', ran_here: false }],
-    ['10 (handler)', error('ENGINE_HANDLER_NOT_REGISTERED'), 's', rec(), { kind: 'capability' }],
-    ['10 (adapter)', error('ENGINE_ADAPTER_NOT_REGISTERED'), 's', rec(), { kind: 'capability' }],
+    [
+      '10 (handler)',
+      error('ENGINE_HANDLER_NOT_REGISTERED'),
+      's',
+      rec(),
+      { kind: 'capability_missing' },
+    ],
+    [
+      '10 (adapter)',
+      error('ENGINE_ADAPTER_NOT_REGISTERED'),
+      's',
+      rec(),
+      { kind: 'capability_missing' },
+    ],
     ['11', error('ENGINE_HANDLER_FAILED'), 's', rec({ failed_steps: ['s'] }), { kind: 'failed' }],
     [
-      '11 (a guard named in error_details)',
+      '11 (a guard named as error.about)',
       guardError('STATE_STEP_ALREADY_SETTLED'),
       's',
       rec({ failed_steps: ['g'] }),
@@ -408,10 +416,10 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
   /** The reply's fields the record decides, and the record's. */
   const view = (r: Awaited<ReturnType<typeof race>>) => ({
     status: r.reply.status,
-    agent_action: r.reply.agent_action,
+    agent_action: agentActionFor(r.reply),
     run_phase: r.reply.run_phase,
     fresh: r.reply.run_version === r.after.version,
-    next: r.reply.next_actions.map((a) => a.instruction?.tool ?? null),
+    next: nextCalls(r.reply),
     chained: (r.reply.chained_auto_steps ?? []).map((c) => c.step),
     taken: r.taken,
     notRecorded: r.notRecorded,
@@ -428,11 +436,13 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
       agent_action: undefined,
       run_phase: 'gate_waiting',
       fresh: true,
-      next: ['submit_human_response'],
+      next: ['respond'],
       chained: [],
       taken: ['s'],
       notRecorded: [],
-      hint: "Run '<run>': nothing ran. Waiting on the question on step 'x' (choices: yes, no) — answer it with submit_human_response. 's' was claimed by another process, so it did not run here.",
+      // #729 PR-0 (Table rows 20–26, 36): the hint says what happened; the question is the reply's
+      // `respond` way (`next`), worded by the door.
+      hint: "Run '<run>': nothing ran. 's' was claimed by another process, so it did not run here.",
     });
   });
 
@@ -445,7 +455,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
       agent_action: undefined,
       run_phase: 'gate_waiting',
       fresh: true,
-      next: ['submit_human_response'],
+      next: ['respond'],
       chained: [],
       taken: ['s'],
       notRecorded: [],
@@ -478,7 +488,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
       agent_action: undefined,
       run_phase: 'gate_waiting',
       fresh: true,
-      next: ['submit_human_response'],
+      next: ['respond'],
       chained: [],
       taken: [],
       notRecorded: [],
@@ -513,9 +523,10 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
         await reclaimStep(store, runId, 's');
         await store.claimStep(runId, 's', DEF, RACER);
       },
-      'taken',
+      'held_elsewhere',
       'running',
-      undefined,
+      // #729 PR-0 (T-22): an `ok` reply whose only blocker is a step another program holds — `await`.
+      'await',
       'ok',
       " 's' ran here, but another process took it over, so its outcome was not recorded.",
       [],
@@ -526,7 +537,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
         await reclaimStep(store, runId, 's');
         await advanceRun(store, DEF, { runId, registry: quick(), driver: RACER });
       },
-      'ran_elsewhere',
+      'step_settled',
       'gate_waiting',
       undefined,
       'ok',
@@ -566,7 +577,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
       //     the reply keeps what the call first read, or the hint says nothing ran; (b) prints them.
       expect({
         status: r.reply.status,
-        agent_action: r.reply.agent_action,
+        agent_action: agentActionFor(r.reply),
         run_phase: r.reply.run_phase,
         fresh: r.reply.run_version === r.after.version,
         notRecorded: r.notRecorded,
@@ -611,7 +622,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
       agent_action: undefined,
       run_phase: 'gate_waiting',
       fresh: true,
-      next: ['submit_human_response'],
+      next: ['respond'],
       chained: [],
       taken: [],
       notRecorded: [],
@@ -629,7 +640,7 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
       agent_action: undefined,
       run_phase: 'gate_waiting',
       fresh: true,
-      next: ['submit_human_response'],
+      next: ['respond'],
       chained: ['s', 'u'],
       taken: [],
       notRecorded: [],
@@ -683,11 +694,11 @@ describe('#625 PR-2a, F7 — advanceRun meets each row as a real race and goes o
     expect({
       claims,
       status: reply.status,
-      next: reply.next_actions.map((a) => a.instruction?.tool),
+      next: nextCalls(reply),
     }).toEqual({
       claims: 4,
       status: 'ok',
-      next: ['advance_run'],
+      next: ['advance'],
     });
   });
 });
@@ -752,7 +763,7 @@ describe('#625 PR-2a, F7 — execute_step’s chain (executeChain) composes its 
       status: reply.status,
       run_phase: reply.run_phase,
       fresh: reply.run_version === after.version,
-      next: reply.next_actions.length,
+      next: nextCalls(reply).length,
       hint: reply.context_hint,
       recorded: after.run_phase,
     }).toEqual({

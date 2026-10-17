@@ -8,24 +8,24 @@ import {
   WorkflowError,
   buildPreExecutionErrorEnvelope,
   buildFailedAttemptRecord,
+  validationListOf,
   serializeFailedAttemptLine,
   getWorkflowForRun,
-  describePending,
-  stepsThatCannotRun,
-  cannotRunWayOutApplies,
-  cannotRunWayOutTools,
-  consumesInputMap,
-  withEndedRunWays,
+  endedRunWaysSentence,
   TERMINAL_PHASES,
   type StepDispatcher,
-  type ResponseEnvelope,
+  type EngineReply,
   type AgentTraceEntry,
-  type ExtensionRegistry,
-  type RunRecord,
-  type RunStore,
-  type WorkflowDefinition,
 } from '@sensigo/realm';
-import type { HandleRunStores, FailedAttemptStoreLike } from './start-run.js';
+import { mcpHostOf, type HandleRunStores, type FailedAttemptStoreLike } from './start-run.js';
+import {
+  mcpReplyOf,
+  withHintTail,
+  renderReply,
+  toolContentOf,
+  type McpEnvelope,
+  type WithPersonBlock,
+} from '../render-reply.js';
 import { sseJsonStringify } from '../sse-json.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
@@ -120,6 +120,10 @@ const VALIDATION_TELEMETRY_CODES = new Set([
  * (P2) and a durable per-run sidecar (P3, when a store is wired). Each sink is separately guarded so a
  * throw in one cannot suppress the other; the whole thing never throws and never alters the
  * execute_step response.
+ *
+ * #729 Q3 correction 1 (C2): written only when the named step is an AGENT step — its record is that
+ * step's refused answer. An engine step's input is the engine's (T-13): a by-name call on it is
+ * refused on the engine's input, so the caller's `params` are no answer of that step's.
  */
 async function emitFailedAttemptTelemetry(
   args: {
@@ -129,12 +133,14 @@ async function emitFailedAttemptTelemetry(
     trace?: AgentTraceEntry[] | undefined;
   },
   workflowId: string,
-  result: ResponseEnvelope,
+  stepExecution: string | undefined,
+  result: EngineReply,
   failedAttemptStore?: FailedAttemptStoreLike,
 ): Promise<void> {
   // Build the shared metadata-only record once (bail both sinks if it can't be built).
   let record: ReturnType<typeof buildFailedAttemptRecord>;
   try {
+    if (stepExecution !== 'agent') return;
     if (result.status !== 'error') return;
     // issue #676 (review): a rejection from a step the engine ran AFTER this one is not a failed
     // attempt of this step — its submission was accepted and it settled (`stopped_step` names
@@ -142,20 +148,19 @@ async function emitFailedAttemptTelemetry(
     if (result.stopped_step !== undefined && result.stopped_step !== args.command) return;
     const code = result.error_code;
     if (code === undefined || !VALIDATION_TELEMETRY_CODES.has(code)) return;
-    // issue #220: VALIDATION_EXHAUSTED carries its ajv errors under `last_ajv_errors` (the last
-    // counted rejection's own errors, threaded through by countRejection) — every other code here
-    // carries them under the pre-existing `errors` key.
-    const ajvErrors =
-      code === 'VALIDATION_EXHAUSTED'
-        ? result.error_details?.['last_ajv_errors']
-        : result.error_details?.['errors'];
+    // issue #759 (Part D.2): the refusal's list and its total, read from the CORE reply through
+    // core's one reader — the two validation codes carry them as typed `error.facts`;
+    // VALIDATION_EXHAUSTED under `last_ajv_errors` / `last_error_count` (#220: the last counted
+    // rejection's own errors); VALIDATION_TRACE_SCHEMA under `errors` / `error_count`.
+    const list = validationListOf(result);
     record = buildFailedAttemptRecord({
       run_id: args.run_id,
       workflow_id: workflowId,
       step_id: args.command,
       ts: new Date().toISOString(),
       error_code: code,
-      ajv_errors: Array.isArray(ajvErrors) ? ajvErrors : [],
+      ajv_errors: list !== undefined ? [...list.errors] : [],
+      ...(list?.error_count !== undefined ? { error_count: list.error_count } : {}),
       params: args.params ?? {},
       trace_entry_count: args.trace?.length ?? 0,
     });
@@ -215,12 +220,14 @@ export async function handleExecuteStep(
     writer_nonce?: string | undefined;
   },
   stores?: HandleRunStores,
-): Promise<ResponseEnvelope> {
+): Promise<WithPersonBlock<McpEnvelope>> {
   assertToolStores(stores, 'handleExecuteStep');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   const runStore = stores?.runStore ?? new JsonFileStore();
   // decision C172: a run that cannot be read is answered as the library answers it — the store's own
-  // WorkflowError, or ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
+  // WorkflowError (issue #719: a damaged JSON-store run file is RESOURCE_FORMAT_INVALID,
+  // STATE_LEGACY_FORMAT or ENGINE_STORE_FAILED, naming the file and its way out), or, for an
+  // untyped throw, ENGINE_STORE_FAILED naming its cause — never ENGINE_INTERNAL.
   const run = await runStore.get(args.run_id).catch((err: unknown) => {
     throw runReadError(err);
   });
@@ -240,9 +247,10 @@ export async function handleExecuteStep(
   }
 
   // A writer_nonce PRESENT on a non-agent step is refused (design §6) — mirrors append_trace's
-  // own non-agent taxonomy (STATE_STEP_NOT_ELIGIBLE + step_type detail). A BARE execute_step call
-  // on a non-agent step stays byte-identical — auto/handler steps legally execute through this
-  // tool, and this check only fires when a nonce was actually supplied.
+  // own non-agent taxonomy (STATE_STEP_NOT_ELIGIBLE + step_type detail). This check fires first, and
+  // only when a nonce was actually supplied. A BARE execute_step call on an engine step is refused
+  // by core's one admission (issue #729, the Q3 unit: the agent party rides the call below) and told
+  // to call advance_run; a guard or cleanup step was already refused there (A-7).
   if (args.writer_nonce !== undefined && stepDef !== undefined && stepDef.execution !== 'agent') {
     throw new WorkflowError(
       `Step '${args.command}' is not an agent step (execution: '${stepDef.execution}') — ` +
@@ -299,62 +307,35 @@ export async function handleExecuteStep(
     ...(args.writer_nonce !== undefined ? { writerNonce: args.writer_nonce } : {}),
     // issue #625: the program this server runs as — the claim's `holder`, the evidence's `driven_by`.
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
+    // issue #729 (the Q3 unit): the MCP `execute_step` door is the agent's (an operator uses the CLI;
+    // the asked person answers through submit_human_response); the party rides the call so core's
+    // one judge refuses what this door never offers (Q4) — R26 holds on both sides at this door.
+    party: 'agent',
   });
 
   // P2/P3 observability: on a pre-claim validation rejection, fan a metadata-only record out to the
   // ephemeral stderr line (P2) and the durable per-run sidecar (P3, when wired). Reads the pre-strip
   // envelope; awaited but best-effort — it never throws and never alters the response.
-  await emitFailedAttemptTelemetry(args, run.workflow_id, result, stores?.failedAttemptStore);
+  await emitFailedAttemptTelemetry(
+    args,
+    run.workflow_id,
+    stepDef?.execution,
+    result,
+    stores?.failedAttemptStore,
+  );
 
-  const reply = await withWayOutOnOwnRefusal(result, args, definition, runStore, registry);
   // decisions C205, C211 (the architect's addendum): a reply on a run that has ended — this call's
   // own step or a step it chained failed, or the run had ended before it — ends with the ways back
-  // in: the failed step `realm run resume` takes, the cleanup steps left pending.
-  if (reply.run_phase === undefined || !TERMINAL_PHASES.has(reply.run_phase)) return reply;
-  const ended = await runStore.get(args.run_id).catch(() => undefined);
-  return ended === undefined ? reply : withEndedRunWays(reply, ended, definition, new Date());
-}
-
-/**
- * issue #625 PR-2a (decisions C66, C82): a by-name `execute_step` on a step the engine refuses
- * before its claim for a failed precondition or an invalid `trust` — an `auto` step or an agent
- * step — returns the step's own refusal.
- * Its cause is the record or the workflow, which the caller cannot change, so when the run cannot
- * go on until its workflow is corrected (`cannotRunWayOutApplies`) the reply's `context_hint` ends
- * with the way out in the tools' words (`cannotRunWayOutTools`, core's one composer). Issue #688:
- * so does an input-schema refusal of a step that consumes its `input_map` (`consumesInputMap`) —
- * its schema checks what the map builds, never the caller's input, so the reply says
- * `report_to_user` and must carry the person's fix. In every other state — and for any other
- * input-schema refusal, which is the caller's own input (decision C3) — the reply is returned
- * unchanged.
- */
-async function withWayOutOnOwnRefusal(
-  result: ResponseEnvelope,
-  args: { run_id: string; command: string },
-  definition: WorkflowDefinition,
-  runStore: RunStore,
-  registry: ExtensionRegistry | undefined,
-): Promise<ResponseEnvelope> {
-  if (result.status === 'ok' || result.stopped_step !== args.command) return result;
-  let fresh: RunRecord;
-  try {
-    fresh = await runStore.get(args.run_id);
-  } catch {
-    return result;
+  // in: the failed step `realm run resume` takes, the cleanup steps left pending (PR-1's words).
+  // #729 PR-0 (Part B): a by-name refusal's way out is the renderer's (`withWayOutOnOwnRefusal`
+  // is gone): the reply carries the refusal and the ways, and `renderReply` words them.
+  // The ended run's ways back in follow the door's next sentence, as before.
+  let tail = '';
+  if (result.run_phase !== undefined && TERMINAL_PHASES.has(result.run_phase)) {
+    const ended = await runStore.get(args.run_id).catch(() => undefined);
+    if (ended !== undefined) tail = endedRunWaysSentence(ended, definition, new Date());
   }
-  const pending = describePending(definition, fresh, registry, new Date());
-  const own = stepsThatCannotRun(pending).find((e) => e.step === args.command);
-  const ownStep = definition.steps[args.command];
-  const mappedInput =
-    own?.refused_by === 'input_schema' && ownStep !== undefined && consumesInputMap(ownStep);
-  if (own?.refused_by !== 'precondition' && own?.refused_by !== 'trust' && !mappedInput) {
-    return result;
-  }
-  if (!cannotRunWayOutApplies(fresh, pending)) return result;
-  return {
-    ...result,
-    context_hint: `${result.context_hint} ${cannotRunWayOutTools(fresh, definition, pending)}`,
-  };
+  return mcpReplyOf(withHintTail(renderReply(result, mcpHostOf(stores)), tail));
 }
 
 /**
@@ -371,18 +352,11 @@ export async function handleExecuteStepTool(
     writer_nonce?: string | undefined;
   },
   stores?: HandleRunStores,
-): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+): Promise<ReturnType<typeof toolContentOf>> {
   assertToolStores(stores, 'handleExecuteStepTool');
   try {
     const result = await handleExecuteStep(args, stores);
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: sseJsonStringify({ ...result, data: {}, evidence: [] }),
-        },
-      ],
-    };
+    return toolContentOf({ ...result, data: {}, evidence: [] }, sseJsonStringify);
   } catch (err) {
     const workflowErr =
       err instanceof WorkflowError
@@ -399,21 +373,11 @@ export async function handleExecuteStepTool(
         : workflowErr.code === 'STATE_RUN_NOT_FOUND'
           ? `Run '${args.run_id}' not found.`
           : `An error occurred before step '${args.command}' could begin.`;
-    const envelope: ResponseEnvelope = buildPreExecutionErrorEnvelope(
-      args.command,
-      args.run_id,
-      0,
-      workflowErr,
-      contextHint,
+    const rendered = renderReply(
+      buildPreExecutionErrorEnvelope(args.command, args.run_id, 0, workflowErr, contextHint),
+      mcpHostOf(stores),
     );
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: sseJsonStringify(envelope),
-        },
-      ],
-    };
+    return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
   }
 }
 

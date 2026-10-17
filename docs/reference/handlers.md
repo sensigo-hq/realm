@@ -182,13 +182,13 @@ throw new WorkflowError('Order A-17 is not in the system.', {
 });
 ```
 
-| Option        | Required | Holds                                                                                                      |
-| ------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `code`        | Yes      | One of Realm's [error codes](error-codes.md).                                                              |
-| `category`    | Yes      | `NETWORK`, `SERVICE`, `STATE`, `VALIDATION`, `ENGINE` or `RESOURCE`.                                       |
-| `agentAction` | Yes      | `report_to_user`, `provide_input`, `resolve_precondition`, `stop`, `wait_for_human` or `wait_and_proceed`. |
-| `retryable`   | Yes      | Whether the step may be tried again.                                                                       |
-| `details`     | No       | An object with anything else about the failure.                                                            |
+| Option        | Required | Holds                                                                                                                                                                                                            |
+| ------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code`        | Yes      | One of Realm's [error codes](error-codes.md).                                                                                                                                                                    |
+| `category`    | Yes      | `NETWORK`, `SERVICE`, `STATE`, `VALIDATION`, `ENGINE` or `RESOURCE`.                                                                                                                                             |
+| `agentAction` | Yes      | `report_to_user`, `provide_input`, `resolve_precondition`, `stop`, `wait_for_service`, `wait_and_proceed` or `await` (`wait_for_service` was `wait_for_human` up to version 0.47.0; `await` was added after it). |
+| `retryable`   | Yes      | Whether the step may be tried again.                                                                                                                                                                             |
+| `details`     | No       | An object with anything else about the failure.                                                                                                                                                                  |
 
 The error above gave a caller over MCP this reply:
 
@@ -332,7 +332,7 @@ Error loading extensions: Extension handler 'order_total' is declared by both '.
 ⚠ Step 'only' is blocked: handler 'missing' is not registered in this runner. The run is NOT failed — add handler 'missing' and re-attach (`realm agent --run-id 019e6924-4d83-4488-aca8-046ae4b8ec8a --provider anthropic --model claude-sonnet-5-5`).
 ```
 
-The re-attach command repeats the flags the drive was started with: the model flags, `--extensions-module`, `--project`, `--schema-retries` when it is not 2, `--llm-timeout` and `--mint-writer-nonce`; it leaves out `--workflow`, `--params` and `--register`. Version 0.45.0 prints `realm agent --run-id <run-id>` alone there.
+The re-attach command repeats the flags the drive was started with: the model flags, `--extensions-module`, `--project`, `--schema-retries` when it is not 2, `--llm-timeout` and `--mint-writer-nonce`; it leaves out `--workflow`, `--params` and `--register`. It also repeats `--prompt-cache` when the drive was given it and its provider applies it, `auto` included, never the default, and never the trigger gaps `realm listen` passes (added after version 0.47.0). Version 0.45.0 prints `realm agent --run-id <run-id>` alone there.
 
 The run stays open, and the step can be run later by a process that has the handler.
 

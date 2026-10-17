@@ -4,7 +4,16 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+} from 'node:fs';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { InMemoryStore } from '@sensigo/realm-testing';
 import {
@@ -12,16 +21,20 @@ import {
   CURRENT_WORKFLOW_SCHEMA_VERSION,
   submitHumanResponse,
 } from '@sensigo/realm';
-import type { WorkflowDefinition, WorkflowRegistrar, PendingGate } from '@sensigo/realm';
+import type { WorkflowDefinition, WorkflowRegistrar, PendingGate, RunRecord } from '@sensigo/realm';
 import { runAgent } from '../agent/run-agent.js';
 import type { AgentDeps, AgentRunOptions } from '../agent/run-agent.js';
 import { LlmProvider } from '../agent/providers/llm-provider.js';
 import { resolveProvider } from '../agent/providers/llm-provider.js';
 import { agentCommand } from './agent.js';
+import { startAnthropicStub } from '../agent/test-support/anthropic-stub.js';
 import {
   serializeToolResult,
   setAdditionalRedactionValues,
 } from '../agent/providers/agent-utils.js';
+
+// issue #600 PR 2: resolveProvider takes an options object; the caching setting is required.
+const TEST_PROMPT_CACHE = { value: 'short', source: 'runner_default', by: 'realm agent' } as const;
 
 // ---------------------------------------------------------------------------
 // MockLlmProvider — queue-based: returns responses in order of callStep() calls.
@@ -269,9 +282,9 @@ describe('resolveProvider', () => {
     delete process.env['OPENAI_API_KEY'];
     delete process.env['ANTHROPIC_API_KEY'];
 
-    await expect(resolveProvider(undefined, undefined)).rejects.toThrow(
-      'realm agent requires an LLM API key',
-    );
+    await expect(
+      resolveProvider({ provider: undefined, model: undefined, promptCache: TEST_PROMPT_CACHE }),
+    ).rejects.toThrow('realm agent requires an LLM API key');
   });
 
   it('throws when --base-url is set and provider resolves to anthropic (explicit flag)', async () => {
@@ -279,7 +292,12 @@ describe('resolveProvider', () => {
     delete process.env['OPENAI_API_KEY'];
 
     await expect(
-      resolveProvider('anthropic', undefined, 'https://api.example.com'),
+      resolveProvider({
+        provider: 'anthropic',
+        model: undefined,
+        baseUrl: 'https://api.example.com',
+        promptCache: TEST_PROMPT_CACHE,
+      }),
     ).rejects.toThrow('--base-url is only supported with --provider openai');
   });
 
@@ -287,9 +305,14 @@ describe('resolveProvider', () => {
     process.env['ANTHROPIC_API_KEY'] = 'test-key';
     delete process.env['OPENAI_API_KEY'];
 
-    await expect(resolveProvider(undefined, undefined, 'https://api.example.com')).rejects.toThrow(
-      '--base-url is only supported with --provider openai',
-    );
+    await expect(
+      resolveProvider({
+        provider: undefined,
+        model: undefined,
+        baseUrl: 'https://api.example.com',
+        promptCache: TEST_PROMPT_CACHE,
+      }),
+    ).rejects.toThrow('--base-url is only supported with --provider openai');
   });
 
   it('does not throw when --base-url is set with --provider openai', async () => {
@@ -297,7 +320,12 @@ describe('resolveProvider', () => {
     delete process.env['ANTHROPIC_API_KEY'];
 
     // The guard must not fire — resolveProvider returns successfully for openai + base-url.
-    const provider = await resolveProvider('openai', 'test-model', 'https://api.deepseek.com');
+    const provider = await resolveProvider({
+      provider: 'openai',
+      model: 'test-model',
+      baseUrl: 'https://api.deepseek.com',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(provider).toBeDefined();
   });
 });
@@ -327,7 +355,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   // A direct-ctor cell cannot substitute: it bypasses the seam under test.
   // -------------------------------------------------------------------------------------------
   it('flag-travel (i): --strict-base-url ARRIVES at the provider — an attested compat endpoint carries NO strictGate', async () => {
-    const p = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com', true);
+    const p = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-4o',
+      baseUrl: 'https://compat.example.com',
+      strictBaseUrl: true,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     // Deep-equal, so a strictGate surviving the attestation reds here.
     expect(p.capabilities()).toEqual({
       jsonMode: false,
@@ -337,12 +371,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('flag-travel (ii): the discriminating counterpart — the SAME call without the attestation IS gated', async () => {
-    const explicitFalse = await resolveProvider(
-      'openai',
-      'gpt-4o',
-      'https://compat.example.com',
-      false,
-    );
+    const explicitFalse = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-4o',
+      baseUrl: 'https://compat.example.com',
+      strictBaseUrl: false,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(explicitFalse.capabilities()).toEqual({
       jsonMode: false,
       providerId: 'openai',
@@ -350,7 +385,12 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
       strictGate: 'compat_endpoint',
     });
     // …and omitted entirely (the CLI passes nothing when the flag is absent).
-    const omitted = await resolveProvider('openai', 'gpt-4o', 'https://compat.example.com');
+    const omitted = await resolveProvider({
+      provider: 'openai',
+      model: 'gpt-4o',
+      baseUrl: 'https://compat.example.com',
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(omitted.capabilities()).toEqual({
       jsonMode: false,
       providerId: 'openai',
@@ -364,11 +404,23 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
     try {
       // The pre-existing hard refusal still governs the combination that CAN be expressed.
       await expect(
-        resolveProvider('anthropic', 'claude-sonnet-4-5', 'https://x.example.com', true),
+        resolveProvider({
+          provider: 'anthropic',
+          model: 'claude-sonnet-4-5',
+          baseUrl: 'https://x.example.com',
+          strictBaseUrl: true,
+          promptCache: TEST_PROMPT_CACHE,
+        }),
       ).rejects.toThrow('--base-url is only supported with --provider openai');
       // Flag alone: no --base-url to attest about, so the Anthropic provider is built normally
       // and the attestation is inert (the CLI layer is what warns — cell 1).
-      const p = await resolveProvider('anthropic', 'claude-sonnet-4-5', undefined, true);
+      const p = await resolveProvider({
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+        baseUrl: undefined,
+        strictBaseUrl: true,
+        promptCache: TEST_PROMPT_CACHE,
+      });
       expect(p.capabilities().providerId).toBe('anthropic');
       expect(p.capabilities().strictGate).toBeUndefined();
     } finally {
@@ -377,7 +429,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('dead-config 4: the o1 branch DROPS --base-url/--strict-base-url and now says so (it silently ignored them before)', async () => {
-    const p = await resolveProvider('openai', 'o1-mini', 'https://compat.example.com', true);
+    const p = await resolveProvider({
+      provider: 'openai',
+      model: 'o1-mini',
+      baseUrl: 'https://compat.example.com',
+      strictBaseUrl: true,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(p.capabilities().providerId).toBe('openai-reasoning');
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('ignored for the o1 model family'),
@@ -390,7 +448,13 @@ describe('resolveProvider — issue #313 dead-config cells 3 and 4', () => {
   });
 
   it('the o1 branch stays SILENT when neither flag was supplied', async () => {
-    await resolveProvider('openai', 'o1-mini', undefined, false);
+    await resolveProvider({
+      provider: 'openai',
+      model: 'o1-mini',
+      baseUrl: undefined,
+      strictBaseUrl: false,
+      promptCache: TEST_PROMPT_CACHE,
+    });
     expect(console.error).not.toHaveBeenCalled();
   });
 });
@@ -643,5 +707,200 @@ steps:
     );
     expect(errored).not.toMatch(/^Error: Cannot/m);
     rmSync(proj, { recursive: true, force: true });
+  });
+});
+
+// ── issue #600 (the lifetime unit), cells 9 and 12: `--cache-gaps` is realm listen's own option; a
+// malformed value from listen never stops a drive; the re-attach command repeats a stated
+// `--prompt-cache` (`auto` included) and never `--cache-gaps`; the help names the four words. The
+// built CLI, with a scratch HOME and only a dummy key, against the in-test Anthropic stand-in (local,
+// answers 200). On a failing host each cell prints the exit code, stdout, stderr and the recorded
+// request facts — never an environment, a header or a key.
+describe('realm agent --cache-gaps and --prompt-cache auto (issue #600, the lifetime unit)', () => {
+  const cli = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
+  type Done = { code: number | null; stdout: string; stderr: string };
+  const run = (root: string, args: string[], baseUrl: string): Promise<Done> =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [cli, 'agent', ...args], {
+        cwd: root,
+        env: {
+          PATH: process.env['PATH'] ?? '',
+          HOME: join(root, 'home'),
+          ANTHROPIC_API_KEY: 'k-600',
+          ANTHROPIC_BASE_URL: baseUrl,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (c: Buffer) => (stdout += c.toString()));
+      child.stderr.on('data', (c: Buffer) => (stderr += c.toString()));
+      const timer = setTimeout(() => child.kill('SIGKILL'), 20_000);
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code, stdout, stderr });
+      });
+    });
+  const runFiles = (root: string): string[] => {
+    const dir = join(root, 'home', '.realm', 'runs');
+    return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.json')) : [];
+  };
+  const ONE_STEP =
+    'id: gaps-600\nname: Gaps 600\nversion: 1\nsteps:\n  ask:\n    description: Answer.\n    execution: agent\n';
+  const BLOCKED = [
+    'id: reattach-gaps-600',
+    'name: Reattach Gaps 600',
+    'version: 1',
+    'steps:',
+    '  publish:',
+    '    description: Publish.',
+    '    execution: auto',
+    '    handler: publish_answer',
+    '  ask:',
+    '    description: Answer.',
+    '    execution: agent',
+    '    depends_on: [publish]',
+    '',
+  ].join('\n');
+  /** A scratch folder holding `workflow.yaml` and an empty HOME, and the stand-in. */
+  const withRoot = async (
+    yaml: string,
+    body: (root: string, baseUrl: string, requests: () => number) => Promise<void>,
+  ) => {
+    const root = mkdtempSync(join(tmpdir(), 'realm-600-gaps-'));
+    const stub = await startAnthropicStub({ finalContent: { summary: 'ok' } });
+    try {
+      mkdirSync(join(root, 'home'));
+      writeFileSync(join(root, 'workflow.yaml'), yaml, 'utf8');
+      await body(root, stub.baseUrl, () => stub.requests.length);
+    } finally {
+      await stub.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  // Cell 9, both producing branches of the refusal's tail. (a) red when `--cache-gaps` is accepted
+  // without `--spawned-by-listen`, or the words change; (b) prints the exit code, stderr, the run
+  // files and the requests the stand-in received.
+  it('--cache-gaps without --spawned-by-listen is refused with the exact words, and nothing is started', async () => {
+    await withRoot(ONE_STEP, async (root, baseUrl, requests) => {
+      const created = await run(
+        root,
+        ['--workflow', join(root, 'workflow.yaml'), '--model', 'claude-x', '--cache-gaps', '420'],
+        baseUrl,
+      );
+      const attached = await run(
+        root,
+        ['--run-id', 'run_600_none', '--model', 'claude-x', '--cache-gaps', '420'],
+        baseUrl,
+      );
+      expect({
+        created: { code: created.code, stderr: created.stderr.trim() },
+        attached: { code: attached.code, stderr: attached.stderr.trim() },
+        runs: runFiles(root),
+        requests: requests(),
+      }).toEqual({
+        created: {
+          code: 1,
+          stderr:
+            "Error: --cache-gaps is realm listen's own option, passed to the agents it starts; remove it. Nothing was started.",
+        },
+        attached: {
+          code: 1,
+          stderr:
+            "Error: --cache-gaps is realm listen's own option, passed to the agents it starts; remove it. If run run_600_none exists, it was not changed.",
+        },
+        runs: [],
+        requests: 0,
+      });
+    });
+  }, 30_000);
+
+  // Cell 9. (a) red when a malformed `--cache-gaps` stops the drive, or is read as gaps; (b) prints
+  // the exit code, the start line and the recorded request facts.
+  it('--spawned-by-listen --cache-gaps 7,abc drives: unreadable, the listen prior (1 hour), said on the start line', async () => {
+    await withRoot(ONE_STEP, async (root, baseUrl) => {
+      const r = await run(
+        root,
+        [
+          '--workflow',
+          join(root, 'workflow.yaml'),
+          '--model',
+          'claude-x',
+          '--spawned-by-listen',
+          '--cache-gaps',
+          '7,abc',
+        ],
+        baseUrl,
+      );
+      const files = runFiles(root);
+      const record = JSON.parse(
+        readFileSync(join(root, 'home', '.realm', 'runs', files[0] ?? 'none'), 'utf8'),
+      ) as RunRecord;
+      const request = record.evidence[0]!.diagnostics!.cache!.requests[0]!;
+      expect({
+        code: r.code,
+        startLine: r.stdout.split('\n').find((l) => l.startsWith('Caching:')),
+        recorded: {
+          lifetime: request.cache_lifetime_s,
+          by: request.cache_requested_by,
+          auto: request.cache_auto,
+        },
+      }).toEqual({
+        code: 0,
+        startLine:
+          "Caching: Anthropic is asked to cache each step's fixed instructions for 1 hour (auto: realm listen's measurement could not be read; realm listen's default; change it with realm listen --prompt-cache).",
+        recorded: {
+          lifetime: 3600,
+          by: 'realm listen',
+          auto: { basis: 'listen_gaps_unreadable' },
+        },
+      });
+    });
+  }, 30_000);
+
+  // Cell 9. (a) red when the re-attach command repeats `--cache-gaps`, drops a stated `auto`, or
+  // repeats a default; (b) prints the blocked line of each drive.
+  it('the re-attach command: a stated auto is repeated, a default is not, and --cache-gaps never is', async () => {
+    await withRoot(BLOCKED, async (root, baseUrl) => {
+      const blocked = (r: Done) =>
+        r.stderr.split('\n').find((l) => l.startsWith("⚠ Step 'publish' is blocked:")) ?? r.stderr;
+      const stated = await run(
+        root,
+        [
+          '--workflow',
+          join(root, 'workflow.yaml'),
+          '--model',
+          'm-600',
+          '--prompt-cache',
+          'auto',
+          '--spawned-by-listen',
+          '--cache-gaps',
+          '420,720',
+        ],
+        baseUrl,
+      );
+      const byDefault = await run(
+        root,
+        ['--workflow', join(root, 'workflow.yaml'), '--model', 'm-600'],
+        baseUrl,
+      );
+      const command = (line: string) =>
+        /re-attach \(`realm agent --run-id \S+ (.*)`\)\.$/.exec(line)?.[1];
+      expect({
+        stated: command(blocked(stated)),
+        byDefault: command(blocked(byDefault)),
+      }).toEqual({
+        stated: '--model m-600 --prompt-cache auto',
+        byDefault: '--model m-600',
+      });
+    });
+  }, 30_000);
+
+  // Cell 12. (a) red when the option's description differs from B4's words; (b) prints it.
+  it("the help: realm agent's --prompt-cache description", () => {
+    expect(agentCommand.options.find((o) => o.long === '--prompt-cache')?.description).toBe(
+      "What Anthropic is asked to cache: auto, short, long or off. auto (the default) chooses per drive — the short lifetime for a drive realm agent starts on its own; for a drive realm listen starts, off, short or long by the gaps between that workflow's recent triggers. short: Anthropic's 5 minutes. long: Anthropic's 1 hour. off: Anthropic is asked to cache nothing. Other providers are asked for no caching.",
+    );
   });
 });

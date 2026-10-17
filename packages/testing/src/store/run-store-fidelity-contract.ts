@@ -12,6 +12,7 @@
 // back, so a store that DECLARES `persistedRunRecordFields` dishonestly (claims a field, drops it
 // on write) fails conformance here, before it ever ships. A store that declares NOTHING passes
 // this law vacuously (zero cases generated) — see `runStoreFidelityContract`'s own doc.
+import { isDeepStrictEqual } from 'node:util';
 import { crossCopyNote } from './cross-copy-note.js';
 import { storeReleaseLineLaw } from './store-release-line-law.js';
 import {
@@ -21,6 +22,7 @@ import {
   type RunStore,
   type RunRecord,
   type LoadBearingRunRecordField,
+  type UsageRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
 
@@ -32,8 +34,12 @@ import {
  * #367 — the seal arm survives a proper terminal write byte-for-byte), `CLAIM_NAMES_HOLDER` (issue
  * #625 — a claim reads back with the program that took the step and when),
  * `EVIDENCE_KEEPS_DRIVER_AND_PROOF` (issue #625 — the program that did a step's work and the proof
- * on an answer's entry survive a round trip) and `STORE_RELEASE_LINE_TRUE` (issue #620 PR-C — the
- * store's declared release line is its errors' line).
+ * on an answer's entry survive a round trip), `STORE_RELEASE_LINE_TRUE` (issue #620 PR-C — the
+ * store's declared release line is its errors' line) and `USAGE_RECORD_ROUNDTRIP` (issue #600 PR 2 —
+ * a request record's facts, the model and what realm asked to cache among them, survive a round trip
+ * in a step's evidence and in a failed drive's usage) and `SUPPLIER_ROUND_TRIPS` (issue #729 PR-0,
+ * T-17 (iv), §5 E1 (iv) — the supplier's role an evidence entry records survives a round trip, and
+ * an entry written without one reads back without one, never a role the store made up).
  */
 export const RUN_STORE_FIDELITY_LAWS = [
   'FIDELITY_HONESTY',
@@ -42,6 +48,8 @@ export const RUN_STORE_FIDELITY_LAWS = [
   'CLAIM_NAMES_HOLDER',
   'EVIDENCE_KEEPS_DRIVER_AND_PROOF',
   'STORE_RELEASE_LINE_TRUE',
+  'USAGE_RECORD_ROUNDTRIP',
+  'SUPPLIER_ROUND_TRIPS',
 ] as const;
 
 export type RunStoreFidelityLaw = (typeof RUN_STORE_FIDELITY_LAWS)[number];
@@ -69,6 +77,39 @@ export interface RunStoreFidelityContractAdapter {
   definition: WorkflowDefinition;
   stepName: string;
 }
+
+/**
+ * Issue #600 PR 2 — the request facts `USAGE_RECORD_ROUNDTRIP` writes, every one with a value no store
+ * default could produce (`true` for the booleans, words other than `off` and `default`). The law
+ * checks each field on this list; a field left off it is a field no store is held to.
+ */
+const TCK_REQUEST_FACTS: Required<
+  Pick<
+    UsageRecord,
+    | 'model'
+    | 'cache_requested'
+    | 'cache_lifetime_s'
+    | 'cache_ttl_sent'
+    | 'cache_requested_source'
+    | 'cache_requested_by'
+    | 'cache_auto'
+    | 'provider'
+    | 'endpoint'
+    | 'cache_split_offered'
+  >
+> = {
+  model: 'tck-model-2026-01-01',
+  cache_requested: 'lifetime',
+  cache_lifetime_s: 3600,
+  cache_ttl_sent: true,
+  cache_requested_source: 'stated',
+  cache_requested_by: 'tck-runner',
+  // issue #600 (the lifetime unit): an object no store default produces
+  cache_auto: { basis: 'listen_trigger_gaps', gaps_s: [61, 3599] },
+  provider: 'tck-provider',
+  endpoint: 'custom',
+  cache_split_offered: true,
+};
 
 /** The program the holder laws name — a synthetic label, never a real host or user. */
 const TCK_CLAIMANT: Attributed = { by: 'tck-program', by_source: 'stated', channel: 'tck' };
@@ -410,6 +451,50 @@ export function runStoreFidelityContract(
     },
   });
 
+  // issue #729 PR-0 (T-17 (iv), §5 E1 (iv)) — SUPPLIER_ROUND_TRIPS. Always active: every store
+  // round-trips evidence. The role is a closed word (`SUPPLIER_ROLES`); an entry with none keeps none —
+  // a store never fills the absence (its readers name why: `readSupplier`).
+  cases.push({
+    law: 'SUPPLIER_ROUND_TRIPS',
+    name: 'an entry written with supplied_by reads back with it, and one written without reads back without',
+    run: async () => {
+      const { run } = await adapter.store.create({
+        workflowId: `tck-supplier-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const base: EvidenceSnapshot = {
+        step_id: adapter.stepName,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'tck-supplier',
+      };
+      await adapter.store.update({
+        ...run,
+        evidence: [{ ...base, supplied_by: 'agent' }, { ...base }],
+      });
+      const reread = await adapter.store.get(run.id);
+      const read = reread.evidence[0]?.supplied_by;
+      if (read !== 'agent') {
+        throw new Error(
+          `a store must round-trip an evidence entry's supplied_by (issue #729 PR-0): wrote "agent", ` +
+            `read back ${JSON.stringify(read)}`,
+        );
+      }
+      const second = reread.evidence[1];
+      if (second === undefined || 'supplied_by' in second) {
+        throw new Error(
+          `an evidence entry written without supplied_by must read back without it (issue #729 ` +
+            `PR-0): read back ${JSON.stringify(second?.supplied_by)}`,
+        );
+      }
+    },
+  });
+
   cases.push({
     law: 'CLAIM_SINGLE_OWNER',
     name: 'two concurrent claimStep calls for the same (runId, step) — exactly one succeeds',
@@ -440,6 +525,84 @@ export function runStoreFidelityContract(
             `expected the losing claimStep call to reject with a WorkflowError carrying code ` +
               `STATE_STEP_ALREADY_CLAIMED, got: ${described}${crossCopyNote(err, WorkflowError)}`,
           );
+        }
+      }
+    },
+  });
+
+  // issue #600 PR 2 — USAGE_RECORD_ROUNDTRIP. Always active: every store round-trips evidence and
+  // drive failures.
+  cases.push({
+    law: 'USAGE_RECORD_ROUNDTRIP',
+    name: "a request record written with every request fact, in a step's evidence and in a failed drive's usage, reads back with each one",
+    run: async () => {
+      const { run } = await adapter.store.create({
+        workflowId: `tck-usage-${Math.random().toString(36).slice(2)}`,
+        workflowVersion: 1,
+        params: {},
+      });
+      const request: UsageRecord = {
+        request_index: 0,
+        request_start: '2026-01-01T00:00:00.000Z',
+        prompt_tokens: 10,
+        ...TCK_REQUEST_FACTS,
+      };
+      const entry: EvidenceSnapshot = {
+        step_id: adapter.stepName,
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        duration_ms: 1,
+        input_summary: {},
+        output_summary: {},
+        status: 'success',
+        evidence_hash: 'tck-usage',
+        diagnostics: {
+          input_token_estimate: 10,
+          precondition_trace: [],
+          cache: { state: 'engaged', basis: 'provider_reported', requests: [{ ...request }] },
+        },
+      };
+      await adapter.store.update({
+        ...run,
+        evidence: [entry],
+        drive_failures: {
+          first_failed_at: '2026-01-01T00:00:02.000Z',
+          total: 1,
+          entries: [
+            {
+              at: '2026-01-01T00:00:02.000Z',
+              step: adapter.stepName,
+              provider: 'tck-provider',
+              error_class: 'other',
+              message: 'tck',
+              elapsed_ms: 1,
+              usage: [{ ...request }],
+            },
+          ],
+        },
+      });
+      const reread = await adapter.store.get(run.id);
+      const places: Array<[string, unknown]> = [
+        [
+          'evidence[0].diagnostics.cache.requests[0]',
+          reread.evidence[0]?.diagnostics?.cache?.requests?.[0],
+        ],
+        ['drive_failures.entries[0].usage[0]', reread.drive_failures?.entries[0]?.usage?.[0]],
+      ];
+      for (const [where, read] of places) {
+        for (const [field, wrote] of Object.entries(TCK_REQUEST_FACTS)) {
+          const got =
+            typeof read === 'object' && read !== null
+              ? (read as Record<string, unknown>)[field]
+              : undefined;
+          // deep equality: the same answer as before for the scalars, and an object's key order no
+          // longer matters (`cache_auto`)
+          if (!isDeepStrictEqual(got, wrote)) {
+            throw new Error(
+              `a store must round-trip a request record's ${field} (issue #600 PR 2): at ${where}, ` +
+                `wrote ${JSON.stringify(wrote)}, read back ${JSON.stringify(got)}`,
+            );
+          }
         }
       }
     },

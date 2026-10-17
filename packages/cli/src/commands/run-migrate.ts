@@ -13,8 +13,9 @@
 // It writes only through `RunStore.stampSeal`. It never rewrites a record it cannot classify, and
 // never auto-corrects one it finds incoherent — an operator adjudicates those.
 import { Command } from 'commander';
-import type { RunRecord, RunStore, SealArm } from '@sensigo/realm';
-import { classifyLegacySeal, armToPhase } from '@sensigo/realm';
+import type { RunRecord, RunStore, SealArm, UnreadableRunFileEntry } from '@sensigo/realm';
+import { classifyLegacySeal, armToPhase, describeStoredFileFault } from '@sensigo/realm';
+import { listRunsDiagnosed, unreadableRunLines } from './list.js';
 
 /** One record's disposition. Every reachable state has exactly one home here. */
 export interface MigrateBuckets {
@@ -32,8 +33,10 @@ export interface MigrateBuckets {
    * ruling exists to close never closes.
    */
   already_stamped: Array<{ id: string; verified: boolean; ruled?: true }>;
-  /** No arm, and the classifier refuses to guess one. Printed, never written. */
-  unclassifiable: Array<{ id: string; why: string }>;
+  /** No arm, and the classifier refuses to guess one. Printed, never written. issue #719 (C2): a
+   *  run file that could not be read as a run is here too, marked `unreadable` — it is not known to
+   *  be a terminal run, or a run at all. */
+  unclassifiable: Array<{ id: string; why: string; unreadable?: true }>;
   /** Has an arm that DISAGREES with its own evidence. Printed, never auto-rewritten. */
   incoherent: Array<{
     id: string;
@@ -51,6 +54,11 @@ export interface MigrateBuckets {
 export interface MigrateOptions {
   /** Dry-run is the DEFAULT; `--force` executes. */
   force?: boolean;
+  /**
+   * issue #719 (B3): told the run files that could not be read as runs. Each is also put in
+   * `unclassifiable` (R11), never written.
+   */
+  onUnreadable?: (entries: UnreadableRunFileEntry[]) => void;
 }
 
 function emptyBuckets(): MigrateBuckets {
@@ -125,7 +133,17 @@ export async function migrateStampSeals(
     );
   }
   const buckets = emptyBuckets();
-  const all = await runStore.list();
+  // issue #719 (R11): a run file that cannot be read as a run is residue — in `unclassifiable`, its
+  // `why` the file's fault, printed and never written — so the shipped exit ladder applies.
+  const { records: all, unreadable } = await listRunsDiagnosed(runStore);
+  for (const entry of unreadable) {
+    buckets.unclassifiable.push({
+      id: entry.file.slice(0, -'.json'.length),
+      why: describeStoredFileFault(entry.facts),
+      unreadable: true,
+    });
+  }
+  if (unreadable.length > 0) options.onUnreadable?.(unreadable);
 
   for (const run of all) {
     if (!run.terminal_state) continue;
@@ -303,11 +321,17 @@ export function renderMigrateReport(
       );
     }
   }
-  if (buckets.unclassifiable.length > 0) {
-    lines.push(
-      `${buckets.unclassifiable.length} run(s) could NOT be classified and were left untouched:`,
-    );
-    for (const e of buckets.unclassifiable) lines.push(`  • ${e.id}: ${e.why}`);
+  // issue #719 (C2): a run file that could not be read is not a run that could not be classified —
+  // its own group, and it is not counted as a terminal run below.
+  const unclassified = buckets.unclassifiable.filter((e) => e.unreadable !== true);
+  const unreadableFiles = buckets.unclassifiable.filter((e) => e.unreadable === true);
+  if (unclassified.length > 0) {
+    lines.push(`${unclassified.length} run(s) could NOT be classified and were left untouched:`);
+    for (const e of unclassified) lines.push(`  • ${e.id}: ${e.why}`);
+  }
+  if (unreadableFiles.length > 0) {
+    lines.push(`${unreadableFiles.length} run file(s) could not be read and were left untouched:`);
+    for (const e of unreadableFiles) lines.push(`  • ${e.id}: ${e.why}`);
   }
   if (buckets.incoherent.length > 0) {
     lines.push(
@@ -343,12 +367,16 @@ export function renderMigrateReport(
   // printed "Residue: 0" directly above a record that had failed to stamp. In a dry run nothing is
   // written, so the would-be-stamped records still count.
   const residue =
-    buckets.unclassifiable.length + buckets.failed.length + (force ? 0 : buckets.stamped.length);
+    unclassified.length + buckets.failed.length + (force ? 0 : buckets.stamped.length);
   const skipped =
     buckets.skipped_conflict.length > 0
       ? ` (+${buckets.skipped_conflict.length} skipped — arm state unknown until their own writer settles)`
       : '';
-  lines.push(`Residue: ${residue} terminal run(s) still without a recorded seal arm.${skipped}`);
+  const unread =
+    unreadableFiles.length > 0 ? `; ${unreadableFiles.length} run file(s) could not be read` : '';
+  lines.push(
+    `Residue: ${residue} terminal run(s) still without a recorded seal arm${unread}.${skipped}`,
+  );
   lines.push(ORDERING_LINE);
   return lines;
 }
@@ -367,7 +395,17 @@ export const runMigrateCommand = new Command('migrate')
     const { JsonFileStore } = await import('@sensigo/realm');
     const runStore = new JsonFileStore();
     try {
-      const buckets = await migrateStampSeals(runStore, { force: opts.force ?? false });
+      const buckets = await migrateStampSeals(runStore, {
+        force: opts.force ?? false,
+        onUnreadable: (entries) => {
+          for (const line of unreadableRunLines(
+            entries,
+            '; realm run migrate did not act on them.',
+          )) {
+            console.error(line);
+          }
+        },
+      });
       for (const line of renderMigrateReport(buckets, { force: opts.force ?? false })) {
         console.log(line);
       }

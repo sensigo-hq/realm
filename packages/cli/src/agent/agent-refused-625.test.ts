@@ -38,7 +38,14 @@ function wf(steps: Record<string, StepDefinition>): WorkflowDefinition {
 
 const PRE: Partial<StepDefinition> = { preconditions: ['run.params.ok == true'] };
 const TRUST = { trust: 'bogus_value' } as unknown as Partial<StepDefinition>;
-const HEADER = ['log: \nRealm Agent — c82 v1', 'log: Run ID: <run>\n'];
+// issue #600 PR 2 (D1): the drive's cache line follows `Run ID:`, then the blank line. This
+// stand-in provider declares no caching capability, so the line is form F2.
+const HEADER = [
+  'log: \nRealm Agent — c82 v1',
+  'log: Run ID: <run>',
+  'log: Caching: Realm asks this provider for no caching; any caching it does is its own.',
+  'log: ',
+];
 const PRE_LINE =
   "log: • Step 'ask' cannot run (precondition): Precondition failed for step 'ask'. Precondition failed: 'run.params.ok == true'. Resolved value: undefined.";
 const TRUST_LINE =

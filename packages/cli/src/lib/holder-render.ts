@@ -207,9 +207,9 @@ export function answerNotRecordedLine(
   const endedArm = `• Step '${step}' was not run: the run ended (${deriveRunPhase(run)}) before this drive's answer reached it; the answer was not recorded.`;
   if (kind !== undefined) {
     switch (kind) {
-      case 'taken':
+      case 'held_elsewhere':
         return takenArm();
-      case 'ran_elsewhere':
+      case 'step_settled':
         return `• Step '${step}' was ${ranElsewherePhrase(run, step) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
       case 'run_ended':
         return endedArm;
@@ -231,8 +231,8 @@ export function answerNotRecordedLine(
  * `STATE_RUN_TERMINAL`: another program ran it after a `realm run reclaim --force` freed this one's
  * claim, or `realm run abandon` ended the run, for one). F7: one arm per kind core's classifier
  * names (`classifyStop`, `ran_here`), read off the record after the refusal: the claim's holder
- * while another process holds the step on a run that has not ended (`taken`), the program that ran
- * it once it settled (`ran_elsewhere`), the run's ending (`run_ended`), or else the claim this
+ * while another process holds the step on a run that has not ended (`held_elsewhere`), the program
+ * that ran it once it settled (`step_settled`), the run's ending (`run_ended`), or else the claim this
  * program held was removed (`claim_removed`). Its own work on the step may have run here: the line
  * says only that its outcome was not recorded, never "not run here". `realm agent` prints it for an
  * engine step its call ran, and `realm workflow run` for the step it drives.
@@ -249,12 +249,12 @@ export function outcomeNotRecordedLine(
   // ending that is not an abandon leaves the claims of the steps still running in place), so the
   // classifier never names it another program's take.
   switch (kind) {
-    case 'taken': {
+    case 'held_elsewhere': {
       const described = describeClaimHolder(run.claims?.[step], keepsClaims);
       const at = described.since !== undefined ? ` at ${described.since}` : '';
       return `• Step '${step}' was ${takenPhrase(described)}${at}; ${notRecorded}.`;
     }
-    case 'ran_elsewhere':
+    case 'step_settled':
       return `• Step '${step}' was ${ranElsewherePhrase(run, step) ?? takenPhrase({ by: null, absent_cause: 'no_claim' })}; ${notRecorded}.`;
     case 'run_ended':
       return `• Step '${step}': the run ended (${deriveRunPhase(run)}) before this program's outcome for it was recorded.`;

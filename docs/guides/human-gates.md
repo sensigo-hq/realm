@@ -94,8 +94,10 @@ Register the workflow and start a run with whichever driver you use. When the dr
 ```text
 status: confirm_required
 run_phase: gate_waiting
-Run is paused at gate '39792a3a-f9c3-470a-b94c-c314fb254234'. Available choices: send, discard.
+Run is paused at gate '39792a3a-f9c3-470a-b94c-c314fb254234'.
 ```
+
+The choices are the gate's (`send`, `discard`); the line named them up to version 0.47.0.
 
 An agent that tries to run `send` at this point is refused:
 

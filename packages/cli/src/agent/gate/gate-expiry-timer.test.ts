@@ -1,6 +1,10 @@
 // gate-expiry-timer.test.ts — issue #291, Deliverable 4e: the attending-process enactment timer.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryStore } from '@sensigo/realm-testing';
+import { JsonFileStore, unreadableRunFileError } from '@sensigo/realm';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { WorkflowDefinition, PendingGate } from '@sensigo/realm';
 import { scheduleGateExpiryTimer } from './gate-expiry-timer.js';
 
@@ -184,5 +188,113 @@ describe('scheduleGateExpiryTimer (issue #291)', () => {
     cancel();
     // (a) red when the timer reports a write it did not make; (b) prints the calls.
     expect(onApplied).not.toHaveBeenCalled();
+  });
+});
+
+describe('issue #719 — the expiry timer on a run file that cannot be read', () => {
+  it('logs the file’s message (its way out) and that no enactment point can read the run, never its text', async () => {
+    const runsDir = mkdtempSync(join(tmpdir(), 'realm-719-timer-'));
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => {
+      warns.push(String(m));
+    });
+    try {
+      writeFileSync(join(runsDir, 'bad.json'), '{"params":{"token": ghp_FAKE719}}');
+      const gate = makeGate({
+        expires_at: new Date(Date.now() - 1000).toISOString(),
+        on_expiry: 'abort',
+      });
+      const cancel = scheduleGateExpiryTimer('bad', gate, {
+        store: new JsonFileStore(runsDir),
+        definition: def,
+      });
+      for (let i = 0; i < 50 && warns.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      cancel();
+      const line = warns.join('\n');
+      // (a) red when the timer's line loses the file's message, or carries the parser's text; (b)
+      //     prints the line count and booleans only.
+      // issue #719 (C2): the tail is true for a damaged file — every enactment point reads that
+      // same file, so none "will still catch it".
+      expect({
+        lines: warns.length,
+        message: line.includes(`The run file '${join(runsDir, 'bad.json')}' is not JSON.`),
+        noneCanRead: line.endsWith(
+          ' — no enactment point can read this run until its file is repaired or moved out.',
+        ),
+        falseTail: line.includes('will still catch it'),
+        leaked: line.includes('ghp_FAKE7'),
+      }).toEqual({
+        lines: 1,
+        message: true,
+        noneCanRead: true,
+        falseTail: false,
+        leaked: false,
+      });
+    } finally {
+      spy.mockRestore();
+      rmSync(runsDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// issue #719 (F6.4): the timer's tail per branch. A retryable read error may pass, so another
+// enactment point may still catch the gate; a read error that will not pass, or damaged bytes,
+// stops every enactment point until the file can be read (or is repaired) or is moved out. #729
+// PR-0 (A10, Amendment 7d): the error is core's own builder `unreadableRunFileError`, now exported —
+// its facts typed (`scope: 'file'`), its retryability core's own rule (EBUSY retryable; EACCES and
+// damaged bytes not), never restated here.
+describe('issue #719 F6.4 — the expiry timer’s tail says what the error allows', () => {
+  const path = '/srv/realm/runs/r-719.json';
+  const ANOTHER =
+    ' — another enactment point (submit/execute_step/reclaim/drain --expired/listen) will still catch it.';
+  it.each([
+    [
+      'a retryable read error (EBUSY)',
+      unreadableRunFileError({ resource: 'run_file', class: 'unreadable', path, errno: 'EBUSY' }),
+      ANOTHER,
+    ],
+    [
+      'a read error that will not pass (EACCES)',
+      unreadableRunFileError({ resource: 'run_file', class: 'unreadable', path, errno: 'EACCES' }),
+      ' — no enactment point can read this run until its file can be read or is moved out.',
+    ],
+    [
+      'damaged bytes (parse)',
+      unreadableRunFileError({ resource: 'run_file', class: 'parse', path }),
+      ' — no enactment point can read this run until its file is repaired or moved out.',
+    ],
+  ])('%s', async (_name, error, tail) => {
+    const warns: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => {
+      warns.push(String(m));
+    });
+    try {
+      const gate = makeGate({
+        expires_at: new Date(Date.now() - 1000).toISOString(),
+        on_expiry: 'abort',
+      });
+      const store = {
+        get: async () => {
+          throw error;
+        },
+      } as unknown as Parameters<typeof scheduleGateExpiryTimer>[2]['store'];
+      const cancel = scheduleGateExpiryTimer('r-719', gate, { store, definition: def });
+      for (let i = 0; i < 50 && warns.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      cancel();
+      const line = warns.join('\n');
+      // (a) red when the tail ignores the error's retryability or its class; (b) prints the line
+      //     count and booleans only.
+      expect({
+        lines: warns.length,
+        message: line.includes(`The run file '${path}'`),
+        tail: line.endsWith(tail),
+      }).toEqual({ lines: 1, message: true, tail: true });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
