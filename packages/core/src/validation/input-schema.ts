@@ -13,11 +13,11 @@ import {
 } from './validation-problems.js';
 
 /**
- * The ONE Ajv construction for AUTHORED JSON-Schema blocks (`params_schema`, and a step's
- * `input_schema` / `output_schema` / `trace_schema`). Issue #586: the loader compiles every
- * authored block at admission through THIS function, and the run time validates through it too,
- * so the load-time verdict can never diverge from the run-time verdict (the B10 doctrine, one
- * level up).
+ * The exported compile for AUTHORED JSON-Schema blocks (`params_schema`, and a step's
+ * `input_schema` / `output_schema` / `trace_schema`). Issue #586: every authored block compiles
+ * through ONE inner compile, `compileInner` — the loader at admission through `compileCapturing`,
+ * the run-time checks through `compileCached`, and this function — so the load-time verdict can
+ * never diverge from the run-time verdict (the B10 doctrine, one level up).
  *
  * Bare Ajv defaults — `strictSchema` is `true`, so an unknown keyword inside a block throws here
  * exactly as it throws at run time. A compile failure propagates Ajv's own throw untouched
