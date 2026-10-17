@@ -189,7 +189,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
   it('connect-an-mcp-client.md, glossary.md, packages/mcp-server/README.md: the server has 11 tools, advance_run among them, each in the guide’s table', async () => {
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      'The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):',
+      // Correction 2 (6.5): by value.
+      "The assistant now has ten tools under `withheld` (the value step 1's example sets); eleven under `asked` or `offered` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven:",
     );
     claim(
       'docs/reference/glossary.md',
@@ -197,7 +198,8 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     );
     claim(
       'packages/mcp-server/README.md',
-      'Creates the MCP server with its tools registered: 11, or 10 under `withheld`.',
+      // Correction 2 (4.4): listed per value, and what is REGISTERED under asked.
+      "Creates the MCP server with its tools registered. A client is listed 11, or 10 under `withheld`; under `asked` both answer tools are registered, and the session's forms enable one.",
     );
     const { client } = await connect();
     const listed = (await client.listTools()).tools.map((t) => t.name);
@@ -210,6 +212,25 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
       true,
       [...listed].sort(),
     ]);
+    // Correction 2 (4.4): the REGISTERED set per value — the SDK's own table of the server's tools.
+    const registered = (gateAnswers: 'asked' | 'offered' | 'withheld') =>
+      Object.keys(
+        (createRealmMcpServer({ gateAnswers }) as unknown as { _registeredTools: object })
+          ._registeredTools,
+      );
+    const answerTools = (names: string[]) =>
+      names.filter((n) => n === 'submit_human_response' || n === 'present_question').sort();
+    // (a) red when a value registers another set than the README says (both answer tools under
+    //     asked, one under offered, none under withheld); (b) prints each count and answer tools.
+    expect({
+      asked: [registered('asked').length, answerTools(registered('asked'))],
+      offered: [registered('offered').length, answerTools(registered('offered'))],
+      withheld: [registered('withheld').length, answerTools(registered('withheld'))],
+    }).toEqual({
+      asked: [12, ['present_question', 'submit_human_response']],
+      offered: [11, ['submit_human_response']],
+      withheld: [10, []],
+    });
   });
 
   it('connect-an-mcp-client.md: execute_step submits the answer to an agent step; an automatic step is the engine’s — advance_run runs it (#729, the Q3 unit)', async () => {

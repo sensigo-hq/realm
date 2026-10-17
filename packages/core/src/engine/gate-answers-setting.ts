@@ -67,10 +67,10 @@ export function judgeGateAnswers(
   const set: { kind: SetKind; value: GateAnswers }[] = [];
   for (const kind of ['flag', 'env', 'option'] as const) {
     const raw = input[kind];
-    // Correction 1 (E1): an EMPTY flag is a value given, and not one of the three — refused (a
-    // `--gate-answers "$MODE"` with `MODE` unset must not start the default silently); an empty
-    // environment variable, or option, stays unset.
-    if (raw === undefined || (raw === '' && kind !== 'flag')) continue;
+    // Correction 1 (E1), correction 2 (4.3): an EMPTY flag or option is a value given, and not one
+    // of the three — refused where it was given (a `--gate-answers "$MODE"` with `MODE` unset must
+    // not start the default silently); an empty environment variable stays unset.
+    if (raw === undefined || (raw === '' && kind === 'env')) continue;
     if (!isGateAnswers(raw)) return { ok: false, kind, raw };
     set.push({ kind, value: raw });
   }
@@ -127,7 +127,9 @@ export function judgeFormWait(
   let best: { kind: SetKind; seconds: number } | undefined;
   for (const kind of ['flag', 'env', 'option'] as const) {
     const raw = input[kind];
-    if (raw === undefined || raw === '') continue;
+    // Correction 2 (4.3): an empty flag or option is refused where it was given; an empty variable
+    // stays unset.
+    if (raw === undefined || (raw === '' && kind === 'env')) continue;
     const text = String(raw);
     const n = /^\d+$/.test(text) ? Number(text) : NaN;
     if (!Number.isInteger(n) || n < FORM_WAIT_SECONDS_MIN || n > FORM_WAIT_SECONDS_MAX) {
@@ -150,4 +152,14 @@ export function judgeFormWait(
           source: { kind: best.kind, ref: FORM_WAIT_REFS[best.kind] },
         },
       };
+}
+
+/**
+ * Correction 2 (4.2): the ONE predicate for "a form-wait value has no effect here" — no form is ever
+ * sent, so the wait it sets never happens: under `withheld` or `offered`, or on a door that sends no
+ * forms (`realm serve`, `statelessHttp`). The bins and `createRealmMcpServer` refuse the setting
+ * where it holds (the inert-config policy).
+ */
+export function formWaitInert(answers: GateAnswers, sendsForms: boolean): boolean {
+  return answers !== 'asked' || !sendsForms;
 }

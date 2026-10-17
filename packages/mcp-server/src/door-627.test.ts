@@ -879,6 +879,95 @@ describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', () => 
       code: 1,
       stderr: REALM_MCP_TAKES_NO_FLAGS,
     });
+    // Correction 2 (4.5): the words, pinned as words — both variables, and the flag's own program.
+    expect(REALM_MCP_TAKES_NO_FLAGS).toBe(
+      "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS or REALM_MCP_FORM_WAIT_SECONDS in your MCP client's env block, or run realm mcp with the flag.",
+    );
+  });
+});
+
+describe('#627 W correction 2 (4.1) — realm-mcp judges its variables as realm mcp judges its flags', () => {
+  const bin = fileURLToPath(new URL('../dist/server.js', import.meta.url));
+  /** The built bin with only these variables; stdin closed, so a started server exits after its line. */
+  const run = async (env: Record<string, string>) => {
+    const home = await mkdtemp(join(tmpdir(), 'realm-door-627-bin2-'));
+    const r = spawnSync(process.execPath, [bin], {
+      env: { PATH: process.env['PATH'] ?? '', HOME: home, ...env },
+      input: '',
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+    const lines = r.stderr.trim().split('\n');
+    return {
+      code: r.status,
+      lines: lines.length,
+      first: lines[0] ?? '',
+      stack: r.stderr.includes('    at '),
+    };
+  };
+
+  it('a bad REALM_MCP_GATE_ANSWERS refuses the start: one line naming the variable, exit 1, no stack trace', async () => {
+    const r = await run({ REALM_MCP_GATE_ANSWERS: 'bogus' });
+    // (a) red when the bin builds the server first (a stack trace with the option's words); (b)
+    //     prints the exit, the line count, whether it names the variable, and whether a stack shows.
+    expect({
+      code: r.code,
+      lines: r.lines,
+      names: r.first.startsWith("realm-mcp: invalid REALM_MCP_GATE_ANSWERS value 'bogus'"),
+      stack: r.stack,
+    }).toEqual({
+      code: 1,
+      lines: 1,
+      names: true,
+      stack: false,
+    });
+  });
+
+  it('a bad REALM_MCP_FORM_WAIT_SECONDS: the line names the variable, never the library option', async () => {
+    const r = await run({ REALM_MCP_FORM_WAIT_SECONDS: '10' });
+    // (a) red when the line says the library's "formWaitSeconds"; (b) prints the exit and the line's
+    //     opening.
+    expect({ code: r.code, first: r.first.split(':').slice(0, 2).join(':') }).toEqual({
+      code: 1,
+      first: "realm-mcp: invalid REALM_MCP_FORM_WAIT_SECONDS value '10'",
+    });
+  });
+
+  it('a valid value: stderr’s first line is the start line, naming the variable', async () => {
+    const r = await run({ REALM_MCP_GATE_ANSWERS: 'withheld' });
+    // (a) red when the bin prints no start line; (b) prints its first stderr line's opening.
+    expect(r.first.split('. ')[0]).toBe(
+      'Gate answers over MCP: withheld (from REALM_MCP_GATE_ANSWERS)',
+    );
+  });
+});
+
+describe('#627 W correction 2 (4.2, 4.3) — the library refuses an inert form wait and an empty value', () => {
+  it('a form wait under withheld, or on a statelessHttp door, builds no server; an empty gateAnswers is refused', () => {
+    const build = (options: Parameters<typeof createRealmMcpServer>[0]) => {
+      try {
+        createRealmMcpServer(options);
+        return 'built';
+      } catch (e) {
+        return (e as Error).message.split(' — ')[0];
+      }
+    };
+    // (a) red when the library builds with a wait no form will use, or reads an empty gateAnswers as
+    //     unset; (b) prints what each build did (the refusal's opening).
+    expect({
+      withheld: build({ gateAnswers: 'withheld', formWaitSeconds: 60 }),
+      stateless: build({ statelessHttp: true, formWaitSeconds: 60 }),
+      asked: build({ gateAnswers: 'asked', formWaitSeconds: 60 }),
+      emptyAnswers: build({ gateAnswers: '' as never }),
+    }).toEqual({
+      withheld:
+        'createRealmMcpServer: the formWaitSeconds option has no effect on this server: it sends no forms under gate answers withheld',
+      stateless:
+        'createRealmMcpServer: the formWaitSeconds option has no effect on this server: it sends no forms (statelessHttp)',
+      asked: 'built',
+      emptyAnswers:
+        "createRealmMcpServer: invalid gateAnswers option value '': expected asked, offered or withheld",
+    });
   });
 });
 

@@ -11,6 +11,7 @@ import {
   FailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
+  formWaitInert,
   principalOf,
   validateTraceCapabilities,
   type Attributed,
@@ -44,11 +45,13 @@ import {
   FORM_WAIT_ENV,
   GATE_ANSWERS_ENV,
   McpDoor,
+  formWaitInertLibraryRefusal,
   formWaitLibraryRefusal,
   gateAnswersLibraryRefusal,
   judgeFormWait,
   judgeGateAnswers,
 } from './door.js';
+import { gateAnswersStartLine, readBinDoorSettings } from './bin-settings.js';
 import type { ElicitFn } from './form-path.js';
 
 export interface RealmMcpServerOptions {
@@ -214,10 +217,32 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     option: options?.formWaitSeconds,
   });
   if (!waitJudged.ok) throw new Error(formWaitLibraryRefusal(waitJudged.raw));
+  // Correction 2 (4.2): the same predicate as the bins — a form-wait value where no form is ever
+  // sent (`withheld`, `offered`, or a door that sends none: `statelessHttp`) builds no server.
+  const sendsForms = options?.statelessHttp !== true;
+  if (
+    waitJudged.setting.source.kind !== 'default' &&
+    formWaitInert(answersJudged.setting.value, sendsForms)
+  ) {
+    const where =
+      waitJudged.setting.source.kind === 'flag'
+        ? '--form-wait-seconds'
+        : waitJudged.setting.source.kind === 'env'
+          ? FORM_WAIT_ENV
+          : 'the formWaitSeconds option';
+    throw new Error(
+      formWaitInertLibraryRefusal(
+        where,
+        !sendsForms
+          ? 'it sends no forms (statelessHttp)'
+          : `it sends no forms under gate answers ${answersJudged.setting.value}`,
+      ),
+    );
+  }
   const door = new McpDoor({
     gateAnswers: answersJudged.setting,
     formWait: waitJudged.setting,
-    sendsForms: options?.statelessHttp !== true,
+    sendsForms,
     ...(options?.monotonicNow !== undefined ? { monotonicNow: options.monotonicNow } : {}),
   });
 
@@ -429,17 +454,18 @@ function isRunDirectly(): boolean {
   }
 }
 
-/**
- * #627 W (correction 1, A4): the `realm-mcp` bin reads no flags. A flag given to it would be ignored —
- * `--gate-answers withheld` would start `asked`, the agent keeping an answer tool in apps without
- * forms, with nothing said — so any argument refuses the start, with one line and exit code 1.
- */
 /** Correction 1 (C1): the library refusal of a `principal` option the total reader cannot read. */
 export const INVALID_PRINCIPAL_OPTION =
   "createRealmMcpServer: the principal option is not a principal — expected { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' }, or a typed absence such as { absent: 'door_authenticates_no_principal' }. Refused when the server is built: every answer it records would name it. Fix the option.";
 
+/**
+ * #627 W (correction 1, A4): the `realm-mcp` bin reads no flags. A flag given to it would be ignored —
+ * `--gate-answers withheld` would start `asked`, the agent keeping an answer tool in apps without
+ * forms, with nothing said — so any argument refuses the start, with one line and exit code 1
+ * (correction 2, 4.5/4.6: the line names both variables, and this comment is the constant's own).
+ */
 export const REALM_MCP_TAKES_NO_FLAGS =
-  "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS in your MCP client's env block, or run `realm mcp --gate-answers <value>`.";
+  "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS or REALM_MCP_FORM_WAIT_SECONDS in your MCP client's env block, or run realm mcp with the flag.";
 
 if (isRunDirectly() && process.argv.length > 2) {
   console.error(REALM_MCP_TAKES_NO_FLAGS);
@@ -447,7 +473,17 @@ if (isRunDirectly() && process.argv.length > 2) {
 }
 
 if (isRunDirectly()) {
+  // Correction 2 (4.1): the variables judged as `realm mcp` judges its flags — a refusal is one line
+  // naming the variable and exit 1, never a stack trace; then the start line, on stderr (stdout
+  // carries the protocol), before anything is built.
+  const settings = readBinDoorSettings('realm-mcp', {}, process.env);
+  if (!settings.ok) {
+    console.error(settings.line);
+    process.exit(1);
+  }
+  // This program's name, which may itself refuse with one line — then no start line is printed.
   const driver = composeBinIdentity();
+  console.error(gateAnswersStartLine(settings.answers, false, 'realm-mcp'));
   // #627 W (§5.8): the stdio transport authenticates no one, so this bin's answers name no principal.
   const server = createRealmMcpServer({
     ...(driver !== undefined ? { driver } : {}),

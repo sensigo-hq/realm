@@ -433,7 +433,8 @@ describe('#627 W — the other pages W changed', () => {
     );
     claim(
       'docs/guides/connect-an-mcp-client.md',
-      "Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell does not reach a server the assistant starts.",
+      // Correction 2 (6.5): "may not reach", with the reason — as gate-answers.md :17 (correction 1, F6).
+      "Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell may not reach a server the assistant starts (the MCP SDK's client starts servers with a reduced environment).",
     );
   });
 
@@ -609,6 +610,16 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     claim(
       'docs/guides/human-gates.md',
       'Under the default, `asked`, a chat app that shows forms gets the question as a form, and the person answers there; under `withheld`, no tool answers.',
+    );
+  });
+
+  it('correction 2 (4.1, 4.5): the MCP README’s realm-mcp sentence (realm-mcp’s cells execute it)', () => {
+    // Executed by door-627 :: "(A4) — `realm-mcp --gate-answers withheld` refuses the start" (no
+    // flags, any refused) and :: "correction 2 (4.1) — realm-mcp judges its variables …" (both
+    // variables judged; the start line on stderr).
+    claim(
+      'packages/mcp-server/README.md',
+      '`realm-mcp` takes no flags and refuses any: set the gate-answers value, or the form wait, in the entry\'s `env` block (`"env": { "REALM_MCP_GATE_ANSWERS": "withheld" }`, `REALM_MCP_FORM_WAIT_SECONDS`), or run `realm mcp --gate-answers <value>`. It judges both variables before it starts, and prints its start line on stderr.',
     );
   });
 

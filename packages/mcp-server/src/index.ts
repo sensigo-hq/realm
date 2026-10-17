@@ -1,5 +1,19 @@
 // @sensigo/realm-mcp — MCP server for AI agent connections
 export { createRealmMcpServer, createDefaultRegistry } from './server.js';
+// #627 W correction 2 (4.1): the programs' words — one home for `realm mcp`, `realm serve` and
+// `realm-mcp`.
+export {
+  checkValueLine,
+  DEV_MODE_ANSWER_WARNING,
+  formWaitBinRefusal,
+  formWaitInertRefusal,
+  formWaitNoFormsRefusal,
+  gateAnswersBinRefusal,
+  gateAnswersStartLine,
+  readBinDoorSettings,
+  type BinDoorFlags,
+  type BinName,
+} from './bin-settings.js';
 export type { RealmMcpServerOptions } from './server.js';
 export { generateProtocol } from './protocol/generator.js';
 export type { WorkflowProtocol, ProtocolStep } from './protocol/generator.js';

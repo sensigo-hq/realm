@@ -28,7 +28,7 @@ Add `realm-mcp` to your MCP client configuration (VS Code, Claude Desktop, Curso
 
 Requires workflows to be registered first via `realm workflow register`.
 
-`realm-mcp` takes no flags: set the gate-answers value in the entry's `env` block (`"env": { "REALM_MCP_GATE_ANSWERS": "withheld" }`), or run `realm mcp --gate-answers <value>`.
+`realm-mcp` takes no flags and refuses any: set the gate-answers value, or the form wait, in the entry's `env` block (`"env": { "REALM_MCP_GATE_ANSWERS": "withheld" }`, `REALM_MCP_FORM_WAIT_SECONDS`), or run `realm mcp --gate-answers <value>`. It judges both variables before it starts, and prints its start line on stderr.
 
 ## Usage — Embedded MCP server
 
@@ -48,7 +48,7 @@ await server.connect(transport);
 
 | Symbol                                           | Description                                                                                                                                                                                                                                                                                                                        |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `createRealmMcpServer(options?)`                 | Creates the MCP server with its tools registered: 11, or 10 under `withheld`. Returns `McpServer`.                                                                                                                                                                                                                                 |
+| `createRealmMcpServer(options?)`                 | Creates the MCP server with its tools registered. A client is listed 11, or 10 under `withheld`; under `asked` both answer tools are registered, and the session's forms enable one. Returns `McpServer`.                                                                                                                          |
 | `createDefaultRegistry()`                        | Returns an `ExtensionRegistry` pre-populated with built-in adapters.                                                                                                                                                                                                                                                               |
 | `generateProtocol(workflow)`                     | Generates a structured protocol description for a workflow.                                                                                                                                                                                                                                                                        |
 | `RealmMcpServerOptions`                          | Type — optional config: `registry?`, `secrets?`, `workflowStore?`, `runStore?`, `gateAnswers?` (`asked`, `offered` or `withheld`), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request: no form can be held open). |

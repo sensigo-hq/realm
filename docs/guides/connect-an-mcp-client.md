@@ -50,11 +50,11 @@ To choose how gate answers are handled, put the flag in the same config. For exa
 claude mcp add realm -- realm mcp --gate-answers withheld
 ```
 
-Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell does not reach a server the assistant starts. The default, `asked`, sends each question to the person as a form in an app that shows forms. See [Gate answers over MCP](../reference/mcp/gate-answers.md). Added after version 0.47.0.
+Set it here, or in the entry's `env` block as `REALM_MCP_GATE_ANSWERS`: a variable you export in a shell may not reach a server the assistant starts (the MCP SDK's client starts servers with a reduced environment). The default, `asked`, sends each question to the person as a form in an app that shows forms. See [Gate answers over MCP](../reference/mcp/gate-answers.md). Added after version 0.47.0.
 
 ## 2. Check what the assistant sees
 
-The assistant now has eleven tools (`advance_run` was added after version 0.46.0, which has ten):
+The assistant now has ten tools under `withheld` (the value step 1's example sets); eleven under `asked` or `offered` (`advance_run` was added after version 0.46.0, which has ten). The table lists the eleven:
 
 | Tool                    | What it does                                                                                   |
 | ----------------------- | ---------------------------------------------------------------------------------------------- |

@@ -853,6 +853,7 @@ export type {
 export {
   judgeGateAnswers,
   judgeFormWait,
+  formWaitInert,
   alsoSetClause,
   GATE_ANSWERS_ENV,
   FORM_WAIT_ENV,

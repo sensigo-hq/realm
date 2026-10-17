@@ -77,6 +77,11 @@ export function formWaitLibraryRefusal(raw: string): string {
   return `createRealmMcpServer: invalid formWaitSeconds value '${raw}': expected a whole number of seconds from 30 to 3600 — refused: no server is built while it is set. Fix the value or remove it.`;
 }
 
+/** Correction 2 (4.2): a form-wait value where this server never sends a form — refused (library). */
+export function formWaitInertLibraryRefusal(where: string, why: string): string {
+  return `createRealmMcpServer: ${where} has no effect on this server: ${why} — refused: no server is built while it is set, because the setting would claim a wait that never happens. Remove it, or set gate answers to asked on a server that sends forms.`;
+}
+
 /** What this server process has sent for one question (§5.2b): never what the person saw. */
 interface GateSends {
   /** How many times the form was sent, the first included. */
