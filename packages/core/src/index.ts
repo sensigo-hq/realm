@@ -657,6 +657,8 @@ export {
   compileSchema,
   validateOutputSchema,
   validateAgentSubmission,
+  isAsyncSchemaRefusal,
+  asyncSchemaValidity,
 } from './validation/input-schema.js';
 export type {
   RawValidationError,
