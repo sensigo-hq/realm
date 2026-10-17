@@ -346,6 +346,48 @@ describe('#627 W — the separation check (cell 26)', () => {
     );
   });
 
+  it('correction 1 (D3): a registered workflow’s extension file, resolved against its source_dir, makes condition 4 "yes" when this login can change it', async () => {
+    const ext = '/srv/wf-src/ext/tools.mjs';
+    const evidence = await measure(
+      machine(
+        {
+          canWrite: (p) => p === ext,
+          list: (p) => (p === `${STORE}/workflows` ? ['wf.json'] : []),
+        },
+        {
+          ...SUDO_NEGATIVE,
+          [`${STORE}/workflows/wf.json`]: JSON.stringify({
+            id: 'wf',
+            source_dir: '/srv/wf-src',
+            extensions: './ext/tools.mjs',
+          }),
+        },
+        [...SUDO_BIN, ext],
+      ),
+    );
+    // (a) red when the registered workflows' extension files are not checked; (b) prints the line.
+    expect(conditionLine('trust_root_writable', evidence)).toBe(
+      `This login can change files Realm executes (realm.yaml, extension modules, the Node binary, Realm's own package): yes (measured) — ${ext} can be changed.`,
+    );
+  });
+
+  it('correction 1 (D4): the per-user Docker socket is looked for in the login’s own home, never in HOME', async () => {
+    const own = '/home/agent/.docker/run/docker.sock';
+    const viaHome = `${HOME}/.docker/run/docker.sock`;
+    const evidence = await measure(
+      machine({ connect: async (t) => 'path' in t && t.path === own }, SUDO_NEGATIVE, [
+        ...SUDO_BIN,
+        own,
+        viaHome,
+      ]),
+    );
+    // (a) red when the socket's path is built from HOME (the agent's own engine is missed); (b) prints
+    //     the line.
+    expect(conditionLine('docker', evidence)).toBe(
+      `This login can reach the Docker engine: yes (measured) — the Docker engine accepted a connection at ${own}.`,
+    );
+  });
+
   it('correction 1 (F6): gate-answers.md :58 and :60 — a store this login can only read; sudo’s kept password; run0, pkexec and su named as not probed', async () => {
     const claimOf = async (probes: SeparationProbes) => separationClaim(await measure(probes));
     const becomeOf = async (probes: SeparationProbes) =>
