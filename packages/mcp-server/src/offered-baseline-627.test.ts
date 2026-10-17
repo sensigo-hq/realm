@@ -134,7 +134,7 @@ const canonical = (reply: string) =>
 const ready = BASE !== undefined && existsSync(BASE_MCP) && existsSync(BASE_CORE);
 
 describe.skipIf(!ready)(
-  '#627 W — cell 3: offered is PR-0’s head, byte for byte, but for the named differences (REALM_627_BASELINE)',
+  '#627 W — cell 3: offered is the base’s, byte for byte, but for the named differences (REALM_627_BASELINE)',
   () => {
     it('the baseline is the main commit this branch sits on (printed, and asserted)', () => {
       const git = (cwd: string, ...args: string[]): string =>
