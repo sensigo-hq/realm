@@ -57,7 +57,7 @@ async function bodyOf(req: IncomingMessage): Promise<unknown> {
  * `statelessHttp` passed or not; and a client that declares forms and accepts every form with
  * `approve`.
  */
-async function httpDoor(shape: Shape, statelessHttp: boolean) {
+async function httpDoor(shape: Shape, statelessHttp: boolean, refuseGet = false) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-http-627-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
@@ -67,6 +67,12 @@ async function httpDoor(shape: Shape, statelessHttp: boolean) {
   const sessions = new Map<string, StreamableHTTPServerTransport>();
   const http = createServer((req, res) => {
     void (async () => {
+      // Correction 2 (1.7): a host that refuses the standalone GET stream — a form then reaches the
+      // client only on the tool call's own stream.
+      if (refuseGet && req.method === 'GET') {
+        res.writeHead(405).end();
+        return;
+      }
       const body = await bodyOf(req);
       if (shape === 'per_request') {
         // One server and one stateless transport per request, as `realm serve` builds them.
@@ -181,4 +187,39 @@ describe('#627 W correction 1 (F1) — the HTTP doors, under asked, for a client
       route: (perSession.recorded as { route?: unknown } | undefined)?.route,
     }).toEqual({ listed: ['present_question'], forms: 1, route: 'mcp_form' });
   }, 60_000);
+});
+
+describe('#627 W correction 2 (1.7) — the form rides the tool call’s own stream', () => {
+  it('a server kept per HTTP session, whose host refuses the GET stream (405): the form still arrives, and records mcp_form', async () => {
+    const d = await httpDoor('per_session', false, true);
+    try {
+      await new Promise((r) => setTimeout(r, 50));
+      const call = d.client.callTool(
+        { name: 'start_run', arguments: { workflow_id: 'http627', params: {} } },
+        undefined,
+        { timeout: 60_000 },
+      );
+      // Without the call's id the form is dropped and the call waits Realm's whole timer: bound it.
+      const settled = await Promise.race([
+        call.then(() => true),
+        new Promise<false>((r) => setTimeout(() => r(false), 5_000)),
+      ]);
+      const runs = await d.runStore.list();
+      const entry = runs[0]?.evidence.find((e) => e.kind === 'gate_response');
+      // (a) red when the elicitation is sent without the tool call's request id (it then needs the
+      //     GET stream this host refuses); (b) prints whether the call settled, the forms sent and
+      //     the recorded route.
+      expect({
+        settled,
+        forms: d.forms(),
+        route: (entry?.answer as { route?: unknown } | undefined)?.route,
+      }).toEqual({
+        settled: true,
+        forms: 1,
+        route: 'mcp_form',
+      });
+    } finally {
+      await d.close();
+    }
+  }, 30_000);
 });

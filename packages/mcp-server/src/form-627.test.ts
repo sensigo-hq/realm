@@ -32,7 +32,6 @@ import { createRealmMcpServer, type RealmMcpServerOptions } from './server.js';
 import {
   renderOutcome,
   sendQuestionForm,
-  SDK_TIMEOUT_MARGIN_MS,
   WITHDRAWN,
   type ElicitFn,
   type FormDeps,
@@ -78,6 +77,8 @@ interface Session {
   withdrawn: () => number;
   /** The `reason` of each cancel the server sent (correction 1, B11). */
   reasons: () => string[];
+  /** The JSON-RPC id of each `tools/call` request the client sent (correction 2, 1.7). */
+  callIds: () => Array<string | number>;
   setHandler: (h: Handler) => void;
   workflowId: string;
 }
@@ -121,6 +122,13 @@ async function session(
     }
     deliver?.(message, extra);
   };
+  const callIds: Array<string | number> = [];
+  const sendToServer = ct.send.bind(ct);
+  ct.send = async (message, options) => {
+    const m = message as { method?: string; id?: string | number };
+    if (m.method === 'tools/call' && m.id !== undefined) callIds.push(m.id);
+    return sendToServer(message, options);
+  };
   await new Promise((r) => setTimeout(r, 20));
   const call = async (name: string, args: Reply, signal?: AbortSignal): Promise<Reply> => {
     const raw = (await client.callTool(
@@ -143,6 +151,7 @@ async function session(
     elicited: () => elicited,
     withdrawn: () => withdrawn,
     reasons: () => reasons,
+    callIds: () => callIds,
     setHandler: (h) => {
       current = h;
     },
@@ -151,8 +160,8 @@ async function session(
 }
 
 /** A run opened at its question outside the session (the CLI, another process). */
-async function openedElsewhere(s: Session, timeout?: number) {
-  const def = loadWorkflowFromString(WORKFLOW(timeout));
+async function openedElsewhere(s: Session, timeout?: number, yaml?: string) {
+  const def = loadWorkflowFromString(yaml ?? WORKFLOW(timeout));
   const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
   await advanceRun(s.runStore, def, { runId: run.id });
   const record = await s.runStore.get(run.id);
@@ -170,16 +179,44 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Runs `p` under fake timers: advance `ms`, then keep turning the clock and the I/O until it settles. */
+/** Correction 2 (1.6): the delays Realm's own form timer was armed with — each `setTimeout` whose
+ *  callback withdraws the form (`form-path.ts`'s `withdrawWith`), from a spy on the global. */
+function realmTimerDelays(spy: { mock: { calls: unknown[][] } }): number[] {
+  return spy.mock.calls
+    .filter(([fn]) => typeof fn === 'function' && String(fn).includes('withdrawWith'))
+    .map(([, ms]) => Number(ms));
+}
+
+/** The real-time bound on `drive()` (correction 2, 1.8). */
+const DRIVE_BOUND_MS = 20_000;
+/** The time limit of a cell that uses `drive()`: above the bound, so a hang prints its message. */
+const DRIVE_CELL_MS = 30_000;
+
+/**
+ * Runs `p` under fake timers: advance `ms`, then keep turning the clock and the I/O until it settles,
+ * or until {@link DRIVE_BOUND_MS} of REAL time passes (correction 2, 1.8). A step count could run out
+ * while real I/O was still pending — a store lock retries on a faked `setTimeout`, so the call then
+ * waited on a fake timer nothing advanced (it hung once on CI). `Date` is not faked here (`toFake`
+ * names only the timer functions), so the bound is real; a call that does not settle fails with the
+ * fake time and the steps it reached.
+ */
 async function drive<T>(p: Promise<T>, ms: number): Promise<T> {
   let done = false;
   void p.finally(() => {
     done = true;
   });
   await vi.advanceTimersByTimeAsync(ms);
-  for (let i = 0; !done && i < 2_000; i++) {
+  const started = Date.now();
+  let steps = 0;
+  while (!done && Date.now() - started < DRIVE_BOUND_MS) {
     await vi.advanceTimersByTimeAsync(50);
     await new Promise((r) => setImmediate(r));
+    steps++;
+  }
+  if (!done) {
+    throw new Error(
+      `drive(): the call did not settle within ${DRIVE_BOUND_MS} ms of real time — fake time advanced ${ms + steps * 50} ms over ${steps} steps`,
+    );
   }
   return p;
 }
@@ -223,31 +260,40 @@ describe('#627 W — the form path (cell 21)', () => {
     });
   });
 
+  // Correction 2 (1.4): W-f2 says how the form ended, one sentence per cause.
+  const CLOSED = 'Not recorded: the person closed the form without answering.';
+  const ENDED = "Not recorded: the user's app ended the form without an answer.";
+  const NOT_A_CHOICE =
+    "Not recorded: the form came back with a value that is not one of the question's choices.";
   it.each([
-    ['decline', async (): Promise<ElicitReply> => ({ action: 'decline' })],
-    ['cancel', async (): Promise<ElicitReply> => ({ action: 'cancel' })],
+    ['decline', async (): Promise<ElicitReply> => ({ action: 'decline' }), CLOSED],
+    ['cancel', async (): Promise<ElicitReply> => ({ action: 'cancel' }), CLOSED],
     [
       'a JSON-RPC error from the client',
       async (): Promise<ElicitReply> => {
         throw new Error('the client failed');
       },
+      ENDED,
     ],
     [
       'accept with {} (SDK 1.31 rejects it: InvalidParams)',
       async (): Promise<ElicitReply> => ({ action: 'accept', content: {} }),
+      NOT_A_CHOICE,
     ],
     [
       'accept with a choice not on the list (cell 22)',
       async (): Promise<ElicitReply> => ({ action: 'accept', content: { choice: 'maybe' } }),
+      NOT_A_CHOICE,
     ],
   ])(
-    '%s records nothing: W-f2, the question still waits, the await entry says "came back"',
-    async (_label, h) => {
+    '%s records nothing: W-f2 says how the form ended, the question still waits, the await entry says it ended without an answer',
+    async (_label, h, ended) => {
       const s = await session({}, h);
       const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
       const runId = String(started['run_id']);
-      // (a) red when a non-answer records something (cancel, say), or the reply says the form is
-      //     open; (b) prints the hint, the entry and the answers recorded.
+      // (a) red when a non-answer records something (cancel, say), the reply says the form is open,
+      //     or W-f2 says one sentence for every cause (correction 2, 1.4); (b) prints the hint, the
+      //     entry and the answers recorded.
       expect({
         recorded: (await answers(s, runId)).length,
         open: (await s.runStore.get(runId)).pending_gate !== undefined,
@@ -256,47 +302,55 @@ describe('#627 W — the form path (cell 21)', () => {
       }).toEqual({
         recorded: 0,
         open: true,
-        hint: "Not recorded: the form came back without an answer. The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).",
-        entry: `The form for step 'q' of run ${runId} came back without an answer 1 time. If the user wants to answer, call present_question (3 left in this session). An answer given in this chat is not recorded. Check again no sooner than poll_after_ms.`,
+        hint: `${ended} The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).`,
+        entry: `The form for step 'q' of run ${runId} ended without an answer 1 time. If the user wants to answer, call present_question (3 left in this session). An answer given in this chat is not recorded. Check again no sooner than poll_after_ms.`,
       });
     },
   );
 
-  it('an answer after 61 s is recorded (Realm passes its own timeout, never the SDK’s 60 s default) — fake timers', async () => {
-    const s = await session({}, async () => {
-      await new Promise((r) => setTimeout(r, 61_000));
-      return { action: 'accept', content: { choice: 'reject' } };
-    });
-    const { runId, gateId } = await openedElsewhere(s);
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
-    await drive(s.call('present_question', { run_id: runId, gate_id: gateId }), 62_000);
-    vi.useRealTimers();
-    // (a) red when `timeout` is left unset (the SDK ends the wait at 60 s and nothing records);
-    //     (b) prints the answers recorded and their choice.
-    expect((await answers(s, runId)).map((e) => e.input_summary?.['choice'])).toEqual(['reject']);
-  });
+  it(
+    'an answer after 61 s is recorded (Realm passes its own timeout, never the SDK’s 60 s default) — fake timers',
+    async () => {
+      const s = await session({}, async () => {
+        await new Promise((r) => setTimeout(r, 61_000));
+        return { action: 'accept', content: { choice: 'reject' } };
+      });
+      const { runId, gateId } = await openedElsewhere(s);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+      await drive(s.call('present_question', { run_id: runId, gate_id: gateId }), 62_000);
+      vi.useRealTimers();
+      // (a) red when `timeout` is left unset (the SDK ends the wait at 60 s and nothing records);
+      //     (b) prints the answers recorded and their choice.
+      expect((await answers(s, runId)).map((e) => e.input_summary?.['choice'])).toEqual(['reject']);
+    },
+    DRIVE_CELL_MS,
+  );
 
-  it('Realm’s own timeout is a non-answer: W-f2 says it stopped waiting, after the form-wait cap', async () => {
-    const s = await session(
-      { formWaitSeconds: 30 },
-      (req) =>
-        new Promise<ElicitReply>((resolve) => {
-          req.signal.addEventListener('abort', () => resolve({ action: 'cancel' }));
-        }),
-    );
-    const { runId, gateId } = await openedElsewhere(s);
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
-    const reply = await drive(
-      s.call('present_question', { run_id: runId, gate_id: gateId }),
-      31_000,
-    );
-    vi.useRealTimers();
-    // (a) red when Realm's timeout is not the cap, or it is reported as an answer; (b) prints the hint.
-    expect({ hint: hintOf(reply), recorded: (await answers(s, runId)).length }).toEqual({
-      hint: "Not recorded: the form came back without an answer (Realm stopped waiting after 30 s). The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).",
-      recorded: 0,
-    });
-  });
+  it(
+    'Realm’s own timeout is a non-answer: W-f2 says it stopped waiting, after the form-wait cap',
+    async () => {
+      const s = await session(
+        { formWaitSeconds: 30 },
+        (req) =>
+          new Promise<ElicitReply>((resolve) => {
+            req.signal.addEventListener('abort', () => resolve({ action: 'cancel' }));
+          }),
+      );
+      const { runId, gateId } = await openedElsewhere(s);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+      const reply = await drive(
+        s.call('present_question', { run_id: runId, gate_id: gateId }),
+        31_000,
+      );
+      vi.useRealTimers();
+      // (a) red when Realm's timeout is not the cap, or it is reported as an answer; (b) prints the hint.
+      expect({ hint: hintOf(reply), recorded: (await answers(s, runId)).length }).toEqual({
+        hint: "Not recorded: Realm stopped waiting after 30 s and withdrew the form. The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).",
+        recorded: 0,
+      });
+    },
+    DRIVE_CELL_MS,
+  );
 
   it('the client cancelling the call withdraws the form (the call’s signal is passed through)', async () => {
     const s = await session({}, () => new Promise<ElicitReply>(() => undefined));
@@ -434,7 +488,8 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     // (a) red when the reply is composed from the pre-wait snapshot (W-f2 on a due question);
     //     (b) prints the hint and the first entry's tool.
     expect({
-      w_f2: hintOf(reply).startsWith('Not recorded: the form came back'),
+      // Correction 2 (1.4): every W-f2 opens "Not recorded:".
+      w_f2: hintOf(reply).startsWith('Not recorded:'),
       tool: (firstEntry(reply) as unknown as { instruction?: { tool?: string } }).instruction?.tool,
     }).toEqual({ w_f2: false, tool: 'advance_run' });
   }, 20_000);
@@ -509,12 +564,12 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
       { monotonicNow: () => readings[Math.min(i++, readings.length - 1)]! },
       async () => ({ action: 'decline' }),
     );
-    const spy2 = vi.spyOn(timed.server.server, 'elicitInput');
     const o = await openedElsewhere(timed);
+    // Correction 2 (1.6): the wait is Realm's own timer — read the delay it was armed with.
+    const armed = vi.spyOn(globalThis, 'setTimeout');
     await timed.call('present_question', { run_id: o.runId, gate_id: o.gateId });
-    // Correction 1 (B11): Realm's own timer is the wait; the SDK's timeout sits a margin above it.
-    const sdkTimeout = (spy2.mock.calls[0]?.[1] as { timeout?: number } | undefined)?.timeout;
-    const waited = sdkTimeout === undefined ? undefined : sdkTimeout - SDK_TIMEOUT_MARGIN_MS;
+    const waited = realmTimerDelays(armed)[0];
+    armed.mockRestore();
     const late = [0, 225_000];
     let j = 0;
     const tight = await session({ monotonicNow: () => late[Math.min(j++, late.length - 1)]! });
@@ -534,18 +589,21 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
 
   it('the wait helper: an unparseable expires_at waits the cap alone and says so on stderr; a due question sends no form', async () => {
     const s = await session({ formWaitSeconds: 60 });
-    const spy = vi.spyOn(s.server.server, 'elicitInput');
     const { runId, gateId } = await openedElsewhere(s);
     const record = await s.runStore.get(runId);
+    // Correction 2 (1.1): only a gate that declares `on_expiry` has its deadline read by the form path.
     await s.runStore.update({
       ...record,
-      pending_gate: { ...record.pending_gate!, expires_at: 'not-a-time' },
+      pending_gate: { ...record.pending_gate!, expires_at: 'not-a-time', on_expiry: 'abort' },
     });
     const lines: string[] = [];
     const err = vi.spyOn(console, 'error').mockImplementation((l: unknown) => {
       lines.push(String(l));
     });
+    const armed = vi.spyOn(globalThis, 'setTimeout');
     await s.call('present_question', { run_id: runId, gate_id: gateId });
+    const waitedMs = realmTimerDelays(armed)[0];
+    armed.mockRestore();
     err.mockRestore();
     const due = await session();
     const d = await openedElsewhere(due, 1);
@@ -554,11 +612,8 @@ describe('#627 W — after the wait: a fresh read, four branches', () => {
     // (a) red when the wait reads the stamp inline (NaN), says nothing, or a due question gets a
     //     form; (b) prints the wait, the stderr line and the forms sent.
     expect({
-      // Correction 1 (B11): Realm's wait is the SDK's timeout less the margin.
-      waited: ((t) => t !== undefined && t > 59_000 && t <= 60_000)(
-        ((spy.mock.calls[0]?.[1] as { timeout?: number } | undefined)?.timeout ?? NaN) -
-          SDK_TIMEOUT_MARGIN_MS,
-      ),
+      // Correction 2 (1.6): the delay Realm's own timer was armed with.
+      waited: ((t) => t !== undefined && t > 59_000 && t <= 60_000)(waitedMs),
       said: lines.some((l) =>
         l.includes('has a deadline this version cannot read; its form waits the cap alone (60 s)'),
       ),
@@ -665,7 +720,7 @@ describe('#627 W — the form path’s own guards, on the function', () => {
     //     Realm's own timeout (`waited_s`, W-f2's "Realm stopped waiting"); (b) prints the result.
     expect({ withdrawn, result }).toEqual({
       withdrawn: true,
-      result: { kind: 'came_back', step: 'q', gate_id: d.gateId },
+      result: { kind: 'came_back', step: 'q', gate_id: d.gateId, cause: 'ended' },
     });
   });
 });
@@ -935,7 +990,7 @@ describe('#627 W correction 1 — the form path', () => {
     const words = String(firstEntry(read)?.human_readable);
     // (a) red when the form counts as answered before its answer is recorded ("0 times"); (b) prints
     //     the await entry's words.
-    expect(words).toContain('came back without an answer 1 time');
+    expect(words).toContain('ended without an answer 1 time');
   });
 
   it('B6: start_run’s pre-flight warning survives an accepted first form (guardrail 7(b))', async () => {
@@ -1034,7 +1089,422 @@ describe('#627 W correction 1 — the form path', () => {
     await s.call('start_run', { workflow_id: s.workflowId, params: {} });
     const related = (spy.mock.calls[0]?.[1] as { relatedRequestId?: unknown } | undefined)
       ?.relatedRequestId;
-    // (a) red when the elicitation is sent without the call's id; (b) prints the id's type.
+    // (a) red when the elicitation is sent without the call's id, or with another id (correction 2,
+    //     1.7: it EQUALS the tools/call request's JSON-RPC id); (b) prints both ids.
+    expect({ related, call: s.callIds()[0] }).toEqual({
+      related: s.callIds()[0],
+      call: s.callIds()[0],
+    });
     expect(typeof related).toBe('number');
+  });
+});
+
+// ─── correction 2: the form path (part 1) and the question's text (part 2.1) ────────────────────
+
+/** A gate whose deadline only reports its expiry (`timeout_seconds`, no `on_expiry`): finding-only. */
+const FINDING_ONLY = (seconds: number) =>
+  SHAPE(
+    ['choices: [approve, reject]', 'message: Ship it?', `timeout_seconds: ${seconds}`],
+    ['  after:', '    description: After.', '    execution: agent', '    depends_on: [q]'],
+  );
+
+/** Moves the open gate's stored deadline into the past (a minute ago). */
+async function pastDeadline(s: Session, runId: string, onExpiry?: 'abort') {
+  const record = await s.runStore.get(runId);
+  await s.runStore.update({
+    ...record,
+    pending_gate: {
+      ...record.pending_gate!,
+      expires_at: new Date(Date.now() - 60_000).toISOString(),
+      ...(onExpiry !== undefined ? { on_expiry: onExpiry } : {}),
+    },
+  });
+}
+
+describe('#627 W correction 2 — the form path', () => {
+  it('1.1 (a): a finding-only gate past its deadline still gets a form, and its answer records', async () => {
+    const yaml = FINDING_ONLY(600);
+    const s = await session(
+      {},
+      async () => ({ action: 'accept', content: { choice: 'approve' } }),
+      undefined,
+      { yaml },
+    );
+    const { runId, gateId } = await openedElsewhere(s, undefined, yaml);
+    await pastDeadline(s, runId);
+    await s.call('present_question', { run_id: runId, gate_id: gateId });
+    // (a) red when every gate past its deadline counts as due (the old `leftMs <= 0` rule);
+    //     (b) prints the forms sent and the answers recorded.
+    expect({ forms: s.elicited(), recorded: (await answers(s, runId)).length }).toEqual({
+      forms: 1,
+      recorded: 1,
+    });
+  });
+
+  it('1.1 (b): before its deadline, a finding-only gate’s form waits the form wait, not the time to the deadline', async () => {
+    const yaml = FINDING_ONLY(60);
+    const s = await session({}, async () => ({ action: 'decline' }), undefined, { yaml });
+    const { runId, gateId } = await openedElsewhere(s, undefined, yaml);
+    const armed = vi.spyOn(globalThis, 'setTimeout');
+    await s.call('present_question', { run_id: runId, gate_id: gateId });
+    const waited = realmTimerDelays(armed)[0];
+    armed.mockRestore();
+    // (a) red when the deadline bounds the wait (≈60 s); (b) prints the delay Realm's timer was
+    //     armed with, as a range check.
+    expect({ armedOver200s: waited !== undefined && waited > 200_000 }).toEqual({
+      armedOver200s: true,
+    });
+  });
+
+  it('1.1 (c): a gate WITH on_expiry past its deadline gets no form — the refusal names advance_run; the form path itself sends none', async () => {
+    const s = await session(
+      {},
+      async () => ({ action: 'accept', content: { choice: 'approve' } }),
+      600,
+    );
+    const { runId, gateId } = await openedElsewhere(s, 600);
+    await pastDeadline(s, runId);
+    const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
+    const d = await direct(600);
+    const rec = await d.runStore.get(d.runId);
+    await d.runStore.update({
+      ...rec,
+      pending_gate: {
+        ...rec.pending_gate!,
+        expires_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    let sent = 0;
+    const result = await sendQuestionForm(
+      d.deps(async () => {
+        sent++;
+        return { action: 'decline' };
+      }),
+      d.runId,
+      d.gateId,
+      { started: d.door.monotonicNow() },
+      false,
+    );
+    // (a) red when the form path sends for every gate (the due check dropped); (b) prints the forms
+    //     sent, whether the reply names advance_run, and the direct result.
+    expect({
+      forms: s.elicited(),
+      namesAdvance: JSON.stringify(reply['next_actions']).includes('advance_run'),
+      direct: result,
+      sent,
+    }).toEqual({ forms: 0, namesAdvance: true, direct: { kind: 'not_sent', why: 'due' }, sent: 0 });
+  });
+
+  it('1.1 (d): a call left below the budget floor is told why no form was sent, never a bare reply', async () => {
+    const late = [0, 225_000];
+    let j = 0;
+    const s = await session({ monotonicNow: () => late[Math.min(j++, late.length - 1)]! });
+    const { runId, gateId } = await openedElsewhere(s);
+    const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
+    // (a) red when the not-sent branch returns the bare reply (an empty hint); (b) prints the hint.
+    expect(hintOf(reply)).toBe(
+      'No form was sent: this call had too little time left to wait for an answer. Call present_question again.',
+    );
+  });
+
+  it('1.1 (e): W-f2 names "until" only for a gate whose deadline ends the question', async () => {
+    const finding = FINDING_ONLY(600);
+    const f = await session({}, async () => ({ action: 'decline' }), undefined, { yaml: finding });
+    const fo = await openedElsewhere(f, undefined, finding);
+    const fReply = await f.call('present_question', { run_id: fo.runId, gate_id: fo.gateId });
+    const e = await session({}, async () => ({ action: 'decline' }), 600);
+    const eo = await openedElsewhere(e, 600);
+    const eReply = await e.call('present_question', { run_id: eo.runId, gate_id: eo.gateId });
+    const expires = (await e.runStore.get(eo.runId)).pending_gate!.expires_at!;
+    // (a) red when "until" prints for both; (b) prints both hints.
+    expect({ finding: hintOf(fReply), onExpiry: hintOf(eReply) }).toEqual({
+      finding:
+        "Not recorded: the person closed the form without answering. The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).",
+      onExpiry: `Not recorded: the person closed the form without answering. The question on step 'q' is still waiting until ${expires}. To show it again, call present_question (3 left in this session).`,
+    });
+  });
+
+  it(
+    '1.2: Realm’s own wait running out first is "stopped", never "the question’s time ran out"',
+    async () => {
+      const s = await session(
+        { formWaitSeconds: 30 },
+        (req) =>
+          new Promise<ElicitReply>((resolve) => {
+            req.signal.addEventListener('abort', () => resolve({ action: 'cancel' }));
+          }),
+      );
+      const { runId, gateId } = await openedElsewhere(s);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+      await drive(s.call('present_question', { run_id: runId, gate_id: gateId }), 31_000);
+      vi.useRealTimers();
+      // (a) red when one reason serves both bounds (an on_expiry gate's 3 s deadline reads "timeout":
+      //     the B2/B11 cell above); (b) prints the cancel reasons the client received.
+      expect(s.reasons()).toEqual([WITHDRAWN.stopped]);
+    },
+    DRIVE_CELL_MS,
+  );
+
+  it('1.3 (a): no cancel after the form came back — a poll read in flight when the person accepted never withdraws it', async () => {
+    // The poll's first read (at 2 s) is held until the answer's settle has been written; released,
+    // it reads a record whose question is gone — the case `settled` exists for.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let holdNext = false;
+    class SlowPollStore extends JsonFileStore {
+      override async get(
+        ...args: Parameters<JsonFileStore['get']>
+      ): ReturnType<JsonFileStore['get']> {
+        if (holdNext) {
+          holdNext = false;
+          await held;
+        }
+        return super.get(...args);
+      }
+      override async settleStep(
+        ...args: Parameters<JsonFileStore['settleStep']>
+      ): ReturnType<JsonFileStore['settleStep']> {
+        const r = await super.settleStep(...args);
+        if (args[1].kind === 'settle_gate') release();
+        return r;
+      }
+    }
+    const s = await session(
+      {},
+      async () => {
+        holdNext = true;
+        await new Promise((r) => setTimeout(r, 2_300));
+        return { action: 'accept', content: { choice: 'approve' } };
+      },
+      undefined,
+      { runStore: (dir) => new SlowPollStore(join(dir, 'runs')) },
+    );
+    const { runId, gateId } = await openedElsewhere(s);
+    await s.call('present_question', { run_id: runId, gate_id: gateId });
+    await new Promise((r) => setTimeout(r, 300));
+    // (a) red when the poll aborts once the form came back (its `settled` check removed); (b) prints
+    //     the cancels the client received and the answers recorded.
+    expect({ cancels: s.withdrawn(), recorded: (await answers(s, runId)).length }).toEqual({
+      cancels: 0,
+      recorded: 1,
+    });
+  }, 20_000);
+
+  it('1.3 (b): the run ending while a form is open withdraws it with "the run ended"', async () => {
+    // The run is ended through the store: a sibling step, claimed before the gate opened, settles with
+    // an abort — the gate_cancelled_by_abort path.
+    const yaml = SHAPE(
+      ['choices: [approve, reject]', 'message: Ship it?'],
+      [
+        '  aborter:',
+        '    description: Aborts.',
+        '    execution: auto',
+        '    handler: abort-handler',
+      ],
+    );
+    const def = loadWorkflowFromString(yaml);
+    const box: { token?: string; runId?: string; s?: Session } = {};
+    let aborted = false;
+    const s = await session(
+      {},
+      (req) =>
+        new Promise<ElicitReply>((resolve) => {
+          req.signal.addEventListener('abort', () => {
+            aborted = true;
+            resolve({ action: 'cancel' });
+          });
+          void box.s!.runStore.settleStep!(
+            box.runId!,
+            {
+              kind: 'settle_step',
+              step: 'aborter',
+              outcome: 'abort',
+              ...(box.token !== undefined ? { claimToken: box.token } : {}),
+              evidence: [],
+              abort: { stepId: 'aborter', abortMessage: 'aborter says stop' },
+            },
+            def,
+          );
+        }),
+      undefined,
+      { yaml },
+    );
+    box.s = s;
+    const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    box.runId = run.id;
+    box.token = (await s.runStore.claimStep(run.id, 'aborter', def)).claims?.['aborter']?.token;
+    await advanceRun(s.runStore, def, { runId: run.id });
+    const gateId = (await s.runStore.get(run.id)).pending_gate!.gate_id;
+    await s.call('present_question', { run_id: run.id, gate_id: gateId });
+    await until(() => aborted, 5_000);
+    // (a) red when the poll words an ended run as "settled elsewhere"; (b) prints the reasons and
+    //     whether the run ended.
+    expect({ reasons: s.reasons(), ended: (await s.runStore.get(run.id)).terminal_state }).toEqual({
+      reasons: [WITHDRAWN.ended],
+      ended: true,
+    });
+  }, 20_000);
+
+  it('1.4b (a): an accepted answer another route beat is never worded as the caller’s refusal ("your choice")', async () => {
+    const box: { s?: Session } = {};
+    const s = await session({}, async () => {
+      const run = (await box.s!.runStore.list())[0]!;
+      await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(WORKFLOW()), {
+        runId: run.id,
+        gateId: run.pending_gate!.gate_id,
+        choice: 'reject',
+        route: 'cli',
+      });
+      return { action: 'accept', content: { choice: 'approve' } };
+    });
+    box.s = s;
+    const { runId, gateId } = await openedElsewhere(s);
+    const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
+    // (a) red when the reply passes on the answer's own refusal; (b) prints whether "your choice"
+    //     appears, the hint's start and whether it names the recorded choice.
+    expect({
+      yourChoice: JSON.stringify(reply).includes('your choice'),
+      notRecorded: hintOf(reply).startsWith('Not recorded:'),
+      namesReject: hintOf(reply).includes('reject'),
+    }).toEqual({ yourChoice: false, notRecorded: true, namesReject: true });
+  });
+
+  it('1.4b (b): a form accepted after the run reached a second gate — the answer’s own reply is a refusal worded to its caller; the reply after the form opens "Not recorded:" and never passes it on', async () => {
+    const yaml = SHAPE(
+      ['choices: [approve, reject]'],
+      [
+        '  q2:',
+        '    description: Ask again.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    depends_on: [q]',
+        '    gate:',
+        '      choices: [approve, reject]',
+      ],
+    );
+    const def = loadWorkflowFromString(yaml);
+    const box: { s?: Session; firstGate?: string } = {};
+    const s = await session(
+      {},
+      async () => {
+        const run = (await box.s!.runStore.list())[0]!;
+        box.firstGate = run.pending_gate!.gate_id;
+        await submitHumanResponse(box.s!.runStore, def, {
+          runId: run.id,
+          gateId: run.pending_gate!.gate_id,
+          choice: 'reject',
+          route: 'cli',
+        });
+        await advanceRun(box.s!.runStore, def, { runId: run.id });
+        return { action: 'accept', content: { choice: 'approve' } };
+      },
+      undefined,
+      { yaml },
+    );
+    box.s = s;
+    const started = await s.call('start_run', { workflow_id: s.workflowId, params: {} });
+    const runId = String(started['run_id']);
+    // The answer the form submitted, repeated: its own reply (a gate that is no longer open).
+    const own = await submitHumanResponse(s.runStore, def, {
+      runId,
+      gateId: box.firstGate!,
+      choice: 'approve',
+      route: 'mcp_form',
+    }).catch((e: unknown) => ({ thrown: String(e) }) as never);
+    // Verify-first (the prompt expected no `outcome` here): the answer's own reply is an error whose
+    // `outcome` names q's winner and whose hint says "your choice 'approve' was not recorded".
+    // (a) red when the reply after the form is the answer's own reply; (b) prints whether the own
+    //     reply has an outcome and addresses its caller, the hint's start, and "your choice".
+    expect({
+      ownOutcome: (own as { outcome?: unknown }).outcome !== undefined,
+      ownAddressesCaller: String((own as { context_hint?: unknown }).context_hint).includes(
+        'your choice',
+      ),
+      notRecorded: hintOf(started).startsWith('Not recorded:'),
+      yourChoice: JSON.stringify(started).includes('your choice'),
+    }).toEqual({
+      ownOutcome: true,
+      ownAddressesCaller: true,
+      notRecorded: true,
+      yourChoice: false,
+    });
+  });
+
+  it('1.4b (c): the other answer ended the run — the reply still opens "Not recorded:", and says the run ended', async () => {
+    const yaml = SHAPE(['choices: [approve, reject]', 'message: Ship it?'], []);
+    const box: { s?: Session } = {};
+    const s = await session(
+      {},
+      async () => {
+        const run = (await box.s!.runStore.list())[0]!;
+        await submitHumanResponse(box.s!.runStore, loadWorkflowFromString(yaml), {
+          runId: run.id,
+          gateId: run.pending_gate!.gate_id,
+          choice: 'reject',
+          route: 'cli',
+        });
+        return { action: 'accept', content: { choice: 'approve' } };
+      },
+      undefined,
+      { yaml },
+    );
+    box.s = s;
+    const { runId, gateId } = await openedElsewhere(s, undefined, yaml);
+    const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
+    // (a) red when the run-ended arm is read first ("ended while the form was open"); (b) prints the
+    //     hint's start and the run's phase.
+    expect({
+      notRecorded: hintOf(reply).startsWith('Not recorded:'),
+      phase: reply['run_phase'],
+    }).toEqual({
+      notRecorded: true,
+      phase: 'completed',
+    });
+  });
+
+  it('1.4b (d): an accepted answer whose write failed → "could not be written", the question still waiting', async () => {
+    class FailingSettle extends JsonFileStore {
+      override async settleStep(
+        ...args: Parameters<JsonFileStore['settleStep']>
+      ): ReturnType<JsonFileStore['settleStep']> {
+        if (args[1].kind === 'settle_gate') throw new Error('the store is full');
+        return super.settleStep(...args);
+      }
+    }
+    const s = await session(
+      {},
+      async () => ({ action: 'accept', content: { choice: 'approve' } }),
+      undefined,
+      { runStore: (dir) => new FailingSettle(join(dir, 'runs')) },
+    );
+    const { runId, gateId } = await openedElsewhere(s);
+    const reply = await s.call('present_question', { run_id: runId, gate_id: gateId });
+    // (a) red when the reply is the answer's own; (b) prints the hint.
+    expect(hintOf(reply)).toBe(
+      "Not recorded: the answer from the form could not be written. The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).",
+    );
+  });
+
+  it('2.1: a prompt-only gate — a later form (present_question, another session than the opening one) shows the step’s prompt', async () => {
+    const yaml = SHAPE(['choices: [approve, reject]'], []).replace(
+      '    trust: human_confirmed\n',
+      '    trust: human_confirmed\n    prompt: Ship the release to production?\n',
+    );
+    let message: string | undefined;
+    const s = await session(
+      {},
+      async (req) => {
+        message = req.params.message;
+        return { action: 'decline' };
+      },
+      undefined,
+      { yaml },
+    );
+    const { runId, gateId } = await openedElsewhere(s, undefined, yaml);
+    await s.call('present_question', { run_id: runId, gate_id: gateId });
+    // (a) red when a later form falls back to the fixed line; (b) prints the form's message.
+    expect(message).toBe('Ship the release to production?');
   });
 });

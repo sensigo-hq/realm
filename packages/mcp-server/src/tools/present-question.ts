@@ -73,6 +73,18 @@ function refusalHint(
   }
 }
 
+/** Correction 2 (1.1): why no form was sent, when the call is still admitted. */
+export function notSentWords(why: 'not_open' | 'due' | 'budget' | 'cancelled' | 'taken'): string {
+  switch (why) {
+    case 'budget':
+      return 'No form was sent: this call had too little time left to wait for an answer. Call present_question again.';
+    case 'cancelled':
+      return 'No form was sent: this call was cancelled.';
+    default:
+      return 'No form was sent: the question changed while this call was judged. Read the run again with get_run_state.';
+  }
+}
+
 /**
  * Business logic for present_question: judge the call on a fresh snapshot, then the door's facts;
  * when admitted, send the form (`sendQuestionForm`, the one function) and return the reply after the
@@ -113,7 +125,11 @@ export async function handlePresentQuestion(
     open !== undefined && open.gate_id === args.gate_id
       ? {
           step: open.step_name,
-          ...(open.expires_at !== undefined ? { expires_at: open.expires_at } : {}),
+          // Correction 2 (1.1): the deadline is named ("until") only when it ends the question — a
+          // gate whose deadline only reports its expiry keeps waiting after it.
+          ...(open.expires_at !== undefined && open.on_expiry !== undefined
+            ? { expires_at: open.expires_at }
+            : {}),
         }
       : undefined;
   const judged = (): Unavailable | undefined => {
@@ -198,7 +214,14 @@ export async function handlePresentQuestion(
                 ? undefined
                 : ({ ...again, code: verdict.code, facts: verdict.facts } as Unavailable);
             })();
-    return mcpReplyOf(renderReply(entry !== undefined ? refuse(entry) : base, host));
+    // Correction 2 (1.1): a call the re-judgement still admits is never answered with a bare reply —
+    // it says why no form was sent.
+    return mcpReplyOf(
+      renderReply(
+        entry !== undefined ? refuse(entry) : { ...base, context_hint: notSentWords(result.why) },
+        host,
+      ),
+    );
   }
   return mcpReplyOf(renderReply(await replyAfterForm(base, result, deps), host));
 }

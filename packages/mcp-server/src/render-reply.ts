@@ -402,7 +402,7 @@ function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
         left > 0
           ? ` If the user wants to answer, call present_question (${left} left in this session).`
           : '';
-      words = `The form for step '${way.step}' of run ${way.run_id} came back without an answer ${times(facts?.came_back ?? 0)}.${again} An answer given in this chat is not recorded.`;
+      words = `The form for step '${way.step}' of run ${way.run_id} ended without an answer ${times(facts?.came_back ?? 0)}.${again} An answer given in this chat is not recorded.`;
     }
   } else {
     const show =
