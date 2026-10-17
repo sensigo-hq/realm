@@ -845,6 +845,7 @@ export type {
   SeparationCondition,
   ConditionReading,
   SeparationEvidence,
+  SeparationGap,
 } from './engine/separation.js';
 // #627 W (§5.1, §5.2b): the MCP door's two process settings, judged once (the server and the bins).
 export {

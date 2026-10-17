@@ -1014,8 +1014,9 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
   });
 
   it('the mode: same_account when this login reaches the store; separate_user only with condition 1 measured no and another owner; sandbox_configured when a sandbox is configured and the store is reachable from outside it', () => {
-    // (a) red when same_account is derived with condition 1 "no" and another owner, or an unknown
-    //     condition 1 is read as separation; (b) prints each mode.
+    // (a) red when same_account is derived with condition 1 "no" and another owner, or from a
+    //     condition 1 that is not measured "yes" (correction 1, D1: an unknown, or "no" on an owned
+    //     store, is `not_measured`); (b) prints each mode.
     expect({
       separate: separationModeOf(evidence()),
       reach: separationModeOf(evidence({}, { store_reach: YES })),
@@ -1033,21 +1034,26 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
     }).toEqual({
       separate: 'separate_user',
       reach: 'same_account',
-      unknown: 'same_account',
-      ownStore: 'same_account',
+      unknown: 'not_measured',
+      ownStore: 'not_measured',
       sandbox: 'sandbox_configured',
     });
   });
 
   it('the gaps the "may still" form names: the prevents conditions not measured no, and the value', () => {
-    // (a) red when a met condition is named, or the env-set value is not; (b) prints the gaps.
+    // (a) red when a met condition is named, the env-set value is not, or a gap loses its reading
+    //     (correction 1, D1: an unknown must read "not measured"); (b) prints the gaps.
     expect(
       separationGaps(
         evidence(
           { value: { value: 'withheld', source: { kind: 'env', ref: 'REALM_MCP_GATE_ANSWERS' } } },
-          { docker: YES },
+          { docker: YES, trust_root_writable: UNKNOWN },
         ),
       ),
-    ).toEqual(['docker', 'value']);
+    ).toEqual([
+      { gap: 'docker', reading: YES },
+      { gap: 'trust_root_writable', reading: UNKNOWN },
+      { gap: 'value' },
+    ]);
   });
 });

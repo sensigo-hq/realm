@@ -407,6 +407,8 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
     // client ignores a cancel for a falsy id (`shared/protocol.js` `_oncancel`), so a session's first
     // form could never be withdrawn on such a client. A ping spends id 0; `request()` takes its id
     // synchronously, so no form can take it first. Nothing is awaited here (rail 3).
+    // MCP SDK 1.x ignores a cancel for request id 0 (modelcontextprotocol/typescript-sdk#3043); remove
+    // this ping when a 1.x release carries the #2654 backport, or at the SDK 2.x move (#753).
     if (shown) void server.server.ping().catch(() => undefined);
   };
 

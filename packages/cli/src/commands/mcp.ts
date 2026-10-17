@@ -72,6 +72,9 @@ export const mcpCommand = new Command('mcp')
           probes: systemProbes(),
           value: { value: settings.answers.value, source: settings.answers.source },
           roots: options.project !== undefined ? [options.project] : [],
+          // Correction 1 (D3, D5): the code file this command line names, and this door.
+          extensionsModule: options.extensionsModule,
+          door: 'mcp',
         });
         for (const line of renderSeparation(evidence)) console.log(line);
         process.exit(0);

@@ -249,6 +249,11 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
   });
 
   it('the separation check: sentences pinned by separation-check-627.test.ts', () => {
+    // Correction 1 (D2): executed by separation-check-627 :: "with su on the host the claim is may still".
+    claim(
+      PAGE,
+      "On a host with `su` — every common system — the check cannot rule out becoming Realm's service user without a password, so it prints 'may still be able to answer'; the stronger sentence is reached where no such path exists, such as a container image without `su`.",
+    );
     claim(
       PAGE,
       "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start nothing. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it reads that user's store.",
