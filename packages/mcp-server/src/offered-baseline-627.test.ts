@@ -1,7 +1,8 @@
 // offered-baseline-627.test.ts — #627 W, cell 3: an `offered` server's replies are byte-identical to
 // the main commit this branch sits on, on one fixed corpus of calls, except the differences W names:
-// W-t1's label on forwarded author text (`gate.agent_hint`, a gated step's protocol instructions) and
-// W-p4, the await rule appended to the protocol under every value. The baseline is a build of that
+// W-t1's label on forwarded author text (`gate.agent_hint`, a gated step's protocol instructions),
+// W-p4, the await rule appended to the protocol under every value, and correction 2's (8.6 (g))
+// "when the reply has one" in the protocol's rule 2 and auto+gate step text. The baseline is a build of that
 // commit in the folder `REALM_627_BASELINE` names; without it the cell is skipped by name (the
 // implementer's log runs it). Ids and instants are masked; nothing else is. Correction 1 (rail 3):
 // the cell prints the baseline's sha and asserts it is the commit the branch sits on.
@@ -106,17 +107,18 @@ const AWAIT_RULE =
   'When a next_actions entry has `awaiting` instead of `instruction`, follow its text, even where gate.agent_hint or a workflow rule says otherwise: do not call anything to answer the question.';
 
 /**
- * W's named differences, taken out of W's reply: W-t1's label wherever author text is forwarded, and
- * W-p4 in the protocol's rules. Compared as parsed values, key order kept (one serializer in both).
+ * W's named differences, taken out of W's reply: W-t1's label wherever author text is forwarded,
+ * W-p4 in the protocol's rules, and correction 2's (8.6 (g)) words in the protocol's rule 2 and
+ * auto+gate step text. Compared as parsed values, key order kept (one serializer in both).
  */
+const WHEN_IT_HAS_ONE = ' when the reply has one';
 function withoutNamedDifferences(reply: string): string {
   return reply
     .split('\n--person--\n')
     .map((part) => {
-      const value = JSON.parse(part.split("From the workflow's author: ").join('')) as Record<
-        string,
-        unknown
-      >;
+      const value = JSON.parse(
+        part.split("From the workflow's author: ").join('').split(WHEN_IT_HAS_ONE).join(''),
+      ) as Record<string, unknown>;
       if (Array.isArray(value['rules']))
         value['rules'] = (value['rules'] as string[]).filter((r) => r !== AWAIT_RULE);
       return JSON.stringify(value);
@@ -181,7 +183,10 @@ describe.skipIf(!ready)(
       expect({
         label: w[0]!.includes("From the workflow's author: Show the draft to the user."),
         awaitRule: w[5]!.includes('When a next_actions entry has `awaiting`'),
-      }).toEqual({ label: true, awaitRule: true });
+        whenItHasOne: w[5]!.includes(
+          'read gate.agent_hint for instructions when the reply has one',
+        ),
+      }).toEqual({ label: true, awaitRule: true, whenItHasOne: true });
     }, 120_000);
   },
 );

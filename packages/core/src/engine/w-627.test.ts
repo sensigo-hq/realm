@@ -973,6 +973,34 @@ describe('#627 W — W-l1: a load note for author text that names an answer tool
     }).toEqual({ read: 9, noted: [] });
   });
 
+  it('correction 2 (8.4): no shipped example’s gated step asks the person to "reply with" an answer — a reply in chat is not recorded', () => {
+    const examples = fileURLToPath(new URL('../../../../examples/', import.meta.url));
+    const asked: string[] = [];
+    let gated = 0;
+    for (const dir of readdirSync(examples, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()) {
+      const wf = loadWorkflowFromString(readFileSync(join(examples, dir, 'workflow.yaml'), 'utf8'));
+      for (const [id, step] of Object.entries(wf.steps)) {
+        if (step.gate === undefined) continue;
+        gated += 1;
+        for (const [field, text] of [
+          ['prompt', step.prompt],
+          ['gate.message', step.gate.message],
+        ] as const) {
+          if (typeof text === 'string' && /reply with/i.test(text))
+            asked.push(`${dir} ${id} ${field}`);
+        }
+      }
+    }
+    // Ordinary steps that draft a reply (example 06) are out of scope: only a gated step's words go
+    // to the person who answers. (a) red when example 03's prompt says "Reply with" again; (b) prints
+    // each example, step and field that asks, and the count of gated steps read (the instrument: 03,
+    // 07, 08 and 09 gate one step each).
+    expect({ gated, asked }).toEqual({ gated: 4, asked: [] });
+  });
+
   it('protocol.rules: one note for the field, with the line of `rules`', () => {
     // (a) red when the rules are not read, or noted per rule; (b) prints the notes.
     expect(notes(AUTHOR_YAML('Do the work.', { rules: 'Use submit_human_response.' }))).toEqual([

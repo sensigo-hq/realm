@@ -126,7 +126,22 @@ describe('#627 W — inspect’s answer line (W-i1…W-i8, W-i10)', () => {
       mcp: "Answer: approve · answered by (not stated) · through Realm's MCP answer tool (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded",
       cli: 'Answer: approve · answered by (not stated) · through a terminal (realm run respond) (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
       slack:
-        "Answer: approve · answered by (not stated) · through route 'slack' (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded",
+        'Answer: approve · answered by (not stated) · through route "slack" (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
+    });
+  });
+
+  it('correction 2 (8.2): an embedder’s route with a newline and a terminal sequence is quoted on one line', () => {
+    const answer = line({ answer: { route: 'x\n\u001b[2Jy' }, driven_by: DRIVER });
+    // (a) red when the route is printed raw (the newline breaks the line; the sequence clears the
+    //     screen); (b) prints whether any control character is left and the route part.
+    expect({
+      // eslint-disable-next-line no-control-regex -- the control characters are what is checked
+      rawControl: /[\u0000-\u001f\u007f-\u009f]/.test(answer),
+      route: answer.split(' · ')[2],
+    }).toEqual({
+      rawControl: false,
+      route:
+        'through route "x\\n\\u001b[2Jy" (as its door declared), recorded by mcp-stdio, running as host (from the OS user)',
     });
   });
 

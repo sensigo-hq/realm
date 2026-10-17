@@ -140,7 +140,9 @@ export function registerAbandonRun(
               : code === 'STATE_TRANSITION_DENIED'
                 ? `The run is waiting on a human gate, so it cannot be abandoned yet.`
                 : `An error occurred while abandoning the run.`;
-        // #627 W: the door's answers row words the refusal's remedy (never an operator route here).
+        // #627 W: the door's answers row words the refusal's remedy. No operator route is passed, and
+        // none is needed (correction 2, 8.6 (f)): a route renders only an elsewhere entry's command,
+        // and an error reply built here lists no way, so it would print nothing.
         const rendered = renderReply(
           buildPreExecutionErrorEnvelope('abandon_run', args.run_id, 0, workflowErr, contextHint),
           mcpHostOf(opts?.door !== undefined ? { door: opts.door } : undefined),

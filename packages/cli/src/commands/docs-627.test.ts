@@ -407,7 +407,15 @@ describe('#627 W — the other pages W changed', () => {
   it('top-level-fields.md: rule 2’s variants by value', () => {
     claim(
       'docs/reference/workflow/top-level-fields.md',
-      'Under `withheld`, and under `asked` with a client that shows forms, it reads: "When you receive status \'confirm_required\', read gate.agent_hint, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation."',
+      'Under `withheld` it reads: "When you receive status \'confirm_required\', read gate.agent_hint when the reply has one, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation."',
+    );
+    claim(
+      'docs/reference/workflow/top-level-fields.md',
+      "Under `asked` with a client that shows forms, it reads: \"When you receive status 'confirm_required', read gate.agent_hint when the reply has one; the user's app shows them the question as a form; follow next_actions.\"",
+    );
+    claim(
+      'docs/reference/workflow/top-level-fields.md',
+      "A reply has `gate.agent_hint` only when the gate's step has `instructions`.",
     );
   });
 

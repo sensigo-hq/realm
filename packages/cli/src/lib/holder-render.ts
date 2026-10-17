@@ -401,7 +401,9 @@ function routePhraseOf(route: string): string {
     case 'cli':
       return 'a terminal (realm run respond)';
     default:
-      return `route '${route}'`;
+      // Correction 2 (8.2): an embedder's route may hold a newline or a terminal sequence (C1
+      // admits any non-empty route) — quoted on one line, as the question is.
+      return `route ${quotedForTerminal(route)}`;
   }
 }
 

@@ -407,7 +407,8 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   registerCreateWorkflow(server, effectiveOptions);
   registerAppendTrace(server, {
     runStore: effectiveRunStore,
-    ...(options?.workflowStore !== undefined ? { workflowStore: options.workflowStore } : {}),
+    // Correction 2 (8.6 (e)): the effective workflow store, as every other tool gets it — one instance.
+    workflowStore: effectiveWorkflowStore,
     traceBufferStore,
     // #627 W (correction 1, A2): the door, as every other tool gets it from `effectiveOptions`.
     door,

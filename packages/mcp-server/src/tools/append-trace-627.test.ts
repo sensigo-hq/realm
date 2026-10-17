@@ -187,3 +187,79 @@ describe('#627 W correction 2 (3.1, MCP F7) — a copy Realm cannot read: the wa
     });
   });
 });
+
+describe('#627 W correction 2 (8.1) — append_trace on a step waiting at its own question', () => {
+  /** A gated agent step: its output submitted, its question open, the step still in progress. */
+  const GATED = [
+    'id: at8',
+    'name: at8',
+    'version: 1',
+    'steps:',
+    '  write:',
+    '    description: Write.',
+    '    execution: agent',
+    '    trust: human_confirmed',
+    '    gate:',
+    '      choices: [approve, reject]',
+  ].join('\n');
+  const atOwnQuestion = async (gateAnswers: Door) => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-at8-627-'));
+    const runStore = new JsonFileStore(join(dir, 'runs'));
+    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    await workflowStore.register(loadWorkflowFromString(GATED));
+    const server = createRealmMcpServer({ runStore, workflowStore, gateAnswers });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'at8-627', version: '0' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const call = async (name: string, args: Record<string, unknown>) =>
+      JSON.parse(
+        ((await client.callTool({ name, arguments: args })) as { content: Array<{ text: string }> })
+          .content[0]!.text,
+      ) as Record<string, unknown>;
+    const started = await call('start_run', { workflow_id: 'at8', params: {} });
+    const runId = String(started['run_id']);
+    await call('execute_step', { run_id: runId, command: 'write', params: {} });
+    const record = await runStore.get(runId);
+    const reply = await call('append_trace', {
+      run_id: runId,
+      step_id: 'write',
+      entries: [{ event: 'note' }],
+    });
+    return { reply, gateId: record.pending_gate?.gate_id, inProgress: record.in_progress_steps };
+  };
+
+  it('under withheld: the hint says the question waits outside this conversation and names no answer tool', async () => {
+    const r = await atOwnQuestion('withheld');
+    const { hint, next } = judged(JSON.stringify(r.reply));
+    const errors = (r.reply['errors'] as string[] | undefined) ?? [];
+    // (a) red when the pre-lock check passes no open gate (the refusal reads "held by another call"
+    //     and carries no remedy, so the hint says nothing of where the question is answered);
+    //     (b) prints the fixture's state, the refusal's line, and whether the hint holds the wait and
+    //     an answer way.
+    expect({
+      fixture: [r.gateId !== undefined, r.inProgress],
+      refusal: errors[0],
+      waitsOutside: hint.includes('waiting for an answer outside this conversation'),
+      namesAnswer: ANSWER_WAY.test(hint) || ANSWER_WAY.test(next),
+    }).toEqual({
+      fixture: [true, ['write']],
+      refusal: `Step 'write' is waiting for an answer to its question (gate '${r.gateId}'); a trace can no longer be added to it.`,
+      waitsOutside: true,
+      namesAnswer: false,
+    });
+  });
+
+  it('under offered: the hint names submit_human_response for that gate', async () => {
+    const r = await atOwnQuestion('offered');
+    const { hint } = judged(JSON.stringify(r.reply));
+    // An error reply lists no ways (its next_actions is empty on every error reply — 8.6 (f)'s fact):
+    // the remedy is worded in the hint, by the door's remedyWords.
+    // (a) red when the pre-lock check passes no open gate (no remedy: no answer named); (b) prints
+    //     whether the hint names the tool with that gate's id.
+    expect({
+      answersThatGate: hint.includes(
+        `Answer it: submit_human_response {run_id: '${String(r.reply['run_id'])}', gate_id: '${r.gateId}', choice: <one of: approve, reject>}.`,
+      ),
+    }).toEqual({ answersThatGate: true });
+  });
+});

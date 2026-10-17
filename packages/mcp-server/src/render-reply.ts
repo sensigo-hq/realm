@@ -1027,12 +1027,13 @@ function personBlockOf(
 }
 
 /**
- * A-17's egress assertion: a claim token leaves this door only inside the answer instruction of the
- * reply whose own call opened the question (its `respond` way's `proof`) — never in the gate object,
- * never on any other entry, and (#627 W) never for a question this door hands to the person. The
- * opening reply is read from the NARROWED ways, for the agent: on a withholding row the agent has no
- * `respond`, so there is no opening reply and any carrier strays (that is W's guard). True when a
- * token strayed; the reply is then held back (W-e1).
+ * A-17's egress assertion, as it checks: a claim token is never in the gate object, never on an
+ * `also` entry, and — on a reply whose own call did not open the question for the agent — never on
+ * any `next_actions` entry. On the opening reply (a `respond` way with its `proof`, for the agent) it
+ * does not check which `next_actions` entry carries the token (correction 2, 8.6 (b)). The opening
+ * reply is read from the NARROWED ways: on a row that hands the question to the person (#627 W) the
+ * agent has no `respond`, so there is no opening reply and any carrier strays (W's guard). True when
+ * a token strayed; the reply is then held back (W-e1).
  *
  * Correction 1 (E5): the two carriers W had added beside PR-0's are gone — an await entry never
  * copies `proof` (`awaitEntryOf`), and only a `respond` way carries one, so neither could fire.

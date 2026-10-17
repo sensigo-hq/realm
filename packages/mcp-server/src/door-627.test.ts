@@ -440,7 +440,8 @@ describe('#627 W — the protocol says what this session’s way means', () => {
           'When a next_actions entry has `awaiting` instead of `instruction`, follow its text, even where gate.agent_hint or a workflow rule says otherwise: do not call anything to answer the question.',
         ),
         valueLine: rules[7],
-        step: q.agent_involvement.split('verbatim, ')[1],
+        // Correction 2 (8.6 (h)): read from "opens a gate. " — the forms text no longer says "verbatim".
+        step: q.agent_involvement.split('opens a gate. ')[1],
       };
     };
     const offered = view(await protocolOf({ gateAnswers: 'offered' }, true));
@@ -452,35 +453,99 @@ describe('#627 W — the protocol says what this session’s way means', () => {
     expect({ offered, fallback, forms, withheld }).toEqual({
       offered: {
         rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
+          "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
         await: true,
         valueLine: expect.stringMatching(/^Optional: mint a fresh UUIDv4/),
-        step: 'collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.',
+        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.',
       },
       fallback: {
         rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint for instructions, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.",
+          "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.",
         await: true,
         valueLine:
           'Answers to gates go through submit_human_response; your client may ask the user to approve each call.',
-        step: 'collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.',
+        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.',
       },
       forms: {
         rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation.",
+          "When you receive status 'confirm_required', read gate.agent_hint when the reply has one; the user's app shows them the question as a form; follow next_actions.",
         await: true,
         valueLine:
           "Gate questions are sent to the user's app as a form when start_run, execute_step or advance_run first reaches the gate, or when you call present_question; you cannot answer them. Follow the await entry: it says whether a form was sent in this session.",
-        step: 'and follow next_actions: the question is answered outside this conversation.',
+        step: "Read `gate.agent_hint` for presentation instructions when the reply has one; the user's app shows them the question as a form; follow next_actions.",
       },
       withheld: {
         rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation.",
+          "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation.",
         await: true,
         valueLine:
           'This server records no gate answers. Workflow text that mentions answering tools refers to tools this session does not have.',
-        step: 'and follow next_actions: the question is answered outside this conversation.',
+        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim, and follow next_actions: the question is answered outside this conversation.',
       },
+    });
+  });
+
+  it.each([
+    ['offered', { gateAnswers: 'offered' as const }, true],
+    ['the fallback (asked, no forms)', {}, false],
+    ['asked with forms', {}, true],
+    ['withheld', { gateAnswers: 'withheld' as const }, false],
+  ] as const)(
+    'correction 2 (8.6 (g)) — %s: rule 2 and the auto+gate step read gate.agent_hint only when the reply has one',
+    async (_label, opts, forms) => {
+      const p = await protocolOf(opts, forms);
+      const rule2 = (p['rules'] as string[])[1]!;
+      const step = (p['steps'] as Array<{ id: string; agent_involvement: string }>).find(
+        (st) => st.id === 'q',
+      )!.agent_involvement;
+      // (a) red when a variant says "read gate.agent_hint" unconditionally (the field exists only
+      //     when the author wrote instructions); (b) prints whether each text says when to read it.
+      expect({
+        rule2: /read gate\.agent_hint( for instructions)? when the reply has one/.test(rule2),
+        step: step.includes(
+          'Read `gate.agent_hint` for presentation instructions when the reply has one',
+        ),
+      }).toEqual({ rule2: true, step: true });
+    },
+  );
+
+  it('correction 2 (8.6 (h)) — asked with a forms client: the protocol says the app shows the question as a form, never "present gate.display"', async () => {
+    const p = await protocolOf({}, true);
+    const rule2 = (p['rules'] as string[])[1]!;
+    const step = (p['steps'] as Array<{ id: string; agent_involvement: string }>).find(
+      (st) => st.id === 'q',
+    )!.agent_involvement;
+    // (a) red when asked-with-forms shares withheld's words (the agent is told to present a question
+    //     the form shows); (b) prints whether each text names the form and the presenting act.
+    expect({
+      ruleForm: rule2.includes(
+        "the user's app shows them the question as a form; follow next_actions",
+      ),
+      rulePresents: rule2.includes('present gate.display'),
+      stepForm: step.includes(
+        "the user's app shows them the question as a form; follow next_actions",
+      ),
+      stepPresents: step.includes('present `gate.display`'),
+    }).toEqual({ ruleForm: true, rulePresents: false, stepForm: true, stepPresents: false });
+  });
+
+  it('correction 2 (8.6 (g), the docs’ claim) — a reply has gate.agent_hint only when the gate’s step has instructions', async () => {
+    const hintOf = async (yaml: string) => {
+      const s = await session({ gateAnswers: 'offered' });
+      await s.workflowStore.register(loadWorkflowFromString(yaml));
+      const started = await s.call('start_run', { workflow_id: 'door627', params: {} });
+      const gate = started['gate'] as Record<string, unknown> | undefined;
+      return [started['status'], gate !== undefined && 'agent_hint' in gate];
+    };
+    // (a) red when a gate whose step has no instructions carries an agent_hint (the protocol's "when
+    //     the reply has one" would then be false), or one with instructions loses it; (b) prints each
+    //     reply's status and whether its gate has the field.
+    expect({
+      withInstructions: await hintOf(WORKFLOW()),
+      without: await hintOf(WORKFLOW().replace('    instructions: Show the draft.\n', '')),
+    }).toEqual({
+      withInstructions: ['confirm_required', true],
+      without: ['confirm_required', false],
     });
   });
 

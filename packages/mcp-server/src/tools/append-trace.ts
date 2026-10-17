@@ -290,6 +290,8 @@ export async function handleAppendTrace(
       preCsState,
       undefined,
       run.claims?.[args.step_id]?.deadline ?? undefined,
+      // #627 W correction 2 (8.1): the live run's open gate (an ended run was refused above).
+      run.pending_gate !== undefined ? { runId: run.id, gate: run.pending_gate } : undefined,
     );
   }
 
