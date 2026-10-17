@@ -213,7 +213,15 @@ Gate: draft (gate f0a1f2af-cdf5-4938-b477-e5de56136688, opened 0m ago)
   To answer: realm run respond 41b88dd5-e82e-426a-b39e-00229fb01cef --gate f0a1f2af-cdf5-4938-b477-e5de56136688 --choice <one of: send, discard>
 ```
 
-The `Question:` line is the gate's message as it read when the gate opened — never the workflow's current text. A gate that declares no message reads `Question: none — the gate declares no message`; one opened by a version of Realm that did not keep its message reads `Question: not recorded — this gate was opened by a version of Realm that did not keep its message`. The `To answer:` line is printed while the question can be answered here. Both were added after version 0.47.0.
+The `Question:` line is the gate's message as it read when the gate opened — never the workflow's current text. For a gate with no message, it is the step's prompt, read from the workflow as registered now and rendered with what the step had when the gate opened, and the line says so: `Question (the step's prompt, from the workflow as registered now): "…"`. When there is nothing to show, the line says why:
+
+- `Question: none — the gate declares no message and its step no prompt`;
+- `Question: not recorded — this gate was opened by a version of Realm that did not keep its message`;
+- `Question: not shown — the workflow's definition cannot be read`;
+- `Question: not shown — the gate's step is not in the workflow's definition`;
+- `Question: not shown — the step's prompt could not be rendered`.
+
+The `To answer:` line is printed while the question can be answered here. Both were added after version 0.47.0.
 
 ### The blocks in the middle
 

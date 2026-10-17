@@ -5,7 +5,8 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // sentence, the tool names, the texts — never a token or an environment.
 import { describe, it, expect } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,10 @@ import {
 import { createRealmMcpServer, FORM_ASKS_AFTER_FIRST } from '@sensigo/realm-mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from '@modelcontextprotocol/sdk/client/stdio.js';
 import { renderAnswerLine } from '../lib/holder-render.js';
 import { gateAnswersStartLine, readBinDoorSettings } from '../lib/gate-answers-door.js';
 
@@ -40,6 +44,69 @@ function claim(page: string, sentence: string): void {
 }
 
 const PAGE = 'docs/reference/mcp/gate-answers.md';
+
+/**
+ * Correction 2 (6.6 (d)): `realm serve --dev`'s output lines, read until its dev-mode warning, and the
+ * index of the first listening line, the gate-answers line and the warning (-1 when absent). Prints
+ * no environment: the child gets PATH and a fresh HOME only.
+ */
+async function serveOrder(
+  cli: string,
+): Promise<{ listening: number; value: number; warning: number }> {
+  const port = await new Promise<number>((resolve, reject) => {
+    const probe = createServer();
+    probe.on('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      const free = typeof address === 'object' && address !== null ? address.port : 0;
+      probe.close(() => resolve(free));
+    });
+  });
+  // stdout and stderr on ONE pipe (`2>&1`), so the lines arrive in the order serve wrote them: its
+  // warning goes to stderr, the other lines to stdout. `exec`: the signal below reaches serve itself.
+  const child = spawn(
+    '/bin/sh',
+    [
+      '-c',
+      `exec "$0" "$1" serve --dev --port ${String(port)} --host 127.0.0.1 2>&1`,
+      process.execPath,
+      cli,
+    ],
+    {
+      env: {
+        PATH: process.env['PATH'] ?? '',
+        HOME: mkdtempSync(join(tmpdir(), 'realm-docs-627-serve-')),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  let out = '';
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('serve printed no dev-mode warning')),
+        20_000,
+      );
+      child.stdout.on('data', (d: Buffer) => {
+        out += d.toString();
+        if (out.includes('Warning: dev mode')) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.on('close', () => reject(new Error('serve exited before its warning')));
+    });
+  } finally {
+    child.kill('SIGTERM');
+  }
+  const lines = out.split('\n');
+  const at = (p: (l: string) => boolean) => lines.findIndex(p);
+  return {
+    listening: at((l) => l.includes('listening on')),
+    value: at((l) => l.startsWith('Gate answers over MCP:')),
+    warning: at((l) => l.startsWith('Warning: dev mode')),
+  };
+}
 
 const YAML = [
   'id: docs627',
@@ -88,11 +155,19 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     );
     claim(
       PAGE,
-      "| `withheld` | No tool on the server records an answer, and its replies name no way to answer, except where a workflow's own text does, which Realm forwards labelled as the author's and warns about when the workflow is loaded. |",
+      "| `withheld` | No tool on the server records an answer, and its replies name no way to answer, except where a workflow's own text does: a gate's `agent_hint`, a gated step's `instructions` and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded; other step text and `quick_start` are forwarded as written. |",
     );
-    // Correction 1 (F2): the exception is executed by door-627 :: "cell 27b — author text is
-    // labelled, under every value" (the label) and w-627 :: "W-l1: a load note for author text that
-    // names an answer tool" (the warning).
+    // Correction 2 (6.4), the labelled half: executed by door-627 :: "cell 27b — author text is
+    // labelled, under every value" (the instructions and the rules), :: "cell 27b — a reply’s
+    // gate.agent_hint is labelled …" (the agent_hint) and w-627 :: "W-l1: a load note for author text
+    // that names an answer tool" (the warning).
+    claim(
+      PAGE,
+      "a gate's `agent_hint`, a gated step's `instructions` and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded",
+    );
+    // The as-written half: executed below, "correction 2 (6.4): other step text and quick_start are
+    // forwarded as written", and by door-627's first cell 27b (an ordinary step's instructions).
+    claim(PAGE, 'other step text and `quick_start` are forwarded as written.');
     claim(
       PAGE,
       // Correction 1 (F1): the row ends with the HTTP doors' sentence (http-door-627 executes it).
@@ -180,7 +255,16 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     );
     claim(
       PAGE,
-      "Realm waits for the form itself. The wait ends at the question's deadline, or at the end of the call's own time: 240 seconds by default, counted from the start of the call. `--form-wait-seconds` (`REALM_MCP_FORM_WAIT_SECONDS`, the `formWaitSeconds` option) changes it, from 30 to 3600 seconds; when it is set in more than one place, the smallest value wins. `realm serve` sends no forms, and refuses the setting.",
+      // Correction 2 (6.9): "when the gate declares `on_expiry`" — executed by form-627 :: "1.1 (a)"
+      // and "1.1 (b)"; the refusal wherever no form is sent — executed here (the bins and the
+      // library) and by gate-answers-door-627's 4.2 rows and door-627's 4.2 library cell.
+      "Realm waits for the form itself. The wait ends at the question's deadline when the gate declares `on_expiry`, or at the end of the call's own time: 240 seconds by default, counted from the start of the call. `--form-wait-seconds` (`REALM_MCP_FORM_WAIT_SECONDS`, the `formWaitSeconds` option) changes it, from 30 to 3600 seconds; when it is set in more than one place, the smallest value wins. The setting is refused at start wherever no form is sent: under `withheld` or `offered`, on `realm serve`, and with `statelessHttp`.",
+    );
+    // Executed by form-627 :: "1.1 (a): a finding-only gate past its deadline still gets a form" and
+    // :: "1.1 (b): … waits the form wait".
+    claim(
+      'docs/reference/workflow/gates.md',
+      "Under `asked`, such a question can still be sent as a form after its deadline; the form waits the server's form wait.",
     );
     claim(
       PAGE,
@@ -196,8 +280,29 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       low: judgeFormWait({ flag: '29' }).ok,
       high: judgeFormWait({ flag: '3601' }).ok,
       serve: readBinDoorSettings('serve', { formWaitSeconds: '60' }, {}).ok,
+      withheld: readBinDoorSettings('mcp', { gateAnswers: 'withheld', formWaitSeconds: '60' }, {})
+        .ok,
+      offered: readBinDoorSettings('mcp', { gateAnswers: 'offered', formWaitSeconds: '60' }, {}).ok,
+      stateless: (() => {
+        try {
+          createRealmMcpServer({ statelessHttp: true, formWaitSeconds: 60 });
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
       cap: FORM_ASKS_AFTER_FIRST,
-    }).toEqual({ dflt: 240, smallest: 120, low: false, high: false, serve: false, cap: 3 });
+    }).toEqual({
+      dflt: 240,
+      smallest: 120,
+      low: false,
+      high: false,
+      serve: false,
+      withheld: false,
+      offered: false,
+      stateless: false,
+      cap: 3,
+    });
   });
 
   it('the await entry and the fallback’s prompt: sentences pinned by door-627.test.ts’s executed cells', () => {
@@ -214,7 +319,8 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       'Realm cannot see whether anyone approved. A headless client that declares forms but cancels them leaves the question waiting: set `offered` for such a client.',
     );
     // Correction 1 (F6): ":33"'s Claude Code sentence is an attributed, dated observation of another
-    // program (walk-798, October 2026), which no cell here can run; the page says so in its words.
+    // program, which no cell here can run; the page says so in its words. Its record: the registry
+    // plans/facts-627.md, rows L1-1, L2-9 and MA-4 (October 2026; correction 2, 6.6 (e)).
     claim(
       PAGE,
       'Some apps ask the person, some skip it (Claude Code asked in interactive sessions and refused the call in headless runs when this page was written, October 2026); other apps may not ask.',
@@ -265,10 +371,12 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
   });
 
   it('the separation check: sentences pinned by separation-check-627.test.ts', () => {
-    // Correction 1 (D2): executed by separation-check-627 :: "with su on the host the claim is may still".
+    // Correction 2 (6.3): executed by separation-check-627 :: "correction 1 (D2): with su on the host
+    // the claim is "may still"", :: "5.9: condition 2 runs nothing …" (sudo present) and the
+    // positive cell (none installed: "cannot record").
     claim(
       PAGE,
-      "On a host with `su` — every common system — the check cannot rule out becoming Realm's service user without a password, so it prints 'may still be able to answer'; the stronger sentence is reached where no such path exists, such as a container image without `su`.",
+      "On a host with any of those programs — every common system — the check therefore prints 'may still be able to answer'. The stronger sentence is reached only where none of them is installed, such as a container image with neither `su` nor `sudo`.",
     );
     claim(
       PAGE,
@@ -281,18 +389,26 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       PAGE,
       'The check says an agent cannot record a gate answer only when all of these hold: the store belongs to another user; this login cannot write or read the store, become that user without a password, reach the Docker engine, or change the files Realm executes; and `--gate-answers withheld` is given on the `--check` line itself.',
     );
-    // Correction 1 (F6): ":58" and ":60" are executed by separation-check-627 :: "each prevents
-    // conjunct alone takes the claim away" (every conjunct but reading) and :: "correction 1 (F6):
-    // gate-answers.md :58 and :60" (reading the store; sudo's kept password; run0, pkexec, su), with
-    // :: "condition 2" (doas) and :: "each condition line in its states" (NOPASSWD, by sudo -n; Touch
-    // ID).
+    // Correction 1 (F6): ":58" is executed by separation-check-627 :: "each prevents conjunct alone
+    // takes the claim away" (every conjunct but reading) and :: "correction 1 (F6): gate-answers.md
+    // :58 — a store this login can only read …" (reading the store). Correction 2 (8.5): the
+    // informational lines' label — :: "the whole output: … (the information lines marked "(fact)")".
     claim(
       PAGE,
-      'Each condition prints as measured, as configured but not enforced by Realm, or as unknown with its cause.',
+      'Each condition prints as measured, as configured but not enforced by Realm, or as unknown with its cause; the two informational lines print as facts, marked (fact).',
     );
+    // Correction 2 (6.2): executed by :: "the positive cell: …, with its proviso" (the first three
+    // provisos) and :: "correction 1 (D1): the mode is never guessed …" (the `denied` store: the
+    // extension-file proviso, on its no-elevation fixture).
     claim(
       PAGE,
-      'Becoming another user without a password includes `sudo` rules with `NOPASSWD`, a `timestamp_timeout` other than 0, and Touch ID for `sudo`; the check reads them where it can, and names `doas`, `run0`, `pkexec` and `su` as not probed when they are present.',
+      "The claim then names what the check cannot read: that no program Realm runs can run code for the agent, that Realm's server runs the Node binary and Realm package the check ran from, that every Realm server on the machine starts with `--gate-answers withheld`, and, when the store cannot be read, that no registered workflow's extension file can be changed by this login.",
+    );
+    // Correction 2 (6.3, 5.9): executed by :: "5.9: condition 2 runs nothing …" and :: "5.9: every
+    // elevation program present is named "not probed"".
+    claim(
+      PAGE,
+      'Becoming another user without a password is not tested in this version: wherever `sudo`, `doas`, `run0`, `pkexec` or `su` is installed, the check names them as not probed and reads the condition as unknown. A later version of Realm reads their rules without running them.',
     );
   });
 });
@@ -435,9 +551,27 @@ describe('#627 W — the other pages W changed', () => {
       'docs/reference/cli/realm-mcp-and-serve.md',
       'When it starts, `realm mcp` prints one line to standard error: the gate-answers value it runs with, where it came from, and what that means (added after version 0.47.0, which printed nothing).',
     );
+    // Correction 2 (6.9, 4.2): executed by gate-answers-door-627's 4.2 rows (serve, and mcp under
+    // withheld and offered) and this file's form-wait cell.
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
-      '`realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting. Added after version 0.47.0.',
+      '`realm serve` sends no forms, so `--form-wait-seconds`, or `REALM_MCP_FORM_WAIT_SECONDS`, stops it from starting, as it stops `realm mcp` under `withheld` or `offered`: the setting is refused at start wherever no form is sent. Added after version 0.47.0.',
+    );
+    claim(
+      'docs/reference/cli/realm-mcp-and-serve.md',
+      'Refused at start under `withheld` or `offered`, which send no form. Added after version 0.47.0.',
+    );
+    // Correction 2 (6.9, 4.1, 4.5): executed by door-627 :: "(A4) — `realm-mcp --gate-answers
+    // withheld` refuses the start" and its 4.1 cells (the variables judged; the start line on stderr).
+    claim(
+      'docs/reference/cli/realm-mcp-and-serve.md',
+      'The package `@sensigo/realm-mcp` installs a command `realm-mcp`, which starts the same server. It takes no flags and refuses any; it reads `REALM_MCP_GATE_ANSWERS` and `REALM_MCP_FORM_WAIT_SECONDS`, and prints its start line on stderr.',
+    );
+    // Correction 2 (6.1): executed by http-door-627 :: "a server built per request — realm serve’s
+    // shape …" (no form, the answer tool stays) and door-627's tool list per session.
+    claim(
+      'docs/reference/cli/realm-mcp-and-serve.md',
+      '`present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, which serves 10.',
     );
     claim(
       'docs/guides/connect-an-mcp-client.md',
@@ -451,6 +585,22 @@ describe('#627 W — the other pages W changed', () => {
       'docs/reference/cli/realm-run-reading.md',
       "The `Question:` line is the gate's message as it read when the gate opened — never the workflow's current text.",
     );
+    // Correction 2 (6.7): each executed by answer-record-627 — the prompt line by "correction 2
+    // (2.2)"'s prompt cell, and each absence by its own cell (none, not recorded, E6, 8.3, 2.1).
+    const READ = 'docs/reference/cli/realm-run-reading.md';
+    claim(
+      READ,
+      'For a gate with no message, it is the step\'s prompt, read from the workflow as registered now and rendered with what the step had when the gate opened, and the line says so: `Question (the step\'s prompt, from the workflow as registered now): "…"`.',
+    );
+    for (const absence of [
+      '`Question: none — the gate declares no message and its step no prompt`',
+      '`Question: not recorded — this gate was opened by a version of Realm that did not keep its message`',
+      "`Question: not shown — the workflow's definition cannot be read`",
+      "`Question: not shown — the gate's step is not in the workflow's definition`",
+      "`Question: not shown — the step's prompt could not be rendered`",
+    ]) {
+      claim(READ, `- ${absence}`);
+    }
     claim(
       'docs/guides/human-gates.md',
       "`realm run inspect <run-id>` shows the gate's ID, its question as the person reads it, its choices and the command that answers it",
@@ -477,7 +627,9 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     // 25 through the real doors), the two values by w-627's judged-once cells.
     claim(
       'packages/mcp-server/README.md',
-      '`gateAnswers?` (`asked`, `offered` or `withheld`), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request: no form can be held open)',
+      // Correction 2 (6.9, 1.7): the JSON-reply transport — http-door-627 :: "a server kept per HTTP
+      // session with enableJsonResponse: no form reaches the client …".
+      '`gateAnswers?` (`asked`, `offered` or `withheld`), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request, or a per-session transport with `enableJsonResponse`: no form can be held open)',
     );
   });
 
@@ -519,7 +671,7 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     });
   });
 
-  it('F6: realm-mcp-and-serve.md — a bad value stops realm mcp with one line and exit 1; serve’s start line and dev-mode warning (gate-answers-door-627 cell 19)', () => {
+  it('F6: realm-mcp-and-serve.md — a bad value stops realm mcp with one line and exit 1; serve’s start line and dev-mode warning (gate-answers-door-627 cell 19)', async () => {
     claim(
       'docs/reference/cli/realm-mcp-and-serve.md',
       'A gate-answers or form-wait value that is not valid stops it before it starts, with one line on standard error and exit code 1.',
@@ -531,6 +683,15 @@ describe('#627 W correction 1 — the claims F asks for', () => {
       "After these lines, `realm serve` prints the gate-answers value it runs with, and, in dev mode when that value is not `withheld`, `Warning: dev mode — authentication is disabled: any process on this machine can call this server's tools, the gate answer tool included.` (added after version 0.47.0).",
     );
     const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
+    // Correction 2 (6.6 (d)): the order, executed — `realm serve --dev`'s stdout, in order.
+    const order = await serveOrder(CLI);
+    // (a) red when the value line or the warning prints before the listening lines, or the warning
+    //     before the value line; (b) prints the index of each line.
+    expect({
+      listening: order.listening >= 0,
+      valueAfter: order.value > order.listening,
+      warningAfter: order.warning > order.value,
+    }).toEqual({ listening: true, valueAfter: true, warningAfter: true });
     const mcp = (args: string[]) => {
       const r = spawnSync(process.execPath, [CLI, 'mcp', ...args], {
         env: {
@@ -586,6 +747,20 @@ describe('#627 W correction 1 — the claims F asks for', () => {
       TRUST,
       '- the form a chat app shows the person, on an MCP server whose gate-answers value is `asked`, the default (added after version 0.47.0);',
     );
+    // Correction 2 (6.6 (c)): each place by the cell that records an answer through it.
+    const PLACES = [
+      // answer-record-627 :: "`realm run respond` records route cli and the principal absence …"
+      '- the command line: `realm run respond <run-id> --gate <gate-id> --choice <choice>`;',
+      // door-627 :: "cell 11 — … the answer records client_prompt_requested and route mcp"
+      '- the MCP tool `submit_human_response`, on a server that lists it;',
+      // form-627 :: "#627 W — the form path (cell 21)" (route mcp_form)
+      '- the form a chat app shows the person, on an MCP server whose gate-answers value is `asked`, the default (added after version 0.47.0);',
+      // slack-gate-notifier.test :: "exact match resolves gate and posts confirmation reply"
+      '- a Slack thread, when `realm agent` is set up to post gates to Slack;',
+      // run-prompt-route-627.test :: "`realm workflow run`’s gate prompt records route cli …"
+      '- the prompt of `realm workflow run`, when you run by hand.',
+    ];
+    for (const place of PLACES) claim(TRUST, place);
     // "records the choice and how it arrived": answer-record-627 :: "`realm run respond` records
     // route cli …" and form-627 cell 21 (route mcp_form). The asked sentence: this file's "who can
     // answer follows the value" (the tools per session) and door-627's fallback _meta cell.
@@ -598,8 +773,14 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     const list = text
       .slice(text.indexOf('There are five places it can come from:'))
       .split(' **Realm does not check who answers.**')[0]!;
-    // (a) red when the list and its count part; (b) prints the count of the list's items.
-    expect(list.split(' - ').length - 1).toBe(5);
+    // (a) red when the page's list holds a place no cell above names, or drops one; (b) prints the
+    //     list's items.
+    expect(
+      list
+        .split(' - ')
+        .slice(1)
+        .map((item) => `- ${item.trim()}`),
+    ).toEqual(PLACES.map(flat));
   });
 
   it('F6: connect-an-mcp-client.md and human-gates.md — the tool in each session; the terminal route; the form', () => {
@@ -635,6 +816,218 @@ describe('#627 W correction 1 — the claims F asks for', () => {
     claim(
       'CHANGELOG.md',
       "A store shared with version 0.47.0: its `realm run advance` prints the program that recorded an answer as the run's `Last recorded driver:`, because this version stamps `driven_by` on answers and 0.47.0 does not skip them; 0.46.0 is unaffected.",
+    );
+  });
+});
+
+describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
+  it('6.4: other step text and quick_start are forwarded as written, under withheld', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-docs-627-qs-'));
+    const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
+    await workflowStore.register(
+      loadWorkflowFromString(
+        [
+          'id: qs627',
+          'name: qs627',
+          'version: 1',
+          'protocol:',
+          '  quick_start: Start with the draft.',
+          'steps:',
+          '  write:',
+          '    description: Write.',
+          '    execution: agent',
+          '    instructions: Write the note.',
+        ].join('\n'),
+      ),
+    );
+    const server = createRealmMcpServer({
+      runStore: new JsonFileStore(join(dir, 'runs')),
+      workflowStore,
+      gateAnswers: 'withheld',
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'docs-627-qs', version: '0' });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const p = JSON.parse(
+      (
+        (await client.callTool({
+          name: 'get_workflow_protocol',
+          arguments: { workflow_id: 'qs627' },
+        })) as { content: Array<{ text: string }> }
+      ).content[0]!.text,
+    ) as { quick_start: string; steps: Array<{ instructions?: string }> };
+    // (a) red when an ordinary step's instructions or the authored quick_start are labelled or
+    //     changed; (b) prints both texts.
+    expect({ quick: p.quick_start, step: p.steps[0]?.instructions }).toEqual({
+      quick: 'Start with the draft.',
+      step: 'Write the note.',
+    });
+  });
+
+  it('6.6 (a): the root README’s four changed sentences', async () => {
+    // :21 and :148 — the count by session, executed here (one tool fewer under withheld).
+    claim(
+      'README.md',
+      '| `@sensigo/realm-mcp` | [![npm](https://img.shields.io/npm/v/@sensigo/realm-mcp)](https://www.npmjs.com/package/@sensigo/realm-mcp) | `realm-mcp` MCP server — 11 tools (10 under `withheld`) |',
+    );
+    // :148 (6.1): the per-request door's tools — http-door-627 :: "a server built per request …".
+    claim(
+      'README.md',
+      'Once connected the agent has access to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response` (or `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms); neither under `withheld`, which lists 10), `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace`',
+    );
+    // :40 — the bin and `realm mcp` list the same tools: executed here, over stdio.
+    claim(
+      'README.md',
+      '`realm-mcp` bin — it runs the same server and the same tools, but resolves neither',
+    );
+    // :204 — a link; its words name no count.
+    claim(
+      'README.md',
+      '- [MCP reference](docs/reference/mcp/tools.md) — the tools and their replies',
+    );
+    const count = async (g: 'asked' | 'offered' | 'withheld', forms: boolean) =>
+      (await (await session(g, forms)).tools()).length;
+    const listed = async (entry: string, args: string[]) => {
+      const client = new Client({ name: 'docs-627-readme', version: '0' });
+      await client.connect(
+        new StdioClientTransport({
+          command: process.execPath,
+          args: [entry, ...args],
+          env: {
+            PATH: process.env['PATH'] ?? '',
+            HOME: mkdtempSync(join(tmpdir(), 'realm-docs-627-readme-')),
+          },
+        }),
+      );
+      try {
+        return (await client.listTools()).tools.map((t) => t.name).sort();
+      } finally {
+        await client.close();
+      }
+    };
+    const BIN = fileURLToPath(new URL('../../../mcp-server/dist/server.js', import.meta.url));
+    const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
+    const bin = await listed(BIN, []);
+    const cli = await listed(CLI, ['mcp']);
+    // (a) red when a session lists another number of tools, or the bin and `realm mcp` differ;
+    //     (b) prints the counts and both lists.
+    expect({
+      counts: [
+        await count('asked', true),
+        await count('asked', false),
+        await count('offered', false),
+        await count('withheld', false),
+      ],
+      sameTools: { bin, cli },
+    }).toEqual({ counts: [11, 11, 11, 10], sameTools: { bin: cli, cli } });
+  }, 60_000);
+
+  it('6.6 (b): the CHANGELOG’s E8 quote (answer-record-627 :: "`realm run respond` records route cli …" prints it)', () => {
+    claim(
+      'CHANGELOG.md',
+      'a token not passed reads "none passed (a token is passed only by Realm\'s MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)".',
+    );
+  });
+
+  it('6.8: realm-workflow.md — the ⚠ lines for copies the table cannot list, and the SCHEMA column', () => {
+    const WF = 'docs/reference/cli/realm-workflow.md';
+    // Executed by answer-record-627 :: "`realm workflow list` names a newer copy by its class …" (the
+    // later version) and workflow-list.test's legacy cell (the older version).
+    claim(
+      WF,
+      '| `SCHEMA` | The format of the stored copy, and whether it is the format this version of Realm writes. A copy a later or an older version of Realm registered is never in the table: it is counted under the ⚠ lines. |',
+    );
+    claim(
+      WF,
+      'The text output counts the copies it cannot list on its last line, and names them on standard error, one ⚠ line per kind, each ending ` — realm cannot audit what it cannot read.`:',
+    );
+    claim(
+      WF,
+      '⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.',
+    );
+    claim(
+      WF,
+      '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json — realm cannot audit what it cannot read.',
+    );
+    // The other kinds: workflow-list-classes.test (one cell per class).
+    claim(
+      WF,
+      'The other kinds read `could not be read (<errno>)`, `could not be parsed`, `is empty`, `is a directory, not a workflow file` and `is gone`.',
+    );
+  });
+
+  it('6.11: the amended CHANGELOG bullets, sentence by sentence (each names its cells)', () => {
+    const C = 'CHANGELOG.md';
+    // gate-answers-door-627 :: the 4.3 rows and door-627's 4.3 library cell; w-627's judged-once
+    // cells (an empty variable is unset).
+    claim(C, 'An empty flag or option is refused; an empty variable stays unset.');
+    // gate-answers-door-627's 4.2 rows; door-627's 4.2 library cell.
+    claim(
+      C,
+      'A form-wait value is refused at start wherever no form is sent: under `withheld` or `offered`, on `realm serve`, and with `statelessHttp`.',
+    );
+    // door-627's 4.1 cells (the built bin).
+    claim(C, '`realm-mcp` reads both variables, judges them at start and prints its start line.');
+    // gate-answers-door-627 :: 8.6 (i).
+    claim(
+      C,
+      'A start line whose `asked` is set by a flag or the variable names that source, and says the default is also asked.',
+    );
+    // form-627 :: 2.1's form cell (the text) and 1.1 (a), (b) (the deadline); 1.4's per-cause rows.
+    claim(C, "The form's text is the gate's message, or, for a gate with none, the step's prompt.");
+    claim(
+      C,
+      "A question whose deadline only reports its expiry (a gate with no `on_expiry`) is still sent as a form, and the form waits the server's form wait.",
+    );
+    claim(
+      C,
+      'When a form ends without an answer, the reply says how: Realm stopped waiting, the person closed it, its value was not one of the choices, the app ended it, or the answer could not be written.',
+    );
+    // separation-check-627 :: 5.9's two cells; 8.5's header cell; the whole output (fact); the
+    // condition lines (condition 7's two apps).
+    claim(
+      C,
+      'Condition 2 starts no process: on a host with `sudo`, `doas`, `run0`, `pkexec` or `su` it is not measured in this version, so the check prints "may still be able to answer"; a later version reads their rules without running them.',
+    );
+    claim(
+      C,
+      'The header says when no store was found; condition 7\'s "no" names the two apps whose settings it read; the two informational lines are marked "(fact)".',
+    );
+    // w-627 :: "correction 1 (C1): … is refused with VALIDATION_OPTION_INVALID".
+    claim(
+      C,
+      '`submitHumanResponse` refuses an empty `route`, or a `principal` it cannot read (`VALIDATION_OPTION_INVALID`).',
+    );
+    // w-627's one-reading cell (getSync's code and the listing's class, per copy).
+    claim(
+      C,
+      'A `schema_version` that is not a number, or a copy with no string `id`, marks the copy as damaged (`RESOURCE_FORMAT_INVALID`), never as one an older Realm registered. A copy an older Realm registered is listed with the copies Realm cannot read, as class `legacy`.',
+    );
+    // registrar-probe C-e…C-e3 (the register way with its path); ways-renderer 3.2 and
+    // answer-record-627's 3.2 cells (the command); fence-predicate and append-trace-627's 8.1 cells.
+    claim(
+      C,
+      "A run whose registered copy cannot be read offers the repair — the `register` way, with the copy's path — never the answer; the terminal command for it is `realm workflow validate --registered <id>`.",
+    );
+    claim(
+      C,
+      "A trace refused for a step that waits at its own question says so, and names that question's answer way.",
+    );
+    // door-627's 8.6 (g) and (h) cells.
+    claim(
+      C,
+      "They read `gate.agent_hint` when the reply has one; under `asked` with forms they say the user's app shows the question as a form.",
+    );
+    // answer-record-627's 8.2 cell (the route), its prompt-line and absence cells (2.2, 8.3, E6, 2.1).
+    claim(C, 'A route a program passes is quoted on one line.');
+    claim(
+      C,
+      "The question line reads a gate with no message as its step's prompt, from the workflow as registered now, and says so; when there is nothing to show, it says why.",
+    );
+    // door-627 :: "(A4) — `realm-mcp --gate-answers withheld` refuses the start".
+    claim(
+      C,
+      "Version 0.47.0 ignored them. Set `REALM_MCP_GATE_ANSWERS` or `REALM_MCP_FORM_WAIT_SECONDS` in the MCP client's `env` block, or run `realm mcp` with the flag.",
     );
   });
 });
@@ -679,6 +1072,7 @@ describe('#627 W — the CHANGELOG’s lines are under their headings (Part L)',
         "The protocol says what the session's way means (issue #627).",
         "Author text is labelled as the author's (issue #627).",
         "`realm run inspect`'s answer line (issue #627).",
+        '`realm-mcp` refuses any argument (issue #627).',
       ],
       fixed: [],
     });

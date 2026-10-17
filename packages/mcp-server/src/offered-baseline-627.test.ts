@@ -5,13 +5,14 @@
 // "when the reply has one" in the protocol's rule 2 and auto+gate step text. The baseline is a build of that
 // commit in the folder `REALM_627_BASELINE` names; without it the cell is skipped by name (the
 // implementer's log runs it). Ids and instants are masked; nothing else is. Correction 1 (rail 3):
-// the cell prints the baseline's sha and asserts it is the commit the branch sits on.
+// the cell prints the baseline's sha and asserts it is the commit the branch sits on; correction 2
+// (6.10) also asserts the folder is a build of it (a clean tree, a dist newer than the commit).
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // call and the first differing reply — never a token (ids are masked).
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -147,6 +148,18 @@ describe.skipIf(!ready)(
       // (a) red when the baseline folder holds another commit than the one this branch sits on (the
       //     comparison would then measure the wrong base); (b) prints both shas.
       expect(baseline).toBe(parent);
+      // Correction 2 (6.10, MCP F9): the baseline is a BUILD of that commit — its tree unchanged and
+      // its dist newer than the commit. (a) red when a file in the checkout is changed, or a dist
+      // predates the checkout (an older build would be compared); (b) prints the count of changed
+      // paths and whether each dist is newer.
+      const committedMs = Number(git(BASE!, 'log', '-1', '--format=%ct')) * 1000;
+      expect({
+        changed: git(BASE!, 'status', '--porcelain')
+          .split('\n')
+          .filter((l) => l !== '').length,
+        mcpNewer: statSync(BASE_MCP).mtimeMs > committedMs,
+        coreNewer: statSync(BASE_CORE).mtimeMs > committedMs,
+      }).toEqual({ changed: 0, mcpNewer: true, coreNewer: true });
     });
 
     it('the corpus, call by call', async () => {

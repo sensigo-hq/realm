@@ -57,7 +57,12 @@ async function bodyOf(req: IncomingMessage): Promise<unknown> {
  * `statelessHttp` passed or not; and a client that declares forms and accepts every form with
  * `approve`.
  */
-async function httpDoor(shape: Shape, statelessHttp: boolean, refuseGet = false) {
+async function httpDoor(
+  shape: Shape,
+  statelessHttp: boolean,
+  refuseGet = false,
+  jsonResponse = false,
+) {
   const dir = await mkdtemp(join(tmpdir(), 'realm-http-627-'));
   const runStore = new JsonFileStore(join(dir, 'runs'));
   const workflowStore = new JsonWorkflowStore(join(dir, 'wf'));
@@ -87,6 +92,8 @@ async function httpDoor(shape: Shape, statelessHttp: boolean, refuseGet = false)
       if (transport === undefined) {
         const created: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          // Correction 2 (6.9): the JSON-reply mode a program may choose for its per-session transport.
+          ...(jsonResponse ? { enableJsonResponse: true } : {}),
           onsessioninitialized: (id) => {
             sessions.set(id, created);
           },
@@ -218,6 +225,31 @@ describe('#627 W correction 2 (1.7) — the form rides the tool call’s own str
         forms: 1,
         route: 'mcp_form',
       });
+    } finally {
+      await d.close();
+    }
+  }, 30_000);
+});
+
+describe('#627 W correction 2 (6.9) — a per-session transport in JSON-reply mode holds no form (the README’s statelessHttp row)', () => {
+  it('a server kept per HTTP session with enableJsonResponse: no form reaches the client, and the call is still waiting after 5 s', async () => {
+    const d = await httpDoor('per_session', false, false, true);
+    try {
+      await new Promise((r) => setTimeout(r, 50));
+      const call = d.client.callTool(
+        { name: 'start_run', arguments: { workflow_id: 'http627', params: {} } },
+        undefined,
+        { timeout: 60_000 },
+      );
+      void call.catch(() => undefined);
+      // The same race as 1.7's cell, where the form arrives and the call settles inside it.
+      const settled = await Promise.race([
+        call.then(() => true),
+        new Promise<false>((r) => setTimeout(() => r(false), 5_000)),
+      ]);
+      // (a) red when a JSON-reply transport delivers the form (the README's advice to pass
+      //     statelessHttp would then be wrong); (b) prints whether the call settled and the forms sent.
+      expect({ settled, forms: d.forms() }).toEqual({ settled: false, forms: 0 });
     } finally {
       await d.close();
     }

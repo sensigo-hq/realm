@@ -145,7 +145,7 @@ REALM_SERVE_TOKEN=<secret> realm serve --port 3001
 
 This starts an HTTP MCP server protected by Bearer token authentication. Use `--dev` to skip auth during local development.
 
-Once connected the agent has access to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response` (`present_question` in its place in an app that shows forms; neither under `withheld`, which lists 10), `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace` (`advance_run` was added after version 0.46.0).
+Once connected the agent has access to 11 tools: `list_workflows`, `get_workflow_protocol`, `start_run`, `start_run_batch`, `execute_step`, `advance_run`, `submit_human_response` (or `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms); neither under `withheld`, which lists 10), `get_run_state`, `abandon_run`, `create_workflow`, and `append_trace` (`advance_run` was added after version 0.46.0).
 
 The agent calls `list_workflows` to discover registered workflows, then `get_workflow_protocol` for the matched workflow to receive explicit step-by-step instructions. It cannot execute a step out of order or submit output that fails schema validation.
 
