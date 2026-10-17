@@ -207,8 +207,14 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   an app without forms the agent keeps `submit_human_response`, marked so the app asks the person to
   approve each call (`_meta["anthropic/requiresUserInteraction"]`), and the answer records that the
   app was asked. A headless client that declares forms but cancels them waits at the question.
+  On an HTTP server built per request — `realm serve`, or a program that builds a server per request
+  or passes `statelessHttp` — no client gets forms: under `asked` every client keeps the answer
+  tool, marked for approval. A program that keeps one server per HTTP session sends forms as stdio
+  does.
   **Upgrading:** set `--gate-answers offered` (or `REALM_MCP_GATE_ANSWERS=offered`) to keep today's
-  answer tool for every client.
+  answer tool for every client. A store shared with version 0.47.0: its `realm run advance` prints
+  the program that recorded an answer as the run's `Last recorded driver:`, because this version
+  stamps `driven_by` on answers and 0.47.0 does not skip them; 0.46.0 is unaffected.
 - **BREAKING — the published reply types gain W's members (issue #627).** `DoorPolicy.answers`, the
   `client_prompt` condition on a way's `conditions`, the `present` verb, and the codes
   `no_form_here`, `form_open`, `asks_exhausted` and `door_withholds_answers`.

@@ -5,7 +5,8 @@
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // sentence, the tool names, the texts — never a token or an environment.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -87,11 +88,15 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     );
     claim(
       PAGE,
-      '| `withheld` | No tool on the server records an answer, and its replies name no way to answer. |',
+      "| `withheld` | No tool on the server records an answer, and its replies name no way to answer, except where a workflow's own text does, which Realm forwards labelled as the author's and warns about when the workflow is loaded. |",
     );
+    // Correction 1 (F2): the exception is executed by door-627 :: "cell 27b — author text is
+    // labelled, under every value" (the label) and w-627 :: "W-l1: a load note for author text that
+    // names an answer tool" (the warning).
     claim(
       PAGE,
-      "| `asked` | The default. In an app that shows forms, the question goes to the person in the app's own form, and the agent gets no tool that records an answer. In an app without forms, the agent keeps the answer tool, and the app is asked to have the person approve each call. |",
+      // Correction 1 (F1): the row ends with the HTTP doors' sentence (http-door-627 executes it).
+      "| `asked` | The default. In an app that shows forms, the question goes to the person in the app's own form, and the agent gets no tool that records an answer. In an app without forms, the agent keeps the answer tool, and the app is asked to have the person approve each call. On an HTTP server built per request — `realm serve`, or a program that builds a server per request or passes `statelessHttp` — no client gets forms: under `asked` every client keeps the answer tool, marked for approval. A program that keeps one server per HTTP session sends forms as stdio does. |",
     );
     const has = async (g: 'asked' | 'offered' | 'withheld' | undefined, forms: boolean) =>
       (await (await session(g, forms)).tools()).some((t) => t.name === 'submit_human_response');
@@ -117,10 +122,12 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     }).toEqual({ won: 'withheld', bad: false });
   });
 
-  it('a variable exported in a shell does not reach a server the client starts (the SDK’s stdio spawn passes a whitelisted environment)', () => {
+  it('a variable exported in a shell may not reach a server the client starts (the SDK’s stdio spawn passes a reduced environment)', () => {
+    // Correction 1 (F6): "may not" — only the TypeScript SDK's client is executed here; other
+    // clients build their own environment.
     claim(
       PAGE,
-      'Set the value in your MCP client\'s own config, as an argument (`"args": ["mcp", "--gate-answers", "withheld"]`) or in its `env` block. A variable you export in a shell does not reach a server your client starts.',
+      'Set the value in your MCP client\'s own config, as an argument (`"args": ["mcp", "--gate-answers", "withheld"]`) or in its `env` block. A variable you export in a shell may not reach a server your client starts (the MCP SDK\'s client starts servers with a reduced environment).',
     );
     process.env['REALM_MCP_GATE_ANSWERS'] = 'withheld';
     const passed = getDefaultEnvironment();
@@ -206,6 +213,12 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       PAGE,
       'Realm cannot see whether anyone approved. A headless client that declares forms but cancels them leaves the question waiting: set `offered` for such a client.',
     );
+    // Correction 1 (F6): ":33"'s Claude Code sentence is an attributed, dated observation of another
+    // program (walk-798, October 2026), which no cell here can run; the page says so in its words.
+    claim(
+      PAGE,
+      'Some apps ask the person, some skip it (Claude Code asked in interactive sessions and refused the call in headless runs when this page was written, October 2026); other apps may not ask.',
+    );
   });
 
   it('what an answer records, and the inspect line the page shows', () => {
@@ -213,6 +226,9 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       PAGE,
       "| `answer` | `{ route, shown? }`: `mcp_form`, `mcp` or `cli`, as its door declared it; `{ absent: 'route_not_declared' }` from a program that declared none. |",
     );
+    // Correction 1 (F6): ":42" is executed by answer-record-627 :: "`realm run respond` records route
+    // cli …" (the entry's driven_by is the program that recorded it: respond, running as ops).
+    claim(PAGE, '| `driven_by` | The program that recorded it. |');
     claim(
       PAGE,
       '| `client_prompt_requested` | `true` when the app was asked to have the person approve the call. |',
@@ -256,11 +272,27 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     );
     claim(
       PAGE,
-      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start nothing. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it reads that user's store.",
+      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start nothing. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store this login cannot open is measured out of its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
+    );
+    // Correction 1 (F6): ":56" is executed by separation-check-627 :: "correction 1 (D1): the mode is
+    // never guessed" (the denied and the missing store) and :: "each condition line in its states"
+    // (the agent's settings read from /home/agent while HOME holds the opposite).
+    claim(
+      PAGE,
+      'The check says an agent cannot record a gate answer only when all of these hold: the store belongs to another user; this login cannot write or read the store, become that user without a password, reach the Docker engine, or change the files Realm executes; and `--gate-answers withheld` is given on the `--check` line itself.',
+    );
+    // Correction 1 (F6): ":58" and ":60" are executed by separation-check-627 :: "each prevents
+    // conjunct alone takes the claim away" (every conjunct but reading) and :: "correction 1 (F6):
+    // gate-answers.md :58 and :60" (reading the store; sudo's kept password; run0, pkexec, su), with
+    // :: "condition 2" (doas) and :: "each condition line in its states" (NOPASSWD, by sudo -n; Touch
+    // ID).
+    claim(
+      PAGE,
+      'Each condition prints as measured, as configured but not enforced by Realm, or as unknown with its cause.',
     );
     claim(
       PAGE,
-      'The check says an agent cannot record a gate answer only when all of these hold: the store belongs to another user; this login cannot write the store, become that user without a password, reach the Docker engine, or change the files Realm executes; and `--gate-answers withheld` is given on the `--check` line itself.',
+      'Becoming another user without a password includes `sudo` rules with `NOPASSWD`, a `timestamp_timeout` other than 0, and Touch ID for `sudo`; the check reads them where it can, and names `doas`, `run0`, `pkexec` and `su` as not probed when they are present.',
     );
   });
 });
@@ -413,6 +445,177 @@ describe('#627 W — the other pages W changed', () => {
     claim(
       'docs/guides/human-gates.md',
       "`realm run inspect <run-id>` shows the gate's ID, its question as the person reads it, its choices and the command that answers it",
+    );
+  });
+});
+
+describe('#627 W correction 1 — the claims F asks for', () => {
+  const F1 =
+    'On an HTTP server built per request — `realm serve`, or a program that builds a server per request or passes `statelessHttp` — no client gets forms: under `asked` every client keeps the answer tool, marked for approval. A program that keeps one server per HTTP session sends forms as stdio does.';
+
+  it('F1: the HTTP doors, on the four pages (executed by realm-mcp’s http-door-627.test.ts over real HTTP)', () => {
+    // (a) red when a page drops or rewords the sentence; (b) prints it. Its behaviour: http-door-627
+    // :: "a server built per request …" and :: "a server kept per HTTP session …".
+    for (const page of [
+      'CHANGELOG.md',
+      PAGE,
+      'docs/concepts/gates-and-trust.md',
+      'docs/guides/human-gates.md',
+    ]) {
+      claim(page, F1);
+    }
+    // The README's options row: `statelessHttp` by http-door-627, `principal` by principal-627 (cell
+    // 25 through the real doors), the two values by w-627's judged-once cells.
+    claim(
+      'packages/mcp-server/README.md',
+      '`gateAnswers?` (`asked`, `offered` or `withheld`), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request: no form can be held open)',
+    );
+  });
+
+  it('F4: tools.md :46 and :105 — advance_run at a question under withheld: ok, agent_action await, the await entry; with the answer tool, the answer', async () => {
+    claim(
+      'docs/reference/mcp/tools.md',
+      'as `await` (a step in flight elsewhere, or a question handed to the person)',
+    );
+    claim(
+      'docs/reference/mcp/tools.md',
+      'Follow `next_actions`; an open question is named there by its answer where this session has the answer tool; else by the await entry.',
+    );
+    const stateAt = async (g: 'withheld' | 'offered') => {
+      const s = await session(g);
+      const call = async (name: string, args: Record<string, unknown>) =>
+        JSON.parse(
+          (
+            (await s.client.callTool({ name, arguments: args })) as {
+              content: Array<{ text: string }>;
+            }
+          ).content[0]!.text,
+        ) as Record<string, unknown>;
+      const started = await call('start_run', { workflow_id: s.def.id, params: {} });
+      const state = await call('advance_run', { run_id: started['run_id'] });
+      const first = (
+        state['next_actions'] as Array<{ awaiting?: unknown; instruction?: { tool?: unknown } }>
+      )[0];
+      return {
+        status: state['status'],
+        action: state['agent_action'],
+        first: first?.awaiting !== undefined ? 'await' : first?.instruction?.tool,
+      };
+    };
+    // (a) red when a question handed to the person does not read as await, or the answer tool's
+    //     session is not named the answer; (b) prints each reply's status, action and first entry.
+    expect({ withheld: await stateAt('withheld'), offered: await stateAt('offered') }).toEqual({
+      withheld: { status: 'ok', action: 'await', first: 'await' },
+      offered: { status: 'ok', action: undefined, first: 'submit_human_response' },
+    });
+  });
+
+  it('F6: realm-mcp-and-serve.md — a bad value stops realm mcp with one line and exit 1; serve’s start line and dev-mode warning (gate-answers-door-627 cell 19)', () => {
+    claim(
+      'docs/reference/cli/realm-mcp-and-serve.md',
+      'A gate-answers or form-wait value that is not valid stops it before it starts, with one line on standard error and exit code 1.',
+    );
+    // Executed by gate-answers-door-627 :: "cell 19 — dev mode warns …" (the value line, and the
+    // warning iff not withheld); the order is serve.ts's (the listening lines, then these).
+    claim(
+      'docs/reference/cli/realm-mcp-and-serve.md',
+      "After these lines, `realm serve` prints the gate-answers value it runs with, and, in dev mode when that value is not `withheld`, `Warning: dev mode — authentication is disabled: any process on this machine can call this server's tools, the gate answer tool included.` (added after version 0.47.0).",
+    );
+    const CLI = fileURLToPath(new URL('../../dist/index.js', import.meta.url));
+    const mcp = (args: string[]) => {
+      const r = spawnSync(process.execPath, [CLI, 'mcp', ...args], {
+        env: {
+          PATH: process.env['PATH'] ?? '',
+          HOME: mkdtempSync(join(tmpdir(), 'realm-docs-627-mcp-')),
+        },
+        input: '',
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      return { code: r.status, lines: r.stderr.trim().split('\n').length, out: r.stdout };
+    };
+    // (a) red when a bad value starts the server, exits 0, or prints more than one line; (b) prints
+    //     the exit code, the count of stderr lines and stdout.
+    expect({
+      answers: mcp(['--gate-answers', 'nope']),
+      wait: mcp(['--form-wait-seconds', '10']),
+    }).toEqual({
+      answers: { code: 1, lines: 1, out: '' },
+      wait: { code: 1, lines: 1, out: '' },
+    });
+  }, 60_000);
+
+  it('F5, F6: realm-run-reading.md — the To answer: line, the answer line, the token row (answer-record-627 executes each)', () => {
+    const READING = 'docs/reference/cli/realm-run-reading.md';
+    // Executed by answer-record-627 :: "cell 13: … the frozen question and the respond line".
+    claim(READING, 'The `To answer:` line is printed while the question can be answered here.');
+    // Executed by answer-record-627 :: "one phrase per route (W-i10)", :: "the absences (W-i2, W-i3,
+    // W-i7)" — F5: the program part reads "did not name itself" when driven_by is ABSENT — and
+    // :: "cell 25 — the principal by kind (W-i8) …; the client prompt (W-i5)".
+    claim(
+      READING,
+      "Then the line says how the answer arrived, as its door declared it — `through the user's app, as a form`, `through Realm's MCP answer tool` or `through a terminal (realm run respond)`, each followed by `(as its door declared)` — and the program that recorded it: its channel, the name it runs as, and how that name is known. An answer from a program that declared no route reads `through a route its program did not declare`; one from a program that did not name itself reads `as recorded by a program that did not name itself`; an answer recorded by an earlier version, or with no route, reads `how it arrived was not recorded`.",
+    );
+    claim(
+      READING,
+      "When the server's transport authenticated someone, the line adds `authenticated by API key <id>`, `through realm serve's shared token, which names no one`, or `with authentication turned off (dev mode)`; when the app was asked to have the person approve the call, `client prompt requested (anthropic/requiresUserInteraction); Realm cannot tell whether anyone approved`.",
+    );
+    // Executed by answer-record-627 :: "`realm run respond` records route cli …" (no token passed).
+    claim(
+      READING,
+      "| `none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)` | No token was passed, over either door. |",
+    );
+  });
+
+  it('F6: gates-and-trust.md — the five places, what the record keeps, the asked sentence', () => {
+    const TRUST = 'docs/concepts/gates-and-trust.md';
+    claim(
+      TRUST,
+      'A gate is answered by one call that names the run, the gate and the choice. There are five places it can come from:',
+    );
+    claim(
+      TRUST,
+      '- the form a chat app shows the person, on an MCP server whose gate-answers value is `asked`, the default (added after version 0.47.0);',
+    );
+    // "records the choice and how it arrived": answer-record-627 :: "`realm run respond` records
+    // route cli …" and form-627 cell 21 (route mcp_form). The asked sentence: this file's "who can
+    // answer follows the value" (the tools per session) and door-627's fallback _meta cell.
+    claim(TRUST, 'It records the choice and how it arrived.');
+    claim(
+      TRUST,
+      'Under the default `asked`, an app that shows forms asks the person in its own form, and the assistant gets no tool that records an answer; an app that shows no forms keeps `submit_human_response`, and the app is asked to have the person approve each call.',
+    );
+    const text = flat(readFileSync(join(ROOT, TRUST), 'utf8'));
+    const list = text
+      .slice(text.indexOf('There are five places it can come from:'))
+      .split(' **Realm does not check who answers.**')[0]!;
+    // (a) red when the list and its count part; (b) prints the count of the list's items.
+    expect(list.split(' - ').length - 1).toBe(5);
+  });
+
+  it('F6: connect-an-mcp-client.md and human-gates.md — the tool in each session; the terminal route; the form', () => {
+    // Executed by this file's "who can answer follows the value" (present_question in a forms
+    // session, neither tool under withheld) and its "the start lines" cell (the terminal route).
+    claim(
+      'docs/guides/connect-an-mcp-client.md',
+      'In an app that shows forms, under the default `asked`, `present_question` takes the place of `submit_human_response`; under `withheld` neither is listed (added after version 0.47.0).',
+    );
+    claim(
+      'docs/guides/connect-an-mcp-client.md',
+      '- Under `withheld`, you answer from a terminal: `realm run inspect <run_id>`, then `realm run respond <run_id> --gate <gate_id> --choice <choice>`.',
+    );
+    // Executed by form-627 cell 21 (the form, and its answer recorded) and this file's "who can
+    // answer follows the value" (no tool under withheld).
+    claim(
+      'docs/guides/human-gates.md',
+      'Under the default, `asked`, a chat app that shows forms gets the question as a form, and the person answers there; under `withheld`, no tool answers.',
+    );
+  });
+
+  it('F7: the CHANGELOG’s upgrade sentence for a store shared with 0.47.0 (skew-627 cell 6(b) pins the residual)', () => {
+    claim(
+      'CHANGELOG.md',
+      "A store shared with version 0.47.0: its `realm run advance` prints the program that recorded an answer as the run's `Last recorded driver:`, because this version stamps `driven_by` on answers and 0.47.0 does not skip them; 0.46.0 is unaffected.",
     );
   });
 });

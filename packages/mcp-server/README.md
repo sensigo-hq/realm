@@ -1,6 +1,6 @@
 # @sensigo/realm-mcp
 
-`@sensigo/realm-mcp` — the Realm MCP server. Exposes 11 workflow tools over stdio or HTTP for AI agent connections (VS Code Copilot, Cursor, Claude, and any MCP-compatible agent).
+`@sensigo/realm-mcp` — the Realm MCP server. Exposes 11 workflow tools (10 under `withheld`) over stdio or HTTP for AI agent connections (VS Code Copilot, Cursor, Claude, and any MCP-compatible agent).
 
 ## Installation
 
@@ -28,6 +28,8 @@ Add `realm-mcp` to your MCP client configuration (VS Code, Claude Desktop, Curso
 
 Requires workflows to be registered first via `realm workflow register`.
 
+`realm-mcp` takes no flags: set the gate-answers value in the entry's `env` block (`"env": { "REALM_MCP_GATE_ANSWERS": "withheld" }`), or run `realm mcp --gate-answers <value>`.
+
 ## Usage — Embedded MCP server
 
 Create and connect a Realm MCP server inside your own application using any MCP-compatible transport.
@@ -44,15 +46,15 @@ await server.connect(transport);
 
 ## API Reference
 
-| Symbol                                           | Description                                                                                                                                                                                               |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `createRealmMcpServer(options?)`                 | Creates the MCP server with all 11 tools pre-registered. Returns `McpServer`.                                                                                                                             |
-| `createDefaultRegistry()`                        | Returns an `ExtensionRegistry` pre-populated with built-in adapters.                                                                                                                                      |
-| `generateProtocol(workflow)`                     | Generates a structured protocol description for a workflow.                                                                                                                                               |
-| `RealmMcpServerOptions`                          | Type — optional config: `registry?`, `secrets?`, `workflowStore?`, `runStore?`.                                                                                                                           |
-| `WorkflowProtocol`, `ProtocolStep`               | Types — output shape of `generateProtocol`.                                                                                                                                                               |
-| `effectiveGateAnswers(options?)`                 | The gate-answers value a server built with these options runs with (`asked`, `offered` or `withheld`), where it came from, and every other value set — for an embedder's log. Added after version 0.47.0. |
-| `routePhraseOf(route)`, `renderOutcome(outcome)` | The MCP door's words for an answer's route, and for how a question was settled. Added after version 0.47.0.                                                                                               |
+| Symbol                                           | Description                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createRealmMcpServer(options?)`                 | Creates the MCP server with its tools registered: 11, or 10 under `withheld`. Returns `McpServer`.                                                                                                                                                                                                                                 |
+| `createDefaultRegistry()`                        | Returns an `ExtensionRegistry` pre-populated with built-in adapters.                                                                                                                                                                                                                                                               |
+| `generateProtocol(workflow)`                     | Generates a structured protocol description for a workflow.                                                                                                                                                                                                                                                                        |
+| `RealmMcpServerOptions`                          | Type — optional config: `registry?`, `secrets?`, `workflowStore?`, `runStore?`, `gateAnswers?` (`asked`, `offered` or `withheld`), `formWaitSeconds?`, `principal?` (what the transport authenticated, stamped on every answer), `statelessHttp?` (pass `true` when a server is built per HTTP request: no form can be held open). |
+| `WorkflowProtocol`, `ProtocolStep`               | Types — output shape of `generateProtocol`.                                                                                                                                                                                                                                                                                        |
+| `effectiveGateAnswers(options?)`                 | The gate-answers value a server built with these options runs with (`asked`, `offered` or `withheld`), where it came from, and every other value set — for an embedder's log. Added after version 0.47.0.                                                                                                                          |
+| `routePhraseOf(route)`, `renderOutcome(outcome)` | The MCP door's words for an answer's route, and for how a question was settled. Added after version 0.47.0.                                                                                                                                                                                                                        |
 
 ## MCP tools exposed
 

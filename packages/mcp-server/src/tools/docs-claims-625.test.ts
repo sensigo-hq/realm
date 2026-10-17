@@ -425,7 +425,7 @@ describe('#625 PR-2a, C154 — tools.md and gates.md: every tool on a run that h
   const ENDED_ROW =
     'never on `confirm_required`; on a run that had ended before the call `advance_run` replies `ok` without it, and so does `submit_human_response` repeating the recorded choice';
   const OK_STOP =
-    'on an `ok` reply as `stop` (`execute_step` on a run that has already ended; a run found ended by another process meanwhile), as `report_to_user` (nothing can be called and the run is open: a step cannot run), or as `await` (a step in flight elsewhere)';
+    'on an `ok` reply as `stop` (`execute_step` on a run that has already ended; a run found ended by another process meanwhile), as `report_to_user` (nothing can be called and the run is open: a step cannot run), or as `await` (a step in flight elsewhere, or a question handed to the person)';
 
   it('C154 execute_step: ok with stop, no steps executed', async () => {
     claim('mcp/tools.md', OK_STOP);
@@ -791,10 +791,13 @@ const WAY_OUT =
 
 describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentence by sentence', () => {
   it('C163: the server has 11 tools, advance_run among them', async () => {
-    claim('mcp/tools.md', "Realm's MCP server has 11 tools.");
+    claim(
+      'mcp/tools.md',
+      "Realm's MCP server has 11 tools under `asked` and `offered` (in an app that shows forms, `present_question` takes the place of `submit_human_response`), and 10 under `withheld`, which lists no answer tool.",
+    );
     claim(
       'core-library.md',
-      '`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with the 11 tools',
+      '`createRealmMcpServer` returns the MCP server that `realm mcp` runs, with 11 tools, 10 under `withheld`',
     );
     const dir = await mkdtemp(join(tmpdir(), 'realm-docs-625-'));
     const server = createRealmMcpServer({
@@ -1001,7 +1004,7 @@ describe('#625 PR-2a, C163 — tools.md: the rest of the reply sections, sentenc
     claim('mcp/tools.md', 'Empty when nothing can be called now (see `ok` below).');
     claim(
       'mcp/tools.md',
-      'Follow `next_actions`; an open question is named there by its answer, `submit_human_response`.',
+      'Follow `next_actions`; an open question is named there by its answer where this session has the answer tool; else by the await entry.',
     );
     const { call, workflowStore } = await connect();
     await workflowStore.register(gated('docs-next'));

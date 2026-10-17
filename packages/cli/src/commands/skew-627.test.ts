@@ -5,7 +5,10 @@
 // cell is skipped by name; the implementer's log runs it.
 //   (a) an answer a published version wrote reads in W as `recorded_without_route`;
 //   (b) an answer W wrote reads in each published version exactly as it reads with W's fields
-//       deleted — `realm run inspect`, `realm run list` and `get_run_state` print the same.
+//       deleted — `realm run inspect`, `realm run list` and `get_run_state` print the same; and
+//       `realm run advance` (correction 1, F7): 0.47.0 reads `driven_by` on the answer's entry, so it
+//       prints W's driver as `Last recorded driver:` — the skew residual the CHANGELOG's upgrade
+//       sentence records, pinned here; 0.46.0 has no `realm run advance`.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: the
 // versions and the differing lines — never a token.
@@ -119,7 +122,7 @@ describe.skipIf(!ready)(
     );
 
     it.each(VERSIONS)(
-      '(b) an answer W wrote reads in %s exactly as it reads with W’s fields deleted (inspect, list, get_run_state)',
+      '(b) an answer W wrote reads in %s exactly as it reads with W’s fields deleted (inspect, list, get_run_state); realm run advance differs only by the recorded residual',
       async (v) => {
         const h = await opened();
         const answered = run(
@@ -169,6 +172,26 @@ describe.skipIf(!ready)(
           inspect: masked(without.inspect),
           list: masked(without.list),
           state: masked(without.state),
+        });
+        // Correction 1 (F7): `realm run advance`, run last (it may write). 0.47.0 names W's driver on
+        // its `Last recorded driver:` line where the bare record reads "none recorded"; every other
+        // line is the same. 0.46.0 has no such command and prints the same nothing for both.
+        const advance = (home: string) =>
+          run(binOf(v, 'realm'), ['run', 'advance', h.runId], home).out.split('\n');
+        const RESIDUAL =
+          /^Last recorded driver: .+ \(from the OS user, via respond\) at step 'q', \S+\.$/;
+        const NONE = 'Last recorded driver: none recorded.';
+        const advW = advance(h.home);
+        const advBare = advance(bare);
+        // (a) red when 0.47.0 stops reading W's driver (the residual is gone: the CHANGELOG's upgrade
+        //     sentence is then false), or advance differs by anything else; (b) prints the residual
+        //     count and both outputs' other lines — a login, never a token.
+        expect({
+          residual: advW.filter((l) => RESIDUAL.test(l)).length,
+          rest: advW.filter((l) => !RESIDUAL.test(l)),
+        }).toEqual({
+          residual: v === '0.47.0' ? 1 : 0,
+          rest: v === '0.47.0' ? advBare.filter((l) => l !== NONE) : advBare,
         });
       },
       180_000,

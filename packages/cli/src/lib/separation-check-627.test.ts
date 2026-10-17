@@ -346,6 +346,40 @@ describe('#627 W — the separation check (cell 26)', () => {
     );
   });
 
+  it('correction 1 (F6): gate-answers.md :58 and :60 — a store this login can only read; sudo’s kept password; run0, pkexec and su named as not probed', async () => {
+    const claimOf = async (probes: SeparationProbes) => separationClaim(await measure(probes));
+    const becomeOf = async (probes: SeparationProbes) =>
+      conditionLine('become_service_user', await measure(probes));
+    // (a) red when a readable store keeps the claim (`:58`'s "or read"), a non-zero
+    //     timestamp_timeout reads "no", or one of run0, pkexec, su is not named; (b) prints each.
+    expect({
+      readOnly: await claimOf(
+        machine({ canRead: (p) => p === `${STORE}/runs` }, SUDO_NEGATIVE, SUDO_BIN),
+      ),
+      kept: await becomeOf(
+        machine(
+          {},
+          { ...SUDO_NEGATIVE, '/etc/sudoers': 'Defaults timestamp_timeout=5\n' },
+          SUDO_BIN,
+        ),
+      ),
+      unprobed: await becomeOf(
+        machine({}, SUDO_NEGATIVE, [
+          ...SUDO_BIN,
+          '/usr/bin/run0',
+          '/usr/bin/pkexec',
+          '/usr/bin/su',
+        ]),
+      ),
+    }).toEqual({
+      readOnly:
+        "An agent running as this login could answer a gate through the terminal or by editing Realm's files; Realm records how each answer arrived but cannot stop it.",
+      kept: "This login can become Realm's service user (realm) without a password: configured, not enforced by Realm — sudo keeps a password for 5 minutes (timestamp_timeout).",
+      unprobed:
+        "This login can become Realm's service user (realm) without a password: unknown (not probed: run0, pkexec, su are on this host; observed now).",
+    });
+  });
+
   it('correction 1 (D2): with su on the host the claim is "may still", never "cannot record"', async () => {
     const claim = separationClaim(
       await measure(machine({}, SUDO_NEGATIVE, [...SUDO_BIN, '/usr/bin/su'])),

@@ -193,11 +193,11 @@ describe('#625 PR-2a, C174 lane E2 — guides, reference pages and READMEs: MCP 
     );
     claim(
       'docs/reference/glossary.md',
-      'Realm is an MCP server with 11 tools (10 in version 0.46.0).',
+      'Realm is an MCP server with 11 tools, 10 under `withheld` (10 in version 0.46.0).',
     );
     claim(
       'packages/mcp-server/README.md',
-      'Creates the MCP server with all 11 tools pre-registered.',
+      'Creates the MCP server with its tools registered: 11, or 10 under `withheld`.',
     );
     const { client } = await connect();
     const listed = (await client.listTools()).tools.map((t) => t.name);
