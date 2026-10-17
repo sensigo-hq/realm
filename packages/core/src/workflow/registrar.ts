@@ -8,6 +8,7 @@ import {
   WorkflowError,
   newerDefinitionFactsOf,
   storedFileFactsOf,
+  type WorkflowErrorOptions,
 } from '../types/workflow-error.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from './yaml-loader.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
@@ -422,26 +423,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     // through this one gate and no gate it would open is ever opened. Its own code: the copy is not
     // legacy (STATE_LEGACY_FORMAT's meaning and remedy are for an OLDER format) and not damaged.
     if (parsed.schema_version > CURRENT_WORKFLOW_SCHEMA_VERSION) {
-      throw new WorkflowError(
-        `Workflow '${workflowId}' was registered by a later version of Realm (definition format ` +
-          `${String(parsed.schema_version)}; this version reads up to ` +
-          `${CURRENT_WORKFLOW_SCHEMA_VERSION}) — refused: this version would ignore requirements ` +
-          'it cannot read. Use the Realm version that registered it, or register the ' +
-          "workflow's source again with this version. Nothing was run.",
-        {
-          code: 'STATE_NEWER_FORMAT',
-          category: 'STATE',
-          agentAction: 'report_to_user',
-          retryable: false,
-          // Typed facts (MA 3, 2026-10-16): `details` stays empty for this code.
-          facts: {
-            scope: 'newer_definition',
-            path: filePath,
-            schema_version: parsed.schema_version,
-            reads_up_to: CURRENT_WORKFLOW_SCHEMA_VERSION,
-          },
-        },
-      );
+      throw new WorkflowError(...newerDefinitionParts(workflowId, filePath, parsed.schema_version));
     }
     return parsed;
   }
@@ -473,7 +455,9 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     workflows: WorkflowDefinition[];
     unreadable: Array<{
       file: string;
-      class: ProbeFailureClass | 'parse';
+      /** `newer` (#627 W correction 1, C3): a copy a later Realm registered — it parses, and this
+       *  version refuses it at read (W-r2), so it is listed here with W-r2's reason, never as readable. */
+      class: ProbeFailureClass | 'parse' | 'newer';
       /** issue #558 PR-T — present only for the OS-error classes; `workflow list`'s per-class
        *  sentence names it. Absent for `parse`, `empty` and `not_a_file` (a directory is not an
        *  OS error — fabricating an errno is a false statement about the operating system). */
@@ -489,7 +473,7 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
     const workflows: WorkflowDefinition[] = [];
     const unreadable: Array<{
       file: string;
-      class: ProbeFailureClass | 'parse';
+      class: ProbeFailureClass | 'parse' | 'newer';
       errno?: string;
       reason: string;
     }> = [];
@@ -584,6 +568,21 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
         continue;
       }
       const parsed = parsedUnknown as WorkflowDefinition;
+      // Correction 1 (C3): a copy a later Realm registered is listed with W-r2's reason — every run
+      // path refuses it (`getSync`), so the listing never shows it as readable.
+      if (
+        typeof parsed.schema_version === 'number' &&
+        parsed.schema_version > CURRENT_WORKFLOW_SCHEMA_VERSION
+      ) {
+        unreadable.push({
+          file: entry,
+          class: 'newer',
+          ...reasonAndRepair(
+            new WorkflowError(...newerDefinitionParts(id, entryPath, parsed.schema_version)),
+          ),
+        });
+        continue;
+      }
       workflows.push(parsed);
       if (entry !== `${String(parsed.id)}.json`) {
         mismatched.push({ file: entry, id: String(parsed.id) });
@@ -594,6 +593,38 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
 }
 
 brandClass(JsonWorkflowStore, Symbol.for('@sensigo/realm/JsonWorkflowStore'), REALM_BRAND);
+
+/**
+ * #627 W (W-r2): the refusal of a copy a LATER Realm registered — one owner of its words and facts
+ * for the registry read (`getSync`) and the listing (`listWithDiagnostics`, correction 1 C3), so both
+ * say the same. The arguments of `new WorkflowError(…)`, so each site keeps that form.
+ */
+function newerDefinitionParts(
+  workflowId: string,
+  filePath: string,
+  schemaVersion: number,
+): [string, WorkflowErrorOptions] {
+  return [
+    `Workflow '${workflowId}' was registered by a later version of Realm (definition format ` +
+      `${String(schemaVersion)}; this version reads up to ` +
+      `${CURRENT_WORKFLOW_SCHEMA_VERSION}) — refused: this version would ignore requirements ` +
+      'it cannot read. Use the Realm version that registered it, or register the ' +
+      "workflow's source again with this version. Nothing was run.",
+    {
+      code: 'STATE_NEWER_FORMAT',
+      category: 'STATE',
+      agentAction: 'report_to_user',
+      retryable: false,
+      // Typed facts (MA 3, 2026-10-16): `details` stays empty for this code.
+      facts: {
+        scope: 'newer_definition',
+        path: filePath,
+        schema_version: schemaVersion,
+        reads_up_to: CURRENT_WORKFLOW_SCHEMA_VERSION,
+      },
+    },
+  ];
+}
 
 /**
  * issue #729 PR-0 (D3 A-5, D4 T-21): why a run's definition is absent, from the error a definition

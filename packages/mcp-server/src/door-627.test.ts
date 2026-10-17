@@ -32,6 +32,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import {
   createRealmMcpServer,
+  INVALID_PRINCIPAL_OPTION,
   REALM_MCP_TAKES_NO_FLAGS,
   type RealmMcpServerOptions,
 } from './server.js';
@@ -794,5 +795,24 @@ describe('#627 W correction 1 (A4) — the realm-mcp bin takes no flags', () => 
       code: 1,
       stderr: REALM_MCP_TAKES_NO_FLAGS,
     });
+  });
+});
+
+describe('#627 W correction 1 (C1) — the principal option is checked when the server is built', () => {
+  it('a principal the total reader cannot read refuses construction; a valid one builds', () => {
+    const build = (principal: unknown) => {
+      try {
+        createRealmMcpServer({ principal: principal as never });
+        return 'built';
+      } catch (e) {
+        return (e as Error).message;
+      }
+    };
+    // (a) red when the server builds with a malformed principal (every answer would carry it);
+    //     (b) prints what each build did.
+    expect({
+      bad: build({ kind: 'api_key' }),
+      good: build({ kind: 'api_key', id: 'key-627' }),
+    }).toEqual({ bad: INVALID_PRINCIPAL_OPTION, good: 'built' });
   });
 });

@@ -2055,8 +2055,8 @@ function judgeRespond(
  * its ending); the open gate → its listed `present` entry — `no_form_here` (core sends no form; the
  * MCP door re-judges its own code, `presentDoorVerdict`), `question_due` (`[advance]`) or
  * `definition_absent`; a settled gate → `question_settled` (the progress ways, else
- * `already_settled`); else → `gate_not_open` (`[present <the open gate>]` when one is open, else
- * `[inspect]`). `question_past_deadline` is WRITE-tagged and `present` performs no settle, so it is
+ * `already_settled`); else → `gate_not_open`, led on by the open gate's listed `present` entry
+ * (`no_form_here` → `[present <the open gate>]`, `question_due` → its remedy), else `[inspect]`. `question_past_deadline` is WRITE-tagged and `present` performs no settle, so it is
  * none of `present`'s codes.
  */
 function judgePresent(
@@ -2099,6 +2099,10 @@ function judgePresent(
     };
   }
   const inspect = composed.ways.filter((w) => w.verb === 'inspect');
+  // Correction 1 (C2): the mirror of `judgeRespond` — the OPEN gate's listed `present` entry leads on:
+  // `no_form_here` → [present] (the door re-judges it), `question_due` → that entry's remedy, else
+  // [inspect].
+  const open = gate !== undefined ? listed(composed, 'present') : undefined;
   return {
     verb: 'present',
     ...(gate !== undefined ? { step: gate.step_name } : {}),
@@ -2107,7 +2111,12 @@ function judgePresent(
       gate_id: gateId,
       ...(gate !== undefined ? { open_gate: { gate_id: gate.gate_id, step: gate.step_name } } : {}),
     },
-    remedy: gate !== undefined ? [presentWayOfGate(run.id, gate.gate_id)] : inspect,
+    remedy:
+      gate !== undefined && open?.code === 'no_form_here'
+        ? [presentWayOfGate(run.id, gate.gate_id)]
+        : open?.code === 'question_due' && open.remedy.length > 0
+          ? open.remedy
+          : inspect,
   };
 }
 

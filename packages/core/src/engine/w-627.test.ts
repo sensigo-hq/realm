@@ -58,7 +58,11 @@ import {
   loadWorkflowFromString,
   loadWorkflowFromStringWithDiagnostics,
 } from '../workflow/yaml-loader.js';
-import { WorkflowError } from '../types/workflow-error.js';
+import {
+  WorkflowError,
+  newerDefinitionFactsOf,
+  storedFileFactsOf,
+} from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunRecord } from '../types/run-record.js';
 
@@ -396,6 +400,24 @@ describe('#627 W — present: offered only on asked with forms, re-judged on the
   });
 });
 
+describe('#627 W correction 1 (C2) — present on another gate follows the open gate’s listed entry', () => {
+  it('another gate while the open one is due → gate_not_open, led on by the due entry’s remedy', async () => {
+    const timed = await atGate(gated(true));
+    const late = new Date(Date.now() + 120_000);
+    const other = admitWay('present', writtenSnapshot(timed.record, late), ctxOf(timed.def), {
+      run_id: timed.record.id,
+      gate_id: 'not-the-open-one',
+    }) as Unavailable;
+    // (a) red when gate_not_open always offers [present <the open gate>], due or not; (b) prints the
+    //     code, the remedy verbs and the no_remedy cause.
+    expect([other.code, other.remedy.map((w) => w.verb), other.no_remedy?.cause]).toEqual([
+      'gate_not_open',
+      ['advance'],
+      undefined,
+    ]);
+  });
+});
+
 // ─── D-8: a question this door hands off is a wait ──────────────────────────────────────────────
 
 describe('#627 W — a handed-off question is waited on (agent_action await)', () => {
@@ -540,6 +562,47 @@ describe('#627 W — each answer records how it arrived', () => {
     });
   });
 
+  it('correction 1 (C1): the principal is written through the total reader — an extra key never reaches the record', async () => {
+    const s = await atGate();
+    const embedderPrincipal = { kind: 'api_key', id: 'key-627', key: 'never-recorded-627' };
+    await submitHumanResponse(s.store, s.def, {
+      runId: s.record.id,
+      gateId: s.gateId,
+      choice: 'approve',
+      route: 'mcp',
+      principal: embedderPrincipal as never,
+    });
+    const entry = (await s.store.get(s.record.id)).evidence.find((e) => e.kind === 'gate_response');
+    // (a) red when the principal is written as given (its extra key persisted in the run file);
+    //     (b) prints the recorded principal's keys — never a value.
+    expect(Object.keys((entry?.principal ?? {}) as object).sort()).toEqual(['id', 'kind']);
+  });
+
+  it.each([
+    ['an empty route', { route: '' }],
+    ['a principal that reads as none', { principal: { kind: 'made_up' } }],
+  ] as const)(
+    'correction 1 (C1): %s is refused with VALIDATION_OPTION_INVALID, and nothing is recorded',
+    async (_label, extra) => {
+      const s = await atGate();
+      const refused = await submitHumanResponse(s.store, s.def, {
+        runId: s.record.id,
+        gateId: s.gateId,
+        choice: 'approve',
+        ...extra,
+      } as never).catch((e: unknown) => e);
+      const code =
+        refused instanceof WorkflowError
+          ? refused.code
+          : (refused as { error_code?: string }).error_code;
+      const recorded = (await s.store.get(s.record.id)).evidence.filter(
+        (e) => e.kind === 'gate_response',
+      ).length;
+      // (a) red when the option is written as given; (b) prints the code and the answers recorded.
+      expect({ code, recorded }).toEqual({ code: 'VALIDATION_OPTION_INVALID', recorded: 0 });
+    },
+  );
+
   it('an unknown submitHumanResponse option is refused before any read; W’s four members are admitted (the closed list)', async () => {
     const s = await atGate();
     const refused = await submitHumanResponse(s.store, s.def, {
@@ -669,6 +732,59 @@ describe('#627 W — R25: the loader and the registry refuse what this version c
       },
       details: {},
       damagedReader: undefined,
+    });
+  });
+
+  it('after #759: storedFileFactsOf takes no newer copy’s facts; newerDefinitionFactsOf reads them (MA 3’s rebase note)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-w-627-wf-'));
+    await writeFile(
+      join(dir, 'later.json'),
+      JSON.stringify({
+        ...gated(),
+        id: 'later',
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+      }),
+    );
+    const err = (() => {
+      try {
+        new JsonWorkflowStore(dir).getSync('later');
+      } catch (e) {
+        return e as WorkflowError;
+      }
+      return undefined;
+    })()!;
+    // (a) red when the stored-file narrowing takes the `newer_definition` scope (its readers would
+    //     call a healthy newer copy damaged), or the newer reader misses it; (b) prints both readings.
+    expect({
+      storedFile: storedFileFactsOf(err),
+      newer: newerDefinitionFactsOf(err)?.schema_version,
+    }).toEqual({ storedFile: undefined, newer: CURRENT_WORKFLOW_SCHEMA_VERSION + 1 });
+  });
+
+  it('correction 1 (C3): listWithDiagnostics lists a newer copy unreadable, with W-r2’s reason, never readable', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-w-627-wf-'));
+    await writeFile(
+      join(dir, 'later.json'),
+      JSON.stringify({
+        ...gated(),
+        id: 'later',
+        schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+      }),
+    );
+    const { workflows, unreadable } = await new JsonWorkflowStore(dir).listWithDiagnostics();
+    // (a) red when the listing returns the newer copy as readable; (b) prints what each list holds.
+    expect({
+      readable: workflows.map((w) => w.id),
+      unreadable: unreadable.map((u) => [u.file, u.class, u.reason.split(' — ')[0]]),
+    }).toEqual({
+      readable: [],
+      unreadable: [
+        [
+          'later.json',
+          'newer',
+          `Workflow 'later' was registered by a later version of Realm (definition format ${CURRENT_WORKFLOW_SCHEMA_VERSION + 1}; this version reads up to ${CURRENT_WORKFLOW_SCHEMA_VERSION})`,
+        ],
+      ],
     });
   });
 

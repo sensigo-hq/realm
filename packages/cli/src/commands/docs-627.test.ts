@@ -261,6 +261,28 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
 });
 
 describe('#627 W — the other pages W changed', () => {
+  it('tools.md (correction 1, C4): poll_after_ms rides an await entry, the opening confirm_required reply included', async () => {
+    claim(
+      'docs/reference/mcp/tools.md',
+      'Whenever the reply carries an await entry — with `agent_action: "await"`, and on a `confirm_required` reply whose question this session cannot answer',
+    );
+    const s = await session('withheld');
+    const opened = JSON.parse(
+      (
+        (await s.client.callTool({
+          name: 'start_run',
+          arguments: { workflow_id: s.def.id, params: {} },
+        })) as { content: Array<{ text: string }> }
+      ).content[0]!.text,
+    ) as Record<string, unknown>;
+    // (a) red when the opening reply under withheld carries no pace, or is not confirm_required;
+    //     (b) prints the status and the pace's presence.
+    expect({ status: opened['status'], paced: typeof opened['poll_after_ms'] }).toEqual({
+      status: 'confirm_required',
+      paced: 'number',
+    });
+  });
+
   it('gates-and-trust.md, connect-an-mcp-client.md, human-gates.md, what-is-realm.md: who can answer follows the value', async () => {
     claim(
       'docs/concepts/gates-and-trust.md',

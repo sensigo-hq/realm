@@ -11,6 +11,7 @@ import {
   FailedAttemptStore,
   WorkflowError,
   createDefaultRegistry,
+  principalOf,
   validateTraceCapabilities,
   type Attributed,
   assertReleaseLine,
@@ -198,6 +199,14 @@ export function createRealmMcpServer(options?: RealmMcpServerOptions): McpServer
   });
   if (!answersJudged.ok) {
     throw new Error(gateAnswersLibraryRefusal(answersJudged.kind, answersJudged.raw));
+  }
+  // Correction 1 (C1, boundary-strict): the principal this door stamps is checked once, here — an
+  // embedder's malformed principal refuses the server, never every answer at its write.
+  if (
+    options?.principal !== undefined &&
+    principalOf({ principal: options.principal }) === undefined
+  ) {
+    throw new Error(INVALID_PRINCIPAL_OPTION);
   }
   const waitJudged = judgeFormWait({
     flag: options?.formWaitSecondsFlag,
@@ -423,6 +432,10 @@ function isRunDirectly(): boolean {
  * `--gate-answers withheld` would start `asked`, the agent keeping an answer tool in apps without
  * forms, with nothing said — so any argument refuses the start, with one line and exit code 1.
  */
+/** Correction 1 (C1): the library refusal of a `principal` option the total reader cannot read. */
+export const INVALID_PRINCIPAL_OPTION =
+  "createRealmMcpServer: the principal option is not a principal — expected { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' }, or a typed absence such as { absent: 'door_authenticates_no_principal' }. Refused when the server is built: every answer it records would name it. Fix the option.";
+
 export const REALM_MCP_TAKES_NO_FLAGS =
   "realm-mcp takes no flags: set REALM_MCP_GATE_ANSWERS in your MCP client's env block, or run `realm mcp --gate-answers <value>`.";
 

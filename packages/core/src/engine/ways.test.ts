@@ -1167,9 +1167,12 @@ describe('#729 PR-0 — the laws over curated run states', () => {
       // carries the `client_prompt` condition. No argument discharges it and admission does not
       // wait on it — the client discharges it outside Realm (`tag: 'client'`) — so `client`-tagged
       // conditions are filtered out of the compared set: then the door offers the agent exactly
-      // the ways (and the conditions) the composition offers. (a) red when the door adds any other
-      // condition, or the filter is dropped (the fallback respond's extra condition shows); (b)
-      // prints the state's name and each way's key with its conditions.
+      // the ways (and the conditions) the composition offers. That admission never waits on the
+      // condition holds by STRUCTURE, not by this cell: `admitWay` takes no door policy, so no
+      // core red can make it wait (correction 1, C5d). The red this cell runs: (a) the door adds
+      // a Realm-judged condition beside `client_prompt` (break c37), or the filter is dropped (the
+      // fallback respond's extra condition shows); (b) prints the state's name and each way's key
+      // with its conditions.
       const withConds = (w: WayOn): string =>
         `${keyOf(w)}|${JSON.stringify(
           w.conditions.filter(

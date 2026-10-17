@@ -17,7 +17,7 @@ import type {
   OutputSource,
   Principal,
 } from '../types/run-record.js';
-import { answerViaOf } from './answer-facts.js';
+import { answerViaOf, principalOf } from './answer-facts.js';
 import { isBareAutoStep as isBareAutoStepDef } from './output-source.js';
 import { boundRequestFacts } from './request-facts.js';
 import { isPastDeadline, overdueOf } from './instants.js';
@@ -5627,7 +5627,11 @@ type AnswerEntryFacts = Pick<
  * passed none). Both answer builds write these (the legacy one dies with #715's step (b)).
  */
 function answerEntryFactsOf(options: SubmitGateOptions): AnswerEntryFacts {
-  const principal: Principal = options.principal ?? { absent: 'principal_not_passed' };
+  // Correction 1 (C1): written through the total reader — only `{ kind, id? }` or a typed absence
+  // reaches the record, never a caller's object as given (admission refused one that reads as none).
+  const principal: Principal = (options.principal !== undefined
+    ? principalOf({ principal: options.principal })
+    : undefined) ?? { absent: 'principal_not_passed' };
   return {
     answer:
       options.route !== undefined

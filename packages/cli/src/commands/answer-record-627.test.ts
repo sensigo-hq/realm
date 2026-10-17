@@ -263,4 +263,13 @@ describe('#627 W — the `newer` readers on the CLI (MA 3’s W-r2 arms)', () =>
       stack: false,
     });
   }, 60_000);
+  it('`realm workflow list` names a newer copy by its class, never as readable (correction 1, C3)', async () => {
+    const h = await newerHome();
+    const r = h.realm(['workflow', 'list']);
+    // (a) red when the listing shows the newer copy as readable, or drops it with no sentence;
+    //     (b) prints the warning lines.
+    expect(r.err.split('\n').filter((l) => l.startsWith('⚠'))).toEqual([
+      '⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.',
+    ]);
+  }, 60_000);
 });

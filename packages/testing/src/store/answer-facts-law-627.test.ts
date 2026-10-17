@@ -76,4 +76,47 @@ describe('#627 W — EVIDENCE_KEEPS_ANSWER_FACTS', () => {
     // law's message.
     await expect(lawOf(new FillsIn()).run()).rejects.toThrow(/never fills in an answer fact/);
   });
+
+  it('correction 1 (C5b): REJECTS a store that invents driven_by on an entry written without it', async () => {
+    class InventsDriver extends InMemoryStore {
+      override update(record: RunRecord): Promise<RunRecord> {
+        return super.update({
+          ...record,
+          // Only where the entry was written without one: the declared entry round-trips intact,
+          // so only the law's fill-in check can catch this store.
+          evidence: record.evidence.map((entry) =>
+            entry.driven_by === undefined
+              ? {
+                  ...entry,
+                  driven_by: { by: 'invented-627', by_source: 'ambient', channel: 'respond' },
+                }
+              : entry,
+          ),
+        } as RunRecord);
+      }
+    }
+    // (a) red when the law stops checking the second entry for an invented driven_by; (b) prints
+    //     the law's message.
+    await expect(lawOf(new InventsDriver()).run()).rejects.toThrow(/never fills in an answer fact/);
+  });
+
+  it('correction 1 (C5c): REJECTS a store that drops principal only when it has a kind', async () => {
+    class DropsKindedPrincipal extends InMemoryStore {
+      override update(record: RunRecord): Promise<RunRecord> {
+        return super.update({
+          ...record,
+          evidence: record.evidence.map((entry) => {
+            const p = entry.principal as { kind?: unknown } | undefined;
+            if (p?.kind === undefined) return entry;
+            const kept = { ...entry };
+            delete kept.principal;
+            return kept;
+          }),
+        });
+      }
+    }
+    // (a) red when the law stops comparing the declared entry's principal (only the absent entry's
+    //     comparison would remain, and this store keeps that one); (b) prints the law's message.
+    await expect(lawOf(new DropsKindedPrincipal()).run()).rejects.toThrow('principal');
+  });
 });

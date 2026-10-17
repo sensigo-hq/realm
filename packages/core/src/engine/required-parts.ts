@@ -11,6 +11,7 @@ import {
 } from '../types/run-record-shape.js';
 import { callsHostDispatcher } from './output-source.js';
 import { PARTIES } from './ways.js';
+import { principalOf } from './answer-facts.js';
 import type { StepDefinition } from '../types/workflow-definition.js';
 import type { EngineEntry as Entry } from '../admission.js';
 import type {
@@ -36,7 +37,10 @@ type PartKind =
   | 'run'
   | 'output_source'
   | 'registry'
-  | 'party';
+  | 'party'
+  // #627 W (correction 1, C1): a principal the total reader reads, and a route that names one.
+  | 'principal'
+  | 'route';
 
 const EXPECTED: Record<PartKind, string> = {
   object: 'an object',
@@ -51,6 +55,9 @@ const EXPECTED: Record<PartKind, string> = {
   registry: 'an extension registry',
   // issue #729 (the Q3 unit): the party a door hands in with its call (`ExecuteStepOptions.party`).
   party: `one of ${PARTIES.join(', ')}`,
+  principal:
+    "a principal: { kind: 'api_key', id }, { kind: 'shared_token' } or a typed absence ({ absent })",
+  route: 'a non-empty string',
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -116,6 +123,10 @@ function holds(kind: PartKind, value: unknown): boolean {
       return isExtensionRegistry(value);
     case 'party':
       return (PARTIES as readonly unknown[]).includes(value);
+    case 'principal':
+      return principalOf({ principal: value } as never) !== undefined;
+    case 'route':
+      return typeof value === 'string' && value.length > 0;
   }
 }
 
@@ -234,9 +245,9 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('string', 'options', 'respondedBy'),
     typed('string', 'options', 'claimToken'),
     // #627 W (§5.8): the door's route, the form's evidence, the principal, the fallback's prompt.
-    typed('string', 'options', 'route'),
+    typed('route', 'options', 'route'),
     typed('object', 'options', 'shown'),
-    typed('object', 'options', 'principal'),
+    typed('principal', 'options', 'principal'),
     typed('boolean', 'options', 'clientPromptRequested'),
   ],
   abandonRun: [need('string', 'runId'), typed('string', 'reason')],
