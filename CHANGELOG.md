@@ -352,6 +352,18 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
 
 ---
 
+## [0.47.1] — 2026-10-17
+
+One security fix; nothing else changes.
+
+### Security
+
+- **`@sensigo/realm-cli`, `@sensigo/realm-mcp` and `@sensigo/realm` `<= 0.47.0`** — one advisory,
+  [GHSA-77ch-g3v5-8wxx](https://github.com/sensigo-hq/realm/security/advisories/GHSA-77ch-g3v5-8wxx).
+  Upgrade to 0.47.1; the advisory gives the details.
+
+---
+
 ## [0.47.0] — 2026-10-14
 
 Ten BREAKING changes; Realm is pre-1.0, so they ship in a minor, and each says how to upgrade
