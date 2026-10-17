@@ -145,8 +145,9 @@ function compileInner(source: object, onStrictLog?: (line: string) => void): Val
  * validator is reused by every later check with the same content. Each check clears the errors the
  * validator keeps right after its last read (`releaseErrors`), so a kept validator keeps no error
  * rows between checks. Any other schema is compiled fresh from the caller's object, as before. A
- * compile that throws is not cached. Internal: exported for the loader and the tests, never from
- * the package.
+ * schema with a `$ref` into another schema (such as the JSON-Schema meta-schema) whose target holds
+ * a `$ref` of its own is compiled fresh on every call, as before (`staysInsideItself`). A compile
+ * that throws is not cached. Internal: exported for the tests, never from the package.
  */
 export function compileCached(schema: JsonSchema): ValidateFunction {
   const cacheable = cacheableKey(schema);
@@ -160,6 +161,7 @@ export function compileCached(schema: JsonSchema): ValidateFunction {
   // The frozen copy: Ajv reads object-valued `enum`/`const` members at validate time and its error
   // rows alias them, so a kept validator must never see a caller change its schema.
   const validate = compileInner(deepFreeze(JSON.parse(cacheable.key)) as object);
+  if (!staysInsideItself(validate)) return validate;
   rememberCompiled(cacheable.key, validate, weightOf(cacheable.key, cacheable.nodes, validate));
   return validate;
 }
@@ -177,6 +179,7 @@ export function compileCapturing(
   const cacheable = cacheableKey(schema);
   if (cacheable === undefined) return compileInner(schema as object, onStrictLog);
   const validate = compileInner(deepFreeze(JSON.parse(cacheable.key)) as object, onStrictLog);
+  if (!staysInsideItself(validate)) return validate;
   rememberCompiled(cacheable.key, validate, weightOf(cacheable.key, cacheable.nodes, validate));
   return validate;
 }
@@ -256,9 +259,11 @@ function weightOf(key: string, nodes: number, validate: ValidateFunction): numbe
   return key.length + NODE_WEIGHT * nodes + code;
 }
 
-/** The DISTINCT compiled functions one validator keeps: itself and each separately compiled
+/** The DISTINCT compiled functions a KEPT validator holds: itself and each separately compiled
  *  reference target (`schemaEnv.root.refs[*].validate`). ONE list, read by the weight and by
- *  `releaseErrors`, so what is weighed and what is cleared cannot drift apart. */
+ *  `releaseErrors`, so what is weighed and what is cleared cannot drift apart. It is complete only
+ *  for a validator whose references stay inside its own schema (`staysInsideItself`), which is the
+ *  only kind the cache keeps. */
 function keptFunctions(validate: ValidateFunction): Set<ValidateFunction> {
   const functions = new Set<ValidateFunction>([validate]);
   for (const ref of Object.values(validate.schemaEnv.root.refs)) {
@@ -268,6 +273,24 @@ function keptFunctions(validate: ValidateFunction): Set<ValidateFunction> {
     }
   }
   return functions;
+}
+
+/**
+ * Issue #560 — whether every reference target this validator compiled as its own function belongs
+ * to its own schema. A `$ref` into another schema (such as the JSON-Schema meta-schema) whose
+ * target holds a `$ref` of its own is compiled as a function of THAT schema's root, outside the
+ * list `keptFunctions` reads, so the weight and the clearing would miss it: such a validator is
+ * never kept. An inlined target is a plain schema object with no `.root`, and a boolean target is
+ * not an object — neither leaves the schema.
+ */
+function staysInsideItself(validate: ValidateFunction): boolean {
+  const root = validate.schemaEnv.root;
+  for (const ref of Object.values(root.refs)) {
+    if (ref === null || typeof ref !== 'object') continue;
+    const targetRoot = (ref as { root?: unknown }).root;
+    if (targetRoot !== undefined && targetRoot !== root) return false;
+  }
+  return true;
 }
 
 /**

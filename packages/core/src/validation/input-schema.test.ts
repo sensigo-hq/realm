@@ -855,13 +855,21 @@ describe('issue #560 — the compiled-validator cache', () => {
     const s: JsonSchema = { type: 'object', description: 'c560-11' };
     const a = compileSchema(s);
     const b = compileSchema(s);
-    // (a) red when `compileSchema` is routed through the cache (`fresh`, `schemaIsCallers`); (b)
-    //     prints three booleans.
+    // (a) red when `compileSchema` is routed through the cache (`fresh`, `schemaIsCallers`), or
+    //     compiles fresh from the caller's object and also writes the cache
+    //     (`cachedIsNeitherCallers`: the second call overwrites the entry with `b`, so `!== a`
+    //     alone would stay green); (b) prints four booleans.
     expect({
       fresh: a !== b,
       schemaIsCallers: a.schema === s,
       cachedIsShared: compileCached(s) === compileCached(s),
-    }).toEqual({ fresh: true, schemaIsCallers: true, cachedIsShared: true });
+      cachedIsNeitherCallers: compileCached(s) !== a && compileCached(s) !== b,
+    }).toEqual({
+      fresh: true,
+      schemaIsCallers: true,
+      cachedIsShared: true,
+      cachedIsNeitherCallers: true,
+    });
   });
 
   it('12. one inner compile: every entry calls compileInner, and `.compile(` appears only in compileInner and describeSchemaFailure', () => {
@@ -894,6 +902,56 @@ describe('issue #560 — the compiled-validator cache', () => {
       inDescribe: 1,
       inFile: 2,
     });
+  });
+
+  it('13. a schema whose reference leaves it (into the JSON-Schema meta-schema) is never kept, so a refused check keeps nothing', () => {
+    const s = { $ref: 'http://json-schema.org/draft-07/schema#' } as unknown as JsonSchema;
+    const freshEachCall = compileCached(s) !== compileCached(s);
+    const captured = compileCapturing(s, () => {});
+    const freshAfterCapture = compileCached(s) !== captured;
+    let refused = false;
+    try {
+      validateRunParams({ type: 5 }, s, 'w');
+    } catch {
+      refused = true;
+    }
+    const freshAfterRefusal = compileCached(s) !== compileCached(s);
+    // (a) red when the predicate is removed from both entries (`freshEachCall`,
+    //     `freshAfterRefusal`), or from `compileCapturing` only (`freshAfterCapture`); (b) prints
+    //     four booleans.
+    expect({ freshEachCall, freshAfterCapture, refused, freshAfterRefusal }).toEqual({
+      freshEachCall: true,
+      freshAfterCapture: true,
+      refused: true,
+      freshAfterRefusal: true,
+    });
+  });
+
+  it('14. a PASSING check clears too: a failed anyOf branch leaves no rows on the kept validator or its reference target', () => {
+    const s = {
+      definitions: {
+        a: { type: 'object', required: ['z'], properties: { next: { $ref: '#/definitions/a' } } },
+      },
+      anyOf: [{ $ref: '#/definitions/a' }, { type: 'object' }],
+      description: 'c560-14',
+    } as unknown as JsonSchema;
+    const kept = compileCached(s);
+    let passed = true;
+    try {
+      validateInputSchema({}, s, 's');
+    } catch {
+      passed = false;
+    }
+    const subs = subValidators(kept);
+    // (a) red when `releaseErrors` runs only on a refused check (the passing call leaves 1 row on
+    //     `a`, which Ajv compiles apart); (b) prints booleans and the count of reference targets.
+    expect({
+      passed,
+      hit: compileCached(s) === kept,
+      subs: subs.length,
+      rootCleared: kept.errors === null,
+      subsCleared: subs.every((f) => f.errors === null),
+    }).toEqual({ passed: true, hit: true, subs: 1, rootCleared: true, subsCleared: true });
   });
 });
 
@@ -1156,13 +1214,29 @@ describe('a schema whose root carries a truthy $async is refused', () => {
     const one = asyncObject(true);
     const first = caught(() => compileSchema(one));
     const second = caught(() => compileSchema(one));
-    // (a) red when a stored validator is returned before the check (the second call passes);
-    //     (b) prints whether each was refused and whether they are one object.
+    // (a) red when the check is removed (neither call is refused) or one refusal is kept and
+    //     thrown again (`sameError`); `compileSchema` keeps nothing, so the cached path's own
+    //     twice-over refusal is the next cell; (b) prints whether each was refused and whether they
+    //     are one object.
     expect({
       first: isAsyncSchemaRefusal(first),
       second: isAsyncSchemaRefusal(second),
       sameError: first === second,
     }).toEqual({ first: true, second: true, sameError: false });
+  });
+
+  it('1c-cached. every compile path refuses it, every time: compileCached twice, compileCapturing, compileCached again', () => {
+    const s = { $async: true, type: 'object', description: 'c560-async' } as unknown as JsonSchema;
+    const refusals = [
+      caught(() => compileCached(s)),
+      caught(() => compileCached(s)),
+      caught(() => compileCapturing(s, () => {})),
+      caught(() => compileCached(s)),
+    ].map((err) => isAsyncSchemaRefusal(err));
+    // (a) red when the check sits in `compileSchema` only (the cached entries refuse nothing), or
+    //     after `rememberCompiled` (the first call is refused, the later ones return the kept
+    //     validator); (b) prints one boolean per call.
+    expect(refusals).toEqual([true, true, true, true]);
   });
 
   it('1d. a non-empty nested $async still throws the validator’s own compile error, not the refusal', () => {

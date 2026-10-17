@@ -357,10 +357,12 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   most 256 schemas, weighed by their text, their values and the compiled code they keep, up to
   about 30 MB at its bound in the heaviest case measured; a schema heavier than the whole bound is
   compiled each time and not kept; a kept schema keeps no error rows between checks. A schema
-  holding a date, an infinite number or binary data is compiled each time, as before. On one
-  machine, `realm run list --stuck` over 50 stuck runs took 3.96–4.68 s before this change and
-  0.68–0.92 s after. The exported `compileSchema` is unchanged: it compiles a fresh validator on
-  every call.
+  holding a date, an infinite number or binary data is compiled each time, as before. A schema
+  with a `$ref` into another schema (such as the JSON-Schema meta-schema) whose target holds a
+  `$ref` of its own is compiled fresh on every call, as before. On one machine, in one session with
+  the two builds run in turn, `realm run list --stuck` over 50 stuck runs took 2.2–2.8 s before
+  this change and 0.6–0.7 s after. The exported `compileSchema` is unchanged: it compiles a fresh
+  validator on every call.
 
 ---
 
