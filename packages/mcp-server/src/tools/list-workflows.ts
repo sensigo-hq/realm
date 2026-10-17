@@ -16,7 +16,8 @@ export interface HandleStores {
 export interface UnreadableWorkflowEntry {
   /** The registry file (its basename), or the registry directory for `registry_broken`. */
   file: string;
-  /** `unreadable` · `not_a_file` · `empty` · `parse` · `registry_broken` (never an error code). */
+  /** `unreadable` · `not_a_file` · `empty` · `parse` · `registry_broken` · `newer` (a later version
+   *  of Realm registered it) · `legacy` (an older version did) — never an error code. */
   class: string;
   /** Present only for the OS-error classes — never fabricated. */
   errno?: string;
@@ -99,7 +100,9 @@ export async function handleListWorkflows(stores?: HandleStores): Promise<ListWo
     hint:
       entries.length === 0
         ? HEALTHY_HINT
-        : `${count} — 'unreadable' names each file, the reason and the repair (an operator's act). Do not create a workflow to replace one listed there until an operator has looked: the entry may be a registered workflow that only needs its file repaired. Call get_workflow_protocol with a workflow_id before calling start_run.`,
+        : // Correction 2 (3.5): by class — a newer or a legacy copy carries no `repair`; its reason
+          // names the way out.
+          `${count} — 'unreadable' names each file and the reason, with the repair where one applies (an operator's act). Do not create a workflow to replace one listed there until an operator has looked: the entry may be a registered workflow that only needs its file repaired, or one an older or a later version of Realm registered, whose reason names the way out. Call get_workflow_protocol with a workflow_id before calling start_run.`,
   };
 }
 

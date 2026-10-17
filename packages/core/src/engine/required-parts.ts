@@ -3,7 +3,7 @@
 // table (the `ENTRY_CALLERS` precedent), checked before anything is read or written. Content is
 // tier 2's (a string is never checked for emptiness here); this row checks presence and type only.
 import { WorkflowError } from '../types/workflow-error.js';
-import { OUTPUT_SOURCES } from '../types/run-record.js';
+import { OUTPUT_SOURCES, PRINCIPAL_ABSENCES } from '../types/run-record.js';
 import {
   runRecordFieldProblems,
   runRecordProblemClause,
@@ -55,8 +55,8 @@ const EXPECTED: Record<PartKind, string> = {
   registry: 'an extension registry',
   // issue #729 (the Q3 unit): the party a door hands in with its call (`ExecuteStepOptions.party`).
   party: `one of ${PARTIES.join(', ')}`,
-  principal:
-    "a principal: { kind: 'api_key', id }, { kind: 'shared_token' } or a typed absence ({ absent })",
+  // Correction 2 (3.6): the absences by name, from the record's own closed list.
+  principal: `a principal: { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' } or { absent: <one of: ${PRINCIPAL_ABSENCES.join(', ')}> }`,
   route: 'a non-empty string',
 };
 

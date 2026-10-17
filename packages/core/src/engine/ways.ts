@@ -170,7 +170,9 @@ export type AbandonWay = Base<'abandon'> & { run_id: string };
 
 /**
  * Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry. `path` only
- * when the registry knows the file (T-21: the unreadable, invalid and legacy copies carry it).
+ * when the registry knows the file (T-21: the unreadable, invalid, legacy and newer copies carry
+ * it): the registered COPY that cannot be used — never a file to register (correction 2, 3.2: each
+ * door words it as a copy to repair).
  */
 export type RegisterWay = Base<'register'> & {
   workflow_id: string;
@@ -2056,7 +2058,9 @@ function judgeRespond(
  * MCP door re-judges its own code, `presentDoorVerdict`), `question_due` (`[advance]`) or
  * `definition_absent`; a settled gate → `question_settled` (the progress ways, else
  * `already_settled`); else → `gate_not_open`, led on by the open gate's listed `present` entry
- * (`no_form_here` → `[present <the open gate>]`, `question_due` → its remedy), else `[inspect]`. `question_past_deadline` is WRITE-tagged and `present` performs no settle, so it is
+ * only when it is due (`question_due` → its remedy), else `[inspect]` (correction 2, 3.4: core's
+ * door never offers `present`; the MCP door shows the open gate's offered `present` in its own
+ * listing). `question_past_deadline` is WRITE-tagged and `present` performs no settle, so it is
  * none of `present`'s codes.
  */
 function judgePresent(
@@ -2099,9 +2103,10 @@ function judgePresent(
     };
   }
   const inspect = composed.ways.filter((w) => w.verb === 'inspect');
-  // Correction 1 (C2): the mirror of `judgeRespond` — the OPEN gate's listed `present` entry leads on:
-  // `no_form_here` → [present] (the door re-judges it), `question_due` → that entry's remedy, else
-  // [inspect].
+  // Correction 1 (C2), correction 2 (3.4, MA 3's option (a)): the OPEN gate's listed `present` entry
+  // leads on only when it is due (`question_due` → its remedy, the advance); else [inspect]. Core's
+  // door never offers `present`; the MCP door shows the open gate's offered `present` in its own
+  // listing.
   const open = gate !== undefined ? listed(composed, 'present') : undefined;
   return {
     verb: 'present',
@@ -2111,12 +2116,7 @@ function judgePresent(
       gate_id: gateId,
       ...(gate !== undefined ? { open_gate: { gate_id: gate.gate_id, step: gate.step_name } } : {}),
     },
-    remedy:
-      gate !== undefined && open?.code === 'no_form_here'
-        ? [presentWayOfGate(run.id, gate.gate_id)]
-        : open?.code === 'question_due' && open.remedy.length > 0
-          ? open.remedy
-          : inspect,
+    remedy: open?.code === 'question_due' && open.remedy.length > 0 ? open.remedy : inspect,
   };
 }
 

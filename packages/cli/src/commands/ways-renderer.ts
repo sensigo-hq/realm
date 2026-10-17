@@ -64,8 +64,12 @@ export const CLI_COMMANDS: WayRenderer<string, CliHost> = {
   advance: (way) => `realm run advance ${way.run_id}`,
   inspect: (way) => `realm run inspect ${way.run_id}`,
   abandon: (way) => `realm run abandon ${way.run_id}`,
+  // Correction 2 (3.2): `path` is the registered COPY that cannot be used — `register` takes a source,
+  // so the command for it reads why the copy cannot be used and its way out.
   register: (way) =>
-    `realm workflow register ${way.path !== undefined ? shellWord(way.path) : '<file>'}`,
+    way.path !== undefined
+      ? `realm workflow validate --registered ${shellWord(way.workflow_id)}`
+      : 'realm workflow register <file>',
   // #627 W: no realm command shows a question as a chat app's form (see above).
   present: () => null,
 };

@@ -1334,7 +1334,8 @@ describe('#627 W correction 2 — the form path', () => {
     box.s = s;
     const { run } = await s.runStore.create({ workflowId: def.id, workflowVersion: 1, params: {} });
     box.runId = run.id;
-    box.token = (await s.runStore.claimStep(run.id, 'aborter', def)).claims?.['aborter']?.token;
+    const token = (await s.runStore.claimStep(run.id, 'aborter', def)).claims?.['aborter']?.token;
+    if (token !== undefined) box.token = token;
     await advanceRun(s.runStore, def, { runId: run.id });
     const gateId = (await s.runStore.get(run.id)).pending_gate!.gate_id;
     await s.call('present_question', { run_id: run.id, gate_id: gateId });
@@ -1485,6 +1486,28 @@ describe('#627 W correction 2 — the form path', () => {
     expect(hintOf(reply)).toBe(
       "Not recorded: the answer from the form could not be written. The question on step 'q' is still waiting. To show it again, call present_question (3 left in this session).",
     );
+  });
+
+  it('3.4: present_question for another gate while G is open — under asked with forms the reply offers present_question for G; under withheld there is none', async () => {
+    const offerFor = async (gateAnswers?: 'withheld') => {
+      const s = await session(gateAnswers !== undefined ? { gateAnswers } : {});
+      const { runId, gateId } = await openedElsewhere(s);
+      const reply = await s.call('present_question', { run_id: runId, gate_id: 'not-this-gate' });
+      const offered = (
+        (reply['next_actions'] as
+          | Array<{ instruction?: { tool?: string; params?: { gate_id?: string } } | null }>
+          | undefined) ?? []
+      )
+        .filter((a) => a.instruction?.tool === 'present_question')
+        .map((a) => a.instruction?.params?.gate_id === gateId);
+      return offered;
+    };
+    // (a) red when the door's own listing stops offering `present` for the open gate; (b) prints,
+    //     per door, the present_question entries offered (true when for G).
+    expect({ askedForms: await offerFor(), withheld: await offerFor('withheld') }).toEqual({
+      askedForms: [true],
+      withheld: [],
+    });
   });
 
   it('2.1: a prompt-only gate — a later form (present_question, another session than the opening one) shows the step’s prompt', async () => {

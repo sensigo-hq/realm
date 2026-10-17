@@ -34,6 +34,7 @@ import {
   type GateInfo,
   type Narrowed,
   type ProgressVerb,
+  type RegisterWay,
   type RenderedList,
   type RespondWay,
   type Source,
@@ -431,16 +432,31 @@ function renderWay(way: WayOn, basis: Basis | undefined, host: McpHost): McpNext
 }
 
 /** The words of an elsewhere entry: the operator's way and why this door cannot enact it. */
-function elsewhereWords(entry: Unavailable): string {
+function elsewhereWords(entry: Unavailable, host: McpHost): string {
   const way = entry.remedy[0];
-  if (way?.verb === 'register') {
-    return `An operator registers workflow '${way.workflow_id}' again${way.path !== undefined ? ` from ${way.path}` : ''}, outside this conversation.`;
-  }
+  if (way?.verb === 'register') return registerWords(way, host);
   if (way?.verb === 'run_step') {
     // PR0-CONTRACT Amendment 14 (Q12): a fact, never a schedule.
     return `'${way.step}' takes its input from an operator, checked against its input_schema; no realm command supplies it.`;
   }
   return `An operator can take this way (${entry.verb}), outside this conversation.`;
+}
+
+/**
+ * Correction 2 (3.1, 3.2): a `register` way's words — the operator's repair, outside this
+ * conversation. A copy that cannot be used is named as such, never as a file to register from. On a
+ * door that hands questions to the person, the question then waits for an answer outside this
+ * conversation too.
+ */
+function registerWords(way: RegisterWay, host: McpHost): string {
+  const repair =
+    way.path !== undefined
+      ? `Workflow '${way.workflow_id}''s registered copy (${way.path}) cannot be used; an operator repairs it, outside this conversation.`
+      : `An operator registers workflow '${way.workflow_id}' again, outside this conversation.`;
+  if (!doorWithholdsAnswers(mcpDoorPolicy(host))) return repair;
+  return way.path !== undefined
+    ? `${repair} Once the copy is repaired, the question waits for an answer outside this conversation.`
+    : `${repair} Once it is registered, the question waits for an answer outside this conversation.`;
 }
 
 // ─── The lists a reply renders ──────────────────────────────────────────────────────────────────
@@ -730,6 +746,8 @@ function remedyWords(remedy: readonly WayOn[], replyRunId: string, host: McpHost
           return ` Call advance_run with run_id '${way.run_id}'.`;
         case 'inspect':
           return way.run_id === replyRunId ? '' : ` Read run '${way.run_id}' with get_run_state.`;
+        case 'register':
+          return ` ${registerWords(way, host)}`;
         default:
           return '';
       }
@@ -883,7 +901,7 @@ export function renderReply(reply: EngineReply, host: McpHost): RenderedReply {
     instruction: null,
     for: 'operator',
     reason: 'door_cannot_enact',
-    human_readable: elsewhereWords(u),
+    human_readable: elsewhereWords(u, host),
   }));
   const ended = reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase);
   const rendered = renderedListOf(reply, narrowed, progress);
@@ -1002,7 +1020,7 @@ function personBlockOf(
       const command = route.render(way, basis);
       return command === null
         ? undefined
-        : `${elsewhereWords(u)} The operator's command: ${command}`;
+        : `${elsewhereWords(u, host)} The operator's command: ${command}`;
     })
     .filter((line): line is string => line !== undefined);
   return lines.length > 0 ? lines.join('\n') : undefined;
@@ -1081,7 +1099,7 @@ export function renderWaysOf(
     instruction: null,
     for: 'operator',
     reason: 'door_cannot_enact',
-    human_readable: elsewhereWords(u),
+    human_readable: elsewhereWords(u, host),
   }));
   const rendered = renderedListOf(reply, narrowed, progress);
   const until = untilOf(narrowed);

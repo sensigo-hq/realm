@@ -167,6 +167,15 @@ export const workflowListCommand = new Command('list')
               `⚠ ${String(n)} files in the registry were registered by a later version of Realm: ${names}`,
           },
           {
+            // #627 W correction 2 (8.6 (c)): a copy an older Realm registered — every run path
+            // refuses it, so it is never in the table.
+            cls: 'legacy',
+            one: (names) =>
+              `⚠ 1 file in the registry was registered by an older version of Realm: ${names}`,
+            many: (n, names) =>
+              `⚠ ${String(n)} files in the registry were registered by an older version of Realm: ${names}`,
+          },
+          {
             // A directory entry that vanished between readdir and probe — a race, not a state an
             // operator can act on, but it must never print as a parse failure.
             cls: 'missing',

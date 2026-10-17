@@ -10,7 +10,7 @@
 // that turns it red and (b) what it prints on failure: lines and record fields — never a token.
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,8 @@ import {
   loadWorkflowFromString,
   type AnswerView,
 } from '@sensigo/realm';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { answererPhrase, renderAnswerLine } from '../lib/holder-render.js';
 import { answererClause } from './respond.js';
 
@@ -349,4 +351,79 @@ describe('#627 W — the `newer` readers on the CLI (MA 3’s W-r2 arms)', () =>
       '⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.',
     ]);
   }, 60_000);
+});
+
+describe('#627 W correction 2 (3.2) — the repair command inspect prints for a damaged copy, executed', () => {
+  const damage = {
+    unreadable: (copy: string) => {
+      writeFileSync(copy, readFileSync(copy, 'utf8'));
+      chmodSync(copy, 0o000);
+    },
+    'invalid JSON': (copy: string) => writeFileSync(copy, '{ not json'),
+    legacy: (copy: string) => {
+      const parsed = JSON.parse(readFileSync(copy, 'utf8')) as Record<string, unknown>;
+      delete parsed['schema_version'];
+      writeFileSync(copy, JSON.stringify(parsed));
+    },
+    newer: (copy: string) => {
+      const parsed = JSON.parse(readFileSync(copy, 'utf8')) as Record<string, unknown>;
+      writeFileSync(
+        copy,
+        JSON.stringify({ ...parsed, schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1 }),
+      );
+    },
+  } as const;
+  const ROWS = (Object.keys(damage) as Array<keyof typeof damage>).filter(
+    // A root login reads a chmod-000 file: the unreadable row is skipped there.
+    (k) => !(k === 'unreadable' && process.getuid?.() === 0),
+  );
+  it.each(ROWS)(
+    '%s: the operator command realm mcp prints for the repair exits 1, names the copy and a way out, never "Failed to read workflow file"',
+    async (cause) => {
+      const h = await home();
+      const copy = join(h.dir, '.realm', 'workflows', 'rec627.json');
+      damage[cause](copy);
+      // The command is printed by the MCP door's operator route: get_run_state's block addressed to
+      // the person (its second content item, audience user) ends "The operator's command: <command>".
+      const client = new Client({ name: 'rec-627', version: '0' });
+      await client.connect(
+        new StdioClientTransport({
+          command: process.execPath,
+          args: [CLI, 'mcp'],
+          env: { PATH: process.env['PATH'] ?? '', HOME: h.dir },
+          stderr: 'pipe',
+        }),
+      );
+      let person: string;
+      try {
+        const r = (await client.callTool({
+          name: 'get_run_state',
+          arguments: { run_id: h.runId },
+        })) as { content: Array<{ text: string; annotations?: { audience?: string[] } }> };
+        person = r.content.find((c) => c.annotations?.audience?.includes('user'))?.text ?? '';
+      } finally {
+        await client.close();
+      }
+      const printed = /The operator's command: (.+)$/m.exec(person)?.[1];
+      const ran = printed !== undefined ? h.realm(printed.split(' ').slice(1)) : undefined;
+      const said = `${ran?.out ?? ''}${ran?.err ?? ''}`;
+      // (a) red when the printed command registers the COPY (`realm workflow register <copy>`, which
+      //     fails: register takes a source), or the command does not say what is wrong; (b) prints the
+      //     command, its exit, and whether it names the copy, a way out, and the generic failure.
+      expect({
+        printed,
+        code: ran?.code,
+        namesCopy: said.includes(copy) || said.includes("'rec627'"),
+        wayOut: /To repair:|Re-register it|registered by a later version of Realm/.test(said),
+        generic: said.includes('Failed to read workflow file'),
+      }).toEqual({
+        printed: 'realm workflow validate --registered rec627',
+        code: 1,
+        namesCopy: true,
+        wayOut: true,
+        generic: false,
+      });
+    },
+    60_000,
+  );
 });

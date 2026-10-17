@@ -146,7 +146,7 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it('K8 a LEGACY record with no name and no version is LISTED with `-` cells — never a crash (main died at `.length`; review fold C10)', async () => {
+  it('K8 a LEGACY record with no name and no version is never a crash (main died at `.length`; review fold C10) — named on the older-version ⚠ line, never a table row (correction 2, 8.6 (c))', async () => {
     writeFileSync(join(wfDir, 'wleg.json'), '{"id":"wleg"}', 'utf8');
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
@@ -155,9 +155,14 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     await workflowListCommand.parseAsync([], { from: 'user' });
 
     const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    const row = out.split('\n').find((l: string) => l.startsWith('wleg')) ?? '';
-    expect(row).toMatch(/^wleg\s+-\s+-\s+-\s+/);
-    expect(out).toContain('1 workflow registered.');
+    // Correction 2 (8.6 (c)): every run path refuses a legacy copy, so it is never in the table.
+    expect({
+      row: out.split('\n').some((l: string) => l.startsWith('wleg')),
+      footer: out.includes('0 workflows registered; 1 entry in the registry could not be read.'),
+      warned: stderr().includes(
+        '⚠ 1 file in the registry was registered by an older version of Realm: wleg.json',
+      ),
+    }).toEqual({ row: false, footer: true, warned: true });
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

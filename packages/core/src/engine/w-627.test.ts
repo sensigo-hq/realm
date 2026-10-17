@@ -345,7 +345,7 @@ describe('#627 W — present: offered only on asked with forms, re-judged on the
     expect('ok' in a ? 'ok' : a.code).toBe('no_form_here');
   });
 
-  it('each snapshot code with its Amendment-15 act: settled → the progress ways; due → [advance]; ended → no_remedy; another gate → [present it]; none open → [inspect]', async () => {
+  it('each snapshot code with its Amendment-15 act: settled → the progress ways; due → [advance]; ended → no_remedy; another gate, the open one not due → [inspect]; none open → [inspect]', async () => {
     // settled: the question was answered; the run goes on (its agent step is offered).
     const settled = await atGate();
     await submitHumanResponse(settled.store, settled.def, {
@@ -396,7 +396,9 @@ describe('#627 W — present: offered only on asked with forms, re-judged on the
       settled: ['question_settled', ['run_step'], undefined],
       due: ['question_due', ['advance'], undefined],
       ended: ['run_ended', [], 'operator_command_untyped'],
-      other: ['gate_not_open', ['present'], undefined],
+      // Correction 2 (3.4): core's door never offers `present` — another gate leads on by [inspect]
+      // unless the open one is due (the C2 cell below); the MCP door shows its own `present`.
+      other: ['gate_not_open', ['inspect'], undefined],
       none: ['gate_not_open', ['inspect'], undefined],
     });
   });
@@ -581,11 +583,16 @@ describe('#627 W — each answer records how it arrived', () => {
   });
 
   it.each([
-    ['an empty route', { route: '' }],
-    ['a principal that reads as none', { principal: { kind: 'made_up' } }],
+    ['an empty route', { route: '' }, 'options.route must be a non-empty string'],
+    [
+      'a principal that reads as none',
+      { principal: { kind: 'made_up' } },
+      // Correction 2 (3.6): the absences by name.
+      "options.principal must be a principal: { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' } or { absent: <one of: door_authentication_disabled, principal_not_passed, door_authenticates_no_principal, not_a_server_door> }",
+    ],
   ] as const)(
-    'correction 1 (C1): %s is refused with VALIDATION_OPTION_INVALID, and nothing is recorded',
-    async (_label, extra) => {
+    'correction 1 (C1): %s is refused with VALIDATION_OPTION_INVALID, and nothing is recorded; the words name what is expected (correction 2, 3.6)',
+    async (_label, extra, words) => {
       const s = await atGate();
       const refused = await submitHumanResponse(s.store, s.def, {
         runId: s.record.id,
@@ -600,8 +607,13 @@ describe('#627 W — each answer records how it arrived', () => {
       const recorded = (await s.store.get(s.record.id)).evidence.filter(
         (e) => e.kind === 'gate_response',
       ).length;
-      // (a) red when the option is written as given; (b) prints the code and the answers recorded.
-      expect({ code, recorded }).toEqual({ code: 'VALIDATION_OPTION_INVALID', recorded: 0 });
+      // (a) red when the option is written as given, or the refusal's words change; (b) prints the
+      //     code, the answers recorded and whether the message holds the words.
+      expect({
+        code,
+        recorded,
+        words: refused instanceof Error && refused.message.includes(words),
+      }).toEqual({ code: 'VALIDATION_OPTION_INVALID', recorded: 0, words: true });
     },
   );
 
@@ -763,6 +775,54 @@ describe('#627 W — R25: the loader and the registry refuse what this version c
     }).toEqual({ storedFile: undefined, newer: CURRENT_WORKFLOW_SCHEMA_VERSION + 1 });
   });
 
+  it('correction 2 (3.7, 8.6 (c)(d)): one reading of a copy at both sites — getSync’s error and the listing’s class agree for every shape', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-w-627-shapes-'));
+    const copies: Record<string, unknown> = {
+      'a string 99': { ...gated(), id: 'v99', schema_version: '99' },
+      'a string abc': { ...gated(), id: 'vabc', schema_version: 'abc' },
+      'an empty object': {},
+      'an object with no id': { a: 1 },
+      'no schema_version (legacy)': { ...gated(), id: 'old' },
+    };
+    const files = Object.keys(copies).map((_, i) => `c${i}`);
+    for (const [i, value] of Object.values(copies).entries()) {
+      await writeFile(join(dir, `${files[i]}.json`), JSON.stringify(value));
+    }
+    const store = new JsonWorkflowStore(dir);
+    const { unreadable } = await store.listWithDiagnostics();
+    const classOf = (file: string) => unreadable.find((u) => u.file === `${file}.json`)?.class;
+    const codeOf = (file: string) => {
+      try {
+        store.getSync(file);
+        return 'read';
+      } catch (e) {
+        return e instanceof WorkflowError ? e.code : 'thrown';
+      }
+    };
+    const rows = Object.keys(copies).map((label, i) => [
+      label,
+      codeOf(files[i]!),
+      classOf(files[i]!),
+    ]);
+    // (a) red when getSync compares schema_version untyped ("99" read as newer, "abc" as current),
+    //     a copy with no id reads as legacy, or the listing keeps a legacy copy readable;
+    //     (b) prints, per copy, getSync's code and the listing's class.
+    expect(rows).toEqual([
+      ['a string 99', 'RESOURCE_FORMAT_INVALID', 'parse'],
+      ['a string abc', 'RESOURCE_FORMAT_INVALID', 'parse'],
+      ['an empty object', 'RESOURCE_FORMAT_INVALID', 'parse'],
+      ['an object with no id', 'RESOURCE_FORMAT_INVALID', 'parse'],
+      ['no schema_version (legacy)', 'STATE_LEGACY_FORMAT', 'legacy'],
+    ]);
+    // The words name what the copy lacks.
+    const reasonOf = (file: string) =>
+      unreadable.find((u) => u.file === `${file}.json`)?.reason ?? '';
+    expect({
+      version: reasonOf(files[0]!).includes('its schema_version is not a number'),
+      noId: reasonOf(files[2]!).includes('it has no string id'),
+    }).toEqual({ version: true, noId: true });
+  });
+
   it('correction 1 (C3): listWithDiagnostics lists a newer copy unreadable, with W-r2’s reason, never readable', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'realm-w-627-wf-'));
     await writeFile(
@@ -886,7 +946,7 @@ describe('#627 W — W-l1: a load note for author text that names an answer tool
     }).toEqual({ respond: [], ordinary: [] });
   });
 
-  it('correction 1 (F3): no shipped example’s author text names an answer tool (example 03 told the agent to call submit_human_response)', () => {
+  it('correction 1 (F3): no gated step’s instructions and no protocol.rules of a shipped example names an answer tool (example 03 told the agent to call submit_human_response)', () => {
     const examples = fileURLToPath(new URL('../../../../examples/', import.meta.url));
     const found = readdirSync(examples, { withFileTypes: true })
       .filter((d) => d.isDirectory())
@@ -1138,5 +1198,81 @@ describe('#627 W correction 2 (2.1) — a re-read gate shows its step’s prompt
       hint: `Run is already paused at gate '${again.gate?.gate_id}'.`,
       display: 'Ship the release to production?',
     });
+  });
+});
+
+// ─── correction 2 (3.3): B1's route reaches every branch of the answer's reply ──────────────────
+
+describe('#627 W correction 2 (3.3) — a form’s answer gets no token sentence on any branch', () => {
+  /** A gate whose expiry settles its default, `approve` (the late answer `ok` only with that choice). */
+  const settlesDefault = (): WorkflowDefinition => {
+    const def = gated();
+    return {
+      ...def,
+      id: 'g-default',
+      steps: {
+        ...def.steps,
+        q: {
+          ...def.steps['q']!,
+          gate: {
+            choices: ['approve', 'reject'],
+            timeout_seconds: 60,
+            on_expiry: 'settle_default',
+            default_choice: 'approve',
+          },
+        },
+      },
+    } as WorkflowDefinition;
+  };
+  const form = (s: Awaited<ReturnType<typeof atGate>>, store: JsonFileStore = s.store) =>
+    submitHumanResponse(store, s.def, {
+      runId: s.record.id,
+      gateId: s.gateId,
+      choice: 'approve',
+      route: 'mcp_form',
+    });
+  it.each([
+    ['recorded', async () => form(await atGate())],
+    [
+      'the same choice again (already settled)',
+      async () => {
+        const s = await atGate();
+        await form(s);
+        return form(s);
+      },
+    ],
+    [
+      'past expires_at (its settle_default enacted by this answer)',
+      async () => {
+        const s = await atGate(settlesDefault());
+        const record = await s.store.get(s.record.id);
+        await s.store.update({
+          ...record,
+          pending_gate: {
+            ...record.pending_gate!,
+            expires_at: new Date(Date.now() - 60_000).toISOString(),
+          },
+        });
+        return form(s);
+      },
+    ],
+    [
+      'a store without settleStep (the legacy write)',
+      async () => {
+        const s = await atGate();
+        const legacy = Object.create(s.store) as JsonFileStore;
+        Object.defineProperty(legacy, 'settleStep', { value: undefined });
+        return form(s, legacy);
+      },
+    ],
+  ] as const)('%s: no warning names claim_token', async (_branch, answer) => {
+    const reply = await answer();
+    // (a) red when that branch's caller drops the route (the sentence "No claim_token was passed…"
+    //     comes back for a form's answer, which carries none by design); (b) prints the status and
+    //     whether any warning names claim_token.
+    expect({
+      status: reply.status,
+      tokenSentence: reply.warnings.some((w) => w.includes('claim_token')),
+    }).toEqual({ status: 'ok', tokenSentence: false });
   });
 });

@@ -5420,8 +5420,9 @@ function withGateClaim(
   answerRecorded: boolean,
   tokenPresented: boolean,
   // #627 W (correction 1, B1): the answer's route. A form's answer carries no token BY DESIGN, so a
-  // sentence about not passing one would be false — none is composed for `mcp_form`.
-  route?: string | undefined,
+  // sentence about not passing one would be false — none is composed for `mcp_form`. Correction 2
+  // (3.3): REQUIRED (an absent route is `undefined`, passed), so the compiler finds every branch.
+  route: string | undefined,
 ): EngineReply {
   if (gateClaim === undefined || envelope.status !== 'ok') return envelope;
   let openedBy: Attributed | ActorAbsent;
@@ -5684,7 +5685,8 @@ async function composeExpiredGateEnvelope(
   answerClaim: {
     verdict: AnswerClaim | undefined;
     tokenPresented: boolean;
-    route?: string | undefined;
+    // Correction 2 (3.3): required — every caller passes the answer's route, or `undefined`.
+    route: string | undefined;
   },
   // decision C151: the call this late answer is — named on the expiry line when it carried it out.
   via: AnswerCaller,
