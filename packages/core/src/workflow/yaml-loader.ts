@@ -42,7 +42,7 @@ import { normalizeTriggerFilter, validateTriggerStructure } from './trigger-sche
 import { splitComparison, isPathShaped } from '../engine/comparison-expr.js';
 import { DEFAULT_EXECUTION_TIMEOUT_SECONDS } from '../engine/claim-liveness.js';
 import {
-  compileSchema,
+  compileCapturing,
   validateOutputSchema,
   isStrictModeRefusal,
   describeSchemaFailure,
@@ -1168,12 +1168,13 @@ function parseWorkflowString(
     );
 
     /**
-     * Issue #586 — SCHEMA ADMISSION. Every AUTHORED JSON-Schema block is compiled here, by the
-     * same `compileSchema` the run time validates through, so a block that cannot compile is
-     * refused on its own line instead of killing the surface that first touches it at run time
-     * with a bare Ajv error (#556's envelope). The key set is `SCHEMA_TYPED_WORKFLOW_KEYS` /
-     * `SCHEMA_TYPED_STEP_KEYS`, each `satisfies` its known-key list, so a schema-typed key that is
-     * not a known key fails `tsc`.
+     * Issue #586 — SCHEMA ADMISSION. Every AUTHORED JSON-Schema block is compiled here through
+     * `compileCapturing`, the same inner compile the run time validates through (issue #560: it
+     * writes the run time's cache, so the first check reuses this compile), so a block that
+     * cannot compile is refused on its own line instead of killing the surface that first touches
+     * it at run time with a bare Ajv error (#556's envelope). The key set is
+     * `SCHEMA_TYPED_WORKFLOW_KEYS` / `SCHEMA_TYPED_STEP_KEYS`, each `satisfies` its known-key list,
+     * so a schema-typed key that is not a known key fails `tsc`.
      *
      * Returns TRUE when the block was refused — the caller skips every later check that reads the
      * block STRUCTURALLY (the structured-output eligibility walk, the B10 default_output proof),
@@ -1239,7 +1240,7 @@ function parseWorkflowString(
       }
       const strictLines: string[] = [];
       try {
-        compileSchema(block as JsonSchema, { onStrictLog: (line) => strictLines.push(line) });
+        compileCapturing(block as JsonSchema, (line) => strictLines.push(line));
       } catch (err) {
         // A root `$async`: refused in its own four clauses, by type (never by the message the
         // arms below read) — the validity once, the key's consequence, the remedy.

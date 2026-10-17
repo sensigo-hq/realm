@@ -446,6 +446,20 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   evidence entry's `output_source`, and the cli README lists `--strict-base-url` among the flags
   `--provider-module` cannot be combined with.
 
+- **Schema checks no longer recompile their schema on every call (issue #560).** The run-time
+  checks (input, output, params and trace) compile each authored schema whose content is plain JSON
+  once per process and reuse it; the check at a workflow's load still compiles, so its strict-mode
+  notes are captured on every load, and the run time then reuses that compile. The cache holds at
+  most 256 schemas, weighed by their text, their values and the compiled code they keep, up to
+  about 30 MB at its bound in the heaviest case measured; a schema heavier than the whole bound is
+  compiled each time and not kept; a kept schema keeps no error rows between checks. A schema
+  holding a date, an infinite number or binary data is compiled each time, as before. A schema
+  with a `$ref` into another schema (such as the JSON-Schema meta-schema) whose target holds a
+  `$ref` of its own is compiled fresh on every call, as before. On one machine, in one session with
+  the two builds run in turn, `realm run list --stuck` over 50 stuck runs took 2.2–2.8 s before
+  this change and 0.6–0.7 s after. The exported `compileSchema` is unchanged: it compiles a fresh
+  validator on every call.
+
 ---
 
 ## [0.47.1] — 2026-10-17
