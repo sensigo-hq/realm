@@ -904,7 +904,7 @@ describe('issue #560 — the compiled-validator cache', () => {
     });
   });
 
-  it('13. a schema whose reference leaves it (into the JSON-Schema meta-schema) is never kept, so a refused check keeps nothing', () => {
+  it('13. a schema whose reference leaves it (into the JSON-Schema meta-schema) is never kept: compiled fresh on every call, after a capture, and after a refused check', () => {
     const s = { $ref: 'http://json-schema.org/draft-07/schema#' } as unknown as JsonSchema;
     const freshEachCall = compileCached(s) !== compileCached(s);
     const captured = compileCapturing(s, () => {});
@@ -945,13 +945,15 @@ describe('issue #560 — the compiled-validator cache', () => {
     const subs = subValidators(kept);
     // (a) red when `releaseErrors` runs only on a refused check (the passing call leaves 1 row on
     //     `a`, which Ajv compiles apart); (b) prints booleans and the count of reference targets.
+    // The root's own `.errors` is not asserted here: Ajv sets it to null on every passing call
+    // whatever this code does, so it could not fail for this cell's reason. Cell 10 pins the
+    // root's clearing after a refused check.
     expect({
       passed,
       hit: compileCached(s) === kept,
       subs: subs.length,
-      rootCleared: kept.errors === null,
       subsCleared: subs.every((f) => f.errors === null),
-    }).toEqual({ passed: true, hit: true, subs: 1, rootCleared: true, subsCleared: true });
+    }).toEqual({ passed: true, hit: true, subs: 1, subsCleared: true });
   });
 });
 
