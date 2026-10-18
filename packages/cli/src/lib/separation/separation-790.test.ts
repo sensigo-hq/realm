@@ -342,6 +342,7 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
       hashUid: await shape('hash-uid'),
       netgroup: await shape('netgroup'),
       negated: await shape('negated'),
+      negatedOnly: await shape('negated-only'),
       alias: await shape('runas-alias'),
       defaultRunas: await shape('default-runas'),
     }).toEqual({
@@ -351,6 +352,8 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
       hashUid: ['sudo yes'],
       netgroup: ['sudo yes'],
       negated: ['sudo yes'],
+      // `(nobody, !svc)`: the negation alone covers (the safe direction); nobody does not.
+      negatedOnly: ['sudo yes'],
       alias: ['sudo yes'],
       defaultRunas: ['sudo yes'],
     });
