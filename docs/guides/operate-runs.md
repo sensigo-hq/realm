@@ -141,7 +141,7 @@ abandon is a kill — declared finalizers (if any) did NOT run and will not for 
 Two things to know before you abandon:
 
 - **Cleanup steps do not run.** A workflow's finalizers are skipped.
-- **A run waiting at a gate cannot be abandoned.** Answer the gate first.
+- **A run waiting at a gate cannot be abandoned while its question can be answered.** Answer the gate first. A question that can never be answered is ended with `realm run abandon <run-id> --gate <gate-id>`.
 
 A run that has already finished is left alone:
 

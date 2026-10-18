@@ -406,12 +406,16 @@ function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
       words = `The form for step '${way.step}' of run ${way.run_id} ended without an answer ${times(facts?.came_back ?? 0)}.${again} An answer given in this chat is not recorded.`;
     }
   } else {
+    // #819 (T1): where the question's text is, by whether the gate declares a message — never "where
+    // they answer it", which Slack and `realm agent` do not show; no answer way is named (K1).
     const show =
       way.presented === 'with_gate'
-        ? 'Show the user gate.display'
-        : // Correction 2 (2.1): no command; the separator the walk found missing.
-          "Show the user the question — get_run_state's pending_gate.resolved_message when the gate declares a message; otherwise it is shown to them where they answer it —";
-    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show} and tell them it is waiting for their answer; an answer they give here is not recorded.`;
+        ? 'Show the user gate.display and tell them it is waiting for their answer'
+        : way.has_message === true
+          ? "Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation"
+          : `This gate declares no message, so get_run_state carries no question text: tell the user the run is waiting at step '${way.step}' for their answer, outside this conversation`;
+    // #819 (T2): the start line's "the agent tells the user the run id" is asked for here.
+    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they need it to answer.`;
   }
   return {
     instruction: null,

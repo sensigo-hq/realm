@@ -756,7 +756,8 @@ describe('#627 W — renderOutcome', () => {
         choice: 'reject',
         via: { absent: 'recorded_without_route' },
       }),
-      unknownRoute: r({ by: { kind: 'answer', basis: 'stated' }, choice: 'approve', via: 'slack' }),
+      // #819 (item 28): 'slack' is now a route this version declares; an unknown one is an embedder's.
+      unknownRoute: r({ by: { kind: 'answer', basis: 'stated' }, choice: 'approve', via: 'pager' }),
       aborted: r({ by: { kind: 'timeout' }, via: { absent: 'settled_by_expiry' } }),
       defaulted: r({
         by: { kind: 'timeout' },
@@ -774,7 +775,7 @@ describe('#627 W — renderOutcome', () => {
       unrecorded:
         "Meanwhile, the question on step 'q' was answered — reject; how the answer arrived was not recorded.",
       unknownRoute:
-        "Meanwhile, the question on step 'q' was answered — approve, through route 'slack'.",
+        "Meanwhile, the question on step 'q' was answered — approve, through route 'pager'.",
       aborted:
         "Meanwhile, the question on step 'q' reached its time limit, and the run ended as aborted.",
       defaulted:

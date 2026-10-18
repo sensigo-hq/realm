@@ -53,7 +53,8 @@ const DOOR: Record<
   abandon: {
     command: () => runCommands.find((c) => c.name() === 'abandon'),
     map: { run_id: '<run-id>', reason: '--reason' },
-    extras: {},
+    // #819 (U1): the CLI's alone — ARGS stays the MCP tool's contract, which is unchanged.
+    extras: { '--gate': 'the gate of a question that can never be answered' },
   },
   register: {
     command: () => workflowCommands.find((c) => c.name() === 'register'),

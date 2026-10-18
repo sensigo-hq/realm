@@ -47,21 +47,25 @@ All notable changes to this project are documented here.
   it would start with and where it came from, then a separation check of the login that runs it: how
   far that login reaches into Realm's store and the programs Realm runs, each condition measured,
   configured or unknown, and what that means for who can answer a gate. No server is started; a
-  bad value exits 1. Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no
-  interaction) in their list and check modes, looks users and groups up with `getent` (`dscl` on
-  macOS), and reads su's login rules from their files — it never
+  bad value exits 1. Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit
+  (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up
+  with `getent` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files —
+  it never
   switches user, never asks for a password and never opens a login connection; condition 3
   (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus,
   Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an
   agent cannot record a gate answer only when every way it found needs a credential or is not
   allowed, and lists what no program can see from that login; a rule it does not recognise, a file
   it cannot read, or a tool's error reads "unknown", and the sentence is not printed. The header
-  says when no store was found; condition 7's "no" names the two apps whose settings it read; the
-  two informational lines are marked "(fact)".
+  says when no store was found, and when the store cannot be opened; condition 7's "no" names the
+  two settings files it looked at; the store's time basis is marked "(fact)", and so is the economics
+  line when a `realm.yaml` the check read names no `runner.cache.economics` (with none read, it is
+  unknown).
 - **The `initialize` result names the gate-answers value (issue #627).**
   `capabilities.experimental['realm/gate_answers']` is `{ value, source_kind }`.
 - **Each answer records how it arrived (issue #627).** A `gate_response` entry gains `answer`
-  (`{ route, shown? }`: `mcp_form`, `mcp` or `cli`, as its door declared it, or
+  (`{ route, shown? }`: `mcp_form`, `mcp`, `cli` or `slack` — `realm agent`'s Slack thread, issue
+  #819 — as its door declared it, or
   `{ absent: 'route_not_declared' }`), `driven_by`, `client_prompt_requested` and `principal` (an API
   key's id, `realm serve`'s shared token, or the door's typed absence). `submitHumanResponse` takes
   `route`, `shown`, `principal` and `clientPromptRequested`; an answer's reply `outcome` gains `via`.
@@ -74,10 +78,28 @@ All notable changes to this project are documented here.
   line. It is a text match: it finds tool names, not every way of asking.
 - **A code for a workflow a later Realm registered (issue #627).** `STATE_NEWER_FORMAT`
   (`report_to_user`, not retryable), with typed facts (`path`, `schema_version`, `reads_up_to`); a
-  run's ways name it as the definition absence `newer`. A `schema_version` that is not a number, or
-  a copy with no string `id`, marks the copy as damaged (`RESOURCE_FORMAT_INVALID`), never as one an
-  older Realm registered. A copy an older Realm registered is listed with the copies Realm cannot
-  read, as class `legacy`.
+  run's ways name it as the definition absence `newer`. A `schema_version` that is not a number, a
+  copy with no string `id`, a copy at the current format whose `steps` is not an object, or a copy
+  with no `schema_version` that is not the shape older versions wrote (a string `name` and a number
+  `version`) marks the copy as damaged (`RESOURCE_FORMAT_INVALID`), never as one an older Realm
+  registered (issue #819 for the last two). A copy an older Realm registered is listed with the
+  copies Realm cannot read, as class `legacy`; `realm workflow list` says to re-register each from
+  its source.
+- **Under `withheld`, the agent is told where a question is, and to pass the run id on (issue
+  #819).** The awaiting entry of a reply that carries no `gate` points to
+  `get_run_state`'s `pending_gate.resolved_message` when the gate declares a message, and otherwise
+  says the gate declares none and names the step the run waits at; every withheld awaiting entry
+  tells the agent to give the user the run id. A `respond` way gains `has_message`, present when the
+  record keeps the question's text.
+- **`realm run abandon --gate <gate_id>` (issue #819).** It ends a run whose open question can never
+  be answered: its workflow was created by an agent and its stored copy is gone, or its stored copy
+  cannot be read and the folder it was registered from is gone. The run's reason says why, and the
+  same write clears the question. Without `--gate`, such a run is refused and the refusal names the
+  flag; a question that can still be answered is refused as before, now with its copy's repair when
+  its workflow cannot be read. `abandonRun` takes `{ gate, absence }`; core exports
+  `questionNeverAnswerable`, `definitionAbsentWords` and the `DefinitionAbsent` and
+  `AbandonRunOptions` types; an `abandon` way names its gate in `gate_id`. MCP's `abandon_run` is
+  unchanged.
 - **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
   `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
   `executeChain`, `executeEngineStep`, `advanceRun`, `submitHumanResponse`, `drainFinalizers`,

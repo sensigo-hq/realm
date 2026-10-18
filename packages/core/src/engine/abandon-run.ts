@@ -4,7 +4,13 @@
 import type { RunStore } from '../store/store-interface.js';
 import type { RunRecord } from '../types/run-record.js';
 import { WorkflowError } from '../types/workflow-error.js';
-import { respondWayOfGate } from './ways.js';
+import {
+  definitionAbsentWords,
+  questionNeverAnswerable,
+  respondWayOfGate,
+  type AbandonWay,
+  type DefinitionAbsent,
+} from './ways.js';
 import { admitEntry } from '../admission.js';
 import { deriveRunPhase, sealRunLevel } from './eligibility.js';
 
@@ -43,6 +49,11 @@ export const ABANDON_KILL_ADVISORY =
  *   So a kept claim only ever blocked `purge`. The brake on purging a just-abandoned run is
  *   `--older-than`, never a fossil claim.
  *
+ * - #819 (U1): an open question that can NEVER be answered ({@link questionNeverAnswerable}, from the
+ *   `absence` the caller read) is ended when `gate` names its gate: the reason gains what made it
+ *   unanswerable, and the same write clears `pending_gate`. Without `gate`, the refusal names the
+ *   gate-named abandon as its way on. Every other open question keeps the refusal and its answer.
+ *
  * Concurrency: if `update()` raises `STATE_SNAPSHOT_MISMATCH`, the run is reloaded once — if it is now
  * abandoned, that is idempotent success; otherwise the mismatch is propagated (the run changed under
  * us — likely a live runner — and abandon should lose). No retry loop beyond the single reload.
@@ -51,8 +62,13 @@ export async function abandonRun(
   store: RunStore,
   runId: string,
   reason?: string,
+  options?: AbandonRunOptions,
 ): Promise<RunRecord> {
-  admitEntry('abandonRun', { store, storeKind: 'run store', parts: { runId, reason } });
+  admitEntry('abandonRun', {
+    store,
+    storeKind: 'run store',
+    parts: { runId, reason, ...(options !== undefined ? { options } : {}) },
+  });
   const run = await store.get(runId);
 
   // Already abandoned → idempotent no-op.
@@ -89,12 +105,49 @@ export async function abandonRun(
   // refusing it stranded the operator behind commands that all fail (walk 3) — so it derives
   // `running` and abandons like one.
   const gate = run.pending_gate;
-  if (gate !== undefined) {
+  // #819 (U1): the caller's read of why the definition is absent decides whether the question can
+  // ever be answered; it only relaxes the refusal, and only for the gate it names.
+  const never =
+    gate !== undefined && options?.absence !== undefined && questionNeverAnswerable(options.absence)
+      ? options.absence
+      : undefined;
+  const ending = never !== undefined && options?.gate === gate?.gate_id;
+  if (gate !== undefined && !ending) {
+    if (never !== undefined) {
+      const named: AbandonWay = {
+        verb: 'abandon',
+        conditions: [],
+        run_id: runId,
+        gate_id: gate.gate_id,
+      };
+      throw new WorkflowError(
+        `Run '${runId}' is waiting on human gate '${gate.step_name}' (gate '${gate.gate_id}'), whose question can never be answered: ${definitionAbsentWords(never)}.`,
+        {
+          code: 'STATE_TRANSITION_DENIED',
+          category: 'STATE',
+          agentAction: 'report_to_user',
+          retryable: false,
+          details: {
+            runId,
+            run_phase: deriveRunPhase(run),
+            persisted_run_phase: run.run_phase,
+          },
+          remedy: [named],
+        },
+      );
+    }
+    // #819 (U1): a question that waits on a copy the caller could not read keeps the refusal, with
+    // the copy's repair as its way on (the answer waits on it, as the listing says).
+    const repairable = options?.absence;
     // The refusal is SURFACE-NEUTRAL: it states the fact; #729 PR-0 (Table row 39): the way on —
     // answering the open question — is its remedy, a typed `respond` way each door words
     // (`realm run respond` on the CLI, the answer tool over MCP); the details re-parse is gone.
     throw new WorkflowError(
-      `Run '${runId}' is waiting on human gate '${gate.step_name}' (gate '${gate.gate_id}'); it cannot be abandoned while its question is open.`,
+      `Run '${runId}' is waiting on human gate '${gate.step_name}' (gate '${gate.gate_id}'); it cannot be abandoned while its question is open.${
+        repairable !== undefined
+          ? ` It can be answered once its workflow can be read: ${definitionAbsentWords(repairable)}.`
+          : ''
+      }`,
       {
         code: 'STATE_TRANSITION_DENIED',
         category: 'STATE',
@@ -107,7 +160,17 @@ export async function abandonRun(
           // gate and the key is the disclosure, not a correction.
           persisted_run_phase: run.run_phase,
         },
-        remedy: [respondWayOfGate(runId, gate)],
+        remedy: [
+          repairable !== undefined
+            ? {
+                verb: 'register',
+                conditions: [],
+                workflow_id: repairable.workflow_id,
+                run_id: runId,
+                ...(repairable.path !== undefined ? { path: repairable.path } : {}),
+              }
+            : respondWayOfGate(runId, gate),
+        ],
       },
     );
   }
@@ -115,14 +178,21 @@ export async function abandonRun(
   // The neutral fallback: each SURFACE supplies its own reason naming the verb the operator used
   // (`Abandoned via realm run abandon` / `Abandoned via abandon_run`). A reason that names the MCP
   // tool for a CLI kill is a false statement about who killed the run (issue #558 PR-C).
-  const abandonedReason = reason ?? 'Abandoned';
+  const abandonedReason =
+    never !== undefined
+      ? `${reason ?? 'Abandoned'} (its question could not be answered: ${definitionAbsentWords(never)})`
+      : (reason ?? 'Abandoned');
   try {
     // issue #367: run-level seal through the ONE bypass-writer chokepoint — it stamps
     // sealed_by {arm: 'abandon_requested'} alongside abandoned_at and terminal_state in the same
     // object literal.
     // issue #558 PR-C: release every claim in the SAME write (see the JSDoc bullet above).
+    // #819 (U1): ending an unanswerable question clears it in the same write — no terminal record
+    // keeps an open question (the #282 class; `sealRunLevel` keeps the rest of the record).
+    const sealed = sealRunLevel(run, 'abandon_requested', abandonedReason);
+    const { pending_gate: _cleared, ...withoutQuestion } = sealed;
     return await store.update({
-      ...sealRunLevel(run, 'abandon_requested', abandonedReason),
+      ...(ending ? withoutQuestion : sealed),
       in_progress_steps: [],
       claims: {},
     });
@@ -137,4 +207,14 @@ export async function abandonRun(
     }
     throw err;
   }
+}
+
+/** #819 (U1): what `realm run abandon --gate` passes — the gate it names and why the run's
+ *  definition is absent, read before the seal. */
+export interface AbandonRunOptions {
+  /** The open gate the operator names. */
+  gate?: string;
+  /** Why the run's definition is absent, as the caller read it (with `source_gone` when the
+   *  folder the copy records is gone). */
+  absence?: DefinitionAbsent;
 }

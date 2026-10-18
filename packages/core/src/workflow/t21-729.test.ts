@@ -118,7 +118,11 @@ describe('#729 PR-0 — T-21: the definition is reachable, or the ways say why a
       [
         'legacy',
         async () => {
-          await writeFile(file, JSON.stringify({ id: 'flow', version: 1, steps: [] }));
+          // #819 (U3): the older cohort's shape — a string name and a number version
+          await writeFile(
+            file,
+            JSON.stringify({ id: 'flow', name: 'flow', version: 1, steps: [] }),
+          );
         },
         'STATE_LEGACY_FORMAT',
       ],

@@ -5,6 +5,8 @@ import type { SwitchPathReading } from '@sensigo/realm';
 import { basename } from 'node:path';
 import {
   findTool,
+  lookedFor,
+  notFound,
   presence,
   toolLine,
   type Found,
@@ -33,7 +35,7 @@ async function shellOf(
     return 'unknown' in entry ? entry : { unknown: `${lk.svc} has no passwd entry` };
   }
   const dscl = findTool(lk.probes, 'dscl');
-  if (dscl === undefined) return { unknown: 'dscl was not found in the system folders' };
+  if (dscl === undefined) return { unknown: notFound('dscl') };
   if ('unknown' in dscl) return dscl;
   const call = `${dscl.path} . -read /Users/${lk.svc} UserShell`;
   const r = await lk.run([dscl.path, '.', '-read', `/Users/${lk.svc}`, 'UserShell']);
@@ -70,7 +72,7 @@ async function readSuOne(
     return {
       path: 'su',
       outcome: 'unknown',
-      how: 'su looked for in the system folders',
+      how: lookedFor('su'),
       cause: `su at ${where.elsewhere} is not a root-owned system copy`,
     };
   }
@@ -86,6 +88,17 @@ async function readSuOne(
   const busybox = basename(lk.probes.realPath(su) ?? su) === 'busybox' && !pamFile;
   // (c) before (b): a shell that runs no command runs nothing, even with an empty password.
   const shell = await shellOf(lk, entry);
+  // #819 (08, B F5): B §9 on macOS too — svc's shell not read (dscl absent or failing) is unknown,
+  // never "needs svc's password" (BusyBox's su, which asks it whatever the shell, aside)
+  if (lk.darwin && !busybox && 'unknown' in shell) {
+    return {
+      path: 'su',
+      tool: su,
+      outcome: 'unknown',
+      how: `${lk.svc}'s shell`,
+      cause: shell.unknown,
+    };
+  }
   if (!busybox && 'shell' in shell && NO_COMMAND_SHELLS.has(shell.shell)) {
     const inFiles = listed(lk, shell.shell);
     if (inFiles === false) {

@@ -78,8 +78,9 @@ export interface SwitchPathReading {
   how: string;
   cause?: string;
   or_not_allowed?: true;
-  /** #790 correction (W §5, W §8): what polkit's clause (d) can say — the entry points present and
-   *  each rules folder as `stat` read it. */
+  /** #790 correction (W §5, W §8): what polkit's clause (d) can say — the entry points (#819, 08
+   *  B F11: of the actions asked) and each rules folder as `exists` and `canRead` (access R_OK) read
+   *  it. */
   polkit?: { tools: string[]; admin: 'unreadable' | 'unread'; vendor: 'unreadable' | 'unread' };
 }
 
@@ -176,6 +177,9 @@ export interface SeparationEvidence {
   service_user?: string;
   /** Whether the store's folder belongs to another OS user (measured). */
   store_owned_by_other: boolean;
+  /** #819 (C4): whether this login owns the store, from the store's own stat — the same-login modes
+   *  need it (an unknown uid owns nothing). */
+  owns_store: boolean;
   conditions: Record<SeparationCondition, ConditionReading>;
   /** The gate-answers value the check judged, with its WINNING source (restrictive wins). */
   value: { value: GateAnswers; source: Source };
@@ -193,14 +197,15 @@ const measuredYes = (r: ConditionReading): boolean => r.basis === 'measured' && 
 /**
  * The mode, derived — never guessed (§5.9; correction 1 D1; correction 2, 5.4): the store belongs to
  * another OS user → `separate_user`, whatever condition 1 reads (the "cannot record" claim still
- * needs condition 1 measured "no": {@link separationPrevents}); else condition 1 measured "yes" —
- * this login owns the store — `sandbox_configured` if the agent's app configures a sandbox (the "no"
- * would come only through it), else `same_account`; otherwise `not_measured`.
+ * needs condition 1 measured "no": {@link separationPrevents}); else condition 1 measured "yes" and
+ * this login owns the store (#819, C4: a reachable store whose owner is not known is not the same
+ * login) — `sandbox_configured` if the agent's app configures a sandbox (the "no" would come only
+ * through it), else `same_account`; otherwise `not_measured`.
  */
 export function separationModeOf(e: SeparationEvidence): SeparationMode {
   const reach = e.conditions.store_reach;
   if (e.store_owned_by_other) return 'separate_user';
-  if (measuredYes(reach)) {
+  if (measuredYes(reach) && e.owns_store) {
     return e.conditions.agent_sandbox.basis === 'configured_not_enforced'
       ? 'sandbox_configured'
       : 'same_account';

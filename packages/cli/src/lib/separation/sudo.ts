@@ -4,7 +4,14 @@
 // counts); a refusal is read by its words; sudo's PAM stack is scanned whenever sudo needs a
 // credential. Anything this reader does not recognise is `unknown`, with sudo's own line (P0).
 import type { SwitchPathReading } from '@sensigo/realm';
-import { findTools, toolLine, type Found, type Lookups, type PasswdEntry } from './lookup.js';
+import {
+  findTools,
+  lookedFor,
+  toolLine,
+  type Found,
+  type Lookups,
+  type PasswdEntry,
+} from './lookup.js';
 import { scanPam } from './pam.js';
 
 /** One listed entry: who it runs as (users, groups), whether it needs no password, its commands. */
@@ -205,7 +212,10 @@ function shortItems(
       if (m[1] === 'PASSWD') state.nopasswd = false;
       item = item.slice(m[0].length);
     }
-    if (/\b[A-Z][A-Z_]*(?::\s|=)/.test(item))
+    // #819 (08, A F5): only the item's head — before its command's first `/` — can hold an option
+    // sudo writes; `FOO=1` among a command's arguments is the command's
+    const head = item.includes('/') ? item.slice(0, item.indexOf('/')) : item;
+    if (/\b[A-Z][A-Z_]*(?::\s|=)/.test(head))
       return { unknown: `sudo listed an option this check does not read: ${item}` };
     if (item !== '') {
       entries.push({
@@ -239,7 +249,11 @@ async function tokenCovers(
   }
   const users = { svc, root };
   const out = { svc: false, root: false };
-  for (const who of ['svc', 'root'] as const) {
+  // #819 (08, A Outside 2): a group whose members may be hidden reads unknown — and a cover already
+  // read outranks it (yes > unknown, 01b #6). A runas GROUP never makes the command run as root
+  // (`entryCovers`), so root is not judged for one.
+  let unread: string | undefined;
+  for (const who of asGroup ? (['svc'] as const) : (['svc', 'root'] as const)) {
     const entry = users[who];
     const name = who === 'svc' ? lk.svc : 'root';
     if (asGroup || token.startsWith('%')) {
@@ -251,8 +265,8 @@ async function tokenCovers(
         continue;
       }
       const inGroup = await lk.userIn(entry.found, group);
-      if ('unknown' in inGroup) return { unknown: inGroup.unknown };
-      if ('found' in inGroup && inGroup.found) out[who] = true;
+      if ('unknown' in inGroup) unread ??= inGroup.unknown;
+      else if ('found' in inGroup && inGroup.found) out[who] = true;
     } else if (token.startsWith('+')) {
       const net = await lk.netgroupUsers(token.slice(1));
       if ('unknown' in net) return { unknown: net.unknown };
@@ -272,6 +286,7 @@ async function tokenCovers(
       if ('found' in other && (uid === undefined || other.found.uid === uid)) out[who] = true;
     }
   }
+  if (unread !== undefined && !out.svc && !out.root) return { unknown: unread };
   return out;
 }
 
@@ -362,9 +377,13 @@ async function withPam(
   ];
 }
 
-/** A §F4: where sudo shows no Defaults, the credential may be this login's, root's or ⟨svc⟩'s. */
-function unseenDefaults(r: SwitchPathReading): SwitchPathReading[] {
-  const cause = 'sudo does not list its Defaults, so rootpw or targetpw cannot be ruled out';
+/** A §F4: where sudo shows no Defaults, the credential may be this login's, root's or ⟨svc⟩'s; the
+ *  cause says why each may be needed (#819, 08 A F1: printed as "may need"). */
+const UNSEEN_LISTED = 'sudo does not list its Defaults, so rootpw or targetpw cannot be ruled out';
+/** #819 (08, A F1): the original sudo's refusal hides its Defaults and whether a rule exists. */
+const UNSEEN_REFUSED =
+  'sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out';
+function unseenDefaults(r: SwitchPathReading, cause = UNSEEN_LISTED): SwitchPathReading[] {
   const { or_not_allowed: _drop, ...rest } = r;
   return [r, { ...rest, whose: 'root', cause }, { ...rest, whose: 'svc', cause }];
 }
@@ -433,7 +452,7 @@ async function readOne(
         or_not_allowed: true,
         how: `${list} says: a password is required`,
       };
-      return withPam(lk, unseenDefaults(r), list, path, 'classic-refusal');
+      return withPam(lk, unseenDefaults(r, UNSEEN_REFUSED), list, path, 'classic-refusal');
     }
     if (flavour === 'rs' && said === 'interactive authentication is required') {
       const r: SwitchPathReading = {
@@ -586,6 +605,25 @@ async function judge(
         how: `${why} (Defaults rootpw)`,
       }),
     ];
+  } else if (opts.has('runaspw')) {
+    // #819 (08, A Outside 1): sudo's own order — rootpw, then runaspw, then targetpw (check.c:60-75)
+    if (runasDefault !== undefined && runasDefault !== 'root' && runasDefault !== lk.svc) {
+      return [
+        reading({
+          outcome: 'unknown',
+          how,
+          cause: `sudo asks for ${runasDefault}'s password (Defaults runaspw)`,
+        }),
+      ];
+    }
+    base = [
+      reading({
+        outcome: 'needs_credential',
+        whose: runasDefault === lk.svc ? 'svc' : 'root',
+        ...cache,
+        how: `${why} (Defaults runaspw)`,
+      }),
+    ];
   } else if (opts.has('targetpw')) {
     base = [
       ...(covering.some((c) => c.svc)
@@ -608,24 +646,6 @@ async function judge(
             }),
           ]
         : []),
-    ];
-  } else if (opts.has('runaspw')) {
-    if (runasDefault !== undefined && runasDefault !== 'root' && runasDefault !== lk.svc) {
-      return [
-        reading({
-          outcome: 'unknown',
-          how,
-          cause: `sudo asks for ${runasDefault}'s password (Defaults runaspw)`,
-        }),
-      ];
-    }
-    base = [
-      reading({
-        outcome: 'needs_credential',
-        whose: runasDefault === lk.svc ? 'svc' : 'root',
-        ...cache,
-        how: `${why} (Defaults runaspw)`,
-      }),
     ];
   } else {
     const r = reading({ outcome: 'needs_credential', whose: 'this_login', ...cache, how: why });
@@ -651,7 +671,7 @@ export async function readSudo(
   for (const name of ['sudo', 'sudo.ws', 'sudo-rs']) {
     const found = findTools(lk.probes, name);
     for (const cause of found.unknown) {
-      const how = `${name} looked for in the system folders`;
+      const how = lookedFor(name);
       readings.push({ path: 'sudo', tool: name, outcome: 'unknown', how, cause });
     }
     for (const path of found.paths) {

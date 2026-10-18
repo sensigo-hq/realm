@@ -7,11 +7,11 @@
 import type { SwitchPathReading, SwitchOutcome, SwitchWhose } from '@sensigo/realm';
 import { mostPermissive } from '@sensigo/realm';
 import { join } from 'node:path';
-import { findTool, presence, toolLine, type Lookups } from './lookup.js';
+import { findTool, lookedFor, presence, toolLine, type Lookups } from './lookup.js';
 
 const ACTIONS_DIR = '/usr/share/polkit-1/actions';
 /** 01b #5: polkitd's install paths (Ubuntu, Debian, Fedora, Alpine: the first; F790-IA rows). */
-const POLKITD = [
+export const POLKITD = [
   '/usr/lib/polkit-1/polkitd',
   '/usr/libexec/polkitd',
   '/usr/lib/policykit-1/polkitd',
@@ -24,6 +24,20 @@ const ASKED = new Set([
   'org.freedesktop.machine1.host-shell',
 ]);
 const EXEC_PATH = 'org.freedesktop.policykit.exec.path';
+
+/** The entry points clause (d) names, in its order. */
+const ENTRY_POINTS = ['pkexec', 'run0', 'systemd-run', 'machinectl'] as const;
+
+/** #819 (08, B F11): the entry points an asked action is reached by — pkexec for its own action and
+ *  each program it runs; run0 and `systemd-run` for manage-units; machinectl for machine1's shells.
+ *  An action none names is named by its id. Any D-Bus client reaches the action itself. */
+function entryPointsOf(a: Action): string[] {
+  if (a.id === 'org.freedesktop.policykit.exec' || a.execPath) return ['pkexec'];
+  if (a.id === 'org.freedesktop.systemd1.manage-units') return ['run0', 'systemd-run'];
+  if (a.id === 'org.freedesktop.machine1.shell' || a.id === 'org.freedesktop.machine1.host-shell')
+    return ['machinectl'];
+  return [a.id];
+}
 
 interface Action {
   id: string;
@@ -69,12 +83,8 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
   ];
   const pkcheck = findTool(lk.probes, 'pkcheck');
   if (pkcheck === undefined)
-    return unknown(
-      'pkcheck looked for in the system folders',
-      'polkit is here, but pkcheck is not',
-    );
-  if ('unknown' in pkcheck)
-    return unknown('pkcheck looked for in the system folders', pkcheck.unknown);
+    return unknown(lookedFor('pkcheck'), 'polkit is here, but pkcheck is not');
+  if ('unknown' in pkcheck) return unknown(lookedFor('pkcheck'), pkcheck.unknown);
   const names = lk.probes.list(ACTIONS_DIR);
   if (names === undefined) return unknown(`${ACTIONS_DIR} listed`, `${ACTIONS_DIR} cannot be read`);
   const actions: Action[] = [];
@@ -108,12 +118,16 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
   }
   // W §7: the actions asked, by name; the pid is this check's own process
   const how = `${pkcheck.path} --action-id <A> --process <this check's pid> asked for ${actions.map((a) => a.id).join(', ')}`;
-  // W §5, W §8: what clause (d) can say — the rules folders as stat reads them, the tools present
+  // W §5, W §8: what clause (d) can say — each rules folder as `exists` and `canRead` (access
+  // R_OK) read it; #819 (08, B F11): the entry points of the actions asked, never the binaries found
   const rules = (dir: string): 'unreadable' | 'unread' =>
     lk.probes.exists(dir) && !lk.probes.canRead(dir) ? 'unreadable' : 'unread';
   const detail = {
     polkit: {
-      tools: ['pkexec', 'run0', 'systemd-run', 'machinectl'].filter(inFolders),
+      tools: ((named) => [
+        ...ENTRY_POINTS.filter((t) => named.has(t)),
+        ...[...named].filter((t) => !(ENTRY_POINTS as readonly string[]).includes(t)),
+      ])(new Set(actions.flatMap(entryPointsOf))),
       admin: rules('/etc/polkit-1/rules.d'),
       vendor: rules('/usr/share/polkit-1/rules.d'),
     },

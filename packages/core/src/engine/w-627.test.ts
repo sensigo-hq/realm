@@ -1090,6 +1090,8 @@ function evidence(
     login: 'agent',
     service_user: 'realm',
     store_owned_by_other: true,
+    // #819 (C4): the guardrail-6 sweep's one add-only member here — another user's store
+    owns_store: false,
     value: { value: 'withheld', source: { kind: 'flag', ref: '--gate-answers' } },
     ...over,
     conditions: {
@@ -1145,7 +1147,10 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
     // (`store_owned_by_other: false`), so they keep their subject; another user's store is
     // `separate_user` whatever condition 1 reads; 5.8, the sandbox cross: a configured sandbox with
     // condition 1 not measured is `not_measured`, never `sandbox_configured`.
-    const own = { store_owned_by_other: false };
+    // #819 (C4): this login's own store — it owns it (the same-login modes need that).
+    const own = { store_owned_by_other: false, owns_store: true };
+    // #819 (C4): a store this login reaches whose owner is not known (no uid) — never the same login.
+    const unowned = { store_owned_by_other: false, owns_store: false };
     const CONFIGURED: ConditionReading = {
       basis: 'configured_not_enforced',
       detail: 'Claude Code',
@@ -1160,6 +1165,10 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
       sandboxCross: separationModeOf(
         evidence(own, { store_reach: UNKNOWN, agent_sandbox: CONFIGURED }),
       ),
+      reachUnowned: separationModeOf(evidence(unowned, { store_reach: YES })),
+      sandboxUnowned: separationModeOf(
+        evidence(unowned, { store_reach: YES, agent_sandbox: CONFIGURED }),
+      ),
     }).toEqual({
       separate: 'separate_user',
       otherReadable: 'separate_user',
@@ -1168,6 +1177,9 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
       ownStore: 'not_measured',
       sandbox: 'sandbox_configured',
       sandboxCross: 'not_measured',
+      // #819 (C4): red when same_account or sandbox_configured does not need `owns_store`.
+      reachUnowned: 'not_measured',
+      sandboxUnowned: 'not_measured',
     });
   });
 

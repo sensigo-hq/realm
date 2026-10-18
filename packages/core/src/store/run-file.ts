@@ -58,12 +58,17 @@ export const SIDE_FILE_KINDS = ['attempts', 'trace_buffer', 'sealed_trace'] as c
 /** One of {@link SIDE_FILE_KINDS}. */
 export type SideFileKind = (typeof SIDE_FILE_KINDS)[number];
 
-/** What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2). */
-export type WorkflowCopyFault = 'schema_version_not_number' | 'no_id';
+/** What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2; #819
+ *  U2 `no_steps`, U3 `not_legacy_shape`). */
+export type WorkflowCopyFault =
+  'schema_version_not_number' | 'no_id' | 'no_steps' | 'not_legacy_shape';
 
 const COPY_FAULT_WORDS: Record<WorkflowCopyFault, string> = {
   schema_version_not_number: 'its schema_version is not a number',
   no_id: 'it has no string id',
+  no_steps: 'its steps is not an object',
+  not_legacy_shape:
+    'it has no schema_version, and is not the shape older versions of Realm wrote (a string name and a number version)',
 };
 
 /**
@@ -82,7 +87,8 @@ export interface UnreadableFileFacts {
   /** `parse` only, for JSON that is not an object: `null`, `array`, `string`, `number` or `boolean`. */
   shape?: string;
   /** `parse` only, for a registered copy that is a JSON object but not a workflow (#627 W correction
-   *  2, 3.7 and 8.6 (d)): what it lacks — a `schema_version` that is a number, or a string `id`. */
+   *  2, 3.7 and 8.6 (d); #819 U2, U3): what it lacks — a `schema_version` that is a number, a string
+   *  `id`, a `steps` object at the current format, or (with no `schema_version`) the older shape. */
   fault?: WorkflowCopyFault;
   /** `mismatched` only: the run id the file holds. */
   held_id?: string;

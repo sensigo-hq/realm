@@ -22,6 +22,7 @@ import type {
   SubmitGateOptions,
 } from './execution-loop.js';
 import type { ReclaimStepOptions } from './reclaim-step.js';
+import type { AbandonRunOptions } from './abandon-run.js';
 import type { getWorkflowForRun } from '../workflow/registrar.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 
@@ -250,7 +251,14 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('principal', 'options', 'principal'),
     typed('boolean', 'options', 'clientPromptRequested'),
   ],
-  abandonRun: [need('string', 'runId'), typed('string', 'reason')],
+  // #819 (U1): the options `realm run abandon --gate` passes, checked when present.
+  abandonRun: [
+    need('string', 'runId'),
+    typed('string', 'reason'),
+    typed('object', 'options'),
+    typed('string', 'options', 'gate'),
+    typed('object', 'options', 'absence'),
+  ],
   drainFinalizers: [...DEFINITION, typed('registry', 'registry'), need('string', 'runId')],
   getWorkflowForRun: [
     need('run', 'run'),
@@ -363,6 +371,10 @@ const RECLAIM_STEP_MEMBERS = [
   'traceBufferStore',
   'now',
 ] as const satisfies readonly (keyof ReclaimStepOptions)[];
+const ABANDON_RUN_MEMBERS = [
+  'gate',
+  'absence',
+] as const satisfies readonly (keyof AbandonRunOptions)[];
 
 const _membersExhaustive: [
   ListsEveryKey<ExecuteStepOptions, typeof EXECUTE_STEP_MEMBERS>,
@@ -372,7 +384,8 @@ const _membersExhaustive: [
   ListsEveryKey<SubmitGateOptions, typeof SUBMIT_HUMAN_RESPONSE_MEMBERS>,
   ListsEveryKey<Parameters<typeof getWorkflowForRun>[2], typeof GET_WORKFLOW_FOR_RUN_MEMBERS>,
   ListsEveryKey<ReclaimStepOptions, typeof RECLAIM_STEP_MEMBERS>,
-] = [true, true, true, true, true, true, true];
+  ListsEveryKey<AbandonRunOptions, typeof ABANDON_RUN_MEMBERS>,
+] = [true, true, true, true, true, true, true, true];
 void _membersExhaustive;
 
 /**
@@ -392,6 +405,7 @@ export const OPTION_MEMBERS: Readonly<
   submitHumanResponse: { container: 'options', members: SUBMIT_HUMAN_RESPONSE_MEMBERS },
   getWorkflowForRun: { container: 'opts', members: GET_WORKFLOW_FOR_RUN_MEMBERS },
   reclaimStep: { container: 'options', members: RECLAIM_STEP_MEMBERS },
+  abandonRun: { container: 'options', members: ABANDON_RUN_MEMBERS },
 };
 
 /** One defect, as the error's details name it: names and type words only. */

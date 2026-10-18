@@ -618,6 +618,8 @@ The run is waiting on a human gate, so it cannot be abandoned yet. Answer it: su
 
 The first line is `errors[0]`, the second `context_hint` (added after version 0.47.0, whose `errors[0]` carried both).
 
+`abandon_run` refuses a run waiting at a gate even when its question can never be answered (its workflow's stored copy gone, with no source); only `realm run abandon --gate`, from a terminal, ends such a run (added after version 0.47.0).
+
 ## `create_workflow`
 
 | Parameter  | Type   | Required | Holds                                                        |

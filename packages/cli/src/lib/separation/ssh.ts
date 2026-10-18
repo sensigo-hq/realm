@@ -1,12 +1,13 @@
-// ssh.ts — #790 (D10, 01b #4, rail 2): ssh to Realm's service user, with no connection. The path is
-// listed when this login holds a key (a private key file under its own `.ssh` it can read, or a set
-// SSH_AUTH_SOCK) and an sshd is present on this host. It reads presence only: it never opens a key
-// file, never prints the variable's value, never reads sshd's port and never connects to it.
+// ssh.ts — #790 (D10, 01b #4, rail 2): ssh to Realm's service user, with no connection. #819 (08,
+// B F9): the path is listed whenever an sshd is present on this host — a key the login keeps outside
+// its own `.ssh` (or names through `IdentityFile`) is not looked for, so with none found there its
+// how says so. It reads presence only: it never opens a key file, never prints the variable's
+// value, never reads sshd's port and never connects to it.
 import type { SwitchPathReading } from '@sensigo/realm';
 import { join } from 'node:path';
 import { SYSTEM_DIRS, type Lookups } from './lookup.js';
 
-const UNIT_DIRS = [
+export const UNIT_DIRS = [
   '/etc/systemd/system',
   '/run/systemd/system',
   '/usr/lib/systemd/system',
@@ -40,17 +41,16 @@ function sshdPresent(lk: Lookups): boolean {
   );
 }
 
-/** D10: the ssh path — listed only with a key and an sshd; never `unknown` (01b #4). */
+/** D10: the ssh path — listed whenever an sshd is present (#819, 08 B F9); never `unknown`
+ *  (01b #4). */
 export function readSsh(lk: Lookups): SwitchPathReading[] {
+  if (!sshdPresent(lk)) return [];
   const key = holdsKey(lk);
-  if (!sshdPresent(lk) || key === 'no') return [];
-  const holds =
-    key === 'yes' ? 'holds a key' : "may hold a key (its home's .ssh could not be listed)";
-  return [
-    {
-      path: 'ssh',
-      outcome: 'needs_credential',
-      how: `an sshd is present and this login ${holds}`,
-    },
-  ];
+  const how =
+    key === 'yes'
+      ? 'an sshd is present and this login holds a key'
+      : key === 'assumed'
+        ? "an sshd is present and this login may hold a key (its home's .ssh could not be listed)"
+        : 'an sshd is present (a key outside ~/.ssh is not looked for)';
+  return [{ path: 'ssh', outcome: 'needs_credential', how }];
 }

@@ -45,7 +45,8 @@ export const NO_DRIVE_FLAGS: CliHost = { driveFlags: '' };
  * - `run_step`: an agent step is driven by `realm agent --run-id <run>` with the drive's flags; an
  *   engine step's input supplied by an operator (T-17's lever) has no command (PR0-CONTRACT
  *   Amendment 14: a fact line, `operatorInputLine`);
- * - `advance`, `inspect`, `abandon`: `realm run <verb> <run>`;
+ * - `advance`, `inspect`, `abandon`: `realm run <verb> <run>` (`abandon` with `--gate <gate>` when the
+ *   way names the gate of a question that can never be answered, #819 U1);
  * - `register`: `realm workflow register <file>` — the file's path when the registry knows it;
  * - `present` (#627 W): `null` — showing a question again as a form in a chat app is the MCP door's
  *   alone (its party is the agent, whom this door does not serve: `door_cannot_enact` here); a person
@@ -63,7 +64,9 @@ export const CLI_COMMANDS: WayRenderer<string, CliHost> = {
   },
   advance: (way) => `realm run advance ${way.run_id}`,
   inspect: (way) => `realm run inspect ${way.run_id}`,
-  abandon: (way) => `realm run abandon ${way.run_id}`,
+  // #819 (U1): with the gate of a question that can never be answered.
+  abandon: (way) =>
+    `realm run abandon ${way.run_id}${way.gate_id !== undefined ? ` --gate ${way.gate_id}` : ''}`,
   // Correction 2 (3.2): `path` is the registered COPY that cannot be used — `register` takes a source,
   // so the command for it reads why the copy cannot be used and its way out.
   register: (way) =>

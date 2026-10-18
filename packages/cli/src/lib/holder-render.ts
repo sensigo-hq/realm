@@ -400,6 +400,9 @@ function routePhraseOf(route: string): string {
       return "Realm's MCP answer tool";
     case 'cli':
       return 'a terminal (realm run respond)';
+    // #819 (item 28): `realm agent`'s Slack thread, its own words — never the fallback.
+    case 'slack':
+      return 'a Slack thread';
     default:
       // Correction 2 (8.2): an embedder's route may hold a newline or a terminal sequence (C1
       // admits any non-empty route) — quoted on one line, as the question is.

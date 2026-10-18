@@ -142,10 +142,13 @@ export function parseFailureError(path: string, fault: WorkflowCopyParseFault): 
 /**
  * The parse fault of a value that parsed — the ONE check `getSync` and the listing both run, so a
  * copy is damaged at both or at neither (#627 W correction 2, 3.7 and 8.6 (d)): not an object; a
- * `schema_version` that is present, not `null` and not a number; no string `id`. `undefined` for an
- * object that can be read as a workflow — legacy (no `schema_version`, `null`, or a number below
- * current), current or newer. No `steps` is NOT a fault here: the registered copies an older Realm
- * wrote (the schema_version-less cohort, #427) carry no `steps` key at all, and they are legacy.
+ * `schema_version` that is present, not `null` and not a number; no string `id`. #819 (U3): a copy
+ * with no `schema_version` (or `null`) is the older cohort's only in its shape — a string `name`
+ * and a number `version`, as all 14 real ones are (W-C2R-CORE-12) — else `not_legacy_shape`. (U2):
+ * a copy at the current format whose `steps` is not an object — `no_steps`. `undefined` for an
+ * object that can be read as a workflow — legacy, current or newer: a NEWER copy is judged by
+ * {@link isNewerDefinition} after this, so one without `steps` reads newer. The older cohort carries
+ * no `steps` key at all, so `steps` is judged only at the current format.
  */
 function copyFault(value: unknown): WorkflowCopyParseFault | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -157,6 +160,19 @@ function copyFault(value: unknown): WorkflowCopyParseFault | undefined {
     return { kind: 'not_a_workflow', fault: 'schema_version_not_number' };
   }
   if (typeof copy['id'] !== 'string') return { kind: 'not_a_workflow', fault: 'no_id' };
+  if (
+    (version === undefined || version === null) &&
+    !(typeof copy['name'] === 'string' && typeof copy['version'] === 'number')
+  ) {
+    return { kind: 'not_a_workflow', fault: 'not_legacy_shape' };
+  }
+  const steps = copy['steps'];
+  if (
+    version === CURRENT_WORKFLOW_SCHEMA_VERSION &&
+    (steps === null || typeof steps !== 'object' || Array.isArray(steps))
+  ) {
+    return { kind: 'not_a_workflow', fault: 'no_steps' };
+  }
   return undefined;
 }
 
@@ -606,10 +622,11 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
       }
       const fault = copyFault(parsedUnknown);
       if (fault !== undefined) {
+        // #819 (U2): every unreadable class names its repair — this one too.
         unreadable.push({
           file: entry,
           class: 'parse',
-          reason: parseFailureError(entryPath, fault).message,
+          ...reasonAndRepair(parseFailureError(entryPath, fault)),
         });
         continue;
       }
@@ -785,7 +802,13 @@ export async function getWorkflowForRun(
     const gateRemedy = (): readonly WayOn[] | undefined => {
       const live = run.terminal_state === true ? undefined : run.pending_gate;
       if (live === undefined) return undefined;
-      const path = definitionAbsenceOf(err, run)?.path;
+      const absence = definitionAbsenceOf(err, run);
+      // #819 (U5, U1): an agent's copy that is gone never had a file to register — its question can
+      // never be answered, and the way on is ending the run by naming the gate.
+      if (absence?.absent === 'agent_copy_gone') {
+        return [{ verb: 'abandon', conditions: [], run_id: run.id, gate_id: live.gate_id }];
+      }
+      const path = absence?.path;
       const register: RegisterWay = {
         verb: 'register',
         conditions: [],
@@ -860,11 +883,18 @@ export async function getWorkflowForRun(
     // Now the clause states the two facts — the gate cannot be answered until the copy reads, and
     // `realm run abandon` refuses a gate-waiting run (abandon-run.ts) — and the REPAIR clause ends
     // in the answer command. PR-V's void replaces this sentence (its sweep list carries it).
-    const disposalSentence = (leadIn: string): string =>
+    // #819 (U1): realm run abandon refuses a question that can still be answered; an agent's copy
+    // that is gone leaves one that can never be answered, ended by naming its gate (the error's
+    // remedy). A copy whose recorded source is gone is judged by the CLI's abandon, which reads it.
+    const disposalSentence = (leadIn: string, never = false): string =>
       gate === undefined
         ? `${leadIn} realm run abandon ${run.id}.`
-        : `This run is waiting on human gate '${gate.step_name}', which cannot be answered until ` +
-          `its workflow can be read; realm run abandon refuses a run that is waiting on a gate.`;
+        : never
+          ? `This run is waiting on human gate '${gate.step_name}', whose question can never be ` +
+            `answered; end it by naming the gate: realm run abandon ${run.id} --gate ${gate.gate_id}.`
+          : `This run is waiting on human gate '${gate.step_name}', which cannot be answered until ` +
+            `its workflow can be read; realm run abandon refuses a run whose question can still be ` +
+            `answered.`;
 
     // Reached with `terminal_state` only through `terminalOk` (the sites whose happy path IS a
     // terminal run — drain, replay, resume, inspect): there is nothing left to END, so the
@@ -884,7 +914,7 @@ export async function getWorkflowForRun(
           ? copy(
               `Workflow '${run.workflow_id}' not found — this run's workflow was created by an ` +
                 `agent (create_workflow) and its stored copy is gone; there is no source file ` +
-                `to register.${terminal ? '' : ` ${disposalSentence('To end the run:')}`}`,
+                `to register.${terminal ? '' : ` ${disposalSentence('To end the run:', true)}`}`,
             )
           : copy(
               // #729 PR-0 (T-21, #742): the reason is the `definition_absent { cause:

@@ -127,7 +127,8 @@ const shape = {
     await writeFile(file, '{"a"');
   },
   async legacy() {
-    await writeFile(file, JSON.stringify({ id: ID, version: 1, steps: [] }));
+    // #819 (U3): the older cohort's shape — a string name and a number version (W-C2R-CORE-12)
+    await writeFile(file, JSON.stringify({ id: ID, name: ID, version: 1, steps: [] }));
   },
   async registryBroken() {
     await writeFile(file, JSON.stringify(makeDefinition(ID)));
@@ -472,7 +473,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     expect(err.message).toBe(
       "the registered copy of 'gate-558' is empty — not a workflow. " +
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
-        'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
+        'workflow can be read; realm run abandon refuses a run whose question can still be answered. ' +
         'To repair: re-register the workflow from its source (realm workflow register ' +
         '<path-to-workflow>), then answer the gate; if it was never registered from a source, ' +
         `remove the file (rm ${file}) instead.`,
@@ -496,7 +497,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
     expect(err.message).toBe(
       `the registered copy of 'gate-558' could not be read (EACCES: ${file}). ` +
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
-        'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
+        'workflow can be read; realm run abandon refuses a run whose question can still be answered. ' +
         `To repair: make ${file} readable (chmod u+r ${file}), then answer the gate.`,
     );
     // Correction 2 (3.1): the repair, with the copy.
@@ -515,7 +516,7 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
       'This workflow was registered with an older version of Realm. ' +
         'Re-register it with: realm workflow register <path-to-workflow>. ' +
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
-        'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
+        'workflow can be read; realm run abandon refuses a run whose question can still be answered. ' +
         'Once re-registered, answer the gate.',
     );
     // Correction 2 (3.1): the repair, with the copy.
