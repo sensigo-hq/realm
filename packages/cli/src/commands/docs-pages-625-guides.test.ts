@@ -137,6 +137,13 @@ describe(
         'docs/reference/cli/realm-mcp-and-serve.md',
         'Both serve the 11 tools listed in [MCP tools](../mcp/tools.md) (`advance_run` was added after version 0.46.0, which serves 10), for every workflow registered in `~/.realm/workflows/`, and both keep runs in `~/.realm/runs/`.',
       );
+      // #627 W correction 2 (6.1): the answer tool by value — present_question only on `realm mcp`;
+      // `realm serve` sends no forms (executed by realm-mcp's http-door-627 :: "a server built per
+      // request …"; the counts by docs-627 :: "6.6 (a)").
+      claim(
+        'docs/reference/cli/realm-mcp-and-serve.md',
+        "Which answer tool is among them follows the server's gate-answers value and the client: `submit_human_response` under `offered` and under `asked` with a client that shows no forms, `present_question` under `asked` with a forms client of `realm mcp` (never on `realm serve`, which sends no forms), and neither under `withheld`, which serves 10.",
+      );
       registered();
       async function served(client: Client) {
         const listed = (await client.listTools()).tools.map((t) => t.name);

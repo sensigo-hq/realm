@@ -113,3 +113,35 @@ describe('list_workflows — every registered copy the listing could not read is
     expect(r.hint).toContain('3 registered workflow copies could not be read');
   });
 });
+
+describe('#627 W correction 2 (3.5) — list_workflows’ hint by class', () => {
+  it('a copy a later version of Realm registered: class newer, no repair, and the hint names the other-version case', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'realm-lw-627-'));
+    try {
+      await writeFile(
+        join(dir, 'w1.json'),
+        JSON.stringify({
+          schema_version: CURRENT_WORKFLOW_SCHEMA_VERSION + 1,
+          id: 'w1',
+          name: 'w1',
+          version: 1,
+          steps: {},
+        }),
+      );
+      const r = await handleListWorkflows({ workflowStore: new JsonWorkflowStore(dir) });
+      if (r.status !== 'ok') throw new Error('fixture: the listing answers');
+      // (a) red when the hint promises a repair for every entry (a newer copy carries none) and never
+      //     names the other-version case; (b) prints the entry's class, whether it has a repair, and
+      //     whether the hint names that case.
+      expect({
+        class: r.unreadable[0]?.class,
+        repair: r.unreadable[0]?.repair,
+        hint: r.hint.includes(
+          'one an older or a later version of Realm registered, whose reason names the way out',
+        ),
+      }).toEqual({ class: 'newer', repair: undefined, hint: true });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

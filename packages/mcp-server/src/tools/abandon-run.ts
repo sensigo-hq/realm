@@ -1,6 +1,6 @@
 // abandon-run tool — explicitly abandons a non-terminal run (stamps the authoritative marker).
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   ABANDON_KILL_ADVISORY,
   JsonFileStore,
@@ -11,13 +11,32 @@ import {
   type RunStore,
 } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { toolMeta } from '../tool-annotations.js';
 import { renderReply, toolContentOf } from '../render-reply.js';
+import { mcpHostOf } from './start-run.js';
+import type { McpDoor } from '../door.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleAbandonRunStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
   runStore?: RunStore;
+  /**
+   * #627 W: this server's door — a refusal at an open question is worded by its answers row (no
+   * answer tool is named where the door hands questions to the person).
+   */
+  door?: McpDoor;
 }
+
+/** The tool's description where the agent keeps an answer tool (`offered`, and `asked`'s fallback). */
+export const ABANDON_RUN_DESCRIPTION =
+  'Abandon a non-terminal workflow run (marks it terminal with phase "abandoned"). Refuses runs waiting on a human gate (resolve via submit_human_response) and already-terminal runs.';
+
+/**
+ * #627 W (W-c8): the description where no answer tool is listed — `withheld`, and `asked` in a
+ * session whose client shows forms. It names no answer tool.
+ */
+export const ABANDON_RUN_DESCRIPTION_NO_ANSWER_TOOL =
+  'Abandon a non-terminal workflow run (marks it terminal with phase "abandoned"). Refuses runs waiting on a human gate and runs that have already ended.';
 
 export interface AbandonRunSummary {
   run_id: string;
@@ -80,12 +99,21 @@ export async function handleAbandonRun(
   };
 }
 
-/** Registers the abandon_run MCP tool on the server. */
-export function registerAbandonRun(server: McpServer, opts?: HandleAbandonRunStores): void {
-  server.tool(
+/**
+ * Registers the abandon_run MCP tool on the server, and returns it: the server sets its description
+ * per session (#627 W, W-c8).
+ */
+export function registerAbandonRun(
+  server: McpServer,
+  opts?: HandleAbandonRunStores,
+): RegisteredTool {
+  return server.registerTool(
     'abandon_run',
-    'Abandon a non-terminal workflow run (marks it terminal with phase "abandoned"). Refuses runs waiting on a human gate (resolve via submit_human_response) and already-terminal runs.',
-    { run_id: z.string(), reason: z.string().optional() },
+    {
+      ...toolMeta('abandon_run'),
+      description: ABANDON_RUN_DESCRIPTION,
+      inputSchema: { run_id: z.string(), reason: z.string().optional() },
+    },
     async (args) => {
       try {
         const result = await handleAbandonRun(args, opts);
@@ -112,8 +140,12 @@ export function registerAbandonRun(server: McpServer, opts?: HandleAbandonRunSto
               : code === 'STATE_TRANSITION_DENIED'
                 ? `The run is waiting on a human gate, so it cannot be abandoned yet.`
                 : `An error occurred while abandoning the run.`;
+        // #627 W: the door's answers row words the refusal's remedy. No operator route is passed, and
+        // none is needed (correction 2, 8.6 (f)): a route renders only an elsewhere entry's command,
+        // and an error reply built here lists no way, so it would print nothing.
         const rendered = renderReply(
           buildPreExecutionErrorEnvelope('abandon_run', args.run_id, 0, workflowErr, contextHint),
+          mcpHostOf(opts?.door !== undefined ? { door: opts.door } : undefined),
         );
         // This reply's field set is as before PR-0: no run was read (no version), the refusal's
         // untyped `details` are not published here, and an untyped throw names no code. A code's

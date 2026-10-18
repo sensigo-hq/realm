@@ -24,6 +24,7 @@ import {
   type McpNextAction,
 } from '../render-reply.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
@@ -246,21 +247,25 @@ export async function handleStartRunBatch(
 
 export function registerStartRunBatch(server: McpServer, opts?: HandleRunStores): void {
   markServedByTool(opts);
-  server.tool(
+  server.registerTool(
     'start_run_batch',
-    "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",
     {
-      workflow_id: z.string(),
-      items: z.array(
-        z.object({
-          params: z.record(z.unknown()),
-          idempotency_key: z.string().optional(),
-        }),
-      ),
-      parent_run_id: z.string().optional(),
-      max_items: z.number().int().positive().optional(),
-      on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
-      on_live_match: z.enum(['use_existing', 'fail']).optional(),
+      ...toolMeta('start_run_batch'),
+      description:
+        "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",
+      inputSchema: {
+        workflow_id: z.string(),
+        items: z.array(
+          z.object({
+            params: z.record(z.unknown()),
+            idempotency_key: z.string().optional(),
+          }),
+        ),
+        parent_run_id: z.string().optional(),
+        max_items: z.number().int().positive().optional(),
+        on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
+        on_live_match: z.enum(['use_existing', 'fail']).optional(),
+      },
     },
     async (args) => {
       try {

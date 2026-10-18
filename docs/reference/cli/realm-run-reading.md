@@ -134,7 +134,7 @@ Evidence (3 steps):
      Output: {"reply":"We have refunded the charge."}
      Diagnostics: ~10 tokens (estimate, step input) | preconditions: classify.confidence >= 0.7 → true (0.9)
      cost: not recorded — realm has no usage figures for this attempt (for example: an outside agent over MCP made it, a person typed its answer at a realm workflow run prompt, or realm 0.45.0 or earlier recorded it)
-     Answer: send · answered by (not stated) · proof: matched the claim_token of the reply that opened this question
+     Answer: send · answered by (not stated) · through Realm's MCP answer tool (as its door declared), recorded by mcp-stdio, running as ops@server-1 (from the OS user) · token: matched the claim_token of the reply that opened this question
   …
 ```
 
@@ -207,9 +207,21 @@ For a step refused for its input that builds no input from an `input_map`, like 
 A waiting gate looks like this:
 
 ```text
-Gate: draft (gate 580b28a5-abfc-49c1-b8ef-5d3574ce5aea, opened 0m ago)
+Gate: draft (gate f0a1f2af-cdf5-4938-b477-e5de56136688, opened 0m ago)
+  Question: "Send this reply?"
   Choices: send, discard
+  To answer: realm run respond 41b88dd5-e82e-426a-b39e-00229fb01cef --gate f0a1f2af-cdf5-4938-b477-e5de56136688 --choice <one of: send, discard>
 ```
+
+The `Question:` line is the gate's message as it read when the gate opened — never the workflow's current text. For a gate with no message, it is the step's prompt, read from the workflow as registered now and rendered with what the step had when the gate opened, and the line says so: `Question (the step's prompt, from the workflow as registered now): "…"`. When there is nothing to show, the line says why:
+
+- `Question: none — the gate declares no message and its step no prompt`;
+- `Question: not recorded — this gate was opened by a version of Realm that did not keep its message`;
+- `Question: not shown — the workflow's definition cannot be read`;
+- `Question: not shown — the gate's step is not in the workflow's definition`;
+- `Question: not shown — the step's prompt could not be rendered`.
+
+The `To answer:` line is printed while the question can be answered here. Both were added after version 0.47.0.
 
 ### The blocks in the middle
 
@@ -344,24 +356,28 @@ A step with a gate prints, for each answer, the question as the person read it (
 
 ```text
      Message:  "Approve the refund?"
-     Answer: approve · answered by alice (as stated, not verified) · proof: no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)
+     Answer: approve · answered by alice (as stated) · through a terminal (realm run respond) (as its door declared), recorded by respond, running as ops@server-1 (from the OS user) · token: none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)
 ```
 
-The answerer is the name the caller gave with `realm run respond --by` or `responded_by`, which Realm does not check. Without one it reads `(not stated)`. A recorded name that cannot be printed reads `a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`. The proof part is one of these:
+The answerer is the name the caller gave with `realm run respond --by` or `responded_by`, which Realm does not check. Without one it reads `(not stated)`. A recorded name that cannot be printed reads `a recorded name that cannot be printed (control characters, or not a name with its source)`. A name longer than 200 characters is shown cut at 200 characters, ending in `…[truncated]`.
 
-| It reads                                                                                                                     | When                                                   |
-| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `matched the claim_token of the reply that opened this question`                                                             | The caller passed back the question's token.           |
-| `no claim_token passed (the CLI never passes one; over MCP, only the conversation that opened the question has one to pass)` | No token was passed, over either door.                 |
-| `the claim_token passed is not this question's`                                                                              | A token was passed and it is not this question's.      |
-| `could not be checked — no claim on this record` / `— the claim has no token` / `— this store keeps no claims`               | There was nothing to check it against.                 |
-| `could not be checked — already settled by an earlier answer` / `— already settled by its expiry`                            | The question was settled before this call.             |
-| `none recorded`                                                                                                              | The answer was written before the proof was recorded.  |
-| `the recorded proof cannot be read`                                                                                          | The record holds a proof that is not one of the above. |
+Then the line says how the answer arrived, as its door declared it — `through the user's app, as a form`, `through Realm's MCP answer tool` or `through a terminal (realm run respond)`, each followed by `(as its door declared)` — and the program that recorded it: its channel, the name it runs as, and how that name is known. An answer from a program that declared no route reads `through a route its program did not declare`; one from a program that did not name itself reads `as recorded by a program that did not name itself`; an answer recorded by an earlier version, or with no route, reads `how it arrived was not recorded`. When the server's transport authenticated someone, the line adds `authenticated by API key <id>`, `through realm serve's shared token, which names no one`, or `with authentication turned off (dev mode)`; when the app was asked to have the person approve the call, `client prompt requested (anthropic/requiresUserInteraction); Realm cannot tell whether anyone approved`. The route, the program, the transport and the `token:` label were added after version 0.47.0, which labelled the last part `proof:`. See [Gate answers over MCP](../mcp/gate-answers.md).
 
-The proof never decides whether the answer was recorded. See [The claim token](../mcp/tools.md#the-claim-token).
+The token part is one of these:
 
-An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no answer in time)`, with no answerer and no proof part: no answer came before the time was up, or one came after it and was not recorded. An `on_expiry: abort` expiry answers nothing: the step has no `Answer:` line, the expiry's entry prints no lines, and the step is listed under `Skipped:` as `gate_expired`. The run's `Cause:` line says the gate expired and the run aborted.
+| It reads                                                                                                                                                          | When                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `matched the claim_token of the reply that opened this question`                                                                                                  | The caller passed back the question's token.           |
+| `none passed (a token is passed only by Realm's MCP answer tool, from the conversation that opened the question, or by a program that calls the library with it)` | No token was passed, over either door.                 |
+| `the claim_token passed is not this question's`                                                                                                                   | A token was passed and it is not this question's.      |
+| `could not be checked — no claim on this record` / `— the claim has no token` / `— this store keeps no claims`                                                    | There was nothing to check it against.                 |
+| `could not be checked — already settled by an earlier answer` / `— already settled by its expiry`                                                                 | The question was settled before this call.             |
+| `none recorded`                                                                                                                                                   | The answer was written before the proof was recorded.  |
+| `the recorded proof cannot be read`                                                                                                                               | The record holds a proof that is not one of the above. |
+
+The token never decides whether the answer was recorded. See [The claim token](../mcp/tools.md#the-claim-token).
+
+An answer the gate's expiry wrote with its default choice reads `Answer: hold · settled by the gate's expiry (no answer in time)`, with no answerer, route or token part: no answer came before the time was up, or one came after it and was not recorded. An `on_expiry: abort` expiry answers nothing: the step has no `Answer:` line, the expiry's entry prints no lines, and the step is listed under `Skipped:` as `gate_expired`. The run's `Cause:` line says the gate expired and the run aborted.
 
 **Exit code:** 0, or 1 if the run is not in the store.
 

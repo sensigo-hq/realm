@@ -308,3 +308,22 @@ describe('#729 PR-0 (Part B) — the owed clause and the held-steps words, moved
     ]).toEqual(["'z', 'y' wait for its answer", "'z' waits for its answer", undefined]);
   });
 });
+
+describe('#627 W correction 2 (3.2) — the command for a register way with a copy works', () => {
+  it('a register way with a path → `realm workflow validate --registered <id>`; without one, the register command', () => {
+    const way = { verb: 'register', conditions: [], workflow_id: 'w1', run_id: 'r1' } as const;
+    // (a) red when the command registers the COPY (`realm workflow register <copy>`, which fails:
+    //     register takes a source); (b) prints both commands.
+    expect({
+      withCopy: CLI_COMMANDS.register(
+        { ...way, path: '/home/u/.realm/workflows/w1.json' },
+        undefined,
+        NO_DRIVE_FLAGS,
+      ),
+      without: CLI_COMMANDS.register(way, undefined, NO_DRIVE_FLAGS),
+    }).toEqual({
+      withCopy: 'realm workflow validate --registered w1',
+      without: 'realm workflow register <file>',
+    });
+  });
+});

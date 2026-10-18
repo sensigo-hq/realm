@@ -1,6 +1,6 @@
 /**
- * Issue #586 — SCHEMA ADMISSION. Every authored JSON-Schema block is compiled at load by the same
- * `compileSchema` the run time validates through, so `validate` / `register` / `--registered` /
+ * Issue #586 — SCHEMA ADMISSION. Every authored JSON-Schema block is compiled at load through the
+ * same inner compile the run time validates through, so `validate` / `register` / `--registered` /
  * `watch` / `workflow test` / `run` / `agent` / `listen` and both public string loaders refuse a
  * malformed block identically, on the block's own line.
  *
@@ -875,7 +875,7 @@ describe('#586 schema admission — the four authored keys', () => {
     const end = loader.indexOf('\n    };', start);
     expect(end).toBeGreaterThan(start);
     const slice = loader.slice(start, end);
-    expect(slice).toContain('compileSchema(');
+    expect(slice).toContain('compileCapturing(');
     expect(slice).not.toContain('new Ajv(');
   });
 

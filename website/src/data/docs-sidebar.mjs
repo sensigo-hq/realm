@@ -76,7 +76,11 @@ export const DOCS_SIDEBAR = [
   {
     label: 'Reference: MCP',
     collapsed: true,
-    items: ['docs/reference/mcp/tools', 'docs/reference/mcp/run-state-and-health'],
+    items: [
+      'docs/reference/mcp/tools',
+      'docs/reference/mcp/run-state-and-health',
+      'docs/reference/mcp/gate-answers',
+    ],
   },
   {
     label: 'Reference: code and settings',

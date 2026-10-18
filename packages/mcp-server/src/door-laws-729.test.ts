@@ -16,7 +16,7 @@
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: field
 // names, verbs, tools and booleans — never a token's value.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -99,7 +99,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       enactor: { kind: 'observer' },
       store: { persistsClaims: true },
     });
-    const view = renderWaysOf(composed);
+    const view = renderWaysOf(composed, {});
     // (a) red when the door renders register as an instruction or drops it silently; (b) prints
     //     the entries.
     expect({
@@ -191,7 +191,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       source: { kind: 'default' as const, ref: 'test' },
     };
     const withRoute = renderReply(reply, { operatorRoute: route });
-    const bare = renderReply(reply);
+    const bare = renderReply(reply, {});
     // (a) red when a command leaks into a structured entry, or the person block appears without a
     //     route; (b) prints booleans.
     expect({
@@ -219,7 +219,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     const stated = { ...BASE, in_progress_steps: ['a'], claims: { a: { deadline, token: 't' } } };
     const unknown = { ...BASE, in_progress_steps: ['a'] };
     const render = (record: unknown) =>
-      renderReply(replyOver(composeWaysOn(writtenSnapshot(record as RunRecord, AT), ctxOf(d))))
+      renderReply(replyOver(composeWaysOn(writtenSnapshot(record as RunRecord, AT), ctxOf(d))), {})
         .envelope;
     const a = render(stated);
     const b = render(unknown);
@@ -280,7 +280,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     //     (b) prints each reply's status and the leaked names.
     expect(
       replies.map((r) => {
-        const env = renderReply(r).envelope as Record<string, unknown>;
+        const env = renderReply(r, {}).envelope as Record<string, unknown>;
         const error = env['error'] as Record<string, unknown> | undefined;
         return [
           r.status,
@@ -300,7 +300,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
   it('Amendment 9 / 11: error_details is one carrier — a #719 error’s typed facts; an input refusal’s typed facts (#759)', async () => {
     const facts = { resource: 'run_file' as const, class: 'parse' as const, path: '/s/r.json' };
     const damaged = buildPreExecutionErrorEnvelope('x', 'r', 0, unreadableRunFileError(facts));
-    const envelope = renderReply(damaged).envelope;
+    const envelope = renderReply(damaged, {}).envelope;
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-door-729-')));
     const { run } = await store.create({ workflowId: LEVER.id, workflowVersion: 1, params: {} });
     const refused = await executeStep(store, LEVER, {
@@ -319,7 +319,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       scope: (envelope.error_details as Record<string, unknown> | undefined)?.['scope'],
       inputCode: refused.error_code,
       inputUntouched:
-        JSON.stringify(renderReply(refused).envelope.error_details) ===
+        JSON.stringify(renderReply(refused, {}).envelope.error_details) ===
         JSON.stringify(refused.error?.facts),
       inputHasErrors: Array.isArray(
         (refused.error?.facts as Record<string, unknown> | undefined)?.['errors'],
@@ -379,14 +379,41 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
     };
     // (a) red when the token rides the gate, a later reply, or another entry; (b) prints where.
     expect({
-      opening: tokensIn(renderReply(opening).envelope as Record<string, unknown>),
-      later: tokensIn(renderReply(later).envelope as Record<string, unknown>),
+      opening: tokensIn(renderReply(opening, {}).envelope as Record<string, unknown>),
+      later: tokensIn(renderReply(later, {}).envelope as Record<string, unknown>),
     }).toEqual({ opening: ['next_actions[0]:submit_human_response'], later: [] });
     const planted = {
       ...opening,
       gate: { ...(opening.gate ?? {}), claim_token: 'planted' },
     } as unknown as EngineReply;
-    expect(() => renderReply(planted)).toThrow(/claim token reached the wire/);
+    // #627 W (Part I): a stray token no longer throws — the reply is held back (W-e1) and the log
+    // line (W-e2) names the tool and the run, never the token. (a) red when the stray token reaches
+    // the wire, or the held-back reply is not W-e1; (b) prints the reply's fields and the log lines.
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    const held = renderReply(planted, {}).envelope;
+    spy.mockRestore();
+    expect({
+      token: JSON.stringify(held).includes('planted'),
+      status: held.status,
+      agent_action: held.agent_action,
+      retryable: held.retryable,
+      next_actions: held.next_actions,
+      held: held.context_hint.startsWith('Realm held back this reply'),
+      logged: logged.map((l) => l.startsWith('realm: held back a q reply for run')),
+      loggedToken: logged.some((l) => l.includes('planted')),
+    }).toEqual({
+      token: false,
+      status: 'error',
+      agent_action: 'report_to_user',
+      retryable: false,
+      next_actions: [],
+      held: true,
+      logged: [true],
+      loggedToken: false,
+    });
   });
 
   it('Amendment 7: every damaged-file class × resource — the MCP door prints #719’s own text, byte for byte, and publishes its facts', () => {
@@ -412,7 +439,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
           typeof renderUnreadableStoredFile
         >[0];
         const reply = buildPreExecutionErrorEnvelope('x', 'r', 0, unreadableRunFileError(facts));
-        const env = renderReply(reply).envelope;
+        const env = renderReply(reply, {}).envelope;
         if (env.errors[0] !== renderUnreadableStoredFile(facts))
           found.push(`${cls}×${resource}: text`);
         if (JSON.stringify(env.error_details) !== JSON.stringify({ scope: 'file', ...facts })) {
@@ -449,7 +476,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       dispatcher: async () => ({}),
     });
     const respond = opened.ways.find((w) => w.verb === 'respond');
-    const answer = renderReply(opened).envelope.next_actions.find(
+    const answer = renderReply(opened, {}).envelope.next_actions.find(
       (n) => n.instruction?.tool === 'submit_human_response',
     );
     // (a) red when the way or its instruction carries other choices than the gate's; (b) prints
@@ -477,7 +504,7 @@ describe('#729 PR-0 — the MCP door’s laws', () => {
       },
     };
     const composed = composeWaysOn(writtenSnapshot(BASE, AT), ctxOf(d));
-    const env = renderReply(replyOver(composed)).envelope;
+    const env = renderReply(replyOver(composed), {}).envelope;
     // (a) red when an entry names a step the ways do not offer, or drops one they do; (b) prints
     //     both sets.
     expect({

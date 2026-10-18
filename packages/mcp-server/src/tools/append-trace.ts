@@ -23,8 +23,11 @@ import {
   isWriterNonceRequired,
   writerNonceRequiredError,
 } from './execute-step.js';
-import { mcpReplyOf, renderReply, toolContentOf } from '../render-reply.js';
+import { mcpReplyOf, renderReply, toolContentOf, type OperatorRoute } from '../render-reply.js';
+import type { McpDoor } from '../door.js';
+import { mcpHostOf } from './start-run.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleAppendTraceStores {
@@ -34,6 +37,12 @@ export interface HandleAppendTraceStores {
   /** The trace buffer the entries land in. Its run reader must read the same runs as `runStore`:
    *  the write-time fence reads the trace buffer's own reader (issue #616), never `runStore`. */
   traceBufferStore?: TraceBufferStore;
+  /** #627 W (correction 1, A2): the server's door, so an error reply's `respond` remedy is worded by
+   *  the door's one predicate (`doorWithholdsAnswers`) — never as the answer call where the session
+   *  has no answer tool. */
+  door?: McpDoor;
+  /** The operator's route, as every other tool's host carries it. */
+  operatorRoute?: OperatorRoute;
 }
 
 export type AppendTraceOkResult = { status: 'ok' } & AppendResult & {
@@ -281,6 +290,8 @@ export async function handleAppendTrace(
       preCsState,
       undefined,
       run.claims?.[args.step_id]?.deadline ?? undefined,
+      // #627 W correction 2 (8.1): the live run's open gate (an ended run was refused above).
+      run.pending_gate !== undefined ? { runId: run.id, gate: run.pending_gate } : undefined,
     );
   }
 
@@ -375,28 +386,31 @@ export async function handleAppendTrace(
 
 /** Registers the append_trace MCP tool on the server. */
 export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceStores): void {
-  server.tool(
+  server.registerTool(
     'append_trace',
-    [
-      'Submit trace entries incrementally during an agent step, before calling execute_step.',
-      'Entries are buffered and merged with any entries submitted at execute_step finalization.',
-      'Delivery is best-effort: entries are durable after this call returns but are not canonical until execute_step completes.',
-      'Only valid for agent steps that have not yet been claimed (before execute_step is called).',
-      'Optional: writer_nonce — mint a fresh UUIDv4 per step-attempt (the SAME value on every',
-      "append_trace call for this attempt, a NEW one next attempt) to get this attempt's own",
-      'lines faithfully attributed instead of the honest-but-unattributed floor. Mint on BOTH',
-      'append_trace and execute_step for this attempt, or neither — a guessable or reused nonce',
-      'is worse than omitting one (it lets residue be adopted with no caveat, or silently folds a',
-      'crashed attempt into this one).',
-    ].join(' '),
     {
-      run_id: z.string(),
-      step_id: z.string(),
-      entries: z.array(traceEntrySchema),
-      // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
-      // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
-      // envelope refusal, never a bare zod/SDK error.
-      writer_nonce: z.string().optional(),
+      ...toolMeta('append_trace'),
+      description: [
+        'Submit trace entries incrementally during an agent step, before calling execute_step.',
+        'Entries are buffered and merged with any entries submitted at execute_step finalization.',
+        'Delivery is best-effort: entries are durable after this call returns but are not canonical until execute_step completes.',
+        'Only valid for agent steps that have not yet been claimed (before execute_step is called).',
+        'Optional: writer_nonce — mint a fresh UUIDv4 per step-attempt (the SAME value on every',
+        "append_trace call for this attempt, a NEW one next attempt) to get this attempt's own",
+        'lines faithfully attributed instead of the honest-but-unattributed floor. Mint on BOTH',
+        'append_trace and execute_step for this attempt, or neither — a guessable or reused nonce',
+        'is worse than omitting one (it lets residue be adopted with no caveat, or silently folds a',
+        'crashed attempt into this one).',
+      ].join(' '),
+      inputSchema: {
+        run_id: z.string(),
+        step_id: z.string(),
+        entries: z.array(traceEntrySchema),
+        // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
+        // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
+        // envelope refusal, never a bare zod/SDK error.
+        writer_nonce: z.string().optional(),
+      },
     },
     async (args) => {
       try {
@@ -436,6 +450,7 @@ export function registerAppendTrace(server: McpServer, opts?: HandleAppendTraceS
             workflowErr,
             contextHint,
           ),
+          mcpHostOf(opts),
         );
         return toolContentOf(mcpReplyOf(rendered), sseJsonStringify);
       }

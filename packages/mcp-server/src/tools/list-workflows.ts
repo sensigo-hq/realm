@@ -5,6 +5,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { JsonWorkflowStore } from '@sensigo/realm';
 import { sseJsonStringify } from '../sse-json.js';
+import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
 
 export interface HandleStores {
@@ -15,7 +16,8 @@ export interface HandleStores {
 export interface UnreadableWorkflowEntry {
   /** The registry file (its basename), or the registry directory for `registry_broken`. */
   file: string;
-  /** `unreadable` · `not_a_file` · `empty` · `parse` · `registry_broken` (never an error code). */
+  /** `unreadable` · `not_a_file` · `empty` · `parse` · `registry_broken` · `newer` (a later version
+   *  of Realm registered it) · `legacy` (an older version did) — never an error code. */
   class: string;
   /** Present only for the OS-error classes — never fabricated. */
   errno?: string;
@@ -98,15 +100,21 @@ export async function handleListWorkflows(stores?: HandleStores): Promise<ListWo
     hint:
       entries.length === 0
         ? HEALTHY_HINT
-        : `${count} — 'unreadable' names each file, the reason and the repair (an operator's act). Do not create a workflow to replace one listed there until an operator has looked: the entry may be a registered workflow that only needs its file repaired. Call get_workflow_protocol with a workflow_id before calling start_run.`,
+        : // Correction 2 (3.5): by class — a newer or a legacy copy carries no `repair`; its reason
+          // names the way out.
+          `${count} — 'unreadable' names each file and the reason, with the repair where one applies (an operator's act). Do not create a workflow to replace one listed there until an operator has looked: the entry may be a registered workflow that only needs its file repaired, or one an older or a later version of Realm registered, whose reason names the way out. Call get_workflow_protocol with a workflow_id before calling start_run.`,
   };
 }
 
 /** Registers the list_workflows MCP tool on the server. */
 export function registerListWorkflows(server: McpServer, opts?: HandleStores): void {
-  server.tool(
+  server.registerTool(
     'list_workflows',
-    'List all registered Realm workflows; names every registered copy that could not be read, and refuses when the registry directory itself cannot be read.',
+    {
+      ...toolMeta('list_workflows'),
+      description:
+        'List all registered Realm workflows; names every registered copy that could not be read, and refuses when the registry directory itself cannot be read.',
+    },
     async () => {
       const result = await handleListWorkflows(opts);
       return { content: [{ type: 'text' as const, text: sseJsonStringify(result) }] };

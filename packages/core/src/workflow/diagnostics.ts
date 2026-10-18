@@ -43,7 +43,11 @@ export type WarningCode =
   | 'SCHEMA_STRICT_ADVISORY'
   // issue #620 PR-C: the project's `@sensigo/realm` (the copy its handlers and adapters import) is
   // not the running one. Advice: true whether or not a crossing happens, so it never refuses.
-  | 'REALM_RELEASE_LINE_MISMATCH';
+  | 'REALM_RELEASE_LINE_MISMATCH'
+  // #627 W (F31, W-l1): a gated step's `instructions` or the workflow's `protocol.rules` names an
+  // answer tool. Advice, never a refusal: the text is forwarded labelled as the author's (W-t1) and
+  // Realm's own rule follows it; a text match finds tool names, not every phrasing.
+  | 'AUTHOR_TEXT_NAMES_ANSWER_TOOL';
 
 /**
  * A single structured diagnostic. `message` is the full human-readable text, minted once at the
@@ -130,6 +134,8 @@ export const DEFAULT_POLICY: Record<WarningCode, 'warn' | 'error'> = {
   DEAD_GATE_CONFIG: 'warn',
   // issue #620 PR-C — advice: register and watch keep registering; `--strict` fails.
   REALM_RELEASE_LINE_MISMATCH: 'warn',
+  // #627 W (F31) — advice about author text; the load goes on.
+  AUTHOR_TEXT_NAMES_ANSWER_TOOL: 'warn',
 };
 
 /**

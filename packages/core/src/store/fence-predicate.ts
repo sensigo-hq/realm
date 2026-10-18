@@ -12,10 +12,11 @@
 // details, `retryable`, `agentAction`), the same treatment of an absent run. The refusal builders
 // moved here from their call sites (`append-trace.ts`, `gc.ts`, `purge.ts`, `reclaim-step.ts`,
 // `execution-loop.ts`) so no caller mints a fence verdict of its own.
-import type { RunRecord } from '../types/run-record.js';
+import type { PendingGate, RunRecord } from '../types/run-record.js';
 import type { RunStore } from './store-interface.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import { deriveRunPhase } from '../engine/eligibility.js';
+import { respondWayOfGate } from '../engine/ways.js';
 import { TERMINAL_PHASES } from '../engine/lifecycle.js';
 import { brandClass, REALM_BRAND } from '../brand.js';
 import { assertReleaseLine } from '../release-line.js';
@@ -154,7 +155,10 @@ export function stepStateOf(
  * `append_trace`'s refusal (issue #207 PR-2) — see `StepEligibilityState`. #729 PR-0 (T-1, T-11): an
  * in-flight step is `held_elsewhere` in the one vocabulary — held by another call until its claim's
  * deadline, or with no deadline recorded (no claim, or a claim without one); never a tool's name,
- * never a liveness word (rule 10).
+ * never a liveness word (rule 10). #627 W correction 2 (8.1): a step that waits at its OWN open
+ * question is not held by another call — it waits for a person; the refusal says so, and its remedy
+ * is that question's `respond` way (each door words it). `openGate`: a LIVE run's open gate (both
+ * callers refuse an ended run first).
  */
 export function stepNotEligibleError(
   stepId: string,
@@ -162,9 +166,13 @@ export function stepNotEligibleError(
   stepState: StepEligibilityState,
   extraDetails?: Record<string, unknown>,
   claimDeadline?: string,
+  openGate?: { runId: string; gate: PendingGate },
 ): WorkflowError {
-  const held =
-    claimDeadline !== undefined
+  const atOwnQuestion =
+    stepState === 'in_progress' && openGate !== undefined && openGate.gate.step_name === stepId;
+  const held = atOwnQuestion
+    ? `Step '${stepId}' is waiting for an answer to its question (gate '${openGate.gate.gate_id}'); a trace can no longer be added to it.`
+    : claimDeadline !== undefined
       ? `Step '${stepId}' is held by another call until ${claimDeadline}.`
       : `Step '${stepId}' is held by another call; no deadline is recorded for it.`;
   const messages: Record<StepEligibilityState, string> = {
@@ -181,6 +189,7 @@ export function stepNotEligibleError(
     agentAction: stepState === 'in_progress' ? 'resolve_precondition' : 'report_to_user',
     retryable: false,
     details: { step_id: stepId, step_state: stepState, run_version: runVersion, ...extraDetails },
+    ...(atOwnQuestion ? { remedy: [respondWayOfGate(openGate.runId, openGate.gate)] } : {}),
   });
 }
 
@@ -436,6 +445,8 @@ function evaluateChecked(
           state,
           undefined,
           run.claims?.[step]?.deadline ?? undefined,
+          // Correction 2 (8.1): the live run's open gate — a step waiting at its own question.
+          run.pending_gate !== undefined ? { runId: run.id, gate: run.pending_gate } : undefined,
         );
       }
       return;

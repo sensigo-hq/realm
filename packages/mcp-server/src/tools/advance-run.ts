@@ -13,7 +13,9 @@ import {
   type Attributed,
   type ActorAbsent,
 } from '@sensigo/realm';
-import type { HandleRunStores } from './start-run.js';
+import { formCallOf, formDepsOf, mcpHostOf, type HandleRunStores } from './start-run.js';
+import { withQuestionForm, type FormCall } from '../form-path.js';
+import { toolMeta } from '../tool-annotations.js';
 import { sseJsonStringify } from '../sse-json.js';
 import {
   mcpReplyOf,
@@ -56,6 +58,7 @@ export type AdvanceRunReply = WithPersonBlock<McpEnvelope> & {
 export async function handleAdvanceRun(
   args: { run_id: string },
   stores?: HandleRunStores,
+  call?: FormCall,
 ): Promise<AdvanceRunReply> {
   assertToolStores(stores, 'handleAdvanceRun');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -89,27 +92,25 @@ export async function handleAdvanceRun(
       : {}),
     ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
   });
+  // #627 W (§5.2b): a reply that reached a question this process never sent sends its form here.
+  const reply = await withQuestionForm(
+    result,
+    formDepsOf(stores, runStore, definition, registry),
+    call,
+  );
   // decision C205: a reply on a run that ended with a failed step `realm run resume` takes — this
   // call's own step failed, or the run had ended before it — ends with the way back in.
   // decision C211: a run that ended with cleanup steps left pending says the command that runs
   // them too — any ending.
   const ended =
-    result.run_phase !== undefined && TERMINAL_PHASES.has(result.run_phase)
+    reply.run_phase !== undefined && TERMINAL_PHASES.has(reply.run_phase)
       ? await runStore.get(args.run_id).catch(() => undefined)
       : undefined;
   // #729 PR-0: the MCP door's one renderer (next_actions, agent_action, the way sentence); the ended
   // run's ways back in follow the door's next sentence, as before.
   const tail = ended === undefined ? '' : endedRunWaysSentence(ended, definition, new Date());
   return {
-    ...mcpReplyOf(
-      withHintTail(
-        renderReply(
-          result,
-          stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {},
-        ),
-        tail,
-      ),
-    ),
+    ...mcpReplyOf(withHintTail(renderReply(reply, mcpHostOf(stores)), tail)),
     continued_by:
       stores?.driver !== undefined
         ? stores.driver
@@ -123,14 +124,15 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
   server.registerTool(
     'advance_run',
     {
+      ...toolMeta('advance_run'),
       description:
         "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — in this server's environment. Call it when next_actions names it.",
       inputSchema: advanceRunArgsSchema,
     },
-    async (rawArgs) => {
+    async (rawArgs, extra) => {
       const args = rawArgs as z.infer<typeof advanceRunArgsSchema>;
       try {
-        const result = await handleAdvanceRun(args, opts);
+        const result = await handleAdvanceRun(args, opts, formCallOf(opts, extra));
         const unknown = advanceRunUnknownKeyWarnings(args as Record<string, unknown>);
         // decision C119: `data` and `evidence` are empty in MCP replies, as `execute_step`'s — the
         // run's evidence is read with get_run_state.
@@ -161,7 +163,7 @@ export function registerAdvanceRun(server: McpServer, opts?: HandleRunStores): v
               : `An error occurred before the run could be advanced.`;
         const envelope = renderReply(
           buildPreExecutionErrorEnvelope('advance_run', args.run_id, 0, workflowErr, contextHint),
-          opts?.operatorRoute !== undefined ? { operatorRoute: opts.operatorRoute } : {},
+          mcpHostOf(opts),
         );
         return toolContentOf(mcpReplyOf(envelope), sseJsonStringify);
       }

@@ -635,6 +635,7 @@ describe(
       // a caller with neither extensions nor a record of them (an observer).
       const act = renderWaysOf(
         composeWaysAt(record, new Date(), { definition: def }),
+        {},
       ).next_actions.find((n) => n.instruction?.tool === 'advance_run');
       const owedLine = realm(h, ['run', 'inspect', id]).out.find((l) => l.startsWith('Owed'));
       // (a) red when a caller with neither judges the step, or the act stops naming it; (b) prints both.
@@ -720,7 +721,7 @@ describe(
       expect({
         view: marked.engine_runnable,
         // #729 PR-0: what comes next is the MCP door's sentence over the ways (describeNext died).
-        next: renderWaysOf(composeWaysAt(twice, new Date(), { definition: def })).next_sentence,
+        next: renderWaysOf(composeWaysAt(twice, new Date(), { definition: def }), {}).next_sentence,
         inspect: inspected.find((l) => l.startsWith('Could not run')),
       }).toEqual({
         view: [

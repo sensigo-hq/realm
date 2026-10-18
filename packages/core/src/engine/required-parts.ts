@@ -3,7 +3,7 @@
 // table (the `ENTRY_CALLERS` precedent), checked before anything is read or written. Content is
 // tier 2's (a string is never checked for emptiness here); this row checks presence and type only.
 import { WorkflowError } from '../types/workflow-error.js';
-import { OUTPUT_SOURCES } from '../types/run-record.js';
+import { OUTPUT_SOURCES, PRINCIPAL_ABSENCES } from '../types/run-record.js';
 import {
   runRecordFieldProblems,
   runRecordProblemClause,
@@ -11,6 +11,7 @@ import {
 } from '../types/run-record-shape.js';
 import { callsHostDispatcher } from './output-source.js';
 import { PARTIES } from './ways.js';
+import { principalOf } from './answer-facts.js';
 import type { StepDefinition } from '../types/workflow-definition.js';
 import type { EngineEntry as Entry } from '../admission.js';
 import type {
@@ -36,7 +37,10 @@ type PartKind =
   | 'run'
   | 'output_source'
   | 'registry'
-  | 'party';
+  | 'party'
+  // #627 W (correction 1, C1): a principal the total reader reads, and a route that names one.
+  | 'principal'
+  | 'route';
 
 const EXPECTED: Record<PartKind, string> = {
   object: 'an object',
@@ -51,6 +55,9 @@ const EXPECTED: Record<PartKind, string> = {
   registry: 'an extension registry',
   // issue #729 (the Q3 unit): the party a door hands in with its call (`ExecuteStepOptions.party`).
   party: `one of ${PARTIES.join(', ')}`,
+  // Correction 2 (3.6): the absences by name, from the record's own closed list.
+  principal: `a principal: { kind: 'api_key', id: <a non-empty string> }, { kind: 'shared_token' } or { absent: <one of: ${PRINCIPAL_ABSENCES.join(', ')}> }`,
+  route: 'a non-empty string',
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -116,6 +123,10 @@ function holds(kind: PartKind, value: unknown): boolean {
       return isExtensionRegistry(value);
     case 'party':
       return (PARTIES as readonly unknown[]).includes(value);
+    case 'principal':
+      return principalOf({ principal: value } as never) !== undefined;
+    case 'route':
+      return typeof value === 'string' && value.length > 0;
   }
 }
 
@@ -233,6 +244,11 @@ export const REQUIRED_PARTS: Readonly<Record<Entry, readonly PartRule[]>> = {
     typed('date', 'options', 'now'),
     typed('string', 'options', 'respondedBy'),
     typed('string', 'options', 'claimToken'),
+    // #627 W (§5.8): the door's route, the form's evidence, the principal, the fallback's prompt.
+    typed('route', 'options', 'route'),
+    typed('object', 'options', 'shown'),
+    typed('principal', 'options', 'principal'),
+    typed('boolean', 'options', 'clientPromptRequested'),
   ],
   abandonRun: [need('string', 'runId'), typed('string', 'reason')],
   drainFinalizers: [...DEFINITION, typed('registry', 'registry'), need('string', 'runId')],
@@ -318,6 +334,11 @@ const ADVANCE_RUN_MEMBERS = [
   'command',
   'onExpiry',
 ] as const satisfies readonly (keyof AdvanceRunOptions)[];
+/**
+ * #627 W (§5.8): `route`, `shown`, `principal`, `clientPromptRequested` are W's. Skew: an embedder
+ * bundle that passes one of them to a core older than W is refused with `VALIDATION_OPTION_INVALID`
+ * (an unknown member) before anything is read — upgrade core with the door that passes them.
+ */
 const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'runId',
   'gateId',
@@ -328,6 +349,10 @@ const SUBMIT_HUMAN_RESPONSE_MEMBERS = [
   'now',
   'driver',
   'caller',
+  'route',
+  'shown',
+  'principal',
+  'clientPromptRequested',
 ] as const satisfies readonly (keyof SubmitGateOptions)[];
 const GET_WORKFLOW_FOR_RUN_MEMBERS = [
   'retryVerb',

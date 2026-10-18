@@ -74,6 +74,12 @@ export interface Outcome {
   /** The question's stored deadline, as an absolute time (display, never a judgement). */
   expiry?: string;
   attempted: boolean;
+  /**
+   * #627 W (cell 29): how the winning entry arrived — its route as its door declared it, else the
+   * record's own absence (`settled_by_expiry`, `recorded_without_route`, `route_not_declared`); one
+   * vocabulary for the reply and the record. Absent on `engine` (no answer entry won).
+   */
+  via?: string | { absent: 'settled_by_expiry' | 'recorded_without_route' | 'route_not_declared' };
 }
 
 /** issue #729 PR-0 (T-3): one race a loop met — the step, the T-1 kind, whether this call's code ran. */

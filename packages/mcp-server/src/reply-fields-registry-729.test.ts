@@ -169,7 +169,7 @@ describe('#729 PR-0 — A-13: every field PR-0 added to the reply is routed on t
         continue;
       }
       for (const reply of carriers) {
-        const env = renderReply(reply).envelope as Record<string, unknown>;
+        const env = renderReply(reply, {}).envelope as Record<string, unknown>;
         if (route.mcp === 'published') {
           if (JSON.stringify(env[field]) !== JSON.stringify(reply[field])) {
             found.push(`${field}: published, but the envelope's differs`);

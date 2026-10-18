@@ -58,6 +58,14 @@ export const SIDE_FILE_KINDS = ['attempts', 'trace_buffer', 'sealed_trace'] as c
 /** One of {@link SIDE_FILE_KINDS}. */
 export type SideFileKind = (typeof SIDE_FILE_KINDS)[number];
 
+/** What a registered copy that is a JSON object lacks to be a workflow (#627 W correction 2). */
+export type WorkflowCopyFault = 'schema_version_not_number' | 'no_id';
+
+const COPY_FAULT_WORDS: Record<WorkflowCopyFault, string> = {
+  schema_version_not_number: 'its schema_version is not a number',
+  no_id: 'it has no string id',
+};
+
 /**
  * The facts of one damaged stored file (issue #719, R7; #729 PR-0 Amendments 7, 7e): names, classes
  * and type words — never its content. Written as the typed `facts` of every such error
@@ -73,6 +81,9 @@ export interface UnreadableFileFacts {
   errno?: string;
   /** `parse` only, for JSON that is not an object: `null`, `array`, `string`, `number` or `boolean`. */
   shape?: string;
+  /** `parse` only, for a registered copy that is a JSON object but not a workflow (#627 W correction
+   *  2, 3.7 and 8.6 (d)): what it lacks — a `schema_version` that is a number, or a string `id`. */
+  fault?: WorkflowCopyFault;
   /** `mismatched` only: the run id the file holds. */
   held_id?: string;
   /** `mismatched` only: what the held run's own file (`<held_id>.json`, same folder) is when it is
@@ -156,6 +167,8 @@ export function describeStoredFileFault(facts: UnreadableFileFacts): string {
     case 'empty':
       return workflow ? 'is empty — not a workflow' : 'is empty';
     case 'parse':
+      if (facts.fault !== undefined)
+        return `is JSON but not a workflow object (${COPY_FAULT_WORDS[facts.fault]})`;
       return facts.shape === undefined
         ? 'is not JSON'
         : `is JSON but not ${workflow ? 'a workflow object' : 'an object'} (it is ${facts.shape})`;

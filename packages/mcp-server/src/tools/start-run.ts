@@ -23,10 +23,14 @@ import {
   type FailedAttemptStore,
   ExtensionRegistry,
   type Attributed,
+  type Principal,
   type RunRecord,
   type WorkflowDefinition,
 } from '@sensigo/realm';
+import type { McpDoor } from '../door.js';
+import { withQuestionForm, type ElicitFn, type FormCall, type FormDeps } from '../form-path.js';
 import { sseJsonStringify } from '../sse-json.js';
+import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   mcpReplyOf,
@@ -58,9 +62,66 @@ export function composeToolWays(
   });
 }
 
-/** The MCP host of a tool's stores: the operator route the launching program injected, if any. */
-export function mcpHostOf(stores: { operatorRoute?: OperatorRoute } | undefined): McpHost {
-  return stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {};
+/**
+ * The MCP host of a tool's stores: the operator route the launching program injected, if any, and
+ * (#627 W) this server's door — its gate answers and its form facts, read at the call (the session's
+ * forms are negotiated after construction).
+ */
+export function mcpHostOf(
+  stores: Pick<HandleRunStores, 'operatorRoute' | 'door'> | undefined,
+): McpHost {
+  const door = stores?.door;
+  return {
+    ...(stores?.operatorRoute !== undefined ? { operatorRoute: stores.operatorRoute } : {}),
+    ...(door !== undefined
+      ? { answers: door.answers(), formFacts: (gateId: string) => door.formFacts(gateId) }
+      : {}),
+  };
+}
+
+/** #627 W (§5.8): the principal a tool's answers record — the door's, else the library's absence. */
+export function principalOfStores(
+  stores: Pick<HandleRunStores, 'principal'> | undefined,
+): Principal {
+  return stores?.principal ?? { absent: 'principal_not_passed' };
+}
+
+/**
+ * #627 W: what sending a form needs on this call, or `undefined` when this server sends none (no
+ * door, or no way to send — a stateless HTTP door).
+ */
+export function formDepsOf(
+  stores: HandleRunStores | undefined,
+  runStore: RunStore,
+  definition: WorkflowDefinition,
+  registry: ExtensionRegistry | undefined,
+): FormDeps | undefined {
+  if (stores?.door === undefined || stores.elicit === undefined || !stores.door.sendsForms) {
+    return undefined;
+  }
+  return {
+    door: stores.door,
+    elicit: stores.elicit,
+    runStore,
+    definition,
+    ...(registry !== undefined ? { registry } : {}),
+    ...(stores.driver !== undefined ? { driver: stores.driver } : {}),
+    principal: principalOfStores(stores),
+  };
+}
+
+/** #627 W: one tool call's own facts — its cancel signal and its start, on the door's clock. */
+export function formCallOf(
+  stores: Pick<HandleRunStores, 'door'> | undefined,
+  extra: { signal?: AbortSignal; requestId?: string | number } | undefined,
+): FormCall | undefined {
+  if (stores?.door === undefined) return undefined;
+  return {
+    started: stores.door.monotonicNow(),
+    ...(extra?.signal !== undefined ? { signal: extra.signal } : {}),
+    // Correction 1 (B9): the call's own request id, so its form rides the call's stream.
+    ...(extra?.requestId !== undefined ? { requestId: extra.requestId } : {}),
+  };
 }
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
 
@@ -141,6 +202,20 @@ export interface HandleRunStores {
    * operator's command; the standalone `realm-mcp` bin injects none.
    */
   operatorRoute?: OperatorRoute;
+  /**
+   * #627 W: this server's MCP door — its gate answers (value, source, the session's forms), its form
+   * wait and the per-gate form facts of this process. Set by `createRealmMcpServer`; absent ⇒ the
+   * tools narrow as PR-0 did.
+   */
+  door?: McpDoor;
+  /** #627 W: how this server sends a form (its `elicitInput`), when it can. */
+  elicit?: ElicitFn;
+  /**
+   * #627 W (§5.8): the principal of this server's transport, stamped on every answer it records —
+   * `realm serve`'s shared token, a door's typed absence, or an embedder's API key. Absent ⇒
+   * `principal_not_passed`. Never one a tool's caller sends.
+   */
+  principal?: Principal;
 }
 
 /**
@@ -156,6 +231,7 @@ export async function handleStartRun(
     on_live_match?: 'use_existing' | 'fail' | undefined;
   },
   stores?: HandleRunStores,
+  call?: FormCall,
 ): Promise<WithPersonBlock<McpEnvelope> & { deduped: boolean; rerun_of?: string }> {
   assertToolStores(stores, 'handleStartRun');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -292,12 +368,22 @@ export async function handleStartRun(
       // walk 2: the hint is what an agent reads first; a supersede must be said there, not only
       // carried as a key below the next_actions block. It, or the ended run's ways back in, follow
       // the door's next sentence, as before #729 PR-0.
+      // #627 W (§5.2b): the run this call created reached a question — its form is sent here.
+      const after = await withQuestionForm(
+        ranReply,
+        formDepsOf(stores, runStore, definition, registry),
+        call,
+      );
+      // Correction 1 (B7): the ended run's ways back in are read from the record as it stands after
+      // the form's wait — a run that ended during the form gets them.
+      const afterRun =
+        after === ranReply ? finalRun : await runStore.get(run.id).catch(() => finalRun);
       const tail =
         finalRun.rerun_of !== undefined
           ? ` This run supersedes run '${finalRun.rerun_of}' under the same idempotency key (on_terminal_match).`
-          : endedRunWaysSentence(finalRun, definition, new Date());
+          : endedRunWaysSentence(afterRun, definition, new Date());
       return {
-        ...mcpReplyOf(withHintTail(renderReply(ranReply, mcpHostOf(stores)), tail)),
+        ...mcpReplyOf(withHintTail(renderReply(after, mcpHostOf(stores)), tail)),
         deduped,
       };
     }
@@ -346,25 +432,30 @@ export async function handleStartRun(
     // decisions C45, C57, C64: the hand-back says what comes next on a live run (the renderer's).
     ...(createdRun.terminal_state ? {} : { names_next: true as const }),
   };
+  // #627 W (§5.2b; correction 1, B10): a hand-back sends no form. A created run reaches a question only
+  // by running a step — the branch above sends that form — and a deduped match never sends one.
   return { ...mcpReplyOf(renderReply(handBack, mcpHostOf(stores))), deduped };
 }
 
 /** Registers the start_run MCP tool on the server. */
 export function registerStartRun(server: McpServer, opts?: HandleRunStores): void {
   markServedByTool(opts);
-  server.tool(
+  server.registerTool(
     'start_run',
-    'Create a new workflow run and run its first automatic steps.',
     {
-      workflow_id: z.string(),
-      params: z.record(z.unknown()).optional().default({}),
-      idempotency_key: z.string().optional(),
-      on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
-      on_live_match: z.enum(['use_existing', 'fail']).optional(),
+      ...toolMeta('start_run'),
+      description: 'Create a new workflow run and run its first automatic steps.',
+      inputSchema: {
+        workflow_id: z.string(),
+        params: z.record(z.unknown()).optional().default({}),
+        idempotency_key: z.string().optional(),
+        on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
+        on_live_match: z.enum(['use_existing', 'fail']).optional(),
+      },
     },
-    async (args) => {
+    async (args, extra) => {
       try {
-        const result = await handleStartRun(args, opts);
+        const result = await handleStartRun(args, opts, formCallOf(opts, extra));
         // Override command to 'start_run': MCP callers invoked start_run, not the first auto step
         // executeChain may have run. The step a non-ok reply belongs to stays named in
         // `stopped_step` (issue #676 review).

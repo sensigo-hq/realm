@@ -904,8 +904,8 @@ export const KNOWN_STEP_KEYS = [
 
 /**
  * Issue #586 — the step keys whose VALUE is an authored JSON-Schema block. The loader compiles
- * each of these at admission through `compileSchema`, so a block that cannot compile is refused on
- * its own line instead of killing every run at run time.
+ * each of these at admission through `compileCapturing`, so a block that cannot compile is refused
+ * on its own line instead of killing every run at run time.
  *
  * `satisfies` the KNOWN_STEP_KEYS member union: a schema-typed key that is not a known step key
  * fails `tsc`. (Alternative B — a branded `JsonSchemaBlock` type so a new schema-bearing field
