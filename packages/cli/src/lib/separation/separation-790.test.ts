@@ -1714,12 +1714,19 @@ describe('#790 correction 1 — the review of PR #827, each finding its cell', (
   });
 
   it('B §9: svc\'s passwd entry not read (getent fails) → su unknown, never "needs svc\'s password"', async () => {
-    const rs = await paths({
-      programs: { [GETENT]: 0, '/usr/bin/su': 0 },
-      files: { '/etc/shells': { fixture: `${U24}/shells` } },
-    });
-    // (a) red when su goes on to its PAM stack; (b) prints the readings.
-    expect(view(rs)).toEqual(['su unknown']);
+    // Ubuntu 24.04's su and its stacks, with getent's answer for svc missing (the runner reports it
+    // could not answer: a lookup that fails)
+    const machine = linux(U24, su(U24));
+    delete machine.calls![`${GETENT} passwd svc`];
+    const rs = await paths(machine);
+    // (a) red when su goes on to its PAM stack (needs svc's password); (b) prints readings and
+    //     whether the cause is getent's.
+    expect({ readings: view(rs), getent: rs[0]?.cause?.startsWith('getent passwd svc: ') }).toEqual(
+      {
+        readings: ['su unknown'],
+        getent: true,
+      },
+    );
   });
 
   it("B §11: su's stack unknown but su-l's grant → yes (a grant outranks an unknown within one path)", async () => {
