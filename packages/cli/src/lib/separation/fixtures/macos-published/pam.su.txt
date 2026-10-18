@@ -1,0 +1,8 @@
+# Apple's published file, not captured from a Mac · apple-oss-distributions/shell_cmds su/su.pam @298787009e54 (2026-04-17), installed as /etc/pam.d/su · read 2026-10-18
+# su: auth account session
+auth       sufficient     pam_rootok.so 
+auth       required       pam_opendirectory.so
+account    required       pam_group.so no_warn group=admin,wheel ruser root_only fail_safe
+account    required       pam_opendirectory.so no_check_shell
+password   required       pam_opendirectory.so
+session    required       pam_launchd.so

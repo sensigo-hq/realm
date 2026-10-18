@@ -1,0 +1,7 @@
+# captured 2026-10-18 · image debian:stable@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · ls -l /usr/bin/sudo /usr/bin/su /bin/su; readlink -f /usr/bin/sudo /usr/bin/su /bin/su
+-rwsr-xr-x 1 root root  84360 Jul 31 15:34 /bin/su
+-rwsr-xr-x 1 root root  84360 Jul 31 15:34 /usr/bin/su
+-rwsr-xr-x 1 root root 306456 Apr 11  2026 /usr/bin/sudo
+/usr/bin/sudo
+/usr/bin/su
+/usr/bin/su

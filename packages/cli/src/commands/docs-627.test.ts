@@ -371,23 +371,22 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
   });
 
   it('the separation check: sentences pinned by separation-check-627.test.ts', () => {
-    // Correction 2 (6.3): executed by separation-check-627 :: "correction 1 (D2): with su on the host
-    // the claim is "may still"", :: "5.9: condition 2 runs nothing …" (sudo present) and the
-    // positive cell (none installed: "cannot record").
+    // #790: the two paragraphs on condition 2's "not probed" reading are gone; the sentences that
+    // replace them are pinned by separation/separation-790.test.ts :: "the docs".
+    // Correction 2 (6.3); #790: "start no server" — the only programs it runs are named below,
+    // executed by separation-790 :: "S2" (one spawn site) and the spy after every cell.
     claim(
       PAGE,
-      "On a host with any of those programs — every common system — the check therefore prints 'may still be able to answer'. The stronger sentence is reached only where none of them is installed, such as a container image with neither `su` nor `sudo`.",
-    );
-    claim(
-      PAGE,
-      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start nothing. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store this login cannot open is measured out of its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
+      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the list-only and check modes named below. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store this login cannot open is measured out of its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
     );
     // Correction 1 (F6): ":56" is executed by separation-check-627 :: "correction 1 (D1): the mode is
     // never guessed" (the denied and the missing store) and :: "each condition line in its states"
     // (the agent's settings read from /home/agent while HOME holds the opposite).
+    // #790 (01b #3): condition 3's words — executed by separation-790 :: "the LXD socket accepts",
+    // :: "the login is in the group …" and :: "01b #3: condition 3's words".
     claim(
       PAGE,
-      'The check says an agent cannot record a gate answer only when all of these hold: the store belongs to another user; this login cannot write or read the store, become that user without a password, reach the Docker engine, or change the files Realm executes; and `--gate-answers withheld` is given on the `--check` line itself.',
+      'The check says an agent cannot record a gate answer only when all of these hold: the store belongs to another user; this login cannot write or read the store, become that user without a password, reach an engine that runs containers or machines as root (Docker, LXD, Incus, Podman, libvirt or containerd), or be in a group that reaches one or the disks, or change the files Realm executes; and `--gate-answers withheld` is given on the `--check` line itself.',
     );
     // Correction 1 (F6): ":58" is executed by separation-check-627 :: "each prevents conjunct alone
     // takes the claim away" (every conjunct but reading) and :: "correction 1 (F6): gate-answers.md
@@ -403,12 +402,6 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     claim(
       PAGE,
       "The claim then names what the check cannot read: that no program Realm runs can run code for the agent, that Realm's server runs the Node binary and Realm package the check ran from, that every Realm server on the machine starts with `--gate-answers withheld`, and, when the store cannot be read, that no registered workflow's extension file can be changed by this login.",
-    );
-    // Correction 2 (6.3, 5.9): executed by :: "5.9: condition 2 runs nothing …" and :: "5.9: every
-    // elevation program present is named "not probed"".
-    claim(
-      PAGE,
-      'Becoming another user without a password is not tested in this version: wherever `sudo`, `doas`, `run0`, `pkexec` or `su` is installed, the check names them as not probed and reads the condition as unknown. A later version of Realm reads their rules without running them.',
     );
   });
 });
@@ -983,12 +976,19 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
       C,
       'When a form ends without an answer, the reply says how: Realm stopped waiting, the person closed it, its value was not one of the choices, the app ended it, or the answer could not be written.',
     );
-    // separation-check-627 :: 5.9's two cells; 8.5's header cell; the whole output (fact); the
-    // condition lines (condition 7's two apps).
+    // #790 (01's CHANGELOG text, word for word): executed by separation/separation-790.test.ts — the
+    // spy after every cell and :: "S2" (only the list and check modes run; no switch, no password,
+    // no login connection), the sudo / doas / polkit / su cells (each way read), condition 3's cells
+    // (the six engines and the groups), :: "W-x3a" / "W-x3b" (the sentence and what it lists),
+    // :: "P0: a way that reads unknown …" with the pam_succeed_if, Alpine and pkcheck-error cells
+    // (unknown, and the sentence not printed); separation-check-627 :: "the whole output" (no server).
+    claim(C, 'No server is started; a bad value exits 1.');
     claim(
       C,
-      'Condition 2 starts no process: on a host with `sudo`, `doas`, `run0`, `pkexec` or `su` it is not measured in this version, so the check prints "may still be able to answer"; a later version reads their rules without running them.',
+      'Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their list and check modes and reads su\'s login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool\'s error reads "unknown", and the sentence is not printed.',
     );
+    // separation-check-627 :: 8.5's header cell; the whole output (fact); the condition lines
+    // (condition 7's two apps).
     claim(
       C,
       'The header says when no store was found; condition 7\'s "no" names the two apps whose settings it read; the two informational lines are marked "(fact)".',

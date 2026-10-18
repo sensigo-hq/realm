@@ -1,0 +1,17 @@
+# captured 2026-10-18 · image alpine:latest@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 · ls -l /bin/su /usr/bin/doas /bin/busybox /bin/bbsuid 2>&1; readlink -f /bin/su /usr/bin/doas; ls -d /etc/pam.d 2>&1; command -v getent; ls -l /usr/bin/getent 2>&1
+ls: /bin/bbsuid: No such file or directory
+-rwxr-xr-x    1 root     root        804616 Jan 10  2026 /bin/busybox
+lrwxrwxrwx    1 root     root            12 Sep 17 17:32 /bin/su -> /bin/busybox
+-rwsr-xr-x    1 root     root         34824 Oct 11  2024 /usr/bin/doas
+BusyBox v1.37.0 (2026-01-10 15:38:28 UTC) multi-call binary.
+
+Usage: readlink [-fnv] FILE
+
+Display the value of a symlink
+
+	-n	Don't add newline
+	-f	Canonicalize by following all symlinks
+	-v	Verbose
+ls: /etc/pam.d: No such file or directory
+/usr/bin/getent
+-rwxr-xr-x    1 root     root         18480 Apr 11  2026 /usr/bin/getent

@@ -1,0 +1,14 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · ls /usr/share/polkit-1/actions/
+org.dpkg.pkexec.update-alternatives.policy
+org.freedesktop.hostname1.policy
+org.freedesktop.import1.policy
+org.freedesktop.locale1.policy
+org.freedesktop.login1.policy
+org.freedesktop.machine1.policy
+org.freedesktop.network1.policy
+org.freedesktop.policykit.policy
+org.freedesktop.portable1.policy
+org.freedesktop.resolve1.policy
+org.freedesktop.systemd1.policy
+org.freedesktop.timedate1.policy
+org.freedesktop.timesync1.policy

@@ -1,0 +1,4 @@
+# Apple's published file, not captured from a Mac · apple-oss-distributions/sudo pam.d/sudo_local.template @802f972bdc92 (2025-10-16), installed as /etc/pam.d/sudo_local.template · read 2026-10-18
+# sudo_local: local config file which survives system update and is included for sudo
+# uncomment following line to enable Touch ID for sudo
+#auth       sufficient     pam_tid.so

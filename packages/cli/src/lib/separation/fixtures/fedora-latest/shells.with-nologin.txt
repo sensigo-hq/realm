@@ -1,0 +1,6 @@
+# captured 2026-10-18 · image fedora:latest@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 · echo /usr/sbin/nologin >> /etc/shells; then cat /etc/shells
+/bin/sh
+/bin/bash
+/usr/bin/sh
+/usr/bin/bash
+/usr/sbin/nologin

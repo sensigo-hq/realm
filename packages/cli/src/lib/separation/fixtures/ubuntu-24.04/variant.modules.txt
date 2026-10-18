@@ -1,0 +1,4 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · ls /usr/lib/x86_64-linux-gnu/security/ | grep -E "u2f|ssh|fprint"
+pam_fprintd.so
+pam_ssh_agent_auth.so
+pam_u2f.so

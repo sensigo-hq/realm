@@ -1,0 +1,21 @@
+# captured 2026-10-18 · image ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 · as the login agent: LC_ALL=C /usr/bin/sudo.ws -n -ll
+exit 0
+--- stdout
+Matching Defaults entries for agent on h:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
+    use_pty, rootpw
+
+User agent may run the following commands on h:
+
+Sudoers entry: /etc/sudoers.d/realm
+    RunAsUsers: nobody
+    Options: !authenticate
+    Commands:
+	/bin/true
+
+Sudoers entry: /etc/sudoers.d/realm
+    RunAsUsers: ALL
+    Commands:
+	ALL
+--- stderr

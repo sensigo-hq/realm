@@ -1,0 +1,5 @@
+# captured 2026-10-18 · this host (Ubuntu 24.04 under WSL 2; the real login is written ⟨login⟩) · as ⟨login⟩: /usr/bin/pkcheck --action-id org.freedesktop.systemd1.manage-units --process <pid>
+exit 2
+--- stdout
+--- stderr
+Authorization requires authentication and -u wasn't passed.
