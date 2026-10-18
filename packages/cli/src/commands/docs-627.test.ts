@@ -756,7 +756,8 @@ describe('#627 W correction 1 — the claims F asks for', () => {
       '- the MCP tool `submit_human_response`, on a server that lists it;',
       // form-627 :: "#627 W — the form path (cell 21)" (route mcp_form)
       '- the form a chat app shows the person, on an MCP server whose gate-answers value is `asked`, the default (added after version 0.47.0);',
-      // slack-gate-notifier.test :: "exact match resolves gate and posts confirmation reply"
+      // slack-gate-notifier.test :: "exact match resolves gate and posts confirmation reply" — it
+      // asserts the answer's entry records route slack (#819, item 28)
       '- a Slack thread, when `realm agent` is set up to post gates to Slack;',
       // run-prompt-route-627.test :: "`realm workflow run`’s gate prompt records route cli …"
       '- the prompt of `realm workflow run`, when you run by hand.',
