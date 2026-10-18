@@ -1095,7 +1095,7 @@ function evidence(
     conditions: {
       store_reach: NO,
       become_service_user: NO,
-      docker: NO,
+      root_engine: NO,
       trust_root_writable: NO,
       other_answer_host: { basis: 'unknown', cause: 'one look' },
       time_basis: { basis: 'measured', answer: 'fact', detail: 'clock' },
@@ -1115,7 +1115,7 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
       sameLogin: separationPrevents(evidence({ store_owned_by_other: false })),
       store: separationPrevents(evidence({}, { store_reach: YES })),
       become: separationPrevents(evidence({}, { become_service_user: UNKNOWN })),
-      docker: separationPrevents(evidence({}, { docker: YES })),
+      rootEngine: separationPrevents(evidence({}, { root_engine: YES })),
       trustRoot: separationPrevents(evidence({}, { trust_root_writable: UNKNOWN })),
       asked: separationPrevents(
         evidence({ value: { value: 'asked', source: { kind: 'flag', ref: '--gate-answers' } } }),
@@ -1130,7 +1130,7 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
       sameLogin: false,
       store: false,
       become: false,
-      docker: false,
+      rootEngine: false,
       trustRoot: false,
       asked: false,
       fromEnv: false,
@@ -1178,11 +1178,11 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
       separationGaps(
         evidence(
           { value: { value: 'withheld', source: { kind: 'env', ref: 'REALM_MCP_GATE_ANSWERS' } } },
-          { docker: YES, trust_root_writable: UNKNOWN },
+          { root_engine: YES, trust_root_writable: UNKNOWN },
         ),
       ),
     ).toEqual([
-      { gap: 'docker', reading: YES },
+      { gap: 'root_engine', reading: YES },
       { gap: 'trust_root_writable', reading: UNKNOWN },
       { gap: 'value' },
     ]);

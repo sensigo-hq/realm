@@ -1,0 +1,7 @@
+# captured 2026-10-18 · image ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 · as the login agent: LC_ALL=C /usr/bin/sudo -n -l
+exit 0
+--- stdout
+User agent may run the following commands on h:
+    (nobody) NOPASSWD: /usr/bin/true
+    (svc) /usr/bin/realm
+--- stderr

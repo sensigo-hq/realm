@@ -1,0 +1,11 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · ls -l /usr/lib/polkit-1/polkitd /usr/libexec/polkitd /usr/lib/policykit-1/polkitd /usr/bin/pkcheck /usr/bin/pkexec /usr/bin/run0 /usr/bin/systemd-run 2>&1; stat -c "%a %U:%G %n" /etc/polkit-1/rules.d /usr/share/polkit-1/rules.d /usr/share/polkit-1/actions
+ls: cannot access '/usr/libexec/polkitd': No such file or directory
+ls: cannot access '/usr/lib/policykit-1/polkitd': No such file or directory
+ls: cannot access '/usr/bin/run0': No such file or directory
+-rwxr-xr-x 1 root root  22832 Sep 11 17:52 /usr/bin/pkcheck
+-rwsr-xr-x 1 root root  30952 Sep 11 17:52 /usr/bin/pkexec
+-rwxr-xr-x 1 root root  68392 Oct 12 07:36 /usr/bin/systemd-run
+-rwxr-xr-x 1 root root 125536 Sep 11 17:52 /usr/lib/polkit-1/polkitd
+750 root:polkitd /etc/polkit-1/rules.d
+755 root:root /usr/share/polkit-1/rules.d
+755 root:root /usr/share/polkit-1/actions

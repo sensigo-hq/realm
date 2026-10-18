@@ -1,0 +1,5 @@
+# captured 2026-10-18 · image debian:stable@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · as the login agent: getent group docker
+exit 0
+--- stdout
+docker:x:1101:agent
+--- stderr

@@ -5,10 +5,10 @@
 // states; the value line (F36: measured only from the `--check` line's own flag); the mode; the login;
 // conditions 5–8.
 //
-// Correction 2 (5.9, the owner's word: "stop the real sudo attempt until #790"): condition 2 runs
-// nothing, so every elevation program present reads "not probed". The cells whose subject is the
-// "cannot record" claim, or one of its conjuncts, run on a machine with NO elevation program — the
-// one place that claim can be reached.
+// Correction 2 (5.9): this file starts no process. #790: condition 2 reads each way with the
+// read-only calls of `separation/runner.ts` — its cells are in `separation/separation-790.test.ts`,
+// which replace correction 2's "not probed" cells. The cells here whose subject is the "cannot
+// record" claim, or one of its conjuncts, run on a machine with no way to the service user.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: logins,
 // paths and words — never a token or an environment.
@@ -27,12 +27,17 @@ import {
   valueLine,
   type SeparationProbes,
 } from './separation-check.js';
+import { notFoundRunner } from '../test-support/separation-fixtures.js';
 
 const HOME = '/home/svc';
 const STORE = `${HOME}/.realm`;
 const PROJECT = '/srv/deploy';
 const ME = 1000;
 const REALM_UID = 900;
+
+/** #790: the machine's getent (root's own, in a system folder): it answers every lookup as the
+ *  captured "not there", so condition 3 reads no group and the switch paths find no user entry. */
+const GETENT = '/usr/bin/getent';
 
 /** The deployment root's manifest: condition 4 has a realm.yaml to check. */
 const PROJECT_FILES = { [`${PROJECT}/realm.yaml`]: 'version: 1\n' };
@@ -54,6 +59,7 @@ function machine(
     `${STORE}/workflows`,
     ...Object.keys(files),
     ...present,
+    GETENT,
   ]);
   const base: SeparationProbes = {
     login: () => 'agent',
@@ -72,15 +78,27 @@ function machine(
     readText: (p) => files[p],
     list: () => [],
     connect: async () => false,
+    // #790: the switch-path readers' probes.
+    realPath: () => undefined,
+    groups: () => [],
+    pid: () => 4242,
+    platform: () => 'linux',
+    run: notFoundRunner,
     ...over,
   };
   return {
     ...base,
     // Correction 1 (D1), correction 2 (5.7: no `ownerOf` — the owner comes from `stat`): derived from
     // `exists` and `owners` unless a cell gives its own stat.
-    stat:
-      over.stat ??
-      ((p) => (base.exists(p) ? { uid: owners[p] ?? ME, mode: 0o40755 } : { error: 'ENOENT' })),
+    // #790: getent is root's own whatever a cell's stat says of other paths.
+    stat: (p) =>
+      p === GETENT
+        ? { uid: 0, mode: 0o100755 }
+        : (
+            over.stat ??
+            ((q: string) =>
+              base.exists(q) ? { uid: owners[q] ?? ME, mode: 0o40755 } : { error: 'ENOENT' })
+          )(p),
   };
 }
 
@@ -113,7 +131,7 @@ describe('#627 W — the separation check (cell 26)', () => {
     }).toEqual({
       claim: CANNOT_RECORD,
       become:
-        "This login can become Realm's service user (realm) without a password: no (measured) — no sudo, doas, run0, pkexec or su on this host.",
+        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.",
     });
   });
 
@@ -138,7 +156,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       // Realm's store, never "the same login".
       store: `${MAY} it can write Realm's store.`,
       become: `${MAY} whether it can become Realm's service user without a password was not measured.`,
-      docker: `${MAY} it can reach the Docker engine.`,
+      docker: `${MAY} it can reach an engine that runs as root.`,
       trustRoot: `${MAY} it can change the files Realm executes.`,
       asked: `${MAY} the gate-answers value: give it on this command line, and read the running server's start line.`,
       fromEnv: `${MAY} the gate-answers value: give it on this command line, and read the running server's start line.`,
@@ -199,7 +217,7 @@ describe('#627 W — the separation check (cell 26)', () => {
         conditionLine('store_reach', unknown),
       ],
       become: [conditionLine('become_service_user', yes), conditionLine('become_service_user', no)],
-      docker: [conditionLine('docker', yes), conditionLine('docker', no)],
+      rootEngine: [conditionLine('root_engine', yes), conditionLine('root_engine', no)],
       trustRoot: [
         conditionLine('trust_root_writable', yes),
         conditionLine('trust_root_writable', no),
@@ -212,14 +230,15 @@ describe('#627 W — the separation check (cell 26)', () => {
         "This login can write Realm's store or open its files: no (measured).",
         `This login can write Realm's store or open its files: unknown (Realm's store was not found at ${STORE}; observed now).`,
       ],
-      // Correction 2 (5.9): condition 2 runs nothing — a present program is "not probed".
+      // #790 (01b #8): a sudo this login owns is not a root-owned system copy — unknown.
       become: [
-        "This login can become Realm's service user (realm) without a password: unknown (not probed: sudo is on this host; observed now).",
-        "This login can become Realm's service user (realm) without a password: no (measured) — no sudo, doas, run0, pkexec or su on this host.",
+        "This login can become Realm's service user (realm) without a password: unknown (sudo: unknown: sudo at /usr/bin/sudo is not a root-owned system copy (sudo looked for in the system folders); observed now).",
+        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.",
       ],
-      docker: [
-        'This login can reach the Docker engine: yes (measured) — the Docker engine accepted a connection at /var/run/docker.sock.',
-        'This login can reach the Docker engine: no (measured).',
+      // #790 (01b #3): condition 3 is every engine that runs as root.
+      rootEngine: [
+        "This login can reach an engine that runs as root: yes (measured) — Docker's socket /var/run/docker.sock accepts.",
+        'This login can reach an engine that runs as root: no (measured).',
       ],
       trustRoot: [
         `${CONDITION_4}: yes (measured) — ${PROJECT}/realm.yaml can be changed.`,
@@ -242,8 +261,8 @@ describe('#627 W — the separation check (cell 26)', () => {
       `Separation: separate user — ${CANNOT_RECORD}`,
       `Measured for the login 'agent', against the store at ${STORE}.`,
       "  This login can write Realm's store or open its files: no (measured).",
-      "  This login can become Realm's service user (realm) without a password: no (measured) — no sudo, doas, run0, pkexec or su on this host.",
-      '  This login can reach the Docker engine: no (measured).',
+      "  This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.",
+      '  This login can reach an engine that runs as root: no (measured).',
       `  ${CONDITION_4}: no (measured) — 3 files and folders checked.`,
       '  Another Realm server or CLI that takes answers uses this store: unknown (another Realm server or CLI could use this store, and one look cannot rule it out; observed now).',
       "  The store's time basis: this machine's clock (the JSON store keeps no clock of its own) (fact).",
@@ -299,7 +318,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       denied: {
         header: `Separation: separate user — An agent running as agent cannot record a gate answer through this server, the terminal or Realm's files, provided no program Realm runs as realm, read from the owner of ${HOME}, can run code for it, Realm's server runs this Node and this Realm package, every Realm server on this machine starts with --gate-answers withheld, and no registered workflow's extension file (not read: the store cannot be read) can be changed by this login.`,
         store: `  This login can write Realm's store or open its files: no (measured) — ${STORE}: permission denied.`,
-        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured) — no sudo, doas, run0, pkexec or su on this host.`,
+        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.`,
       },
       ownedNo: {
         header: `Separation: not measured — ${MAY} whether it can become Realm's service user without a password was not measured.`,
@@ -406,8 +425,8 @@ describe('#627 W — the separation check (cell 26)', () => {
     );
     // (a) red when the socket's path is built from HOME (the agent's own engine is missed); (b) prints
     //     the line.
-    expect(conditionLine('docker', evidence)).toBe(
-      `This login can reach the Docker engine: yes (measured) — the Docker engine accepted a connection at ${own}.`,
+    expect(conditionLine('root_engine', evidence)).toBe(
+      `This login can reach an engine that runs as root: yes (measured) — Docker's socket ${own} accepts.`,
     );
   });
 
@@ -483,8 +502,8 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
   it('5.2: a login with no passwd entry — its own Docker sockets and its apps’ settings are not read, never read from HOME', async () => {
     const e = await measure(machine({ loginHome: () => undefined }));
     // (a) red when the agent-scoped paths fall back to HOME; (b) prints both lines.
-    expect([conditionLine('docker', e), conditionLine('agent_sandbox', e)]).toEqual([
-      "This login can reach the Docker engine: unknown (this login's home could not be read: it has no passwd entry, so its own Docker sockets were not checked; observed now).",
+    expect([conditionLine('root_engine', e), conditionLine('agent_sandbox', e)]).toEqual([
+      "This login can reach an engine that runs as root: unknown (this login's home could not be read: it has no passwd entry, so its own Docker sockets were not checked; observed now).",
       "The agent's app runs it in a sandbox: unknown (this login's home could not be read: it has no passwd entry, so the agent apps' settings were not read; observed now).",
     ]);
   });
@@ -529,7 +548,8 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
     //     say it owns the store, or a stranger's folder is named without its label; (b) prints the
     //     lines that say so.
     expect({
-      rootNamed: root.join('\n').includes('root'),
+      // #790: "runs as root" is condition 3's own words; root named as Realm's service user is not.
+      rootNamed: /service user \(root|runs as root,? can run code/.test(root.join('\n')),
       rootBecome: root[3],
       mineOwns: mine.join('\n').includes('This login owns the store'),
       mineBecome: mine[3],
@@ -539,7 +559,7 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
       rootBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
       mineOwns: false,
       mineBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
-      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured) — no sudo, doas, run0, pkexec or su on this host.`,
+      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.`,
     });
   });
 
@@ -581,44 +601,27 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
     );
   });
 
-  it('5.9: condition 2 runs nothing — the check names no process API; sudo present is "not probed", and the header says so', async () => {
+  it('5.9: the check names no process API (#790: its one spawn site is separation/runner.ts)', () => {
     const src = readFileSync(new URL('./separation-check.ts', import.meta.url), 'utf8');
-    const e = await measure(machine({}, PROJECT_FILES, ['/usr/bin/sudo']));
-    // (a) red when the check imports a process API again, or reads sudo as measured; (b) prints
-    //     whether each name appears, condition 2's line and the header.
+    // (a) red when the check imports a process API again; (b) prints whether each name appears.
+    // #790: the "not probed" half of this cell is replaced by separation-790.test.ts's cells.
     expect({
-      childProcess: src.includes('node:child_process'),
+      // #790 correction (A §F12): the module by any spelling, with or without its `node:` prefix
+      childProcess: /\bchild_process\b/.test(src),
       spawnSync: src.includes('spawnSync'),
       execFile: src.includes('execFile'),
       // A bare `exec(` — never a RegExp's `.exec(`, which the check uses to read files' text.
       exec: /(?<![.\w])exec\(/.test(src),
-      become: conditionLine('become_service_user', e),
-      header: renderSeparation(e)[0],
+      spawn: /\bspawn\(/.test(src),
+      fork: /\bfork\(/.test(src),
     }).toEqual({
       childProcess: false,
       spawnSync: false,
       execFile: false,
       exec: false,
-      become:
-        "This login can become Realm's service user (realm) without a password: unknown (not probed: sudo is on this host; observed now).",
-      header: `Separation: separate user — ${MAY} whether it can become Realm's service user without a password was not measured.`,
+      spawn: false,
+      fork: false,
     });
-  });
-
-  it('5.9: every elevation program present is named "not probed"', async () => {
-    const e = await measure(
-      machine({}, PROJECT_FILES, [
-        '/usr/bin/sudo',
-        '/usr/bin/doas',
-        '/usr/bin/run0',
-        '/usr/bin/pkexec',
-        '/usr/bin/su',
-      ]),
-    );
-    // (a) red when a present program is not named; (b) prints the line.
-    expect(conditionLine('become_service_user', e)).toBe(
-      "This login can become Realm's service user (realm) without a password: unknown (not probed: sudo, doas, run0, pkexec, su are on this host; observed now).",
-    );
   });
 
   it('8.5: with no store, the header says no store was found — never "against the store at"', async () => {

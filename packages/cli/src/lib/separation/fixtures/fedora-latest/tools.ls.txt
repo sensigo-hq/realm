@@ -1,0 +1,11 @@
+# captured 2026-10-18 · image fedora:latest@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 · ls -l /usr/bin/sudo /usr/bin/su /bin/su /etc/pam.d/system-auth; readlink -f /usr/bin/sudo /usr/bin/su /etc/pam.d/system-auth; authselect current 2>&1
+-rwsr-xr-x 1 root root  57176 Jun 16 00:00 /bin/su
+lrwxrwxrwx 1 root root     27 Aug 25 06:47 /etc/pam.d/system-auth -> /etc/authselect/system-auth
+-rwsr-xr-x 1 root root  57176 Jun 16 00:00 /usr/bin/su
+---s--x--x 1 root root 211088 Apr 14  2026 /usr/bin/sudo
+/usr/bin/sudo
+/usr/bin/su
+/etc/authselect/system-auth
+Profile ID: local
+Enabled features:
+- with-silent-lastlog

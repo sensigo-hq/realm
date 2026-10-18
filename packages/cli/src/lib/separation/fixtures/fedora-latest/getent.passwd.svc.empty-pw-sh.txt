@@ -1,0 +1,5 @@
+# captured 2026-10-18 · image fedora:latest@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 · set up as root: sed -i "s/^svc:x:/svc::/" /etc/passwd; usermod -s /bin/sh svc · then as the login agent: getent passwd svc
+exit 0
+--- stdout
+svc::999:1100::/home/svc:/bin/sh
+--- stderr

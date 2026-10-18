@@ -1,0 +1,9 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent: /usr/bin/sudo -V
+exit 0
+--- stdout
+Sudo version 1.9.15p5
+Sudoers policy plugin version 1.9.15p5
+Sudoers file grammar version 50
+Sudoers I/O plugin version 1.9.15p5
+Sudoers audit plugin version 1.9.15p5
+--- stderr

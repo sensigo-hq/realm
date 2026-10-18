@@ -26,11 +26,12 @@ export type SeparationMode = (typeof SEPARATION_MODES)[number];
 export const SEPARATION_BASES = ['measured', 'configured_not_enforced', 'unknown'] as const;
 export type SeparationBasis = (typeof SEPARATION_BASES)[number];
 
-/** The conditions the check reads (§5.9), in its order. */
+/** The conditions the check reads (§5.9), in its order. #790 (D12): condition 3 is `root_engine`,
+ *  every engine that runs containers or machines as root (W's `docker`, unreleased, renamed). */
 export const SEPARATION_CONDITIONS = [
   'store_reach',
   'become_service_user',
-  'docker',
+  'root_engine',
   'trust_root_writable',
   'other_answer_host',
   'time_basis',
@@ -46,6 +47,127 @@ export type ConditionReading =
   | { basis: 'configured_not_enforced'; detail: string }
   | { basis: 'unknown'; cause: string };
 
+/** #790 (D14): the ways this login might become Realm's service user, each read without acting. */
+export const SWITCH_PATHS = ['root', 'sudo', 'su', 'doas', 'polkit', 'ssh'] as const;
+export type SwitchPath = (typeof SWITCH_PATHS)[number];
+
+/** What one way reads: open, closed behind a credential, closed, or not known (fail closed, P0). */
+export const SWITCH_OUTCOMES = ['yes', 'needs_credential', 'not_allowed', 'unknown'] as const;
+export type SwitchOutcome = (typeof SWITCH_OUTCOMES)[number];
+
+/** Whose credential a closed way needs (D3, D5, D6, D9; `person` = a touch or a security key). */
+export const SWITCH_WHOSE = ['this_login', 'svc', 'root', 'administrator', 'person'] as const;
+export type SwitchWhose = (typeof SWITCH_WHOSE)[number];
+
+/** A credential cache that waives the password for some minutes once someone authenticates (D11 b). */
+export const SWITCH_CACHES = ['sudo_timestamp', 'doas_persist', 'polkit_keep'] as const;
+export type SwitchCache = (typeof SWITCH_CACHES)[number];
+
+/**
+ * #790 (D14): one way, read. `how` names the read-only call or file it came from (R14); `cause` says
+ * why an `unknown` is unknown. `or_not_allowed`: classic sudo's refusal "a password is required",
+ * which does not say whether a rule exists (D4) — the reading is then "needs this login's password,
+ * or not allowed".
+ */
+export interface SwitchPathReading {
+  path: SwitchPath;
+  tool?: string;
+  outcome: SwitchOutcome;
+  whose?: SwitchWhose;
+  cache?: SwitchCache;
+  how: string;
+  cause?: string;
+  or_not_allowed?: true;
+  /** #790 correction (W §5, W §8): what polkit's clause (d) can say — the entry points present and
+   *  each rules folder as `stat` read it. */
+  polkit?: { tools: string[]; admin: 'unreadable' | 'unread'; vendor: 'unreadable' | 'unread' };
+}
+
+/** #790 (01b #6): when readings meet, the most permissive wins, and an `unknown` outranks a
+ *  credential (fail closed): yes > unknown > needs a credential > not allowed. */
+const OUTCOME_RANK: Record<SwitchOutcome, number> = {
+  yes: 3,
+  unknown: 2,
+  needs_credential: 1,
+  not_allowed: 0,
+};
+
+/** The most permissive outcome among `readings` (01b #6), or `undefined` for none. */
+export function mostPermissive(readings: readonly SwitchPathReading[]): SwitchOutcome | undefined {
+  let best: SwitchOutcome | undefined;
+  for (const r of readings) {
+    if (best === undefined || OUTCOME_RANK[r.outcome] > OUTCOME_RANK[best]) best = r.outcome;
+  }
+  return best;
+}
+
+/**
+ * #790 (D13): condition 2 from the ways read. Measured "no" only when every way present reads "needs
+ * a credential" or "not allowed"; any "yes" is measured "yes"; any `unknown` is unknown (fail
+ * closed). No way present is measured "no". `describe` renders one way's entry in the CLI's words
+ * (01b #2: `⟨path⟩: ⟨outcome⟩ (⟨how⟩)`); the entries are joined by "; ".
+ */
+export function switchPathsCondition(
+  readings: readonly SwitchPathReading[],
+  describe: (r: SwitchPathReading) => string,
+  where: string,
+): ConditionReading {
+  const entries = readings.map(describe).join('; ');
+  const best = mostPermissive(readings);
+  if (best === undefined) {
+    // A §F15, B §14: the line names where the check looked (`where`, the CLI's folders)
+    return {
+      basis: 'measured',
+      answer: 'no',
+      detail: `no sudo, su, doas, polkit or ssh way was found ${where}`,
+    };
+  }
+  if (best === 'yes') return { basis: 'measured', answer: 'yes', detail: entries };
+  if (best === 'unknown') return { basis: 'unknown', cause: entries };
+  return { basis: 'measured', answer: 'no', detail: entries };
+}
+
+/**
+ * #790 (D11): a clause the strong sentence adds, each fired by what the ways read — never printed for
+ * a way that is absent. (a) a credential the agent must not be able to obtain; (b) a credential cache
+ * someone could warm; (c) classic sudo's refusal, which hides `Defaults` it cannot show; (d) polkit
+ * present, whose rules cannot be read here; (e) a person's touch or key; (f) an sshd present while
+ * this login holds a key.
+ */
+export type SwitchClause =
+  | { clause: 'a'; whose: Exclude<SwitchWhose, 'person'> }
+  | { clause: 'b'; tools: ('sudo' | 'doas' | 'polkit')[] }
+  | { clause: 'c' }
+  | ({ clause: 'd' } & NonNullable<SwitchPathReading['polkit']>)
+  | { clause: 'e' }
+  | { clause: 'f' };
+
+/** Which tool each credential cache belongs to (B §10: clause (b) names only those that fired). */
+const CACHE_TOOL = { sudo_timestamp: 'sudo', doas_persist: 'doas', polkit_keep: 'polkit' } as const;
+
+/** #790 (D11): the clauses `readings` fire, in the order (a)–(f); (a) once per whose. */
+export function switchClausesOf(readings: readonly SwitchPathReading[]): SwitchClause[] {
+  const closed = readings.filter((r) => r.outcome === 'needs_credential');
+  const clauses: SwitchClause[] = [];
+  for (const whose of ['this_login', 'svc', 'root', 'administrator'] as const) {
+    if (closed.some((r) => r.whose === whose)) clauses.push({ clause: 'a', whose });
+  }
+  const caches = (['sudo_timestamp', 'doas_persist', 'polkit_keep'] as const).filter((c) =>
+    readings.some((r) => r.cache === c),
+  );
+  if (caches.length > 0) clauses.push({ clause: 'b', tools: caches.map((c) => CACHE_TOOL[c]) });
+  if (closed.some((r) => r.path === 'sudo' && r.or_not_allowed === true))
+    clauses.push({ clause: 'c' });
+  const polkit = readings.find((r) => r.path === 'polkit');
+  if (polkit !== undefined) {
+    const shown = polkit.polkit ?? { tools: [], admin: 'unread', vendor: 'unread' };
+    clauses.push({ clause: 'd', ...shown });
+  }
+  if (closed.some((r) => r.whose === 'person')) clauses.push({ clause: 'e' });
+  if (readings.some((r) => r.path === 'ssh')) clauses.push({ clause: 'f' });
+  return clauses;
+}
+
 /** Everything the check measured for one login. */
 export interface SeparationEvidence {
   /** The login the check ran as (the docs say: the agent's own shell). */
@@ -57,6 +179,9 @@ export interface SeparationEvidence {
   conditions: Record<SeparationCondition, ConditionReading>;
   /** The gate-answers value the check judged, with its WINNING source (restrictive wins). */
   value: { value: GateAnswers; source: Source };
+  /** #790 (01b #1): the ways read for condition 2 — present whenever they were measured (a service
+   *  user was named); the strong sentence's clauses come from them (D11). */
+  switch_paths?: SwitchPathReading[];
 }
 
 /** Whether a condition was measured "no". */
@@ -96,7 +221,7 @@ export function valueMeasuredWithheld(e: SeparationEvidence): boolean {
 export const PREVENTS_CONDITIONS = [
   'store_reach',
   'become_service_user',
-  'docker',
+  'root_engine',
   'trust_root_writable',
 ] as const satisfies readonly SeparationCondition[];
 

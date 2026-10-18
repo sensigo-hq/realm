@@ -1,0 +1,8 @@
+# captured 2026-10-18 · image ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 · as the login agent: LC_ALL=C /usr/bin/sudo -n -l
+exit 1
+--- stdout
+--- stderr
+/etc/sudoers.d/realm:1:13: expecting ')' but found 's'
+agent ALL=(+svcnet) NOPASSWD: /bin/true
+            ^
+sudo-rs: Sorry, user agent may not run sudo on h.

@@ -1,0 +1,5 @@
+# captured 2026-10-18 · image debian:stable@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · set up as root: sed -i "s/^svc:x:/svc::/" /etc/passwd · then as the login agent: getent passwd svc
+exit 0
+--- stdout
+svc::999:1100::/home/svc:/usr/sbin/nologin
+--- stderr

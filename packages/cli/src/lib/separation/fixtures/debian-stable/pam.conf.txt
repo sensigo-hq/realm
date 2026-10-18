@@ -1,0 +1,17 @@
+# captured 2026-10-18 · image debian:stable@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · ls -l /etc/pam.conf 2>&1; cat /etc/pam.conf 2>&1
+-rw-r--r-- 1 root root 552 Jun 29  2025 /etc/pam.conf
+# ---------------------------------------------------------------------------#
+# /etc/pam.conf								     #
+# ---------------------------------------------------------------------------#
+#
+# NOTE
+# ----
+#
+# NOTE: Most program use a file under the /etc/pam.d/ directory to setup their
+# PAM service modules. This file is used only if that directory does not exist.
+# ---------------------------------------------------------------------------#
+
+# Format:
+# serv.	module	   ctrl	      module [path]	...[args..]		     #
+# name	type	   flag							     #
+
