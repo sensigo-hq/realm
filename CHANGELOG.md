@@ -65,12 +65,18 @@ All notable changes to this project are documented here.
 - **`realm mcp --check` and `realm serve --check` (issue #627).** Each prints the gate-answers value
   it would start with and where it came from, then a separation check of the login that runs it: how
   far that login reaches into Realm's store and the programs Realm runs, each condition measured,
-  configured or unknown, and what that means for who can answer a gate. Nothing is started; a bad
-  value exits 1. Condition 2 starts no process: on a host with `sudo`, `doas`, `run0`, `pkexec` or
-  `su` it is not measured in this version, so the check prints "may still be able to answer"; a
-  later version reads their rules without running them. The header says when no store was found;
-  condition 7's "no" names the two apps whose settings it read; the two informational lines are
-  marked "(fact)".
+  configured or unknown, and what that means for who can answer a gate. No server is started; a
+  bad value exits 1. Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no
+  interaction) in their list and check modes, looks users and groups up with `getent` (`dscl` on
+  macOS), and reads su's login rules from their files — it never
+  switches user, never asks for a password and never opens a login connection; condition 3
+  (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus,
+  Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an
+  agent cannot record a gate answer only when every way it found needs a credential or is not
+  allowed, and lists what no program can see from that login; a rule it does not recognise, a file
+  it cannot read, or a tool's error reads "unknown", and the sentence is not printed. The header
+  says when no store was found; condition 7's "no" names the two apps whose settings it read; the
+  two informational lines are marked "(fact)".
 - **The `initialize` result names the gate-answers value (issue #627).**
   `capabilities.experimental['realm/gate_answers']` is `{ value, source_kind }`.
 - **Each answer records how it arrived (issue #627).** A `gate_response` entry gains `answer`

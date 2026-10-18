@@ -1,0 +1,13 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · sed -i "/@include common-auth/i auth sufficient pam_ssh_agent_auth.so file=/etc/security/authorized_keys" /etc/pam.d/sudo; then cat /etc/pam.d/sudo
+#%PAM-1.0
+
+# Set up user limits from /etc/security/limits.conf.
+session    required   pam_limits.so
+
+session    required   pam_env.so readenv=1 user_readenv=0
+session    required   pam_env.so readenv=1 envfile=/etc/default/locale user_readenv=0
+
+auth       sufficient pam_ssh_agent_auth.so file=/etc/security/authorized_keys
+@include common-auth
+@include common-account
+@include common-session-noninteractive

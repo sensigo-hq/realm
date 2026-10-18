@@ -1,0 +1,6 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent: LC_ALL=C setpriv --no-new-privs /usr/bin/sudo -n -l
+exit 1
+--- stdout
+--- stderr
+sudo: The "no new privileges" flag is set, which prevents sudo from running as root.
+sudo: If sudo is running in a container, you may need to adjust the container configuration to disable the flag.

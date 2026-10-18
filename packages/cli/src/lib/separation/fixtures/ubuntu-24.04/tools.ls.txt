@@ -1,0 +1,7 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · ls -l /usr/bin/sudo /usr/bin/su /bin/su; readlink -f /usr/bin/sudo /usr/bin/su /bin/su
+-rwsr-xr-x 1 root root  55680 Aug 19 16:47 /bin/su
+-rwsr-xr-x 1 root root  55680 Aug 19 16:47 /usr/bin/su
+-rwsr-xr-x 1 root root 282032 Oct  6 13:51 /usr/bin/sudo
+/usr/bin/sudo
+/usr/bin/su
+/usr/bin/su

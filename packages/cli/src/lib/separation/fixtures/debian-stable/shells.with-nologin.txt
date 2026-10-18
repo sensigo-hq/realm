@@ -1,0 +1,10 @@
+# captured 2026-10-18 · image debian:stable@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · echo /usr/sbin/nologin >> /etc/shells; then cat /etc/shells
+# /etc/shells: valid login shells
+/bin/sh
+/usr/bin/sh
+/bin/bash
+/usr/bin/bash
+/bin/rbash
+/usr/bin/rbash
+/usr/bin/dash
+/usr/sbin/nologin

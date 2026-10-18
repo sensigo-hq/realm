@@ -1,0 +1,8 @@
+# Apple's published file, not captured from a Mac · apple-oss-distributions/sudo pam.d/sudo @802f972bdc92 (2025-10-16), installed as /etc/pam.d/sudo · read 2026-10-18
+# sudo: auth account password session
+auth       include        sudo_local
+auth       sufficient     pam_smartcard.so
+auth       required       pam_opendirectory.so
+account    required       pam_permit.so
+password   required       pam_deny.so
+session    required       pam_permit.so

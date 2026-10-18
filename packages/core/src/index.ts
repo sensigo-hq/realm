@@ -850,6 +850,14 @@ export {
   separationPrevents,
   separationGaps,
   valueMeasuredWithheld,
+  // #790 (D13, D14, D11): the ways to the service user, read; condition 2; the claim's clauses.
+  SWITCH_PATHS,
+  SWITCH_OUTCOMES,
+  SWITCH_WHOSE,
+  SWITCH_CACHES,
+  mostPermissive,
+  switchPathsCondition,
+  switchClausesOf,
 } from './engine/separation.js';
 export type {
   SeparationMode,
@@ -858,6 +866,12 @@ export type {
   ConditionReading,
   SeparationEvidence,
   SeparationGap,
+  SwitchPath,
+  SwitchOutcome,
+  SwitchWhose,
+  SwitchCache,
+  SwitchPathReading,
+  SwitchClause,
 } from './engine/separation.js';
 // #627 W (§5.1, §5.2b): the MCP door's two process settings, judged once (the server and the bins).
 export {

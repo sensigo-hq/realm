@@ -1,0 +1,5 @@
+# captured 2026-10-18 · this host (Ubuntu 24.04 under WSL 2; the real login is written ⟨login⟩) · as ⟨login⟩: LC_ALL=C /usr/bin/sudo -n -l
+exit 1
+--- stdout
+--- stderr
+sudo: a password is required

@@ -1,0 +1,17 @@
+# captured 2026-10-18 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · ls -l /etc/pam.conf 2>&1; cat /etc/pam.conf 2>&1
+-rw-r--r-- 1 root root 552 Oct 13  2022 /etc/pam.conf
+# ---------------------------------------------------------------------------#
+# /etc/pam.conf								     #
+# ---------------------------------------------------------------------------#
+#
+# NOTE
+# ----
+#
+# NOTE: Most program use a file under the /etc/pam.d/ directory to setup their
+# PAM service modules. This file is used only if that directory does not exist.
+# ---------------------------------------------------------------------------#
+
+# Format:
+# serv.	module	   ctrl	      module [path]	...[args..]		     #
+# name	type	   flag							     #
+

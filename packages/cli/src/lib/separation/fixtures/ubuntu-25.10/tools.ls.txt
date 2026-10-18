@@ -1,0 +1,8 @@
+# captured 2026-10-18 · image ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 · ls -l /usr/bin/sudo /usr/bin/sudo.ws /usr/bin/su /usr/lib/cargo/bin/sudo /usr/lib/cargo/bin/su; readlink -f /usr/bin/sudo /usr/bin/su
+-rwsr-xr-x 1 root root   55832 Mar  6  2026 /usr/bin/su
+lrwxrwxrwx 1 root root      22 Mar  2  2026 /usr/bin/sudo -> /etc/alternatives/sudo
+-rwsr-xr-x 1 root root  282080 Mar  2  2026 /usr/bin/sudo.ws
+-rwsr-xr-x 1 root root  637576 Jan  9  2026 /usr/lib/cargo/bin/su
+-rwsr-xr-x 1 root root 1112712 Jan  9  2026 /usr/lib/cargo/bin/sudo
+/usr/lib/cargo/bin/sudo
+/usr/bin/su

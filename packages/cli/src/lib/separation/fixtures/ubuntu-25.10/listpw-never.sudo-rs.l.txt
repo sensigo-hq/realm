@@ -1,0 +1,8 @@
+# captured 2026-10-18 · image ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 · as the login agent: LC_ALL=C /usr/bin/sudo -n -l
+exit 1
+--- stdout
+--- stderr
+/etc/sudoers.d/realm:1:16: unknown setting: 'listpw'
+Defaults:agent listpw=never
+               ^~~~~~
+sudo-rs: interactive authentication is required

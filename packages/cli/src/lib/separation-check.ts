@@ -2,13 +2,22 @@
 // separation check. It MEASURES, as the login that runs it, what that login can reach of Realm's
 // store and of the programs Realm runs; core types the evidence and derives the mode and the claim
 // (`separationModeOf`, `separationPrevents`). It prints logins and paths, never a token, a secret or
-// an environment. It starts no process (correction 2, 5.9: the owner's word, "stop the real sudo
-// attempt until #790"): it reads files, stats paths and connects to sockets only.
-import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+// an environment. This file starts no process (correction 2, 5.9). #790: condition 2's read-only
+// calls — sudo's listing, doas's and polkit's check modes, the user and group lookups — go through
+// `separation/runner.ts`, the check's one spawn site, which refuses every other argv.
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { osLogin } from './program-identity.js';
-import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   separationGaps,
@@ -22,35 +31,34 @@ import {
   type SeparationGap,
   type SeparationMode,
   type Source,
+  type SwitchClause,
+  type SwitchPathReading,
+  type SwitchWhose,
+  switchClausesOf,
+  switchPathsCondition,
 } from '@sensigo/realm';
+import {
+  lookups,
+  measureSwitchPaths,
+  rootEngineReach,
+  SYSTEM_DIRS,
+  systemRunner,
+  type SwitchProbes,
+} from './separation/index.js';
 
-/** What the check reads from the machine — injectable, so every cell runs on a fixture. */
-export interface SeparationProbes {
-  login: () => string;
-  /** This process's uid — `undefined` only where the OS gives none (correction 2, 5.2: read from the
-   *  process, which needs no passwd entry). */
-  uid: () => number | undefined;
+/**
+ * What the check reads from the machine — injectable, so every cell runs on a fixture. #790: the
+ * switch-path readers' probes (`SwitchProbes`: the uid from the process, correction 2 5.2; the login's
+ * own passwd home, never `$HOME`, correction 1 D4; stat, file reads, socket connects, and the one
+ * runner), plus what the other conditions read.
+ */
+export interface SeparationProbes extends SwitchProbes {
   /** `$HOME`: where Realm's store is read (correction 1 D4: the store only). */
   home: () => string;
-  /** The login's own passwd home: where the agent-scoped paths are read (Docker sockets, the agent
-   *  apps' settings) — never `$HOME`, which may point at Realm's store (correction 1 D4).
-   *  `undefined` when the login has no passwd entry (correction 2, 5.2: no `$HOME` fallback). */
-  loginHome: () => string | undefined;
-  /** A path's owner and mode, or the reason it cannot be stat'ed (`ENOENT`, `EACCES`, … — correction
-   *  1 D1; correction 2, 5.6: the mode carries the sticky bit). */
-  stat: (path: string) => { uid: number; mode: number } | { error: string };
   /** The Node binary that runs this check, and Realm's own package folder (correction 1 D3). */
   execPath: () => string;
   realmPackageDir: () => string;
-  env: Record<string, string | undefined>;
   userName: (uid: number) => string | undefined;
-  canWrite: (path: string) => boolean;
-  canRead: (path: string) => boolean;
-  exists: (path: string) => boolean;
-  readText: (path: string) => string | undefined;
-  list: (dir: string) => string[] | undefined;
-  /** Connects to a socket: a Unix socket path, or `host:port`. True iff it accepted. */
-  connect: (target: { path: string } | { host: string; port: number }) => Promise<boolean>;
 }
 
 const tryAccess = (path: string, mode: number): boolean => {
@@ -117,6 +125,17 @@ export function systemProbes(): SeparationProbes {
         return undefined;
       }
     },
+    realPath: (path) => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return undefined;
+      }
+    },
+    groups: () => process.getgroups?.(),
+    pid: () => process.pid,
+    platform: () => process.platform,
+    run: systemRunner,
     connect: (target) =>
       new Promise((done) => {
         const socket =
@@ -132,21 +151,6 @@ export function systemProbes(): SeparationProbes {
         socket.once('error', () => finish(false));
       }),
   };
-}
-
-/** The elevation programs the check does NOT probe (§5.9): named `unknown (not probed)` when present.
- *  Correction 2 (5.9): `sudo` among them — the check runs nothing until #790 reads their rules. */
-const UNPROBED_ELEVATION = ['sudo', 'doas', 'run0', 'pkexec', 'su'] as const;
-
-/** Whether a program is on this host: found on `PATH`, or at `/usr/bin`, `/usr/sbin`, `/usr/local/bin`. */
-function present(probes: SeparationProbes, name: string): boolean {
-  const dirs = [
-    ...(probes.env['PATH'] ?? '').split(delimiter).filter((d) => d !== ''),
-    '/usr/bin',
-    '/usr/sbin',
-    '/usr/local/bin',
-  ];
-  return dirs.some((d) => probes.exists(join(d, name)));
 }
 
 /** What a stat of the store said (correction 1 D1): there; not found; or not even stat-able. */
@@ -176,15 +180,15 @@ function storeReach(probes: SeparationProbes, store: string, state: StoreState):
 /** Why no service user is named, when none is (correction 1 D1; correction 2, 5.2 and 5.3). */
 type NoServiceUser = 'own_store' | 'no_store' | 'owner_unread' | 'no_uid';
 
-/** Condition 2: can this login become Realm's service user without a password? Correction 2 (5.9):
- *  it starts no process — every elevation program present is named "not probed"; with none present
- *  it is measured "no" (looking for the programs' files runs nothing). */
-function becomeServiceUser(
+/** Condition 2: can this login become Realm's service user without a password? #790 (D13): read
+ *  from every way to it, each without acting (`measureSwitchPaths`); with no service user named,
+ *  W's early unknown, and no ways are read (01b #1). */
+async function becomeServiceUser(
   probes: SeparationProbes,
   svc: string | undefined,
   why: NoServiceUser,
   store: string,
-): ConditionReading {
+): Promise<{ reading: ConditionReading; paths?: SwitchPathReading[] }> {
   if (svc === undefined) {
     const cause = {
       own_store: 'there is no separate service user: the store belongs to this login',
@@ -192,20 +196,47 @@ function becomeServiceUser(
       owner_unread: `the store's owner could not be read: ${store} cannot be opened`,
       no_uid: "there is no service user to name: this login's uid could not be read",
     }[why];
-    return { basis: 'unknown', cause };
+    return { reading: { basis: 'unknown', cause } };
   }
-  const unprobed = UNPROBED_ELEVATION.filter((p) => present(probes, p));
-  if (unprobed.length > 0) {
-    return {
-      basis: 'unknown',
-      cause: `not probed: ${unprobed.join(', ')} ${unprobed.length === 1 ? 'is' : 'are'} on this host`,
-    };
+  const paths = await measureSwitchPaths({ probes, svc });
+  const where = `in ${SYSTEM_DIRS.join(', ')} or on PATH`;
+  return { reading: switchPathsCondition(paths, (r) => switchPathEntry(r, svc), where), paths };
+}
+
+/** 01b #2: whose credential a closed way needs, in words. */
+function whoseWords(whose: SwitchWhose | undefined, svc: string): string {
+  switch (whose) {
+    case 'svc':
+      return `${svc}'s password`;
+    case 'root':
+      return "root's password";
+    case 'administrator':
+      return "an administrator's password";
+    case 'person':
+      return "a person's touch or key";
+    default:
+      return "this login's password";
   }
-  return {
-    basis: 'measured',
-    answer: 'no',
-    detail: 'no sudo, doas, run0, pkexec or su on this host',
-  };
+}
+
+/** 01b #2: one way's entry on condition 2's line, `⟨path⟩: ⟨outcome⟩ (⟨how⟩)`. */
+export function switchPathEntry(r: SwitchPathReading, svc: string): string {
+  const outcome =
+    r.outcome === 'yes'
+      ? 'yes'
+      : r.outcome === 'not_allowed'
+        ? 'not allowed'
+        : r.outcome === 'unknown'
+          ? `unknown: ${r.cause ?? 'not read'}`
+          : r.or_not_allowed === true
+            ? "needs this login's password or is not allowed (sudo does not say which)"
+            : r.path === 'ssh'
+              ? `needs a key ${svc} accepts`
+              : `needs ${whoseWords(r.whose, svc)}`;
+  // W's friction: an outcome's own parenthetical and the how's merge into one
+  return outcome.endsWith(')')
+    ? `${r.path}: ${outcome.slice(0, -1)}; ${r.how})`
+    : `${r.path}: ${outcome} (${r.how})`;
 }
 
 /** Correction 2 (5.2): a reading for a condition the login's own home is needed for, when it has none. */
@@ -214,42 +245,6 @@ function noLoginHome(what: string): ConditionReading {
     basis: 'unknown',
     cause: `this login's home could not be read: it has no passwd entry, so ${what}`,
   };
-}
-
-/** Condition 3: can this login reach the Docker engine (root-equivalent)? The socket, never the group or CLI. */
-async function dockerReach(probes: SeparationProbes): Promise<ConditionReading> {
-  const targets: ({ path: string } | { host: string; port: number })[] = [];
-  const dockerHost = probes.env['DOCKER_HOST'];
-  if (dockerHost !== undefined && dockerHost !== '') {
-    if (dockerHost.startsWith('unix://'))
-      targets.push({ path: dockerHost.slice('unix://'.length) });
-    const tcp = /^tcp:\/\/([^:/]+):(\d+)/.exec(dockerHost);
-    if (tcp !== null) targets.push({ host: tcp[1]!, port: Number(tcp[2]) });
-  }
-  const home = probes.loginHome();
-  for (const path of [
-    '/var/run/docker.sock',
-    ...(home !== undefined
-      ? [
-          join(home, '.docker', 'run', 'docker.sock'),
-          join(home, '.docker', 'desktop', 'docker.sock'),
-        ]
-      : []),
-  ]) {
-    if (probes.exists(path)) targets.push({ path });
-  }
-  for (const t of targets) {
-    if (await probes.connect(t)) {
-      return {
-        basis: 'measured',
-        answer: 'yes',
-        detail: `the Docker engine accepted a connection at ${'path' in t ? t.path : `${t.host}:${t.port}`}`,
-      };
-    }
-  }
-  // Correction 2 (5.2): with no login home, the login's own sockets were never looked at.
-  if (home === undefined) return noLoginHome('its own Docker sockets were not checked');
-  return { basis: 'measured', answer: 'no' };
 }
 
 /** The files Realm executes for the deployment roots the check knows (realm.yaml and its module refs). */
@@ -482,10 +477,12 @@ export async function measureSeparation(args: {
     ...stored.extensions,
     probes.execPath(),
   ];
+  const become = await becomeServiceUser(probes, svc, noServiceUser, store);
   const conditions: Record<SeparationCondition, ConditionReading> = {
     store_reach: storeReach(probes, store, state),
-    become_service_user: becomeServiceUser(probes, svc, noServiceUser, store),
-    docker: await dockerReach(probes),
+    become_service_user: become.reading,
+    // #790 (D12): every engine that runs as root, and the groups that reach one or the disks.
+    root_engine: await rootEngineReach(lookups(probes)),
     trust_root_writable: trustRootWritable(
       probes,
       [...new Set([...args.roots, ...stored.roots])],
@@ -510,6 +507,7 @@ export async function measureSeparation(args: {
     ...(svc !== undefined && ownerFrom !== undefined ? { service_user_from: ownerFrom } : {}),
     store_owned_by_other: ownedByOther,
     conditions,
+    ...(become.paths !== undefined ? { switch_paths: become.paths } : {}),
     value: args.value,
     store,
     store_found: state !== 'missing',
@@ -566,7 +564,7 @@ const CONDITION_WORDS: Record<
   store_reach: () => "This login can write Realm's store or open its files",
   become_service_user: (e) =>
     `This login can become Realm's service user${e.service_user !== undefined ? ` (${serviceUserWords(e)})` : ''} without a password`,
-  docker: () => 'This login can reach the Docker engine',
+  root_engine: () => 'This login can reach an engine that runs as root',
   // Correction 2 (5.6): what it measured — the Node binary and Realm package this check runs from.
   trust_root_writable: () =>
     'This login can change files Realm executes (realm.yaml, extension modules, and the Node binary and Realm package this check runs from)',
@@ -586,9 +584,10 @@ export function conditionLine(
   switch (r.basis) {
     case 'measured':
       // Correction 2 (8.5): an information line carries its label too, "(fact)".
+      // #790 (D11): condition 2 is read "now" — a credential cached later is not seen (clause b).
       return r.answer === 'fact'
         ? `${words}: ${r.detail} (fact).`
-        : `${words}: ${r.answer} (measured)${r.detail !== undefined ? ` — ${r.detail}` : ''}.`;
+        : `${words}: ${r.answer} (${c === 'become_service_user' ? 'measured now' : 'measured'})${r.detail !== undefined ? ` — ${r.detail}` : ''}.`;
     case 'configured_not_enforced':
       return `${words}: configured, not enforced by Realm — ${r.detail}.`;
     case 'unknown':
@@ -626,7 +625,7 @@ const MODE_WORDS: Record<SeparationMode, string> = {
 const GAP_SUBJECT: Record<Exclude<SeparationGap['gap'], 'value'>, string> = {
   store_reach: "reach Realm's store",
   become_service_user: "become Realm's service user without a password",
-  docker: 'reach the Docker engine',
+  root_engine: 'reach an engine that runs as root',
   trust_root_writable: 'change the files Realm executes',
 };
 
@@ -649,6 +648,41 @@ function gapWords(g: SeparationGap): string {
   return `whether it can ${subject} was not measured`;
 }
 
+/** #790 (D11): one clause of the strong sentence, word for word (no backticks on a terminal line,
+ *  W correction 2 §4.7). ⟨svc⟩ is the raw user name (rail 5). */
+function clauseWords(c: SwitchClause, login: string, svc: string): string {
+  switch (c.clause) {
+    case 'a':
+      return c.whose === 'this_login'
+        ? `the agent cannot obtain ${login}'s password, and it is not empty`
+        : c.whose === 'svc'
+          ? `the agent cannot obtain ${svc}'s password, and it is not empty`
+          : c.whose === 'root'
+            ? "the agent cannot obtain root's password"
+            : "the agent cannot obtain an administrator's password";
+    case 'b':
+      // B §10: only the tools whose cache fired
+      return `nobody authenticates ${orList(c.tools)} as ${login} where the agent's processes run (${c.tools.length === 1 ? 'it then waives' : 'each then waives'} the password for some minutes)`;
+    case 'c':
+      return 'sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, and no Defaults!… or Defaults>… line sets !authenticate)';
+    case 'd': {
+      // W §8: the entry points present ("polkit's actions" when none is); W §5: each rules folder
+      // as stat read it
+      const words = { unreadable: 'cannot be read here', unread: 'are not read' } as const;
+      const tools = c.tools.length > 0 ? orList(c.tools) : "polkit's actions";
+      return `no polkit rule grants ${login} ${tools} beyond what this check's own session was shown (polkit's admin rules ${words[c.admin]}; its vendor rules ${words[c.vendor]})`;
+    }
+    case 'e':
+      return 'no person approves a Touch ID, fingerprint or security-key prompt the agent raises';
+    case 'f':
+      return `${svc}'s authorized_keys holds none of ${login}'s keys`;
+  }
+}
+
+/** `a`, `a or b`, `a, b or c`. */
+const orList = (xs: readonly string[]): string =>
+  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1)!}`;
+
 /** W-x3: the claim, chosen by the measured mode and the predicate. */
 export function separationClaim(
   e: SeparationEvidence & { extensions_unread?: boolean; service_user_from?: string },
@@ -657,11 +691,30 @@ export function separationClaim(
     // Correction 1 (D3): what the check could not read is named in the proviso, as the running
     // server's value is. Correction 2 (5.6): and that Realm's server runs the Node and the Realm
     // package this check measured; no backticks on a terminal line (4.7's rule).
+    // #790 (D11): then the clauses the ways read fired — each names what no program can see from
+    // this login, and none is printed for a way that is absent (one composer, R13).
     const svc = e.service_user_from !== undefined ? `${serviceUserWords(e)},` : serviceUserWords(e);
+    const always = [
+      `no program Realm runs as ${svc} can run code for it`,
+      "Realm's server runs this Node and this Realm package",
+      'every Realm server on this machine starts with --gate-answers withheld',
+      ...(e.extensions_unread === true
+        ? [
+            "no registered workflow's extension file (not read: the store cannot be read) can be changed by this login",
+          ]
+        : []),
+    ];
+    const clauses = switchClausesOf(e.switch_paths ?? []).map((c) =>
+      clauseWords(c, e.login, e.service_user ?? "Realm's service user"),
+    );
+    // W's always-clauses exactly as the base joins them; #790's clauses follow, joined by "; ",
+    // since each may carry commas of its own.
+    const list = (items: string[], sep: string): string =>
+      items.length === 1 ? items[0]! : `${items.slice(0, -1).join(sep)}${sep}and ${items.at(-1)!}`;
     const proviso =
-      e.extensions_unread === true
-        ? `no program Realm runs as ${svc} can run code for it, Realm's server runs this Node and this Realm package, every Realm server on this machine starts with --gate-answers withheld, and no registered workflow's extension file (not read: the store cannot be read) can be changed by this login`
-        : `no program Realm runs as ${svc} can run code for it, Realm's server runs this Node and this Realm package, and every Realm server on this machine starts with --gate-answers withheld`;
+      clauses.length === 0
+        ? list(always, ', ')
+        : `${list(always, ', ')}; and provided ${list(clauses, '; ')}`;
     return `An agent running as ${e.login} cannot record a gate answer through this server, the terminal or Realm's files, provided ${proviso}.`;
   }
   if (separationModeOf(e) === 'same_account') {
@@ -690,7 +743,7 @@ export function renderSeparation(e: CheckEvidence): string[] {
       [
         'store_reach',
         'become_service_user',
-        'docker',
+        'root_engine',
         'trust_root_writable',
         'other_answer_host',
         'time_basis',
