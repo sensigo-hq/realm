@@ -1,14 +1,15 @@
 // separation-check-790-live.test.ts — #790 (02, D2 §3): the one live cell. It reads the switch paths
 // of THIS host through the real probes and the real runner, which refuses any argv that is not one of
 // rail 1's read-only calls (S3). Skipped unless REALM_LIVE_SEPARATION=1: CI does not run it (04 item
-// 8), and no red-first run sets it, so no break reaches a real tool. Its readings print only to the
-// local log under reports/, which is never committed.
+// 8), and no red-first run sets it, so no break reaches a real tool. Its readings go only to the
+// local log REALM_LIVE_SEPARATION_LOG names (under reports/, never committed).
 //
 // D2 §3's expectations are hypotheses (guardrail 4), for a host like the one D2 measured: classic
 // sudo that refuses this login's listing, a `daemon` user whose shell is nologin, and polkitd with
 // pkcheck. Each assertion carries (a) the change that turns it red and (b) what it prints: readings
 // and outcomes.
 import { describe, expect, it } from 'vitest';
+import { appendFileSync } from 'node:fs';
 import { switchClausesOf, type SwitchPathReading } from '@sensigo/realm';
 import { measureSwitchPaths, railOne } from './separation/index.js';
 import { systemProbes } from './separation-check.js';
@@ -32,9 +33,11 @@ describe.skipIf(!LIVE)('#790 — the live cell on this host (D2 §3)', () => {
     };
     const rs = await measureSwitchPaths({ probes, svc: 'daemon' });
     const clauses = switchClausesOf(rs).map((c) => (c.clause === 'a' ? `a:${c.whose}` : c.clause));
-    console.log(
-      JSON.stringify({ readings: rs, clauses, calls: argvs.map((a) => a.join(' ')) }, null, 2),
-    );
+    const log = process.env['REALM_LIVE_SEPARATION_LOG'];
+    if (log !== undefined && log !== '') {
+      const record = { readings: rs, clauses, calls: argvs.map((a) => a.join(' ')) };
+      appendFileSync(log, `${JSON.stringify(record, null, 2)}\n`);
+    }
     const sudo = rs.filter((r) => r.path === 'sudo').map(view);
     const su = rs.filter((r) => r.path === 'su').map(view);
     const polkit = rs.filter((r) => r.path === 'polkit');
