@@ -7,7 +7,7 @@
 // readings, outcomes, booleans and a captured fixture's own line — never an environment, a key file's
 // contents, an environment variable's value, or a real login or host name.
 import { afterEach, describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { switchClausesOf, switchPathsCondition, type SwitchPathReading } from '@sensigo/realm';
 import {
   lookups,
@@ -119,6 +119,7 @@ function merge(a: MachineSpec, b: MachineSpec): MachineSpec {
 const PAM: Record<string, string[]> = {
   [U24]: [
     'sudo',
+    'sudo-i',
     'su',
     'su-l',
     'common-auth',
@@ -129,6 +130,7 @@ const PAM: Record<string, string[]> = {
   ],
   [U25]: [
     'sudo',
+    'sudo-i',
     'su',
     'su-l',
     'common-auth',
@@ -139,6 +141,7 @@ const PAM: Record<string, string[]> = {
   ],
   [DEB]: [
     'sudo',
+    'sudo-i',
     'su',
     'su-l',
     'common-auth',
@@ -147,10 +150,15 @@ const PAM: Record<string, string[]> = {
     'common-session-noninteractive',
     'other',
   ],
-  [FED]: ['sudo', 'su', 'su-l', 'system-auth', 'postlogin', 'other'],
+  [FED]: ['sudo', 'sudo-i', 'su', 'su-l', 'system-auth', 'postlogin', 'other'],
 };
 
-/** A Linux image's machine: its getent, its passwd entries for svc and root, its PAM files. */
+/** Whether a fixture was captured (some images hold a lookup others do not). */
+const captured = (name: string): boolean =>
+  existsSync(new URL(`./fixtures/${name}.txt`, import.meta.url));
+
+/** A Linux image's machine: its getent, its passwd entries for svc, root and nobody (a run-as a
+ *  listing names, compared by uid), its PAM files. */
 function linux(img: string, over: MachineSpec = {}): MachineSpec {
   return merge(
     {
@@ -158,6 +166,9 @@ function linux(img: string, over: MachineSpec = {}): MachineSpec {
       calls: {
         [`${GETENT} passwd svc`]: `${img}/getent.passwd.svc`,
         [`${GETENT} passwd root`]: `${img}/getent.passwd.root`,
+        ...(captured(`${img}/getent.passwd.nobody`)
+          ? { [`${GETENT} passwd nobody`]: `${img}/getent.passwd.nobody` }
+          : {}),
       },
       files: Object.fromEntries(
         (PAM[img] ?? []).map((n) => [`/etc/pam.d/${n}`, { fixture: `${img}/pam.${n}` }]),
@@ -212,11 +223,16 @@ const clauses = (rs: SwitchPathReading[]): string[] =>
 describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
   it('classic sudo refused "a password is required" → needs this login\'s password or not allowed; clauses (a), (b), (c)', async () => {
     const rs = await paths(linux(U24, sudos(U24, 'password', ['sudo'])));
-    // (a) red when the refusal drops its cache (b) or its "or not allowed" (c); (b) prints readings
-    //     and clauses.
+    // (a) red when the refusal drops its cache (b) or its "or not allowed" (c), or reads only this
+    //     login's password where its Defaults cannot be seen (A §F4); (b) prints readings and
+    //     clauses.
     expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
-      readings: ['sudo needs_credential this_login sudo_timestamp or not allowed'],
-      clauses: ['a:this_login', 'b', 'c'],
+      readings: [
+        'sudo needs_credential this_login sudo_timestamp or not allowed',
+        'sudo needs_credential root sudo_timestamp',
+        'sudo needs_credential svc sudo_timestamp',
+      ],
+      clauses: ['a:this_login', 'a:svc', 'a:root', 'b', 'c'],
     });
   });
 
@@ -228,10 +244,15 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
 
   it('sudo-rs "interactive authentication is required" → needs this login\'s password (a rule exists)', async () => {
     const rs = await paths(linux(U25, sudos(U25, 'password', ['sudo-rs'])));
-    // (a) red when it is read as not allowed; (b) prints readings and clauses.
+    // (a) red when it is read as not allowed, or reads only this login's password (A §F4); (b)
+    //     prints readings and clauses.
     expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
-      readings: ['sudo needs_credential this_login sudo_timestamp'],
-      clauses: ['a:this_login', 'b'],
+      readings: [
+        'sudo needs_credential this_login sudo_timestamp',
+        'sudo needs_credential root sudo_timestamp',
+        'sudo needs_credential svc sudo_timestamp',
+      ],
+      clauses: ['a:this_login', 'a:svc', 'a:root', 'b'],
     });
   });
 
@@ -255,10 +276,17 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
   it('`Defaults!/usr/bin/realm !authenticate` shown in a listing → yes (sudo.ws); sudo-rs, which ignores it, needs the password', async () => {
     const rs = await paths(linux(U25, sudos(U25, 'auth-cmd', ['sudo-rs', 'sudo.ws'])));
     // (a) red when the command-specific line is ignored; (b) prints readings and sudo.ws's how.
-    expect({ readings: view(rs), how: rs[1]?.how }).toEqual({
-      readings: ['sudo needs_credential this_login sudo_timestamp', 'sudo yes'],
-      how: 'LC_ALL=C /usr/bin/sudo.ws -n -l and -n -ll: Defaults!/usr/bin/realm !authenticate covers a rule',
-    });
+    expect({ readings: view(rs), how: rs.find((r) => r.tool === '/usr/bin/sudo.ws')?.how }).toEqual(
+      {
+        readings: [
+          'sudo needs_credential this_login sudo_timestamp',
+          'sudo needs_credential root sudo_timestamp',
+          'sudo needs_credential svc sudo_timestamp',
+          'sudo yes',
+        ],
+        how: 'LC_ALL=C /usr/bin/sudo.ws -n -l and -n -ll: Defaults!/usr/bin/realm !authenticate covers a rule',
+      },
+    );
   });
 
   it('`Defaults>svc !authenticate` (a runas line) → yes', async () => {
@@ -269,17 +297,18 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
 
   it("`rootpw` in Matching Defaults → needs root's password; the clause names root", async () => {
     const rs = await paths(linux(U25, sudos(U25, 'rootpw', ['sudo.ws'])));
-    // (a) red when rootpw is ignored (this login's); (b) prints readings and clauses.
+    // (a) red when rootpw is ignored (this login's), or its ticket drops clause (b) (A §F5); (b)
+    //     prints readings and clauses.
     expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
-      readings: ['sudo needs_credential root'],
-      clauses: ['a:root'],
+      readings: ['sudo needs_credential root sudo_timestamp'],
+      clauses: ['a:root', 'b'],
     });
   });
 
   it("`targetpw` → needs svc's password", async () => {
     const rs = await paths(linux(U25, sudos(U25, 'targetpw', ['sudo.ws'])));
     // (a) red when targetpw is ignored; (b) prints the readings.
-    expect(view(rs)).toEqual(['sudo needs_credential svc']);
+    expect(view(rs)).toEqual(['sudo needs_credential svc sudo_timestamp']);
   });
 
   it('01b #13: sudo and sudo.ws both present, only sudo.ws lists NOPASSWD → yes (two rule sets combined)', async () => {
@@ -292,15 +321,22 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
     // (a) red when only the first sudo is asked; (b) prints the readings and the condition.
     expect({
       readings: view(rs),
-      condition: switchPathsCondition(rs, () => '').basis,
+      condition: switchPathsCondition(rs, () => '', 'here').basis,
       yes: rs.some((r) => r.outcome === 'yes'),
     }).toEqual({
-      readings: ['sudo needs_credential this_login sudo_timestamp', 'sudo yes'],
+      readings: [
+        'sudo needs_credential this_login sudo_timestamp',
+        'sudo needs_credential root sudo_timestamp',
+        'sudo needs_credential svc sudo_timestamp',
+        'sudo yes',
+      ],
       condition: 'measured',
       yes: true,
     });
   });
 
+  // A §F16: this cell covers the parser only — no shipped path reads a wrapped short listing (classic
+  // sudo is read from -ll; sudo-rs writes each entry on one line).
   it("a wrapped listing is read whole (D2): the short format's continuation lines give what the long format lists", () => {
     const entries = (fixture: string) => {
       const l = parseListing((capture(fixture) as { stdout: string }).stdout);
@@ -330,6 +366,8 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
             calls: {
               [`${GETENT} group svcgrp`]: `${U25}/getent.group.svcgrp`,
               [`${GETENT} netgroup svcnet`]: `${U25}/getent.netgroup.svcnet`,
+              // A §F7: `%#gid` is looked up by gid
+              [`${GETENT} group 1100`]: `${U25}/getent.group.1100`,
             },
           }),
         ),
@@ -379,9 +417,11 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
     expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
       readings: [
         'sudo needs_credential this_login sudo_timestamp or not allowed',
+        'sudo needs_credential root sudo_timestamp',
+        'sudo needs_credential svc sudo_timestamp',
         'sudo needs_credential person',
       ],
-      clauses: ['a:this_login', 'b', 'c', 'e'],
+      clauses: ['a:this_login', 'a:svc', 'a:root', 'b', 'c', 'e'],
     });
   });
 
@@ -402,6 +442,8 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
     //     person; (b) prints the readings.
     expect(view(rs)).toEqual([
       'sudo needs_credential this_login sudo_timestamp or not allowed',
+      'sudo needs_credential root sudo_timestamp',
+      'sudo needs_credential svc sudo_timestamp',
       'sudo needs_credential person',
     ]);
   });
@@ -550,10 +592,17 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
       linux(U25, merge(sudos(U25, 'password', ['sudo-rs']), sudos(U25, 'requiretty', ['sudo.ws']))),
     );
     // (a) red when the credential outranks the unknown; (b) prints readings and the condition's basis.
-    expect({ readings: view(rs), basis: switchPathsCondition(rs, () => '').basis }).toEqual({
-      readings: ['sudo needs_credential this_login sudo_timestamp', 'sudo unknown'],
-      basis: 'unknown',
-    });
+    expect({ readings: view(rs), basis: switchPathsCondition(rs, () => '', 'here').basis }).toEqual(
+      {
+        readings: [
+          'sudo needs_credential this_login sudo_timestamp',
+          'sudo needs_credential root sudo_timestamp',
+          'sudo needs_credential svc sudo_timestamp',
+          'sudo unknown',
+        ],
+        basis: 'unknown',
+      },
+    );
   });
 });
 
@@ -665,7 +714,7 @@ describe('#790 — su, never run (D6, D7, 01b #11, #14)', () => {
     expect(view(rs)).toEqual(['su needs_credential svc']);
   });
 
-  it("BusyBox su (Alpine, no PAM stack) → needs svc's password; with svc's /sbin/nologin, not allowed", async () => {
+  it("BusyBox su (Alpine, no PAM stack) → needs svc's password, whatever svc's shell (B §11)", async () => {
     const alpine = (entry: string) =>
       paths({
         programs: { [GETENT]: 0, '/bin/su': 0, '/bin/busybox': 0 },
@@ -682,7 +731,8 @@ describe('#790 — su, never run (D6, D7, 01b #11, #14)', () => {
       nologin: await alpine('getent.passwd.svc'),
     }).toEqual({
       sh: ['su needs_credential svc'],
-      nologin: ['su not_allowed'],
+      // B §11: BusyBox keeps a restricted shell only under a build option this check cannot see
+      nologin: ['su needs_credential svc'],
     });
   });
 
@@ -714,20 +764,25 @@ describe('#790 — doas (D8)', () => {
     files: {
       '/etc/doas.conf': { fixture: `${ALP}/doas.conf.stock` },
       ...(realm !== undefined
-        ? { '/etc/doas.d/realm.conf': { fixture: `${ALP}/doas.${realm}.realm.conf` } }
+        ? { '/etc/doas.d/realm.conf': { fixture: `${ALP}/doas7.${realm}.realm.conf` } }
         : {}),
     },
     dirs: { '/etc/doas.d': realm !== undefined ? ['realm.conf'] : [] },
   });
-  /** The captured `doas -C` answers of one rule set: each file × svc and root × each command. */
+  /** B §2: the command no rule can name, and the argument asked after a bare `cmd`. */
+  const ANY = '/nonexistent/realm-check-any';
+  const ARG = 'realm-check-any-argument';
+  /** The captured `doas -C` answers of one rule set: each file × svc and root × each question,
+   *  the command no rule can name included. */
   const answers = (set: string, cmds: string[]): MachineSpec => {
     const calls: Record<string, string> = {};
+    const key = (c: string) => c.replace(/\//g, '-').replace(/ /g, '_');
     for (const t of ['svc', 'root']) {
-      calls[`/usr/bin/doas -C /etc/doas.conf -u ${t} /bin/sh`] =
-        `${ALP}/doas.stock.doas.conf.${t}.-bin-sh`;
-      for (const c of cmds) {
+      calls[`/usr/bin/doas -C /etc/doas.conf -u ${t} ${ANY}`] =
+        `${ALP}/doas7.stock.doas.conf.${t}.${key(ANY)}`;
+      for (const c of [...cmds, ANY]) {
         calls[`/usr/bin/doas -C /etc/doas.d/realm.conf -u ${t} ${c}`] =
-          `${ALP}/doas.${set}.realm.conf.${t}.${c.replace(/\//g, '-').replace(/ /g, '_')}`;
+          `${ALP}/doas7.${set}.realm.conf.${t}.${key(c)}`;
       }
     }
     return { calls };
@@ -752,14 +807,17 @@ describe('#790 — doas (D8)', () => {
 
   it('`permit nopass agent as svc cmd /usr/bin/realm` readable → yes (the named command is asked)', async () => {
     const rs = await paths(
-      merge(doasFiles('nopass-cmd'), answers('nopass-cmd', ['/usr/bin/realm', '/bin/sh'])),
+      merge(
+        doasFiles('nopass-cmd'),
+        answers('nopass-cmd', ['/usr/bin/realm', `/usr/bin/realm ${ARG}`]),
+      ),
     );
     // (a) red when only an unrestricted command is asked (deny for any other); (b) prints readings.
     expect(view(rs)).toEqual(['doas yes']);
   });
 
   it('rules only in /etc/doas.d/realm.conf → read from the folder; persist → clause (b)', async () => {
-    const rs = await paths(merge(doasFiles('persist'), answers('persist', ['/bin/sh'])));
+    const rs = await paths(merge(doasFiles('persist'), answers('persist', [])));
     // (a) red when only /etc/doas.conf is read (not allowed); (b) prints readings, clauses and how.
     expect({ readings: view(rs), clauses: clauses(rs), how: rs[0]?.how }).toEqual({
       readings: ['doas needs_credential this_login doas_persist'],
@@ -769,9 +827,9 @@ describe('#790 — doas (D8)', () => {
   });
 
   it('`deny agent` → not allowed; a :wheel rule and a command with args are parsed as doas -C reads them', async () => {
-    const deny = await paths(merge(doasFiles('deny'), answers('deny', ['/bin/sh'])));
+    const deny = await paths(merge(doasFiles('deny'), answers('deny', [])));
     const mixed = await paths(
-      merge(merge(doasFiles('mixed'), answers('mixed', ['/usr/bin/realm status', '/bin/sh'])), {
+      merge(merge(doasFiles('mixed'), answers('mixed', ['/usr/bin/realm status'])), {
         calls: { [`${GETENT} group wheel`]: `${ALP}/getent.group.wheel` },
       }),
     );
@@ -781,6 +839,26 @@ describe('#790 — doas (D8)', () => {
       deny: ['doas not_allowed'],
       mixed: ['doas yes'],
     });
+  });
+
+  it('B §2: `permit nopass agent as svc` with `deny … cmd /bin/sh` after it → yes (the command no rule can name is asked)', async () => {
+    const rs = await paths(
+      merge(doasFiles('deny-sh'), answers('deny-sh', ['/bin/sh', `/bin/sh ${ARG}`])),
+    );
+    // (a) red when the any-command question is a command a rule can name (/bin/sh: deny); (b)
+    //     prints the readings.
+    expect(view(rs)).toEqual(['doas yes']);
+  });
+
+  it('B §2: a command whose deny rule pins no arguments → asked with one argument too → yes', async () => {
+    const rs = await paths(
+      merge(
+        doasFiles('deny-noargs'),
+        answers('deny-noargs', ['/usr/bin/realm', `/usr/bin/realm ${ARG}`]),
+      ),
+    );
+    // (a) red when a bare `cmd` is asked without an argument only (deny); (b) prints the readings.
+    expect(view(rs)).toEqual(['doas yes']);
   });
 });
 
@@ -874,8 +952,12 @@ describe('#790 — polkit (D9, 01b #5)', () => {
     // (a) red when polkit's presence prints no (d), *_keep no (b), or an action D9 names is not
     //     asked (machinectl's shells, pkexec's own programs); (b) prints readings, clauses, actions.
     expect({ readings: view(rs), clauses: clauses(rs), actions }).toEqual({
-      readings: ['polkit needs_credential administrator polkit_keep'],
-      clauses: ['a:administrator', 'b', 'd'],
+      // B §4: an exit 2 reads both whose, kept — an unreadable rule may change whose it asks
+      readings: [
+        'polkit needs_credential administrator polkit_keep',
+        'polkit needs_credential this_login polkit_keep',
+      ],
+      clauses: ['a:this_login', 'a:administrator', 'b', 'd'],
       actions: [SH, HS, EX, RP, MU],
     });
   });
@@ -947,7 +1029,7 @@ describe('#790 — ssh (D10, 01b #4)', () => {
   it('01b #4: key plus sshd → needs a credential, clause (f), and no block (condition 2 measured "no")', async () => {
     const rs = await paths(sshMachine());
     // (a) red when ssh reads unknown; (b) prints the condition's basis and answer.
-    const c = switchPathsCondition(rs, () => '');
+    const c = switchPathsCondition(rs, () => '', 'here');
     expect({ basis: c.basis, answer: c.basis === 'measured' ? c.answer : undefined }).toEqual({
       basis: 'measured',
       answer: 'no',
@@ -1063,16 +1145,19 @@ describe("#790 — the probes: the spy, the one spawn site, the runner's refusal
     const dir = new URL('./', import.meta.url);
     const files = readdirSync(dir).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
     const spawning = files.filter((f) =>
-      /node:child_process|\bspawn(?:Sync)?\(|\bexecFile(?:Sync)?\(|(?<![.\w])exec(?:Sync)?\(|\bfork\(/.test(
+      /\bchild_process\b|\bspawn(?:Sync)?\(|\bexecFile(?:Sync)?\(|(?<![.\w])exec(?:Sync)?\(|\bfork\(/.test(
         stripComments(readFileSync(new URL(f, dir), 'utf8')),
       ),
     );
-    // (a) red when a reader starts a process itself; (b) prints the files that do.
+    // (a) red when a reader starts a process itself, by any spelling of the module (A §F12); (b)
+    //     prints the files that do.
     expect({ files: files.length > 8, spawning }).toEqual({ files: true, spawning: ['runner.ts'] });
   });
 
   it('S3: the runner refuses an argv that is not on rail 1, never starting it; a refused call reads unknown', async () => {
     const refused = await systemRunner(['/bin/echo', 'started']);
+    // A §F13: a tool's name in a folder outside D2's is refused too
+    const outside = await systemRunner(['/tmp/x/sudo', '-V']);
     // A doas rule whose command starts with "-": its check argv is not one of rail 1's. Rail-1
     // calls answer from captures; any other goes to the real runner, which must refuse it.
     const machine = fixtureMachine(
@@ -1088,8 +1173,9 @@ describe("#790 — the probes: the spy, the one spawn site, the runner's refusal
     const rs = await measureSwitchPaths({ probes, svc: 'svc' });
     // (a) red when the runner's check is removed (echo runs; doas is started); (b) prints the
     //     runner's answer and the doas reading's cause.
-    expect({ refused, doas: view(rs), cause: rs[0]?.cause }).toEqual({
+    expect({ refused, outside, doas: view(rs), cause: rs[0]?.cause }).toEqual({
       refused: { refused: '/bin/echo started' },
+      outside: { refused: '/tmp/x/sudo -V' },
       doas: ['doas unknown'],
       cause:
         '/usr/bin/doas -C /etc/doas.conf -u svc -x: the check refused to run /usr/bin/doas -C /etc/doas.conf -u svc -x',
@@ -1109,7 +1195,7 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     store_owned_by_other: true,
     conditions: {
       store_reach: NO,
-      become_service_user: switchPathsCondition(ways, (w) => switchPathEntry(w, 'svc')),
+      become_service_user: switchPathsCondition(ways, (w) => switchPathEntry(w, 'svc'), 'here'),
       root_engine: NO,
       trust_root_writable: NO,
       other_answer_host: { basis: 'unknown', cause: 'one look' },
@@ -1134,7 +1220,7 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     // (a) red when a clause prints for a way that is not there (polkit's (d), ssh's (f)); (b) prints
     //     the sentence.
     expect(separationClaim(evidence(ways))).toBe(
-      `${HEAD}; and provided the agent cannot obtain agent's password; nobody authenticates sudo, doas or polkit as agent where the agent's processes run (each then waives the password for some minutes); and sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, and no Defaults!… or Defaults>… line sets !authenticate).`,
+      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; nobody authenticates sudo as agent where the agent's processes run (it then waives the password for some minutes); and sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, and no Defaults!… or Defaults>… line sets !authenticate).`,
     );
   });
 
@@ -1165,7 +1251,7 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     );
     // (a) red when a fired clause is left out of the sentence; (b) prints the sentence.
     expect(separationClaim(evidence(ways))).toBe(
-      `${HEAD}; and provided the agent cannot obtain agent's password; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain an administrator's password; nobody authenticates sudo, doas or polkit as agent where the agent's processes run (each then waives the password for some minutes); sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, and no Defaults!… or Defaults>… line sets !authenticate); no polkit rule grants agent pkexec, run0, systemd-run or machinectl beyond what this check's own session was shown (polkit's rules cannot be read here); no person approves a Touch ID or security-key prompt the agent raises; and svc's authorized_keys holds none of agent's keys.`,
+      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; the agent cannot obtain an administrator's password; nobody authenticates sudo or polkit as agent where the agent's processes run (each then waives the password for some minutes); sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, and no Defaults!… or Defaults>… line sets !authenticate); no polkit rule grants agent polkit's actions beyond what this check's own session was shown (polkit's admin rules are not read; its vendor rules are not read); no person approves a Touch ID, fingerprint or security-key prompt the agent raises; and svc's authorized_keys holds none of agent's keys.`,
     );
   });
 
@@ -1181,7 +1267,7 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     const ways = await paths(linux(U24, merge(sudos(U24, 'password', ['sudo']), su(U24))));
     // (a) red when W's words come back ("(measured)", W's detail); (b) prints the line.
     expect(conditionLine('become_service_user', evidence(ways))).toBe(
-      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which) (LC_ALL=C /usr/bin/sudo -n -l says: a password is required); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command).",
+      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: needs root's password (LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: needs svc's password (LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command).",
     );
   });
 
@@ -1210,7 +1296,8 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
       "sudo: needs an administrator's password (h)",
       "sudo: needs a person's touch or key (h)",
       'ssh: needs a key svc accepts (h)',
-      "sudo: needs this login's password or is not allowed (sudo does not say which) (h)",
+      // W's friction: the outcome's own parenthetical and the how's merge into one
+      "sudo: needs this login's password or is not allowed (sudo does not say which; h)",
     ]);
   });
 
@@ -1226,6 +1313,483 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
       line: 'This login can reach an engine that runs as root: yes (measured) — this login is in the group docker.',
       claim:
         'An agent running as agent may still be able to answer a gate: it can reach an engine that runs as root.',
+    });
+  });
+});
+
+describe('#790 correction 1 — the review of PR #827, each finding its cell', () => {
+  /** A stack file from a captured variant, placed at `service`. */
+  const stack = (img: string, service: string, variant: string): MachineSpec => ({
+    files: { [`/etc/pam.d/${service}`]: { fixture: `${img}/variant.${variant}` } },
+  });
+  const group = (img: string, name: string): MachineSpec => ({
+    calls: { [`${GETENT} group ${name}`]: `${img}/getent.group.${name}` },
+  });
+  const R3rs = [
+    'sudo needs_credential this_login sudo_timestamp',
+    'sudo needs_credential root sudo_timestamp',
+    'sudo needs_credential svc sudo_timestamp',
+  ];
+
+  // A §F1 / B §1: the PAM grant and the no-password stack at each of the three sites
+  it('A §F1 / B §1, the original sudo refusal × a pam_wheel trust grant → unknown (sudo hides whether a rule exists)', async () => {
+    const rs = await paths(
+      linux(
+        U24,
+        merge(
+          merge(sudos(U24, 'password', ['sudo']), stack(U24, 'sudo', 'sudo-wheel-trust')),
+          group(U24, 'sudo'),
+        ),
+      ),
+    );
+    // (a) red when the grant is dropped at this site (needs this login's password); (b) prints
+    //     readings and cause.
+    expect({ readings: view(rs), cause: rs[0]?.cause }).toEqual({
+      readings: ['sudo unknown'],
+      cause:
+        "sudo's PAM stack grants it (auth sufficient pam_wheel.so trust use_uid group=sudo), and sudo does not say whether a rule exists",
+    });
+  });
+
+  it('A §F1 / B §1, the sudo-rs refusal × a pam_wheel trust grant → yes (a rule exists)', async () => {
+    const rs = await paths(
+      linux(
+        U25,
+        merge(
+          merge(sudos(U25, 'password', ['sudo-rs']), stack(U25, 'sudo', 'sudo-wheel-trust')),
+          group(U25, 'sudo'),
+        ),
+      ),
+    );
+    // (a) red when the grant is dropped at this site; (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo yes']);
+  });
+
+  it('A §F1 / B §1, a listing with a covering password rule beside a NOPASSWD rule for a third user × the grant → yes', async () => {
+    const rs = await paths(
+      linux(
+        U25,
+        merge(
+          merge(sudos(U25, 'third-nopasswd', ['sudo.ws']), stack(U25, 'sudo', 'sudo-wheel-trust')),
+          group(U25, 'sudo'),
+        ),
+      ),
+    );
+    // (a) red when the grant is dropped at the listing site; (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo yes']);
+  });
+
+  it('A §F1 / B §1, each site × a sudo stack with no password and no person module → unknown at all three', async () => {
+    const noPassword = (img: string, set: string, which: ('sudo' | 'sudo-rs' | 'sudo.ws')[]) =>
+      paths(linux(img, merge(sudos(img, set, which), stack(img, 'sudo', 'sudo-no-password')))).then(
+        (rs) => ({
+          readings: view(rs),
+          cause: rs[0]?.cause,
+        }),
+      );
+    const cause = "sudo's PAM stack names no password or person module this check reads";
+    // (a) red when such a stack keeps the credential reading at a site; (b) prints each site's
+    //     readings and cause.
+    expect({
+      classic: await noPassword(U24, 'password', ['sudo']),
+      rs: await noPassword(U25, 'password', ['sudo-rs']),
+      listing: await noPassword(U25, 'third-nopasswd', ['sudo.ws']),
+    }).toEqual({
+      classic: { readings: ['sudo unknown'], cause },
+      rs: { readings: ['sudo unknown'], cause },
+      listing: { readings: ['sudo unknown'], cause },
+    });
+  });
+
+  it('A §F2: `Defaults!/usr/bin/realm !authenticate` with a rule for `/usr/bin/realm mcp *` → yes (any arguments)', async () => {
+    const rs = await paths(linux(U25, sudos(U25, 'defaults-cmd-args', ['sudo.ws'])));
+    // (a) red when the command is matched by exact string; (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo yes']);
+  });
+
+  it("A §F3: sudo-rs's `CWD=*` before NOPASSWD → yes, beside a third user's rule and alone", async () => {
+    const shape = (set: string) => paths(linux(U25, sudos(U25, set, ['sudo-rs']))).then(view);
+    // (a) red when the option prefix is not stripped (the line then reads unknown); (b) prints both.
+    expect({ beside: await shape('cwd-tag'), alone: await shape('cwd-tag-only') }).toEqual({
+      beside: ['sudo yes'],
+      alone: ['sudo yes'],
+    });
+  });
+
+  it("A §F4: sudo-rs's listings under `rootpw` and `targetpw` (it shows no Defaults) → this login's, root's and svc's", async () => {
+    const shape = (set: string) => paths(linux(U25, sudos(U25, set, ['sudo-rs']))).then(view);
+    // (a) red when only this login's password is read where the Defaults cannot be seen; (b) prints
+    //     both.
+    expect({ rootpw: await shape('rootpw'), targetpw: await shape('targetpw') }).toEqual({
+      rootpw: R3rs,
+      targetpw: R3rs,
+    });
+  });
+
+  it("A §F6: `timestamp_timeout=0` listed → this login's password with no cache, so no clause (b)", async () => {
+    const rs = await paths(linux(U25, sudos(U25, 'ts0-third', ['sudo.ws'])));
+    // (a) red when the timeout is not read (clause b printed); (b) prints readings and clauses.
+    expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
+      readings: ['sudo needs_credential this_login'],
+      clauses: ['a:this_login'],
+    });
+  });
+
+  it('A §F6: a global `!authenticate` in Matching Defaults, beside a NOPASSWD rule for a third user → yes', async () => {
+    const rs = await paths(linux(U25, sudos(U25, 'global-noauth-third', ['sudo.ws'])));
+    // (a) red when the global setting is not read (a password rule reads "needs"); (b) prints the
+    //     readings and how.
+    expect({ readings: view(rs), how: rs[0]?.how }).toEqual({
+      readings: ['sudo yes'],
+      how: 'LC_ALL=C /usr/bin/sudo.ws -n -l and -n -ll: its Defaults turn the password off (!authenticate)',
+    });
+  });
+
+  it("A §F6: `runaspw` → the run-as default's password (root's)", async () => {
+    const rs = await paths(linux(U25, sudos(U25, 'runaspw', ['sudo.ws'])));
+    // (a) red when runaspw is not read (this login's); (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo needs_credential root sudo_timestamp']);
+  });
+
+  it('A §F6: the original sudo\'s unprefixed "Sorry, user agent may not run sudo on h." → not allowed', async () => {
+    const rs = await paths(linux(U25, sudos(U25, 'noentries-noauth', ['sudo.ws'])));
+    // (a) red when the refusal is not read (unknown); (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo not_allowed']);
+  });
+
+  it("A §F7: `%#1200`, a secondary group of svc's → yes", async () => {
+    const rs = await paths(
+      linux(U25, merge(sudos(U25, 'pct-gid-secondary', ['sudo.ws']), group(U25, '1200'))),
+    );
+    // (a) red when only svc's primary gid is compared; (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo yes']);
+  });
+
+  it('A §F8: `exempt_group` with this login in it, and a listing under `listpw=all` → yes; `pam_service` → that stack', async () => {
+    const exempt = await paths(
+      linux(U25, merge(sudos(U25, 'exempt-group', ['sudo.ws']), group(U25, 'sudo'))),
+    );
+    const listpw = await paths(linux(U25, sudos(U25, 'listpw-all-cached', ['sudo.ws'])));
+    const service = await paths(linux(U25, sudos(U25, 'pam-service', ['sudo.ws'])));
+    // (a) red per setting when it is not read; (b) prints each reading and the pam_service cause.
+    expect({
+      exempt: view(exempt),
+      listpw: view(listpw),
+      service: view(service),
+      cause: service[0]?.cause,
+    }).toEqual({
+      exempt: ['sudo yes'],
+      listpw: ['sudo yes'],
+      service: ['sudo unknown'],
+      cause: 'the PAM file for sudo-realm was not found',
+    });
+  });
+
+  it("A §F9 / B §8: a grant only in sudo-i's stack → yes (sudo -i reads it)", async () => {
+    // sudo-i here is the captured pam_wheel trust variant of Ubuntu 25.10's sudo stack, placed at sudo-i.
+    const rs = await paths(
+      linux(
+        U25,
+        merge(
+          merge(
+            sudos(U25, 'third-nopasswd', ['sudo.ws']),
+            stack(U25, 'sudo-i', 'sudo-wheel-trust'),
+          ),
+          group(U25, 'sudo'),
+        ),
+      ),
+    );
+    // (a) red when sudo-i is not scanned; (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo yes']);
+  });
+
+  it("A §F10: run-as names compared by uid — `toor` (uid 0) covers root, `svc2` (svc's uid) covers svc", async () => {
+    const shape = (set: string, user: string) =>
+      paths(
+        linux(
+          U25,
+          merge(sudos(U25, set, ['sudo.ws']), {
+            calls: { [`${GETENT} passwd ${user}`]: `${U25}/getent.passwd.${user}` },
+          }),
+        ),
+      ).then(view);
+    // (a) red when run-as users are compared by name only; (b) prints both.
+    expect({
+      toor: await shape('uid0-alias', 'toor'),
+      svc2: await shape('svc-uid-alias', 'svc2'),
+    }).toEqual({
+      toor: ['sudo yes'],
+      svc2: ['sudo yes'],
+    });
+  });
+
+  it('A §F11: a listing with no rules section → unknown', () => {
+    // Classic sudo's captured listing, cut before its "User … may run" line (no real sudo prints that).
+    const full = capture(`${U25}/cmd-svc.sudo.ws.ll`) as { stdout: string };
+    const cut = full.stdout.slice(0, full.stdout.indexOf('User '));
+    // (a) red when a headerless listing reads as one with no rules (not allowed); (b) prints the parse.
+    expect(parseListing(cut)).toEqual({ unknown: 'sudo listed no rules section' });
+  });
+
+  it('A §F14: every root-owned system copy is asked; a copy there that is not root-owned reads unknown beside a good one', async () => {
+    const two = (owner: number) =>
+      paths(
+        linux(U24, {
+          programs: { '/usr/bin/sudo': 0, '/usr/local/bin/sudo': owner },
+          calls: {
+            ...sudos(U24, 'password', ['sudo']).calls,
+            '/usr/local/bin/sudo -V': `${U24}/version.sudo`,
+            'LC_ALL=C /usr/local/bin/sudo -n -l': `${U24}/password.sudo.l`,
+          },
+        }),
+      ).then((rs) => rs.map((r) => `${r.tool} ${r.outcome}`));
+    // (a) red when only the first copy is asked, or a bad copy beside a good one is skipped; (b)
+    //     prints each machine's tools and outcomes.
+    expect({ rooted: await two(0), theirs: await two(1001) }).toEqual({
+      rooted: [
+        '/usr/bin/sudo needs_credential',
+        '/usr/bin/sudo needs_credential',
+        '/usr/bin/sudo needs_credential',
+        '/usr/local/bin/sudo needs_credential',
+        '/usr/local/bin/sudo needs_credential',
+        '/usr/local/bin/sudo needs_credential',
+      ],
+      theirs: [
+        'sudo unknown',
+        '/usr/bin/sudo needs_credential',
+        '/usr/bin/sudo needs_credential',
+        '/usr/bin/sudo needs_credential',
+      ],
+    });
+  });
+
+  it('W §3: a writable sudo first on PATH beside the system copy → the system copy is read, the PATH copy never run', async () => {
+    await paths(
+      linux(
+        U24,
+        merge(sudos(U24, 'password', ['sudo']), {
+          env: { PATH: '/tmp/shim:/usr/bin' },
+          programs: { '/tmp/shim/sudo': 1001 },
+          writable: ['/tmp/shim/sudo', '/tmp/shim'],
+        }),
+      ),
+    );
+    // (a) red when the PATH copy is asked; (b) prints the sudo paths asked.
+    expect([...new Set(asked.flatMap((a) => a.filter((w) => w.endsWith('/sudo'))))]).toEqual([
+      '/usr/bin/sudo',
+    ]);
+  });
+
+  it("B §3: a module argument off the list → unknown (pam_u2f's nouserok; pam_wheel's trust deny)", async () => {
+    const u2f = await paths(
+      linux(U24, merge(sudos(U24, 'password', ['sudo']), stack(U24, 'sudo', 'sudo-u2f-nouserok'))),
+    );
+    const deny = await paths(
+      linux(U24, merge(su(U24, 'getent.passwd.svc.bash'), stack(U24, 'su-l', 'su-l-wheel-deny'))),
+    );
+    // (a) red when module arguments are not read; (b) prints both causes.
+    expect({ u2f: u2f[0]?.cause, deny: deny[0]?.cause }).toEqual({
+      u2f: "sudo's PAM stack has a line this check does not read: auth sufficient pam_u2f.so nouserok",
+      deny: "su-l's PAM stack has a line this check does not read: auth sufficient pam_wheel.so trust deny use_uid group=sudo",
+    });
+  });
+
+  it('B §3: a neutral module under `sufficient` (pam_faillock preauth) → unknown', async () => {
+    const rs = await paths(
+      linux(
+        U24,
+        merge(su(U24, 'getent.passwd.svc.bash'), stack(U24, 'su', 'su-faillock-sufficient')),
+      ),
+    );
+    // (a) red when neutral modules are read under any control; (b) prints the cause.
+    expect(rs[0]?.cause).toBe(
+      "su's PAM stack has a line this check does not read: auth sufficient pam_faillock.so preauth",
+    );
+  });
+
+  it('B §5: the honesty branches — a cyclic include, an unreadable include, pam_permit with no deny before it, four controls, /etc/pam.conf alone', async () => {
+    const suStack = (over: MachineSpec) =>
+      paths(linux(U24, merge(su(U24, 'getent.passwd.svc.bash'), over))).then((rs) => rs[0]?.cause);
+    const commonAuth = (variant: string) => suStack(stack(U24, 'common-auth', variant));
+    const unreadable = linux(U24, su(U24, 'getent.passwd.svc.bash'));
+    delete unreadable.files!['/etc/pam.d/common-auth'];
+    unreadable.unreadable = ['/etc/pam.d/common-auth'];
+    const confOnly = await paths({
+      programs: { [GETENT]: 0, '/usr/bin/su': 0 },
+      calls: {
+        [`${GETENT} passwd svc`]: `${U24}/getent.passwd.svc.bash`,
+        [`${GETENT} passwd root`]: `${U24}/getent.passwd.root`,
+      },
+      files: {
+        '/etc/pam.conf': { fixture: `${DEB}/pam.conf` },
+        '/etc/shells': { fixture: `${U24}/shells` },
+      },
+    });
+    // (a) red per branch when it is removed (each then reads "needs svc's password" or another
+    //     cause); (b) prints each cause.
+    expect({
+      cyclic: await suStack(stack(U24, 'su', 'su-cyclic')),
+      unreadable: await paths(unreadable).then((rs) => rs[0]?.cause),
+      permit: await commonAuth('common-auth-no-deny'),
+      optionalUnix: await commonAuth('common-auth-optional-unix'),
+      successDone: await commonAuth('common-auth-success-done-unix'),
+      sufficientDeny: await commonAuth('common-auth-sufficient-deny'),
+      requiredCap: await commonAuth('common-auth-required-cap'),
+      confOnly: confOnly[0]?.cause,
+    }).toEqual({
+      cyclic: 'the PAM stack nests deeper than 4 includes',
+      unreadable: '/etc/pam.d/common-auth cannot be read',
+      permit: "su's PAM stack has a line this check does not read: auth required pam_permit.so",
+      optionalUnix:
+        "su's PAM stack has a line this check does not read: auth optional pam_unix.so nullok",
+      successDone:
+        "su's PAM stack has a line this check does not read: auth [success=done default=ignore] pam_unix.so nullok",
+      sufficientDeny:
+        "su's PAM stack has a line this check does not read: auth sufficient pam_deny.so",
+      requiredCap: "su's PAM stack has a line this check does not read: auth required pam_cap.so",
+      confOnly: 'PAM is configured in /etc/pam.conf, which this check does not read',
+    });
+  });
+
+  it('B §6: a guard whose jump lands past the deny line → unknown', async () => {
+    const rs = await paths(
+      linux(
+        U24,
+        merge(
+          su(U24, 'getent.passwd.svc.bash'),
+          stack(U24, 'common-auth', 'common-auth-guard-jump'),
+        ),
+      ),
+    );
+    // (a) red when the jump is not followed (needs svc's password); (b) prints the cause.
+    expect(rs[0]?.cause).toBe(
+      "su's PAM stack can jump past its deny line: auth [default=2 ignore=ignore success=ok] pam_localuser.so",
+    );
+  });
+
+  it('CAUD-12: a `sufficient` password module with no deny line after it → unknown (Linux-PAM lets a later success through)', async () => {
+    const rs = await paths(
+      linux(
+        U24,
+        merge(
+          su(U24, 'getent.passwd.svc.bash'),
+          stack(U24, 'common-auth', 'common-auth-sufficient-no-deny'),
+        ),
+      ),
+    );
+    // (a) red when such a stack reads "needs svc's password"; (b) prints the cause.
+    expect(rs[0]?.cause).toBe(
+      "su's PAM stack lets a failed password through: no deny line follows auth sufficient pam_unix.so nullok",
+    );
+  });
+
+  it('B §12: a module named by a path outside the module folders → unknown', async () => {
+    const rs = await paths(
+      linux(
+        U24,
+        merge(
+          su(U24, 'getent.passwd.svc.bash'),
+          stack(U24, 'common-auth', 'common-auth-abs-module'),
+        ),
+      ),
+    );
+    // (a) red when a module is recognised by its basename anywhere; (b) prints the cause.
+    expect(rs[0]?.cause).toBe(
+      '/etc/pam.d/common-auth has a line this check does not read: auth [success=1 default=ignore] /opt/x/pam_unix.so nullok',
+    );
+  });
+
+  it('B §7: any readable key file counts (`~/.ssh/deploy`); an unlistable .ssh says the key is assumed', async () => {
+    const sshd = { '/usr/lib/systemd/system/ssh.socket': '' };
+    const deploy = await paths({
+      dirs: { '/home/agent/.ssh': ['deploy', 'deploy.pub', 'known_hosts'] },
+      files: { ...sshd, '/home/agent/.ssh/deploy': '' },
+    });
+    const unlisted = await paths({ dirs: { '/home/agent/.ssh': undefined }, files: sshd });
+    // (a) red when only `id_*` counts, or an assumed key is said to be held; (b) prints both.
+    expect({ deploy: view(deploy), how: unlisted[0]?.how }).toEqual({
+      deploy: ['ssh needs_credential'],
+      how: "an sshd is present and this login may hold a key (its home's .ssh could not be listed)",
+    });
+  });
+
+  it('B §9: svc\'s passwd entry not read (getent fails) → su unknown, never "needs svc\'s password"', async () => {
+    const rs = await paths({
+      programs: { [GETENT]: 0, '/usr/bin/su': 0 },
+      files: { '/etc/shells': { fixture: `${U24}/shells` } },
+    });
+    // (a) red when su goes on to its PAM stack; (b) prints the readings.
+    expect(view(rs)).toEqual(['su unknown']);
+  });
+
+  it("B §11: su's stack unknown but su-l's grant → yes (a grant outranks an unknown within one path)", async () => {
+    const rs = await paths(
+      linux(
+        U24,
+        merge(
+          merge(
+            merge(su(U24, 'getent.passwd.svc.bash'), stack(U24, 'su', 'su-succeed-if')),
+            stack(U24, 'su-l', 'su-l-wheel-trust'),
+          ),
+          group(U24, 'wheel'),
+        ),
+      ),
+    );
+    // (a) red when the unknown is returned before the grant is looked for; (b) prints the readings.
+    expect(view(rs)).toEqual(['su yes']);
+  });
+
+  it('B §13: a socket this login can write, its engine stopped → yes', async () => {
+    const reach = await rootEngineReach(
+      lookups(
+        fixtureMachine({
+          programs: { [GETENT]: 0 },
+          sockets: { '/var/run/docker.sock': false },
+          writable: ['/var/run/docker.sock'],
+          calls: Object.fromEntries(
+            ROOT_GROUPS.map((g) => [`${GETENT} group ${g}`, `${U24}/getent.group.${g}.without`]),
+          ),
+        }),
+      ),
+    );
+    // (a) red when a writable socket of a stopped engine reads no; (b) prints the reading.
+    expect(reach).toEqual({
+      basis: 'measured',
+      answer: 'yes',
+      detail: "Docker's socket /var/run/docker.sock can be written by this login",
+    });
+  });
+
+  it('W §5, W §8: clause (d) names the entry points present and each rules folder as stat read it', async () => {
+    const rs = await paths({
+      programs: {
+        '/usr/bin/pkcheck': 0,
+        '/usr/lib/polkit-1/polkitd': 0,
+        '/usr/bin/pkexec': 0,
+        '/usr/bin/systemd-run': 0,
+      },
+      dirs: {
+        '/usr/share/polkit-1/actions': ['org.freedesktop.systemd1.policy'],
+        '/etc/polkit-1/rules.d': undefined,
+        '/usr/share/polkit-1/rules.d': ['50-default.rules'],
+      },
+      files: {
+        '/usr/share/polkit-1/actions/org.freedesktop.systemd1.policy': {
+          fixture: `${U24}/policy.org.freedesktop.systemd1`,
+        },
+      },
+      readable: ['/usr/share/polkit-1/rules.d'],
+      calls: {
+        '/usr/bin/pkcheck --action-id org.freedesktop.systemd1.manage-units --process 4242': `${U24}/pkcheck.stock.org.freedesktop.systemd1.manage-units`,
+        '/usr/bin/pkcheck --action-id org.freedesktop.systemd1.reply-password --process 4242': `${U24}/pkcheck.active-yes.reply-password`,
+      },
+    });
+    // (a) red when the folders are not stat'ed, or absent tools are named; (b) prints the clause.
+    expect(switchClausesOf(rs).find((c) => c.clause === 'd')).toEqual({
+      clause: 'd',
+      tools: ['pkexec', 'systemd-run'],
+      admin: 'unreadable',
+      vendor: 'unread',
     });
   });
 });
@@ -1250,36 +1814,40 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     claim(
       'It reads each way from this login to the user Realm runs as, and prints one entry per way, `way: reading (how it was read)`, measured now:',
     );
-    // :: "01b #13: sudo and sudo.ws both present", the spy (the argv shapes).
+    // :: "01b #13", :: "A §F14: every root-owned system copy is asked …"; W §4: classic sudo's -ll
+    // only after -l lists (:: "classic sudo refused …" asks no -ll; the spy).
     claim(
-      'Every copy named `sudo`, `sudo.ws` or `sudo-rs` in `/usr/bin`, `/usr/sbin`, `/usr/local/bin`, `/usr/local/sbin`, `/bin`, `/sbin`, `/run/wrappers/bin` or `/run/setuid-programs` is asked `sudo -V`, then `LC_ALL=C sudo -n -l` (and `-n -ll` for the original sudo).',
+      'Every root-owned copy named `sudo`, `sudo.ws` or `sudo-rs` in `/usr/bin`, `/usr/sbin`, `/usr/local/bin`, `/usr/local/sbin`, `/bin`, `/sbin`, `/run/wrappers/bin` or `/run/setuid-programs` is asked `sudo -V`, then `LC_ALL=C sudo -n -l`, and, when the original sudo lists its rules, `-n -ll`.',
     );
-    // :: "`(svc) NOPASSWD: /usr/bin/realm` listed", :: "`Defaults!/usr/bin/realm !authenticate`",
-    // :: "`Defaults>svc !authenticate`".
+    // :: "`(svc) NOPASSWD: /usr/bin/realm` listed", :: "`Defaults!…`", :: "`Defaults>svc …`",
+    // :: "A §F2: … `/usr/bin/realm mcp *`", :: "A §F10: run-as names compared by uid …".
     claim(
-      "A rule that runs as Realm's user or root without a password reads yes, whatever command it is limited to, and so does a `Defaults` line that turns the password off for such a rule.",
+      "A rule that runs as Realm's user or root without a password reads yes, whatever command it is limited to, and so does a `Defaults` line that may turn the password off for such a rule. A run-as name counts by its uid, so another name for root or for the user counts too.",
     );
-    // :: "a listing with no NOPASSWD entry (a cached credential)".
+    // :: "a listing with no NOPASSWD entry …", :: "A §F8: `exempt_group` … `listpw=all` …".
     claim(
-      'Rules listed although none of them waives the password read yes too: a cached credential, among other causes, lets them be listed.',
+      'Rules listed although none of them waives the password read yes too: a cached credential, among other causes, lets them be listed. So do `exempt_group` naming a group this login may be in, and a listing shown under `listpw=all`.',
     );
-    // :: "`rootpw` in Matching Defaults", :: "`targetpw`", :: "`Defaults!/usr/bin/realm …`" (sudo-rs).
+    // :: "`rootpw` …", :: "`targetpw` …", :: "A §F6: `runaspw` …", :: "A §F4: sudo-rs's listings …",
+    // :: "classic sudo refused …", :: "sudo-rs "interactive authentication is required" …".
     claim(
-      "A listed rule that needs a password reads \"needs\" that password: this login's, or root's or the user's under `rootpw` or `targetpw`.",
+      "In the original sudo's listing, a rule that needs a password reads \"needs\" that password: this login's, or root's or the user's under `rootpw`, `targetpw` or `runaspw`. Where sudo shows no Defaults — sudo-rs's listings and either sudo's refusal — the password may be this login's, root's or the user's, and all three are read.",
     );
-    // :: "classic sudo refused …", :: "sudo-rs "interactive authentication is required"", :: "sudo-rs
-    // "Sorry, user agent may not run sudo on h."".
+    // :: "classic sudo refused …", :: "sudo-rs "interactive authentication is required" …",
+    // :: "sudo-rs "Sorry, user agent may not run sudo on h."".
     claim(
       'The original sudo\'s "a password is required" reads "needs this login\'s password or is not allowed", because sudo does not say which; sudo-rs\'s "interactive authentication is required" needs this login\'s password, and its "Sorry, user … may not run sudo" reads not allowed.',
     );
-    // :: "sudo's PAM has a person module (pam_u2f …)", :: "Fedora's authselect sssd profile …
-    // pam_fprintd", :: "sudo's PAM has pam_ssh_agent_auth".
+    // :: "sudo's PAM has a person module (pam_u2f …)", :: "Fedora's … pam_fprintd …", :: "sudo's
+    // PAM has pam_ssh_agent_auth", :: "A §F1 / B §1" (four cells), :: "A §F9 / B §8", :: "A §F8"
+    // (pam_service).
     claim(
-      'Whenever sudo needs a password, its PAM stack (`/etc/pam.d/sudo` and its includes) is read too: a security-key or fingerprint module adds "a person\'s touch or key", and an ssh-agent module reads unknown.',
+      'Whenever sudo needs a password, its PAM stacks are read too: `/etc/pam.d/sudo`, and `sudo-i` where it exists (or the services `pam_service` and `pam_login_service` name), with their includes. A security-key or fingerprint module adds "a person\'s touch or key"; an ssh-agent module, or a stack with no password or person module, reads unknown; a `pam_wheel.so trust` line for this login reads yes where a rule is listed or the sudo-rs refusal names one, and unknown where the original sudo refused.',
     );
-    // :: "svc's shell /usr/sbin/nologin, in neither shells file", :: "… listed in /etc/shells".
+    // :: "B §9: svc's passwd entry not read …"; :: "svc's shell /usr/sbin/nologin …", :: "… listed in
+    // /etc/shells".
     claim(
-      "When the user's shell runs no command (`/usr/sbin/nologin`, `/sbin/nologin`, `/bin/false` or `/usr/bin/false`) and no shells file lists it, su reads not allowed.",
+      "On Linux, when `getent` cannot read the user's passwd entry, su reads unknown. When the user's shell runs no command (`/usr/sbin/nologin`, `/sbin/nologin`, `/bin/false` or `/usr/bin/false`) and no shells file lists it, su reads not allowed.",
     );
     // :: "an empty password field and a shell that runs commands".
     claim("An empty password field in the user's passwd entry reads yes.");
@@ -1287,35 +1855,37 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     claim(
       'Otherwise su\'s PAM stacks, `su` and `su-l`, are read: a password module reads "needs" the user\'s password, and a `pam_wheel.so trust` line for this login reads yes.',
     );
-    // :: "BusyBox su (Alpine, no PAM stack)".
-    claim("BusyBox's su, which reads no PAM stack, needs the user's password.");
-    // :: "`permit nopass agent as svc cmd /usr/bin/realm` readable", :: "rules only in
-    // /etc/doas.d/realm.conf", :: "`deny agent` → not allowed …".
+    // :: "BusyBox su (Alpine, no PAM stack) → needs svc's password, whatever svc's shell (B §11)".
     claim(
-      "Its rules in `/etc/doas.conf` and `/etc/doas.d/*.conf` are read, and doas is asked `doas -C <file> -u <user> <command>` for Realm's user and root: `permit nopass` reads yes, `permit` needs this login's password, and `deny` reads not allowed.",
+      "BusyBox's su, which reads no PAM stack, needs the user's password, whatever the user's shell: whether it keeps a shell that runs no command depends on how it was built.",
     );
-    // :: "pkcheck: manage-units 0, exec 2", :: "stock polkit … every action D9 names is asked", the spy
-    // (no `--allow-user-interaction` is one of rail 1's shapes).
+    // :: "`permit nopass agent as svc cmd /usr/bin/realm` readable", :: "rules only in
+    // /etc/doas.d/realm.conf", :: "`deny agent` …", :: "B §2: …" (two cells).
+    claim(
+      "Its rules in `/etc/doas.conf` and `/etc/doas.d/*.conf` are read, and doas is asked `doas -C <file> -u <user> <command>` for Realm's user and root — for each command a rule names (with one more argument too, unless the rule fixes its arguments) and for a command no rule names: `permit nopass` reads yes, `permit` needs this login's password, and `deny` reads not allowed.",
+    );
+    // :: "pkcheck: manage-units 0, exec 2", :: "stock polkit … every action D9 names is asked", the spy.
     claim(
       "`pkcheck --action-id <action> --process <pid>` is asked, without `--allow-user-interaction`, for pkexec, for run0 and `systemd-run` (`org.freedesktop.systemd1.manage-units`), for machinectl's shells and for each program pkexec runs.",
     );
-    // :: "the session rule: manage-units' default allow_active yes …".
+    // :: "the session rule …"; :: "stock polkit …" (B §4: both whose, kept).
     claim(
-      "polkit decides by session, and the check's session may not be the agent's, so each action's defaults count too.",
+      "polkit decides by session, and the check's session may not be the agent's, so each action's defaults count too. An answer that asks for a credential reads both this login's password and an administrator's, each kept for some minutes: polkit's rules may change whose it asks.",
     );
-    // :: "a key in ~/.ssh, an ssh.socket unit … no connection is made", :: "rail 2: …".
+    // :: "a key in ~/.ssh … no connection is made", :: "rail 2: …", :: "B §7: any readable key file …".
     claim(
-      'It is listed when this login holds a key and an sshd is present. No connection is made.',
+      'It is listed when this login holds a key — any readable file in its own `.ssh` but a `.pub`, `known_hosts`, `config` or `authorized_keys`, or a set `SSH_AUTH_SOCK` — and an sshd is present. No connection is made.',
     );
     // :: "the pam_succeed_if recipe in su" (a rule), :: "Alpine as shipped" (a file), :: "a pkcheck
-    // error" (a tool's error), :: "P0: a way that reads unknown keeps the stronger sentence back".
+    // error" and :: "B §9" (a tool's error), :: "P0: a way that reads unknown keeps the stronger
+    // sentence back".
     claim(
       "A rule the check does not recognise, a file it cannot read, or a tool's error reads unknown, with the tool's own line, and then the stronger sentence is not printed.",
     );
-    // :: "01b #8: a sudo found only under the login's home"; separation-check-627 :: "each condition
-    // line in its states" (a sudo this login owns).
+    // :: "01b #8: a sudo found only under the login's home", :: "A §F14 … a copy there that is not
+    // root-owned …", :: "W §3: a writable sudo first on PATH …".
     claim(
-      'The tools are asked only as the root-owned copies in the folders above: a copy found elsewhere on `PATH`, or one this login can change, reads unknown.',
+      'The tools are asked only as the root-owned copies in the folders above: a copy found only on PATH, or a system copy that is not root-owned or that this login can change, reads unknown; a copy elsewhere on PATH beside a good system copy is never run.',
     );
     // The check's boundary (04 item 10), by design: no reading from this login can see it.
     claim('A compromise that already holds root can fake any reading.');
@@ -1324,31 +1894,35 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
       'When every way needs a credential or is not allowed, the stronger sentence adds a condition for each thing no program can see from this login, and only for the ways it found:',
     );
     claim(
-      "the agent cannot obtain a password a way needs (this login's, the user's, root's or an administrator's); for the user's, that it is not empty, since an empty one sits where this login cannot read it;",
+      "the agent cannot obtain a password a way needs (this login's, the user's, root's or an administrator's); for this login's and the user's, that it is not empty, since an empty one sits where this login cannot read it;",
     );
     claim(
-      "nobody authenticates sudo, doas or polkit as this login where the agent's processes run, because each then waives the password for some minutes;",
+      "nobody authenticates, as this login where the agent's processes run, those of sudo, doas and polkit whose password cache a way showed, because each then waives the password for some minutes;",
     );
     claim(
       'sudo turns off its password only through `NOPASSWD` tags, when the original sudo refused the listing, because its refusal hides `listpw` and the `Defaults!…` and `Defaults>…` lines;',
     );
+    // :: "W §5, W §8: clause (d) names the entry points present and each rules folder …".
     claim(
-      "no polkit rule grants this login pkexec, run0, systemd-run or machinectl beyond what the check's own session was shown, when polkit is present, because its rules folders cannot be read;",
+      "no polkit rule grants this login the entry points present (pkexec, run0, systemd-run or machinectl; polkit's actions when none is) beyond what the check's own session was shown, when polkit is present: the condition says which rules folder cannot be read here and which is not read;",
     );
     claim(
-      "no person approves a Touch ID or security-key prompt the agent raises, when a way needs a person's touch or key;",
+      "no person approves a Touch ID, fingerprint or security-key prompt the agent raises, when a way needs a person's touch or key;",
     );
     claim(
       "the user's `authorized_keys` holds none of this login's keys, when an sshd is present and this login holds a key.",
     );
-    // :: "the LXD socket accepts", :: "modular libvirt", :: "the login is in the group …" (each).
+    // :: "the LXD socket accepts", :: "modular libvirt", :: "B §13: a socket this login can write …",
+    // :: "the login is in the group …" (each).
     claim(
-      'Condition 3 connects to the sockets of Docker, LXD, Incus, Podman, libvirt and containerd, and reads whether this login is in the group `disk`, `docker`, `lxd`, `incus-admin` or `libvirt`: membership outlasts a stopped daemon.',
+      'Condition 3 connects to the sockets of Docker, LXD, Incus, Podman, libvirt and containerd — a socket this login can write counts even while its engine is stopped — and reads whether this login is in the group `disk`, `docker`, `lxd`, `incus-admin` or `libvirt`: membership outlasts a stopped daemon.',
     );
-    // By design (04 item 6): sudo's own source, registry F790-R1-06 and F790-MA3-06; libvirtd's
-    // logging, D2 §7.6. Not executable here: this host keeps no audit trail (F790-MA3-05).
+    // W §2 = F790-MA3-15: the syslog line, measured by the walk (journalctl, auth.log); the ticket,
+    // read in sudo 1.9.15p5's check.c:180-187, 216-223 and policy.c:86, 100 (F790-IA-C1 rows); the
+    // audit record and the engine log line, by design (F790-R1-06, D2 §7.6); noninteractive_auth,
+    // sudo-rs pipeline.rs:205-207 (F790-R3-B-07). Not executable here.
     claim(
-      'A refused sudo listing may leave one audit record where Linux auditd or macOS auditing runs, and a socket connect may leave a log line on an engine that logs each connection. Nothing is locked, mailed or counted as a failed login.',
+      "A refused sudo listing writes one syslog auth line naming the working folder (`sudo: <login> : a password is required ; PWD=… ; COMMAND=list`), and may leave an audit record where Linux auditd or macOS auditing runs. A listing that a still-valid ticket of the original sudo allowed renews that ticket. A socket connect may leave a log line on an engine that logs each connection. Nothing is locked, mailed or counted as a failed login while sudo's `noninteractive_auth` setting is off, as it is by default.",
     );
     // :: "Alpine as shipped: /etc/doas.conf 0640"; the remedy: the readable doas cells.
     claim(

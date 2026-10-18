@@ -1,0 +1,5 @@
+# captured 2026-10-18 · image alpine:latest@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 · as the login agent: doas -C /etc/doas.conf -u svc /nonexistent/realm-check-any
+exit 1
+--- stdout
+deny
+--- stderr

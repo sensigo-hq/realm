@@ -10,7 +10,7 @@ import { readSu } from './su.js';
 import { readSudo } from './sudo.js';
 
 export { rootEngineReach, ROOT_GROUPS } from './engines.js';
-export { lookups, type SwitchProbes } from './lookup.js';
+export { lookups, SYSTEM_DIRS, type SwitchProbes } from './lookup.js';
 export { systemRunner, railOne, type Runner, type RunResult } from './runner.js';
 
 /**

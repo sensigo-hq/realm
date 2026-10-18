@@ -78,6 +78,9 @@ export interface SwitchPathReading {
   how: string;
   cause?: string;
   or_not_allowed?: true;
+  /** #790 correction (W §5, W §8): what polkit's clause (d) can say — the entry points present and
+   *  each rules folder as `stat` read it. */
+  polkit?: { tools: string[]; admin: 'unreadable' | 'unread'; vendor: 'unreadable' | 'unread' };
 }
 
 /** #790 (01b #6): when readings meet, the most permissive wins, and an `unknown` outranks a
@@ -107,14 +110,16 @@ export function mostPermissive(readings: readonly SwitchPathReading[]): SwitchOu
 export function switchPathsCondition(
   readings: readonly SwitchPathReading[],
   describe: (r: SwitchPathReading) => string,
+  where: string,
 ): ConditionReading {
   const entries = readings.map(describe).join('; ');
   const best = mostPermissive(readings);
   if (best === undefined) {
+    // A §F15, B §14: the line names where the check looked (`where`, the CLI's folders)
     return {
       basis: 'measured',
       answer: 'no',
-      detail: 'no sudo, su, doas, polkit or ssh way was found on this host',
+      detail: `no sudo, su, doas, polkit or ssh way was found ${where}`,
     };
   }
   if (best === 'yes') return { basis: 'measured', answer: 'yes', detail: entries };
@@ -131,11 +136,14 @@ export function switchPathsCondition(
  */
 export type SwitchClause =
   | { clause: 'a'; whose: Exclude<SwitchWhose, 'person'> }
-  | { clause: 'b' }
+  | { clause: 'b'; tools: ('sudo' | 'doas' | 'polkit')[] }
   | { clause: 'c' }
-  | { clause: 'd' }
+  | ({ clause: 'd' } & NonNullable<SwitchPathReading['polkit']>)
   | { clause: 'e' }
   | { clause: 'f' };
+
+/** Which tool each credential cache belongs to (B §10: clause (b) names only those that fired). */
+const CACHE_TOOL = { sudo_timestamp: 'sudo', doas_persist: 'doas', polkit_keep: 'polkit' } as const;
 
 /** #790 (D11): the clauses `readings` fire, in the order (a)–(f); (a) once per whose. */
 export function switchClausesOf(readings: readonly SwitchPathReading[]): SwitchClause[] {
@@ -144,10 +152,17 @@ export function switchClausesOf(readings: readonly SwitchPathReading[]): SwitchC
   for (const whose of ['this_login', 'svc', 'root', 'administrator'] as const) {
     if (closed.some((r) => r.whose === whose)) clauses.push({ clause: 'a', whose });
   }
-  if (readings.some((r) => r.cache !== undefined)) clauses.push({ clause: 'b' });
+  const caches = (['sudo_timestamp', 'doas_persist', 'polkit_keep'] as const).filter((c) =>
+    readings.some((r) => r.cache === c),
+  );
+  if (caches.length > 0) clauses.push({ clause: 'b', tools: caches.map((c) => CACHE_TOOL[c]) });
   if (closed.some((r) => r.path === 'sudo' && r.or_not_allowed === true))
     clauses.push({ clause: 'c' });
-  if (readings.some((r) => r.path === 'polkit')) clauses.push({ clause: 'd' });
+  const polkit = readings.find((r) => r.path === 'polkit');
+  if (polkit !== undefined) {
+    const shown = polkit.polkit ?? { tools: [], admin: 'unread', vendor: 'unread' };
+    clauses.push({ clause: 'd', ...shown });
+  }
   if (closed.some((r) => r.whose === 'person')) clauses.push({ clause: 'e' });
   if (readings.some((r) => r.path === 'ssh')) clauses.push({ clause: 'f' });
   return clauses;

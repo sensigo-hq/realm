@@ -44,6 +44,8 @@ export interface MachineSpec {
   links?: Record<string, string>;
   /** Paths this login can write. */
   writable?: string[];
+  /** Paths besides `files` this login can read (a folder). */
+  readable?: string[];
   /** Calls: the argv joined by spaces → a captured fixture's name. */
   calls?: Record<string, string>;
   /** Unix sockets that exist, and whether each accepts. */
@@ -83,7 +85,7 @@ export function fixtureMachine(spec: MachineSpec): SwitchProbes {
           ? { uid: 0, mode: 0o100644 }
           : { error: 'ENOENT' },
     exists,
-    canRead: (p) => p in files,
+    canRead: (p) => p in files || (spec.readable ?? []).includes(p),
     canWrite: (p) => (spec.writable ?? []).includes(p),
     readText: text,
     list: (d) => spec.dirs?.[d],

@@ -4,7 +4,8 @@
 // other argv, which it never starts. A call runs with no stdin, a fixed PATH and no other variable
 // of the caller's, so no tool can prompt, and none reads the agent's environment.
 import { spawn } from 'node:child_process';
-import { basename, isAbsolute } from 'node:path';
+import { basename, dirname, isAbsolute } from 'node:path';
+import { SYSTEM_DIRS } from './lookup.js';
 
 /** What one call gave: its exit status and output; a refusal (not one of rail 1's argv); or why it
  *  could not run. */
@@ -19,9 +20,12 @@ const SUDO_NAMES = new Set(['sudo', 'sudo.ws', 'sudo-rs']);
 const NAME = /^[A-Za-z0-9_.][A-Za-z0-9_.@+-]*$/;
 const ACTION = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
-/** The tool at `path`, when it is an absolute path to a program named one of `names`. */
+/** The tool at `path`, when it is a program named one of `names` in one of D2's folders (A §F13). */
 const tool = (path: string | undefined, names: ReadonlySet<string>): boolean =>
-  path !== undefined && isAbsolute(path) && names.has(basename(path));
+  path !== undefined &&
+  isAbsolute(path) &&
+  (SYSTEM_DIRS as readonly string[]).includes(dirname(path)) &&
+  names.has(basename(path));
 
 /**
  * Whether `argv` is one of rail 1's calls, element by element:

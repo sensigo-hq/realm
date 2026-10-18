@@ -41,6 +41,7 @@ import {
   lookups,
   measureSwitchPaths,
   rootEngineReach,
+  SYSTEM_DIRS,
   systemRunner,
   type SwitchProbes,
 } from './separation/index.js';
@@ -198,7 +199,8 @@ async function becomeServiceUser(
     return { reading: { basis: 'unknown', cause } };
   }
   const paths = await measureSwitchPaths({ probes, svc });
-  return { reading: switchPathsCondition(paths, (r) => switchPathEntry(r, svc)), paths };
+  const where = `in ${SYSTEM_DIRS.join(', ')} or on PATH`;
+  return { reading: switchPathsCondition(paths, (r) => switchPathEntry(r, svc), where), paths };
 }
 
 /** 01b #2: whose credential a closed way needs, in words. */
@@ -231,7 +233,10 @@ export function switchPathEntry(r: SwitchPathReading, svc: string): string {
             : r.path === 'ssh'
               ? `needs a key ${svc} accepts`
               : `needs ${whoseWords(r.whose, svc)}`;
-  return `${r.path}: ${outcome} (${r.how})`;
+  // W's friction: an outcome's own parenthetical and the how's merge into one
+  return outcome.endsWith(')')
+    ? `${r.path}: ${outcome.slice(0, -1)}; ${r.how})`
+    : `${r.path}: ${outcome} (${r.how})`;
 }
 
 /** Correction 2 (5.2): a reading for a condition the login's own home is needed for, when it has none. */
@@ -649,24 +654,34 @@ function clauseWords(c: SwitchClause, login: string, svc: string): string {
   switch (c.clause) {
     case 'a':
       return c.whose === 'this_login'
-        ? `the agent cannot obtain ${login}'s password`
+        ? `the agent cannot obtain ${login}'s password, and it is not empty`
         : c.whose === 'svc'
           ? `the agent cannot obtain ${svc}'s password, and it is not empty`
           : c.whose === 'root'
             ? "the agent cannot obtain root's password"
             : "the agent cannot obtain an administrator's password";
     case 'b':
-      return `nobody authenticates sudo, doas or polkit as ${login} where the agent's processes run (each then waives the password for some minutes)`;
+      // B §10: only the tools whose cache fired
+      return `nobody authenticates ${orList(c.tools)} as ${login} where the agent's processes run (${c.tools.length === 1 ? 'it then waives' : 'each then waives'} the password for some minutes)`;
     case 'c':
       return 'sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, and no Defaults!… or Defaults>… line sets !authenticate)';
-    case 'd':
-      return `no polkit rule grants ${login} pkexec, run0, systemd-run or machinectl beyond what this check's own session was shown (polkit's rules cannot be read here)`;
+    case 'd': {
+      // W §8: the entry points present ("polkit's actions" when none is); W §5: each rules folder
+      // as stat read it
+      const words = { unreadable: 'cannot be read here', unread: 'are not read' } as const;
+      const tools = c.tools.length > 0 ? orList(c.tools) : "polkit's actions";
+      return `no polkit rule grants ${login} ${tools} beyond what this check's own session was shown (polkit's admin rules ${words[c.admin]}; its vendor rules ${words[c.vendor]})`;
+    }
     case 'e':
-      return 'no person approves a Touch ID or security-key prompt the agent raises';
+      return 'no person approves a Touch ID, fingerprint or security-key prompt the agent raises';
     case 'f':
       return `${svc}'s authorized_keys holds none of ${login}'s keys`;
   }
 }
+
+/** `a`, `a or b`, `a, b or c`. */
+const orList = (xs: readonly string[]): string =>
+  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1)!}`;
 
 /** W-x3: the claim, chosen by the measured mode and the predicate. */
 export function separationClaim(

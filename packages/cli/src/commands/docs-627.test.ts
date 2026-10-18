@@ -374,10 +374,11 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // #790: the two paragraphs on condition 2's "not probed" reading are gone; the sentences that
     // replace them are pinned by separation/separation-790.test.ts :: "the docs".
     // Correction 2 (6.3); #790: "start no server" — the only programs it runs are named below,
-    // executed by separation-790 :: "S2" (one spawn site) and the spy after every cell.
+    // executed by separation-790 :: "S2" (one spawn site) and the spy after every cell (getent and
+    // dscl among its shapes; #790 correction, W §1).
     claim(
       PAGE,
-      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the list-only and check modes named below. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store this login cannot open is measured out of its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
+      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the list and check modes of sudo, doas and polkit named below, and `getent` (on macOS, `dscl . -read /Users/<user> UserShell`), which looks users and groups up. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store this login cannot open is measured out of its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
     );
     // Correction 1 (F6): ":56" is executed by separation-check-627 :: "correction 1 (D1): the mode is
     // never guessed" (the denied and the missing store) and :: "each condition line in its states"
@@ -985,7 +986,7 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     claim(C, 'No server is started; a bad value exits 1.');
     claim(
       C,
-      'Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their list and check modes and reads su\'s login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool\'s error reads "unknown", and the sentence is not printed.',
+      'Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their list and check modes, looks users and groups up with `getent` (`dscl` on macOS), and reads su\'s login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool\'s error reads "unknown", and the sentence is not printed.',
     );
     // separation-check-627 :: 8.5's header cell; the whole output (fact); the condition lines
     // (condition 7's two apps).

@@ -25,12 +25,13 @@ const letters = (rs: SwitchPathReading[]): string[] =>
   switchClausesOf(rs).map((c) => (c.clause === 'a' ? `a:${c.whose}` : c.clause));
 
 describe('#790 — condition 2 from the ways read (D13)', () => {
-  it('no way found → measured "no", and it says what was looked for', () => {
-    // (a) red when an empty reading list is unknown or yes; (b) prints the condition.
-    expect(switchPathsCondition([], words)).toEqual({
+  it('no way found → measured "no", and it says where it looked (A §F15)', () => {
+    // (a) red when an empty reading list is unknown or yes, or the folders are not named; (b)
+    //     prints the condition.
+    expect(switchPathsCondition([], words, 'in /usr/bin or on PATH')).toEqual({
       basis: 'measured',
       answer: 'no',
-      detail: 'no sudo, su, doas, polkit or ssh way was found on this host',
+      detail: 'no sudo, su, doas, polkit or ssh way was found in /usr/bin or on PATH',
     });
   });
 
@@ -38,6 +39,7 @@ describe('#790 — condition 2 from the ways read (D13)', () => {
     const c = switchPathsCondition(
       [r({ outcome: 'needs_credential', whose: 'this_login' }), r({ path: 'su' })],
       words,
+      'here',
     );
     // (a) red when a credential reads "yes" or unknown; (b) prints the condition.
     expect(c).toEqual({
@@ -50,8 +52,8 @@ describe('#790 — condition 2 from the ways read (D13)', () => {
   it('any "yes" → measured "yes"; any unknown (and no yes) → unknown, with every entry as its cause', () => {
     // (a) red when a yes is outranked, or an unknown reads "no"; (b) prints both conditions.
     expect({
-      yes: switchPathsCondition([r({}), r({ path: 'su', outcome: 'yes' })], words),
-      unknown: switchPathsCondition([r({ outcome: 'unknown' }), r({ path: 'su' })], words),
+      yes: switchPathsCondition([r({}), r({ path: 'su', outcome: 'yes' })], words, 'here'),
+      unknown: switchPathsCondition([r({ outcome: 'unknown' }), r({ path: 'su' })], words, 'here'),
     }).toEqual({
       yes: { basis: 'measured', answer: 'yes', detail: 'sudo: not_allowed; su: yes' },
       unknown: { basis: 'unknown', cause: 'sudo: unknown; su: not_allowed' },

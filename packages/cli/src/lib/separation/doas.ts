@@ -9,8 +9,11 @@ import { findTool, toolLine, type Lookups } from './lookup.js';
 
 const CONF = '/etc/doas.conf';
 const CONF_DIR = '/etc/doas.d';
-/** A command no rule names: what a rule with no `cmd` permits. */
-const ANY_COMMAND = '/bin/sh';
+/** B §2: a command no rule can name (doas -C only matches it, never resolves or runs it — captured):
+ *  what a rule with no `cmd` permits. */
+const ANY_COMMAND = '/nonexistent/realm-check-any';
+/** B §2: an argument no rule names, asked after each command whose rule does not pin its `args`. */
+const ANY_ARGUMENT = 'realm-check-any-argument';
 
 interface Rule {
   permit: boolean;
@@ -182,10 +185,15 @@ export async function readDoas(lk: Lookups): Promise<SwitchPathReading[]> {
       if (typeof m === 'object') return unknown(`${file} read`, m.unknown);
       if (m) mine.push(r);
     }
-    const commands = [
-      ...mine.flatMap((r) => (r.cmd !== undefined ? [[r.cmd, ...(r.args ?? [])]] : [])),
-      [ANY_COMMAND],
-    ];
+    const questions = new Map<string, string[]>();
+    for (const r of mine) {
+      if (r.cmd === undefined) continue;
+      for (const q of r.args !== undefined
+        ? [[r.cmd, ...r.args]]
+        : [[r.cmd], [r.cmd, ANY_ARGUMENT]])
+        questions.set(q.join('\0'), q);
+    }
+    const commands = [...questions.values(), [ANY_COMMAND]];
     for (const target of [lk.svc, 'root']) {
       for (const [cmd, ...args] of commands) {
         // the parse's answer: the last rule that matches wins

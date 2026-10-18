@@ -52,6 +52,11 @@ export async function rootEngineReach(lk: Lookups): Promise<ConditionReading> {
       const where = 'path' in target ? target.path : `${target.host}:${target.port}`;
       return { basis: 'measured', answer: 'yes', detail: `${engine}'s socket ${where} accepts` };
     }
+    // B §13: a socket this login can write reaches its engine once it runs again
+    if ('path' in target && probes.canWrite(target.path)) {
+      const detail = `${engine}'s socket ${target.path} can be written by this login`;
+      return { basis: 'measured', answer: 'yes', detail };
+    }
   }
   const unread: string[] = [];
   for (const group of ROOT_GROUPS) {

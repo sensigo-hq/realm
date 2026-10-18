@@ -4,7 +4,7 @@
 // counts); a refusal is read by its words; sudo's PAM stack is scanned whenever sudo needs a
 // credential. Anything this reader does not recognise is `unknown`, with sudo's own line (P0).
 import type { SwitchPathReading } from '@sensigo/realm';
-import { findTool, toolLine, type Found, type Lookups, type PasswdEntry } from './lookup.js';
+import { findTools, toolLine, type Found, type Lookups, type PasswdEntry } from './lookup.js';
 import { scanPam } from './pam.js';
 
 /** One listed entry: who it runs as (users, groups), whether it needs no password, its commands. */
@@ -85,6 +85,7 @@ const commaList = (text: string): string[] => {
 export function parseListing(stdout: string): Listing | { unknown: string } {
   const listing: Listing = { defaults: [], specific: [], entries: [] };
   let mode: 'none' | 'defaults' | 'specific' | 'entries' = 'none';
+  let header = false;
   let defaultsText = '';
   let entry: (Entry & { long: boolean; inCommands: boolean }) | undefined;
   const close = (): void => {
@@ -109,6 +110,7 @@ export function parseListing(stdout: string): Listing | { unknown: string } {
     }
     if (/^User \S+ may run the following commands on \S+:$/.test(line)) {
       mode = 'entries';
+      header = true;
       continue;
     }
     if (mode === 'defaults' && line.startsWith('    ')) {
@@ -172,7 +174,10 @@ export function parseListing(stdout: string): Listing | { unknown: string } {
   }
   close();
   listing.defaults = commaList(defaultsText);
-  for (const e of listing.entries) if (e.users.length === 0) e.users = ['root'];
+  // P0 (A §F11, A's Held B16): a listing with no rules header, or an entry naming no run-as user
+  if (!header) return { unknown: 'sudo listed no rules section' };
+  if (listing.entries.some((e) => e.users.length === 0))
+    return { unknown: 'sudo listed a rule with no run-as user' };
   return listing;
 }
 
@@ -184,6 +189,11 @@ function shortItems(
 ): { entries: Entry[] } | { unknown: string } {
   const entries: Entry[] = [];
   for (let item of text.split(/,\s*/).filter((i) => i !== '')) {
+    // sudo-rs writes `CWD=<dir> ` / `APPARMOR_PROFILE=<p> ` … before the tags (A §F3)
+    item = item.replace(
+      /^(?:(?:APPARMOR_PROFILE|CWD|CHROOT|ROLE|TYPE|TIMEOUT|NOTBEFORE|NOTAFTER|PRIVS|LIMITPRIVS)=\S+\s+)+/,
+      '',
+    );
     for (
       let m = /^([A-Z][A-Z_]*):\s*/.exec(item);
       m !== null;
@@ -195,6 +205,8 @@ function shortItems(
       if (m[1] === 'PASSWD') state.nopasswd = false;
       item = item.slice(m[0].length);
     }
+    if (/\b[A-Z][A-Z_]*(?::\s|=)/.test(item))
+      return { unknown: `sudo listed an option this check does not read: ${item}` };
     if (item !== '') {
       entries.push({
         users: state.users,
@@ -246,15 +258,28 @@ async function tokenCovers(
       if ('unknown' in net) return { unknown: net.unknown };
       if ('found' in net && net.found.some((u) => u === '' || u === name)) out[who] = true;
     } else if (token.startsWith('#')) {
-      if (who === 'root') out.root = token === '#0';
-      else if ('found' in entry) out.svc = token === `#${entry.found.uid}`;
-      else if ('unknown' in entry) out.svc = true; // svc's uid is not known: the safe direction
+      const uid = who === 'root' ? 0 : uidOf(lk, entry);
+      if (uid === undefined)
+        out[who] = true; // svc's uid is not known: the safe direction
+      else out[who] = token === `#${uid}`;
     } else if (token === name) {
       out[who] = true;
+    } else if (token !== lk.login) {
+      // A §F10: another name may share svc's uid or root's (a `toor`): compared by uid
+      const other = await lk.passwd(token);
+      if ('unknown' in other) return { unknown: other.unknown };
+      const uid = who === 'root' ? 0 : uidOf(lk, entry);
+      if ('found' in other && (uid === undefined || other.found.uid === uid)) out[who] = true;
     }
   }
   return out;
 }
+
+/** ⟨svc⟩'s uid: from its passwd entry, or from a `uid <n>` service user (A §F10). */
+const uidOf = (lk: Lookups, entry: Found<PasswdEntry>): number | undefined =>
+  'found' in entry
+    ? entry.found.uid
+    : ((n) => (n === undefined ? undefined : Number(n)))(/^uid (\d+)$/.exec(lk.svc)?.[1]);
 
 /** Whether an entry covers ⟨svc⟩ or root: by its users, or by a group of ⟨svc⟩'s (review 15). */
 async function entryCovers(
@@ -279,32 +304,69 @@ async function entryCovers(
   return out;
 }
 
-/** What sudo's PAM stack adds to a reading that needs a credential (D5). */
+/** Where a credential reading is composed: a listing, sudo-rs's refusal (both show a rule exists),
+ *  or classic sudo's refusal (which hides whether one does) — F790-CAUD-01. */
+type Site = 'listing' | 'rs-refusal' | 'classic-refusal';
+
+/**
+ * D5 (as corrected): sudo's PAM stacks — `sudo`, and `sudo-i` where it exists (or the services
+ * `pam_service` / `pam_login_service` name) — read whenever sudo needs a credential; the most
+ * permissive wins. A grant reads yes where a rule is known to exist and unknown at classic sudo's
+ * refusal; a stack with no password and no person module reads unknown (B §1).
+ */
 async function withPam(
   lk: Lookups,
   base: SwitchPathReading[],
   how: string,
   tool: string,
+  site: Site,
+  services: { main: string; login: string | undefined } = { main: 'sudo', login: undefined },
 ): Promise<SwitchPathReading[]> {
-  const scan = await scanPam(lk, 'sudo');
-  if ('unknown' in scan)
-    return [{ path: 'sudo', tool, outcome: 'unknown', how, cause: scan.unknown }];
-  if (scan.sshAgent) {
-    return [
-      { path: 'sudo', tool, outcome: 'unknown', how, cause: "sudo accepts an ssh agent's key" },
-    ];
-  }
-  if (!scan.person) return base;
-  return [
-    ...base,
-    {
-      path: 'sudo',
-      tool,
-      outcome: 'needs_credential',
-      whose: 'person',
-      how: `${scan.files.join(', ')} read`,
-    },
+  const login = services.login ?? 'sudo-i';
+  const names = [services.main];
+  if (
+    services.login !== undefined ||
+    ['/etc/pam.d', '/usr/lib/pam.d'].some((d) => lk.probes.exists(`${d}/${login}`))
+  )
+    names.push(login);
+  const unknown = (cause: string): SwitchPathReading[] => [
+    { path: 'sudo', tool, outcome: 'unknown', how, cause },
   ];
+  const scans = await Promise.all(names.map((n) => scanPam(lk, n)));
+  const files = [...new Set(scans.flatMap((x) => ('files' in x ? x.files : [])))].join(', ');
+  const read = `${how}; ${files} read`;
+  let worst: SwitchPathReading[] | undefined;
+  let person = false;
+  for (const scan of scans) {
+    if ('unknown' in scan) worst ??= unknown(scan.unknown);
+    else if (scan.grant !== undefined) {
+      if (site === 'classic-refusal') {
+        worst ??= unknown(
+          `sudo's PAM stack grants it (${scan.grant}), and sudo does not say whether a rule exists`,
+        );
+      } else {
+        const why = `${read}: ${scan.grant} lets this login through without a password`;
+        return [{ path: 'sudo', tool, outcome: 'yes', how: why }];
+      }
+    } else if (scan.sshAgent) worst ??= unknown("sudo accepts an ssh agent's key");
+    else if (!scan.password && !scan.person)
+      worst ??= unknown("sudo's PAM stack names no password or person module this check reads");
+    else person ||= scan.person;
+  }
+  if (worst !== undefined) return worst;
+  const readings = base.map((r) => ({ ...r, how: `${r.how}; ${files} read` }));
+  if (!person) return readings;
+  return [
+    ...readings,
+    { path: 'sudo', tool, outcome: 'needs_credential', whose: 'person', how: read },
+  ];
+}
+
+/** A §F4: where sudo shows no Defaults, the credential may be this login's, root's or ⟨svc⟩'s. */
+function unseenDefaults(r: SwitchPathReading): SwitchPathReading[] {
+  const cause = 'sudo does not list its Defaults, so rootpw or targetpw cannot be ruled out';
+  const { or_not_allowed: _drop, ...rest } = r;
+  return [r, { ...rest, whose: 'root', cause }, { ...rest, whose: 'svc', cause }];
 }
 
 /** Stderr lines sudo-rs prints for a sudoers line it ignores: `file:line:col: why`, the line, a caret. */
@@ -362,39 +424,27 @@ async function readOne(
     if (errLines.length !== 1) return unknown(list, `${list} says: ${toolLine(r)}`);
     if (flavour === 'classic' && said === 'a password is required') {
       // D4: classic sudo asks before it shows a refusal, so a rule may exist or not (clause c)
-      return withPam(
-        lk,
-        [
-          {
-            path: 'sudo',
-            tool: path,
-            outcome: 'needs_credential',
-            whose: 'this_login',
-            cache: 'sudo_timestamp',
-            or_not_allowed: true,
-            how: `${list} says: a password is required`,
-          },
-        ],
-        list,
-        path,
-      );
+      const r: SwitchPathReading = {
+        path: 'sudo',
+        tool: path,
+        outcome: 'needs_credential',
+        whose: 'this_login',
+        cache: 'sudo_timestamp',
+        or_not_allowed: true,
+        how: `${list} says: a password is required`,
+      };
+      return withPam(lk, unseenDefaults(r), list, path, 'classic-refusal');
     }
     if (flavour === 'rs' && said === 'interactive authentication is required') {
-      return withPam(
-        lk,
-        [
-          {
-            path: 'sudo',
-            tool: path,
-            outcome: 'needs_credential',
-            whose: 'this_login',
-            cache: 'sudo_timestamp',
-            how: `${list} says: interactive authentication is required`,
-          },
-        ],
-        list,
-        path,
-      );
+      const r: SwitchPathReading = {
+        path: 'sudo',
+        tool: path,
+        outcome: 'needs_credential',
+        whose: 'this_login',
+        cache: 'sudo_timestamp',
+        how: `${list} says: interactive authentication is required`,
+      };
+      return withPam(lk, unseenDefaults(r), list, path, 'rs-refusal');
     }
     if (/^Sorry, user \S+ may not run sudo on \S+\.$/.test(said)) {
       return [{ path: 'sudo', tool: path, outcome: 'not_allowed', how: `${list} says: ${said}` }];
@@ -416,7 +466,7 @@ async function readOne(
   }
   const listing = parseListing(text);
   if ('unknown' in listing) return unknown(how, listing.unknown);
-  return judge(lk, path, how, listing, svc, root);
+  return judge(lk, path, how, listing, svc, root, flavour);
 }
 
 /** D3: a listing's reading. */
@@ -427,6 +477,7 @@ async function judge(
   listing: Listing,
   svc: Found<PasswdEntry>,
   root: Found<PasswdEntry>,
+  flavour: 'classic' | 'rs',
 ): Promise<SwitchPathReading[]> {
   const reading = (r: Omit<SwitchPathReading, 'path' | 'tool'>): SwitchPathReading => ({
     path: 'sudo',
@@ -463,12 +514,18 @@ async function judge(
         if ('unknown' in c) return [reading({ outcome: 'unknown', how, cause: c.unknown })];
         hit = c.svc || c.root;
       } else {
-        // a command, or an alias of commands: it counts when a covering rule may run it
-        hit = covering.some(
-          (c) =>
-            !target.startsWith('/') ||
-            c.entry.commands.some((cmd) => cmd === 'ALL' || cmd === target),
-        );
+        // A §F2: a command, an alias, a folder or a glob counts, unless both are plain paths that
+        // differ as strings and by their real files
+        const plain = (p: string): boolean => /^\/[^\s*?[\]]*[^\s*?[\]/]$/.test(p);
+        const rp = (p: string): string | undefined => lk.probes.realPath(p);
+        const differs = (cmd: string): boolean =>
+          plain(cmd) &&
+          plain(target) &&
+          cmd !== target &&
+          rp(cmd) !== undefined &&
+          rp(target) !== undefined &&
+          rp(cmd) !== rp(target);
+        hit = covering.some((c) => c.entry.commands.some((cmd) => !differs(cmd)));
       }
       if (hit) {
         return [
@@ -484,6 +541,23 @@ async function judge(
   // let it be shown.
   if (covering.length === 0) {
     return [reading({ outcome: 'not_allowed', how: `${how}: no rule runs as ${lk.svc} or root` })];
+  }
+  const exempt = listing.defaults.find((o) => o.startsWith('exempt_group='));
+  if (exempt !== undefined) {
+    const m = await lk.loginIn(exempt.slice('exempt_group='.length));
+    if (!('found' in m) || m.found)
+      return [
+        reading({ outcome: 'yes', how: `${how}: Defaults ${exempt}, and this login may be in it` }),
+      ];
+  }
+  if (opts.has('listpw=all') && listing.entries.some((e) => !e.nopasswd)) {
+    // A §F8: listpw=all asks a password unless every rule is NOPASSWD — it was waived somehow
+    return [
+      reading({
+        outcome: 'yes',
+        how: `${how}: listed under listpw=all although a rule needs a password`,
+      }),
+    ];
   }
   if (listing.entries.every((e) => !e.nopasswd)) {
     // D3 (review 19): listed although no rule waives the password — a cache, exempt_group,
@@ -505,7 +579,12 @@ async function judge(
   let base: SwitchPathReading[];
   if (opts.has('rootpw')) {
     base = [
-      reading({ outcome: 'needs_credential', whose: 'root', how: `${why} (Defaults rootpw)` }),
+      reading({
+        outcome: 'needs_credential',
+        whose: 'root',
+        ...cache,
+        how: `${why} (Defaults rootpw)`,
+      }),
     ];
   } else if (opts.has('targetpw')) {
     base = [
@@ -514,6 +593,7 @@ async function judge(
             reading({
               outcome: 'needs_credential',
               whose: 'svc',
+              ...cache,
               how: `${why} (Defaults targetpw)`,
             }),
           ]
@@ -523,6 +603,7 @@ async function judge(
             reading({
               outcome: 'needs_credential',
               whose: 'root',
+              ...cache,
               how: `${why} (Defaults targetpw)`,
             }),
           ]
@@ -542,16 +623,22 @@ async function judge(
       reading({
         outcome: 'needs_credential',
         whose: runasDefault === lk.svc ? 'svc' : 'root',
+        ...cache,
         how: `${why} (Defaults runaspw)`,
       }),
     ];
   } else {
-    base = [reading({ outcome: 'needs_credential', whose: 'this_login', ...cache, how: why })];
+    const r = reading({ outcome: 'needs_credential', whose: 'this_login', ...cache, how: why });
+    base = flavour === 'rs' ? unseenDefaults(r) : [r];
   }
-  return withPam(lk, base, how, path);
+  const option = (k: string) =>
+    listing.defaults.find((o) => o.startsWith(`${k}=`))?.slice(k.length + 1);
+  const services = { main: option('pam_service') ?? 'sudo', login: option('pam_login_service') };
+  return withPam(lk, base, how, path, 'listing', services);
 }
 
-/** D2: every sudo present (`sudo`, `sudo.ws`, `sudo-rs`), each copy asked once. */
+/** D2: every sudo present (`sudo`, `sudo.ws`, `sudo-rs`) — every root-owned copy in D2's folders,
+ *  each real file asked once (A §F14). */
 export async function readSudo(
   lk: Lookups,
   svc: Found<PasswdEntry>,
@@ -562,22 +649,17 @@ export async function readSudo(
   const readings: SwitchPathReading[] = [];
   const seen = new Set<string>();
   for (const name of ['sudo', 'sudo.ws', 'sudo-rs']) {
-    const found = findTool(lk.probes, name);
-    if (found === undefined) continue;
-    if ('unknown' in found) {
-      readings.push({
-        path: 'sudo',
-        tool: name,
-        outcome: 'unknown',
-        how: `${name} looked for in the system folders`,
-        cause: found.unknown,
-      });
-      continue;
+    const found = findTools(lk.probes, name);
+    for (const cause of found.unknown) {
+      const how = `${name} looked for in the system folders`;
+      readings.push({ path: 'sudo', tool: name, outcome: 'unknown', how, cause });
     }
-    const real = lk.probes.realPath(found.path) ?? found.path;
-    if (seen.has(real)) continue;
-    seen.add(real);
-    readings.push(...(await readOne(lk, found.path, svc, root, noNewPrivs)));
+    for (const path of found.paths) {
+      const real = lk.probes.realPath(path) ?? path;
+      if (seen.has(real)) continue;
+      seen.add(real);
+      readings.push(...(await readOne(lk, path, svc, root, noNewPrivs)));
+    }
   }
   return readings;
 }

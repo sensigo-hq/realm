@@ -77,18 +77,38 @@ function systemCopy(probes: SwitchProbes, path: string): boolean {
   });
 }
 
-/** 01b #8: the copy of `name` to ask — from D2's folders only, and only a root-owned system copy. */
-export function findTool(probes: SwitchProbes, name: string): ToolFound {
+/** 01b #8 (A §F14): every root-owned copy of `name` in D2's folders this login cannot change, each
+ *  real file once; a copy there that is not one, or a copy found only elsewhere on PATH, is named
+ *  in `unknown` — it makes that path unknown even beside a good copy. */
+export function findTools(
+  probes: SwitchProbes,
+  name: string,
+): { paths: string[]; unknown: string[] } {
   const where = presence(probes, name);
-  if (where === undefined) return undefined;
-  if ('system' in where) {
-    const copy = SYSTEM_DIRS.map((d) => join(d, name)).find(
-      (p) => probes.exists(p) && systemCopy(probes, p),
-    );
-    if (copy !== undefined) return { path: copy };
-    return { unknown: `${name} at ${where.system} is not a root-owned system copy` };
+  if (where === undefined) return { paths: [], unknown: [] };
+  if ('elsewhere' in where) {
+    return {
+      paths: [],
+      unknown: [`${name} at ${where.elsewhere} is not a root-owned system copy`],
+    };
   }
-  return { unknown: `${name} at ${where.elsewhere} is not a root-owned system copy` };
+  const out: { paths: string[]; unknown: string[] } = { paths: [], unknown: [] };
+  const seen = new Set<string>();
+  for (const p of SYSTEM_DIRS.map((d) => join(d, name)).filter((q) => probes.exists(q))) {
+    if (!systemCopy(probes, p)) out.unknown.push(`${name} at ${p} is not a root-owned system copy`);
+    else if (!seen.has(probes.realPath(p) ?? p)) {
+      seen.add(probes.realPath(p) ?? p);
+      out.paths.push(p);
+    }
+  }
+  return out;
+}
+
+/** The one copy of `name` to ask (01b #8): the first good one, or unknown when any copy is not. */
+export function findTool(probes: SwitchProbes, name: string): ToolFound {
+  const found = findTools(probes, name);
+  if (found.unknown.length > 0) return { unknown: found.unknown[0]! };
+  return found.paths.length > 0 ? { path: found.paths[0]! } : undefined;
 }
 
 /** One passwd entry, read by `getent passwd`. */
@@ -214,9 +234,10 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
   };
   const userIn = async (user: PasswdEntry, name: string): Promise<Found<boolean>> => {
     if (darwin) return { unknown: `macOS has no getent, so ${user.name}'s groups are not read` };
-    if (name.startsWith('#')) return { found: Number(name.slice(1)) === user.gid };
-    const g = await group(name);
-    if (!('found' in g)) return 'absent' in g ? { found: false } : g;
+    // A §F7: `#gid` is looked up too, so a secondary group counts, not only the primary one
+    const g = await group(name.startsWith('#') ? name.slice(1) : name);
+    if ('unknown' in g) return g;
+    if ('absent' in g) return { found: name === `#${user.gid}` };
     return { found: g.found.gid === user.gid || g.found.members.includes(user.name) };
   };
   return { probes, login, svc, darwin, run, passwd, group, netgroupUsers, loginIn, userIn };

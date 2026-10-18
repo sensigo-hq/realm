@@ -48,7 +48,8 @@ All notable changes to this project are documented here.
   far that login reaches into Realm's store and the programs Realm runs, each condition measured,
   configured or unknown, and what that means for who can answer a gate. No server is started; a
   bad value exits 1. Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no
-  interaction) in their list and check modes and reads su's login rules from their files — it never
+  interaction) in their list and check modes, looks users and groups up with `getent` (`dscl` on
+  macOS), and reads su's login rules from their files — it never
   switches user, never asks for a password and never opens a login connection; condition 3
   (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus,
   Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an

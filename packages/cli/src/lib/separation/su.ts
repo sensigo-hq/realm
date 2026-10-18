@@ -75,9 +75,18 @@ async function readSuOne(
     };
   }
   const su = where.system;
+  // B §9: on Linux, ⟨svc⟩'s entry not read is unknown, never "needs ⟨svc⟩'s password".
+  if (!lk.darwin && !('found' in entry)) {
+    const cause = 'unknown' in entry ? entry.unknown : `${lk.svc} has no passwd entry`;
+    return { path: 'su', tool: su, outcome: 'unknown', how: `getent passwd ${lk.svc}`, cause };
+  }
+  // B §11: BusyBox's su keeps a restricted shell only under a build option this check cannot see,
+  // so (c) is not read for it: it asks for ⟨svc⟩'s password (e).
+  const pamFile = ['/etc/pam.d/su', '/usr/lib/pam.d/su'].some((p) => lk.probes.exists(p));
+  const busybox = basename(lk.probes.realPath(su) ?? su) === 'busybox' && !pamFile;
   // (c) before (b): a shell that runs no command runs nothing, even with an empty password.
   const shell = await shellOf(lk, entry);
-  if ('shell' in shell && NO_COMMAND_SHELLS.has(shell.shell)) {
+  if (!busybox && 'shell' in shell && NO_COMMAND_SHELLS.has(shell.shell)) {
     const inFiles = listed(lk, shell.shell);
     if (inFiles === false) {
       return {
@@ -98,8 +107,7 @@ async function readSuOne(
     };
   }
   // (e) BusyBox su reads no PAM stack and asks the target's password.
-  const pamFile = ['/etc/pam.d/su', '/usr/lib/pam.d/su'].some((p) => lk.probes.exists(p));
-  if (basename(lk.probes.realPath(su) ?? su) === 'busybox' && !pamFile) {
+  if (busybox) {
     return {
       path: 'su',
       tool: su,
@@ -115,6 +123,21 @@ async function readSuOne(
       scan: await scanPam(lk, s),
     })),
   );
+  const read = scans.flatMap((s) =>
+    'unknown' in s.scan ? [] : [{ service: s.service, ...s.scan }],
+  );
+  const files = [...new Set(read.flatMap((s) => s.files))].join(', ');
+  const how = `${files} read`;
+  // B §11, 01b #6 within one path: a grant (yes) outranks an unknown
+  const granted = read.find((s) => s.grant !== undefined);
+  if (granted !== undefined) {
+    return {
+      path: 'su',
+      tool: su,
+      outcome: 'yes',
+      how: `${how}: ${granted.service} grants it (${granted.grant})`,
+    };
+  }
   const unknown = scans.find((s) => 'unknown' in s.scan);
   if (unknown !== undefined && 'unknown' in unknown.scan) {
     return {
@@ -123,20 +146,6 @@ async function readSuOne(
       outcome: 'unknown',
       how: `su's PAM stacks read`,
       cause: unknown.scan.unknown,
-    };
-  }
-  const read = scans.flatMap((s) =>
-    'unknown' in s.scan ? [] : [{ service: s.service, ...s.scan }],
-  );
-  const files = [...new Set(read.flatMap((s) => s.files))].join(', ');
-  const how = `${files} read`;
-  const granted = read.find((s) => s.grant !== undefined);
-  if (granted !== undefined) {
-    return {
-      path: 'su',
-      tool: su,
-      outcome: 'yes',
-      how: `${how}: ${granted.service} grants it (${granted.grant})`,
     };
   }
   if (read.some((s) => s.sshAgent)) {
@@ -160,6 +169,6 @@ async function readSuOne(
     tool: su,
     outcome: 'unknown',
     how,
-    cause: "su's PAM stacks name no module this check reads",
+    cause: "su's PAM stacks name no password module this check reads",
   };
 }

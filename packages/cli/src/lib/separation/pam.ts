@@ -3,7 +3,7 @@
 // `@include` are followed to depth 4), and recognises only the lines D7 lists. Anything else — a line
 // it does not recognise, a missing or unreadable file, an include that does not resolve — makes the
 // whole stack unknown, with that line. D5 (sudo's stack) and D6 (su's stacks) call it.
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { Lookups } from './lookup.js';
 
 /** What a stack's auth lines say: unknown (with why), or what they hold. */
@@ -65,7 +65,27 @@ function serviceFile(lk: Lookups, name: string): string | undefined {
 
 /** A module's name without its folder and suffix: `pam_unix`, from `pam_unix.so` or `pam_tid.so.2`. */
 const moduleName = (path: string): string | undefined =>
-  /^(pam_[A-Za-z0-9_]+)\.so(?:\.\d+)*$/.exec(basename(path))?.[1];
+  (
+    isAbsolute(path)
+      ? (MODULE_DIRS as readonly string[]).includes(dirname(path))
+      : !path.includes('/')
+  )
+    ? /^(pam_[A-Za-z0-9_]+)\.so(?:\.\d+)*$/.exec(basename(path))?.[1]
+    : undefined;
+
+/** B §3: each module's arguments, seeded from every captured stack (F790-IA-16/17); any other
+ *  argument reads unknown — `pam_wheel trust deny` (it grants NON-members) and `pam_u2f nouserok`
+ *  (it lets a user with no key through) among them. A module not named takes none. */
+const ARGS: Record<string, RegExp> = {
+  pam_unix: /^nullok$/,
+  pam_sss: /^forward_pass$/,
+  pam_faildelay: /^delay=\d+$/,
+  pam_faillock: /^(?:preauth|silent|authfail)$/,
+  pam_usertype: /^isregular$/,
+  pam_wheel: /^(?:trust|use_uid|group=[\w.-]+)$/,
+  pam_u2f: /^cue$/,
+  pam_ssh_agent_auth: /^file=\S+$/,
+};
 
 /** D7's `-auth`: read as `auth` when its module exists — and also when no module folder is known,
  *  so a line is never skipped on a guess. */
@@ -135,7 +155,9 @@ function authLines(
     if (line.startsWith('@include')) {
       const target = line.split(/\s+/)[1];
       if (target === undefined)
-        return { unknown: `${file} has a line this check does not read: ${line}` };
+        return {
+          unknown: `${file} has a line this check does not read: ${line.replace(/\s+/g, ' ')}`,
+        };
       const inner = authLines(lk, target, depth + 1, files);
       if (!Array.isArray(inner)) return inner;
       lines.push(...inner);
@@ -145,11 +167,15 @@ function authLines(
     const dashed = type.startsWith('-');
     const bare = dashed ? type.slice(1) : type;
     if (!TYPES.has(bare))
-      return { unknown: `${file} has a line this check does not read: ${line}` };
+      return {
+        unknown: `${file} has a line this check does not read: ${line.replace(/\s+/g, ' ')}`,
+      };
     if (bare !== 'auth') continue;
     const target = rest[0];
     if (target === undefined)
-      return { unknown: `${file} has a line this check does not read: ${line}` };
+      return {
+        unknown: `${file} has a line this check does not read: ${line.replace(/\s+/g, ' ')}`,
+      };
     if (control === 'include' || control === 'substack') {
       const inner = authLines(lk, target, depth + 1, files);
       if (!Array.isArray(inner)) return inner;
@@ -159,7 +185,9 @@ function authLines(
     if (dashed && !moduleExists(lk, target)) continue;
     const module = moduleName(target);
     if (module === undefined)
-      return { unknown: `${file} has a line this check does not read: ${line}` };
+      return {
+        unknown: `${file} has a line this check does not read: ${line.replace(/\s+/g, ' ')}`,
+      };
     lines.push({ text: line.replace(/\s+/g, ' '), control, module, args: rest.slice(1) });
   }
   return lines;
@@ -171,6 +199,8 @@ function authLines(
  * the membership (review 16).
  */
 export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
+  if (!lk.probes.exists('/etc/pam.d') && lk.probes.exists('/etc/pam.conf'))
+    return { unknown: 'PAM is configured in /etc/pam.conf, which this check does not read' };
   const files: string[] = [];
   const lines = authLines(lk, service, 0, files);
   if (!Array.isArray(lines)) return lines;
@@ -179,12 +209,17 @@ export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
   let sshAgent = false;
   let grant: string | undefined;
   let denied = false;
-  const unread = (l: AuthLine): PamScan => ({
-    unknown: `${service}'s PAM stack has a line this check does not read: ${l.text}`,
-  });
-  for (const l of lines) {
+  // 01b #6 within one stack (B §11): a `sufficient` grant already read ends the stack when it
+  // succeeds, so it outranks anything after it this check does not read
+  const fail = (cause: string): PamScan =>
+    grant !== undefined ? { password, person, sshAgent, files, grant } : { unknown: cause };
+  const unread = (l: AuthLine): PamScan =>
+    fail(`${service}'s PAM stack has a line this check does not read: ${l.text}`);
+  for (const [i, l] of lines.entries()) {
     const word = typeof l.control === 'string' ? l.control : undefined;
     const set = typeof l.control === 'string' ? undefined : l.control;
+    const allowed = ARGS[l.module];
+    if (l.args.some((a) => allowed === undefined || !allowed.test(a))) return unread(l);
     if (l.module === 'pam_rootok') {
       // A grant only for root, which this login is not (the root path reads that first).
       if (word !== 'sufficient') return unread(l);
@@ -203,11 +238,19 @@ export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
       // Debian's fallthrough only: `required pam_permit` behind a `requisite pam_deny`.
       if (word !== 'required' || !denied) return unread(l);
     } else if (NEUTRAL_MODULES.has(l.module)) {
-      // recognised: these lines add no way and remove none
+      // B §3: recognised only under controls that cannot let a user through
+      const die = set !== undefined && set.size === 1 && set.has('default=die');
+      const ok = word === 'required' || word === 'requisite' || word === 'optional';
+      if (!ok && !(die && l.module === 'pam_faillock' && l.args.includes('authfail')))
+        return unread(l);
     } else if (OPTIONAL_MODULES.has(l.module)) {
       if (word !== 'optional') return unread(l);
     } else if (l.module === 'pam_usertype' || l.module === 'pam_localuser') {
       if (set === undefined || !fedoraGuard(set)) return unread(l);
+      // B §6: a guard whose jump lands past a deny line can skip it
+      const jump = Number([...set].find((t) => t.startsWith('default='))!.slice('default='.length));
+      if (lines.slice(i + 1, i + 1 + jump).some((x) => x.module === 'pam_deny'))
+        return fail(`${service}'s PAM stack can jump past its deny line: ${l.text}`);
     } else if (l.module === 'pam_wheel') {
       if (!l.args.includes('trust')) continue; // a restriction, recognised
       if (word !== 'sufficient') return unread(l);
@@ -217,7 +260,7 @@ export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
       }
       const named = l.args.find((a) => a.startsWith('group='))?.slice('group='.length);
       const member = await wheelMember(lk, named);
-      if ('unknown' in member) return { unknown: `${l.text}: ${member.unknown}` };
+      if ('unknown' in member) return fail(`${l.text}: ${member.unknown}`);
       if (member.found) grant ??= l.text;
     } else if (PERSON_MODULES.has(l.module)) {
       person = true;
@@ -225,6 +268,21 @@ export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
       sshAgent = true;
     } else {
       return unread(l);
+    }
+  }
+  // CAUD-12 (Linux-PAM's dispatch, F790-IA-C1): a password module whose failure is ignored, with no
+  // deny line after it, lets a later success through on a wrong password
+  for (const [i, l] of lines.entries()) {
+    const ignoresFailure = l.control === 'sufficient' || typeof l.control !== 'string';
+    const denyAfter = lines
+      .slice(i + 1)
+      .some(
+        (x) => x.module === 'pam_deny' && (x.control === 'requisite' || x.control === 'required'),
+      );
+    if (PASSWORD_MODULES.has(l.module) && ignoresFailure && !denyAfter) {
+      return fail(
+        `${service}'s PAM stack lets a failed password through: no deny line follows ${l.text}`,
+      );
     }
   }
   return { password, person, sshAgent, files, ...(grant !== undefined ? { grant } : {}) };

@@ -49,26 +49,33 @@ describe.skipIf(!LIVE)('#790 — the live cell on this host (D2 §3)', () => {
     }).toEqual({ offRail: [], refused: [] });
     // Every reading's how names a rail-1 call or a plain read (R14).
     const how =
-      /^(?:LC_ALL=C \/\S+ -n -l|\/\S+ -V|\/\S+ --action-id |\/\S+ -C |getent passwd |\/\S+(?:, \/\S+)* read|\/etc\/doas\.conf|\S+ looked for in the system folders|su's PAM stacks read|an sshd is present|this process's uid)/;
+      /^(?:LC_ALL=C \/\S+ -n -l|\/\S+ -V|\/\S+ --action-id |\/\S+ -C |getent (?:passwd|group|netgroup) |\/\S+ \. -read |\/\S+(?:, \/\S+)* read|\/etc\/doas\.conf|\S+ looked for in the system folders|su's PAM stacks read|an sshd is present|this process's uid)/;
     // (a) red when a reading's how names no call it came from; (b) prints the hows that do not.
     expect(rs.filter((r) => !how.test(r.how)).map((r) => r.how)).toEqual([]);
-    // D2 §3. (a) red when the su reader ignores daemon's no-command shell (02's named red: "needs
-    //     daemon's password"), sudo's refusal loses (b) or (c), or polkit reads otherwise; (b)
-    //     prints the readings and clauses.
+    // D2 §3, as #790's correction moves it (verify-first): the refusal also reads root's and
+    //     svc's password (A §F4); polkit's exit 2 reads this login's beside an administrator's, kept
+    //     (B §4). (a) red when the su reader ignores daemon's no-command shell (02's named red:
+    //     "needs daemon's password"), sudo's refusal loses (b) or (c), or polkit reads otherwise;
+    //     (b) prints the readings and clauses.
+    const credential = polkit.filter((r) => r.outcome === 'needs_credential');
     expect({
       sudo,
       su,
-      polkit: polkit.every(
-        (r) =>
-          r.outcome === 'unknown' ||
-          (r.outcome === 'needs_credential' && r.cache === 'polkit_keep'),
-      ),
+      polkit:
+        polkit.every((r) => r.outcome === 'unknown') ||
+        (credential.length === polkit.length && credential.every((r) => r.cache === 'polkit_keep')),
+      polkitWhose: [...new Set(credential.map((r) => r.whose))].sort(),
       polkitRead: polkit.length > 0,
       clauses: ['b', 'c', 'd'].filter((c) => clauses.includes(c)),
     }).toEqual({
-      sudo: ['sudo needs_credential this_login sudo_timestamp or not allowed'],
+      sudo: [
+        'sudo needs_credential this_login sudo_timestamp or not allowed',
+        'sudo needs_credential root sudo_timestamp',
+        'sudo needs_credential svc sudo_timestamp',
+      ],
       su: ['su not_allowed'],
       polkit: true,
+      polkitWhose: ['administrator', 'this_login'],
       polkitRead: true,
       clauses: ['b', 'c', 'd'],
     });

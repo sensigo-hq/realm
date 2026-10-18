@@ -98,20 +98,26 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
     if (code === 0) found.push({ outcome: 'yes', id: a.id });
     else if (code === 1) found.push({ outcome: 'not_allowed', id: a.id });
     else if (code === 2) {
-      // a challenge: whose credential comes from the action's defaults; none of them asks → unknown
-      const whose = fromDefaults.flatMap((d) => (d.whose !== undefined ? [d.whose] : []));
-      if (whose.length === 0) {
-        found.push({
-          outcome: 'unknown',
-          id: a.id,
-          cause: `pkcheck asks a credential for ${a.id}, and its defaults do not say whose`,
-        });
-      }
+      // B §4: an unreadable rule may change whose credential the challenge asks, and keep it
+      found.push({ outcome: 'needs_credential', whose: 'this_login', id: a.id });
+      found.push({ outcome: 'needs_credential', whose: 'administrator', id: a.id });
+      keep = true;
     } else {
       found.push({ outcome: 'unknown', id: a.id, cause: `${argv.join(' ')}: ${toolLine(r)}` });
     }
   }
-  const how = `${pkcheck.path} --action-id <each> --process ${pid} asked for ${actions.length} actions`;
+  // W §7: the actions asked, by name; the pid is this check's own process
+  const how = `${pkcheck.path} --action-id <A> --process <this check's pid> asked for ${actions.map((a) => a.id).join(', ')}`;
+  // W §5, W §8: what clause (d) can say — the rules folders as stat reads them, the tools present
+  const rules = (dir: string): 'unreadable' | 'unread' =>
+    lk.probes.exists(dir) && !lk.probes.canRead(dir) ? 'unreadable' : 'unread';
+  const detail = {
+    polkit: {
+      tools: ['pkexec', 'run0', 'systemd-run', 'machinectl'].filter(inFolders),
+      admin: rules('/etc/polkit-1/rules.d'),
+      vendor: rules('/usr/share/polkit-1/rules.d'),
+    },
+  };
   const best = mostPermissive(
     found.map((f) => ({ path: 'polkit' as const, outcome: f.outcome, how: '' })),
   );
@@ -122,6 +128,7 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
         tool: pkcheck.path,
         outcome: 'not_allowed',
         how: `${ACTIONS_DIR} holds none of the actions asked`,
+        ...detail,
       },
     ];
   }
@@ -133,6 +140,7 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
         tool: pkcheck.path,
         outcome: 'yes',
         how: `${how}: allowed for ${ids.join(', ')}`,
+        ...detail,
       },
     ];
   }
@@ -142,10 +150,19 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
         found.flatMap((f) => (f.outcome === 'unknown' ? [f.cause ?? `${f.id}'s defaults`] : [])),
       ),
     ];
-    return unknown(how, causes.join('; '));
+    return [
+      {
+        path: 'polkit',
+        tool: pkcheck.path,
+        outcome: 'unknown',
+        how,
+        cause: causes.join('; '),
+        ...detail,
+      },
+    ];
   }
   if (best === 'not_allowed')
-    return [{ path: 'polkit', tool: pkcheck.path, outcome: 'not_allowed', how }];
+    return [{ path: 'polkit', tool: pkcheck.path, outcome: 'not_allowed', how, ...detail }];
   const whose = [
     ...new Set(
       found.flatMap((f) =>
@@ -160,5 +177,6 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
     whose: w,
     ...(keep ? { cache: 'polkit_keep' as const } : {}),
     how,
+    ...detail,
   }));
 }

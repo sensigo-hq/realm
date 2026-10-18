@@ -131,7 +131,7 @@ describe('#627 W — the separation check (cell 26)', () => {
     }).toEqual({
       claim: CANNOT_RECORD,
       become:
-        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found on this host.",
+        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.",
     });
   });
 
@@ -233,7 +233,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       // #790 (01b #8): a sudo this login owns is not a root-owned system copy — unknown.
       become: [
         "This login can become Realm's service user (realm) without a password: unknown (sudo: unknown: sudo at /usr/bin/sudo is not a root-owned system copy (sudo looked for in the system folders); observed now).",
-        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found on this host.",
+        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.",
       ],
       // #790 (01b #3): condition 3 is every engine that runs as root.
       rootEngine: [
@@ -261,7 +261,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       `Separation: separate user — ${CANNOT_RECORD}`,
       `Measured for the login 'agent', against the store at ${STORE}.`,
       "  This login can write Realm's store or open its files: no (measured).",
-      "  This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found on this host.",
+      "  This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.",
       '  This login can reach an engine that runs as root: no (measured).',
       `  ${CONDITION_4}: no (measured) — 3 files and folders checked.`,
       '  Another Realm server or CLI that takes answers uses this store: unknown (another Realm server or CLI could use this store, and one look cannot rule it out; observed now).',
@@ -318,7 +318,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       denied: {
         header: `Separation: separate user — An agent running as agent cannot record a gate answer through this server, the terminal or Realm's files, provided no program Realm runs as realm, read from the owner of ${HOME}, can run code for it, Realm's server runs this Node and this Realm package, every Realm server on this machine starts with --gate-answers withheld, and no registered workflow's extension file (not read: the store cannot be read) can be changed by this login.`,
         store: `  This login can write Realm's store or open its files: no (measured) — ${STORE}: permission denied.`,
-        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found on this host.`,
+        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.`,
       },
       ownedNo: {
         header: `Separation: not measured — ${MAY} whether it can become Realm's service user without a password was not measured.`,
@@ -559,7 +559,7 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
       rootBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
       mineOwns: false,
       mineBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
-      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found on this host.`,
+      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH.`,
     });
   });
 
@@ -606,16 +606,21 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
     // (a) red when the check imports a process API again; (b) prints whether each name appears.
     // #790: the "not probed" half of this cell is replaced by separation-790.test.ts's cells.
     expect({
-      childProcess: src.includes('node:child_process'),
+      // #790 correction (A §F12): the module by any spelling, with or without its `node:` prefix
+      childProcess: /\bchild_process\b/.test(src),
       spawnSync: src.includes('spawnSync'),
       execFile: src.includes('execFile'),
       // A bare `exec(` — never a RegExp's `.exec(`, which the check uses to read files' text.
       exec: /(?<![.\w])exec\(/.test(src),
+      spawn: /\bspawn\(/.test(src),
+      fork: /\bfork\(/.test(src),
     }).toEqual({
       childProcess: false,
       spawnSync: false,
       execFile: false,
       exec: false,
+      spawn: false,
+      fork: false,
     });
   });
 
