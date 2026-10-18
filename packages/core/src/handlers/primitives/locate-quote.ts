@@ -486,14 +486,138 @@ function extend(
   return { first, last, at, end, pieces };
 }
 
+// ─── Correction 2: after a skip, the next part starts where the document starts a sentence, a
+//     clause or a line (the owner's yes, 2026-10-18) ──────────────────────────────────────────────
+
+/** Step 2's opening marks; the quotation marks among them make a line break a line start. */
+const START_OPENING: ReadonlySet<string> = new Set(['"', '“', '„', '«', "'", '‘', '(', '[']);
+const START_QUOTE_OPENING: ReadonlySet<string> = new Set(['"', '“', '„', '«', "'", '‘']);
+/** Step 4's closing marks. */
+const START_CLOSING: ReadonlySet<string> = new Set(['"', '”', '’', "'", ')', ']', '»']);
+/** Step 3's list marks (a run of `#` too), only at the start of a line. */
+const LIST_MARKS: ReadonlySet<string> = new Set(['-', '*', '•', '◦', '▪', '‣', '·', '–', '—', '|']);
+
+const isBlank = (c: string | undefined): boolean => c === ' ' || c === '\t';
+const isDigit = (c: string | undefined): boolean => c !== undefined && DIGIT.test(c);
+
+function blanksBack(source: string, at: number): number {
+  let i = at;
+  while (i > 0 && isBlank(source[i - 1])) i--;
+  return i;
+}
+
+/** Step 3: the start of one clause number that ends at `at` — a bracketed group of at most four
+ *  letters or digits (`(a)`, `(iv)`, `(3)`), or digits joined by `.` (`6.2`, `3.4.1`, `12`) with an
+ *  optional closing `.` or `)` — or -1. */
+function clauseNumberBack(source: string, at: number): number {
+  if (source[at - 1] === ')') {
+    let j = at - 2;
+    let n = 0;
+    while (j >= 0 && n < 5 && (isLetter(source[j]) || isDigit(source[j]))) {
+      j--;
+      n++;
+    }
+    if (n >= 1 && n <= 4 && source[j] === '(') return j;
+  }
+  let j = at;
+  if ((source[j - 1] === '.' || source[j - 1] === ')') && isDigit(source[j - 2])) j--;
+  if (!isDigit(source[j - 1])) return -1;
+  for (;;) {
+    while (isDigit(source[j - 1])) j--;
+    if (source[j - 1] === '.' && isDigit(source[j - 2])) {
+      j--;
+      continue;
+    }
+    return j;
+  }
+}
+
+/** Step 3: the start of one list mark that ends at `at`, where a line break or the source's start
+ *  comes right before it (past spaces and tabs), or -1. */
+function listMarkBack(source: string, at: number): number {
+  let j = -1;
+  if (source[at - 1] === '#') {
+    j = at - 1;
+    while (j > 0 && source[j - 1] === '#') j--;
+  } else if (at > 0 && LIST_MARKS.has(source[at - 1]!)) j = at - 1;
+  if (j < 0) return -1;
+  const k = blanksBack(source, j);
+  return k === 0 || LINE_BREAKS.has(source[k - 1]!) ? j : -1;
+}
+
+/** The accepted characters other than a line break, the one right before `at`: a `.` `!` `?` that
+ *  ends a sentence (L1's test: never an abbreviation or an initial), `;`, a `:` not between two
+ *  digits. */
+function endsSentenceOrClause(source: string, at: number): boolean {
+  const c = source[at - 1];
+  if (c === '.') return !endsAbbreviation(source, at - 1);
+  if (c === '!' || c === '?' || c === ';') return true;
+  if (c === ':') return !(isNum(source[at - 2]) && isNum(source[at]));
+  return false;
+}
+
+/** Whether the document starts a line at the line break `lineBreak`: the line before it is blank,
+ *  or ends (past spaces and closing marks) a sentence or a clause. Hard-wrapped text breaks its
+ *  lines inside sentences, so a bare line break is not a line start. */
+function lineBeforeEnds(source: string, lineBreak: number): boolean {
+  let i = lineBreak;
+  while (i > 0 && (isBlank(source[i - 1]) || source[i - 1] === '\r')) i--;
+  if (i === 0 || LINE_BREAKS.has(source[i - 1]!)) return true;
+  while (i > 0 && START_CLOSING.has(source[i - 1]!)) i--;
+  return endsSentenceOrClause(source, i);
+}
+
+/** Step 4 and the accepted character: past spaces and closing marks, the source starts at `at`, or
+ *  a sentence or clause ends there, or a line starts there (`opened`: steps 2–3 skipped a clause
+ *  number, a list mark or an opening quotation mark on the new line). */
+function startAccepted(source: string, at: number, opened: boolean): boolean {
+  let i = blanksBack(source, at);
+  while (i > 0 && START_CLOSING.has(source[i - 1]!)) i--;
+  if (i === 0) return true;
+  const c = source[i - 1]!;
+  if (LINE_BREAKS.has(c)) return opened || lineBeforeEnds(source, i - 1);
+  return endsSentenceOrClause(source, i);
+}
+
+/**
+ * Correction 2: whether a part placed at raw offset `start` starts where the document starts a
+ * sentence, a clause or a line — read in the RAW source (the canonical form drops `.` `;` `:` and
+ * turns line breaks into spaces). Walking back: (1) spaces and tabs; (2) optionally one opening
+ * quotation mark or bracket, then spaces and tabs; (3) optionally one clause number, or one list mark
+ * at a line's start; (4) spaces, tabs and closing marks; then an accepted character. Each optional
+ * step is tried with and without it, and the start holds if ANY reading reaches an accepted
+ * character (read greedily, `2031.` in `…30 April 2031. The notice…` would be a clause number).
+ */
+function partStartHolds(source: string, start: number): boolean {
+  const first = blanksBack(source, start);
+  const afterStep2 = [{ at: first, opened: false }];
+  if (first > 0 && START_OPENING.has(source[first - 1]!)) {
+    afterStep2.push({
+      at: blanksBack(source, first - 1),
+      opened: START_QUOTE_OPENING.has(source[first - 1]!),
+    });
+  }
+  for (const reading of afterStep2) {
+    if (startAccepted(source, reading.at, reading.opened)) return true;
+    const clause = clauseNumberBack(source, reading.at);
+    if (clause >= 0 && startAccepted(source, clause, true)) return true;
+    const mark = listMarkBack(source, reading.at);
+    if (mark >= 0 && startAccepted(source, mark, true)) return true;
+  }
+  return false;
+}
+
 /** Places the pieces as parts: each part's first piece at the occurrence (at or after `after` when
- *  `inOrder`) that joins the most pieces after it, the earliest of those. `undefined` when a piece
- *  is found nowhere it may be. */
+ *  `inOrder`) that joins the most pieces after it, the earliest of those. Every part after the first
+ *  follows a skip, so an occurrence of its first piece is a candidate only where `startHolds` (the
+ *  canonical offset) says the document starts a sentence, a clause or a line there (correction 2).
+ *  `undefined` when a piece is found nowhere it may be. */
 function placeParts(
   budget: Budget,
   hay: string,
   segments: readonly Segment[],
   inOrder: boolean,
+  startHolds: (at: number) => boolean,
 ): Part[] | undefined {
   const parts: Part[] = [];
   let after = 0;
@@ -501,7 +625,11 @@ function placeParts(
     const piece = segments[k]!.canonical.text;
     let best: Part | undefined;
     for (let at = budget.indexOf(hay, piece, inOrder ? after : 0); at >= 0;) {
-      if (wordEdgesHold(hay, at, piece) && numberEdgesHold(hay, at, piece)) {
+      if (
+        wordEdgesHold(hay, at, piece) &&
+        numberEdgesHold(hay, at, piece) &&
+        (k === 0 || startHolds(at))
+      ) {
         const part = extend(budget, hay, segments, k, at);
         if (best === undefined || part.last > best.last) best = part;
         if (part.last === segments.length - 1) break;
@@ -748,11 +876,12 @@ function ladder(
 
   if (segments.length > 1) {
     const hay = canonical.text;
-    const inOrder = placeParts(budget, hay, segments, true);
+    const startHolds = (at: number): boolean => partStartHolds(source, canonical.from[at]!);
+    const inOrder = placeParts(budget, hay, segments, true, startHolds);
     const parts =
       inOrder !== undefined && inOrder.every((p) => p.end - p.at >= minPartChars)
         ? inOrder
-        : placeParts(budget, hay, segments, false);
+        : placeParts(budget, hay, segments, false, startHolds);
     if (parts !== undefined && parts.every((p) => p.end - p.at >= minPartChars)) {
       const ordered = parts.every((p, i) => i === 0 || p.at >= parts[i - 1]!.end);
       const spans = parts.map((p) => {

@@ -198,7 +198,9 @@ describe('check_quotes — the record, always', () => {
   });
 
   it('min_part_chars reaches the ladder', async () => {
-    const quote = 'The Tenant shall pay … at its own cost';
+    // Correction 2 re-pin: the second piece starts a sentence, so the skip rule allows it, and only
+    // the floor decides ("either party may" is 16 characters); "at its own cost" resumed mid-sentence.
+    const quote = 'The Tenant shall pay … Either party may';
     const atDefault = await run(ctx([{ field: 'f', value: 'v', quote }]));
     const lowered = await run(ctx([{ field: 'f', value: 'v', quote }], { min_part_chars: 15 }));
     // (a) red when the option is not passed on (both stay not_found); (b) prints the two states.

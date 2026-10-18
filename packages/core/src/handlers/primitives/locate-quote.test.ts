@@ -87,8 +87,10 @@ const LEASE_ROWS: LeaseRow[] = [
     from: 'haiku/P-0 floor_area_sqm',
     quote:
       'Lettable Area" means the net internal area of the Premises... agreed between the parties at 412 square metres',
-    state: 'stitched',
-    lines: [35, 35],
+    // Correction 2, the skip rule: after `...` the quote resumes at "agreed between", mid-sentence —
+    // honest, but a skip must land where the document starts a sentence, a clause or a line.
+    state: 'not_found',
+    nearestLine: 35,
   },
   {
     tag: 'd2',
@@ -249,15 +251,16 @@ describe('locateQuote — every state on constructed inputs', () => {
   });
 
   it('stitched: two marked pieces in order; a piece that sits next to the next one in the source joins it into one part (Part S, rule 3)', () => {
-    // "at its own cost" (15 characters) is under the floor alone, but "cost. Either" sits together in
-    // the source, so it and "Either party may end" are ONE part of 36 (correction 1, divergence:
-    // 02's prediction that it would stand alone was wrong).
+    // "The Landlord shall repair the roof" and "and the structure of the building" sit together in the
+    // source, so the `;` the quote adds between them joins them into ONE part, which starts a
+    // sentence. Correction 2 re-pin: the earlier quote resumed at "at its own cost", mid-sentence,
+    // which the skip rule now refuses.
     const marked = locateQuote(
-      'The Tenant shall pay the rent quarterly … at its own cost. Either party may end',
+      'The Tenant shall pay the rent quarterly … The Landlord shall repair the roof; and the structure of the building',
       SOURCE,
     );
-    // (a) red when pieces next to each other are not merged (the 15-character piece then fails the
-    //     floor); (b) prints the state and the part count.
+    // (a) red when pieces next to each other are not merged ("and the structure…" then follows a
+    //     skip mid-sentence); (b) prints the state and the part count.
     expect([marked.state, marked.parts.length]).toEqual(['stitched', 2]);
   });
 
@@ -364,18 +367,19 @@ describe('locateQuote — the floor, the count, the offsets, the empty inputs, t
   const B19 = 'eeee ffff gggg hhhh'; // 19
 
   // Each source holds its pieces as whole words, so the floor alone decides (correction 1, A2: a
-  // 19-character piece cut out of `hhhhh` would be refused at its word edge whatever the floor).
+  // 19-character piece cut out of `hhhhh` would be refused at its word edge whatever the floor), and
+  // the second piece starts a sentence (correction 2: a skip lands only where one starts).
   it('the floor: a 20-character part stitches; a 19-character part does not', () => {
     // (a) red when the floor compares with `>` (20 fails) or is ignored (19 passes); (b) prints the
     //     two states.
     expect([
-      locateQuote(`${A20}… ${B20}`, `${A20} then ${B20} again`).state,
-      locateQuote(`${A20}… ${B19}`, `${A20} then ${B19} again`).state,
+      locateQuote(`${A20}… ${B20}`, `${A20} then. ${B20} again`).state,
+      locateQuote(`${A20}… ${B19}`, `${A20} then. ${B19} again`).state,
     ]).toEqual(['stitched', 'not_found']);
   });
 
   it('minPartChars: a lower floor admits the shorter part; less than 4 is refused', () => {
-    const source = `${A20} then ${B19} again`;
+    const source = `${A20} then. ${B19} again`;
     let refused = false;
     try {
       locateQuote('x', 'x', { minPartChars: 3 });
@@ -766,8 +770,10 @@ describe('locateQuote — correction 1, Part S: a quote skips text only where it
   });
 
   it('a marked quote whose two pieces each pass the floor → stitched', () => {
+    // Correction 2 re-pin: the second piece starts a sentence (l.99); the earlier one resumed
+    // mid-sentence ("… which remain the responsibility…"), which the skip rule now refuses.
     const quote =
-      'The Tenant shall keep the Premises in good and substantial repair and condition… which remain the responsibility of the Landlord';
+      'The Tenant shall keep the Premises in good and substantial repair and condition… The Tenant shall decorate the inside of the Premises in every fifth year';
     // (a) red when `…` is not a break; (b) prints the state and the part count.
     const c = locateQuote(quote, LEASE);
     expect([c.state, c.parts.length]).toEqual(['stitched', 2]);
@@ -788,6 +794,329 @@ describe('locateQuote — correction 1, Part S: a quote skips text only where it
       segmentsOf('excluding any tenant’s fixtures and fittings').length,
       segmentsOf('the office opens at 9:30 on weekdays').length,
     ]).toEqual([1, 1, 1]);
+  });
+});
+
+// ─── correction 2, 01: after a skip, the next part starts where the document starts a sentence, a
+//     clause or a line ───────────────────────────────────────────────────────────────────────────
+
+/** A plain word-wrap: each line cut before the word that would pass `width` columns (hard-wrapped
+ *  text, as PDF and email text is). */
+function wrapAt(text: string, width: number): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const out: string[] = [];
+      let current = '';
+      for (const word of line.split(' ')) {
+        if (current !== '' && `${current} ${word}`.length > width) {
+          out.push(current);
+          current = word;
+        } else current = current === '' ? word : `${current} ${word}`;
+      }
+      out.push(current);
+      return out.join('\n');
+    })
+    .join('\n');
+}
+
+describe('locateQuote — correction 2, 01: a skip lands only where the document starts a sentence, a clause or a line', () => {
+  const WRAPPED = wrapAt(LEASE, 72);
+
+  // The 30 stitched attacks (the walk's s6new and s6new2, reader A's two, the audit's wrapped one):
+  // each was stitched or stitched_out_of_order before this correction, against the fixture and its
+  // 72-column wrap. Fictional quotes against the fictional lease.
+  const ATTACKS: Array<[string, string]> = [
+    [
+      'b_nl_drop_not_71',
+      '7.1 Repair. The Tenant shall keep the Premises in good and substantial repair and condition, damage by the Insured Risks excepted. The Tenant shall\nbe responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'b_semi_drop_not_71',
+      'damage by the Insured Risks excepted. The Tenant shall; be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'b_colon_drop_not_71',
+      'damage by the Insured Risks excepted. The Tenant shall: be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'b_dq_drop_not_71',
+      'damage by the Insured Risks excepted. The Tenant shall "be responsible for repairs to the structure, roof, foundations or exterior of the Building"',
+    ],
+    [
+      'b_period_drop_not_71',
+      'damage by the Insured Risks excepted. The Tenant shall. Be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'b_nl_drop_not_75',
+      "save that the Tenant may assign the whole of the Premises with the Landlord's consent, such consent\nto be unreasonably withheld.",
+    ],
+    [
+      'b_nl_ins_not_sc',
+      'the Tenant shall not\npay the Service Charge on account by quarterly instalments on the quarter days.',
+    ],
+    [
+      'b_nl_ins_not_51',
+      'The Tenant shall not\npay the Service Charge in accordance with Schedule 3.',
+    ],
+    [
+      'b_nl_ll_not_resp',
+      '6.1 The Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'b_nl_ll_not_resp_oo',
+      'Subject to payment of the Service Charge, the Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    ['b_nl_assign_any_part', 'the Tenant may assign the whole\nor any part of the Premises'],
+    ['b_nl_indemnity_500k', 'a limit of indemnity of not less than\nfive hundred thousand euro'],
+    [
+      'b_nl_regno_swap',
+      'NORTHWIND ANALYTICS LTD, a company incorporated in Ireland\n(registered number FICT-0001)',
+    ],
+    [
+      'b_nl_break_2030',
+      'is varied so that the Break Date is\n30 April 2030. The notice period in clause 9.1 is not changed.',
+    ],
+    [
+      'b_nl_rent_48k_sideletter',
+      'the initial annual rent shall be\nforty-eight thousand euro (€48,000), exclusive of value added tax',
+    ],
+    [
+      'b_nl_sc_cap_48k',
+      'The Service Charge payable in respect of any service charge year shall not exceed\nforty-eight thousand euro (€48,000), exclusive of value added tax',
+    ],
+    [
+      'b_nl_deposit_48k',
+      'On the date of this Lease the Tenant shall pay to the Landlord the sum of\nforty-eight thousand euro (€48,000)',
+    ],
+    ['b_dq_expiry_2030', '"Term Expiry Date" means\n30 April 2030 (the "Break Date")'],
+    ['b_colon_expiry_2030', '"Term Expiry Date" means: 30 April 2030 (the "Break Date")'],
+    [
+      'b_nl_interest_14',
+      '"Interest" means interest at the rate of\nfourteen (14) days of its due date',
+    ],
+    [
+      'b_ell_cross',
+      'The Landlord shall insure the Building…not be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'b_ell_drop_not_71',
+      'damage by the Insured Risks excepted. The Tenant shall … be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'e_ls_drop_not',
+      'damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'e_cr_drop_not',
+      'damage by the Insured Risks excepted. The Tenant shall\rbe responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'e_curly_dq_drop_not',
+      'damage by the Insured Risks excepted. The Tenant shall “be responsible for repairs to the structure, roof, foundations or exterior of the Building”',
+    ],
+    [
+      'e_q_mark_drop_not',
+      'damage by the Insured Risks excepted. The Tenant shall? Be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'e_bang_drop_not',
+      'damage by the Insured Risks excepted. The Tenant shall! Be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'readerA_61_nl',
+      '6.1 The Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building',
+    ],
+    [
+      'readerA_pinned_nl',
+      'The Tenant shall not\npay the Service Charge in accordance with Schedule 3.',
+    ],
+    [
+      'audit_wrap_rent',
+      'assessed on the assumptions and disregards set out in this Schedule. The Rent shall\nbe reduced on review.',
+    ],
+  ];
+  for (const [name, quote] of ATTACKS) {
+    it(`${name} → not_found, in the fixture and in its 72-column wrap`, () => {
+      // (a) red when the rule is taken out of placeParts (each one stitches), and, on the wrapped
+      //     copy, when any line break counts as a line start; (b) prints the two states.
+      expect([locateQuote(quote, LEASE).state, locateQuote(quote, WRAPPED).state]).toEqual([
+        'not_found',
+        'not_found',
+      ]);
+    });
+  }
+
+  it("control: l.212's sentence after a year, `…30 April 2031. The notice period…`, stays stitched", () => {
+    const c = locateQuote(
+      'is varied so that the Break Date is 30 April 2031. The notice period in clause 9.1 is not changed.',
+      LEASE,
+    );
+    // (a) red when step 3 is read greedily (`2031.` taken as a clause number, the start refused);
+    //     (b) prints the state and the parts' lines.
+    expect({ state: c.state, lines: c.parts.map((p) => lineAt(p.start)) }).toEqual({
+      state: 'stitched',
+      lines: [212, 212],
+    });
+  });
+
+  it('control: a skip onto a numbered clause after a blank line (`…against the Tenant.⏎⏎6.2 The Tenant shall pay…`) stays stitched', () => {
+    const c = locateQuote(
+      "The Landlord shall insure the Building (excluding any tenant's fixtures and fittings) against the Insured Risks for its full reinstatement cost, and shall use reasonable endeavours to procure that the insurer waives its rights of subrogation against the Tenant. The Tenant shall pay to the Landlord on demand, as insurance rent, a fair proportion of the cost of the insurance",
+      LEASE,
+    );
+    // (a) red when a clause number is not skipped; (b) prints the state and the parts' lines.
+    expect({ state: c.state, lines: c.parts.map((p) => lineAt(p.start)) }).toEqual({
+      state: 'stitched',
+      lines: [89, 91],
+    });
+  });
+
+  it('control: a skip onto a definition after a line break and an opening quotation mark stays stitched', () => {
+    // The line before ends with no full stop, so only step 2 (the opening mark) makes it a line start.
+    const source =
+      'The following words have these meanings in this Lease\n"Rent" means the rent specified in clause 3.1.';
+    // (a) red when step 2 is dropped; (b) prints the state.
+    expect(
+      locateQuote(
+        'The following words have these meanings … "Rent" means the rent specified in clause 3.1',
+        source,
+      ).state,
+    ).toBe('stitched');
+  });
+
+  it('control: `(b) "Rent" means…` after a line break stays stitched', () => {
+    const source =
+      '1.1 In this Lease the following words have these meanings:\n(a) "Act" means the Landlord and Tenant Act 1980;\n(b) "Rent" means the rent specified in clause 3.1.';
+    // (a) red when the spaces after step 2's opening mark are not skipped (`(b)` is then not
+    //     reached); (b) prints the state.
+    expect(
+      locateQuote(
+        '1.1 In this Lease the following words have these meanings: … "Rent" means the rent specified in clause 3.1',
+        source,
+      ).state,
+    ).toBe('stitched');
+  });
+
+  const RULES =
+    'The account manager owns the renewal … Escalate any discount above ten per cent to the director';
+  const TABLE =
+    'Rent | forty-eight thousand euro … Service Charge | nine thousand two hundred euro';
+  const MARKS: Array<[string, string, string, string]> = [
+    [
+      'a `•` bullet line',
+      RULES,
+      'The account manager owns the renewal.\n\nRules:\n• Never discount in the first call.\n• Escalate any discount above ten per cent to the director.',
+      'The account manager owns the renewal. Rules: never discount in the first call, • Escalate any discount above ten per cent to the director.',
+    ],
+    [
+      'a `-` bullet line',
+      RULES,
+      'The account manager owns the renewal.\n\nRules:\n- Never discount in the first call.\n- Escalate any discount above ten per cent to the director.',
+      'The account manager owns the renewal. Rules: never discount in the first call, - Escalate any discount above ten per cent to the director.',
+    ],
+    [
+      'a `|` table row',
+      TABLE,
+      '| Rent | forty-eight thousand euro |\n| Service Charge | nine thousand two hundred euro |',
+      '| Rent | forty-eight thousand euro |, | Service Charge | nine thousand two hundred euro |',
+    ],
+  ];
+  for (const [name, quote, line, midLine] of MARKS) {
+    it(`control: a skip onto ${name} stays stitched; its twin, the same mark mid-line after a comma, is not_found`, () => {
+      // (a) red when the list mark is not skipped (the line start is refused), or when a mark
+      //     counts mid-line; (b) prints the two states.
+      expect([locateQuote(quote, line).state, locateQuote(quote, midLine).state]).toEqual([
+        'stitched',
+        'not_found',
+      ]);
+    });
+  }
+
+  it('control: a skip landing after `;` in a list stays stitched', () => {
+    // (a) red when `;` is not a clause end; (b) prints the state.
+    expect(
+      locateQuote(
+        'The Tenant shall pay the Rent … and insure its fixtures',
+        'The Tenant shall pay the Rent; keep the Premises clean; and insure its fixtures.',
+      ).state,
+    ).toBe('stitched');
+  });
+
+  // l.83, after "5.1 " at a line start; l.97, after "7.1 Repair. ".
+  const SERVICE = 'The Tenant shall pay the Service Charge in accordance with Schedule 3.';
+  const REPAIR =
+    'The Tenant shall keep the Premises in good and substantial repair and condition, damage by the Insured Risks excepted.';
+
+  it('control: two whole sentences joined by ` … ` stay stitched (the second follows a full stop)', () => {
+    const c = locateQuote(`${SERVICE} … ${REPAIR}`, LEASE);
+    // (a) red when `.` is not a sentence end; (b) prints the state and the parts' lines.
+    expect({ state: c.state, lines: c.parts.map((p) => lineAt(p.start)) }).toEqual({
+      state: 'stitched',
+      lines: [83, 97],
+    });
+  });
+
+  it('control: the same two reversed stay stitched_out_of_order (the second follows a clause number at a line start)', () => {
+    const c = locateQuote(`${REPAIR} … ${SERVICE}`, LEASE);
+    // (a) red when a clause number is not skipped; (b) prints the state and the parts' lines.
+    expect({ state: c.state, lines: c.parts.map((p) => lineAt(p.start)) }).toEqual({
+      state: 'stitched_out_of_order',
+      lines: [97, 83],
+    });
+  });
+
+  it('control: a skip onto a sentence that starts a wrapped line stays stitched (the fixture wrapped at 74 columns)', () => {
+    // At 74 columns l.199's `(the "Lease").` ends a line and "In consideration…" starts the next;
+    // the 72-column copy has no sentence that starts a wrapped line.
+    const wrapped = wrapAt(LEASE, 74);
+    // (a) red when the line before is not read (a bare line break is then never a line start);
+    //     (b) prints the state.
+    expect(
+      locateQuote(`${SERVICE} … In consideration of the Tenant entering into the Lease`, wrapped)
+        .state,
+    ).toBe('stitched');
+  });
+
+  it('the price of the rule: an honest quote that skips mid-sentence after `...` is not_found', () => {
+    // In the `Lettable Area` shape (row d1): l.37's definition, then its tail, which resumes after
+    // "2001, ", mid-sentence.
+    const c = locateQuote(
+      'Permitted Use" means use as offices within the meaning of Class 2 of Part 4 of Schedule 2... together with ancillary meeting and training rooms',
+      LEASE,
+    );
+    // (a) red when the rule is taken out of placeParts (it stitches); (b) prints the state.
+    expect(c.state).toBe('not_found');
+  });
+
+  it('a known gap: the part BEFORE a skip may end mid-sentence, so a clause joins a later sentence (stitched_out_of_order)', () => {
+    // The audit's quote (F760-AUD3-06): "Subject to payment of the Service Charge," ends mid-sentence
+    // at l.115, and the next part starts l.89's clause. Not covered by this rule (05, problem 1).
+    const c = locateQuote(
+      "Subject to payment of the Service Charge,\nThe Landlord shall insure the Building (excluding any tenant's fixtures and fittings) against the Insured Risks",
+      LEASE,
+    );
+    // (a) red when the gap closes, or the clause is no longer found; (b) prints the state and the
+    //     parts' lines.
+    expect({ state: c.state, lines: c.parts.map((p) => lineAt(p.start)) }).toEqual({
+      state: 'stitched_out_of_order',
+      lines: [115, 89],
+    });
+  });
+
+  it('an abbreviation is not a sentence end: a skip landing after `e.g. ` or after an initial (`J. `) is not_found', () => {
+    // (a) red when L1's test is dropped from the walk-back (each then stitches); (b) prints the two
+    //     states.
+    expect([
+      locateQuote(
+        'the Landlord may charge fees … the Tenant shall not pay the Rent',
+        'The Landlord may charge fees, e.g. the Tenant shall not pay the Rent late without interest.',
+      ).state,
+      locateQuote(
+        'Signed for the Landlord by … Smith the Tenant shall pay the Rent',
+        'Signed for the Landlord by J. Smith the Tenant shall pay the Rent today.',
+      ).state,
+    ]).toEqual(['not_found', 'not_found']);
   });
 });
 
