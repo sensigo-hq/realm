@@ -7,7 +7,7 @@
 // Eircodes and company numbers were made fictional before it was committed (the owner's call,
 // 2026-10-17: one was a real building), and the quotes below carry the same substitution. Its
 // landlord's name and the two company numbers were changed again on 2026-10-18 (correction 1, L6:
-// "Harbourside Estates Limited" is a live UK company; the numbers sat in the Irish register's
+// the earlier fictional name matched a registered company; the numbers sat in the Irish register's
 // series): no register has the name, and the numbers are FICT-0001 and FICT-0002.
 //
 // The lease table: the pilot's quotes, copied whole from its run payloads (model run · field), with
@@ -466,9 +466,11 @@ describe('locateQuote — the floor, the count, the offsets, the empty inputs, t
     },
   );
 
-  it('the nearest tiler grows its tiles by doubling: a 3,000-character quote with one drop costs about a hundred substring searches, not thousands', () => {
+  it('the nearest tiler: a 3,000-character quote with one drop costs about a hundred substring searches, not thousands', () => {
     // Correction 1: under Part S the drop inside one sentence is not_found, so the searches counted
-    // are the `nearest` tiler's (A8), `includes`, `indexOf` and `startsWith` alike.
+    // are the `nearest` tiler's (A8), `includes`, `indexOf` and `startsWith` alike. (Correction 2:
+    // halving from the full length costs 67 here, so this cell pins the cost, not the doubling; the
+    // next cell pins the doubling.)
     const window = LEASE.slice(2_000, 5_000);
     const quote = window.slice(0, 1_400) + window.slice(1_440);
     const spies = (['includes', 'indexOf', 'startsWith'] as const).map((m) =>
@@ -484,6 +486,33 @@ describe('locateQuote — the floor, the count, the offsets, the empty inputs, t
       nearest: check.nearest !== undefined,
       under150: searches < 150,
     }).toEqual({ state: 'not_found', nearest: true, under150: true });
+  });
+
+  it('the nearest tiler grows its tiles by doubling: a 600-character made-up quote costs under 800 substring searches', () => {
+    // Correction 2 (ride-along): measured 695 searches with doubling, 928 when each tile is found by
+    // halving from the full length, both inside the 1,000 budget.
+    const words =
+      'the landlord tenant shall pay rent quarterly premises building repair insure lease term notice clause schedule party consent assign deposit interest rate annum review service charge cost structure roof window door spring autumn every each'.split(
+        ' ',
+      );
+    let seed = 7;
+    const next = (): number =>
+      (seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648) / 2_147_483_648;
+    let quote = '';
+    while (quote.length < 600) quote += `${words[Math.floor(next() * words.length)]} `;
+    quote = quote.slice(0, 600).trim();
+    const spies = (['includes', 'indexOf', 'startsWith'] as const).map((m) =>
+      vi.spyOn(String.prototype, m),
+    );
+    const check = locateQuote(quote, LEASE);
+    const searches = spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
+    for (const spy of spies) spy.mockRestore();
+    // (a) red when a tile is found by halving from the full length (928); (b) prints the state and
+    //     whether the searches stayed under 800.
+    expect({ state: check.state, under800: searches < 800 }).toEqual({
+      state: 'not_found',
+      under800: true,
+    });
   });
 });
 
@@ -1117,6 +1146,233 @@ describe('locateQuote — correction 2, 01: a skip lands only where the document
         'Signed for the Landlord by J. Smith the Tenant shall pay the Rent today.',
       ).state,
     ]).toEqual(['not_found', 'not_found']);
+  });
+});
+
+// ─── correction 2, 02: the number, sign and hyphen family ────────────────────────────────────────
+
+describe('locateQuote — correction 2, N1: a quote never starts or ends on a number’s separator', () => {
+  const CUT: Array<[string, string, string]> = [
+    ['`being 18.` in `18.5`', 'of the Building, being 18.', LEASE],
+    ['`(€48,` in `€48,000`', 'an initial annual rent of forty-eight thousand euro (€48,', LEASE],
+    ['`€48.` in `€48.50`', 'The daily rate is €48.', 'The daily rate is €48.50 per day.'],
+    ['`€9,` in `€9,200`', 'a cap of €9,', 'a cap of €9,200 a year'],
+  ];
+  for (const [name, quote, source] of CUT) {
+    it(`${name} → not_found (the quote ends on the separator)`, () => {
+      // (a) red when the right edge checks a digit only (the quote reads exact); (b) prints the state.
+      expect(locateQuote(quote, source).state).toBe('not_found');
+    });
+  }
+
+  it('`.5% above` in `4.5% above` → not_found (the quote opens on the separator)', () => {
+    // (a) red when the left edge checks a digit only; (b) prints the state.
+    expect(locateQuote('.5% above', 'the rate of 4.5% above the base rate').state).toBe(
+      'not_found',
+    );
+  });
+
+  it('controls, still exact: `the rent is 9.` before a space; `items 3,` before a space', () => {
+    // (a) red when a separator ending the quote clashes whatever follows it; (b) prints the states.
+    expect([
+      locateQuote('the rent is 9.', 'the rent is 9. The tenant pays').state,
+      locateQuote('items 3,', 'see items 3, 4').state,
+    ]).toEqual(['exact', 'exact']);
+  });
+});
+
+describe('locateQuote — correction 2, N2: a group of thousands is part of its number', () => {
+  const SPACES: Array<[string, string]> = [
+    ['a space', ' '],
+    ['a no-break space', '\u00a0'],
+    ['a thin space', '\u2009'],
+    ['a narrow no-break space', '\u202f'],
+  ];
+  for (const [name, g] of SPACES) {
+    it(`\`1 200\` in \`1 200 000\`, grouped by ${name} → not_found`, () => {
+      // (a) red when the right edge lets a group follow; (b) prints the state.
+      expect(locateQuote(`the rent is 1${g}200`, `the rent is 1${g}200${g}000 euro`).state).toBe(
+        'not_found',
+      );
+    });
+    it(`\`200 000 euro\` in \`1 200 000 euro\`, grouped by ${name} → not_found`, () => {
+      // (a) red when the left edge lets a group come before; (b) prints the state.
+      expect(locateQuote(`200${g}000 euro`, `1${g}200${g}000 euro`).state).toBe('not_found');
+    });
+  }
+
+  it('control: `price 1` in `price 1 20 euro` stays exact (two digits after the space)', () => {
+    // (a) red when any digits after a group space count as a group; (b) prints the state.
+    expect(locateQuote('price 1', 'price 1 20 euro').state).toBe('exact');
+  });
+  it('control: `price 1` in `price 1 2000 euro` stays exact (four digits after the space)', () => {
+    // (a) red when a fourth digit does not end the group; (b) prints the state.
+    expect(locateQuote('price 1', 'price 1 2000 euro').state).toBe('exact');
+  });
+  it('control: `pipeline in Q1` in `pipeline in Q1 120 deals` stays exact (a letter before the run)', () => {
+    // (a) red when a run after a letter counts as a number's first group; (b) prints the state.
+    expect(locateQuote('pipeline in Q1', 'pipeline in Q1 120 deals').state).toBe('exact');
+  });
+  it('control: `500 new accounts` in `In 2024 500 new accounts` stays exact (four digits before)', () => {
+    // (a) red when a four-digit run counts as a number's first group; (b) prints the state.
+    expect(locateQuote('500 new accounts', 'In 2024 500 new accounts').state).toBe('exact');
+  });
+});
+
+describe('locateQuote — correction 2, N3: a leading decimal is part of its number', () => {
+  const SOURCE = 'a margin of .75% above the base rate';
+  it('`75% above the base rate` in `.75%` → not_found (the edge)', () => {
+    // (a) red when the left edge lets a `.` after no letter or digit come before (it reads exact);
+    //     (b) prints the state.
+    expect(locateQuote('75% above the base rate', SOURCE).state).toBe('not_found');
+  });
+  it('`a margin of 75% above the base rate` against `.75%` → not_found (the canonical form)', () => {
+    // (a) red when the canonical form drops the leading `.` (it reads reformatted); (b) prints the
+    //     state.
+    expect(locateQuote('a margin of 75% above the base rate', SOURCE).state).toBe('not_found');
+  });
+  it('controls, still exact: `5 for the plan` after `B.`; `9.5` in `9.5`', () => {
+    // (a) red when a `.` after a letter counts as a leading decimal; (b) prints the states.
+    expect([
+      locateQuote('5 for the plan', 'see Appendix B.5 for the plan').state,
+      locateQuote('9.5', '9.5').state,
+    ]).toEqual(['exact', 'exact']);
+  });
+});
+
+describe('locateQuote — correction 2, N4: every dash and hyphen reads as `-`', () => {
+  // The members, enumerated by running the predicate's own definition over U+0000–U+FFFF: every BMP
+  // `\p{Pd}` character, and U+2212, U+2796, U+02D7 (28).
+  const MEMBERS: string[] = [];
+  for (let u = 0; u <= 0xffff; u++) {
+    if (u >= 0xd800 && u <= 0xdfff) continue;
+    const c = String.fromCharCode(u);
+    if (/^\p{Pd}$/u.test(c) || c === '\u2212' || c === '\u2796' || c === '\u02d7') MEMBERS.push(c);
+  }
+  // The four the set held before this correction: their cells pass on the old set too.
+  const CONTROLS = new Set(['-', '\u2013', '\u2014', '\u2212']);
+  const hex = (c: string): string => c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+
+  it('the members are 28', () => {
+    // (a) red when the enumeration changes (a Unicode update); (b) prints the count.
+    expect(MEMBERS.length).toBe(28);
+  });
+  for (const d of MEMBERS) {
+    const title = `${CONTROLS.has(d) ? 'control: ' : ''}U+${hex(d)}: \`5 business days\` in \`3${d}5\` and \`a balance of 5 units\` against \`${d}5\` → not_found`;
+    it(title, () => {
+      // (a) red when this member is not read as `-` (the shorter number is found, or the sign is
+      //     dropped); (b) prints the two states.
+      expect([
+        locateQuote('5 business days', `within 3${d}5 business days`).state,
+        locateQuote('a balance of 5 units', `a balance of ${d}5 units`).state,
+      ]).toEqual(['not_found', 'not_found']);
+    });
+  }
+
+  it('offsets: a source holding all 28, quoted exactly, gives the raw span — and so does a quote after them', () => {
+    const quoted = MEMBERS.map((d, i) => `item${i}${d}x`).join(' ');
+    // A run of letters ends just before the later quote: an edge copy whose length drifted from the
+    // source's (a member mapped to two code units) would read a letter beside its first digit there
+    // and refuse the literal match.
+    const source = `Before it. ${quoted} ${'x'.repeat(40)} 5 business days.`;
+    const all = locateQuote(quoted, source);
+    const after = locateQuote('5 business days', source);
+    const at = source.indexOf('5 business days');
+    // (a) red when a member maps to more or fewer code units (the edges then read the wrong
+    //     characters); (b) prints the states and the spans.
+    expect({
+      all: [all.state, all.parts[0]],
+      after: [after.state, after.parts[0]],
+    }).toEqual({
+      all: ['exact', { start: 11, end: 11 + quoted.length }],
+      after: ['exact', { start: at, end: at + '5 business days'.length }],
+    });
+  });
+});
+
+describe('locateQuote — correction 2, N5: number signs, ballot boxes and check marks are kept', () => {
+  const PAIRS: Array<[string, string, string]> = [
+    ['`5′` against `5″`', 'a ceiling of 5′', 'a ceiling of 5″ clear'],
+    ['`5″` against `5′`', 'a ceiling of 5″', 'a ceiling of 5′ clear'],
+    ['`☒` against `☐`', '☒ The Tenant may keep pets', '☐ The Tenant may keep pets'],
+    ['`☐` against `☒`', '☐ The Tenant may keep pets', '☒ The Tenant may keep pets'],
+    ['`✓` against `✗`', '✓ Pets allowed', '✗ Pets allowed'],
+    ['`✗` against `✓`', '✗ Pets allowed', '✓ Pets allowed'],
+  ];
+  for (const [name, quote, source] of PAIRS) {
+    it(`${name} → not_found`, () => {
+      // (a) red when the sign is set aside (or, for `5′` in `5″`, when NFKC folds `″` into `′′`);
+      //     (b) prints the state.
+      expect(locateQuote(quote, source).state).toBe('not_found');
+    });
+  }
+
+  it('controls: `5′` against `5′` is exact; a bullet `■` is still set aside (reformatted)', () => {
+    // (a) red when a prime no longer matches itself, or every symbol is kept; (b) prints the states.
+    expect([
+      locateQuote('a ceiling of 5′', 'a ceiling of 5′ clear').state,
+      locateQuote(
+        'The Tenant shall pay the Rent and keep the Premises',
+        'The Tenant shall pay the Rent ■ and keep the Premises',
+      ).state,
+    ]).toEqual(['exact', 'reformatted']);
+  });
+});
+
+describe('locateQuote — correction 2, N6: a quote starts and ends at a word edge, in every layer', () => {
+  const MIDWORD: Array<[string, string, string]> = [
+    ['`solvent…` inside "insolvent"', 'solvent, the Landlord may re-enter the Premises', LEASE],
+    ['`…may not` cut out of "notify"', 'or to such other address as the Landlord may not', LEASE],
+    [
+      '`lawful use` inside "unlawful use"',
+      'lawful use of the Premises',
+      'The Tenant shall not permit any unlawful use of the Premises.',
+    ],
+  ];
+  for (const [name, quote, source] of MIDWORD) {
+    it(`${name} → not_found`, () => {
+      // (a) red when the literal layer's word edges are unchecked (it reads exact), or the canonical
+      //     layer's (it reads reformatted); (b) prints the state.
+      expect(locateQuote(quote, source).state).toBe('not_found');
+    });
+  }
+
+  it('`refundable deposit` after `non-` → not_found (a hyphen between two letters is inside a word)', () => {
+    // (a) red when the hyphen clause is dropped (it reads exact), or the canonical layer's word edges
+    //     are unchecked; (b) prints the state.
+    expect(locateQuote('refundable deposit', 'a non-refundable deposit').state).toBe('not_found');
+  });
+
+  it('controls, still exact: `deposit` after `non-refundable `; a quote opening at a bracket; `the Tenant` before an em dash', () => {
+    // (a) red when an edge that is a word edge is refused (an en or em dash read as a hyphen); (b)
+    //     prints the three states.
+    expect([
+      locateQuote('deposit', 'a non-refundable deposit').state,
+      locateQuote('(the "Building")', LEASE).state,
+      locateQuote('the Tenant', 'Only the Tenant—not the Landlord—shall pay.').state,
+    ]).toEqual(['exact', 'exact', 'exact']);
+  });
+
+  it('the occurrence count holds word edges: `the rent` occurs once in `the rent and the rental`', () => {
+    // (a) red when the count ignores word edges (2); (b) prints the count.
+    expect(locateQuote('the rent', 'the rent and the rental').occurrences).toBe(1);
+  });
+});
+
+describe('locateQuote — correction 2, N7: `cut_short` on an exact quote', () => {
+  it('`The area is approx.` in `…approx. 412 square metres.` is exact and cut_short after `approx.`', () => {
+    const c = locateQuote('The area is approx.', 'The area is approx. 412 square metres.');
+    // (a) red when the exact branch never sets the label; (b) prints the state, the label and where.
+    expect([c.state, c.cut_short, c.cut_short_at]).toEqual(['exact', true, [19]]);
+  });
+
+  it('control: `The Tenant shall pay the Rent.` before a new sentence is exact, not cut_short', () => {
+    const c = locateQuote(
+      'The Tenant shall pay the Rent.',
+      'The Tenant shall pay the Rent. The Landlord shall insure.',
+    );
+    // (a) red when any exact quote ending in `.` is labelled; (b) prints the state and the label.
+    expect([c.state, c.cut_short]).toEqual(['exact', undefined]);
   });
 });
 

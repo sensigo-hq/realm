@@ -18,11 +18,19 @@ All notable changes to this project are documented here.
   does. Registered in `createDefaultRegistry()`.
 - **`locateQuote`, the sixth helper `@sensigo/realm` exports for handlers (issue #760).** The rule
   `check_quotes` uses, for a handler of your own. A quote may skip document text only where it
-  breaks — at `…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation
-  mark or a line break — so a dropped or added "not", or pieces taken from far-apart sentences,
-  read `not_found`. A number is one unit, and comparison signs, superscripts and fractions are
-  kept. A quote that ends a sentence where the document's goes on is marked `cut_short`, with
-  `cut_short_at`.
+  breaks (at `…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation
+  mark or a line break), and only to where the document starts a sentence, a clause or a line. A
+  line counts only where the line before it ends a sentence or clause or is blank, or where it
+  opens with a clause number, a list mark or a quotation mark, so text whose lines break inside
+  sentences is read correctly. A skip can no longer land inside a sentence. The part before a skip
+  may still end mid-sentence, so a clause can be joined to a later sentence and read `stitched`.
+  Whole sentences quoted from far apart read `stitched` (`stitched_out_of_order` when reversed). A
+  number written in digits is one unit: a digit never matches inside a longer number or next to a
+  letter, and a quote never starts or ends on a number's separator or beside a group of
+  thousands. A sign belongs to its number. A number written in words is matched as words.
+  Mathematical signs, primes, ballot boxes and check marks, superscripts and fractions are kept,
+  and every dash and hyphen reads as `-`. A quote that ends a sentence where the document's goes
+  on is marked `cut_short`, with `cut_short_at`.
 - **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
   every control character written out. Core exports `controlEscape`, the one spelling of a control
   character a terminal line shows.

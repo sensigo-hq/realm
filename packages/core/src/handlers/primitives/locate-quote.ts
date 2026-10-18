@@ -89,9 +89,49 @@ const MAX_MARKS = 30;
 /** A8: how many times a tile may be shortened to find it with its edges holding. */
 const MAX_TILE_RETREATS = 3;
 
-const DASHES: ReadonlySet<string> = new Set(['–', '—', '−']); // – — −
-/** `%` `‰` `°`; `+` and the comparison signs are `\p{Sm}`, kept by MATH below. */
-const KEPT_SYMBOLS: ReadonlySet<string> = new Set(['%', '‰', '°']); // % ‰ °
+/** N4: a dash or hyphen, read as `-`: every BMP `\p{Pd}` character (25 of them), the minus sign
+ *  U+2212, the heavy minus sign U+2796 and the modifier letter minus sign U+02D7 — 28 in all. One code
+ *  unit maps to one, so every offset stays the source's own. The two `\p{Pd}` characters outside the
+ *  BMP (U+10D6E, U+10EAD) are left out: each is two code units, and reading one as a one-unit `-`
+ *  would shift every later offset of the dash-mapped copy. */
+const DASH = /^\p{Pd}$/u;
+const isDash = (c: string | undefined): boolean =>
+  c !== undefined &&
+  c.length === 1 &&
+  (DASH.test(c) || c === '\u2212' || c === '\u2796' || c === '\u02d7');
+/** `%` `‰` `°`; N5: `‱`, the primes `′` `″` `‴` `‵` `‶` `‷` (U+2031–U+2037), the ballot boxes
+ *  `☐` `☑` `☒` (U+2610–U+2612), the check and cross marks `✓` `✔` `✕` `✖` `✗` `✘` (U+2713–U+2718),
+ *  `✅` `❌` `❎`. Every other `\p{So}` (bullets, emoji) stays set aside. `+` and the comparison signs are
+ *  `\p{Sm}`, kept by MATH below. */
+const KEPT_SYMBOLS: ReadonlySet<string> = new Set([
+  '%',
+  '‰',
+  '°',
+  '\u2031',
+  '\u2032',
+  '\u2033',
+  '\u2034',
+  '\u2035',
+  '\u2036',
+  '\u2037',
+  '\u2610',
+  '\u2611',
+  '\u2612',
+  '\u2713',
+  '\u2714',
+  '\u2715',
+  '\u2716',
+  '\u2717',
+  '\u2718',
+  '\u2705',
+  '\u274c',
+  '\u274e',
+]);
+/** N5: NFKC folds `″` `‴` `‶` `‷` into repeated primes, so `5′` would sit inside `5″`; like `\p{No}`,
+ *  a unit with one of these bases is not NFKC-normalised. */
+const UNFOLDED_PRIMES: ReadonlySet<string> = new Set(['\u2033', '\u2034', '\u2036', '\u2037']);
+/** N2: a space that may group the thousands of one number. */
+const GROUP_SPACES: ReadonlySet<string> = new Set([' ', '\u00a0', '\u2009', '\u202f']);
 /** A1: the characters that join the digits of one number (after the dash mapping). */
 const NUMBER_JOINERS: ReadonlySet<string> = new Set([',', '.', '/', ':', '-']);
 const LETTER = /^\p{L}$/u;
@@ -102,12 +142,15 @@ const CURRENCY = /^\p{Sc}$/u;
 const MATH = /^\p{Sm}$/u;
 const MARK = /^\p{M}$/u;
 const WORD_CHAR = /[\p{L}\p{Nd}]/u;
+const LOWERCASE = /^\p{Ll}$/u;
 
 const isLetter = (c: string | undefined): boolean => c !== undefined && LETTER.test(c);
 /** A digit for numbers and edges: `\p{Nd}`, and superscripts and fractions (`\p{No}`, A1/A4). */
 const isNum = (c: string | undefined): boolean =>
   c !== undefined && (DIGIT.test(c) || OTHER_NUMBER.test(c));
+const isDigit = (c: string | undefined): boolean => c !== undefined && DIGIT.test(c);
 const isAlnum = (c: string | undefined): boolean => isLetter(c) || isNum(c);
+const isGroupSpace = (c: string | undefined): boolean => c !== undefined && GROUP_SPACES.has(c);
 const isJoiner = (c: string | undefined): boolean => c !== undefined && NUMBER_JOINERS.has(c);
 /** A1: a symbol that belongs to the number it touches: `%` `‰` `°`, currency, comparison and math
  *  signs (`\p{Sm}`: `<` `>` `≤` `≥` `+` …). */
@@ -176,9 +219,10 @@ function canonicalize(text: string): Canonical {
       marks++;
     }
     const unit = text.slice(i, j);
-    const normal = OTHER_NUMBER.test(base) ? unit : unit.normalize('NFKC');
+    const normal =
+      OTHER_NUMBER.test(base) || UNFOLDED_PRIMES.has(base) ? unit : unit.normalize('NFKC');
     for (const ch of normal.toLowerCase()) {
-      chars.push(DASHES.has(ch) ? '-' : ch);
+      chars.push(isDash(ch) ? '-' : ch);
       from.push(i);
       to.push(j);
     }
@@ -204,6 +248,13 @@ function canonicalize(text: string): Canonical {
   // (ii) a `-` directly before a digit is kept.
   for (let k = 0; k + 1 < chars.length; k++) {
     if (chars[k] === '-' && isNum(chars[k + 1])) kind[k] = 'keep';
+  }
+  // (iii) N3: a `.` or `,` directly before a digit and after a character that is not a letter or
+  //     digit (or at the text's start) is kept: a leading decimal, `.75%` ≠ `75%`.
+  for (let k = 0; k + 1 < chars.length; k++) {
+    if ((chars[k] === '.' || chars[k] === ',') && isNum(chars[k + 1]) && !isAlnum(chars[k - 1])) {
+      kind[k] = 'keep';
+    }
   }
 
   // Emit; a whitespace run becomes one space (mapped to its first character), none at either end.
@@ -240,10 +291,12 @@ function codePointLength(text: string, at: number): number {
   return text.codePointAt(at)! > 0xffff ? 2 : 1;
 }
 
-/** The source as the literal layer's edge rule reads it: each dash variant as `-`, one code unit
- *  for one, so every offset is the source's own (A1, audit finding 4). */
+/** The source as the literal layer's edge rule reads it: each dash or hyphen (N4's `isDash`) as
+ *  `-`, one code unit for one, so every offset is the source's own (A1, audit finding 4). */
 function dashMapped(text: string): string {
-  return text.replace(/[–—−]/gu, '-');
+  let out = '';
+  for (let i = 0; i < text.length; i++) out += isDash(text[i]) ? '-' : text[i];
+  return out;
 }
 
 /** One cached source: a handler checks many quotes against one document (L4: it lets it go). */
@@ -295,8 +348,26 @@ function leftNumberEdgeHolds(hay: string, at: number, needle: string): boolean {
     if (isAlnum(b1)) return false;
     if (isJoiner(b1) && isNum(b2)) return false;
     if (b1 === '-' || isNumberSymbol(b1)) return false;
+    // N3: a leading decimal — a `.` or `,` before the digit that follows no letter or digit.
+    if ((b1 === '.' || b1 === ',') && !isAlnum(b2)) return false;
   } else if (isLetter(first) && isNum(b1)) return false;
   if (first === '-' && isNum(needle[1]) && isAlnum(b1)) return false;
+  // N1: a quote that opens on a number's separator (`.5%` in `4.5%`).
+  if (isJoiner(first) && isNum(needle[1]) && isNum(b1)) return false;
+  // N2: a quote that opens with a group of exactly three digits after one group space and a run of
+  //     1–3 digits that follows no letter (`200 000` in `1 200 000`; never `500` in `2024 500`).
+  if (
+    isDigit(first) &&
+    isDigit(needle[1]) &&
+    isDigit(needle[2]) &&
+    !isDigit(needle[3]) &&
+    isGroupSpace(b1) &&
+    isDigit(b2)
+  ) {
+    let s = at - 1;
+    while (s > 0 && isDigit(hay[s - 1])) s--;
+    if (at - 1 - s <= 3 && !isLetter(hay[s - 1])) return false;
+  }
   return true;
 }
 
@@ -310,21 +381,51 @@ function rightNumberEdgeHolds(hay: string, at: number, needle: string): boolean 
     if (isJoiner(a1) && isNum(a2)) return false;
     if (isNumberSymbol(a1)) return false;
   } else if (isLetter(last) && isNum(a1)) return false;
+  // N1: a quote that ends on a number's separator (`18.` in `18.5`).
+  if (isJoiner(last) && isNum(needle[needle.length - 2]) && isNum(a1)) return false;
+  // N2: a quote whose last digit ends a run of 1–3 digits that follows no letter, where the source
+  //     goes on with one group space, exactly three digits and then no digit (`1 200` in
+  //     `1 200 000`; never `Q1` in `Q1 120`).
+  if (isDigit(last) && isGroupSpace(a1)) {
+    let s = end;
+    while (s > 0 && isDigit(hay[s - 1])) s--;
+    if (
+      end - s <= 3 &&
+      !isLetter(hay[s - 1]) &&
+      isDigit(hay[end + 1]) &&
+      isDigit(hay[end + 2]) &&
+      isDigit(hay[end + 3]) &&
+      !isDigit(hay[end + 4])
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
-/** A2: a piece starts and ends at a word edge of the canonical source — never with a letter or digit
- *  on both sides of the boundary (`whole o|r`; a "not" cut out of "notify"; `can|t`). */
+/** N6: the hyphens that join two letters into one word; never an en or em dash (`the Tenant—not`). */
+const WORD_HYPHENS: ReadonlySet<string> = new Set(['-', '\u2010', '\u2011', '\ufe63', '\uff0d']);
+const isWordHyphen = (c: string | undefined): boolean => c !== undefined && WORD_HYPHENS.has(c);
+
+/** A2, N6: a match starts and ends at a word edge — never with a letter or digit on both sides of the
+ *  boundary (`whole o|r`; a "not" cut out of "notify"; `can|t`; `in|solvent`), and never right after
+ *  or before a hyphen between two letters (`non-|refundable`). Pieces read the canonical source; the
+ *  literal layer reads the raw one. */
 function wordEdgesHold(hay: string, at: number, needle: string): boolean {
   const end = at + needle.length;
   if (at > 0 && isAlnum(hay[at - 1]) && isAlnum(needle[0])) return false;
   if (end < hay.length && isAlnum(hay[end]) && isAlnum(needle[needle.length - 1])) return false;
+  if (isLetter(needle[0]) && isWordHyphen(hay[at - 1]) && isLetter(hay[at - 2])) return false;
+  if (isLetter(needle[needle.length - 1]) && isWordHyphen(hay[end]) && isLetter(hay[end + 1])) {
+    return false;
+  }
   return true;
 }
 
 /** The first occurrence at or after `fromIndex` whose number edges hold — read from `edgeHay` and
- *  `edgeNeedle` (the dash-mapped source and quote, for the literal layer; the same offsets) — or
- *  -1. */
+ *  `edgeNeedle` (the dash-mapped source and quote, for the literal layer; the same offsets) — and,
+ *  when `words` is set, whose word edges hold in `hay` itself (N6: the literal and canonical layers);
+ *  or -1. */
 function findWithEdges(
   budget: Budget,
   hay: string,
@@ -332,21 +433,25 @@ function findWithEdges(
   fromIndex: number,
   edgeHay: string = hay,
   edgeNeedle: string = needle,
+  words = false,
 ): number {
   if (needle === '') return -1;
   let at = budget.indexOf(hay, needle, fromIndex);
-  while (at >= 0 && !numberEdgesHold(edgeHay, at, edgeNeedle)) {
+  while (
+    at >= 0 &&
+    !(numberEdgesHold(edgeHay, at, edgeNeedle) && (!words || wordEdgesHold(hay, at, needle)))
+  ) {
     at = budget.indexOf(hay, needle, at + 1);
   }
   return at;
 }
 
-/** Non-overlapping occurrences whose number edges hold. */
+/** Non-overlapping occurrences whose number and word edges hold (N6). */
 function countWithEdges(budget: Budget, hay: string, needle: string): number {
   let count = 0;
-  for (let at = findWithEdges(budget, hay, needle, 0); at >= 0;) {
+  for (let at = findWithEdges(budget, hay, needle, 0, hay, needle, true); at >= 0;) {
     count++;
-    at = findWithEdges(budget, hay, needle, at + needle.length);
+    at = findWithEdges(budget, hay, needle, at + needle.length, hay, needle, true);
   }
   return count;
 }
@@ -498,7 +603,6 @@ const START_CLOSING: ReadonlySet<string> = new Set(['"', '”', '’', "'", ')',
 const LIST_MARKS: ReadonlySet<string> = new Set(['-', '*', '•', '◦', '▪', '‣', '·', '–', '—', '|']);
 
 const isBlank = (c: string | undefined): boolean => c === ' ' || c === '\t';
-const isDigit = (c: string | undefined): boolean => c !== undefined && DIGIT.test(c);
 
 function blanksBack(source: string, at: number): number {
   let i = at;
@@ -791,6 +895,21 @@ function sentenceGoesOn(source: string, at: number): boolean {
   return c !== undefined && !LINE_BREAKS.has(c);
 }
 
+/** N7: whether the source's sentence goes on after an exact quote's own closing `.` `!` `?` at `at`:
+ *  past closing marks, spaces and tabs, the next character is a lowercase letter or a digit
+ *  (`approx. 412`). */
+function exactGoesOn(source: string, at: number): boolean {
+  let k = at;
+  while (
+    k < source.length &&
+    ((CLOSING.has(source[k]!) && source[k] !== '.') || isBlank(source[k]))
+  ) {
+    k++;
+  }
+  const c = source[k];
+  return c !== undefined && (LOWERCASE.test(c) || isDigit(c));
+}
+
 // ─── The ladder ─────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -837,19 +956,32 @@ function ladder(
   const notFound: QuoteCheck = { state: 'not_found', parts: [], occurrences: 0 };
   const canonicalQuote = quoteCanonical.text;
 
-  const literal = findWithEdges(budget, source, quote, 0, mapped, dashMapped(quote));
+  const literal = findWithEdges(budget, source, quote, 0, mapped, dashMapped(quote), true);
   if (literal >= 0) {
     // The whole quote occurs at least once (the literal match), whatever the canonical count says.
     const occurrences = Math.max(1, countWithEdges(budget, canonical.text, canonicalQuote));
+    const end = literal + quote.length;
+    // N7: the source has the quote's own closing `.` `!` `?`, so L2's test reads the character after.
+    const last = quote[quote.length - 1];
+    const cut = (last === '.' || last === '!' || last === '?') && exactGoesOn(source, end);
     return {
       state: 'exact',
-      parts: [{ start: literal, end: literal + quote.length }],
+      parts: [{ start: literal, end }],
       occurrences,
+      ...cutShort(cut ? [end] : []),
     };
   }
 
   const segments = segmentsWithin(quote);
-  const whole = findWithEdges(budget, canonical.text, canonicalQuote, 0);
+  const whole = findWithEdges(
+    budget,
+    canonical.text,
+    canonicalQuote,
+    0,
+    canonical.text,
+    canonicalQuote,
+    true,
+  );
   if (whole >= 0) {
     const span = trimmed(
       spanOf(canonical, whole, canonicalQuote.length),

@@ -146,6 +146,37 @@ describe('check_quotes — the record, always', () => {
     });
   });
 
+  it('all_found: true with one value in each found state and one unquoted; false once one is not_found (correction 2, 03)', async () => {
+    const each = [
+      { field: 'a', value: 'v', quote: 'shall repair the roof' },
+      { field: 'b', value: 'v', quote: 'THE LANDLORD shall repair the roof' },
+      {
+        field: 'c',
+        value: 'v',
+        quote: 'The Tenant shall pay the rent quarterly … Either party may end this agreement',
+      },
+      {
+        field: 'd',
+        value: 'v',
+        quote: 'Either party may end this agreement … The Tenant shall pay the rent quarterly',
+      },
+      { field: 'e', value: null, quote: '' },
+    ];
+    const found = await run(ctx(each));
+    const missing = await run(ctx([...each, INVENTED('f')]));
+    // (a) red when all_found counts only some found states (stitched or out of order read as
+    //     missing), or counts unquoted; (b) prints the states and the two flags.
+    expect({
+      states: found.data.results.map((r) => r.quote_check.state),
+      all: found.data.all_found,
+      withMissing: missing.data.all_found,
+    }).toEqual({
+      states: ['exact', 'reformatted', 'stitched', 'stitched_out_of_order', 'unquoted'],
+      all: true,
+      withMissing: false,
+    });
+  });
+
   it('unquoted: no quote and no value is not a failure; no quote WITH a value is not_found', async () => {
     const { data } = await run(
       ctx([
