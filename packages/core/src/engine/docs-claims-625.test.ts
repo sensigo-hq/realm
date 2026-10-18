@@ -11,11 +11,18 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { load as loadYaml } from 'js-yaml';
 import * as core from '../index.js';
 import { CheckQuotesHandler } from '../handlers/check-quotes.js';
-import { QUOTE_STATES, locateQuote } from '../handlers/primitives/locate-quote.js';
+import {
+  NOT_SENTENCE_ENDS,
+  QUOTE_SEARCH_BUDGET,
+  QUOTE_STATES,
+  locateQuote,
+  segmentsOf,
+} from '../handlers/primitives/locate-quote.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
+import { loadWorkflowFromString } from '../workflow/yaml-loader.js';
 import {
   advanceRun,
   executeChain,
@@ -1277,18 +1284,105 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
     );
   });
 
-  it(':339 — check_quotes is registered; the two old names never were', () => {
+  it(':339 — check_quotes is registered; a step naming an old name is blocked, the run kept open (correction 1, 05 item 1)', async () => {
     claimOn(
       HANDLERS,
-      '`check_quotes` is registered from this release (see [Built-in handlers](#built-in-handlers)). `validate_verbatim_quotes` and `validate_field_match` were never registered: a step naming them fails at execute as any missing handler does.',
+      '`check_quotes` is registered, added after version 0.47.1 (see [Built-in handlers](#built-in-handlers)). `validate_verbatim_quotes` and `validate_field_match` were never registered: a step naming them is blocked, as any unregistered handler is (above).',
     );
     const registry = createDefaultRegistry();
-    // (a) red when check_quotes is not registered, or an old name is; (b) prints three booleans.
-    expect([
-      registry.has('handler', 'check_quotes'),
-      registry.has('handler', 'validate_verbatim_quotes'),
-      registry.has('handler', 'validate_field_match'),
-    ]).toEqual([true, false, false]);
+    const def = {
+      id: 'docs-760-old',
+      name: 'O',
+      version: 1,
+      steps: {
+        extract: { description: 'E', execution: 'agent', depends_on: [] },
+        verify: {
+          description: 'V',
+          execution: 'auto',
+          handler: 'validate_verbatim_quotes',
+          depends_on: ['extract'],
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-old-')));
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const reply = await executeChain(store, def, {
+      runId: run.id,
+      command: 'extract',
+      registry,
+      input: { text: 'x' },
+      dispatcher: async (_n, i) => ({ ...i }),
+    });
+    const after = await store.get(run.id);
+    // (a) red when check_quotes is not registered, an old name is, or a step naming it ends the run;
+    //     (b) prints three booleans, the code and the run's end.
+    expect({
+      registered: [
+        registry.has('handler', 'check_quotes'),
+        registry.has('handler', 'validate_verbatim_quotes'),
+        registry.has('handler', 'validate_field_match'),
+      ],
+      code: reply.error_code,
+      ended: after.terminal_state === true,
+    }).toEqual({
+      registered: [true, false, false],
+      code: 'ENGINE_HANDLER_NOT_REGISTERED',
+      ended: false,
+    });
+  });
+
+  it(':5, :7 and :343 — the 6 helpers; one built-in handler; every default registry has it, a bare one does not (correction 1, 05 items 2, 13)', () => {
+    claimOn(HANDLERS, 'and the 6 helper functions that `@sensigo/realm` exports for handlers.');
+    claimOn(
+      HANDLERS,
+      'Realm has one handler of its own, `check_quotes` (see [Built-in handlers](#built-in-handlers)); every other handler a workflow names comes from the project.',
+    );
+    claimOn(
+      HANDLERS,
+      'Every registry `createDefaultRegistry()` returns has them: the CLI, `realm agent`, `realm listen`, the MCP server and the testing runner. A registry built with `new ExtensionRegistry()` does not.',
+    );
+    const helpers = [
+      'resolveResource',
+      'walkField',
+      'partitionBySubstring',
+      'countResults',
+      'compareStrings',
+      'locateQuote',
+    ];
+    const exported = core as unknown as Record<string, unknown>;
+    // (a) red when the count, the handler list or a registry drifts; (b) prints the count, the
+    //     handler names and a boolean. (The door list is the census's reading, F760-PIN-09: every
+    //     one of them builds its registry with createDefaultRegistry.)
+    expect({
+      helpers: helpers.filter((n) => typeof exported[n] === 'function').length,
+      handlers: createDefaultRegistry().names('handler'),
+      bare: new ExtensionRegistry().has('handler', 'check_quotes'),
+    }).toEqual({ helpers: 6, handlers: ['check_quotes'], bare: false });
+  });
+
+  it('core-library.md and deployment-manifest.md name the built-in handler (correction 1, 05 items 14, 15)', () => {
+    claimOn(
+      'docs/reference/core-library.md',
+      'Returns an `ExtensionRegistry` that holds the `filesystem` adapter and the `check_quotes` handler.',
+    );
+    claimOn(
+      'docs/reference/core-library.md',
+      'The adapters and handlers the steps can use. Without it, only the `filesystem` adapter and the `check_quotes` handler.',
+    );
+    claimOn(
+      'docs/reference/deployment-manifest.md',
+      'The manifest has no catalogue for handlers or processors; the built-in handler `check_quotes` needs no entry.',
+    );
+    const registry = createDefaultRegistry();
+    // (a) red when the default registry holds another handler set, or loses the adapter; (b) prints
+    //     the names.
+    expect({
+      handlers: registry.names('handler'),
+      adapter: registry.has('adapter', 'filesystem'),
+    }).toEqual({
+      handlers: ['check_quotes'],
+      adapter: true,
+    });
   });
 
   it(':343 — six helper functions, the import block names them, and each is exported', () => {
@@ -1360,13 +1454,14 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
       {
         run_id: 'r',
         run_params: {},
+        // Correction 1 (05 item 11): the guard pattern's own config, so the warning names the
+        // source the workflow below reads.
         config: {
-          source_step: 'extract_fields',
-          source_field: 'document',
+          source_step: 'fetch_document',
           candidates_step: 'extract_fields',
           candidates_field: 'fields',
         },
-        resources: { extract_fields: { document: DOC, fields: candidates } },
+        resources: { fetch_document: { text: DOC }, extract_fields: { fields: candidates } },
       },
     );
     claimOn(HANDLERS, `The step's output, for a document \`${DOC}\` and two values:`);
@@ -1383,41 +1478,45 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
       "The guard needs `depends_on: [quote_check]`. Without it the guard is checked when the run starts, before the check has an output, and the run ends `failed` with a resolution error instead of `aborted`. With it, the run ends `aborted` and the check's record is kept.",
     );
     // "Without it … `failed`" is pinned by `check-quotes.test.ts` ("without depends_on the guard
-    // runs first and the run FAILS").
-    const pattern = loadYaml(block(HANDLERS, 'handler: check_quotes')) as Record<string, unknown>;
-    const def = {
-      id: 'docs-760',
-      name: 'D',
-      version: 1,
-      steps: {
-        fetch_document: { description: 'F', execution: 'agent', depends_on: [] },
-        extract_fields: { description: 'E', execution: 'agent', depends_on: ['fetch_document'] },
-        ...pattern,
-      },
-    } as unknown as WorkflowDefinition;
+    // runs first and the run FAILS"). Correction 1 (05 item 13b): the block is a whole workflow —
+    // loaded as registering loads it, and run once with an altered quote.
+    claimOn(
+      HANDLERS,
+      "A whole workflow: the document's text comes in the run's params, the agent extracts the values, the check reads both, and the guard stops the run:",
+    );
+    const def = loadWorkflowFromString(block(HANDLERS, 'handler: check_quotes'));
     const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-')));
-    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
-    const drive = (command: string, input: Record<string, unknown>) =>
-      executeChain(store, def, {
-        runId: run.id,
-        command,
-        registry: createDefaultRegistry(),
-        input,
-        dispatcher: async (_n, i) => ({ ...i }),
-      });
-    await drive('fetch_document', { text: DOC });
-    await drive('extract_fields', {
-      fields: [{ field: 'payment', value: 'quarterly', quote: 'the rent is paid quarterly' }],
+    const { run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: { text: DOC },
+    });
+    await advanceRun(store, def, { runId: run.id, registry: createDefaultRegistry() });
+    const reply = await executeChain(store, def, {
+      runId: run.id,
+      command: 'extract_fields',
+      registry: createDefaultRegistry(),
+      input: {
+        fields: [
+          { field: 'annual_rent', value: '48000', quote: 'The rent is €48,000 a year' },
+          { field: 'payment', value: 'quarterly', quote: 'the rent is paid quarterly' },
+        ],
+      },
+      dispatcher: async (_n, i) => ({ ...i }),
     });
     const after = await store.get(run.id);
     const check = after.evidence.find((e) => e.step_id === 'quote_check');
-    // (a) red when the pattern's guard cannot stop the run, or the record is lost; (b) prints the
-    //     phase, the seal and the record's flag.
+    // (a) red when the workflow does not load, its guard cannot stop the run, the record is lost, or
+    //     the warning does not reach the reply; (b) prints the phase, the seal, the flag and a
+    //     boolean.
     expect({
       phase: after.run_phase,
       sealedBy: after.sealed_by?.arm,
       all_found: (check?.output_summary as { all_found?: boolean } | undefined)?.all_found,
-    }).toEqual({ phase: 'aborted', sealedBy: 'guard_abort', all_found: false });
+      warned: reply.warnings.some((w) =>
+        w.startsWith("Quote check: 1 of 2 values not found in 'fetch_document.text'"),
+      ),
+    }).toEqual({ phase: 'aborted', sealedBy: 'guard_abort', all_found: false, warned: true });
   });
 
   it('the locateQuote table is what it returns', () => {
@@ -1453,7 +1552,9 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
     // carrying no step output by `step-view.ts`'s StepView (F760-AUD-06).
     claimOn(
       HANDLERS,
-      "The per-value record is the step's output: read it afterwards with `realm run export <run-id>`, which writes the whole run. `get_run_state` does not carry a step's output, and `realm run inspect` prints only the warning, on the step's `Warn:` line.",
+      // Correction 1 (05 item 12): the 120-character Output: cut and the whole Warn: line are
+      // executed by the CLI's docs-claims-625 (#760 cell).
+      "The per-value record is the step's output: read it afterwards with `realm run export <run-id>`, which writes the whole run. `get_run_state` does not carry a step's output, and `realm run inspect` prints the step's output cut at 120 characters and its warning whole, on the `Warn:` line.",
     );
   });
 
@@ -1473,5 +1574,262 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
       changed: 1,
       fixed: 0,
     });
+  });
+});
+
+// issue #760 correction 1 (part 05): every sentence the correction changes in handlers.md, quoted and
+// then executed. What a failing cell prints: states, booleans and the sentence.
+describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const flatten = (t: string) => t.replace(/\s+/g, ' ');
+  const claimOn = (p: string, sentence: string): void => {
+    expect(
+      flatten(readFileSync(join(ROOT, p), 'utf8')),
+      `${p} no longer says: ${sentence}`,
+    ).toContain(flatten(sentence));
+  };
+  /** The states table's row text for `state`. */
+  const stateRow = (state: string): string => {
+    const line = readFileSync(join(ROOT, HANDLERS), 'utf8')
+      .split('\n')
+      .find((l) => l.startsWith(`| \`${state}\``));
+    return (line ?? '').split('|')[2]!.trim();
+  };
+  const handler = new CheckQuotesHandler();
+  const SOURCE =
+    'The Tenant shall pay the rent quarterly in advance. The Landlord shall repair the roof.';
+  const run = async (candidates: unknown[], config: Record<string, unknown> = {}) =>
+    handler.execute(
+      { params: {} },
+      {
+        run_id: 'r',
+        run_params: {},
+        config: { source_step: 'doc', candidates_step: 'extract', ...config },
+        resources: { doc: { text: SOURCE }, extract: { candidates } },
+      },
+    );
+
+  it(':347 and the keys sentence — a missing quote never stops the run; the keys each value is read by', async () => {
+    claimOn(
+      HANDLERS,
+      'A missing quote never stops the run, and the step never judges whether a value is correct; a guard on its `all_found` stops the run (below).',
+    );
+    claimOn(
+      HANDLERS,
+      'Each value is an object: its `quote_field` holds the quote, its `value` key the value, and its `field` key its name in the warning; a value with no `value` key and no quote counts as `not_found`.',
+    );
+    const result = await run([
+      { field: 'rent', value: 'x', quote: 'nothing like this at all' },
+      { name: 'deposit', answer: '24000', quote: '' },
+    ]);
+    const states = (result.data?.['results'] as Array<{ quote_check: { state: string } }>).map(
+      (r) => r.quote_check.state,
+    );
+    // (a) red when a missing quote aborts, the field is not the warning's name, or a value with no
+    //     `value` key and no quote is not counted; (b) prints the abort's presence, the states and
+    //     two booleans.
+    expect({
+      aborted: result.abort !== undefined,
+      states,
+      named: result.warn?.message.includes('rent — "nothing like this at all"'),
+      second: result.warn?.message.includes('candidate 2 — no quote given'),
+    }).toEqual({ aborted: false, states: ['not_found', 'not_found'], named: true, second: true });
+  });
+
+  it('the fault sentence — the step fails, every config fault is named; a check without depends_on fails and the run completes (walk 4)', async () => {
+    claimOn(
+      HANDLERS,
+      'ends the step `failed` with `ENGINE_HANDLER_FAILED` and a message saying what to change; every fault in the config is named at once. List the steps the check reads in its own `depends_on`; without it the check may run before them, fail, and a run whose later steps do not need it still completes.',
+    );
+    let message = '';
+    try {
+      await run([], { quote_feild: 'q', min_part_chars: 3 });
+    } catch (err) {
+      message = err instanceof WorkflowError ? err.message : '';
+    }
+    const def = {
+      id: 'docs-760-w4',
+      name: 'W',
+      version: 1,
+      steps: {
+        extract: { description: 'E', execution: 'agent', depends_on: [] },
+        quote_check: {
+          description: 'C',
+          execution: 'auto',
+          handler: 'check_quotes',
+          config: { source_step: 'extract', candidates_step: 'extract' },
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-w4-')));
+    const { run: created } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await advanceRun(store, def, { runId: created.id, registry: createDefaultRegistry() });
+    await executeChain(store, def, {
+      runId: created.id,
+      command: 'extract',
+      registry: createDefaultRegistry(),
+      input: { text: SOURCE, candidates: [] },
+      dispatcher: async (_n, i) => ({ ...i }),
+    });
+    const after = await store.get(created.id);
+    // (a) red when only the first fault is named, or the walk-4 run does not complete with the check
+    //     failed; (b) prints two booleans, the phase and the failed steps.
+    expect({
+      both:
+        message.includes("'quote_feild'") &&
+        message.includes('min_part_chars must be a whole number'),
+      stepFailed: message.includes('this step failed'),
+      phase: after.run_phase,
+      failed: after.failed_steps,
+    }).toEqual({ both: true, stepFailed: true, phase: 'completed', failed: ['quote_check'] });
+  });
+
+  it('the states table: reformatted, stitched, out of order, not_found, unquoted — each row executed', async () => {
+    claimOn(HANDLERS, stateRow('reformatted'));
+    expect(stateRow('reformatted')).toContain('and `<5%` is not `>5%`.');
+    expect(stateRow('stitched')).toContain(
+      'A piece ends where the quote breaks: at `…` or `...`, a sentence end, `;` or `:` (not one between two digits, as in `9:30`), a double quotation mark or a line break.',
+    );
+    expect(stateRow('stitched_out_of_order')).toBe('The same, with the pieces in another order.');
+    expect(stateRow('not_found')).toBe(
+      'A piece is not in the document, or a part is shorter than `min_part_chars`, or locating the quote took more than 1,000 substring searches; or the value has no quote.',
+    );
+    expect(stateRow('unquoted')).toBe(
+      'The value has no quote, and its `value` key holds `null` or an empty string. It does not count as missing.',
+    );
+    const lease = 'First, the rent. Second, the repairs and the roof are the Landlord’s own duty.';
+    const unquoted = await run([{ field: 'g', value: null, quote: '' }]);
+    // (a) red when a row's behaviour drifts: a sign dropped, an abbreviation or `9:30` read as a
+    //     break, a drop inside a piece found, reversed pieces not labelled, the budget not applied, an
+    //     empty value not unquoted; (b) prints the states.
+    expect({
+      signs: locateQuote('the deposit is <5% of the rent', 'the deposit is >5% of the rent').state,
+      breaks: [segmentsOf('see e.g. the roof').length, segmentsOf('at 9:30 on Monday').length],
+      inOrder: locateQuote(
+        'The Tenant shall pay the rent quarterly… The Landlord shall repair the roof',
+        SOURCE,
+      ).state,
+      dropInside: locateQuote('The Tenant shall pay the rent in advance', SOURCE).state,
+      reversed: locateQuote(
+        'The Landlord shall repair the roof. The Tenant shall pay the rent quarterly',
+        SOURCE,
+      ).state,
+      tooShort: locateQuote('First, the rent… the roof', lease).state,
+      slow: locateQuote('a1'.repeat(200), 'a1'.repeat(4_000)).state,
+      unquoted: (unquoted.data?.['results'] as Array<{ quote_check: { state: string } }>)[0]!
+        .quote_check.state,
+    }).toEqual({
+      signs: 'not_found',
+      breaks: [1, 1],
+      inOrder: 'stitched',
+      dropInside: 'not_found',
+      reversed: 'stitched_out_of_order',
+      tooShort: 'not_found',
+      slow: 'not_found',
+      unquoted: 'unquoted',
+    });
+  });
+
+  it("the stitched row's abbreviations and the not_found row's 1,000 searches are the code's own (L1, A8)", () => {
+    const row = stateRow('stitched');
+    const listed = [...row.slice(row.indexOf('one of ')).matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    // (a) red when the row's list and the code's differ, a listed abbreviation or an initial ends a
+    //     piece, or the budget is not the row's figure; (b) prints the two lists, the abbreviations
+    //     that split a quote, the initial's piece count and the budget.
+    expect({
+      listed,
+      splits: listed.filter((a) => segmentsOf(`see ${a} the roof`).length !== 1),
+      initial: segmentsOf('signed by J. Smith today').length,
+      budget: QUOTE_SEARCH_BUDGET,
+    }).toEqual({ listed: [...NOT_SENTENCE_ENDS], splits: [], initial: 1, budget: 1_000 });
+    expect(stateRow('not_found')).toContain('more than 1,000 substring searches');
+  });
+
+  it('cut_short, the number sentence and `nearest` — each executed', () => {
+    claimOn(
+      HANDLERS,
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest.",
+    );
+    claimOn(
+      HANDLERS,
+      'A number is one unit: a digit never matches inside a longer number or next to a letter. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, and `18` not in `18.5`.',
+    );
+    claimOn(
+      HANDLERS,
+      '`nearest` is where the longest piece of the quote that is in the document lies; it is absent when no whole word of the quote is found.',
+    );
+    claimOn(
+      HANDLERS,
+      '`all_found` is true when no value is `not_found`: `exact`, `reformatted`, `stitched` and `stitched_out_of_order` count as found, and `unquoted` is not counted.',
+    );
+    const cut = locateQuote('The Tenant shall pay the rent.', SOURCE);
+    // (a) red when the label is missing, a shorter number is found inside a longer one, or a
+    //     one-letter `nearest` is kept; (b) prints the label and the states.
+    expect({
+      cut: cut.cut_short,
+      numbers: [
+        locateQuote('see clause 9', 'see clause 9a').state,
+        locateQuote('a cap of 9,20', 'a cap of 9,200 a year').state,
+        locateQuote('a rent of €48', 'a rent of €48,000').state,
+        locateQuote('being 18', 'being 18.5 per cent').state,
+      ],
+      nearest: locateQuote('zzzz qqqq', SOURCE).nearest,
+    }).toEqual({
+      cut: true,
+      numbers: ['not_found', 'not_found', 'not_found', 'not_found'],
+      nearest: undefined,
+    });
+  });
+
+  it('the warning sentence — the quote as the model gave it, cut at 80, and offsets; never text read from the document', async () => {
+    claimOn(
+      HANDLERS,
+      'It prints the quote as the model gave it, cut at 80 characters, and offsets; it never prints text it read from the document.',
+    );
+    const long = `${'The Landlord shall repaint every window each spring and every door each autumn'} and more`;
+    const result = await run([{ field: 'paint', value: 'v', quote: long }]);
+    const near = (
+      result.data?.['results'] as Array<{
+        quote_check: { nearest?: { start: number; end: number } };
+      }>
+    )[0]!.quote_check.nearest;
+    // (a) red when the warning prints the source at `nearest`, or more than 80 characters of the
+    //     quote; (b) prints booleans.
+    expect({
+      head: result.warn?.message.includes(`"${long.slice(0, 80)}…"`),
+      sourceAtNearest:
+        near !== undefined &&
+        result.warn?.message.includes(SOURCE.slice(near.start, near.end) + ' ') === true &&
+        !long.includes(SOURCE.slice(near.start, near.end)),
+    }).toEqual({ head: true, sourceAtNearest: false });
+  });
+
+  it("the locateQuote section — the ladder's stitched, out-of-order and not_found items, and the kept characters", () => {
+    claimOn(
+      HANDLERS,
+      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). A quote with no break is never stitched.",
+    );
+    claimOn(HANDLERS, '4. `stitched_out_of_order`: the same, with the parts in another order.');
+    claimOn(
+      HANDLERS,
+      '5. `not_found`: otherwise, with `nearest` when a piece of the quote holding a whole word is in `source`; it is absent when no whole word of the quote is found.',
+    );
+    claimOn(
+      HANDLERS,
+      'keeping letters, digits, `%`, `‰`, `°`, currency and comparison signs (`<` `>` `≤` `≥` `+`), superscripts and fractions (never folded into digits), a `-` directly before a digit, and the separators between two digits. A number is one unit: a digit never matches inside a longer number of `source`, or next to its letters.',
+    );
+    // (a) red when a mid-word piece is found, a quote with no break stitches, or a sign or a
+    //     superscript is folded; (b) prints the states.
+    expect([
+      locateQuote('The Tenant shall pa… y the rent quarterly', SOURCE).state,
+      locateQuote('The Tenant shall pay the roof', SOURCE).state,
+      locateQuote('a fee of ≥ 10%', 'a fee of ≤ 10%').state,
+      locateQuote('clause 91', 'clause 9¹').state,
+    ]).toEqual(['not_found', 'not_found', 'not_found', 'not_found']);
   });
 });

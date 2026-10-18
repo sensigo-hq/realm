@@ -35,6 +35,7 @@ import {
   outputSourceOf,
   readSupplier,
   parseDeploymentManifest,
+  controlEscape,
 } from '@sensigo/realm';
 import {
   CLI_COMMANDS,
@@ -327,6 +328,17 @@ export function outputSourceLine(
     case 'none':
       return 'Output source: none — nothing to copy, so {} was recorded';
   }
+}
+
+/**
+ * issue #760 (correction D1): a handler's warning, whole, on one line a terminal cannot be driven by —
+ * every control character written out in decision C183's spelling (`\n` reads `\n`). Any handler's
+ * warning goes through it, not only `check_quotes`'s. Never `quotedForTerminal`: that is JSON and
+ * would write every `"` as `\"`.
+ */
+function warnLine(warn: string): string {
+  // eslint-disable-next-line no-control-regex -- the control characters are what is escaped
+  return warn.replace(/[\u0000-\u001f\u007f-\u009f]/g, controlEscape);
 }
 
 function formatSummary(value: unknown, maxLength = 120): string {
@@ -1567,7 +1579,7 @@ export async function inspectRun(
       const lastSource = outputSourceLine(lastSnap, definition);
       if (lastSource !== undefined) lines.push(`     ${lastSource}`);
       // issue #760: a handler's warning, whole — a sentence the operator reads in full, never cut.
-      if (lastSnap.warn !== undefined) lines.push(`     Warn: ${lastSnap.warn}`);
+      if (lastSnap.warn !== undefined) lines.push(`     Warn: ${warnLine(lastSnap.warn)}`);
       if (lastSnap.trace !== undefined) {
         lines.push(`     Trace:  ${lastSnap.trace.length} entries (not hashed).`);
         if (lastSnap.trace_summary?.truncated) {
@@ -1671,7 +1683,7 @@ export async function inspectRun(
         const source = outputSourceLine(snap, definition);
         if (source !== undefined) lines.push(`     ${source}`);
         // issue #760: a handler's warning, whole — a sentence the operator reads in full, never cut.
-        if (snap.warn !== undefined) lines.push(`     Warn: ${snap.warn}`);
+        if (snap.warn !== undefined) lines.push(`     Warn: ${warnLine(snap.warn)}`);
         if (snap.trace !== undefined) {
           lines.push(`     Trace:  ${snap.trace.length} entries (not hashed).`);
           if (snap.trace_summary?.truncated) {

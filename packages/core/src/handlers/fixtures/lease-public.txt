@@ -4,9 +4,9 @@ THIS LEASE is made on 14 March 2025
 
 BETWEEN
 
-(1) HARBOURSIDE ESTATES LIMITED, a company incorporated in Ireland (registered number 990612), whose registered office is at 7 Halloran Row, Dublin 2, D02 QX61, Ireland (the "Landlord"); and
+(1) TALLOWMERE ESTATES LIMITED, a company incorporated in Ireland (registered number FICT-0001), whose registered office is at 7 Halloran Row, Dublin 2, D02 QX61, Ireland (the "Landlord"); and
 
-(2) NORTHWIND ANALYTICS LTD, a company incorporated in Ireland (registered number 990698), whose registered office is at 41 Kestrel Street Lower, Dublin 2, D02 QX25, Ireland (the "Tenant").
+(2) NORTHWIND ANALYTICS LTD, a company incorporated in Ireland (registered number FICT-0002), whose registered office is at 41 Kestrel Street Lower, Dublin 2, D02 QX25, Ireland (the "Tenant").
 
 BACKGROUND
 
@@ -180,7 +180,7 @@ SCHEDULE 4 — RENT REVIEW
 
 2. If the Landlord and the Tenant have not agreed the open market rent three (3) months before the Review Date, either party may refer its determination to an independent chartered surveyor acting as an expert, appointed by agreement or, failing agreement, by the President of the Society of Chartered Surveyors Ireland.
 
-SIGNED AND DELIVERED as a deed by HARBOURSIDE ESTATES LIMITED, acting by two directors, on 14 March 2025.
+SIGNED AND DELIVERED as a deed by TALLOWMERE ESTATES LIMITED, acting by two directors, on 14 March 2025.
 
 SIGNED AND DELIVERED as a deed by NORTHWIND ANALYTICS LTD, acting by a director in the presence of a witness, on 14 March 2025.
 
@@ -188,7 +188,7 @@ SIGNED AND DELIVERED as a deed by NORTHWIND ANALYTICS LTD, acting by a director 
 
 SIDE LETTER
 
-From: Harbourside Estates Limited, 7 Halloran Row, Dublin 2
+From: Tallowmere Estates Limited, 7 Halloran Row, Dublin 2
 To: Northwind Analytics Ltd, 41 Kestrel Street Lower, Dublin 2
 Date: 14 March 2025
 
@@ -201,13 +201,13 @@ We refer to the lease of the above premises completed today (the "Lease"). In co
 This letter is personal to Northwind Analytics Ltd and shall cease to have effect on any assignment of the Lease.
 
 Yours faithfully,
-For and on behalf of Harbourside Estates Limited
+For and on behalf of Tallowmere Estates Limited
 
 ---
 
 DEED OF VARIATION
 
-THIS DEED is made on 2 September 2025 between Harbourside Estates Limited (the "Landlord") and Northwind Analytics Ltd (the "Tenant").
+THIS DEED is made on 2 September 2025 between Tallowmere Estates Limited (the "Landlord") and Northwind Analytics Ltd (the "Tenant").
 
 1. The Landlord and the Tenant agree that, with effect from the date of this Deed, clause 9.1 of the lease of the third floor of Quayside House dated 14 March 2025 (the "Lease") is varied so that the Break Date is 30 April 2031 instead of 30 April 2030. The notice period in clause 9.1 is not changed.
 

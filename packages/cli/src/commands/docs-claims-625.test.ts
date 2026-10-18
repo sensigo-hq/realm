@@ -666,6 +666,11 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
       'docs/reference/handlers.md',
       'read it afterwards with `realm run export <run-id>`, which writes the whole run.',
     );
+    // Correction 1 (05 item 12): inspect prints the step's output cut and its warning whole.
+    claimDoc625(
+      'docs/reference/handlers.md',
+      "`realm run inspect` prints the step's output cut at 120 characters and its warning whole, on the `Warn:` line.",
+    );
     const dir = mkdtempSync(join(tmpdir(), 'realm-760-cli-'));
     try {
       const runStore = new JsonFileStore(dir);
@@ -714,11 +719,21 @@ describe('#760 — a handler warning on `realm run inspect`, and the record in `
         ?.output_summary as { results?: unknown[] } | undefined;
       // (a) red when inspect prints no Warn: line (or cuts it), or the export drops the record; (b)
       //     prints the booleans and the record's length.
+      const output = out.split('\n').find((l) => l.trimStart().startsWith('Output: '));
       expect({
         warned: warn !== undefined && warn.length > 120,
         printedWhole: out.split('\n').some((l) => l.trim() === `Warn: ${warn}`),
+        // The record is longer than 120 characters: its Output: line is cut, with `…`.
+        outputCut:
+          output !== undefined &&
+          output
+            .trim()
+            // eslint-disable-next-line no-control-regex -- the colour codes are what is stripped
+            .replace(/\u001b\[[0-9;]*m/g, '')
+            .endsWith('…') &&
+          output.trim().length < 140,
         exportedResults: exported?.results?.length,
-      }).toEqual({ warned: true, printedWhole: true, exportedResults: 1 });
+      }).toEqual({ warned: true, printedWhole: true, outputCut: true, exportedResults: 1 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

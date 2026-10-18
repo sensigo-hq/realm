@@ -9,7 +9,10 @@ import { join } from 'node:path';
 import { CheckQuotesHandler, CHECK_QUOTES_CONFIG_KEYS } from './check-quotes.js';
 import { createDefaultRegistry } from '../extensions/default-registry.js';
 import { unmetCapabilities } from '../engine/capability.js';
-import { executeChain } from '../engine/execution-loop.js';
+import { advanceRun, executeChain } from '../engine/execution-loop.js';
+import { applyResume } from '../engine/apply-resume.js';
+import { offeredResumeWay } from '../engine/pending.js';
+import { quoteCacheHolds } from './primitives/locate-quote.js';
 import { JsonFileStore } from '../store/json-file-store.js';
 import { WorkflowError } from '../types/workflow-error.js';
 import type { StepContext } from '../extensions/step-handler.js';
@@ -231,8 +234,9 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
     // (a) red when the warning drops a part, prints more than 80 characters of the quote, or
     //     carries the source's text at `nearest`; (b) prints the warning's parts as booleans.
     expect({
-      opens: warn?.startsWith("Quote check: 1 of 1 quotes not found in 'doc.text': repairs — \""),
-      head: warn?.includes(`"${long.slice(0, 80)}"`) === true && !warn.includes(long.slice(0, 81)),
+      // Correction 1 (H4): "values", and a head cut at 80 characters ends with `…`.
+      opens: warn?.startsWith("Quote check: 1 of 1 values not found in 'doc.text': repairs — \""),
+      head: warn?.includes(`"${long.slice(0, 80)}…"`) === true && !warn.includes(long.slice(0, 81)),
       offsets: warn?.includes(`(nearest match at ${near.start}–${near.end})`),
       sourceSpanDiffers: sourceSpan !== '' && !long.includes(sourceSpan),
       sourceText: warn?.includes(sourceSpan),
@@ -247,18 +251,18 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
     });
   });
 
-  it('a quote with nothing nearby says so; one sharing a single letter points at it', async () => {
+  it('a quote with nothing nearby says so; one sharing only a single letter has no `nearest` (correction 1, A7)', async () => {
     const { warn } = await run(ctx([{ field: 'x', value: 'v', quote: '1234 5678' }]));
     const { data } = await run(ctx([{ field: 'y', value: 'v', quote: 'zzzz qqqq' }]));
     const near = (
       data.results[0]!.quote_check as unknown as { nearest?: { start: number; end: number } }
     ).nearest;
-    // (a) red when an absent `nearest` prints offsets, or a found tile is dropped; (b) prints the
-    //     warning's tail and the nearest span's length.
+    // (a) red when an absent `nearest` prints offsets, or a one-letter span (no whole word) is kept
+    //     as `nearest`; (b) prints the warning's tail and the nearest span's length.
     expect({
       none: warn?.endsWith('x — "1234 5678" (no nearby match).'),
       oneLetter: near === undefined ? undefined : near.end - near.start,
-    }).toEqual({ none: true, oneLetter: 1 });
+    }).toEqual({ none: true, oneLetter: undefined });
   });
 
   it('13 not found: ten named, then "and 3 more" from the true count', async () => {
@@ -268,7 +272,7 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
     // (a) red when the list is not capped, or the remainder is recounted wrongly; (b) prints the
     //     count named and the warning's opening and ending.
     expect({
-      opens: warn?.startsWith("Quote check: 13 of 13 quotes not found in 'doc.text': f1 — "),
+      opens: warn?.startsWith("Quote check: 13 of 13 values not found in 'doc.text': f1 — "),
       named,
       ends: warn?.endsWith('; and 3 more.'),
     }).toEqual({ opens: true, named: 10, ends: true });
@@ -276,8 +280,10 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
 });
 
 describe('check_quotes — every fault is a four-clause refusal', () => {
-  const CONSEQUENCE = 'so the quote check did not run and the run failed.';
-  const READMISSION = 'then register the workflow again and start a new run.';
+  // Correction 1 (H6): the STEP failed; resume is offered only for a run that ended failed.
+  const CONSEQUENCE = 'so the quote check did not run and this step failed.';
+  const READMISSION =
+    'then register the workflow again and start a new run; if this run ended failed, realm run resume <run-id> --from <step> runs the step again instead.';
   const FAULTS: Array<[string, StepContext, string]> = [
     [
       'an unknown config key',
@@ -427,7 +433,9 @@ describe('check_quotes on the engine — the step records, the author’s guard 
       sealedBy: run.sealed_by?.arm,
       results: output?.results.length,
       all_found: output?.all_found,
-      warned: check?.warn?.startsWith('Quote check: 1 of 2 quotes not found'),
+      warned: check?.warn?.startsWith('Quote check: 1 of 2 values not found'),
+      // Correction 1 (H7, guardrail 7(b)): the later carrier, the reply's `warnings`, keeps it.
+      inReply: reply.warnings.some((w) => w.startsWith('Quote check: 1 of 2 values not found')),
       line: reply.context_hint,
     }).toEqual({
       phase: 'aborted',
@@ -435,6 +443,7 @@ describe('check_quotes on the engine — the step records, the author’s guard 
       results: 2,
       all_found: false,
       warned: true,
+      inReply: true,
       line: "Guard step 'stop_if_missing' aborted the run.",
     });
   });
@@ -459,5 +468,238 @@ describe('check_quotes on the engine — the step records, the author’s guard 
       named: run.terminal_reason?.startsWith("Step 'quote_check' failed: check_quotes: "),
       prefixed: run.terminal_reason?.includes('threw:'),
     }).toEqual({ code: 'ENGINE_HANDLER_FAILED', phase: 'failed', named: true, prefixed: false });
+  });
+});
+
+describe('check_quotes — correction 1: the values, the text, the faults (03)', () => {
+  it('H1: a value with no `value` key and no quote is not_found; one whose `value` is null is unquoted', async () => {
+    const { data, warn } = await run(
+      ctx([
+        { name: 'deposit', answer: '24000', quote: '' },
+        { field: 'x', value: null, quote: '' },
+      ]),
+    );
+    // (a) red when an absent `value` key reads as an empty value (the deposit is then unquoted,
+    //     all_found true and nothing warned); (b) prints the two states, the flag and the warning's
+    //     presence.
+    expect({
+      states: data.results.map((r) => r.quote_check.state),
+      all_found: data.all_found,
+      warned: warn !== undefined,
+    }).toEqual({ states: ['not_found', 'unquoted'], all_found: false, warned: true });
+  });
+
+  it('H2: the warning is one terminal-safe line — whitespace collapsed, control characters written out, the field cut at 80', async () => {
+    const { warn } = await run(
+      ctx([
+        { field: 'rent\n     Output: {"all_found":true}', value: 'x', quote: 'made up\u001b[2J' },
+        { field: `${'f'.repeat(85)}`, value: 'x', quote: 'nothing like it' },
+      ]),
+    );
+    // (a) red when the field or the quote reaches the warning raw (a forged line, a cleared
+    //     screen), or the field is not cut; (b) prints booleans only.
+    expect({
+      oneLine: (warn ?? '').includes('\n') === false,
+      // eslint-disable-next-line no-control-regex -- the control characters are what is checked
+      noRawControl: /[\u0000-\u001f\u007f-\u009f]/.test(warn ?? '') === false,
+      escWrittenOut: (warn ?? '').includes('made up\\u001b[2J'),
+      fieldCollapsed: (warn ?? '').includes('rent Output: {"all_found":true} — '),
+      fieldCut: (warn ?? '').includes(`${'f'.repeat(80)}… — `),
+    }).toEqual({
+      oneLine: true,
+      noRawControl: true,
+      escWrittenOut: true,
+      fieldCollapsed: true,
+      fieldCut: true,
+    });
+  });
+
+  it('H3: a value with no quote says "no quote given"; a quote that is not text says so', async () => {
+    const { warn } = await run(
+      ctx([
+        { field: 'deposit', value: '24000', quote: '' },
+        { field: 'rent', value: '9', quote: 42 },
+      ]),
+    );
+    // (a) red when either branch prints the old `"" (no nearby match)` (no search ran); (b) prints
+    //     the two entries' presence.
+    expect({
+      noQuote: (warn ?? '').includes('deposit — no quote given'),
+      notText: (warn ?? '').includes('rent — the quote is not text'),
+      noSearchClaimed: (warn ?? '').includes('"" (no nearby match)'),
+    }).toEqual({ noQuote: true, notText: true, noSearchClaimed: false });
+  });
+
+  it('H4: a quote head of 81 characters ends with `…`; one of 80 is shown whole', async () => {
+    const at80 = 'The Landlord shall repaint every window each spring and every door each autumn !';
+    const at81 = `${at80}x`;
+    const { warn } = await run(
+      ctx([
+        { field: 'a', value: 'v', quote: at80 },
+        { field: 'b', value: 'v', quote: at81 },
+      ]),
+    );
+    // (a) red when a cut head carries no `…`, or an uncut one does; (b) prints two booleans.
+    expect({
+      whole: at80.length === 80 && (warn ?? '').includes(`a — "${at80}" (`),
+      cut: (warn ?? '').includes(`b — "${at80}…" (`),
+    }).toEqual({ whole: true, cut: true });
+  });
+
+  it('H5: every config fault is named in one refusal, each with its own remedy', async () => {
+    const err = await refusal(ctx([FOUND], { quote_feild: 'q', min_part_chars: 3 }));
+    // (a) red when the refusal stops at the first fault; (b) prints the clauses as booleans.
+    expect({
+      opens: err?.message.startsWith("check_quotes: the step's config has 2 problems: "),
+      unknown: err?.message.includes(
+        "the config key 'quote_feild' is not one this handler reads (remove it or correct its spelling",
+      ),
+      floor: err?.message.includes(
+        'min_part_chars must be a whole number of at least 4 (got a number 3) (set it to 4 or more',
+      ),
+      consequence: err?.message.includes('so the quote check did not run and this step failed.'),
+      readmission: err?.message.includes('Fix each one, then register the workflow again'),
+    }).toEqual({ opens: true, unknown: true, floor: true, consequence: true, readmission: true });
+  });
+
+  it('H5: more than ten config faults — ten named, then the true remainder', async () => {
+    const keys = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${i + 1}`, 'x']));
+    const err = await refusal(ctx([FOUND], keys));
+    const named = (err?.message.match(/the config key 'k\d+'/g) ?? []).length;
+    // (a) red when the list is not capped, or the remainder is recounted; (b) prints the count named
+    //     and a boolean.
+    expect({ named, more: err?.message.includes('; and 2 more, so the quote check') }).toEqual({
+      named: 10,
+      more: true,
+    });
+  });
+
+  it('H6: a field the value names nowhere reads "nothing"; `min_part_chars: null` is refused, never the default', async () => {
+    const nothing = await refusal(ctx([FOUND], { source_field: 'body' }));
+    const nul = await refusal(ctx([FOUND], { min_part_chars: null }));
+    // (a) red when `undefined` reads "a undefined", or `null` silently takes the default 20;
+    //     (b) prints two booleans.
+    expect({
+      nothing: nothing?.message.startsWith(
+        "check_quotes: 'doc.body' is not the document's text (got nothing), ",
+      ),
+      nul: nul?.message.startsWith(
+        'check_quotes: min_part_chars must be a whole number of at least 4 (got null), ',
+      ),
+    }).toEqual({ nothing: true, nul: true });
+  });
+
+  it('L4: the handler lets the cached document go when it finishes', async () => {
+    await run(ctx([FOUND]));
+    // (a) red when the document stays cached after the step; (b) prints a boolean.
+    expect(quoteCacheHolds()).toBe(false);
+  });
+});
+
+describe('check_quotes — correction 1 (H6): the re-admission clause, by how the run ended', () => {
+  const steps = (config: Record<string, unknown>, checkDependsOn: boolean) => ({
+    extract: { description: 'E', execution: 'agent', depends_on: [] },
+    quote_check: {
+      description: 'C',
+      execution: 'auto',
+      handler: 'check_quotes',
+      ...(checkDependsOn ? { depends_on: ['extract'] } : {}),
+      config: { source_step: 'extract', candidates_step: 'extract', ...config },
+    },
+  });
+  const def = (config: Record<string, unknown>, checkDependsOn = true) =>
+    ({
+      id: 'quote-resume',
+      name: 'Q',
+      version: 1,
+      steps: steps(config, checkDependsOn),
+    }) as unknown as WorkflowDefinition;
+
+  async function started(definition: WorkflowDefinition) {
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-r-')));
+    const { run: created } = await store.create({
+      workflowId: definition.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    await executeChain(store, definition, {
+      runId: created.id,
+      command: 'extract',
+      registry: createDefaultRegistry(),
+      input: { text: SOURCE, candidates: [FOUND] },
+      dispatcher: async (_name, input) => ({ ...input }),
+    });
+    return { store, runId: created.id };
+  }
+
+  it('a run that ends failed: resume runs the check again on the newly registered workflow', async () => {
+    const faulty = def({ quote_feild: 'quote' });
+    const { store, runId } = await started(faulty);
+    const failed = await store.get(runId);
+    const fixed = def({});
+    const offer = offeredResumeWay(failed, fixed);
+    await store.update(applyResume(failed, 'quote_check', fixed).run);
+    await advanceRun(store, fixed, { runId, registry: createDefaultRegistry() });
+    const after = await store.get(runId);
+    const check = [...after.evidence].reverse().find((e) => e.step_id === 'quote_check');
+    // (a) red when the clause promises a resume that does not run the check again; (b) prints the
+    //     phases, the offered command's step and the re-run check's flag.
+    expect({
+      firstPhase: failed.run_phase,
+      clause: failed.terminal_reason?.includes(
+        'if this run ended failed, realm run resume <run-id> --from <step> runs the step again instead.',
+      ),
+      offered: offer?.steps,
+      phase: after.run_phase,
+      allFound: (check?.output_summary as { all_found?: boolean } | undefined)?.all_found,
+    }).toEqual({
+      firstPhase: 'failed',
+      clause: true,
+      offered: ['quote_check'],
+      phase: 'completed',
+      allFound: true,
+    });
+  });
+
+  it('a run that ends completed (the check without depends_on): no resume is offered, and the message promises none', async () => {
+    // Walk 4's shape: with no depends_on the check runs at the run's start, before the values exist,
+    // and fails; the run goes on and completes.
+    const definition = def({}, false);
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-760-c-')));
+    const { run: created } = await store.create({
+      workflowId: definition.id,
+      workflowVersion: 1,
+      params: {},
+    });
+    const runId = created.id;
+    await advanceRun(store, definition, { runId, registry: createDefaultRegistry() });
+    await executeChain(store, definition, {
+      runId,
+      command: 'extract',
+      registry: createDefaultRegistry(),
+      input: { text: SOURCE, candidates: [FOUND] },
+      dispatcher: async (_name, input) => ({ ...input }),
+    });
+    const run = await store.get(runId);
+    const failure = run.evidence.find((e) => e.step_id === 'quote_check');
+    const message = JSON.stringify(failure ?? {});
+    // (a) red when the message promises a resume unconditionally ("runs the step again" with no
+    //     "if this run ended failed"); (b) prints the phase, the offer and two booleans.
+    expect({
+      phase: run.run_phase,
+      failed: run.failed_steps,
+      offered: offeredResumeWay(run, definition),
+      conditional: message.includes('if this run ended failed, realm run resume'),
+      unconditional:
+        /did not run and this step failed\..*?, then register the workflow again and run the step again/.test(
+          message,
+        ),
+    }).toEqual({
+      phase: 'completed',
+      failed: ['quote_check'],
+      offered: undefined,
+      conditional: true,
+      unconditional: false,
+    });
   });
 });

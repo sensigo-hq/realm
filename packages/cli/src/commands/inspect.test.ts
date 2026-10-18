@@ -1279,6 +1279,38 @@ describe('inspectRun — the Warn: line (issue #760)', () => {
     expect(placement(out)).toEqual({ whole: true, afterOutput: true, underHeader: false });
   });
 
+  // Correction 1 (D1): a stored warning holding a newline and a terminal sequence prints as one
+  // line, both written out (decision C183's spelling), in either branch.
+  const RAW =
+    'Quote check: 1 of 1 values not found in \'doc.text\': rent\n     Output: {} — "made up\u001b[2J" (no nearby match).';
+  const ESCAPED =
+    'Quote check: 1 of 1 values not found in \'doc.text\': rent\\n     Output: {} — "made up\\u001b[2J" (no nearby match).';
+  it.each([
+    ['one attempt', [makeSnapshot('quote_check', { warn: RAW, output_summary: {} })]],
+    [
+      'several attempts',
+      [
+        makeSnapshot('quote_check', { status: 'error' }),
+        makeSnapshot('quote_check', { warn: RAW, output_summary: {} }),
+      ],
+    ],
+  ] as const)(
+    '%s: a newline and an escape sequence in the warning are written out',
+    async (_branch, snaps) => {
+      const run = makeRun([...snaps]);
+      const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(quoteDef));
+      const line = out.split('\n').find((l) => l.trimStart().startsWith('Warn: '));
+      // (a) red when the warning is printed raw (a forged line, a cleared screen); (b) prints the
+      //     line's escaping as booleans.
+      expect({
+        escaped: line?.trim() === `Warn: ${ESCAPED}`,
+        // eslint-disable-next-line no-control-regex -- the control characters are what is checked
+        raw: /[\u0000-\u001f\u007f-\u009f]/.test(line ?? ''),
+        forged: out.split('\n').some((l) => l.trim() === 'Output: {} — "made up'),
+      }).toEqual({ escaped: true, raw: false, forged: false });
+    },
+  );
+
   it('a step with no warning prints no Warn: line', async () => {
     const run = makeRun([makeSnapshot('quote_check', { output_summary: { all_found: true } })]);
     const out = await inspectRun('run_test1', makeRunStore(run), makeWorkflowStore(quoteDef));

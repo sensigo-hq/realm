@@ -12,12 +12,20 @@ All notable changes to this project are documented here.
   document (issue #760).** It records, per value, how the quote was found — `exact`,
   `reformatted`, `stitched`, `stitched_out_of_order`, `not_found` or `unquoted` — with offsets into
   the document, and counts them in `by_state` and `all_found`. When a quote is not found, the step
-  completes with a warning naming each one by field, quote and nearest offsets, never the
-  document's text. The step never stops the run; a guard on its `all_found`, with
-  `depends_on` on the check, does. Registered on every runner.
+  completes with a warning naming each one by field and nearest offsets; it prints the quote as
+  the model gave it, cut at 80 characters, and offsets, never text it read from the document. A
+  missing quote never stops the run; a guard on its `all_found`, with `depends_on` on the check,
+  does. Registered in `createDefaultRegistry()`.
 - **`locateQuote`, the sixth helper `@sensigo/realm` exports for handlers (issue #760).** The rule
-  `check_quotes` uses, for a handler of your own.
-- **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full.
+  `check_quotes` uses, for a handler of your own. A quote may skip document text only where it
+  breaks — at `…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation
+  mark or a line break — so a dropped or added "not", or pieces taken from far-apart sentences,
+  read `not_found`. A number is one unit, and comparison signs, superscripts and fractions are
+  kept. A quote that ends a sentence where the document's goes on is marked `cut_short`, with
+  `cut_short_at`.
+- **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
+  every control character written out. Core exports `controlEscape`, the one spelling of a control
+  character a terminal line shows.
 
 - **`error_count`: the total number of problems a refusal found (issue #759).** On the MCP
   reply's `error_details` for `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, beside the
@@ -206,8 +214,8 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 ### Changed
 
-- **The handlers reference no longer describes `validate_verbatim_quotes`, which was never
-  registered (issue #760).** Authors use `check_quotes`.
+- **`ValidateVerbatimQuotesHandler`, never registered or exported, is removed (issue #760);** the
+  handlers reference points to `check_quotes`.
 
 - **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
   an `auto` step the engine could run is refused before anything is claimed: `blocked`,
