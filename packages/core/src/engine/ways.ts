@@ -172,12 +172,7 @@ export type AdvanceWay = Base<'advance'> & {
 export type InspectWay = Base<'inspect'> & { run_id: string };
 
 /** End the run. */
-/**
- * End the run. #819 (U1): with `gate_id`, it ends a run whose open question (that gate) can never be
- * answered ({@link questionNeverAnswerable}) — named by the operator (`realm run abandon <run> --gate
- * <gate_id>`); an operator's way only, never the agent's.
- */
-export type AbandonWay = Base<'abandon'> & { run_id: string; gate_id?: string };
+export type AbandonWay = Base<'abandon'> & { run_id: string };
 
 /**
  * Register the run's workflow again (D3 A-10): no JUDGE — on MCP an elsewhere entry. `path` only
@@ -617,9 +612,7 @@ function partiesAt(way: WayOn, serves: readonly Party[], row?: AnswersRow): Part
       serves.includes(party) &&
       !(party === 'agent' && isEngineStepWay(way)) &&
       // #627 W, §5.2 rows 2 and 4: the door withholds the agent's answer.
-      !(party === 'agent' && way.verb === 'respond' && withholdsAnswers(row)) &&
-      // #819 (U1): ending a run whose question can never be answered is the operator's, by name.
-      !(party === 'agent' && way.verb === 'abandon' && way.gate_id !== undefined),
+      !(party === 'agent' && way.verb === 'respond' && withholdsAnswers(row)),
   );
 }
 
@@ -1085,53 +1078,16 @@ export function classifyStop(
  * reply of that call (A-17: `proof` rides only the opening reply). `presented` says whether the
  * reply carries the question's `gate` object.
  */
-/**
- * Why a run's definition is absent (A-5, T-21), with the copy's path where the store knows it.
- * #819 (U1): `source_gone` — the folder the copy records it was registered from (`source_dir`), when
- * that folder no longer exists; read by the CLI, never by core (R19).
- */
-export interface DefinitionAbsent {
-  absent: DefinitionAbsence;
-  workflow_id: string;
-  path?: string;
-  /** #627 W: `newer` only (W-r2). */
-  format?: { schema_version: number; reads_up_to: number };
-  source_gone?: string;
-}
-
-/**
- * #819 (U1): the copies whose open question can never be answered — by each member's mechanism:
- * `agent_copy_gone` (an agent created the workflow and its copy is gone: there was never a source
- * to register); `unreadable`, `format_invalid` and `legacy` only with `source_gone` (the copy
- * cannot be read, and the folder it records it came from is gone). Never `not_registered` (no
- * copy, so no recorded source), `newer` (the Realm that registered it answers it) or `not_read`.
- */
-export function questionNeverAnswerable(absence: DefinitionAbsent): boolean {
-  if (absence.absent === 'agent_copy_gone') return true;
-  return (
-    absence.source_gone !== undefined &&
-    (absence.absent === 'unreadable' ||
-      absence.absent === 'format_invalid' ||
-      absence.absent === 'legacy')
-  );
-}
-
-/** #819 (U1): why a run's definition is absent, in words for a sentence's middle —
- *  `renderDefinitionAbsent`'s reason (the one composer), and the recorded folder when it is gone. */
-export function definitionAbsentWords(absence: DefinitionAbsent): string {
-  const reason = renderDefinitionAbsent({
-    workflow_id: absence.workflow_id,
-    cause: absence.absent,
-    ...(absence.path !== undefined ? { path: absence.path } : {}),
-  });
-  const lower = `${reason.charAt(0).toLowerCase()}${reason.slice(1)}`;
-  return absence.absent === 'agent_copy_gone' || absence.source_gone === undefined
-    ? lower
-    : `${lower}, and the folder it was registered from (${absence.source_gone}) no longer exists`;
-}
-
 export interface WaysContext {
-  definition: { ok: WorkflowDefinition } | DefinitionAbsent;
+  definition:
+    | { ok: WorkflowDefinition }
+    | {
+        absent: DefinitionAbsence;
+        workflow_id: string;
+        path?: string;
+        /** #627 W: `newer` only (W-r2). */
+        format?: { schema_version: number; reads_up_to: number };
+      };
   enactor:
     | { kind: 'this_program'; registry: ExtensionRegistry }
     | { kind: 'observer' }
@@ -1446,17 +1402,12 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       ...(ctx.definition.format !== undefined ? { format: ctx.definition.format } : {}),
     };
     // #819 (U5): a copy that never had a file has no `register` way; the run's way on is ending it.
-    const noFile = ctx.definition.absent === 'agent_copy_gone';
-    // #819 (U1): an open question that can never be answered is ended by naming its gate.
+    // #819 correction 1 (01): never at a live question — a gate proves the workflow came from a
+    // file (an agent's workflow has none; W-829-B-01), so there the repair is `register`.
     const gate = run.pending_gate;
-    const neverAnswered =
-      gate !== undefined && !run.terminal_state && questionNeverAnswerable(ctx.definition);
-    const abandon: AbandonWay = {
-      verb: 'abandon',
-      conditions: [],
-      run_id: run.id,
-      ...(neverAnswered ? { gate_id: gate.gate_id } : {}),
-    };
+    const noFile =
+      ctx.definition.absent === 'agent_copy_gone' && !(gate !== undefined && !run.terminal_state);
+    const abandon: AbandonWay = { verb: 'abandon', conditions: [], run_id: run.id };
     const repair: WayOn[] = noFile ? [abandon] : [register];
     if (!noFile) ways.push(register);
     if (run.terminal_state) {
@@ -1480,8 +1431,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       unavailable.push({ verb, code: 'definition_absent', facts, remedy: repair });
     }
     // abandon reads no definition: offered, unless a question is open (then the answer is the way
-    // on, and it too waits on the definition — listed above, so the remedy is judged). #819 (U1):
-    // a question that can never be answered is ended by naming its gate — offered.
+    // on, and it too waits on the definition — listed above, so the remedy is judged).
     if (gate !== undefined) {
       const respond: RespondWay = {
         ...respondWayOfGate(run.id, gate),
@@ -1502,21 +1452,17 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
         facts,
         remedy: repair,
       });
-      if (neverAnswered) {
-        ways.push(abandon);
-      } else {
-        unavailable.push({
-          verb: 'abandon',
-          code: 'question_open',
-          facts: {
-            step: gate.step_name,
-            gate_id: gate.gate_id,
-            question_step: gate.step_name,
-            choices: [...gate.choices],
-          },
-          remedy: [respond],
-        });
-      }
+      unavailable.push({
+        verb: 'abandon',
+        code: 'question_open',
+        facts: {
+          step: gate.step_name,
+          gate_id: gate.gate_id,
+          question_step: gate.step_name,
+          choices: [...gate.choices],
+        },
+        remedy: [respond],
+      });
     } else {
       ways.push({ verb: 'abandon', conditions: [], run_id: run.id });
     }

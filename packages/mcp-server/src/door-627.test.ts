@@ -478,11 +478,11 @@ describe('#627 W — the protocol says what this session’s way means', () => {
       },
       withheld: {
         rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation.",
+          "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.",
         await: true,
         valueLine:
           'This server records no gate answers. Workflow text that mentions answering tools refers to tools this session does not have.',
-        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim, and follow next_actions: the question is answered outside this conversation.',
+        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation.',
       },
     });
   });
@@ -666,8 +666,9 @@ describe('#627 W — the await entry: a question answered outside this conversat
     }).toEqual({
       opened: [
         null,
-        // #819 (T2): red when the run-id instruction is missing.
-        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+        // #819 (T2): red when the run-id instruction is missing; correction 1 (02 W3): "from a
+        // terminal" — a Slack thread's answer needs no run id.
+        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they need it to answer from a terminal. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
         `Run is paused at gate '${gate.gate_id}' on step 'q', waiting for an answer outside this conversation.`,
       ],
       awaiting: {
@@ -679,13 +680,82 @@ describe('#627 W — the await entry: a question answered outside this conversat
       },
       // #819 (T1): red per row when the old single clause comes back ("otherwise it is shown to
       // them where they answer it" — false in Slack and in `realm agent`) or the row's text is
-      // another's.
-      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
-      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. This gate declares no message, so get_run_state carries no question text: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+      // another's; correction 1 (02 W2): `noMessage` says what the record holds ("carries no
+      // question text for this gate"), never what the definition declares.
+      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they need it to answer from a terminal. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. get_run_state carries no question text for this gate: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they need it to answer from a terminal. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
       noAnswerCall: false,
       noToken: false,
       pace: [30_000, gate.expires_at, gate.expires_at],
       noWays: [],
+    });
+  });
+
+  it('#819 correction 1 (02 W1): a reply whose gate carries no display — start_run on a gate with no message and no prompt, execute_step of the agent step before one — never says to show gate.display', async () => {
+    // The walk's two workflows (review-829 E, nomsg-gate and agentfirst-gate), as written there.
+    const s = await session({ gateAnswers: 'withheld' });
+    const nomsg = loadWorkflowFromString(
+      [
+        'id: nomsg-gate',
+        'name: Gate with no message and no prompt',
+        'version: 1',
+        'steps:',
+        '  approve:',
+        '    description: A person decides.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    gate:',
+        '      choices: [ship, hold]',
+        '  after:',
+        '    description: Runs after the answer.',
+        '    execution: auto',
+        '    depends_on: [approve]',
+      ].join('\n'),
+    );
+    const agentFirst = loadWorkflowFromString(
+      [
+        'id: agentfirst-gate',
+        'name: Agent step then gate',
+        'version: 1',
+        'steps:',
+        '  draft:',
+        '    description: Draft a note.',
+        '    execution: agent',
+        '    input_schema:',
+        '      type: object',
+        '      properties: { note: { type: string } }',
+        '      required: [note]',
+        '  approve:',
+        '    description: A person decides.',
+        '    execution: auto',
+        '    trust: human_confirmed',
+        '    depends_on: [draft]',
+        '    gate:',
+        '      choices: [ship, hold]',
+      ].join('\n'),
+    );
+    await s.workflowStore.register(nomsg);
+    await s.workflowStore.register(agentFirst);
+    const started = await s.call('start_run', { workflow_id: 'nomsg-gate', params: {} });
+    const drafted = await s.call('start_run', { workflow_id: 'agentfirst-gate', params: {} });
+    const stepped = await s.call('execute_step', {
+      run_id: String(drafted['run_id']),
+      command: 'draft',
+      params: { note: 'n' },
+    });
+    const awaitText = (r: Reply) =>
+      (r['next_actions'] as Entry[]).find((a) => a.awaiting !== undefined)?.human_readable ?? '';
+    const shape = (r: Reply) => ({
+      display: 'display' in ((r['gate'] as Reply | undefined) ?? {}),
+      saysDisplay: awaitText(r).includes('gate.display'),
+      saysNoText: awaitText(r).includes('get_run_state carries no question text for this gate'),
+    });
+    // (a) red when the reply's own gate is not read (the old branch: "Show the user gate.display"
+    //     for a reply whose gate has none); (b) prints, per reply, whether its gate has a display
+    //     and what its awaiting text says.
+    expect({ started: shape(started), stepped: shape(stepped) }).toEqual({
+      started: { display: false, saysDisplay: false, saysNoText: true },
+      stepped: { display: false, saysDisplay: false, saysNoText: true },
     });
   });
 

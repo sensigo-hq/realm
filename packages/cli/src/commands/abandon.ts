@@ -1,49 +1,34 @@
 // abandon command — explicitly abandons a non-terminal run via the shared core primitive.
 import { Command } from 'commander';
-import { existsSync, readFileSync } from 'node:fs';
-import type { DefinitionAbsent, RunRecord } from '@sensigo/realm';
+import type { RunRecord } from '@sensigo/realm';
 import { cliCommandOf } from './ways-renderer.js';
 
 /**
- * #819 (U1): the one read before the seal, for a run waiting on a question — whether its workflow
- * can be read, and, when its copy cannot be, why (core's `definitionAbsenceOf`), with the folder the
- * copy records it was registered from (`source_dir`) when that folder is gone. It only relaxes the
- * refusal: any failure of its own reads nothing (`undefined`), and the kill goes on as before.
+ * #819 correction 1 (02 C2): an empty or blank `--reason` is refused, as an empty flag is refused at
+ * the MCP door's start (#627): its four clauses — validity, consequence, remedy, re-admission.
  */
-async function absenceBeforeSeal(run: RunRecord): Promise<DefinitionAbsent | undefined> {
-  try {
-    const { JsonWorkflowStore, definitionAbsenceOf, getWorkflowForRun } =
-      await import('@sensigo/realm');
-    try {
-      await getWorkflowForRun(new JsonWorkflowStore(), run, {
-        retryVerb: 'abandon again',
-        verb: 'abandon',
-      });
-      return undefined;
-    } catch (err) {
-      const absence = definitionAbsenceOf(err, run);
-      if (absence === undefined) return undefined;
-      const source = recordedSource(absence.path);
-      return source !== undefined && !existsSync(source)
-        ? { ...absence, source_gone: source }
-        : absence;
-    }
-  } catch {
-    return undefined;
-  }
+export function emptyReasonRefusal(raw: string): string {
+  return `realm run abandon: invalid --reason value '${raw}': expected text that says why the run ends — refused: the run is not abandoned while the reason is empty, because an empty reason records nothing about why it ended. Give a reason, or leave --reason out (the record then says it was abandoned via realm run abandon). The run can be abandoned as soon as the reason is not empty.`;
 }
 
-/** The folder a registered copy records it was registered from, when the copy is a JSON object
- *  that records one. */
-function recordedSource(path: string | undefined): string | undefined {
-  if (path === undefined) return undefined;
+/**
+ * #819 correction 1 (01): the repair of a run whose question is open but whose workflow cannot be
+ * read — the one read, made only after core refused the kill: the remedy `getWorkflowForRun`'s own
+ * error carries (its `register` way, with the copy's path when the store knows it). `undefined`
+ * when the workflow reads, or the read says nothing to repair: the refusal then names the answer.
+ */
+async function repairOf(run: RunRecord): Promise<string | undefined> {
+  const { JsonWorkflowStore, WorkflowError, getWorkflowForRun } = await import('@sensigo/realm');
   try {
-    const copy = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-    if (copy === null || typeof copy !== 'object' || Array.isArray(copy)) return undefined;
-    const dir = (copy as Record<string, unknown>)['source_dir'];
-    return typeof dir === 'string' && dir !== '' ? dir : undefined;
-  } catch {
+    await getWorkflowForRun(new JsonWorkflowStore(), run, {
+      retryVerb: 'answer the gate',
+      verb: 'abandon',
+    });
     return undefined;
+  } catch (err) {
+    if (!(err instanceof WorkflowError)) return undefined;
+    const register = (err.remedy ?? []).find((w) => w.verb === 'register');
+    return register !== undefined ? (cliCommandOf(register) ?? undefined) : undefined;
   }
 }
 
@@ -51,11 +36,7 @@ export const abandonCommand = new Command('abandon')
   .description('Abandon a non-terminal run (marks it terminal with phase "abandoned")')
   .argument('<run-id>', 'ID of the run to abandon')
   .option('--reason <text>', 'Human-readable reason recorded as terminal_reason')
-  .option(
-    '--gate <gate_id>',
-    'End a run waiting on this gate whose question can never be answered: its workflow was created by an agent and its copy is gone, or its copy cannot be read and the folder it was registered from is gone',
-  )
-  .action(async (runId: string, opts: { reason?: string; gate?: string }) => {
+  .action(async (runId: string, opts: { reason?: string }) => {
     const {
       JsonFileStore,
       JsonWorkflowStore,
@@ -65,30 +46,25 @@ export const abandonCommand = new Command('abandon')
       shellWord,
       withFullStop,
     } = await import('@sensigo/realm');
+    if (opts.reason !== undefined && opts.reason.trim() === '') {
+      console.error(emptyReasonRefusal(opts.reason));
+      process.exit(1);
+      return;
+    }
     const runStore = new JsonFileStore();
+    let before: RunRecord | undefined;
     try {
       // issue #367: read first, so the output can say whether THIS call changed anything —
       // abandoning an already-abandoned run is an idempotent no-op and used to print exactly the
       // same line as a real kill.
-      const before = await runStore.get(runId);
+      before = await runStore.get(runId);
       const alreadyAbandoned = before.abandoned_at !== undefined;
-      // #819 (U1): at a live question, the one read before the seal — whether it can ever be
-      // answered; core decides, and only for the gate `--gate` names.
-      const live =
-        !before.terminal_state &&
-        before.abandoned_at === undefined &&
-        before.pending_gate !== undefined;
-      const absence = live ? await absenceBeforeSeal(before) : undefined;
       // issue #558 PR-C: the reason names THIS surface's verb. Core's neutral default
       // ('Abandoned') would leave a CLI kill unattributed; the MCP tool supplies its own.
       const run = await abandonRun(
         runStore,
         runId,
         opts.reason ?? 'Abandoned via realm run abandon',
-        {
-          ...(opts.gate !== undefined ? { gate: opts.gate } : {}),
-          ...(absence !== undefined ? { absence } : {}),
-        },
       );
       // issue #558 PR-C (walk 2): the rerun command must be executable from THIS screen. The
       // registered copy records the directory it was registered from (`source_dir`, since v0.14);
@@ -134,19 +110,16 @@ export const abandonCommand = new Command('abandon')
       // through the CLI's one renderer — no command is read out of `details`. C212: the command ends
       // the line, with no stop after it.
       if (err instanceof WorkflowError && err.code === 'STATE_TRANSITION_DENIED') {
-        // #819 (U1): a question that can never be answered names the gate-named abandon; one whose
-        // workflow cannot be read yet names its repair; any other names its answer.
-        const way = (err.remedy ?? []).find(
-          (w) => w.verb === 'abandon' || w.verb === 'register' || w.verb === 'respond',
-        );
-        const lead =
-          way?.verb === 'abandon'
-            ? 'To end it'
-            : way?.verb === 'register'
-              ? 'Repair it'
-              : 'Answer it';
-        if (way !== undefined) {
-          console.error(`${err.message} ${lead}: ${cliCommandOf(way)}`);
+        const answer = (err.remedy ?? []).find((w) => w.verb === 'respond');
+        if (answer !== undefined) {
+          // #819 correction 1 (01): the answer waits on a workflow that cannot be read — then the
+          // way on is its repair, read once here (the record is not touched: core refused).
+          const repair = before !== undefined ? await repairOf(before) : undefined;
+          console.error(
+            repair !== undefined
+              ? `${err.message} Its workflow cannot be read, so the question cannot be answered until it is repaired. Repair it: ${repair}`
+              : `${err.message} Answer it: ${cliCommandOf(answer)}`,
+          );
           process.exit(1);
           return;
         }

@@ -26,9 +26,12 @@ export function sortedById(workflows: WorkflowDefinition[]): WorkflowDefinition[
 
 /** The SCHEMA column. #819 (U4): every copy in the table is at the current format — a copy an older
  *  or a later Realm registered is never listed here (#627 W correction 1 C3, correction 2 8.6 (c)):
- *  its ⚠ line names it, with its way out. */
+ *  its ⚠ line names it, with its way out. #819 correction 1 (02 C1): "(current)" only for the
+ *  current format — a schema bump that still reads older numbers would list one, and it prints as
+ *  itself. */
 export function schemaCell(schemaVersion: number | undefined): string {
-  return `${String(schemaVersion)} (current)`;
+  if (schemaVersion === CURRENT_WORKFLOW_SCHEMA_VERSION) return `${schemaVersion} (current)`;
+  return schemaVersion === undefined ? 'none' : String(schemaVersion);
 }
 
 function pad(value: string, width: number): string {

@@ -268,15 +268,14 @@ Run 729eaab3-6203-46cb-9c5c-3714070723a8 stays open (phase 'running'): for 'a', 
 ## `abandon`
 
 ```text
-realm run abandon <run-id> [--reason <text>] [--gate <gate-id>]
+realm run abandon <run-id> [--reason <text>]
 ```
 
 Ends an open run. Its phase becomes `abandoned`. The workflow's cleanup steps do not run.
 
-| Flag               | What it does                                                                                                                                                                                                                                      |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--reason <text>`  | Recorded as the run's cause. Default: `Abandoned via realm run abandon`.                                                                                                                                                                          |
-| `--gate <gate-id>` | Ends a run waiting at this gate whose question can never be answered: its workflow was created by an agent and its stored copy is gone, or its stored copy cannot be read and the folder it was registered from is gone. The cause then says why. |
+| Flag              | What it does                                                             |
+| ----------------- | ------------------------------------------------------------------------ |
+| `--reason <text>` | Recorded as the run's cause. Default: `Abandoned via realm run abandon`. |
 
 ```bash
 realm run abandon 00b33778-f504-4d65-93ca-6300441f41e7 --reason "upstream still down"
@@ -294,12 +293,12 @@ Abandoning a run that is already abandoned changes nothing, and the first line s
 
 **Exit code:** 0 if the run is abandoned, otherwise 1:
 
-| Case                                                                                         | Message                                                                                                                                                                                                                                                                                                                  |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The run is waiting at a gate                                                                 | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Answer it: realm run respond 4233aa3c-… --gate 70d76b3b-… --choice <one of: approve, reject>`                                                                                                |
-| The run is waiting at a gate whose workflow cannot be read yet                               | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. It can be answered once its workflow can be read: the stored copy of workflow 'deploy' (…/deploy.json) is not a valid workflow. Repair it: realm workflow validate --registered deploy`      |
-| The run is waiting at a gate whose question can never be answered, and `--gate` is not given | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'), whose question can never be answered: workflow 'triage-0123456789abcdef' was created by an agent (create_workflow) and its stored copy is gone; there is no source file to register. To end it: realm run abandon 4233aa3c-… --gate 70d76b3b-…` |
-| The run ended in another way                                                                 | `Run '08c61d5d-…' is already terminal (failed); cannot abandon a finished run.`                                                                                                                                                                                                                                          |
+| Case                                                       | Message                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The run is waiting at a gate                               | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Answer it: realm run respond 4233aa3c-… --gate 70d76b3b-… --choice <one of: approve, reject>`                                                                                                                                                            |
+| The run ended in another way                               | `Run '08c61d5d-…' is already terminal (failed); cannot abandon a finished run.`                                                                                                                                                                                                                                                                                                      |
+| The run is waiting at a gate whose workflow cannot be read | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its workflow cannot be read, so the question cannot be answered until it is repaired. Repair it: realm workflow validate --registered deploy`                                                                                                            |
+| `--reason` is empty or blank                               | `realm run abandon: invalid --reason value '': expected text that says why the run ends — refused: the run is not abandoned while the reason is empty, because an empty reason records nothing about why it ended. Give a reason, or leave --reason out (the record then says it was abandoned via realm run abandon). The run can be abandoned as soon as the reason is not empty.` |
 
 ## `cleanup`
 

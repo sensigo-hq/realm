@@ -30,13 +30,33 @@ const ENTRY_POINTS = ['pkexec', 'run0', 'systemd-run', 'machinectl'] as const;
 
 /** #819 (08, B F11): the entry points an asked action is reached by — pkexec for its own action and
  *  each program it runs; run0 and `systemd-run` for manage-units; machinectl for machine1's shells.
- *  An action none names is named by its id. Any D-Bus client reaches the action itself. */
-function entryPointsOf(a: Action): string[] {
+ *  An action none names is named by its id. Any D-Bus client reaches the action itself. #819
+ *  correction 1 (walk --check wording 6): only the entry points this host has; manage-units with
+ *  neither run0 nor systemd-run is named by its id (systemd's D-Bus service is reached without them). */
+function entryPointsOf(a: Action, has: (name: string) => boolean): string[] {
   if (a.id === 'org.freedesktop.policykit.exec' || a.execPath) return ['pkexec'];
-  if (a.id === 'org.freedesktop.systemd1.manage-units') return ['run0', 'systemd-run'];
+  if (a.id === 'org.freedesktop.systemd1.manage-units') {
+    const here = ['run0', 'systemd-run'].filter(has);
+    return here.length > 0 ? here : [a.id];
+  }
   if (a.id === 'org.freedesktop.machine1.shell' || a.id === 'org.freedesktop.machine1.host-shell')
     return ['machinectl'];
   return [a.id];
+}
+
+/** sd_booted(3)'s test: systemd runs as PID 1 when this folder exists. */
+const SYSTEMD_BOOTED = '/run/systemd/system';
+
+/** #819 correction 1 (walk --check wording 6; #790 01b #5): whether this host has a way to the
+ *  action — pkexec's actions where pkexec is present, machinectl's shells where machinectl is, and
+ *  manage-units whenever systemd runs as PID 1 (its D-Bus service needs neither run0 nor
+ *  systemd-run). Any other action is asked. */
+function reachable(a: Action, has: (name: string) => boolean, booted: boolean): boolean {
+  if (a.id === 'org.freedesktop.policykit.exec' || a.execPath) return has('pkexec');
+  if (a.id === 'org.freedesktop.systemd1.manage-units') return booted;
+  if (a.id === 'org.freedesktop.machine1.shell' || a.id === 'org.freedesktop.machine1.host-shell')
+    return has('machinectl');
+  return true;
 }
 
 interface Action {
@@ -88,15 +108,25 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
   const names = lk.probes.list(ACTIONS_DIR);
   if (names === undefined) return unknown(`${ACTIONS_DIR} listed`, `${ACTIONS_DIR} cannot be read`);
   const actions: Action[] = [];
+  const has = (n: string): boolean => presence(lk.probes, n) !== undefined;
+  const booted = lk.probes.exists(SYSTEMD_BOOTED);
   for (const name of names.filter((n) => n.endsWith('.policy')).sort()) {
     const xml = lk.probes.readText(join(ACTIONS_DIR, name));
     const parsed = xml === undefined ? undefined : actionsOf(xml);
     if (parsed === undefined)
       return unknown(`${ACTIONS_DIR} read`, `${join(ACTIONS_DIR, name)} cannot be read`);
-    actions.push(...parsed.filter((a) => ASKED.has(a.id) || a.execPath));
+    actions.push(
+      ...parsed.filter((a) => (ASKED.has(a.id) || a.execPath) && reachable(a, has, booted)),
+    );
   }
   const pid = String(lk.probes.pid());
-  const found: { outcome: SwitchOutcome; whose?: SwitchWhose; id: string; cause?: string }[] = [];
+  const found: {
+    outcome: SwitchOutcome;
+    whose?: SwitchWhose;
+    id: string;
+    cause?: string;
+    guessed?: true;
+  }[] = [];
   let keep = false;
   for (const a of actions) {
     const argv = [pkcheck.path, '--action-id', a.id, '--process', pid];
@@ -108,9 +138,10 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
     if (code === 0) found.push({ outcome: 'yes', id: a.id });
     else if (code === 1) found.push({ outcome: 'not_allowed', id: a.id });
     else if (code === 2) {
-      // B §4: an unreadable rule may change whose credential the challenge asks, and keep it
-      found.push({ outcome: 'needs_credential', whose: 'this_login', id: a.id });
-      found.push({ outcome: 'needs_credential', whose: 'administrator', id: a.id });
+      // B §4: an unreadable rule may change whose credential the challenge asks, and keep it —
+      // #819 correction 1 (A MINOR 5): a guess, printed as "may need"
+      found.push({ outcome: 'needs_credential', whose: 'this_login', id: a.id, guessed: true });
+      found.push({ outcome: 'needs_credential', whose: 'administrator', id: a.id, guessed: true });
       keep = true;
     } else {
       found.push({ outcome: 'unknown', id: a.id, cause: `${argv.join(' ')}: ${toolLine(r)}` });
@@ -127,7 +158,7 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
       tools: ((named) => [
         ...ENTRY_POINTS.filter((t) => named.has(t)),
         ...[...named].filter((t) => !(ENTRY_POINTS as readonly string[]).includes(t)),
-      ])(new Set(actions.flatMap(entryPointsOf))),
+      ])(new Set(actions.flatMap((a) => entryPointsOf(a, has)))),
       admin: rules('/etc/polkit-1/rules.d'),
       vendor: rules('/usr/share/polkit-1/rules.d'),
     },
@@ -184,6 +215,9 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
       ),
     ),
   ];
+  // a credential only pkcheck's challenge suggested, which no action's defaults name, is a guess
+  const guess = (w: SwitchWhose): boolean =>
+    found.every((f) => f.outcome !== 'needs_credential' || f.whose !== w || f.guessed === true);
   return whose.map((w) => ({
     path: 'polkit',
     tool: pkcheck.path,
@@ -191,6 +225,7 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
     whose: w,
     ...(keep ? { cache: 'polkit_keep' as const } : {}),
     how,
+    ...(guess(w) ? { cause: "polkit's rules may change whose it asks" } : {}),
     ...detail,
   }));
 }

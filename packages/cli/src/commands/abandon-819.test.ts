@@ -1,41 +1,46 @@
-// abandon-819.test.ts — #819 (03) on the CLI door. U1: `realm run abandon <run> --gate <gate>` ends
-// a run whose open question can never be answered — an agent's copy that is gone, or a copy that
-// cannot be read whose recorded source folder is gone — reading the copy once before the seal;
-// without `--gate` it refuses and names the flag; every repairable cause keeps the refusal with its
-// repair. U2: a registered copy with no `steps` is named, with its repair, by `realm run inspect` and
-// `realm workflow list`. U5: the gate-named abandon is the CLI's command for its way.
+// abandon-819.test.ts — #819 correction 1 (01) on the CLI door. The stuck-run command (U1) is out:
+// `realm run abandon` refuses every run waiting at a question, as before #819. When the run's
+// workflow cannot be read, the refusal names that copy's repair — read once, after core refused —
+// in place of the answer it cannot take yet; the record is not touched. A run at a gate whose
+// hex-suffixed workflow has no copy reads `not_registered` on every CLI surface (abandon, respond,
+// inspect's Run Health), never "created by an agent". 02 C2: an empty or blank `--reason` is
+// refused, as an empty flag is at the MCP door's start.
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: run
 // and gate ids, file names, printed lines — never a token or an environment.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { abandonCommand } from './abandon.js';
-import { cliCommandOf } from './ways-renderer.js';
+import { abandonCommand, emptyReasonRefusal } from './abandon.js';
+import { respondCommand } from './respond.js';
+import { inspectRun } from './inspect.js';
 
-/** An id the registrar reads as an agent's (`create_workflow`'s `<slug>-<16 hex>`). */
-const AGENT_ID = 'triage-0123456789abcdef';
+/** An id the registrar's shape test reads as an agent's (`<slug>-<16 hex>`): here a person's. */
+const HEX_ID = 'ops-review-0123456789abcdef';
 const GATE = {
   gate_id: 'g-1',
   step_name: 'approve',
   preview: {},
-  choices: ['approve', 'reject'],
+  choices: ['ship', 'hold'],
   opened_at: '2026-01-01T00:00:00.000Z',
 };
+const AGENT_WORDS = 'created by an agent';
 
-describe('#819 U1 — realm run abandon --gate', () => {
+describe('#819 correction 1 (01) — realm run abandon at an open question', () => {
   let home: string;
   let wfDir: string;
+  let runsDir: string;
   let originalHome: string | undefined;
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'realm-abandon-819-'));
+    home = await mkdtemp(join(tmpdir(), 'realm-abandon-819c1-'));
     wfDir = join(home, '.realm', 'workflows');
-    await mkdir(join(home, '.realm', 'runs'), { recursive: true });
+    runsDir = join(home, '.realm', 'runs');
+    await mkdir(runsDir, { recursive: true });
     await mkdir(wfDir, { recursive: true });
     originalHome = process.env['HOME'];
     process.env['HOME'] = home;
@@ -55,143 +60,163 @@ describe('#819 U1 — realm run abandon --gate', () => {
     await rm(home, { recursive: true, force: true });
   });
 
-  /** A run of `workflowId` waiting at gate `g-1`. */
-  async function atGate(workflowId: string) {
+  /** A run of `workflowId` waiting at gate `g-1`; its registered copy written as `copy`, if given. */
+  async function atGate(workflowId: string, copy?: string) {
+    if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), copy);
     const { JsonFileStore } = await import('@sensigo/realm');
     const store = new JsonFileStore();
     const { run } = await store.create({ workflowId, workflowVersion: 1, params: {} });
     await store.update({ ...run, pending_gate: { ...GATE } });
     return { store, id: run.id };
   }
-  /** The command's outcome: what it printed, whether it exited 1, and the stored run. */
-  async function abandon(
-    args: string[],
-    store: { get: (id: string) => Promise<unknown> },
-    id: string,
-  ) {
-    const failed = await abandonCommand.parseAsync(args, { from: 'user' }).then(
+  /** `realm run abandon <args>`: whether it exited 1, what it printed, and whether the run's file
+   *  is byte for byte what it was. */
+  async function abandon(id: string, ...args: string[]) {
+    const file = join(runsDir, `${id}.json`);
+    const before = await readFile(file);
+    errSpy.mockClear();
+    const failed = await abandonCommand.parseAsync([id, ...args], { from: 'user' }).then(
       () => false,
       () => true,
     );
-    const run = (await store.get(id)) as {
-      run_phase: string;
-      terminal_reason?: string;
-      pending_gate?: unknown;
-    };
     return {
       failed,
       err: errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n'),
-      phase: run.run_phase,
-      reason: run.terminal_reason,
-      gate: run.pending_gate !== undefined,
+      unchanged: before.equals(await readFile(file)),
     };
   }
+  const NOT_OPEN = (id: string) =>
+    `Run '${id}' is waiting on human gate 'approve' (gate 'g-1'); it cannot be abandoned while its question is open.`;
+  const REPAIR =
+    'Its workflow cannot be read, so the question cannot be answered until it is repaired. Repair it:';
+  /** A copy at the current format, as a file registration writes it, with `over` changed. */
+  const copyOf = (id: string, over: Record<string, unknown>, drop: string[] = []) => {
+    const base: Record<string, unknown> = {
+      id,
+      name: id,
+      version: 1,
+      schema_version: 1,
+      steps: { approve: { execution: 'auto', trust: 'human_confirmed' } },
+      source_dir: join(home, 'gone'),
+      ...over,
+    };
+    for (const k of drop) delete base[k];
+    return JSON.stringify(base);
+  };
 
-  it("(a) an agent's copy that is gone: --gate ends the run, the record names why, its question is cleared", async () => {
-    const { store, id } = await atGate(AGENT_ID);
-    const out = await abandon([id, '--gate', 'g-1', '--reason', 'triage retired'], store, id);
-    // (a) red when the refusal still stands (W's walk 2: neither answered nor ended), the reason
-    //     loses its cause, or the terminal record keeps its open question; (b) prints the outcome.
-    expect(out).toEqual({
-      failed: false,
-      err: '',
-      phase: 'abandoned',
-      reason: `triage retired (its question could not be answered: workflow '${AGENT_ID}' was created by an agent (create_workflow) and its stored copy is gone; there is no source file to register)`,
-      gate: false,
-    });
-  });
-
-  it('(b) a copy that cannot be read whose recorded source folder is gone: --gate ends the run', async () => {
-    // A copy at the current format with no `steps` (U2's fault), registered from a folder since
-    // removed (`source_dir`, as every file-registered copy records it).
-    const gone = join(home, 'deleted-source');
-    await writeFile(
-      join(wfDir, 'flow.json'),
-      JSON.stringify({ id: 'flow', name: 'flow', version: 1, schema_version: 1, source_dir: gone }),
-    );
-    const { store, id } = await atGate('flow');
-    const out = await abandon([id, '--gate', 'g-1'], store, id);
-    // (a) red when the copy's recorded source is not read, or a gone one does not count; (b)
-    //     prints the outcome.
-    expect(out).toEqual({
-      failed: false,
-      err: '',
-      phase: 'abandoned',
-      reason: `Abandoned via realm run abandon (its question could not be answered: the stored copy of workflow 'flow' (${join(wfDir, 'flow.json')}) is not a valid workflow, and the folder it was registered from (${gone}) no longer exists)`,
-      gate: false,
-    });
-  });
-
-  it('without --gate, a question that can never be answered is refused, naming the flag', async () => {
-    const { store, id } = await atGate(AGENT_ID);
-    const out = await abandon([id], store, id);
-    // (a) red when the run is ended unnamed, or the refusal names the answer (which can never be
-    //     given) instead of the flag; (b) prints the outcome.
-    expect(out).toEqual({
+  it('A1: a gate whose workflow can be read is refused with its answer line, as before #819', async () => {
+    // a readable copy: the captured shape of a registered gate workflow, its source kept
+    const { id } = await atGate('plain-gate', copyOf('plain-gate', { source_dir: home }));
+    // (a) red when a readable workflow's refusal names a repair, or the record changes; (b) prints
+    //     the outcome.
+    expect(await abandon(id)).toEqual({
       failed: true,
-      err: `Run '${id}' is waiting on human gate 'approve' (gate 'g-1'), whose question can never be answered: workflow '${AGENT_ID}' was created by an agent (create_workflow) and its stored copy is gone; there is no source file to register. To end it: realm run abandon ${id} --gate g-1`,
-      phase: 'gate_waiting',
-      reason: undefined,
-      gate: true,
+      err: `${NOT_OPEN(id)} Answer it: realm run respond ${id} --gate g-1 --choice <one of: ship, hold>`,
+      unchanged: true,
     });
   });
 
-  it('each repairable cause keeps the refusal, --gate or not, with its repair: a copy whose source is still there, a newer copy, a copy that is not JSON, a workflow not registered', async () => {
-    const source = join(home, 'flow-src');
-    await mkdir(source, { recursive: true });
-    const refused = async (workflowId: string, copy?: string) => {
-      if (copy !== undefined) await writeFile(join(wfDir, `${workflowId}.json`), copy);
-      const { store, id } = await atGate(workflowId);
-      errSpy.mockClear();
-      const out = await abandon([id, '--gate', 'g-1'], store, id);
+  it('the walk cases whose workflow cannot be read — A4f, A6b, A6c, B1, and the repairable causes — are each refused with their repair; the record is unchanged', async () => {
+    const run = async (workflowId: string, copy?: string) => {
+      const { id } = await atGate(workflowId, copy);
+      const out = await abandon(id);
       return {
         failed: out.failed,
-        phase: out.phase,
-        tail: out.err.slice(out.err.indexOf(' Repair it: ')),
+        unchanged: out.unchanged,
+        tail: out.err.startsWith(NOT_OPEN(id)) ? out.err.slice(NOT_OPEN(id).length + 1) : out.err,
       };
     };
-    const NOT_FOUND = { failed: true, phase: 'gate_waiting' };
-    // (a) red when the exception reaches a cause that can still be repaired (LAW-g: abandon never
-    //     destroys a repairable run), or its refusal names no repair; (b) prints each outcome.
+    const refused = (tail: string) => ({
+      failed: true,
+      unchanged: true,
+      tail: `${REPAIR} ${tail}`,
+    });
+    // (a) red when the catch arm's read is removed (each prints the answer line, which cannot be
+    //     taken until the copy reads), the run is ended, or the record is touched; (b) prints each.
     expect({
-      sourceThere: await refused(
-        'there',
-        JSON.stringify({
-          id: 'there',
-          name: 't',
-          version: 1,
-          schema_version: 1,
-          source_dir: source,
-        }),
-      ),
-      newer: await refused(
-        'later',
-        JSON.stringify({
-          id: 'later',
-          name: 'l',
-          version: 1,
-          schema_version: 99,
-          source_dir: join(home, 'gone'),
-        }),
-      ),
-      notJson: await refused('broken', '{"id": "broken", "sou'),
-      notRegistered: await refused('nowhere'),
+      // walk A4f: valid JSON with no steps, the folder it was registered from gone
+      A4f: await run('a4f', copyOf('a4f', {}, ['steps'])),
+      // walk A6b: the copy's schema_version removed, its source folder gone
+      A6b: await run('a6b', copyOf('a6b', {}, ['schema_version'])),
+      // walk A6c: schema_version "1", a string
+      A6c: await run('a6c', copyOf('a6c', { schema_version: '1' })),
+      // walk B1: a person-registered hex-suffixed id, its copy removed (the source kept elsewhere)
+      B1: await run(HEX_ID),
+      newer: await run('later', copyOf('later', { schema_version: 99 })),
+      notJson: await run('broken', '{"id": "broken", "sou'),
     }).toEqual({
-      sourceThere: { ...NOT_FOUND, tail: ' Repair it: realm workflow validate --registered there' },
-      newer: { ...NOT_FOUND, tail: ' Repair it: realm workflow validate --registered later' },
-      notJson: { ...NOT_FOUND, tail: ' Repair it: realm workflow validate --registered broken' },
-      notRegistered: { ...NOT_FOUND, tail: ' Repair it: realm workflow register <file>' },
+      A4f: refused('realm workflow validate --registered a4f'),
+      A6b: refused('realm workflow validate --registered a6b'),
+      A6c: refused('realm workflow validate --registered a6c'),
+      B1: refused('realm workflow register <file>'),
+      newer: refused('realm workflow validate --registered later'),
+      notJson: refused('realm workflow validate --registered broken'),
     });
   });
-});
 
-describe('#819 U5 — the gate-named abandon is a CLI command', () => {
-  it('the abandon way that names a gate renders `--gate`; one that names none renders the plain command', () => {
-    // (a) red when the renderer drops the gate (the listing's way then reads as the plain kill,
-    //     which refuses); (b) prints both commands.
+  it('B1: a hex-suffixed workflow with no copy, at a live question — no CLI surface says it was created by an agent', async () => {
+    const { JsonFileStore, JsonWorkflowStore } = await import('@sensigo/realm');
+    const { id } = await atGate(HEX_ID);
+    const refusal = (await abandon(id)).err;
+    errSpy.mockClear();
+    await respondCommand
+      .parseAsync([id, '--gate', 'g-1', '--choice', 'ship'], { from: 'user' })
+      .catch(() => undefined);
+    const responded = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    const inspected = await inspectRun(id, new JsonFileStore(), new JsonWorkflowStore());
+    const health = inspected
+      .split('\n')
+      .filter((l) => l.includes(HEX_ID))
+      .join('\n');
+    // (a) red when the id's shape decides at a live question (each surface then says the workflow
+    //     was created by an agent, a guess no gate allows); (b) prints, per surface, whether it
+    //     says so and whether it names the not-registered repair.
+    const said = (text: string) => ({
+      agent: text.includes(AGENT_WORDS),
+      notRegistered: text.includes(`Workflow '${HEX_ID}' is not registered in this workflow store`),
+    });
     expect({
-      named: cliCommandOf({ verb: 'abandon', conditions: [], run_id: 'r-1', gate_id: 'g-1' }),
-      plain: cliCommandOf({ verb: 'abandon', conditions: [], run_id: 'r-1' }),
-    }).toEqual({ named: 'realm run abandon r-1 --gate g-1', plain: 'realm run abandon r-1' });
+      abandon: {
+        ...said(refusal),
+        repair: refusal.endsWith('Repair it: realm workflow register <file>'),
+      },
+      respond: said(responded),
+      inspect: said(health),
+    }).toEqual({
+      abandon: { agent: false, notRegistered: false, repair: true },
+      respond: { agent: false, notRegistered: true },
+      inspect: { agent: false, notRegistered: true },
+    });
+  });
+
+  it('02 C2: an empty or blank --reason is refused with its four clauses; the run is not abandoned', async () => {
+    const { id } = await atGate('plain-gate', copyOf('plain-gate', { source_dir: home }));
+    const { store: running, id: runningId } = await (async () => {
+      const { JsonFileStore } = await import('@sensigo/realm');
+      const store = new JsonFileStore();
+      const { run } = await store.create({
+        workflowId: 'plain-gate',
+        workflowVersion: 1,
+        params: {},
+      });
+      return { store, id: run.id };
+    })();
+    // (a) red when an empty reason is recorded ("Reason: ." — the walk's minor) or a blank one is
+    //     taken as given; (b) prints each refusal and the running run's phase.
+    expect({
+      empty: await abandon(runningId, '--reason', ''),
+      blank: await abandon(runningId, '--reason', '   '),
+      phase: (await running.get(runningId)).run_phase,
+      gated: (await abandon(id, '--reason', '')).err,
+    }).toEqual({
+      empty: { failed: true, err: emptyReasonRefusal(''), unchanged: true },
+      blank: { failed: true, err: emptyReasonRefusal('   '), unchanged: true },
+      phase: 'running',
+      gated: emptyReasonRefusal(''),
+    });
+    // (a) red when the refusal loses a clause; (b) prints it.
+    expect(emptyReasonRefusal('')).toBe(
+      "realm run abandon: invalid --reason value '': expected text that says why the run ends — refused: the run is not abandoned while the reason is empty, because an empty reason records nothing about why it ended. Give a reason, or leave --reason out (the record then says it was abandoned via realm run abandon). The run can be abandoned as soon as the reason is not empty.",
+    );
   });
 });

@@ -173,8 +173,51 @@ export interface Lookups {
   netgroupUsers: (name: string) => Promise<Found<string[]>>;
   /** Whether this login is in the group `name`: by its process groups or the group's members. */
   loginIn: (name: string) => Promise<Found<boolean>>;
-  /** Whether `user` (svc or root) is in the group `name` (`#gid` or a name). macOS: unknown (01b #9). */
-  userIn: (user: PasswdEntry, name: string) => Promise<Found<boolean>>;
+  /** Whether `user` (svc or root) is in the group `name` (`#gid` or a name). macOS: unknown (01b #9).
+   *  `listed`: not in it, read from the members the group lists (#819 correction 1, clause (g)). */
+  userIn: (
+    user: PasswdEntry,
+    name: string,
+  ) => Promise<Found<boolean> | { found: false; listed: true }>;
+}
+
+/** #819 correction 1 (SEP-00 (f)): the group sources glibc reads locally, each complete for what it
+ *  knows — `files`; `compat` (files with NIS `+` entries); `db` (a local database of /etc/group);
+ *  `systemd` (systemd's own services and JSON drop-ins, root and nobody; nss-systemd(8)). */
+const LOCAL_GROUP_SOURCES = new Set(['files', 'compat', 'db', 'systemd']);
+/** SSSD's NSS responder socket, as libnss_sss names it (sssd-client 2.13.1, Fedora 44; captured
+ *  2026-10-19): while it is there, `sss` serves names from a directory. */
+export const SSS_NSS_SOCKET = '/var/lib/sss/pipes/nss';
+
+/** Where `getent group` reads groups from: only local sources, a source that may serve a directory,
+ *  or not known. */
+type GroupSource = { local: true } | { directory: string } | { unknown: string };
+
+/** SEP-00 (f): `/etc/nsswitch.conf`'s `group:` line, read once. No file, or no `group:` line (musl's
+ *  file, Alpine's shape), is the `files` source; bracketed actions are syntax, not sources. */
+function groupSourceOf(probes: SwitchProbes): GroupSource {
+  const path = '/etc/nsswitch.conf';
+  const stat = probes.stat(path);
+  if ('error' in stat && stat.error === 'ENOENT') return { local: true };
+  const text = probes.readText(path);
+  if (text === undefined)
+    return { unknown: `${path} cannot be read, so where groups are listed from is not known` };
+  const line = text
+    .split('\n')
+    .map((l) => l.replace(/#.*$/, ''))
+    .find((l) => /^\s*group\s*:/.test(l));
+  if (line === undefined) return { local: true };
+  const sources = line
+    .replace(/^\s*group\s*:/, '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t !== '');
+  for (const source of sources) {
+    if (LOCAL_GROUP_SOURCES.has(source)) continue;
+    if (source === 'sss' && !probes.exists(SSS_NSS_SOCKET)) continue;
+    return { directory: source };
+  }
+  return { local: true };
 }
 
 const parsePasswd = (line: string): PasswdEntry | undefined => {
@@ -253,7 +296,11 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
     if (gids === undefined) return { unknown: "this process's groups could not be read" };
     return { found: false };
   };
-  const userIn = async (user: PasswdEntry, name: string): Promise<Found<boolean>> => {
+  let groupSource: GroupSource | undefined;
+  const userIn = async (
+    user: PasswdEntry,
+    name: string,
+  ): Promise<Found<boolean> | { found: false; listed: true }> => {
     if (darwin) return { unknown: `macOS has no getent, so ${user.name}'s groups are not read` };
     // A §F7: `#gid` is looked up too, so a secondary group counts, not only the primary one
     const g = await group(name.startsWith('#') ? name.slice(1) : name);
@@ -267,7 +314,15 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
         unknown: `getent group ${g.found.name} lists no members, so whether ${user.name} is in it is not known`,
       };
     }
-    return { found: false };
+    // #819 correction 1 (SEP-00 (f)): a member list is complete only from a local source
+    groupSource ??= groupSourceOf(probes);
+    if ('unknown' in groupSource) return { unknown: groupSource.unknown };
+    if ('directory' in groupSource) {
+      return {
+        unknown: `/etc/nsswitch.conf lists ${groupSource.directory} for groups, so ${user.name}'s membership of ${g.found.name} may not all be listed`,
+      };
+    }
+    return { found: false, listed: true };
   };
   return { probes, login, svc, darwin, run, passwd, group, netgroupUsers, loginIn, userIn };
 }

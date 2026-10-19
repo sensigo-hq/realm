@@ -56,7 +56,13 @@ All notable changes to this project are documented here.
   Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an
   agent cannot record a gate answer only when every way it found needs a credential or is not
   allowed, and lists what no program can see from that login; a rule it does not recognise, a file
-  it cannot read, or a tool's error reads "unknown", and the sentence is not printed. The header
+  it cannot read, or a tool's error reads "unknown", and the sentence is not printed. A sudo
+  Defaults setting or long-format option the check does not read makes sudo's reading unknown,
+  unless sudo already reads yes, with sudo's own line, and so does a setting sudo lists twice with
+  different values (issue #819); the stack `pam_askpass_service` names is read too; run-as names
+  match in any case, as sudo matches them; a run-as group's members count only when
+  `/etc/nsswitch.conf` lists local sources for groups, and the sentence then adds that the groups
+  the system lists for the service user are all of its groups. The header
   says when no store was found, and when the store cannot be opened; condition 7's "no" names the
   two settings files it looked at; the store's time basis is marked "(fact)", and so is the economics
   line when a `realm.yaml` the check read names no `runner.cache.economics` (with none read, it is
@@ -88,18 +94,11 @@ All notable changes to this project are documented here.
 - **Under `withheld`, the agent is told where a question is, and to pass the run id on (issue
   #819).** The awaiting entry of a reply that carries no `gate` points to
   `get_run_state`'s `pending_gate.resolved_message` when the gate declares a message, and otherwise
-  says the gate declares none and names the step the run waits at; every withheld awaiting entry
-  tells the agent to give the user the run id. A `respond` way gains `has_message`, present when the
-  record keeps the question's text.
-- **`realm run abandon --gate <gate_id>` (issue #819).** It ends a run whose open question can never
-  be answered: its workflow was created by an agent and its stored copy is gone, or its stored copy
-  cannot be read and the folder it was registered from is gone. The run's reason says why, and the
-  same write clears the question. Without `--gate`, such a run is refused and the refusal names the
-  flag; a question that can still be answered is refused as before, now with its copy's repair when
-  its workflow cannot be read. `abandonRun` takes `{ gate, absence }`; core exports
-  `questionNeverAnswerable`, `definitionAbsentWords` and the `DefinitionAbsent` and
-  `AbandonRunOptions` types; an `abandon` way names its gate in `gate_id`. MCP's `abandon_run` is
-  unchanged.
+  says `get_run_state` carries no question text for this gate and names the step the run waits at,
+  as does a reply whose `gate` carries no `display`; every withheld awaiting entry tells the agent to
+  give the user the run id, which they need to answer from a terminal, and the withheld protocol
+  rules say to present `gate.display` when the reply has one. A `respond` way gains `has_message`,
+  present when the record keeps the question's text.
 - **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
   `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
   `executeChain`, `executeEngineStep`, `advanceRun`, `submitHumanResponse`, `drainFinalizers`,
@@ -223,6 +222,13 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 ### Changed
 
+- **`realm run abandon` at a gate whose workflow cannot be read names the repair (issue #819).** The
+  run is still refused, as every run waiting at a gate is; where its answer line would name an
+  answer the run cannot take yet, the refusal says the workflow cannot be read and names its repair
+  (`realm workflow register <file>`, or `realm workflow validate --registered <id>`). An empty or
+  blank `--reason` is refused, and the run is not abandoned. At a gate, a workflow whose copy is gone
+  is reported as not registered, whatever its id (a workflow created by an agent has no gate), and
+  the copy's repair no longer offers to remove the file.
 - **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
   an `auto` step the engine could run is refused before anything is claimed: `blocked`,
   `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.`

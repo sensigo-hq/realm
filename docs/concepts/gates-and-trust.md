@@ -40,13 +40,11 @@ The choices are `approve` and `reject` unless the step lists its own under `gate
 
 While the gate is open, the steps after it cannot run. An agent that tried to run one was refused, and the run stayed at the gate.
 
-A run that is waiting at a gate cannot be abandoned either, while its question can still be answered. The gate has to be answered first:
+A run that is waiting at a gate cannot be abandoned either. The gate has to be answered first:
 
 ```text
 Run 'c3b7eed7-…' is waiting on human gate 'approve' (gate '9a35fbef-…'); it cannot be abandoned while its question is open.
 ```
-
-A question that can never be answered is ended from a terminal by naming its gate: `realm run abandon <run-id> --gate <gate-id>`. That is a question whose workflow was created by an agent and whose stored copy is gone, or whose stored copy cannot be read and the folder it was registered from is gone. The run's recorded reason then says why. MCP's `abandon_run` refuses such a run as before (added after version 0.47.0).
 
 ## Routing on the answer
 

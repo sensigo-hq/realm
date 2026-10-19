@@ -155,7 +155,10 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     );
     claim(
       PAGE,
-      "| `withheld` | No tool on the server records an answer, and its replies name no way to answer, except where a workflow's own text does: a gate's `agent_hint`, a gated step's `instructions` and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded; other step text and `quick_start` are forwarded as written. |",
+      // #819 correction 1 (02 W4): a gate has no agent_hint key — the gated step's instructions are
+      // sent as the reply's gate.agent_hint (door-627 :: "cell 27b — a reply’s gate.agent_hint is
+      // labelled …").
+      "| `withheld` | No tool on the server records an answer, and its replies name no way to answer, except where a workflow's own text does: a gated step's `instructions` (sent as the reply's `gate.agent_hint`) and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded; other step text and `quick_start` are forwarded as written. |",
     );
     // Correction 2 (6.4), the labelled half: executed by door-627 :: "cell 27b — author text is
     // labelled, under every value" (the instructions and the rules), :: "cell 27b — a reply’s
@@ -163,7 +166,7 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // that names an answer tool" (the warning).
     claim(
       PAGE,
-      "a gate's `agent_hint`, a gated step's `instructions` and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded",
+      "a gated step's `instructions` (sent as the reply's `gate.agent_hint`) and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded",
     );
     // The as-written half: executed below, "correction 2 (6.4): other step text and quick_start are
     // forwarded as written", and by door-627's first cell 27b (an ordinary step's instructions).
@@ -404,6 +407,13 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
       PAGE,
       "Each condition prints as measured, as configured but not enforced by Realm, or as unknown with its cause; the store's time basis prints as a fact, marked (fact), and so does the economics line when a `realm.yaml` the check read names no `runner.cache.economics`.",
     );
+    // #819 correction 1 (walk --check wording 2, 3): separation-check-627 :: "each condition line in
+    // its states …" (condition 7: "read from two files", each named under /home/agent while HOME
+    // holds the opposite).
+    claim(
+      PAGE,
+      "The agent's sandbox line is read from two settings files in the login's own home, and says so.",
+    );
     // Correction 2 (6.2): executed by :: "the positive cell: …, with its proviso" (the first three
     // provisos) and :: "correction 1 (D1): the mode is never guessed …" (the `denied` store: the
     // extension-file proviso, on its no-elevation fixture).
@@ -524,7 +534,9 @@ describe('#627 W — the other pages W changed', () => {
   it('top-level-fields.md: rule 2’s variants by value', () => {
     claim(
       'docs/reference/workflow/top-level-fields.md',
-      'Under `withheld` it reads: "When you receive status \'confirm_required\', read gate.agent_hint when the reply has one, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation."',
+      // #819 correction 1 (02 W1): realm-mcp door-627 :: the protocol rules' row (":481") and
+      // "#819 correction 1 (02 W1): a reply whose gate carries no display …".
+      'Under `withheld` it reads: "When you receive status \'confirm_required\', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation."',
     );
     claim(
       'docs/reference/workflow/top-level-fields.md',
@@ -997,6 +1009,13 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     claim(
       C,
       "Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up with `getent` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool's error reads \"unknown\", and the sentence is not printed.",
+    );
+    // #819 correction 1 (SEP-00 Words): separation-790 :: "C-2", "C-6 (01b #6) …", "C-13 (a) …"
+    // (unknown unless yes, and twice), :: "C-1 (A BLOCKING 1) …" (askpass), :: "C-17 (e) …"
+    // (any case), :: "C-18 (f) …" (the group source), :: "#819 correction 1 C-20 …" (clause (g)).
+    claim(
+      C,
+      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting sudo lists twice with different values (issue #819); the stack `pam_askpass_service` names is read too; run-as names match in any case, as sudo matches them; a run-as group's members count only when `/etc/nsswitch.conf` lists local sources for groups, and the sentence then adds that the groups the system lists for the service user are all of its groups.",
     );
     // separation-check-627 :: 8.5's header cell and #819's "C4: a store this login cannot open — the
     // header says so"; the condition lines (condition 7's two files); #819's "C4: the economics line

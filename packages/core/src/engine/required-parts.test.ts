@@ -110,8 +110,7 @@ const CALL: Record<EngineEntry, (s: RunStore, p: Parts) => Promise<unknown>> = {
   advanceRun: (s, p) => advanceRun(s, p['definition'] as never, p['options'] as never),
   submitHumanResponse: (s, p) =>
     submitHumanResponse(s, p['definition'] as never, p['options'] as never),
-  abandonRun: (s, p) =>
-    abandonRun(s, p['runId'] as never, p['reason'] as never, p['options'] as never),
+  abandonRun: (s, p) => abandonRun(s, p['runId'] as never, p['reason'] as never),
   drainFinalizers: (s, p) =>
     drainFinalizers(s, p['definition'] as never, p['registry'] as never, p['runId'] as never),
   getWorkflowForRun: (s, p) => getWorkflowForRun(s as never, p['run'] as never, p['opts'] as never),
@@ -241,10 +240,6 @@ const TYPED: Array<[EngineEntry, string, unknown]> = [
   ['submitHumanResponse', 'options.respondedBy', 7],
   ['submitHumanResponse', 'options.claimToken', 7],
   ['abandonRun', 'reason', 7],
-  // #819 (U1): the options `realm run abandon --gate` passes.
-  ['abandonRun', 'options', 'x'],
-  ['abandonRun', 'options.gate', 7],
-  ['abandonRun', 'options.absence', 'x'],
   ['getWorkflowForRun', 'opts.terminalOk', 'yes'],
   ['reclaimStep', 'options', 'x'],
   ['reclaimStep', 'options.now', '2026-01-01'],
@@ -577,14 +572,9 @@ describe('issue #719 C4 — a member that is not an option of the entry is refus
     ['submitHumanResponse', 'options.bogusOption'],
     ['getWorkflowForRun', 'opts.bogusOption'],
     ['reclaimStep', 'options.bogusOption'],
-    // #819 (U1)
-    ['abandonRun', 'options.bogusOption'],
   ];
   it.each(UNKNOWN_AT)('%s: %s', async (entry, at) => {
-    const parts =
-      entry === 'reclaimStep' || entry === 'abandonRun'
-        ? { ...BASE[entry](), options: {} }
-        : BASE[entry]();
+    const parts = entry === 'reclaimStep' ? { ...BASE[entry](), options: {} } : BASE[entry]();
     // (a) red when an unknown member is silently ignored; (b) prints the outcome.
     expect(await outcome(entry, withPart(parts, at, true))).toEqual({
       code: 'VALIDATION_OPTION_INVALID',

@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { workflowListCommand, sortedById } from './workflow-list.js';
+import { workflowListCommand, sortedById, schemaCell } from './workflow-list.js';
 import { CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
 
@@ -89,6 +89,16 @@ describe('realm workflow list (issue #427)', () => {
         '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
       ),
     }).toEqual({ ancientRow: false, modern: true, undefinedWord: false, warned: true });
+  });
+
+  it('#819 correction 1 (02 C1): the SCHEMA column says "(current)" only for the current format; another value prints as itself', () => {
+    // (a) red when "(current)" is printed for any value (U4's unconditional cell); (b) prints the
+    //     three cells.
+    expect({
+      current: schemaCell(1),
+      older: schemaCell(0),
+      none: schemaCell(undefined),
+    }).toEqual({ current: '1 (current)', older: '0', none: 'none' });
   });
 
   it('L3 an unparseable file is REPORTED, and the exit stays 0', async () => {

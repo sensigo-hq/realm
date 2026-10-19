@@ -211,6 +211,37 @@ const su = (img: string, entry = 'getent.passwd.svc', shells = 'shells'): Machin
 const paths = (spec: MachineSpec, svc = 'svc') =>
   measureSwitchPaths({ probes: fixtureMachine(spec), svc });
 
+/** #819 correction 1: Ubuntu 24.04's captured `third-nopasswd` listing (classic sudo, `-ll`) with
+ *  the svc rule's run-as edited to `%svcgrp` (the cut-capture standard); svcgrp lists alice, not
+ *  svc, and svc's primary group is another (the captures of 2026-10-19) — a reading that rests on a
+ *  group's listed members. */
+const groupBacked = (): Promise<SwitchPathReading[]> => {
+  const machine = fixtureMachine(
+    linux(
+      U24,
+      merge(sudos(U24, 'third-nopasswd', ['sudo']), {
+        calls: {
+          [`${GETENT} group svcgrp`]: `${U24}/getent.group.svcgrp.others`,
+          [`${GETENT} passwd svc`]: `${U24}/getent.passwd.svc.own-group`,
+        },
+      }),
+    ),
+  );
+  const run = machine.run;
+  return measureSwitchPaths({
+    probes: {
+      ...machine,
+      run: async (argv) => {
+        const r = await run(argv);
+        return argv.join(' ') === 'LC_ALL=C /usr/bin/sudo -n -ll' && 'exit' in r
+          ? { ...r, stdout: r.stdout.replace('    RunAsUsers: svc\n', '    RunAsUsers: %svcgrp\n') }
+          : r;
+      },
+    },
+    svc: 'svc',
+  });
+};
+
 /** A reading, compact: path, outcome, whose, cache, and classic sudo's "or not allowed". */
 const view = (rs: SwitchPathReading[]): string[] =>
   rs.map((r) =>
@@ -902,10 +933,16 @@ describe('#790 — polkit (D9, 01b #5)', () => {
   const MU = 'org.freedesktop.systemd1.manage-units';
   const RP = 'org.freedesktop.systemd1.reply-password';
   const EX = 'org.freedesktop.policykit.exec';
+  /** #819 correction 1 (walk --check wording 6): systemd running as PID 1 (sd_booted's folder), and
+   *  the host's pkexec and machinectl — each action is asked only where the host has a way to it. */
+  const BOOTED: MachineSpec = { dirs: { '/run/systemd/system': [] } };
+  const HOST = merge(BOOTED, {
+    programs: { '/usr/bin/pkexec': 0, '/usr/bin/machinectl': 0 },
+  });
 
   it('pkcheck: manage-units 0, exec 2 → yes (manage-units is asked)', async () => {
     const rs = await paths(
-      merge(policies(), {
+      merge(merge(policies(), HOST), {
         calls: {
           ...ask(MU, 'pkcheck.rule.org.freedesktop.systemd1.manage-units'),
           ...ask(EX, 'pkcheck.stock.org.freedesktop.policykit.exec'),
@@ -919,7 +956,7 @@ describe('#790 — polkit (D9, 01b #5)', () => {
 
   it("the session rule: manage-units' default allow_active yes, the check's session gets 2 → yes", async () => {
     const rs = await paths(
-      merge(policies('policy.systemd1.active-yes', false), {
+      merge(merge(policies('policy.systemd1.active-yes', false), HOST), {
         calls: {
           ...ask(MU, 'pkcheck.active-yes.manage-units'),
           ...ask(RP, 'pkcheck.active-yes.reply-password'),
@@ -934,7 +971,7 @@ describe('#790 — polkit (D9, 01b #5)', () => {
     const SH = 'org.freedesktop.machine1.shell';
     const HS = 'org.freedesktop.machine1.host-shell';
     const rs = await paths(
-      merge(policies(), {
+      merge(merge(policies(), HOST), {
         dirs: {
           '/usr/share/polkit-1/actions': [
             'org.freedesktop.machine1.policy',
@@ -972,7 +1009,7 @@ describe('#790 — polkit (D9, 01b #5)', () => {
 
   it('a pkcheck error (no system bus) → unknown, with its line', async () => {
     const rs = await paths(
-      merge(policies('policy.org.freedesktop.systemd1', false), {
+      merge(merge(policies('policy.org.freedesktop.systemd1', false), HOST), {
         calls: {
           ...ask(MU, 'pkcheck.nobus.manage-units'),
           ...ask(RP, 'pkcheck.nobus.manage-units'),
@@ -988,7 +1025,7 @@ describe('#790 — polkit (D9, 01b #5)', () => {
 
   it('01b #5: polkitd at /usr/lib/polkit-1/polkitd, pkcheck, no pkexec and no run0 → pkcheck is asked', async () => {
     await paths(
-      merge(policies('policy.org.freedesktop.systemd1', false), {
+      merge(merge(policies('policy.org.freedesktop.systemd1', false), BOOTED), {
         calls: {
           ...ask(MU, 'pkcheck.stock.org.freedesktop.systemd1.manage-units'),
           ...ask(RP, 'pkcheck.active-yes.reply-password'),
@@ -1058,7 +1095,7 @@ describe('#790 — ssh (D10, 01b #4)', () => {
     // #819 (08, B F9): ssh is listed whenever an sshd is present.
     expect({ readings: view(viaHome), how: viaHome.map((r) => r.how) }).toEqual({
       readings: ['ssh needs_credential'],
-      how: ['an sshd is present (a key outside ~/.ssh is not looked for)'],
+      how: ['an sshd is present; a key outside /home/agent/.ssh is not looked for'],
     });
   });
 });
@@ -1163,7 +1200,8 @@ describe("#790 — the probes: the spy, the one spawn site, the runner's refusal
       if (sources.has(name)) return;
       const src = readFileSync(url, 'utf8');
       sources.set(name, src);
-      for (const m of src.matchAll(/(?:from|import\()\s*['"](\.{1,2}\/[^'"]+)\.js['"]/g)) {
+      // #819 correction 1 (A MINOR 10): a side-effect import (`import './x.js'`) is followed too
+      for (const m of src.matchAll(/(?:from|import\(?)\s*['"](\.{1,2}\/[^'"]+)\.js['"]/g)) {
         visit(new URL(`${m[1]}.ts`, url));
       }
     };
@@ -1258,15 +1296,16 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
 
   it("W-x3a: classic sudo refused and su closed by svc's shell → the head, W's always-clauses, and only (a), (b), (c) — no clause for a way that is absent", async () => {
     const ways = await paths(linux(U24, merge(sudos(U24, 'password', ['sudo']), su(U24))));
-    // (a) red when a clause prints for a way that is not there (polkit's (d), ssh's (f)); (b) prints
-    //     the sentence.
+    // (a) red when a clause prints for a way that is not there (polkit's (d), ssh's (f); #819
+    //     correction 1 C-10: (g) with no reading resting on a member list), or clause (c)'s old
+    //     words come back; (b) prints the sentence.
     expect(separationClaim(evidence(ways))).toBe(
-      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; nobody authenticates sudo as agent where the agent's processes run (it then waives the password for some minutes); and sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, and no pam_service or pam_login_service setting names another PAM stack).`,
+      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; nobody authenticates sudo as agent where the agent's processes run (it then waives the password for some minutes); and sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, and no timestamp_type setting shares one ticket across sessions).`,
     );
   });
 
   it('W-x3b: every way the clauses guard is found → every clause, (a) once per whose', async () => {
-    const ways = await paths(
+    const found = await paths(
       linux(
         U24,
         merge(merge(sudos(U24, 'password', ['sudo']), su(U24, 'getent.passwd.svc.bash')), {
@@ -1278,10 +1317,18 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
             '/home/agent/.ssh/id_ed25519': '',
             '/usr/lib/systemd/system/ssh.socket': '',
           },
-          programs: { '/usr/bin/pkcheck': 0, '/usr/lib/polkit-1/polkitd': 0 },
+          // #819 correction 1 (walk --check wording 6): the host's entry points, and systemd as PID 1
+          programs: {
+            '/usr/bin/pkcheck': 0,
+            '/usr/lib/polkit-1/polkitd': 0,
+            '/usr/bin/pkexec': 0,
+            '/usr/bin/run0': 0,
+            '/usr/bin/systemd-run': 0,
+          },
           dirs: {
             '/usr/share/polkit-1/actions': ['org.freedesktop.systemd1.policy'],
             '/home/agent/.ssh': ['id_ed25519'],
+            '/run/systemd/system': [],
           },
           calls: {
             '/usr/bin/pkcheck --action-id org.freedesktop.systemd1.manage-units --process 4242': `${U24}/pkcheck.stock.org.freedesktop.systemd1.manage-units`,
@@ -1290,10 +1337,70 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
         }),
       ),
     );
+    // #819 correction 1 (C-10): and a second sudo's reading that rests on a group's listed members
+    const ways = [...found, ...(await groupBacked())];
     // (a) red when a fired clause is left out of the sentence; (b) prints the sentence.
     expect(separationClaim(evidence(ways))).toBe(
-      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; the agent cannot obtain an administrator's password; nobody authenticates sudo or polkit as agent where the agent's processes run (each then waives the password for some minutes); sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, and no pam_service or pam_login_service setting names another PAM stack); no polkit rule grants agent pkexec, run0 or systemd-run beyond what this check's own session was shown (polkit's admin rules are not read; its vendor rules are not read); no person approves a Touch ID, fingerprint or security-key prompt the agent raises; and svc's authorized_keys holds none of agent's keys.`,
+      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; the agent cannot obtain an administrator's password; nobody authenticates sudo or polkit as agent where the agent's processes run (each then waives the password for some minutes); sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, and no timestamp_type setting shares one ticket across sessions); no polkit rule grants agent pkexec, run0 or systemd-run beyond what this check's own session was shown (polkit's admin rules are not read; its vendor rules are not read); no person approves a Touch ID, fingerprint or security-key prompt the agent raises; svc's authorized_keys holds none of agent's keys; and the groups the system lists for svc are all of its groups (a member the system does not list is not seen).`,
     );
+  });
+
+  it("#819 correction 1 C-20: clause (g) prints once when a reading rested on a group's listed members, and never for a run-as user, a group found by its gid, or this login's own groups", async () => {
+    const grouped = await groupBacked();
+    // (ii) the captured listing as it is, `(svc)`; (ii-b) `%svcgrp` with svc in it by its primary
+    // gid (the captured svcgrp, gid 1100, svc's gid 1100)
+    const plain = await paths(linux(U24, sudos(U24, 'third-nopasswd', ['sudo'])));
+    const byGid = await (async () => {
+      const machine = fixtureMachine(
+        linux(
+          U24,
+          merge(sudos(U24, 'third-nopasswd', ['sudo']), {
+            calls: { [`${GETENT} group svcgrp`]: `${U24}/getent.group.svcgrp` },
+          }),
+        ),
+      );
+      const run = machine.run;
+      return measureSwitchPaths({
+        probes: {
+          ...machine,
+          run: async (argv) => {
+            const r = await run(argv);
+            return argv.join(' ') === 'LC_ALL=C /usr/bin/sudo -n -ll' && 'exit' in r
+              ? {
+                  ...r,
+                  stdout: r.stdout.replace('    RunAsUsers: svc\n', '    RunAsUsers: %svcgrp\n'),
+                }
+              : r;
+          },
+        },
+        svc: 'svc',
+      });
+    })();
+    // (iii) condition 3 read this login's own groups (the captured docker group lists no member, and
+    // the login is not in it): no switch path rests on a member list
+    const own = await rootEngineReach(
+      lookups(
+        fixtureMachine({
+          programs: { [GETENT]: 0 },
+          calls: Object.fromEntries(
+            ROOT_GROUPS.map((g) => [`${GETENT} group ${g}`, `${U24}/getent.group.${g}.without`]),
+          ),
+        }),
+      ),
+    );
+    const G =
+      'the groups the system lists for svc are all of its groups (a member the system does not list is not seen)';
+    const count = (text: string) => text.split(G).length - 1;
+    // (a) red: `grouped` when the trigger is not recorded on the reading (no clause); `byGid` when
+    //     the clause is printed whenever a group was looked up; `plain` and `own` when it is printed
+    //     unconditionally (W-x3a's break); (b) prints the reading, and the clause's count per case.
+    expect({
+      reading: view(grouped),
+      grouped: count(separationClaim(evidence(grouped))),
+      plain: count(separationClaim(evidence(plain))),
+      byGid: count(separationClaim(evidence(byGid))),
+      own: count(separationClaim(evidence([], { root_engine: own }))),
+    }).toEqual({ reading: ['sudo not_allowed'], grouped: 1, plain: 0, byGid: 0, own: 0 });
   });
 
   it('P0: a way that reads unknown keeps the stronger sentence back — "may still", condition 2 not measured', async () => {
@@ -1756,7 +1863,7 @@ describe('#790 correction 1 — the review of PR #827, each finding its cell', (
     // (a) red when only `id_*` counts, or an assumed key is said to be held; (b) prints both.
     expect({ deploy: view(deploy), how: unlisted[0]?.how }).toEqual({
       deploy: ['ssh needs_credential'],
-      how: "an sshd is present and this login may hold a key (its home's .ssh could not be listed)",
+      how: "an sshd is present and this login may hold a key: its home's .ssh could not be listed",
     });
   });
 
@@ -1823,6 +1930,8 @@ describe('#790 correction 1 — the review of PR #827, each finding its cell', (
         '/usr/bin/systemd-run': 0,
       },
       dirs: {
+        // #819 correction 1 (walk --check wording 6): systemd runs as PID 1, so manage-units is asked
+        '/run/systemd/system': [],
         '/usr/share/polkit-1/actions': ['org.freedesktop.systemd1.policy'],
         '/etc/polkit-1/rules.d': undefined,
         '/usr/share/polkit-1/rules.d': ['50-default.rules'],
@@ -1838,12 +1947,13 @@ describe('#790 correction 1 — the review of PR #827, each finding its cell', (
         '/usr/bin/pkcheck --action-id org.freedesktop.systemd1.reply-password --process 4242': `${U24}/pkcheck.active-yes.reply-password`,
       },
     });
-    // (a) red when the folders are not read, or the entry points come from the binaries found
-    //     (#819, 08 B F11: run0 is not installed here, and manage-units — run0's action — is asked;
-    //     reply-password is a program pkexec runs); (b) prints the clause.
+    // (a) red when the folders are not read, or the entry points are not those of the actions asked
+    //     (#819, 08 B F11: reply-password is a program pkexec runs; #819 correction 1, walk --check
+    //     wording 6: of manage-units' entry points, only systemd-run is on this host — run0 is not);
+    //     (b) prints the clause.
     expect(switchClausesOf(rs).find((c) => c.clause === 'd')).toEqual({
       clause: 'd',
-      tools: ['pkexec', 'run0', 'systemd-run'],
+      tools: ['pkexec', 'systemd-run'],
       admin: 'unreadable',
       vendor: 'unread',
     });
@@ -1918,7 +2028,7 @@ describe("#819 (08) — #790's leftovers, each its cell", () => {
     //     agent may use a key it keeps elsewhere); (b) prints the readings, how and clauses.
     expect({ readings: view(rs), how: rs[0]?.how, clauses: clauses(rs) }).toEqual({
       readings: ['ssh needs_credential'],
-      how: 'an sshd is present (a key outside ~/.ssh is not looked for)',
+      how: 'an sshd is present; a key outside /home/agent/.ssh is not looked for',
       clauses: ['f'],
     });
   });
@@ -1933,7 +2043,7 @@ describe("#819 (08) — #790's leftovers, each its cell", () => {
       },
     });
     // (a) red when those four count as keys ("holds a key"); (b) prints the how.
-    expect(rs[0]?.how).toBe('an sshd is present (a key outside ~/.ssh is not looked for)');
+    expect(rs[0]?.how).toBe('an sshd is present; a key outside /home/agent/.ssh is not looked for');
   });
 
   it('A Outside 2: `(%svcgrp)` with svcgrp listing no members, svc\'s primary group another → unknown, never "not covering"', async () => {
@@ -2213,6 +2323,523 @@ describe("#819 (08) — #790's leftovers, each its cell", () => {
   });
 });
 
+describe('#819 correction 1 — the separation half, each finding its cell', () => {
+  const stack = (img: string, service: string, variant: string): MachineSpec => ({
+    files: { [`/etc/pam.d/${service}`]: { fixture: `${img}/variant.${variant}` } },
+  });
+  const group = (img: string, name: string, fixture = name): MachineSpec => ({
+    calls: { [`${GETENT} group ${name}`]: `${img}/getent.group.${fixture}` },
+  });
+  /** The ways read on `spec`'s machine, one captured call's stdout edited — the cut-capture
+   *  standard (A F11): each edit is named beside its cell. */
+  const edited = (
+    spec: MachineSpec,
+    call: string,
+    edit: (stdout: string) => string,
+    svc = 'svc',
+  ) => {
+    const machine = fixtureMachine(spec);
+    const run = machine.run;
+    return measureSwitchPaths({
+      probes: {
+        ...machine,
+        run: async (argv) => {
+          const r = await run(argv);
+          return argv.join(' ') === call && 'exit' in r ? { ...r, stdout: edit(r.stdout) } : r;
+        },
+      },
+      svc,
+    });
+  };
+  const LL24 = 'LC_ALL=C /usr/bin/sudo -n -ll';
+  /** The base (SEP-02): Ubuntu 24.04's captured `third-nopasswd` listing (`-ll`) — stock Defaults, a
+   *  NOPASSWD rule for `nobody` and a password rule `(svc) /usr/bin/realm` — edited per cell. */
+  const third = (edit: (out: string) => string = (o) => o, over: MachineSpec = {}) =>
+    edited(linux(U24, merge(sudos(U24, 'third-nopasswd', ['sudo']), over)), LL24, edit);
+  /** Edits: Defaults items appended to the captured `use_pty` line; a `Runas and Command-specific
+   *  defaults` section before the rules; the svc entry's run-as, and an `Options:` line under it. */
+  const defaults =
+    (...items: string[]) =>
+    (out: string) =>
+      out.replace('    use_pty\n', `    use_pty, ${items.join(', ')}\n`);
+  const specific =
+    (...lines: string[]) =>
+    (out: string) =>
+      out.replace(
+        '\nUser agent may run',
+        `\nRunas and Command-specific defaults for agent:\n${lines.map((l) => `    ${l}\n`).join('')}\nUser agent may run`,
+      );
+  const runAs = (users: string) => (out: string) =>
+    out.replace('    RunAsUsers: svc\n', `    RunAsUsers: ${users}\n`);
+  const options = (value: string) => (out: string) =>
+    out.replace('    RunAsUsers: svc\n', `    RunAsUsers: svc\n    Options: ${value}\n`);
+  const both =
+    (...edits: ((out: string) => string)[]) =>
+    (out: string) =>
+      edits.reduce((o, e) => e(o), out);
+  /** The base's own reading: this login's password, cached (the captured Ubuntu 24.04 stack). */
+  const NEEDS = ['sudo needs_credential this_login sudo_timestamp'];
+  const cause = async (rs: Promise<SwitchPathReading[]>) =>
+    rs.then((r) => ({ readings: view(r), cause: r[0]?.cause }));
+
+  it('C-0: the base reads "needs this login\'s password" today, so an unknown or a changed reading can show', async () => {
+    // (a) red when the base's capture or the stock Defaults stop reading as measured; (b) prints it.
+    expect(view(await third())).toEqual(NEEDS);
+  });
+
+  it('C-1 (A BLOCKING 1): a listed pam_askpass_service naming a stack that grants → yes, its stack named', async () => {
+    // The captured listing (sudo.ws -ll, Ubuntu 25.10) with `Defaults pam_askpass_service=sudo-realm`
+    // — a capture, not an edit (the capture of 2026-10-19 shows it prints as pam_service does); the
+    // captured pam_wheel trust variant at /etc/pam.d/sudo-realm, and the captured sudo group.
+    const rs = await paths(
+      linux(
+        U25,
+        merge(
+          merge(sudos(U25, 'askpass', ['sudo.ws']), stack(U25, 'sudo-realm', 'sudo-wheel-trust')),
+          group(U25, 'sudo'),
+        ),
+      ),
+    );
+    // (a) red when pam_askpass_service is dropped from the stacks withPam scans (the reading is then
+    //     this login's password, and the strong sentence can print); (b) prints readings and how.
+    expect({ readings: view(rs), how: rs[0]?.how }).toEqual({
+      readings: ['sudo yes'],
+      how: 'LC_ALL=C /usr/bin/sudo.ws -n -l and -n -ll; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session, /etc/pam.d/sudo-realm read: auth sufficient pam_wheel.so trust use_uid group=sudo lets this login through without a password',
+    });
+  });
+
+  it('C-1b: the same stack through pam_service → yes (the control: the stack grants)', async () => {
+    const rs = await paths(
+      linux(
+        U25,
+        merge(
+          merge(
+            sudos(U25, 'pam-service', ['sudo.ws']),
+            stack(U25, 'sudo-realm', 'sudo-wheel-trust'),
+          ),
+          group(U25, 'sudo'),
+        ),
+      ),
+    );
+    // (a) red when the stack's grant line is removed (the yes is the stack's); (b) prints the readings.
+    expect(view(rs)).toEqual(['sudo yes']);
+  });
+
+  it("C-2: a Defaults setting in no list (frobnicate=1) → unknown, with sudo's own item", async () => {
+    // (a) red when every keyword is harmless (the three-kind check removed): the base's reading
+    //     comes back; (b) prints readings and cause.
+    expect(await cause(third(defaults('frobnicate=1')))).toEqual({
+      readings: ['sudo unknown'],
+      cause: 'sudo listed a Defaults setting this check does not read: frobnicate=1',
+    });
+  });
+
+  it('C-3: timestampdir (the folder sudo trusts for tickets) → unknown', async () => {
+    // (a) red when timestampdir is on the harmless list; (b) prints readings and cause.
+    expect(await cause(third(defaults('timestampdir=/somewhere')))).toEqual({
+      readings: ['sudo unknown'],
+      cause: 'sudo listed a Defaults setting this check does not read: timestampdir=/somewhere',
+    });
+  });
+
+  it("C-4: a credential keyword on the svc rule's command line (`Defaults!/usr/bin/realm rootpw`) → unknown, naming the line", async () => {
+    // (a) red when the command-specific lines are not checked (the global reading, this login's
+    //     password, comes back); (b) prints readings and cause.
+    expect(await cause(third(specific('Defaults!/usr/bin/realm rootpw')))).toEqual({
+      readings: ['sudo unknown'],
+      cause:
+        'sudo listed a Defaults setting this check does not read: Defaults!/usr/bin/realm rootpw',
+    });
+  });
+
+  it('C-5: harmless forms — `!var`, `var+=`, `var-=`, `var=value`, and the two list options B1 lacked — read as the base', async () => {
+    const rs = await third(
+      defaults(
+        '!visiblepw',
+        'env_keep+="A"',
+        'env_delete-="B"',
+        'secure_path=/p',
+        'requiretty',
+        'log_servers=host',
+        'passprompt_regex=x',
+      ),
+    );
+    // (a) red, one break each: the `!` strip removed (`!visiblepw` unread); the `+=`/`-=` strip
+    //     removed (`env_keep+="A"` unread); the `=…` strip removed (`secure_path=/p` unread);
+    //     (b) prints the readings.
+    expect(view(rs)).toEqual(NEEDS);
+  });
+
+  it('C-6 (01b #6): an item not read never shadows a yes — !authenticate, a NOPASSWD rule, a granting stack', async () => {
+    const authOff = await third(defaults('!authenticate', 'frobnicate=1'));
+    // the captured `nopasswd-all` listing (sudo -ll, Ubuntu 24.04), frobnicate=1 appended
+    const nopasswd = await edited(
+      linux(U24, sudos(U24, 'nopasswd-all', ['sudo'])),
+      LL24,
+      defaults('frobnicate=1'),
+    );
+    // pam_service=sudo-realm, the captured pam_wheel trust variant there, the captured sudo group
+    const granting = await third(
+      defaults('pam_service=sudo-realm', 'frobnicate=1'),
+      merge(stack(U24, 'sudo-realm', 'sudo-wheel-trust'), group(U24, 'sudo')),
+    );
+    // (a) red: authOff and nopasswd when the unknown is returned before judge's yes exits; granting
+    //     when it is applied before withPam; (b) prints the three.
+    expect({
+      authOff: view(authOff),
+      nopasswd: view(nopasswd),
+      granting: view(granting),
+    }).toEqual({ authOff: ['sudo yes'], nopasswd: ['sudo yes'], granting: ['sudo yes'] });
+  });
+
+  it("C-7: the long format's Options — a value in no list → unknown; a tag's printed name (noexec) → as the base, and the captured `setenv, noexec`", async () => {
+    // (b'): the captured `(svc) NOEXEC: SETENV: /usr/bin/realm` listing (sudo.ws -ll, Ubuntu 25.10,
+    // 2026-10-19), which prints `Options: setenv, noexec`
+    const captured = await paths(linux(U25, sudos(U25, 'tags', ['sudo.ws'])));
+    // (a) red when the Options values are not checked (frobnicate reads as the base); (b) prints
+    //     each reading and the cause.
+    expect({
+      unread: await cause(third(options('frobnicate'))),
+      noexec: view(await third(options('noexec'))),
+      captured: view(captured),
+    }).toEqual({
+      unread: {
+        readings: ['sudo unknown'],
+        cause: 'sudo listed an Options value this check does not read: frobnicate',
+      },
+      noexec: NEEDS,
+      captured: ['sudo needs_credential this_login sudo_timestamp'],
+    });
+  });
+
+  it('C-12: an item not read turns the not-allowed exit unknown', async () => {
+    // (a) red when the not-allowed exit skips the composition; (b) prints both readings.
+    expect({
+      base: view(await third(runAs('nobody'))),
+      unread: view(await third(both(runAs('nobody'), defaults('frobnicate=1')))),
+    }).toEqual({ base: ['sudo not_allowed'], unread: ['sudo unknown'] });
+  });
+
+  it('C-13 (a): an acted-on keyword listed twice with different forms → unknown, both items named', async () => {
+    // (a) red when the repeat rule is removed (rootpw is read: root's password); (b) prints readings
+    //     and cause.
+    expect(await cause(third(defaults('rootpw', '!rootpw')))).toEqual({
+      readings: ['sudo unknown'],
+      cause:
+        'sudo listed a Defaults setting more than once, and does not show which one it applies: rootpw, !rootpw',
+    });
+  });
+
+  it("C-14 (b): `timestamp_timeout=0` globally, `timestamp_timeout=5` on the svc rule's command → the ticket is kept (clause b)", async () => {
+    const rs = await third(
+      both(
+        defaults('timestamp_timeout=0'),
+        specific('Defaults!/usr/bin/realm timestamp_timeout=5'),
+      ),
+    );
+    // (a) red when only the global section's timeout is read (no cache, no clause b); (b) prints
+    //     readings and clauses.
+    expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
+      readings: NEEDS,
+      clauses: ['a:this_login', 'b'],
+    });
+  });
+
+  it('C-15 (c): group_plugin → unknown (a run-as %group may be resolved where getent cannot see)', async () => {
+    // (a) red when group_plugin is on the harmless list; (b) prints readings and cause.
+    expect(await cause(third(defaults('group_plugin=/usr/libexec/sudo/group_file.so')))).toEqual({
+      readings: ['sudo unknown'],
+      cause:
+        'sudo listed a Defaults setting this check does not read: group_plugin=/usr/libexec/sudo/group_file.so',
+    });
+  });
+
+  it('C-16 (d): one ticket for every session — timestamp_type=global, !tty_tickets → unknown; timestamp_type=tty → as the base', async () => {
+    // (a) red when timestamp_type is harmless for every value (global reads as the base); (b) prints
+    //     the three.
+    expect({
+      global: view(await third(defaults('timestamp_type=global'))),
+      ttyOff: view(await third(defaults('!tty_tickets'))),
+      tty: view(await third(defaults('timestamp_type=tty'))),
+    }).toEqual({ global: ['sudo unknown'], ttyOff: ['sudo unknown'], tty: NEEDS });
+  });
+
+  it('C-17 (e): sudo matches run-as names in any case — `(Svc)` covers svc; not with !case_insensitive_user; an absent `%Svcgrp` is unknown', async () => {
+    // getent passwd Svc and getent group Svcgrp: the captured "not there" answers (Ubuntu 24.04,
+    // 2026-10-19)
+    const lookupsOf: MachineSpec = {
+      calls: {
+        [`${GETENT} passwd Svc`]: `${U24}/getent.passwd.Svc.absent`,
+        [`${GETENT} group Svcgrp`]: `${U24}/getent.group.Svcgrp.absent`,
+      },
+    };
+    // (a) red: `user` when names are compared exactly (not allowed); `group` when an absent group
+    //     reads "not a member" (not allowed); (b) prints the readings and the group's cause.
+    expect({
+      user: view(await third(runAs('Svc'), lookupsOf)),
+      exact: view(await third(both(runAs('Svc'), defaults('!case_insensitive_user')), lookupsOf)),
+      group: await cause(third(runAs('%Svcgrp'), lookupsOf)),
+    }).toEqual({
+      user: NEEDS,
+      exact: ['sudo not_allowed'],
+      group: {
+        readings: ['sudo unknown'],
+        cause:
+          'getent group Svcgrp finds no group of that name, and sudo matches group names in any case (case_insensitive_group, on by default)',
+      },
+    });
+  });
+
+  describe('C-18 (f): the group source — a member list is trusted only from a local source', () => {
+    /** The svc rule's run-as edited to `%svcgrp`; svcgrp lists alice, not svc, and svc's primary
+     *  group is svcown (the captures of 2026-10-19, Ubuntu 24.04). */
+    const grouped = (over: MachineSpec = {}) =>
+      third(
+        runAs('%svcgrp'),
+        merge(
+          {
+            calls: {
+              [`${GETENT} group svcgrp`]: `${U24}/getent.group.svcgrp.others`,
+              [`${GETENT} passwd svc`]: `${U24}/getent.passwd.svc.own-group`,
+            },
+          },
+          over,
+        ),
+      );
+    const nss = (text: string): MachineSpec => ({ files: { '/etc/nsswitch.conf': text } });
+    const SSS = '/var/lib/sss/pipes/nss';
+
+    it('local lines, an absent file and a file with no group: line → as today (not allowed); ldap, and sss while its socket is there → unknown', async () => {
+      const ldap = await cause(grouped(nss('group: files ldap\n')));
+      // (a) red, one break each: `ldap` when the source rule is removed (not allowed); `merge` when
+      //     the bracket skip is removed (unknown); `sssAbsent` when the socket check is removed
+      //     (unknown); `hostsOnly` when a file with no group: line is not the files source
+      //     (unknown); (b) prints each reading, and ldap's cause.
+      expect({
+        filesSystemd: view(await grouped(nss('group:          files systemd\n'))),
+        merge: view(await grouped(nss('group:      files [SUCCESS=merge] systemd\n'))),
+        ldap,
+        sssAbsent: view(await grouped(nss('group: files sss\n'))),
+        sssPresent: view(
+          await grouped(merge(nss('group: files sss\n'), { sockets: { [SSS]: false } })),
+        ),
+        noFile: view(await grouped()),
+        hostsOnly: view(await grouped(nss('hosts: files dns\n'))),
+      }).toEqual({
+        filesSystemd: ['sudo not_allowed'],
+        merge: ['sudo not_allowed'],
+        ldap: {
+          readings: ['sudo unknown'],
+          cause:
+            "/etc/nsswitch.conf lists ldap for groups, so svc's membership of svcgrp may not all be listed",
+        },
+        sssAbsent: ['sudo not_allowed'],
+        sssPresent: ['sudo unknown'],
+        noFile: ['sudo not_allowed'],
+        hostsOnly: ['sudo not_allowed'],
+      });
+    });
+
+    it("(vi): condition 3 — this login's own groups — is decided by its process ids, whatever the group source", async () => {
+      // Ubuntu 24.04's captured docker group (no member listed), the login in it by its process
+      // gid 1101, and every other root group captured without it
+      const spec = merge(
+        {
+          programs: { [GETENT]: 0 },
+          calls: Object.fromEntries(
+            ROOT_GROUPS.map((g) => [`${GETENT} group ${g}`, `${U24}/getent.group.${g}.without`]),
+          ),
+          groups: [1001, 1101],
+        },
+        nss('group: files ldap\n'),
+      );
+      // (a) red when the source rule reaches this login's own groups (condition 3 unknown); (b)
+      //     prints the reading.
+      expect(await rootEngineReach(lookups(fixtureMachine(spec)))).toEqual({
+        basis: 'measured',
+        answer: 'yes',
+        detail: 'this login is in the group docker',
+      });
+    });
+
+    it('(vii): the five stock files, as captured — their group: lines, and none reads unknown', async () => {
+      const images = [U24, U25, DEB, FED, ALP];
+      const lines = Object.fromEntries(
+        images.map((img) => [
+          img,
+          /^\s*group\s*:\s*(.*?)\s*$/m.exec(fixtureFile(`${img}/nsswitch.conf`))?.[1] ?? 'none',
+        ]),
+      );
+      const readings: Record<string, string[]> = {};
+      for (const img of images) {
+        readings[img] = view(
+          await grouped({ files: { '/etc/nsswitch.conf': { fixture: `${img}/nsswitch.conf` } } }),
+        );
+      }
+      // (a) red when a stock line reads unknown (the STOP point, SEP-00 (f)) or a captured line
+      //     differs from MA 3's reading (W-829-MA3-04); (b) prints each image's line and reading.
+      expect({ lines, readings }).toEqual({
+        lines: {
+          [U24]: 'files',
+          [U25]: 'files',
+          [DEB]: 'files',
+          [FED]: 'files [SUCCESS=merge] systemd',
+          [ALP]: 'none',
+        },
+        readings: Object.fromEntries(images.map((img) => [img, ['sudo not_allowed']])),
+      });
+    });
+  });
+
+  it("A MINOR 1: a cover read for root never drops svc's unknown — `(%root)` under targetpw, svc a hidden member", async () => {
+    // The svc rule's run-as edited to `%root`, targetpw appended; root's group and svc's own-group
+    // entry are the captures of 2026-10-19 (Ubuntu 24.04): `root:x:0:` lists no member
+    const rs = await third(both(runAs('%root'), defaults('targetpw')), {
+      calls: {
+        [`${GETENT} group root`]: `${U24}/getent.group.root`,
+        [`${GETENT} passwd svc`]: `${U24}/getent.passwd.svc.own-group`,
+      },
+    });
+    // (a) red when root's cover drops svc's unknown (root's password only); (b) prints readings and
+    //     cause.
+    expect(await cause(Promise.resolve(rs))).toEqual({
+      readings: ['sudo unknown'],
+      cause: 'getent group root lists no members, so whether svc is in it is not known',
+    });
+  });
+});
+
+describe("#819 correction 1 — SEP-01's items, each its cell", () => {
+  it('A MINOR 3: an sshd found only on PATH, or only by its sshd.socket unit → ssh listed, clause (f)', async () => {
+    const onPath = await paths({
+      env: { PATH: '/opt/openssh/sbin:/usr/bin' },
+      programs: { '/opt/openssh/sbin/sshd': 0 },
+    });
+    const socketOnly = await paths({ files: { '/usr/lib/systemd/system/sshd.socket': '' } });
+    // (a) red: `onPath` when sshd is looked for in D2's folders alone; `socketOnly` when sshd.socket
+    //     is not one of the units; (b) prints both readings and their clauses.
+    expect({
+      onPath: { readings: view(onPath), clauses: clauses(onPath) },
+      socketOnly: { readings: view(socketOnly), clauses: clauses(socketOnly) },
+    }).toEqual({
+      onPath: { readings: ['ssh needs_credential'], clauses: ['f'] },
+      socketOnly: { readings: ['ssh needs_credential'], clauses: ['f'] },
+    });
+  });
+
+  it("A MINOR 3: the no-way line names sshd's units by name, beside the folders", () => {
+    const line = switchPathsReading([], 'svc');
+    // (a) red when the units are not named; (b) prints the line's detail.
+    expect(line.basis === 'measured' ? line.detail : line).toBe(
+      "no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system)",
+    );
+  });
+
+  it('A MINOR 4: with Realm\'s service user root and only rootpw, (a) is said for it with "and it is not empty", and the rule runs as root once', async () => {
+    const ways = await paths(linux(U25, sudos(U25, 'rootpw', ['sudo.ws'])), 'root');
+    const claim = separationClaim({
+      login: 'agent',
+      service_user: 'root',
+      store_owned_by_other: true,
+      owns_store: false,
+      conditions: {
+        store_reach: { basis: 'measured', answer: 'no' },
+        become_service_user: switchPathsReading(ways, 'root'),
+        root_engine: { basis: 'measured', answer: 'no' },
+        trust_root_writable: { basis: 'measured', answer: 'no' },
+        other_answer_host: { basis: 'unknown', cause: 'one look' },
+        time_basis: { basis: 'measured', answer: 'fact', detail: 'clock' },
+        agent_sandbox: { basis: 'measured', answer: 'no' },
+        economics_writable: { basis: 'measured', answer: 'fact', detail: 'none' },
+      },
+      switch_paths: ways,
+      value: { value: 'withheld', source: { kind: 'flag', ref: '--gate-answers' } },
+    });
+    // (a) red: `notEmpty` when root's password is not mapped to the service user's before the
+    //     clauses are de-duplicated; `how` when runsAs names root twice; (b) prints both.
+    expect({
+      notEmpty: claim.includes("the agent cannot obtain root's password, and it is not empty"),
+      how: ways[0]?.how,
+    }).toEqual({
+      notEmpty: true,
+      how: 'LC_ALL=C /usr/bin/sudo.ws -n -l and -n -ll: a rule runs as root with a password (Defaults rootpw); /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read',
+    });
+  });
+
+  describe('polkit: guessed readings say "may need"; each action is asked only where the host has a way to it', () => {
+    const POLICY = '/usr/share/polkit-1/actions';
+    /** Ubuntu 24.04's captured polkit pieces: pkcheck, polkitd, the systemd1 and policykit
+     *  policies, and pkcheck's captured stock answers. */
+    const polkit = (over: MachineSpec): MachineSpec =>
+      merge(
+        {
+          programs: { '/usr/bin/pkcheck': 0, '/usr/lib/polkit-1/polkitd': 0 },
+          dirs: {
+            [POLICY]: ['org.freedesktop.policykit.policy', 'org.freedesktop.systemd1.policy'],
+          },
+          files: {
+            [`${POLICY}/org.freedesktop.systemd1.policy`]: {
+              fixture: `${U24}/policy.org.freedesktop.systemd1`,
+            },
+            [`${POLICY}/org.freedesktop.policykit.policy`]: {
+              fixture: `${U24}/policy.org.freedesktop.policykit`,
+            },
+          },
+          calls: {
+            '/usr/bin/pkcheck --action-id org.freedesktop.systemd1.manage-units --process 4242': `${U24}/pkcheck.stock.org.freedesktop.systemd1.manage-units`,
+            '/usr/bin/pkcheck --action-id org.freedesktop.policykit.exec --process 4242': `${U24}/pkcheck.stock.org.freedesktop.policykit.exec`,
+            '/usr/bin/pkcheck --action-id org.freedesktop.systemd1.reply-password --process 4242': `${U24}/pkcheck.active-yes.reply-password`,
+          },
+        },
+        over,
+      );
+    const askedNow = () =>
+      asked
+        .filter((a) => a[0] === '/usr/bin/pkcheck')
+        .map((a) => a[2]!.replace(/^org\.freedesktop\./, ''));
+
+    it('walk --check wording 6: no pkexec, no machinectl, systemd not PID 1 → nothing asked; systemd PID 1 alone → manage-units only, named by its id', async () => {
+      const none = await paths(polkit({}));
+      const noneAsked = askedNow();
+      asked.length = 0;
+      const booted = await paths(polkit({ dirs: { '/run/systemd/system': [] } }));
+      const bootedAsked = askedNow();
+      // (a) red when every action D9 names is asked whatever the host has (`noneAsked` then lists
+      //     them), or manage-units is named by entry points the host lacks; (b) prints the actions
+      //     asked and clause (d)'s tools.
+      expect({
+        noneAsked,
+        none: view(none),
+        bootedAsked,
+        tools: switchClausesOf(booted).find((c) => c.clause === 'd'),
+      }).toEqual({
+        noneAsked: [],
+        none: ['polkit not_allowed'],
+        bootedAsked: ['systemd1.manage-units'],
+        tools: {
+          clause: 'd',
+          tools: ['org.freedesktop.systemd1.manage-units'],
+          admin: 'unread',
+          vendor: 'unread',
+        },
+      });
+    });
+
+    it('A MINOR 5: a credential only pkcheck\'s challenge suggested reads "may need"; one an action\'s defaults name reads "needs"', async () => {
+      // pkexec present: its action's stock answer is exit 2 (a challenge), and its defaults
+      // auth_admin* — so the administrator's password is named by the defaults, this login's only by
+      // the challenge
+      const rs = await paths(polkit({ programs: { '/usr/bin/pkexec': 0 } }));
+      // (a) red when the challenge's guess carries no cause (both print "needs"); (b) prints each
+      //     reading's entry word.
+      expect(rs.map((r) => switchPathEntry(r, 'svc').split(' (')[0])).toEqual([
+        "polkit: needs an administrator's password",
+        "polkit: may need this login's password",
+      ]);
+    });
+  });
+});
+
 describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten separation section names its cell', () => {
   const PAGE = new URL('../../../../../docs/reference/mcp/gate-answers.md', import.meta.url);
   const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -2264,8 +2891,26 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // (pam_service).
     // #819 (08, A F4): "in the original sudo's listing" — the services are read only where sudo lists
     // them; :: "A F2: the PAM stack `pam_login_service` names, and `sudo-i` under /usr/lib/pam.d …".
+    // #819 correction 1 (C-11): "and the service `pam_askpass_service` names" — :: "C-1 (A BLOCKING 1):
+    // a listed pam_askpass_service …".
     claim(
-      'Whenever sudo needs a password, its PAM stacks are read too: `/etc/pam.d/sudo`, and `sudo-i` where it exists (or, in the original sudo\'s listing, the services `pam_service` and `pam_login_service` name), with their includes. A security-key or fingerprint module adds "a person\'s touch or key"; an ssh-agent module, or a stack with no password or person module, reads unknown; a `pam_wheel.so trust` line for this login reads yes where a rule is listed or the sudo-rs refusal names one, and unknown where the original sudo refused.',
+      'Whenever sudo needs a password, its PAM stacks are read too: `/etc/pam.d/sudo`, and `sudo-i` where it exists (or, in the original sudo\'s listing, the services `pam_service` and `pam_login_service` name), and the service `pam_askpass_service` names, with their includes. A security-key or fingerprint module adds "a person\'s touch or key"; an ssh-agent module, or a stack with no password or person module, reads unknown; a `pam_wheel.so trust` line for this login reads yes where a rule is listed or the sudo-rs refusal names one, and unknown where the original sudo refused.',
+    );
+    // #819 correction 1 (C-11): :: "C-16 (d): one ticket for every session …".
+    claim(
+      "A `timestamp_type` other than `tty` or `ppid`, or `!tty_tickets`, shares one ticket across the login's sessions, and reads unknown.",
+    );
+    // :: "C-17 (e): sudo matches run-as names in any case …".
+    claim(
+      'Run-as names match in any case, as sudo matches them, unless `!case_insensitive_user` or `!case_insensitive_group` is listed; a run-as group that `getent` finds no group for then reads unknown.',
+    );
+    // :: "C-18 (f): the group source …" (its first cell: each source; (vi): this login's own groups).
+    claim(
+      "A run-as group's members count only when `/etc/nsswitch.conf` lists local sources for groups (`files`, `compat`, `db` or `systemd`, or `sss` while SSSD's socket is absent); another source reads unknown.",
+    );
+    // 02 W5: :: "#819 correction 1 C-20: clause (g) prints once …" (clause (g)'s words match it).
+    claim(
+      'Group membership is read as the system lists it: a member the system does not list is not seen, so the strong sentence holds only if the groups the system lists for the service user are all of its groups.',
     );
     // :: "B §9: svc's passwd entry not read …"; :: "svc's shell /usr/sbin/nologin …", :: "… listed in
     // /etc/shells".
@@ -2309,6 +2954,12 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     claim(
       "A rule the check does not recognise, a file it cannot read, or a tool's error reads unknown, with the tool's own line, and then the stronger sentence is not printed.",
     );
+    // #819 correction 1 (C-11): :: "C-2: a Defaults setting in no list …", :: "C-4", :: "C-7", :: "C-12"
+    // (unknown), :: "C-6 (01b #6): an item not read never shadows a yes …" (unless yes), :: "C-13
+    // (a): an acted-on keyword listed twice …" (twice).
+    claim(
+      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line; so does a setting sudo lists twice with different values, since it does not show which one applies.",
+    );
     // :: "01b #8: a sudo found only under the login's home", :: "A §F14 … a copy there that is not
     // root-owned …", :: "W §3: a writable sudo first on PATH …".
     claim(
@@ -2327,9 +2978,10 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
       "nobody authenticates, as this login where the agent's processes run, those of sudo, doas and polkit whose password cache a way showed, because each then waives the password for some minutes;",
     );
     // #819 (08, A F4): :: "W-x3a", :: "W-x3b" (clause (c)'s words); sudo 1.9.15p5's auth/pam.c:220-226
-    // (the services; W-819-790 rows) and check.c:61-80 (runaspw).
+    // (the services; W-819-790 rows) and check.c:61-80 (runaspw). #819 correction 1 (C-10, C-11):
+    // `timestamp_type` and `pam_askpass_service` — :: "W-x3a", :: "W-x3b" (the new words).
     claim(
-      'sudo turns off its password only through `NOPASSWD` tags, when the original sudo refused the listing, because its refusal hides `listpw`, the `Defaults!…` and `Defaults>…` lines, `runaspw`, and the PAM services `pam_service` and `pam_login_service` name;',
+      'sudo turns off its password only through `NOPASSWD` tags, when the original sudo refused the listing, because its refusal hides `listpw`, the `Defaults!…` and `Defaults>…` lines, `runaspw`, `timestamp_type`, and the PAM services `pam_service`, `pam_login_service` and `pam_askpass_service` name;',
     );
     // :: "W §5, W §8: clause (d) names the entry points of the actions asked (#819, 08 B F11) …",
     // :: "W-x3b".
@@ -2340,7 +2992,11 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
       "no person approves a Touch ID, fingerprint or security-key prompt the agent raises, when a way needs a person's touch or key;",
     );
     // #819 (08, B F9): :: "B F9: an sshd and no ~/.ssh → ssh listed, …, and clause (f)".
-    claim("the user's `authorized_keys` holds none of this login's keys, when an sshd is present.");
+    claim("the user's `authorized_keys` holds none of this login's keys, when an sshd is present;");
+    // #819 correction 1 (C-11): :: "#819 correction 1 C-20 …", :: "W-x3b" (clause (g), once).
+    claim(
+      "the groups the system lists for the user are all of its groups, when a reading rested on a group's listed members.",
+    );
     // :: "the LXD socket accepts", :: "modular libvirt", :: "B §13: a socket this login can write …",
     // :: "the login is in the group …" (each).
     claim(
@@ -2351,11 +3007,11 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // "may" because a login sudo does not list, sudo-rs and newer sudo were not measured (#819, 08
     // B F1); the ticket, read in sudo 1.9.15p5's check.c:180-187, 216-223 and policy.c:86, 100
     // (F790-IA-C1 rows); the audit record and the engine log line, by design (F790-R1-06, D2 §7.6);
-    // noninteractive_auth, sudo-rs pipeline.rs:205-207 (F790-R3-B-07). No mail clause: sudo 1.9.15p5's
-    // log_denial mails a login not in sudoers by default (mail_no_user, logging.c:281-300, 957-969;
-    // W-819-790 rows). Not executable here.
+    // noninteractive_auth, sudo-rs pipeline.rs:205-207 (F790-R3-B-07). #819 correction 1 (A MINOR 6):
+    // the mail clause — sudo 1.9.15p5's log_denial mails root for a login not in sudoers, by
+    // default (mail_no_user; logging.c:957-969, sudoers.c:468-478; W-819-790-02). Not executable here.
     claim(
-      "A refused sudo listing may write one syslog auth line naming the working folder (the original sudo 1.9.15p5 does for a login it lists: `sudo: <login> : a password is required ; PWD=… ; USER=root ; COMMAND=list`), and may leave an audit record where Linux auditd or macOS auditing runs. A listing that a still-valid ticket of the original sudo allowed renews that ticket. A socket connect may leave a log line on an engine that logs each connection. Nothing is locked or counted as a failed login while sudo's `noninteractive_auth` setting is off, as it is by default.",
+      "A refused sudo listing may write one syslog auth line naming the working folder (the original sudo 1.9.15p5 does for a login it lists: `sudo: <login> : a password is required ; PWD=… ; USER=root ; COMMAND=list`), and may leave an audit record where Linux auditd or macOS auditing runs. For a login sudo does not list, it may also mail root (`mail_no_user`, on by default, when a mailer is installed). A listing that a still-valid ticket of the original sudo allowed renews that ticket. A socket connect may leave a log line on an engine that logs each connection. Nothing is locked or counted as a failed login while sudo's `noninteractive_auth` setting is off, as it is by default.",
     );
     // :: "Alpine as shipped: /etc/doas.conf 0640"; the remedy: the readable doas cells.
     claim(

@@ -118,7 +118,6 @@ export { deriveCacheDetail } from './engine/execution-loop.js';
 // issue #600 PR 2 (A3): the names a request record carries, bounded where the record is written.
 export { boundRequestFacts } from './engine/request-facts.js';
 export { abandonRun, ABANDON_KILL_ADVISORY } from './engine/abandon-run.js';
-export type { AbandonRunOptions } from './engine/abandon-run.js';
 export {
   buildFailedAttemptRecord,
   moreOf,
@@ -237,9 +236,6 @@ export {
   presentDoorVerdict,
   presentWayOfGate,
   doorWithholdsAnswers,
-  // #819 (U1): an open question that can never be answered, and its words.
-  questionNeverAnswerable,
-  definitionAbsentWords,
 } from './engine/ways.js';
 export type {
   Party,
@@ -261,7 +257,6 @@ export type {
   UnavailableCode,
   RefusedCheck,
   DefinitionAbsence,
-  DefinitionAbsent,
   LoadErrorCode,
   FactsByCode,
   FactsOf,

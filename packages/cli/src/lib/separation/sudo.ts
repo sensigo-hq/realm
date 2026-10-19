@@ -3,6 +3,9 @@
 // A listing is read for entries whose runas covers Realm's service user or root (any command
 // counts); a refusal is read by its words; sudo's PAM stack is scanned whenever sudo needs a
 // credential. Anything this reader does not recognise is `unknown`, with sudo's own line (P0).
+// #819 correction 1 (SEP-00): every item of every list it reads — the Defaults, the `Defaults!…` and
+// `Defaults>…` lines, the long format's `Options:` — is acted on, known harmless (by name, with its
+// reason), or not read; an item not read makes every reading short of yes `unknown`.
 import type { SwitchPathReading } from '@sensigo/realm';
 import {
   findTools,
@@ -33,6 +36,8 @@ interface Listing {
   defaults: string[];
   specific: Specific[];
   entries: Entry[];
+  /** Every value of the long format's `Options:` fields, in order (#819 correction 1). */
+  options: string[];
 }
 
 /** The short format's tags (`NOPASSWD:` …); any other tag is not read. */
@@ -71,6 +76,266 @@ const LONG_FIELDS = new Set([
   'Chroot',
 ]);
 
+/** #819 correction 1 (SEP-00): the keyword of a Defaults item as sudo prints it — `var`, `!var`,
+ *  `var=value`, `var+=value`, `var-=value` (fmtsudoers.c, AUD-10). Exported for its cells only. */
+export function defaultsKeyword(item: string): string {
+  let k = item;
+  if (k.startsWith('!')) k = k.slice(1);
+  k = k.replace(/[+-]=[\s\S]*$/, '');
+  k = k.replace(/=[\s\S]*$/, '');
+  return k;
+}
+
+/** The global Defaults keywords this reader acts on (SEP-00): who must authenticate, whose password,
+ *  which PAM stacks, the cache, the run-as default, and how run-as names are matched. */
+const GLOBAL_ACTED = new Set([
+  'authenticate',
+  'exempt_group',
+  'listpw',
+  'runas_default',
+  'timestamp_timeout',
+  'rootpw',
+  'runaspw',
+  'targetpw',
+  'pam_service',
+  'pam_login_service',
+  'pam_askpass_service',
+  'case_insensitive_user',
+  'case_insensitive_group',
+]);
+
+/**
+ * #819 correction 1 (SEP-00): the Defaults keywords that cannot change who can become whom without
+ * a credential — sudoers(5) at 1.9.15p5, grouped by its types, each with its reason (the sweep's
+ * table B1, as the audit corrected it). Not here, so `unknown`: `timestampdir` and `timestampowner`
+ * (the folder and owner sudo trusts for tickets), `group_plugin` (a run-as `%group` resolved where
+ * getent cannot see), `timestamp_type` but `tty`/`ppid` and `!tty_tickets` (one ticket for every
+ * session), and any keyword newer than that man page.
+ */
+const HARMLESS = new Set([
+  // boolean (76)
+  'always_query_group_plugin', // invoker group matching; the listing already shows what matched
+  'always_set_home', // environment of the run command
+  'closefrom_override', // file descriptors
+  'compress_io', // I/O log
+  'exec_background', // how the command is started
+  'env_editor', // sudoedit editor choice
+  'env_reset', // environment of the run command
+  'fast_glob', // command wildcard matching; any command counts for the reading
+  'log_passwords', // I/O logging
+  'fqdn', // host matching; the listing is already per host
+  'ignore_audit_errors', // logging
+  'ignore_dot', // PATH search
+  'ignore_iolog_errors', // logging
+  'ignore_logfile_errors', // logging
+  'ignore_local_sudoers', // which sudoers source applies; the listing shows the result
+  'ignore_unknown_defaults', // parse diagnostics
+  'insults', // prompt text
+  'log_allowed', // logging
+  'log_denied', // logging
+  'log_exit_status', // logging
+  'log_host', // logging
+  'log_input', // I/O logging
+  'log_output', // I/O logging
+  'log_server_keepalive', // log server
+  'log_server_verify', // log server
+  'log_stderr', // I/O logging
+  'log_stdin', // I/O logging
+  'log_stdout', // I/O logging
+  'log_subcmds', // logging
+  'log_ttyin', // I/O logging
+  'log_ttyout', // I/O logging
+  'log_year', // logging
+  'long_otp_prompt', // prompt text
+  'mail_all_cmnds', // mail
+  'mail_always', // mail
+  'mail_badpass', // mail
+  'mail_no_host', // mail
+  'mail_no_perms', // mail
+  'mail_no_user', // mail
+  'match_group_by_gid', // invoker group matching; the listing already shows what matched; runas groups are read through getent, not sudo
+  'intercept', // policy on sub-commands after the command runs
+  'intercept_allow_setid', // same
+  'intercept_authenticate', // asks MORE authentication, never less
+  'intercept_verify', // same family
+  'netgroup_tuple', // netgroup triple matching; the check takes the user field of every triple (over-covers)
+  'noexec', // restricts what the command may exec
+  'noninteractive_auth', // the PAM stack is read either way; the docs' condition covers the check's own -n (gate-answers.md)
+  'pam_acct_mgmt', // account phase on/off; the scanner skips account lines; the phase only adds restrictions
+  'pam_rhost', // PAM items set for logging; no admitted module grants by them
+  'pam_ruser', // PAM items set for logging; no admitted module grants by them
+  'pam_session', // session and credential phases
+  'pam_setcred', // session and credential phases
+  'passprompt_override', // prompt text
+  'path_info', // error text
+  'preserve_groups', // group vector of the run command
+  'pwfeedback', // prompt echo
+  'requiretty', // a restriction
+  'root_sudo', // a restriction on root
+  'runas_allow_unknown_id', // lets #uid outside passwd match; the check compares #uid numerically and ALL already covers
+  'runas_check_shell', // a restriction (target's shell must be listed)
+  'selinux', // security context of the command
+  'set_home', // environment / utmp of the run command
+  'set_logname', // environment / utmp of the run command
+  'set_utmp', // environment / utmp of the run command
+  'setenv', // environment
+  'shell_noargs', // which command runs with no arguments; any command counts
+  'stay_setuid', // sudo's own uids
+  'sudoedit_checkdir', // sudoedit file handling
+  'sudoedit_follow', // sudoedit file handling
+  'syslog_pid', // logging
+  'umask_override', // umask of the command
+  'use_netgroups', // user/host matching; the listing shows the result; runas +netgroup is expanded by the check
+  'use_pty', // terminal handling
+  'user_command_timeouts', // time limits
+  'utmp_runas', // environment / utmp of the run command
+  'visiblepw', // prompt echo (!visiblepw is Fedora's stock)
+  // integer (9)
+  'closefrom', // file descriptors
+  'command_timeout', // time limit
+  'log_server_timeout', // log server
+  'maxseq', // I/O log sequence
+  'passwd_tries', // number of tries; fewer tries is a restriction
+  'syslog_maxlen', // logging
+  'loglinelen', // logging
+  'passwd_timeout', // prompt time limit
+  'umask', // umask of the command
+  // string (51)
+  'apparmor_profile', // confinement of the command
+  'authfail_message', // message text
+  'badpass_message', // message text
+  'editor', // sudoedit
+  'intercept_type', // intercept mechanism
+  'iolog_dir', // I/O log storage
+  'iolog_file', // I/O log storage
+  'iolog_flush', // I/O log storage
+  'iolog_group', // I/O log storage
+  'iolog_mode', // I/O log storage
+  'iolog_user', // I/O log storage
+  'lecture_status_dir', // lecture state
+  'log_server_cabundle', // log server TLS
+  'log_server_peer_cert', // log server TLS
+  'log_server_peer_key', // log server TLS
+  'mailsub', // mail
+  'noexec_file', // noexec library
+  'passprompt', // prompt text
+  'role', // SELinux context
+  'sudoers_locale', // parse locale
+  'type', // SELinux context
+  'admin_flag', // a marker file
+  'env_file', // environment
+  'fdexec', // how the command is executed
+  'lecture', // lecture text
+  'lecture_file', // lecture text
+  'log_format', // logging
+  'logfile', // logging
+  'mailerflags', // mail
+  'mailerpath', // mail
+  'mailfrom', // mail
+  'mailto', // mail
+  'rlimit_as', // resource limits of the command
+  'rlimit_core', // resource limits of the command
+  'rlimit_cpu', // resource limits of the command
+  'rlimit_data', // resource limits of the command
+  'rlimit_fsize', // resource limits of the command
+  'rlimit_locks', // resource limits of the command
+  'rlimit_memlock', // resource limits of the command
+  'rlimit_nofile', // resource limits of the command
+  'rlimit_nproc', // resource limits of the command
+  'rlimit_rss', // resource limits of the command
+  'rlimit_stack', // resource limits of the command
+  'restricted_env_file', // environment
+  'runchroot', // where the command runs
+  'runcwd', // where the command runs
+  'secure_path', // PATH of the command
+  'syslog', // logging
+  'syslog_badpri', // logging
+  'syslog_goodpri', // logging
+  'verifypw', // governs -v only; with authentication off, -v opens no time stamp (AUD-17)
+  // list (5)
+  'env_check', // environment of the command
+  'env_delete', // environment of the command
+  'env_keep', // environment of the command
+  'log_servers', // a log destination (AUD-07)
+  'passprompt_regex', // a prompt pattern (AUD-07)
+]);
+
+/** The long format's `Options:` names sudo prints for the tags (display.c, AUD-09): each restricts
+ *  or logs what the command does, never who may run it. */
+const OPTIONS_HARMLESS = new Set(
+  ['setenv', 'noexec', 'intercept', 'log_input', 'log_output'].flatMap((n) => [n, `!${n}`]),
+);
+
+/** What one Defaults item is to this reader: acted on, harmless, or not read. */
+type Kind = 'acted' | 'harmless' | 'unread';
+
+/** (d): the ticket's scope — `tty` and `ppid` keep one ticket per terminal or parent (harmless);
+ *  `global`, `kernel` or `!tty_tickets` one for every session of the login (not read). */
+function ticketKind(item: string, k: string): Kind | undefined {
+  if (k === 'timestamp_type')
+    return /^timestamp_type=(?:tty|ppid)$/.test(item) ? 'harmless' : 'unread';
+  if (k === 'tty_tickets') return item === 'tty_tickets' ? 'harmless' : 'unread';
+  return undefined;
+}
+
+/** A global Defaults item's kind. (e): `!case_insensitive_*` is acted on; the positive forms state
+ *  sudo's default. */
+function globalKind(item: string): Kind {
+  const k = defaultsKeyword(item);
+  const ticket = ticketKind(item, k);
+  if (ticket !== undefined) return ticket;
+  if (k === 'case_insensitive_user' || k === 'case_insensitive_group')
+    return item.startsWith('!') ? 'acted' : 'harmless';
+  if (GLOBAL_ACTED.has(k)) return 'acted';
+  return HARMLESS.has(k) ? 'harmless' : 'unread';
+}
+
+/** A `Defaults!…`/`Defaults>…` item's kind: `!authenticate` and `timestamp_timeout` are acted on;
+ *  `authenticate` restores the password and `listpw` changes no credential; a credential keyword
+ *  here — which the global reading never sees — is not read. */
+function specificKind(item: string): Kind {
+  const k = defaultsKeyword(item);
+  if (item === '!authenticate' || k === 'timestamp_timeout') return 'acted';
+  if (item === 'authenticate' || k === 'listpw') return 'harmless';
+  const ticket = ticketKind(item, k);
+  if (ticket !== undefined) return ticket;
+  return HARMLESS.has(k) ? 'harmless' : 'unread';
+}
+
+/** (b): `timestamp_timeout=0`, the value that keeps no ticket. */
+const ZERO_TIMEOUT = /^timestamp_timeout=0(?:\.0*)?$/;
+
+/** The first item of `listing` this reader does not read, as its cause (P0) — or none. (a): an
+ *  acted-on keyword listed with different forms or values is not read either: sudo applies the
+ *  last matching entry, and the listing does not show which that is (AUD-11). */
+function unreadItem(listing: Listing): string | undefined {
+  const global = listing.defaults.find((i) => globalKind(i) === 'unread');
+  if (global !== undefined)
+    return `sudo listed a Defaults setting this check does not read: ${global}`;
+  const forms = new Map<string, string[]>();
+  for (const item of listing.defaults) {
+    const k = defaultsKeyword(item);
+    if (!GLOBAL_ACTED.has(k)) continue;
+    const seen = forms.get(k) ?? [];
+    if (!seen.includes(item)) seen.push(item);
+    forms.set(k, seen);
+  }
+  const repeated = [...forms.values()].find((items) => items.length > 1);
+  if (repeated !== undefined)
+    return `sudo listed a Defaults setting more than once, and does not show which one it applies: ${repeated.join(', ')}`;
+  for (const s of listing.specific) {
+    const item = s.options.find((o) => specificKind(o) === 'unread');
+    if (item !== undefined)
+      return `sudo listed a Defaults setting this check does not read: Defaults${s.kind}${s.targets.join(',')} ${item}`;
+  }
+  const option = listing.options.find(
+    (o) => o !== 'authenticate' && o !== '!authenticate' && !OPTIONS_HARMLESS.has(o),
+  );
+  if (option !== undefined)
+    return `sudo listed an Options value this check does not read: ${option}`;
+  return undefined;
+}
+
 /** Splits a list on commas outside double quotes, trimmed. */
 const commaList = (text: string): string[] => {
   const out: string[] = [];
@@ -90,7 +355,7 @@ const commaList = (text: string): string[] => {
 /** Reads one listing (either format): its sections, every line recognised — or unknown. Exported
  *  for its cells only. */
 export function parseListing(stdout: string): Listing | { unknown: string } {
-  const listing: Listing = { defaults: [], specific: [], entries: [] };
+  const listing: Listing = { defaults: [], specific: [], entries: [], options: [] };
   let mode: 'none' | 'defaults' | 'specific' | 'entries' = 'none';
   let header = false;
   let defaultsText = '';
@@ -154,6 +419,7 @@ export function parseListing(stdout: string): Listing | { unknown: string } {
       if (field === 'RunAsGroups') entry.groups = commaList(value!);
       if (field === 'Options') {
         const opts = commaList(value!);
+        listing.options.push(...opts);
         if (opts.includes('!authenticate')) entry.nopasswd = true;
         if (opts.includes('authenticate')) entry.nopasswd = false;
       }
@@ -229,8 +495,16 @@ function shortItems(
   return { entries };
 }
 
-/** Who a runas covers, of Realm's service user and root — or unknown. */
-type Covers = { svc: boolean; root: boolean } | { unknown: string };
+/** Who a runas covers, of Realm's service user and root — or unknown. `listed`: the token does not
+ *  cover ⟨svc⟩, and that rested on a group's listed members (clause (g), #819 correction 1). */
+type Covers = { svc: boolean; root: boolean; listed?: true } | { unknown: string };
+
+/** (e): how sudo matches run-as names — case-insensitively unless `!case_insensitive_user` /
+ *  `!case_insensitive_group` is listed (sudo's default, defaults.c; AUD-16). */
+interface NameMatch {
+  user: boolean;
+  group: boolean;
+}
 
 /** A sudoers alias's shape: upper case (sudo-rs lists runas aliases unexpanded). */
 const ALIAS = /^[A-Z][A-Z0-9_]*$/;
@@ -243,6 +517,7 @@ async function tokenCovers(
   svc: Found<PasswdEntry>,
   root: Found<PasswdEntry>,
   asGroup: boolean,
+  ci: NameMatch,
 ): Promise<Covers> {
   if (token === 'ALL' || token.startsWith('!') || (ALIAS.test(token) && token !== lk.svc)) {
     return { svc: true, root: true };
@@ -253,6 +528,9 @@ async function tokenCovers(
   // read outranks it (yes > unknown, 01b #6). A runas GROUP never makes the command run as root
   // (`entryCovers`), so root is not judged for one.
   let unread: string | undefined;
+  let listed = false;
+  const same = (a: string, b: string): boolean =>
+    ci.user ? a.toLowerCase() === b.toLowerCase() : a === b;
   for (const who of asGroup ? (['svc'] as const) : (['svc', 'root'] as const)) {
     const entry = users[who];
     const name = who === 'svc' ? lk.svc : 'root';
@@ -264,9 +542,16 @@ async function tokenCovers(
         else if ('unknown' in entry) return { unknown: entry.unknown };
         continue;
       }
+      // #819 correction 1 (e): sudo matches a group name in any case unless told otherwise, and
+      // getent only exactly — a name it finds no group for may name one of another case
+      if (ci.group && !lk.darwin && !group.startsWith('#') && 'absent' in (await lk.group(group))) {
+        unread ??= `getent group ${group} finds no group of that name, and sudo matches group names in any case (case_insensitive_group, on by default)`;
+        continue;
+      }
       const inGroup = await lk.userIn(entry.found, group);
       if ('unknown' in inGroup) unread ??= inGroup.unknown;
       else if ('found' in inGroup && inGroup.found) out[who] = true;
+      else if (who === 'svc' && 'listed' in inGroup) listed = true;
     } else if (token.startsWith('+')) {
       const net = await lk.netgroupUsers(token.slice(1));
       if ('unknown' in net) return { unknown: net.unknown };
@@ -276,7 +561,7 @@ async function tokenCovers(
       if (uid === undefined)
         out[who] = true; // svc's uid is not known: the safe direction
       else out[who] = token === `#${uid}`;
-    } else if (token === name) {
+    } else if (same(token, name)) {
       out[who] = true;
     } else if (token !== lk.login) {
       // A §F10: another name may share svc's uid or root's (a `toor`): compared by uid
@@ -286,8 +571,9 @@ async function tokenCovers(
       if ('found' in other && (uid === undefined || other.found.uid === uid)) out[who] = true;
     }
   }
-  if (unread !== undefined && !out.svc && !out.root) return { unknown: unread };
-  return out;
+  // #819 correction 1 (A MINOR 1): a cover read for root never drops ⟨svc⟩'s unknown
+  if (unread !== undefined && !out.svc) return { unknown: unread };
+  return listed && !out.svc ? { ...out, listed: true } : out;
 }
 
 /** ⟨svc⟩'s uid: from its passwd entry, or from a `uid <n>` service user (A §F10). */
@@ -302,21 +588,23 @@ async function entryCovers(
   e: Entry,
   svc: Found<PasswdEntry>,
   root: Found<PasswdEntry>,
+  ci: NameMatch,
 ): Promise<Covers> {
-  const out = { svc: false, root: false };
+  const out: { svc: boolean; root: boolean; listed?: true } = { svc: false, root: false };
   for (const [tokens, asGroup] of [
     [e.users, false],
     [e.groups, true],
   ] as const) {
     for (const t of tokens) {
-      const c = await tokenCovers(lk, t, svc, root, asGroup);
+      const c = await tokenCovers(lk, t, svc, root, asGroup, ci);
       if ('unknown' in c) return c;
       out.svc ||= c.svc;
       // a runas group onto root's group does not make the command run as root
       if (!asGroup) out.root ||= c.root;
+      if (c.listed === true) out.listed = true;
     }
   }
-  return out;
+  return out.svc ? { svc: out.svc, root: out.root } : out;
 }
 
 /** Where a credential reading is composed: a listing, sudo-rs's refusal (both show a rule exists),
@@ -325,7 +613,8 @@ type Site = 'listing' | 'rs-refusal' | 'classic-refusal';
 
 /**
  * D5 (as corrected): sudo's PAM stacks — `sudo`, and `sudo-i` where it exists (or the services
- * `pam_service` / `pam_login_service` name) — read whenever sudo needs a credential; the most
+ * `pam_service` / `pam_login_service` name), and the stack `pam_askpass_service` names (#819
+ * correction 1) — read whenever sudo needs a credential; the most
  * permissive wins. A grant reads yes where a rule is known to exist and unknown at classic sudo's
  * refusal; a stack with no password and no person module reads unknown (B §1).
  */
@@ -335,7 +624,10 @@ async function withPam(
   how: string,
   tool: string,
   site: Site,
-  services: { main: string; login: string | undefined } = { main: 'sudo', login: undefined },
+  services: { main: string; login: string | undefined; askpass?: string } = {
+    main: 'sudo',
+    login: undefined,
+  },
 ): Promise<SwitchPathReading[]> {
   const login = services.login ?? 'sudo-i';
   const names = [services.main];
@@ -344,6 +636,8 @@ async function withPam(
     ['/etc/pam.d', '/usr/lib/pam.d'].some((d) => lk.probes.exists(`${d}/${login}`))
   )
     names.push(login);
+  // #819 correction 1 (A BLOCKING 1): the stack sudo consults under -A, when one is named
+  if (services.askpass !== undefined) names.push(services.askpass);
   const unknown = (cause: string): SwitchPathReading[] => [
     { path: 'sudo', tool, outcome: 'unknown', how, cause },
   ];
@@ -488,7 +782,12 @@ async function readOne(
   return judge(lk, path, how, listing, svc, root, flavour);
 }
 
-/** D3: a listing's reading. */
+/**
+ * D3: a listing's reading. #819 correction 1 (SEP-00, 01b #6 yes > unknown): an item the reader
+ * does not read never shadows a yes; every other reading — the not-allowed exit, a credential, what
+ * the PAM stacks leave short of yes — becomes unknown, with the first such item as its cause. A
+ * reading that rested on a group's listed members not holding ⟨svc⟩ says so (clause (g)).
+ */
 async function judge(
   lk: Lookups,
   path: string,
@@ -498,12 +797,36 @@ async function judge(
   root: Found<PasswdEntry>,
   flavour: 'classic' | 'rs',
 ): Promise<SwitchPathReading[]> {
+  const unread = unreadItem(listing);
+  const seen = { listed: false };
+  const rs = await judgeListing(lk, path, how, listing, svc, root, flavour, seen);
+  if (rs.some((r) => r.outcome === 'yes' || r.outcome === 'unknown')) return rs;
+  if (unread !== undefined)
+    return [{ path: 'sudo', tool: path, outcome: 'unknown', how, cause: unread }];
+  return seen.listed ? rs.map((r) => ({ ...r, member_list: true as const })) : rs;
+}
+
+/** D3: a listing's reading, before what the reader did not read is composed in (`judge`). */
+async function judgeListing(
+  lk: Lookups,
+  path: string,
+  how: string,
+  listing: Listing,
+  svc: Found<PasswdEntry>,
+  root: Found<PasswdEntry>,
+  flavour: 'classic' | 'rs',
+  seen: { listed: boolean },
+): Promise<SwitchPathReading[]> {
   const reading = (r: Omit<SwitchPathReading, 'path' | 'tool'>): SwitchPathReading => ({
     path: 'sudo',
     tool: path,
     ...r,
   });
   const opts = new Set(listing.defaults);
+  const ci: NameMatch = {
+    user: !opts.has('!case_insensitive_user'),
+    group: !opts.has('!case_insensitive_group'),
+  };
   if (opts.has('!authenticate')) {
     return [
       reading({
@@ -514,12 +837,14 @@ async function judge(
   }
   const covering: { entry: Entry; svc: boolean; root: boolean }[] = [];
   for (const entry of listing.entries) {
-    const c = await entryCovers(lk, entry, svc, root);
+    const c = await entryCovers(lk, entry, svc, root, ci);
     if ('unknown' in c) return [reading({ outcome: 'unknown', how, cause: c.unknown })];
-    if (c.svc || c.root) covering.push({ entry, ...c });
+    if (c.listed === true) seen.listed = true;
+    if (c.svc || c.root) covering.push({ entry, svc: c.svc, root: c.root });
   }
+  // #819 correction 1 (A MINOR 4): with Realm's service user root, it is named once
   const runsAs = (c: { svc: boolean; root: boolean }) =>
-    c.svc && c.root ? `${lk.svc} or root` : c.svc ? lk.svc : 'root';
+    c.svc && c.root ? (lk.svc === 'root' ? 'root' : `${lk.svc} or root`) : c.svc ? lk.svc : 'root';
   const open = covering.find((c) => c.entry.nopasswd);
   if (open !== undefined) {
     return [reading({ outcome: 'yes', how: `${how}: a NOPASSWD rule runs as ${runsAs(open)}` })];
@@ -529,8 +854,9 @@ async function judge(
     for (const target of s.targets) {
       let hit: boolean;
       if (s.kind === '>') {
-        const c = await tokenCovers(lk, target, svc, root, false);
+        const c = await tokenCovers(lk, target, svc, root, false, ci);
         if ('unknown' in c) return [reading({ outcome: 'unknown', how, cause: c.unknown })];
+        if (c.listed === true) seen.listed = true;
         hit = c.svc || c.root;
       } else {
         // A §F2: a command, an alias, a folder or a glob counts, unless both are plain paths that
@@ -591,9 +917,17 @@ async function judge(
   const runasDefault = listing.defaults
     .find((o) => o.startsWith('runas_default='))
     ?.slice('runas_default='.length);
-  const cache = listing.defaults.some((o) => /^timestamp_timeout=0(?:\.0*)?$/.test(o))
-    ? {}
-    : { cache: 'sudo_timestamp' as const };
+  // #819 correction 1 (b): a non-zero timeout anywhere keeps a ticket — a `Defaults!…`/`Defaults>…`
+  // line applies before sudo authenticates and governs the ticket (AUD-13); `=0` drops it only when
+  // no line sets another value
+  const timeouts = [...listing.defaults, ...listing.specific.flatMap((s) => s.options)].filter(
+    (o) => defaultsKeyword(o) === 'timestamp_timeout',
+  );
+  const cache =
+    listing.defaults.some((o) => ZERO_TIMEOUT.test(o)) &&
+    timeouts.every((o) => ZERO_TIMEOUT.test(o))
+      ? {}
+      : { cache: 'sudo_timestamp' as const };
   const why = `${how}: a rule runs as ${runsAs({ svc: covering.some((c) => c.svc), root: covering.some((c) => c.root) })} with a password`;
   let base: SwitchPathReading[];
   if (opts.has('rootpw')) {
@@ -653,7 +987,12 @@ async function judge(
   }
   const option = (k: string) =>
     listing.defaults.find((o) => o.startsWith(`${k}=`))?.slice(k.length + 1);
-  const services = { main: option('pam_service') ?? 'sudo', login: option('pam_login_service') };
+  const askpass = option('pam_askpass_service');
+  const services = {
+    main: option('pam_service') ?? 'sudo',
+    login: option('pam_login_service'),
+    ...(askpass !== undefined ? { askpass } : {}),
+  };
   return withPam(lk, base, how, path, 'listing', services);
 }
 

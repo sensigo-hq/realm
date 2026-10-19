@@ -698,16 +698,22 @@ function newerDefinitionParts(
   ];
 }
 
+/** #819 correction 1 (01): whether `run` waits at an open question. */
+const atLiveGate = (run: Partial<Pick<RunRecord, 'pending_gate' | 'terminal_state'>>): boolean =>
+  run.pending_gate !== undefined && run.terminal_state !== true;
+
 /**
  * issue #729 PR-0 (D3 A-5, D4 T-21): why a run's definition is absent, from the error a definition
  * read threw — the `definition_absent` entry's cause, one per {@link getWorkflowForRun} arm, and the
  * stored file's path where the store knows it (the unreadable, invalid and legacy copies; a workflow
  * that was never registered, or an agent's copy that is gone, has none). `undefined` for any other
- * error.
+ * error. #819 correction 1 (01): a run waiting at a live question reads `not_registered` whatever
+ * its id's shape — an agent's workflow has no gate (create_workflow never sets `trust`; W-829-B-01),
+ * so a gate proves the workflow came from a file.
  */
 export function definitionAbsenceOf(
   err: unknown,
-  run: Pick<RunRecord, 'workflow_id'>,
+  run: Pick<RunRecord, 'workflow_id'> & Partial<Pick<RunRecord, 'pending_gate' | 'terminal_state'>>,
 ):
   | {
       absent: DefinitionAbsence;
@@ -732,7 +738,10 @@ export function definitionAbsenceOf(
   switch (err.code) {
     case 'STATE_WORKFLOW_NOT_FOUND':
       return {
-        absent: /-[0-9a-f]{16}$/.test(run.workflow_id) ? 'agent_copy_gone' : 'not_registered',
+        absent:
+          /-[0-9a-f]{16}$/.test(run.workflow_id) && !atLiveGate(run)
+            ? 'agent_copy_gone'
+            : 'not_registered',
         workflow_id: run.workflow_id,
       };
     case 'STATE_WORKFLOW_UNREADABLE':
@@ -802,13 +811,7 @@ export async function getWorkflowForRun(
     const gateRemedy = (): readonly WayOn[] | undefined => {
       const live = run.terminal_state === true ? undefined : run.pending_gate;
       if (live === undefined) return undefined;
-      const absence = definitionAbsenceOf(err, run);
-      // #819 (U5, U1): an agent's copy that is gone never had a file to register — its question can
-      // never be answered, and the way on is ending the run by naming the gate.
-      if (absence?.absent === 'agent_copy_gone') {
-        return [{ verb: 'abandon', conditions: [], run_id: run.id, gate_id: live.gate_id }];
-      }
-      const path = absence?.path;
+      const path = definitionAbsenceOf(err, run)?.path;
       const register: RegisterWay = {
         verb: 'register',
         conditions: [],
@@ -849,12 +852,15 @@ export async function getWorkflowForRun(
     // Review fold R1: the act is keyed on the CLASS (`repairActFor`), never the code — three
     // classes share STATE_WORKFLOW_UNREADABLE and their acts differ. One joiner: the act, then
     // the retry. (`missing`/`legacy` yield no act — see `repairActFor`.)
+    // #819 correction 1 (01, B S2): at a live question the `rm` alternative is not offered —
+    // removing the copy loses the only record of where it came from, and leaves the run no way on.
     const repairClause = (withRetry: boolean): string | undefined => {
       const r = repairActFor(err);
       if (r === undefined) return undefined;
+      const alternative = gate === undefined ? r.alternative : undefined;
       return (
         `To repair: ${r.act}${withRetry ? `, then ${then}` : ''}` +
-        `${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`
+        `${alternative !== undefined ? `; ${alternative}` : ''}.`
       );
     };
 
@@ -883,18 +889,11 @@ export async function getWorkflowForRun(
     // Now the clause states the two facts — the gate cannot be answered until the copy reads, and
     // `realm run abandon` refuses a gate-waiting run (abandon-run.ts) — and the REPAIR clause ends
     // in the answer command. PR-V's void replaces this sentence (its sweep list carries it).
-    // #819 (U1): realm run abandon refuses a question that can still be answered; an agent's copy
-    // that is gone leaves one that can never be answered, ended by naming its gate (the error's
-    // remedy). A copy whose recorded source is gone is judged by the CLI's abandon, which reads it.
-    const disposalSentence = (leadIn: string, never = false): string =>
+    const disposalSentence = (leadIn: string): string =>
       gate === undefined
         ? `${leadIn} realm run abandon ${run.id}.`
-        : never
-          ? `This run is waiting on human gate '${gate.step_name}', whose question can never be ` +
-            `answered; end it by naming the gate: realm run abandon ${run.id} --gate ${gate.gate_id}.`
-          : `This run is waiting on human gate '${gate.step_name}', which cannot be answered until ` +
-            `its workflow can be read; realm run abandon refuses a run whose question can still be ` +
-            `answered.`;
+        : `This run is waiting on human gate '${gate.step_name}', which cannot be answered until ` +
+          `its workflow can be read; realm run abandon refuses a run that is waiting on a gate.`;
 
     // Reached with `terminal_state` only through `terminalOk` (the sites whose happy path IS a
     // terminal run — drain, replay, resume, inspect): there is nothing left to END, so the
@@ -910,11 +909,13 @@ export async function getWorkflowForRun(
         // A SHAPE heuristic, not provenance: `deriveWorkflowId` mints `dynamic-<16hex>` and
         // `<slug>-<16hex>`, so a human-registered id that happens to carry a 16-hex suffix gets
         // the agent sentence too. Keyed on the id, never on a record field realm does not have.
-        throw /-[0-9a-f]{16}$/.test(run.workflow_id)
+        // #819 correction 1 (01): never at a live question, which an agent's workflow cannot open
+        // (`definitionAbsenceOf`): there the copy came from a file, and the way on is registering it.
+        throw definitionAbsenceOf(err, run)?.absent === 'agent_copy_gone'
           ? copy(
               `Workflow '${run.workflow_id}' not found — this run's workflow was created by an ` +
                 `agent (create_workflow) and its stored copy is gone; there is no source file ` +
-                `to register.${terminal ? '' : ` ${disposalSentence('To end the run:', true)}`}`,
+                `to register.${terminal ? '' : ` ${disposalSentence('To end the run:')}`}`,
             )
           : copy(
               // #729 PR-0 (T-21, #742): the reason is the `definition_absent { cause:

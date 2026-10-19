@@ -674,7 +674,7 @@ describe('handleBidirectionalGate', () => {
     });
   });
 
-  it('#819 (item 28) the cross cell: a run answered in Slack reads "a Slack thread" in realm run inspect and in the agent\'s text after the form path', async () => {
+  it('#819 (item 28) the cross cell: a run answered in Slack reads "a Slack thread" in the answer line `realm run inspect` renders (renderAnswerLine, from the recorded route) and in the agent\'s text after the form path', async () => {
     const gate: PendingGate = {
       gate_id: 'g1',
       step_name: 'confirm_review',

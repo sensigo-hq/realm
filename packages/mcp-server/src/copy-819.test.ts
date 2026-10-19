@@ -1,8 +1,9 @@
 // copy-819.test.ts — #819 (03) on the MCP door. U2: a registered copy that is valid JSON at the
 // current format but has no `steps` object is named, with its repair, by `get_run_state` and
 // `advance_run` — never a raw internal error (W's walk 1: "Cannot convert undefined or null to
-// object"). U1: MCP's `abandon_run` stays definition-blind — a run whose question can never be
-// answered (an agent's copy that is gone) is still refused there; the CLI's `--gate` ends it.
+// object"). MCP's `abandon_run` stays definition-blind: a run waiting at a gate is refused there,
+// whatever its copy. #819 correction 1 (01): at a live question a hex-suffixed workflow with no copy
+// reads `not_registered` in the agent's replies too — never "created by an agent".
 //
 // Every assertion carries (a) the change that turns it red and (b) what it prints on failure: codes,
 // texts — never a token.
@@ -95,8 +96,8 @@ describe('#819 U2 — a copy with no steps, over MCP', () => {
   });
 });
 
-describe('#819 U1 — abandon_run stays definition-blind', () => {
-  it("a run whose question can never be answered (an agent's copy that is gone) is still refused by abandon_run", async () => {
+describe('#819 — abandon_run stays definition-blind', () => {
+  it('a run waiting at a gate whose hex-suffixed workflow has no copy is refused by abandon_run, as every gate run is', async () => {
     const s = await atGate('triage-0123456789abcdef');
     const reply = await s.call('abandon_run', { run_id: s.runId, reason: 'stuck' });
     // (a) red when MCP's abandon ends a question — under `withheld` the agent's tool, and the agent
@@ -105,5 +106,27 @@ describe('#819 U1 — abandon_run stays definition-blind', () => {
       code: reply['error_code'],
       phase: (await s.runStore.get(s.runId)).run_phase,
     }).toEqual({ code: 'STATE_TRANSITION_DENIED', phase: 'gate_waiting' });
+  });
+});
+
+describe("#819 correction 1 (01) — the agent is never told a gate run's workflow was created by an agent", () => {
+  it('submit_human_response on a run at a gate whose hex-suffixed workflow has no copy: the message says it is not registered', async () => {
+    const s = await atGate('ops-review-0123456789abcdef');
+    const reply = await s.call('submit_human_response', {
+      run_id: s.runId,
+      gate_id: 'g-1',
+      choice: 'ship',
+    });
+    const text = JSON.stringify(reply);
+    // (a) red when the id's shape decides at a live question (the message then says the workflow
+    //     was created by an agent and offers no register way); (b) prints the code and what the
+    //     message says.
+    expect({
+      code: reply['error_code'],
+      agent: text.includes('created by an agent'),
+      notRegistered: text.includes(
+        "Workflow 'ops-review-0123456789abcdef' is not registered in this workflow store",
+      ),
+    }).toEqual({ code: 'STATE_WORKFLOW_NOT_FOUND', agent: false, notRegistered: true });
   });
 });

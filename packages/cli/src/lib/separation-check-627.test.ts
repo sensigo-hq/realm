@@ -68,6 +68,7 @@ function machine(
     // Correction 1 (D4): the login's own home, where the agent-scoped paths are read.
     loginHome: () => '/home/agent',
     stat: () => ({ error: 'unset' }),
+    lstat: () => ({ error: 'unset' }),
     execPath: () => '/usr/bin/node',
     realmPackageDir: () => '/usr/lib/node_modules/@sensigo/realm-cli',
     env: { PATH: '/usr/bin' },
@@ -86,20 +87,19 @@ function machine(
     run: notFoundRunner,
     ...over,
   };
-  return {
-    ...base,
-    // Correction 1 (D1), correction 2 (5.7: no `ownerOf` — the owner comes from `stat`): derived from
-    // `exists` and `owners` unless a cell gives its own stat.
-    // #790: getent is root's own whatever a cell's stat says of other paths.
-    stat: (p) =>
-      p === GETENT
-        ? { uid: 0, mode: 0o100755 }
-        : (
-            over.stat ??
-            ((q: string) =>
-              base.exists(q) ? { uid: owners[q] ?? ME, mode: 0o40755 } : { error: 'ENOENT' })
-          )(p),
-  };
+  // Correction 1 (D1), correction 2 (5.7: no `ownerOf` — the owner comes from `stat`): derived from
+  // `exists` and `owners` unless a cell gives its own stat.
+  // #790: getent is root's own whatever a cell's stat says of other paths.
+  const stat: SeparationProbes['stat'] = (p) =>
+    p === GETENT
+      ? { uid: 0, mode: 0o100755 }
+      : (
+          over.stat ??
+          ((q: string) =>
+            base.exists(q) ? { uid: owners[q] ?? ME, mode: 0o40755 } : { error: 'ENOENT' })
+        )(p);
+  // #819 correction 1 (SEP-00 (g)): a path's own owner — the same as `stat` unless a cell gives a link
+  return { ...base, stat, lstat: over.lstat ?? stat };
 }
 
 const FLAG: { value: GateAnswers; source: Source } = {
@@ -131,7 +131,7 @@ describe('#627 W — the separation check (cell 26)', () => {
     }).toEqual({
       claim: CANNOT_RECORD,
       become:
-        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
+        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
     });
   });
 
@@ -181,7 +181,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       ),
       offered: await line({ value: 'offered', source: { kind: 'flag', ref: '--gate-answers' } }),
     }).toEqual({
-      flag: 'The gate-answers value: withheld (measured — given on this command line).',
+      flag: 'The gate-answers value: withheld (given on this command line).',
       env: "The gate-answers value: withheld, configured, not enforced by Realm — from REALM_MCP_GATE_ANSWERS; the running server's value is not read.",
       asked:
         'The gate-answers value: asked (from the default) — the agent keeps an answer way in apps without forms.',
@@ -234,7 +234,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       // #790 (01b #8): a sudo this login owns is not a root-owned system copy — unknown.
       become: [
         "This login can become Realm's service user (realm) without a password: unknown (sudo: unknown: sudo at /usr/bin/sudo is not a root-owned system copy (sudo looked for in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs and on PATH); observed now).",
-        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
+        "This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
       ],
       // #790 (01b #3): condition 3 is every engine that runs as root.
       rootEngine: [
@@ -248,8 +248,8 @@ describe('#627 W — the separation check (cell 26)', () => {
       ],
       // Correction 2 (8.5): the "no" names what it read.
       sandbox: [
-        "The agent's app runs it in a sandbox: configured, not enforced by Realm — Claude Code (~/.claude/settings.json).",
-        "The agent's app runs it in a sandbox: no (measured) — only ~/.claude/settings.json and ~/.codex/config.toml were looked at.",
+        "The agent's app runs it in a sandbox: configured, not enforced by Realm — Claude Code (/home/agent/.claude/settings.json).",
+        "The agent's app runs it in a sandbox: no (read from two files) — only /home/agent/.claude/settings.json and /home/agent/.codex/config.toml were looked at.",
       ],
     });
   });
@@ -262,14 +262,14 @@ describe('#627 W — the separation check (cell 26)', () => {
       `Separation: separate user — ${CANNOT_RECORD}`,
       `Measured for the login 'agent', against the store at ${STORE}.`,
       "  This login can write Realm's store or open its files: no (measured).",
-      "  This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
+      "  This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
       '  This login can reach an engine that runs as root: no (measured).',
       `  ${CONDITION_4}: no (measured) — 3 files and folders checked.`,
       '  Another Realm server or CLI that takes answers uses this store: unknown (another Realm server or CLI could use this store, and one look cannot rule it out; observed now).',
       "  The store's time basis: this machine's clock (the JSON store keeps no clock of its own) (fact).",
-      "  The agent's app runs it in a sandbox: no (measured) — only ~/.claude/settings.json and ~/.codex/config.toml were looked at.",
+      "  The agent's app runs it in a sandbox: no (read from two files) — only /home/agent/.claude/settings.json and /home/agent/.codex/config.toml were looked at.",
       '  This login can change runner.cache.economics (informational): no runner.cache.economics is set (fact).',
-      '  The gate-answers value: withheld (measured — given on this command line).',
+      '  The gate-answers value: withheld (given on this command line).',
     ]);
   });
 
@@ -319,7 +319,7 @@ describe('#627 W — the separation check (cell 26)', () => {
       denied: {
         header: `Separation: separate user — An agent running as agent cannot record a gate answer through this server, the terminal or Realm's files, provided no program Realm runs as realm, read from the owner of ${HOME}, can run code for it, Realm's server runs this Node and this Realm package, every Realm server on this machine starts with --gate-answers withheld, and no registered workflow's extension file (not read: the store cannot be read) can be changed by this login.`,
         store: `  This login can write Realm's store or open its files: no (measured) — ${STORE}: permission denied.`,
-        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
+        become: `  This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
       },
       // #819 (C3): a store this login owns is within its reach, whatever its mode — the same login.
       ownedNo: {
@@ -563,7 +563,7 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
       rootBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
       mineOwns: false,
       mineBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
-      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
+      strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
     });
   });
 
@@ -748,6 +748,37 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
     expect(line).toBe(`${CONDITION_4}: yes (measured) — ${PROJECT}/realm.yaml can be changed.`);
   });
 
+  it('#819 correction 1 C-19 (SEP-00 (g)): a link this login owns in a sticky world-writable folder, pointing at another user\'s file — condition 4 "yes"', async () => {
+    const line = conditionLine(
+      'trust_root_writable',
+      await measure(
+        machine({
+          canWrite: (p) => p === PROJECT,
+          // the folder root's, sticky and world-writable; realm.yaml a link whose target is Realm's
+          // user's file (stat follows it) while the link itself is this login's (lstat)
+          stat: (p) =>
+            p === PROJECT
+              ? { uid: 0, mode: 0o41777 }
+              : p === `${PROJECT}/realm.yaml`
+                ? { uid: REALM_UID, mode: 0o100644 }
+                : p === STORE
+                  ? { uid: REALM_UID, mode: 0o40755 }
+                  : { uid: 0, mode: 0o40755 },
+          lstat: (p) =>
+            p === `${PROJECT}/realm.yaml`
+              ? { uid: ME, mode: 0o120777 }
+              : p === PROJECT
+                ? { uid: 0, mode: 0o41777 }
+                : p === STORE
+                  ? { uid: REALM_UID, mode: 0o40755 }
+                  : { uid: 0, mode: 0o40755 },
+        }),
+      ),
+    );
+    // (a) red when the entry's owner is read through stat (the link's target's: "no"); (b) prints it.
+    expect(line).toBe(`${CONDITION_4}: yes (measured) — ${PROJECT}/realm.yaml can be changed.`);
+  });
+
   it('C4: the economics line — named (measured), not named in a realm.yaml read (fact), no realm.yaml read (unknown)', async () => {
     const economics = async (files: Record<string, string>, roots = [PROJECT]) =>
       conditionLine(
@@ -755,18 +786,22 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
         await measureSeparation({ probes: machine({}, files), value: FLAG, roots, door: 'mcp' }),
       );
     // (a) red per row: `named` when a named file is not measured; `notNamed` when a realm.yaml that
-    //     names none is not a fact; `none` when no realm.yaml read is called a fact (W's "(fact)");
-    //     (b) prints the three lines.
+    //     names none is not a fact; `none` when no realm.yaml read is called a fact (W's "(fact)"),
+    //     or — #819 correction 1 (walk --check wording 4) — when it does not name --project;
+    //     `unread` (A MINOR 9) when a root whose realm.yaml cannot be read is told to pass one;
+    //     (b) prints the four lines.
     expect({
       named: await economics({
         [`${PROJECT}/realm.yaml`]: 'runner:\n  cache:\n    economics: prices.json\n',
       }),
       notNamed: await economics(PROJECT_FILES),
       none: await economics({}, []),
+      unread: await economics({}, [PROJECT]),
     }).toEqual({
       named: `${ECONOMICS}: no (measured) — ${PROJECT}/prices.json.`,
       notNamed: `${ECONOMICS}: no runner.cache.economics is set (fact).`,
-      none: `${ECONOMICS}: unknown (no realm.yaml was found to read; observed now).`,
+      none: `${ECONOMICS}: unknown (no realm.yaml was given to read: pass --project with the deployment root; observed now).`,
+      unread: `${ECONOMICS}: unknown (no realm.yaml could be read; observed now).`,
     });
   });
 
@@ -791,8 +826,8 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
             : { error: 'ENOENT' },
       ),
     }).toEqual({
-      denied: `Measured for the login 'agent', against the store at ${STORE}, which this login cannot open.`,
-      other: `Measured for the login 'agent', against the store at ${STORE}, which this login cannot open.`,
+      denied: `Measured for the login 'agent', against ${STORE}, which this login cannot open, so whether a store is there is not known.`,
+      other: `Measured for the login 'agent', against ${STORE}, which this login cannot open, so whether a store is there is not known.`,
     });
   });
 
