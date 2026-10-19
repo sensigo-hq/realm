@@ -32,8 +32,8 @@ All notable changes to this project are documented here.
   Mathematical signs, primes, ballot boxes and check marks, superscripts and fractions are kept,
   and every dash and hyphen reads as `-` (two hyphens outside the Basic Multilingual Plane
   excepted); a soft hyphen is not a dash, and the literal match reads past it and every other
-  invisible character. A quote's own leading or trailing space never counts as an edge. A quote that ends a sentence where the document's goes
-  on is marked `cut_short`, with `cut_short_at`.
+  invisible character. A quote's own leading or trailing space never counts as an edge. A quote
+  that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`.
 - **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
   every control character written out. Core exports `controlEscape`, the one spelling of a control
   character a terminal line shows.

@@ -545,9 +545,11 @@ describe('locateQuote — correction 1, A1: a number is one unit', () => {
     });
   }
 
-  it('a number symbol a piece cuts off: `(4… The Tenant…` and `… 48,000 is payable…` are not stitched (the sign belongs to its number)', () => {
-    // Correction 3 (ride-along): each second piece starts where a sentence or a line starts, so the
-    // skip rule lets it through and only the number edge refuses each quote (one rule each).
+  it('a number symbol a piece cuts off: `(4… The Tenant…` and `48,000 is payable… The Tenant…` are not stitched (the sign belongs to its number)', () => {
+    // Correction 3 (ride-along): each second piece starts a sentence, so the skip rule lets it
+    // through and only the number edge refuses each quote (one rule each). The `€` cut sits in the
+    // first piece: a later piece that cuts off a sign before it never starts a sentence, so the skip
+    // rule would refuse it too.
     // (a) red when a part may end at a digit the source follows with `%`, or start at one it
     //     precedes with `€` (each then stitches, the sign dropped); (b) prints the two states.
     expect([
@@ -556,8 +558,8 @@ describe('locateQuote — correction 1, A1: a number is one unit', () => {
         'Interest runs at the rate of four per cent (4%) per annum above the Base Rate. The Tenant shall pay it on demand.',
       ).state,
       locateQuote(
-        'The Tenant shall pay the sum set out below: … 48,000 is payable on the first day of the term',
-        'The Tenant shall pay the sum set out below:\n€48,000 is payable on the first day of the term.',
+        '48,000 is payable on the first day of the term … The Tenant shall pay it on demand',
+        '€48,000 is payable on the first day of the term, in advance. The Tenant shall pay it on demand.',
       ).state,
     ]).toEqual(['not_found', 'not_found']);
   });
