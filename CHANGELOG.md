@@ -20,16 +20,19 @@ All notable changes to this project are documented here.
   `check_quotes` uses, for a handler of your own. A quote may skip document text only where it
   breaks (at `…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation
   mark or a line break), and only to where the document starts a sentence, a clause or a line. A
-  line counts only where the line before it ends a sentence or clause or is blank, or where it
-  opens with a clause number, a list mark or a quotation mark, so text whose lines break inside
-  sentences is read correctly. A skip can no longer land inside a sentence. The part before a skip
-  may still end mid-sentence, so a clause can be joined to a later sentence and read `stitched`.
+  line counts only after a blank line, or a line that ends a sentence, a clause or a table row,
+  so text whose lines break inside sentences is read correctly; a clause number or a list mark is
+  skipped only at such a line start, and after a full stop the next piece must begin with a
+  capital letter or a quotation mark. The part before a skip may still end mid-sentence, so a
+  clause can be joined to a later sentence and read `stitched`.
   Whole sentences quoted from far apart read `stitched` (`stitched_out_of_order` when reversed). A
   number written in digits is one unit: a digit never matches inside a longer number or next to a
   letter, and a quote never starts or ends on a number's separator or beside a group of
   thousands. A sign belongs to its number. A number written in words is matched as words.
   Mathematical signs, primes, ballot boxes and check marks, superscripts and fractions are kept,
-  and every dash and hyphen reads as `-`. A quote that ends a sentence where the document's goes
+  and every dash and hyphen reads as `-` (two hyphens outside the Basic Multilingual Plane
+  excepted); a soft hyphen is not a dash, and the literal match reads past it and every other
+  invisible character. A quote's own leading or trailing space never counts as an edge. A quote that ends a sentence where the document's goes
   on is marked `cut_short`, with `cut_short_at`.
 - **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
   every control character written out. Core exports `controlEscape`, the one spelling of a control

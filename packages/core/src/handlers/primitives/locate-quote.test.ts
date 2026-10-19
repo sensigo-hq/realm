@@ -545,14 +545,19 @@ describe('locateQuote — correction 1, A1: a number is one unit', () => {
     });
   }
 
-  it('a number symbol a piece cuts off: `(4… per annum` and `(… 48,000)` are not stitched (the sign belongs to its number)', () => {
+  it('a number symbol a piece cuts off: `(4… The Tenant…` and `… 48,000 is payable…` are not stitched (the sign belongs to its number)', () => {
+    // Correction 3 (ride-along): each second piece starts where a sentence or a line starts, so the
+    // skip rule lets it through and only the number edge refuses each quote (one rule each).
     // (a) red when a part may end at a digit the source follows with `%`, or start at one it
     //     precedes with `€` (each then stitches, the sign dropped); (b) prints the two states.
     expect([
-      locateQuote('the rate of four per cent (4… per annum above the Base Rate', LEASE).state,
       locateQuote(
-        'an initial annual rent of forty-eight thousand euro (… 48,000), exclusive of value added tax',
-        LEASE,
+        'Interest runs at the rate of four per cent (4… The Tenant shall pay it on demand',
+        'Interest runs at the rate of four per cent (4%) per annum above the Base Rate. The Tenant shall pay it on demand.',
+      ).state,
+      locateQuote(
+        'The Tenant shall pay the sum set out below: … 48,000 is payable on the first day of the term',
+        'The Tenant shall pay the sum set out below:\n€48,000 is payable on the first day of the term.',
       ).state,
     ]).toEqual(['not_found', 'not_found']);
   });
@@ -1360,6 +1365,41 @@ describe('locateQuote — correction 2, N6: a quote starts and ends at a word ed
   it('the occurrence count holds word edges: `the rent` occurs once in `the rent and the rental`', () => {
     // (a) red when the count ignores word edges (2); (b) prints the count.
     expect(locateQuote('the rent', 'the rent and the rental').occurrences).toBe(1);
+  });
+});
+
+describe('locateQuote — correction 3 (ride-along): N2 and N7 condition by condition', () => {
+  it('N2 control: `In 2024` in `In 2024 500 new accounts` stays exact (a four-digit run is no first group)', () => {
+    // (a) red when the right edge counts a run of four digits as a number's first group; (b) prints
+    //     the state.
+    expect(locateQuote('In 2024', 'In 2024 500 new accounts').state).toBe('exact');
+  });
+  it('N2 control: `120 deals` in `pipeline in Q1 120 deals` stays exact (a run after a letter is no first group)', () => {
+    // (a) red when the left edge counts a run after a letter as a number's first group; (b) prints the
+    //     state.
+    expect(locateQuote('120 deals', 'pipeline in Q1 120 deals').state).toBe('exact');
+  });
+  it('N2 control: `2000 euro` in `price 1 2000 euro` stays exact (four digits are no group of three)', () => {
+    // (a) red when the left edge counts four digits as a group; (b) prints the state.
+    expect(locateQuote('2000 euro', 'price 1 2000 euro').state).toBe('exact');
+  });
+  it('N7: `.` before a lowercase word — `The area is approx.` in `…approx. four hundred…` is cut_short', () => {
+    const c = locateQuote('The area is approx.', 'The area is approx. four hundred square metres.');
+    // (a) red when only a digit after the mark counts; (b) prints the state, the label and where.
+    expect([c.state, c.cut_short, c.cut_short_at]).toEqual(['exact', true, [19]]);
+  });
+  it('N7: `!` — `Do not enter the loading bay!` before `the lift…` is cut_short', () => {
+    const c = locateQuote(
+      'Do not enter the loading bay!',
+      'Do not enter the loading bay! the lift is closed.',
+    );
+    // (a) red when `!` is not read as the quote's stop; (b) prints the state, the label and where.
+    expect([c.state, c.cut_short, c.cut_short_at]).toEqual(['exact', true, [29]]);
+  });
+  it('N7: `?` — `Is the rent paid?` before `if not…` is cut_short', () => {
+    const c = locateQuote('Is the rent paid?', 'Is the rent paid? if not, interest runs.');
+    // (a) red when `?` is not read as the quote's stop; (b) prints the state, the label and where.
+    expect([c.state, c.cut_short, c.cut_short_at]).toEqual(['exact', true, [17]]);
   });
 });
 
