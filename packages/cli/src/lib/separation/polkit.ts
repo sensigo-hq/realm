@@ -215,9 +215,10 @@ export async function readPolkit(lk: Lookups): Promise<SwitchPathReading[]> {
       ),
     ),
   ];
-  // a credential only pkcheck's challenge suggested, which no action's defaults name, is a guess
+  // #819 correction 1 (A MINOR 5, as the raw writes it): a credential pkcheck's challenge suggested
+  // is a guess for both whose — an unreadable rule may change whose it asks, whatever the defaults say
   const guess = (w: SwitchWhose): boolean =>
-    found.every((f) => f.outcome !== 'needs_credential' || f.whose !== w || f.guessed === true);
+    found.some((f) => f.outcome === 'needs_credential' && f.whose === w && f.guessed === true);
   return whose.map((w) => ({
     path: 'polkit',
     tool: pkcheck.path,

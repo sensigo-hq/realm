@@ -2825,15 +2825,16 @@ describe("#819 correction 1 — SEP-01's items, each its cell", () => {
       });
     });
 
-    it('A MINOR 5: a credential only pkcheck\'s challenge suggested reads "may need"; one an action\'s defaults name reads "needs"', async () => {
+    it('A MINOR 5: both credentials pkcheck\'s challenge suggests read "may need" — an unreadable rule may change whose it asks, whatever the defaults name', async () => {
       // pkexec present: its action's stock answer is exit 2 (a challenge), and its defaults
-      // auth_admin* — so the administrator's password is named by the defaults, this login's only by
-      // the challenge
+      // auth_admin* — the administrator's password is named by the defaults too, yet a rule this
+      // check cannot read may change whose the challenge asks (reader A's MINOR 5: both readings)
       const rs = await paths(polkit({ programs: { '/usr/bin/pkexec': 0 } }));
-      // (a) red when the challenge's guess carries no cause (both print "needs"); (b) prints each
+      // (a) red when the challenge's guess carries no cause (both print "needs"), or only the whose
+      //     no default names carries it (the administrator's then prints "needs"); (b) prints each
       //     reading's entry word.
       expect(rs.map((r) => switchPathEntry(r, 'svc').split(' (')[0])).toEqual([
-        "polkit: needs an administrator's password",
+        "polkit: may need an administrator's password",
         "polkit: may need this login's password",
       ]);
     });
