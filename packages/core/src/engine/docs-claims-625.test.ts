@@ -1776,7 +1776,9 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       ).state,
       skipToLine: locateQuote(
         'The account manager owns the renewal … Escalate any discount above ten per cent',
-        'The account manager owns the renewal, and\n- Escalate any discount above ten per cent.',
+        // Correction 3: the line before ends with `:`, so the list line counts (a line ending
+        // `and` does not, under rule rev 3); the text between the pieces is what the skip leaves.
+        'The account manager owns the renewal and its terms:\n- Escalate any discount above ten per cent.',
       ).state,
       exactMidWord: [
         locateQuote('solvent, the Landlord', 'if the Tenant is insolvent, the Landlord').state,

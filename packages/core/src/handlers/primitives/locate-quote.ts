@@ -591,18 +591,22 @@ function extend(
   return { first, last, at, end, pieces };
 }
 
-// ─── Correction 2: after a skip, the next part starts where the document starts a sentence, a
-//     clause or a line (the owner's yes, 2026-10-18) ──────────────────────────────────────────────
+// ─── Correction 2, tightened by correction 3: after a skip, the next part starts where the document
+//     starts a sentence, a clause or a line (the owner's yes, 2026-10-18) ─────────────────────────
 
-/** Step 2's opening marks; the quotation marks among them make a line break a line start. */
+/** The opening marks a part may sit after (a quotation mark or a bracket). */
 const START_OPENING: ReadonlySet<string> = new Set(['"', '“', '„', '«', "'", '‘', '(', '[']);
-const START_QUOTE_OPENING: ReadonlySet<string> = new Set(['"', '“', '„', '«', "'", '‘']);
-/** Step 4's closing marks. */
+/** The closing marks walked past before an accepted character. */
 const START_CLOSING: ReadonlySet<string> = new Set(['"', '”', '’', "'", ')', ']', '»']);
-/** Step 3's list marks (a run of `#` too), only at the start of a line. */
+/** Read 3's list marks (a run of `#` too), only at a line start that counts. */
 const LIST_MARKS: ReadonlySet<string> = new Set(['-', '*', '•', '◦', '▪', '‣', '·', '–', '—', '|']);
+const CAPITAL = /^[\p{Lu}\p{Lt}]$/u;
 
 const isBlank = (c: string | undefined): boolean => c === ' ' || c === '\t';
+const isCapital = (c: string | undefined): boolean => c !== undefined && CAPITAL.test(c);
+/** A capital letter or an opening mark: what a sentence may begin with after a full stop. */
+const isSentenceOpening = (c: string | undefined): boolean =>
+  isCapital(c) || (c !== undefined && START_OPENING.has(c));
 
 function blanksBack(source: string, at: number): number {
   let i = at;
@@ -610,9 +614,9 @@ function blanksBack(source: string, at: number): number {
   return i;
 }
 
-/** Step 3: the start of one clause number that ends at `at` — a bracketed group of at most four
- *  letters or digits (`(a)`, `(iv)`, `(3)`), or digits joined by `.` (`6.2`, `3.4.1`, `12`) with an
- *  optional closing `.` or `)` — or -1. */
+/** Read 2: the start of one clause number that ends at `at`, or -1. A clause number is digits joined
+ *  by `.` with at least one joiner (`6.2`, `3.4.1`), digits closed by `.` or `)` (`12.`, `12)`), or a
+ *  bracketed group of 1–4 letters or digits (`(a)`, `(iv)`). Never bare digits (`12`, `2`). */
 function clauseNumberBack(source: string, at: number): number {
   if (source[at - 1] === ')') {
     let j = at - 2;
@@ -624,89 +628,136 @@ function clauseNumberBack(source: string, at: number): number {
     if (n >= 1 && n <= 4 && source[j] === '(') return j;
   }
   let j = at;
-  if ((source[j - 1] === '.' || source[j - 1] === ')') && isDigit(source[j - 2])) j--;
+  let closed = false;
+  if ((source[j - 1] === '.' || source[j - 1] === ')') && isDigit(source[j - 2])) {
+    j--;
+    closed = true;
+  }
   if (!isDigit(source[j - 1])) return -1;
+  let dotted = false;
   for (;;) {
     while (isDigit(source[j - 1])) j--;
     if (source[j - 1] === '.' && isDigit(source[j - 2])) {
       j--;
+      dotted = true;
       continue;
     }
-    return j;
+    return dotted || closed ? j : -1;
   }
 }
 
-/** Step 3: the start of one list mark that ends at `at`, where a line break or the source's start
- *  comes right before it (past spaces and tabs), or -1. */
+/** Whether the part at `start` opens with a clause number (dotted, or closed by `.` or `)`; never
+ *  bare digits) followed by spaces and a capital letter or an opening mark (`2. Send…`,
+ *  `6.2 The Tenant…`, quoted with their number). */
+function opensWithClauseNumber(source: string, start: number): boolean {
+  let j = start;
+  if (!isDigit(source[j])) return false;
+  let dotted = false;
+  for (;;) {
+    while (isDigit(source[j])) j++;
+    if (source[j] === '.' && isDigit(source[j + 1])) {
+      j++;
+      dotted = true;
+      continue;
+    }
+    break;
+  }
+  let closed = false;
+  if (source[j] === '.' || source[j] === ')') {
+    j++;
+    closed = true;
+  }
+  if ((!dotted && !closed) || !isBlank(source[j])) return false;
+  while (isBlank(source[j])) j++;
+  return isSentenceOpening(source[j]);
+}
+
+/** Read 3: the start of one list mark (or a run of `#`) that ends at `at`, or -1. */
 function listMarkBack(source: string, at: number): number {
-  let j = -1;
   if (source[at - 1] === '#') {
-    j = at - 1;
+    let j = at - 1;
     while (j > 0 && source[j - 1] === '#') j--;
-  } else if (at > 0 && LIST_MARKS.has(source[at - 1]!)) j = at - 1;
-  if (j < 0) return -1;
-  const k = blanksBack(source, j);
-  return k === 0 || LINE_BREAKS.has(source[k - 1]!) ? j : -1;
+    return j;
+  }
+  return at > 0 && LIST_MARKS.has(source[at - 1]!) ? at - 1 : -1;
 }
 
-/** The accepted characters other than a line break, the one right before `at`: a `.` `!` `?` that
- *  ends a sentence (L1's test: never an abbreviation or an initial), `;`, a `:` not between two
- *  digits. */
-function endsSentenceOrClause(source: string, at: number): boolean {
-  const c = source[at - 1];
-  if (c === '.') return !endsAbbreviation(source, at - 1);
-  if (c === '!' || c === '?' || c === ';') return true;
-  if (c === ':') return !(isNum(source[at - 2]) && isNum(source[at]));
-  return false;
-}
-
-/** Whether the document starts a line at the line break `lineBreak`: the line before it is blank,
- *  or ends (past spaces and closing marks) a sentence or a clause. Hard-wrapped text breaks its
- *  lines inside sentences, so a bare line break is not a line start. */
-function lineBeforeEnds(source: string, lineBreak: number): boolean {
+/** How the line break at `lineBreak` counts as a line start: `free` when the line before it is blank,
+ *  or ends (past spaces, `\r` and closing marks) with `;`, `:` or `|` (a table row's end);
+ *  `sentence` when it ends with `.` `!` `?` under L1's test (read 1's capital condition then
+ *  applies); `undefined` when it does not count. What the new line opens with never exempts it. */
+function lineStart(source: string, lineBreak: number): 'free' | 'sentence' | undefined {
   let i = lineBreak;
   while (i > 0 && (isBlank(source[i - 1]) || source[i - 1] === '\r')) i--;
-  if (i === 0 || LINE_BREAKS.has(source[i - 1]!)) return true;
+  if (i === 0 || LINE_BREAKS.has(source[i - 1]!)) return 'free';
   while (i > 0 && START_CLOSING.has(source[i - 1]!)) i--;
-  return endsSentenceOrClause(source, i);
+  const c = source[i - 1];
+  if (c === ';' || c === ':' || c === '|') return 'free';
+  if ((c === '.' && !endsAbbreviation(source, i - 1)) || c === '!' || c === '?') return 'sentence';
+  return undefined;
 }
 
-/** Step 4 and the accepted character: past spaces and closing marks, the source starts at `at`, or
- *  a sentence or clause ends there, or a line starts there (`opened`: steps 2–3 skipped a clause
- *  number, a list mark or an opening quotation mark on the new line). */
-function startAccepted(source: string, at: number, opened: boolean): boolean {
+/** Reads 2 and 3: past spaces and tabs, `at` is the source's start or a line start that counts. */
+function atCountedLineStart(source: string, at: number): boolean {
+  const i = blanksBack(source, at);
+  if (i === 0) return true;
+  return LINE_BREAKS.has(source[i - 1]!) && lineStart(source, i - 1) !== undefined;
+}
+
+/** Read 1's accepted character before `at`, past spaces, tabs and closing marks: the source's start;
+ *  `;`; a `:` not between two digits; a line break that counts; a `.` `!` `?` that ends a sentence
+ *  (L1's test for `.`) only when `opening` (the part, or its opening mark, begins with a capital
+ *  letter or an opening mark). At a line break that counts only because the line before ends a
+ *  sentence, the same capital condition holds, or `numbered` (the part opens with a clause number
+ *  and a capital). */
+function acceptedBefore(source: string, at: number, opening: boolean, numbered: boolean): boolean {
   let i = blanksBack(source, at);
   while (i > 0 && START_CLOSING.has(source[i - 1]!)) i--;
   if (i === 0) return true;
   const c = source[i - 1]!;
-  if (LINE_BREAKS.has(c)) return opened || lineBeforeEnds(source, i - 1);
-  return endsSentenceOrClause(source, i);
+  if (LINE_BREAKS.has(c)) {
+    const kind = lineStart(source, i - 1);
+    return kind === 'free' || (kind === 'sentence' && (opening || numbered));
+  }
+  if (c === ';') return true;
+  if (c === ':') return !(isNum(source[i - 2]) && isNum(source[i]));
+  if (c === '.') return opening && !endsAbbreviation(source, i - 1);
+  if (c === '!' || c === '?') return opening;
+  return false;
 }
 
 /**
- * Correction 2: whether a part placed at raw offset `start` starts where the document starts a
- * sentence, a clause or a line — read in the RAW source (the canonical form drops `.` `;` `:` and
- * turns line breaks into spaces). Walking back: (1) spaces and tabs; (2) optionally one opening
- * quotation mark or bracket, then spaces and tabs; (3) optionally one clause number, or one list mark
- * at a line's start; (4) spaces, tabs and closing marks; then an accepted character. Each optional
- * step is tried with and without it, and the start holds if ANY reading reaches an accepted
- * character (read greedily, `2031.` in `…30 April 2031. The notice…` would be a clause number).
+ * Correction 3 (01, rule rev 3): whether a part placed at raw offset `start` starts where the
+ * document starts a sentence, a clause or a line — read in the RAW source (the canonical form drops
+ * `.` `;` `:` and turns line breaks into spaces). From the part's start, walk back over spaces and
+ * tabs; the start holds if ANY read holds:
+ * 1. No label: past an optional opening mark and its spaces, then closing marks, an accepted
+ *    character (`acceptedBefore`).
+ * 2. A clause-number label (never bare digits) right before the part, or before its opening mark and
+ *    spaces, sitting at a line start that counts — and the part, or its opening mark, begins with a
+ *    capital letter or an opening mark (never `4.5 per cent`).
+ * 3. A list mark, then spaces, then an optional opening mark and spaces, right before the part,
+ *    sitting at a line start that counts.
  */
 function partStartHolds(source: string, start: number): boolean {
   const first = blanksBack(source, start);
-  const afterStep2 = [{ at: first, opened: false }];
-  if (first > 0 && START_OPENING.has(source[first - 1]!)) {
-    afterStep2.push({
-      at: blanksBack(source, first - 1),
-      opened: START_QUOTE_OPENING.has(source[first - 1]!),
-    });
-  }
-  for (const reading of afterStep2) {
-    if (startAccepted(source, reading.at, reading.opened)) return true;
-    const clause = clauseNumberBack(source, reading.at);
-    if (clause >= 0 && startAccepted(source, clause, true)) return true;
-    const mark = listMarkBack(source, reading.at);
-    if (mark >= 0 && startAccepted(source, mark, true)) return true;
+  const opening = isSentenceOpening(source[start]);
+  const numbered = opensWithClauseNumber(source, start);
+  // Where the part's own opening mark (and the spaces before it) ends, when it has one.
+  const beforeMark =
+    first > 0 && START_OPENING.has(source[first - 1]!) ? blanksBack(source, first - 1) : -1;
+  // Read 1.
+  if (acceptedBefore(source, first, opening, numbered)) return true;
+  if (beforeMark >= 0 && acceptedBefore(source, beforeMark, true, numbered)) return true;
+  // Reads 2 and 3, the label ending right before the part, or before its opening mark.
+  for (const end of beforeMark >= 0 ? [first, beforeMark] : [first]) {
+    const after = end === first ? source[start] : source[first - 1];
+    if (isSentenceOpening(after)) {
+      const label = clauseNumberBack(source, end);
+      if (label >= 0 && atCountedLineStart(source, label)) return true;
+    }
+    const mark = listMarkBack(source, end);
+    if (mark >= 0 && atCountedLineStart(source, mark)) return true;
   }
   return false;
 }

@@ -363,8 +363,10 @@ describe('locateQuote — digits, their separators and their symbols are load-be
 
 describe('locateQuote — the floor, the count, the offsets, the empty inputs, the cost', () => {
   const A20 = 'aaaa bbbb cccc ddddd'; // 20 canonical characters
-  const B20 = 'eeee ffff gggg hhhhh'; // 20
-  const B19 = 'eeee ffff gggg hhhh'; // 19
+  // Correction 3: each second part opens with a capital, since after a full stop a sentence starts
+  // with one (01, rule rev 3); the floor alone still decides.
+  const B20 = 'Eeee ffff gggg hhhhh'; // 20
+  const B19 = 'Eeee ffff gggg hhhh'; // 19
 
   // Each source holds its pieces as whole words, so the floor alone decides (correction 1, A2: a
   // 19-character piece cut out of `hhhhh` would be refused at its word edge whatever the floor), and
@@ -1001,17 +1003,19 @@ describe('locateQuote — correction 2, 01: a skip lands only where the document
     });
   });
 
-  it('control: a skip onto a definition after a line break and an opening quotation mark stays stitched', () => {
-    // The line before ends with no full stop, so only step 2 (the opening mark) makes it a line start.
+  it('the cost of rule rev 3: a skip onto a definition line under a heading with no stop is not_found (the safe direction)', () => {
+    // Correction 3 re-pin (was a correction-2 control, stitched): the line before ends with no stop
+    // and is not blank, so the new line does not count, and an opening mark no longer exempts it.
     const source =
       'The following words have these meanings in this Lease\n"Rent" means the rent specified in clause 3.1.';
-    // (a) red when step 2 is dropped; (b) prints the state.
+    // (a) red when an opening quotation mark on a new line makes it count again (it stitches); (b)
+    //     prints the state.
     expect(
       locateQuote(
         'The following words have these meanings … "Rent" means the rent specified in clause 3.1',
         source,
       ).state,
-    ).toBe('stitched');
+    ).toBe('not_found');
   });
 
   it('control: `(b) "Rent" means…` after a line break stays stitched', () => {
@@ -1374,6 +1378,139 @@ describe('locateQuote — correction 2, N7: `cut_short` on an exact quote', () =
     // (a) red when any exact quote ending in `.` is labelled; (b) prints the state and the label.
     expect([c.state, c.cut_short]).toEqual(['exact', undefined]);
   });
+});
+
+// ─── correction 3, 01: the start rule, rev 3 ────────────────────────────────────────────────────
+
+describe('locateQuote — correction 3, 01: the start rule, rev 3 (labels, accepted characters, line starts)', () => {
+  const FIRST = 'The Landlord shall insure the Building';
+  /** A document whose second sentence follows `join`, and the quote that skips to it. */
+  const skipTo = (join: string, second: string): [string, string] => [
+    `${FIRST} … ${second}`,
+    `${FIRST} for its full reinstatement cost${join}${second} at the end of each year.`,
+  ];
+  const CAPITAL = 'The Tenant shall pay the insurance rent';
+  const LOWER = 'the Tenant shall pay the insurance rent';
+
+  const READS: Array<[string, string, string, QuoteCheck['state']]> = [
+    // read 1, no label
+    ['read 1: after `. ` onto a capital', '. ', CAPITAL, 'stitched'],
+    ['read 1, twin: after `. ` onto a lowercase word', '. ', LOWER, 'not_found'],
+    [
+      'read 1, twin: after `. ` onto a digit',
+      '. ',
+      '12 Tenants shall pay the insurance rent',
+      'not_found',
+    ],
+    ['read 1: after `! ` onto a capital', '! ', CAPITAL, 'stitched'],
+    ['read 1, twin: after `! ` onto a lowercase word', '! ', LOWER, 'not_found'],
+    ['read 1: after `? ` onto a capital', '? ', CAPITAL, 'stitched'],
+    ['read 1, twin: after `? ` onto a lowercase word', '? ', LOWER, 'not_found'],
+    ['read 1: after `; ` onto a lowercase word', '; ', LOWER, 'stitched'],
+    ['read 1: after `: ` onto a lowercase word', ': ', LOWER, 'stitched'],
+    ['read 1, twin: after `, `', ', ', LOWER, 'not_found'],
+    // read 2, a clause-number label at a line start that counts
+    ['read 2: `6.2 ` after a blank line', '.\n\n6.2 ', CAPITAL, 'stitched'],
+    ['read 2: `(b) ` after a blank line', '.\n\n(b) ', CAPITAL, 'stitched'],
+    ['read 2: `12. ` after a line ending `;`', ';\n12. ', CAPITAL, 'stitched'],
+    ['read 2, twin: bare digits `12 ` are no label', '.\n\n12 ', CAPITAL, 'not_found'],
+    [
+      'read 2, twin: a label before a lowercase word (`4.5 per cent`)',
+      '.\n\n4.5 ',
+      'per cent is added to the insurance rent',
+      'not_found',
+    ],
+    ['read 2, twin: a label mid-line after a sentence end', '. 6.2 ', CAPITAL, 'not_found'],
+    [
+      'read 2, twin: a label on a line after a line ending a word',
+      ' and\n6.2 ',
+      CAPITAL,
+      'not_found',
+    ],
+    // read 3, a list mark at a line start that counts
+    [
+      'read 3: a `-` line after a line ending `.`, onto a lowercase word',
+      '.\n- ',
+      LOWER,
+      'stitched',
+    ],
+    ['read 3: a `•` line after a line ending `:`', ':\n• ', CAPITAL, 'stitched'],
+    ['read 3, twin: a list mark mid-line after `, `', ', - ', CAPITAL, 'not_found'],
+    [
+      'read 3, twin: a list mark mid-line after a sentence end (`call. • Escalate`)',
+      '. • ',
+      CAPITAL,
+      'not_found',
+    ],
+    // a line break, read 1
+    ['line break: after a blank line, onto a lowercase word', '\n\n', LOWER, 'stitched'],
+    ['line break: after a line ending `.`, onto a capital', '.\n', CAPITAL, 'stitched'],
+    ['line break, twin: after a line ending `.`, onto a lowercase word', '.\n', LOWER, 'not_found'],
+    ['line break: after a line ending `!`, onto a capital', '!\n', CAPITAL, 'stitched'],
+    ['line break: after a line ending `?`, onto a capital', '?\n', CAPITAL, 'stitched'],
+    ['line break: after a line ending `;`, onto a lowercase word', ';\n', LOWER, 'stitched'],
+    ['line break: after a line ending `:`, onto a lowercase word', ':\n', LOWER, 'stitched'],
+    ['line break: after a line ending `|`, onto a lowercase word', ' |\n', LOWER, 'stitched'],
+    ['line break, twin: after a line ending a word', ' and\n', CAPITAL, 'not_found'],
+    ['line break, twin: after a line ending `,`', ',\n', CAPITAL, 'not_found'],
+    [
+      'line break: a numbered line quoted with its number (`2. Send…`)',
+      '.\n',
+      '2. Send the Tenant the insurance rent',
+      'stitched',
+    ],
+  ];
+  for (const [name, join, second, state] of READS) {
+    it(`${name} → ${state}`, () => {
+      const [quote, source] = skipTo(join, second);
+      // (a) red when that read, accepted character or line rule changes; (b) prints the state.
+      expect(locateQuote(quote, source).state).toBe(state);
+    });
+  }
+
+  it('read 1: a skip onto the source’s start (out of order) → stitched_out_of_order', () => {
+    const source = `${CAPITAL}. ${FIRST} for its full reinstatement cost.`;
+    // (a) red when the source's start is not accepted; (b) prints the state.
+    expect(locateQuote(`${FIRST} … ${CAPITAL}`, source).state).toBe('stitched_out_of_order');
+  });
+
+  const ABBREVIATIONS: Array<[string, string, string, string]> = [
+    [
+      '`a.m.`',
+      'The Tenant and its contractors shall not before 9 a.m. use the loading bay or the goods lift.',
+      'The Tenant and its contractors shall\nuse the loading bay or the goods lift.',
+      'a.m. ',
+    ],
+    [
+      '`approx.`',
+      'The Landlord warrants that the Lettable Area is not less than approx. 412 square metres of floor space.',
+      'The Landlord warrants that the Lettable Area is\n412 square metres of floor space.',
+      'approx. ',
+    ],
+    [
+      '`p.a.`',
+      'Interest is payable at 4% p.a. on all arrears from the due date until payment.',
+      'Interest is payable at 4%\non all arrears from the due date until payment.',
+      'p.a. ',
+    ],
+    [
+      '`in 2024. the`',
+      'The Tenant shall pay the rent in 2024. the Landlord shall not raise it before then.',
+      'The Tenant shall pay the rent … the Landlord shall not raise it before then.',
+      '2024. ',
+    ],
+  ];
+  for (const [name, doc, quote, abbreviation] of ABBREVIATIONS) {
+    it(`after ${name}, a lowercase or digit part is mid-sentence → not_found, on one line and with the line broken after it`, () => {
+      const broken = doc.replace(abbreviation, `${abbreviation.trimEnd()}\n`);
+      // (a) red when a `.` ends a sentence whatever follows it, or a line break after it counts
+      //     whatever follows it; (b) prints the two states.
+      expect([locateQuote(quote, doc).state, locateQuote(quote, broken).state]).toEqual([
+        'not_found',
+        'not_found',
+      ]);
+    });
+  }
 });
 
 describe('locateQuote — correction 1, L1–L3: abbreviations, a sentence cut short, the trim rule', () => {
