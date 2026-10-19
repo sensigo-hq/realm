@@ -1601,10 +1601,10 @@ describe('locateQuote — correction 3, 02 B: a word cut at an invisible charact
 
 describe("locateQuote — correction 3, 02 C: the literal layer's edges hold at the quote's first and last non-space characters", () => {
   const SPACES: Array<[string, number]> = [
-    ['a space', 0x20],
-    ['a no-break space', 0xa0],
-    ['a thin space', 0x2009],
-    ['a narrow no-break space', 0x202f],
+    ['space', 0x20],
+    ['no-break space', 0xa0],
+    ['thin space', 0x2009],
+    ['narrow no-break space', 0x202f],
   ];
   for (const [name, code] of SPACES) {
     const g = String.fromCharCode(code);
