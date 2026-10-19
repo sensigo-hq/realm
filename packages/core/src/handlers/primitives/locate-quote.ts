@@ -299,16 +299,42 @@ function dashMapped(text: string): string {
   return out;
 }
 
+/** 02 B: an invisible format character (`\p{Cf}`: the soft hyphen U+00AD, the zero-width characters
+ *  U+200B–U+200D, U+2060, U+FEFF, and the rest of the category), read by code point. */
+const FORMAT = /^\p{Cf}$/u;
+
+/** 02 B: the source as the literal layer's edges read it — every `\p{Cf}` code point left out, so an
+ *  invisible character never makes a word or number edge. `raw` keeps the dashes (the word edges'
+ *  hyphen test); `mapped` is `dashMapped` of it (the number edges); `at[k]` is the view offset of
+ *  source offset `k`. */
+interface LiteralView {
+  readonly raw: string;
+  readonly mapped: string;
+  readonly at: readonly number[];
+}
+function literalView(text: string): LiteralView {
+  let raw = '';
+  const at: number[] = [];
+  for (let i = 0; i < text.length;) {
+    const unit = String.fromCodePoint(text.codePointAt(i)!);
+    for (let u = 0; u < unit.length; u++) at.push(raw.length);
+    if (!FORMAT.test(unit)) raw += unit;
+    i += unit.length;
+  }
+  at.push(raw.length);
+  return { raw, mapped: dashMapped(raw), at };
+}
+
 /** One cached source: a handler checks many quotes against one document (L4: it lets it go). */
 let lastSource: string | undefined;
 let lastPrepared: Prepared | undefined;
 interface Prepared {
   readonly canonical: Canonical;
-  readonly mapped: string;
+  readonly view: LiteralView;
 }
 function prepared(source: string): Prepared {
   if (lastSource !== source || lastPrepared === undefined) {
-    lastPrepared = { canonical: canonicalize(source), mapped: dashMapped(source) };
+    lastPrepared = { canonical: canonicalize(source), view: literalView(source) };
     lastSource = source;
   }
   return lastPrepared;
@@ -442,6 +468,37 @@ function findWithEdges(
     !(numberEdgesHold(edgeHay, at, edgeNeedle) && (!words || wordEdgesHold(hay, at, needle)))
   ) {
     at = budget.indexOf(hay, needle, at + 1);
+  }
+  return at;
+}
+
+/** The literal layer's edges (N1–N6, and 02 B): the number and word edges of the match at `at`,
+ *  read in the literal view, so past every `\p{Cf}` character; and a word the source goes on with
+ *  as a contraction is the same word — a quote ending with a letter before `'t` or `’t` and then no
+ *  letter or digit (`The Tenant can` in `can't`), or ending with a letter and `'` or `’` before a
+ *  letter (`The Tenant can'` in `can't`), ends inside it. */
+function literalEdgesHold(view: LiteralView, at: number, end: number): boolean {
+  const from = view.at[at]!;
+  const to = view.at[end]!;
+  const needle = view.raw.slice(from, to);
+  if (needle === '') return false;
+  if (!numberEdgesHold(view.mapped, from, view.mapped.slice(from, to))) return false;
+  if (!wordEdgesHold(view.raw, from, needle)) return false;
+  const last = needle[needle.length - 1];
+  const [a1, a2, a3] = [view.raw[to], view.raw[to + 1], view.raw[to + 2]];
+  if (isLetter(last) && (a1 === "'" || a1 === '’') && a2 === 't' && !isAlnum(a3)) return false;
+  if ((last === "'" || last === '’') && isLetter(needle[needle.length - 2]) && isLetter(a1)) {
+    return false;
+  }
+  return true;
+}
+
+/** The first literal occurrence of `quote` whose edges hold (`literalEdgesHold`), or -1. */
+function findLiteral(budget: Budget, source: string, quote: string, view: LiteralView): number {
+  if (quote === '') return -1;
+  let at = budget.indexOf(source, quote, 0);
+  while (at >= 0 && !literalEdgesHold(view, at, at + quote.length)) {
+    at = budget.indexOf(source, quote, at + 1);
   }
   return at;
 }
@@ -982,11 +1039,11 @@ export function locateQuote(
   const notFound: QuoteCheck = { state: 'not_found', parts: [], occurrences: 0 };
   const quoteCanonical = canonicalize(quote);
   if (!WORD_CHAR.test(quoteCanonical.text) || source === '') return notFound;
-  const { canonical, mapped } = prepared(source);
+  const { canonical, view } = prepared(source);
   const budget = new Budget(QUOTE_SEARCH_BUDGET);
   const tiles: Tile[] = [];
   try {
-    return ladder(quote, quoteCanonical, source, canonical, mapped, budget, minPartChars, tiles);
+    return ladder(quote, quoteCanonical, source, canonical, view, budget, minPartChars, tiles);
   } catch (err) {
     if (err !== OUT_OF_BUDGET) throw err;
     const nearest = nearestOf(tiles, canonical);
@@ -999,7 +1056,7 @@ function ladder(
   quoteCanonical: Canonical,
   source: string,
   canonical: Canonical,
-  mapped: string,
+  view: LiteralView,
   budget: Budget,
   minPartChars: number,
   tiles: Tile[],
@@ -1007,7 +1064,7 @@ function ladder(
   const notFound: QuoteCheck = { state: 'not_found', parts: [], occurrences: 0 };
   const canonicalQuote = quoteCanonical.text;
 
-  const literal = findWithEdges(budget, source, quote, 0, mapped, dashMapped(quote), true);
+  const literal = findLiteral(budget, source, quote, view);
   if (literal >= 0) {
     // The whole quote occurs at least once (the literal match), whatever the canonical count says.
     const occurrences = Math.max(1, countWithEdges(budget, canonical.text, canonicalQuote));

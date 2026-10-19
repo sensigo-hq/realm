@@ -1513,6 +1513,48 @@ describe('locateQuote — correction 3, 01: the start rule, rev 3 (labels, accep
   }
 });
 
+// ─── correction 3, 02 B: the literal layer reads its edges past invisible characters ────────────
+
+describe('locateQuote — correction 3, 02 B: a word cut at an invisible character or a contraction', () => {
+  const unlawful = (mark: string): string =>
+    `The Tenant shall not permit any un${mark}lawful use of the Premises.`;
+  const CUT: Array<[string, string, string]> = [
+    ['a soft hyphen (U+00AD) inside "unlawful"', 'lawful use of the Premises', unlawful('\u00ad')],
+    [
+      'a zero-width space (U+200B) inside "unlawful"',
+      'lawful use of the Premises',
+      unlawful('\u200b'),
+    ],
+    [
+      'a zero-width non-joiner (U+200C) inside "unlawful"',
+      'lawful use of the Premises',
+      unlawful('\u200c'),
+    ],
+    ['a word joiner (U+2060) inside "unlawful"', 'lawful use of the Premises', unlawful('\u2060')],
+    ["`The Tenant can` in `can't`", 'The Tenant can', "The Tenant can't assign this Lease."],
+    ['`The Tenant can` in `can’t`', 'The Tenant can', 'The Tenant can’t assign this Lease.'],
+    ["`The Landlord won` in `won't`", 'The Landlord won', "The Landlord won't object."],
+    ["`The Tenant can` in `can't` at the source’s end", 'The Tenant can', "The Tenant can't"],
+    ["`The Tenant can'` in `can't`", "The Tenant can'", "The Tenant can't assign this Lease."],
+  ];
+  for (const [name, quote, source] of CUT) {
+    it(`${name} → not_found`, () => {
+      // (a) red when the literal layer reads the invisible character as a word edge, or reads a
+      //     contraction as two words; (b) prints the state.
+      expect(locateQuote(quote, source).state).toBe('not_found');
+    });
+  }
+
+  it("controls, still exact: a possessive (`the Tenant` in `the Tenant's`); a zero-width space at a word edge", () => {
+    // (a) red when every apostrophe after a word joins it, or every invisible character is read as
+    //     inside a word; (b) prints the two states.
+    expect([
+      locateQuote('the Tenant', "the Tenant's covenants").state,
+      locateQuote('the Tenant', 'the Tenant\u200b shall').state,
+    ]).toEqual(['exact', 'exact']);
+  });
+});
+
 describe('locateQuote — correction 1, L1–L3: abbreviations, a sentence cut short, the trim rule', () => {
   it('L1: an abbreviation or an initial does not end a sentence', () => {
     // (a) red when each is split at its `.`; (b) prints the piece counts.
