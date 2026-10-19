@@ -493,11 +493,16 @@ function literalEdgesHold(view: LiteralView, at: number, end: number): boolean {
   return true;
 }
 
-/** The first literal occurrence of `quote` whose edges hold (`literalEdgesHold`), or -1. */
+/** The first literal occurrence of `quote` whose edges hold (`literalEdgesHold`), or -1. 02 C: the
+ *  edges are tested at the quote's first and last characters that are not whitespace, so a space
+ *  the quote carries at an end cannot stand in for a word or number edge (`1 200 ` in `1 200 000`);
+ *  the occurrence returned is the whole quote's. */
 function findLiteral(budget: Budget, source: string, quote: string, view: LiteralView): number {
-  if (quote === '') return -1;
+  const lead = quote.length - quote.trimStart().length;
+  const trail = quote.length - quote.trimEnd().length;
+  if (lead + trail >= quote.length) return -1;
   let at = budget.indexOf(source, quote, 0);
-  while (at >= 0 && !literalEdgesHold(view, at, at + quote.length)) {
+  while (at >= 0 && !literalEdgesHold(view, at + lead, at + quote.length - trail)) {
     at = budget.indexOf(source, quote, at + 1);
   }
   return at;

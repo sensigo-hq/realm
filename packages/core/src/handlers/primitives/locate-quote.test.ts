@@ -1555,6 +1555,34 @@ describe('locateQuote — correction 3, 02 B: a word cut at an invisible charact
   });
 });
 
+// ─── correction 3, 02 C: whitespace at a quote's own ends ───────────────────────────────────────
+
+describe("locateQuote — correction 3, 02 C: the literal layer's edges hold at the quote's first and last non-space characters", () => {
+  const SPACES: Array<[string, number]> = [
+    ['a space', 0x20],
+    ['a no-break space', 0xa0],
+    ['a thin space', 0x2009],
+    ['a narrow no-break space', 0x202f],
+  ];
+  for (const [name, code] of SPACES) {
+    const g = String.fromCharCode(code);
+    const source = `the rent is 1${g}200${g}000 euro`;
+    it(`\`1 200\` with a trailing ${name}, in a source grouped by it → not_found`, () => {
+      // (a) red when the edge is tested at the quote's own trailing space; (b) prints the state.
+      expect(locateQuote(`the rent is 1${g}200${g}`, source).state).toBe('not_found');
+    });
+    it(`\`200 000 euro\` with a leading ${name}, in a source grouped by it → not_found`, () => {
+      // (a) red when the edge is tested at the quote's own leading space; (b) prints the state.
+      expect(locateQuote(`${g}200${g}000 euro`, source).state).toBe('not_found');
+    });
+  }
+
+  it('control: `the rent is 1 200 000 ` (a trailing space after a whole number) stays exact', () => {
+    // (a) red when a trailing space refuses a quote that ends a whole number; (b) prints the state.
+    expect(locateQuote('the rent is 1 200 000 ', 'the rent is 1 200 000 euro').state).toBe('exact');
+  });
+});
+
 describe('locateQuote — correction 1, L1–L3: abbreviations, a sentence cut short, the trim rule', () => {
   it('L1: an abbreviation or an initial does not end a sentence', () => {
     // (a) red when each is split at its `.`; (b) prints the piece counts.
