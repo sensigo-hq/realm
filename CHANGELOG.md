@@ -391,6 +391,11 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
 
 ### Fixed
 
+- **Three docs statements about processors are corrected (issue #642).** The core README no
+  longer lists `normalizeText` and `computeHash` among its exports; the testing README says
+  `testProcessor` calls a processor's `process` on a `{ text, metadata }` input; the testing
+  reference no longer says processors run in fixture runs.
+
 - **The capability block's `context_hint` no longer says `then follow next_actions` beside an empty
   list (issue #729).** The MCP reply ends with the step's own words (`'<step>' cannot run here
 (capability): …`).
