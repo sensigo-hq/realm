@@ -87,8 +87,8 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
   }
   const NOT_OPEN = (id: string) =>
     `Run '${id}' is waiting on human gate 'approve' (gate 'g-1'); it cannot be abandoned while its question is open.`;
-  const REPAIR =
-    'Its workflow cannot be read, so the question cannot be answered until it is repaired. Repair it:';
+  /** #819 follow-up 2 (R2; reader B's M1): the gate fork's words, from core's one composer. */
+  const UNANSWERABLE = 'Its question cannot be answered until its workflow can be read.';
   /** A copy at the current format, as a file registration writes it, with `over` changed. */
   const copyOf = (id: string, over: Record<string, unknown>, drop: string[] = []) => {
     const base: Record<string, unknown> = {
@@ -126,10 +126,12 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
         tail: out.err.startsWith(NOT_OPEN(id)) ? out.err.slice(NOT_OPEN(id).length + 1) : out.err,
       };
     };
+    const REREGISTER =
+      're-register the workflow from its source (realm workflow register <path-to-workflow>)';
     const refused = (tail: string) => ({
       failed: true,
       unchanged: true,
-      tail: `${REPAIR} ${tail}`,
+      tail: `${UNANSWERABLE} ${tail}`,
     });
     // (a) red when the catch arm's read is removed (each prints the answer line, which cannot be
     //     taken until the copy reads), the run is ended, or the record is touched; (b) prints each.
@@ -145,12 +147,17 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       newer: await run('later', copyOf('later', { schema_version: 99 })),
       notJson: await run('broken', '{"id": "broken", "sou'),
     }).toEqual({
-      A4f: refused('realm workflow validate --registered a4f'),
-      A6b: refused('realm workflow validate --registered a6b'),
-      A6c: refused('realm workflow validate --registered a6c'),
-      B1: refused('realm workflow register <file>'),
-      newer: refused('realm workflow validate --registered later'),
-      notJson: refused('realm workflow validate --registered broken'),
+      // #819 follow-up 2 re-pins (R2, the audit's B1): each copy's own repair, never `validate
+      // --registered` (whose text offers `rm`) — was "Its workflow cannot be read, so the question
+      // cannot be answered until it is repaired. Repair it: realm workflow validate --registered <id>"
+      A4f: refused(`Repair it: ${REREGISTER}`),
+      A6b: refused('Re-register it with: realm workflow register <path-to-workflow>'),
+      A6c: refused(`Repair it: ${REREGISTER}`),
+      B1: refused('Repair it: realm workflow register <file>'),
+      newer: refused(
+        "Use the Realm version that registered it, or register the workflow's source again with this version.",
+      ),
+      notJson: refused(`Repair it: ${REREGISTER}`),
     });
   });
 
@@ -189,9 +196,94 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
     });
   });
 
-  it('02 C2: an empty or blank --reason is refused with its four clauses; the run is not abandoned', async () => {
+  // #819 follow-up 2 re-pin (R1): was "02 C2: an empty or blank --reason is refused with its four
+  // clauses; the run is not abandoned" — its words promised what a gate refuses (walk BLOCKING 2).
+  it('#819 follow-up 2 (R2): walk A4b, A5b and A6c at a gate, their sources gone — the copy’s repair act, with no `rm` and no `validate` anywhere in the refusal', async () => {
+    const out = async (workflowId: string, copy: string) => {
+      const { id } = await atGate(workflowId, copy);
+      const r = await abandon(id);
+      return {
+        tail: r.err.slice(NOT_OPEN(id).length + 1),
+        rm: /\brm\b/.test(r.err),
+        validate: r.err.includes('validate'),
+        answer: r.err.includes('Answer it'),
+        unchanged: r.unchanged,
+      };
+    };
+    const act = {
+      tail: `${UNANSWERABLE} Repair it: re-register the workflow from its source (realm workflow register <path-to-workflow>)`,
+      rm: false,
+      validate: false,
+      answer: false,
+      unchanged: true,
+    };
+    // (a) red when the refusal names `validate --registered` again (whose text offers `rm`), the
+    //     act's alternative is printed (`rm`), or the answer line comes back; (b) prints each.
+    expect({
+      // walk A4b: the copy cut at 200 bytes, its source folder gone
+      A4b: await out('a4b', copyOf('a4b', {}).slice(0, 60)),
+      // walk A5b: valid JSON with no steps, its source folder gone
+      A5b: await out('a5b', copyOf('a5b', {}, ['steps'])),
+      // walk A6c: schema_version "1", a string
+      A6c: await out('a6c', copyOf('a6c', { schema_version: '1' })),
+    }).toEqual({ A4b: act, A5b: act, A6c: act });
+  });
+
+  it('#819 follow-up 2 (R2, the audit’s B1): walk A6a and A6b (an older Realm’s copy) and reader B’s newer shape, at a gate — the class’s own remedy, and no "Answer it"', async () => {
+    const out = async (workflowId: string, copy: string) => {
+      const { id } = await atGate(workflowId, copy);
+      const r = await abandon(id);
+      return { tail: r.err.slice(NOT_OPEN(id).length + 1), unchanged: r.unchanged };
+    };
+    const legacy = {
+      tail: `${UNANSWERABLE} Re-register it with: realm workflow register <path-to-workflow>`,
+      unchanged: true,
+    };
+    // (a) red when legacy or newer reads no repair (the answer line, which the run cannot take), or
+    //     the newer copy is told it must be repaired; (b) prints each tail.
+    expect({
+      // walk A6a: schema_version removed, its source kept
+      A6a: await out('a6a', copyOf('a6a', { source_dir: home }, ['schema_version'])),
+      // walk A6b: schema_version removed, its source gone
+      A6b: await out('a6b', copyOf('a6b', {}, ['schema_version'])),
+      // reader B's newer shape: a copy a later Realm wrote (W-829-C1-B-15)
+      newer: await out('later', copyOf('later', { schema_version: 99 })),
+    }).toEqual({
+      A6a: legacy,
+      A6b: legacy,
+      newer: {
+        tail: `${UNANSWERABLE} Use the Realm version that registered it, or register the workflow's source again with this version.`,
+        unchanged: true,
+      },
+    });
+  });
+
+  it('#819 follow-up 2 (R2, R13): a registry folder at mode 000 — abandon’s refusal and respond name the same act', async () => {
     const { id } = await atGate('plain-gate', copyOf('plain-gate', { source_dir: home }));
-    const { store: running, id: runningId } = await (async () => {
+    const { chmod } = await import('node:fs/promises');
+    await chmod(wfDir, 0o000);
+    try {
+      const refusal = (await abandon(id)).err;
+      errSpy.mockClear();
+      await respondCommand
+        .parseAsync([id, '--gate', 'g-1', '--choice', 'ship'], { from: 'user' })
+        .catch(() => undefined);
+      const responded = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+      const ACT = `make the registry directory ${wfDir} readable and searchable (chmod u+rx ${wfDir})`;
+      // (a) red when the two surfaces name different repairs for one state (abandon's `validate
+      //     --registered` beside respond's act — R13); (b) prints whether each names the act.
+      expect({
+        abandon: refusal.endsWith(`${UNANSWERABLE} Repair it: ${ACT}`),
+        respond: responded.includes(ACT),
+      }).toEqual({ abandon: true, respond: true });
+    } finally {
+      await chmod(wfDir, 0o755);
+    }
+  });
+
+  it('#819 follow-up 2 (R1, the audit’s S5): an empty or blank --reason is refused in respond --by’s words — nothing is recorded, with no claim about the run', async () => {
+    const { id } = await atGate('plain-gate', copyOf('plain-gate', { source_dir: home }));
+    const { store, id: runningId } = await (async () => {
       const { JsonFileStore } = await import('@sensigo/realm');
       const store = new JsonFileStore();
       const { run } = await store.create({
@@ -201,22 +293,45 @@ describe('#819 correction 1 (01) — realm run abandon at an open question', () 
       });
       return { store, id: run.id };
     })();
-    // (a) red when an empty reason is recorded ("Reason: ." — the walk's minor) or a blank one is
-    //     taken as given; (b) prints each refusal and the running run's phase.
+    const ended = await (async () => {
+      const { JsonFileStore, abandonRun } = await import('@sensigo/realm');
+      const s = new JsonFileStore();
+      const { run } = await s.create({ workflowId: 'plain-gate', workflowVersion: 1, params: {} });
+      await abandonRun(s, run.id, 'ended before');
+      return run.id;
+    })();
+    const missing = async () => {
+      errSpy.mockClear();
+      const failed = await abandonCommand
+        .parseAsync(['00000000-0000-4000-8000-000000000000', '--reason', ''], { from: 'user' })
+        .then(
+          () => false,
+          () => true,
+        );
+      return { failed, err: errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n') };
+    };
+    const REFUSED = emptyReasonRefusal();
+    // (a) red when an empty reason is recorded, a blank one is taken as given, or the refusal says
+    //     anything about the run (at a gate, for a missing run and for one already abandoned, a
+    //     reason alone changes nothing); (b) prints each refusal and the running run's phase.
     expect({
       empty: await abandon(runningId, '--reason', ''),
       blank: await abandon(runningId, '--reason', '   '),
-      phase: (await running.get(runningId)).run_phase,
+      phase: (await store.get(runningId)).run_phase,
       gated: (await abandon(id, '--reason', '')).err,
+      abandoned: await abandon(ended, '--reason', ''),
+      missing: await missing(),
     }).toEqual({
-      empty: { failed: true, err: emptyReasonRefusal(''), unchanged: true },
-      blank: { failed: true, err: emptyReasonRefusal('   '), unchanged: true },
+      empty: { failed: true, err: REFUSED, unchanged: true },
+      blank: { failed: true, err: REFUSED, unchanged: true },
       phase: 'running',
-      gated: emptyReasonRefusal(''),
+      gated: REFUSED,
+      abandoned: { failed: true, err: REFUSED, unchanged: true },
+      missing: { failed: true, err: REFUSED },
     });
-    // (a) red when the refusal loses a clause; (b) prints it.
-    expect(emptyReasonRefusal('')).toBe(
-      "realm run abandon: invalid --reason value '': expected text that says why the run ends — refused: the run is not abandoned while the reason is empty, because an empty reason records nothing about why it ended. Give a reason, or leave --reason out (the record then says it was abandoned via realm run abandon). The run can be abandoned as soon as the reason is not empty.",
+    // (a) red when the words change, or a claim about the run comes back; (b) prints the refusal.
+    expect(REFUSED).toBe(
+      "--reason: empty; nothing was recorded. Give a reason, or leave it out: the default reason is 'Abandoned via realm run abandon'.",
     );
   });
 });

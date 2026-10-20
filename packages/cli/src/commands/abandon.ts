@@ -4,21 +4,25 @@ import type { RunRecord } from '@sensigo/realm';
 import { cliCommandOf } from './ways-renderer.js';
 
 /**
- * #819 correction 1 (02 C2): an empty or blank `--reason` is refused, as an empty flag is refused at
- * the MCP door's start (#627): its four clauses — validity, consequence, remedy, re-admission.
+ * #819 correction 1 (02 C2): an empty or blank `--reason` is refused. #819 follow-up 2 (R1, the
+ * audit's S5): in the words of `realm run respond --by ""`'s refusal (`holder.ts`'s
+ * `identityRefusalLine`), with no claim about the run — at a gate, for a run that does not exist and
+ * for one already abandoned, a reason alone changes nothing. A second rule beside `holder.ts:133`
+ * (04 §3's exception; #604 adds the reason kind to that helper).
  */
-export function emptyReasonRefusal(raw: string): string {
-  return `realm run abandon: invalid --reason value '${raw}': expected text that says why the run ends — refused: the run is not abandoned while the reason is empty, because an empty reason records nothing about why it ended. Give a reason, or leave --reason out (the record then says it was abandoned via realm run abandon). The run can be abandoned as soon as the reason is not empty.`;
+export function emptyReasonRefusal(): string {
+  return "--reason: empty; nothing was recorded. Give a reason, or leave it out: the default reason is 'Abandoned via realm run abandon'.";
 }
 
 /**
- * #819 correction 1 (01): the repair of a run whose question is open but whose workflow cannot be
- * read — the one read, made only after core refused the kill: the remedy `getWorkflowForRun`'s own
- * error carries (its `register` way, with the copy's path when the store knows it). `undefined`
- * when the workflow reads, or the read says nothing to repair: the refusal then names the answer.
+ * #819 correction 1 (01): the way on from a run whose question is open but whose workflow cannot be
+ * read — the one read, made only after core refused the kill. #819 follow-up 2 (R2): worded by core's
+ * one composer (`gateRepairOf`): the copy's repair act, never `rm` and never `validate`; a copy an
+ * older or a later Realm registered gets its own remedy. `undefined` only when the workflow reads:
+ * the refusal then names the answer.
  */
 async function repairOf(run: RunRecord): Promise<string | undefined> {
-  const { JsonWorkflowStore, WorkflowError, getWorkflowForRun } = await import('@sensigo/realm');
+  const { JsonWorkflowStore, getWorkflowForRun, gateRepairOf } = await import('@sensigo/realm');
   try {
     await getWorkflowForRun(new JsonWorkflowStore(), run, {
       retryVerb: 'answer the gate',
@@ -26,9 +30,7 @@ async function repairOf(run: RunRecord): Promise<string | undefined> {
     });
     return undefined;
   } catch (err) {
-    if (!(err instanceof WorkflowError)) return undefined;
-    const register = (err.remedy ?? []).find((w) => w.verb === 'register');
-    return register !== undefined ? (cliCommandOf(register) ?? undefined) : undefined;
+    return gateRepairOf(err);
   }
 }
 
@@ -47,7 +49,7 @@ export const abandonCommand = new Command('abandon')
       withFullStop,
     } = await import('@sensigo/realm');
     if (opts.reason !== undefined && opts.reason.trim() === '') {
-      console.error(emptyReasonRefusal(opts.reason));
+      console.error(emptyReasonRefusal());
       process.exit(1);
       return;
     }
@@ -113,11 +115,12 @@ export const abandonCommand = new Command('abandon')
         const answer = (err.remedy ?? []).find((w) => w.verb === 'respond');
         if (answer !== undefined) {
           // #819 correction 1 (01): the answer waits on a workflow that cannot be read — then the
-          // way on is its repair, read once here (the record is not touched: core refused).
+          // way on is its repair, read once here (the record is not touched: core refused). #819
+          // follow-up 2 (R2): once the read has failed, the answer is never offered.
           const repair = before !== undefined ? await repairOf(before) : undefined;
           console.error(
             repair !== undefined
-              ? `${err.message} Its workflow cannot be read, so the question cannot be answered until it is repaired. Repair it: ${repair}`
+              ? `${err.message} ${repair}`
               : `${err.message} Answer it: ${cliCommandOf(answer)}`,
           );
           process.exit(1);

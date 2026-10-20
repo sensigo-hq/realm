@@ -132,6 +132,16 @@ export function findTool(probes: SwitchProbes, name: string): ToolFound {
   return found.paths.length > 0 ? { path: found.paths[0]! } : undefined;
 }
 
+/** #819 follow-up 2 (member 5): the id a sudoers `#uid` or `%#gid` names, as sudo reads it — a
+ *  decimal number, leading zeros and all (the lexer's `#-?[0-9]+`, parsed by `sudo_strtoid`;
+ *  W-829c1-A-09); `negative` for a `#-n`, which this check treats as covering (the safe direction);
+ *  `undefined` when `token` is not one. */
+export function numericId(token: string): number | 'negative' | undefined {
+  const m = /^#(-?)(\d+)$/.exec(token);
+  if (m === null) return undefined;
+  return m[1] === '-' ? 'negative' : Number(m[2]);
+}
+
 /** One passwd entry, read by `getent passwd`. */
 export interface PasswdEntry {
   name: string;
@@ -189,33 +199,80 @@ const LOCAL_GROUP_SOURCES = new Set(['files', 'compat', 'db', 'systemd']);
  *  2026-10-19): while it is there, `sss` serves names from a directory. */
 export const SSS_NSS_SOCKET = '/var/lib/sss/pipes/nss';
 
+/** #819 follow-up 2 (member 8): nscd's socket (glibc's and musl's `/var/run/nscd/socket`, and the
+ *  `/run` it usually links to). musl reads no `/etc/nsswitch.conf`: its group lookups and
+ *  `getgrouplist` ask nscd when this socket is there (musl `src/passwd`; W-819F2-AUD-09). */
+export const NSCD_SOCKETS = ['/var/run/nscd/socket', '/run/nscd/socket'] as const;
+
 /** Where `getent group` reads groups from: only local sources, a source that may serve a directory,
  *  or not known. */
-type GroupSource = { local: true } | { directory: string } | { unknown: string };
+type GroupSource =
+  { local: true } | { directory: string; database: 'group' | 'initgroups' } | { unknown: string };
 
-/** SEP-00 (f): `/etc/nsswitch.conf`'s `group:` line, read once. No file, or no `group:` line (musl's
- *  file, Alpine's shape), is the `files` source; bracketed actions are syntax, not sources. */
+/** #819 follow-up 2 (member 2): the databases whose sources decide a member list — `group`, and
+ *  `initgroups`, which `getgrouplist` (and so sudo's group match) reads when it is there (glibc
+ *  `nss/initgroups.c`; W-829c1-A-04). */
+const GROUP_DATABASES = ['group', 'initgroups'] as const;
+
+/**
+ * SEP-00 (f), #819 follow-up 2 (member 2, the audit's S1 text): `/etc/nsswitch.conf`, read once, as
+ * glibc reads it, or not known. Only a line whose first word — up to whitespace or `:`, after leading
+ * whitespace, as glibc reads it; matched in any case, so a name glibc might read is never skipped —
+ * is `group` or `initgroups` is judged. Each of these reads unknown: a second line of the same name
+ * (glibc keeps the last; one of each is not a second); a `#` after the name (glibc strips no trailing
+ * comment); no `:`; sources the parser cannot split (an unclosed bracket, a name of other characters,
+ * or none). Both lines are classed alike, the `sss` socket rule included; bracketed actions are syntax,
+ * not sources. A line that starts with `#` is a comment, and no other line is read. No file, or no
+ * `group` line, is the `files` source — unless nscd's socket is there (member 8): musl then asks nscd.
+ */
 function groupSourceOf(probes: SwitchProbes): GroupSource {
   const path = '/etc/nsswitch.conf';
+  const nscd = (): GroupSource | undefined => {
+    const socket = NSCD_SOCKETS.find((s) => probes.exists(s));
+    return socket !== undefined
+      ? {
+          unknown: `${socket} is there and ${path} lists no group line, so groups may be listed from nscd`,
+        }
+      : undefined;
+  };
   const stat = probes.stat(path);
-  if ('error' in stat && stat.error === 'ENOENT') return { local: true };
+  if ('error' in stat && stat.error === 'ENOENT') return nscd() ?? { local: true };
   const text = probes.readText(path);
   if (text === undefined)
     return { unknown: `${path} cannot be read, so where groups are listed from is not known` };
-  const line = text
-    .split('\n')
-    .map((l) => l.replace(/#.*$/, ''))
-    .find((l) => /^\s*group\s*:/.test(l));
-  if (line === undefined) return { local: true };
-  const sources = line
-    .replace(/^\s*group\s*:/, '')
-    .replace(/\[[^\]]*\]/g, ' ')
-    .split(/\s+/)
-    .filter((t) => t !== '');
-  for (const source of sources) {
-    if (LOCAL_GROUP_SOURCES.has(source)) continue;
-    if (source === 'sss' && !probes.exists(SSS_NSS_SOCKET)) continue;
-    return { directory: source };
+  const lines: Partial<Record<(typeof GROUP_DATABASES)[number], string>> = {};
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/^\s+/, '');
+    if (line.startsWith('#')) continue;
+    const name = /^[^\s:]*/.exec(line)![0];
+    const db = GROUP_DATABASES.find((d) => d === name.toLowerCase());
+    if (db === undefined) continue;
+    const cannot = (why: string): GroupSource => ({
+      unknown: `${path} has ${why}, so where groups are listed from is not known: ${line.trimEnd()}`,
+    });
+    if (lines[db] !== undefined) return cannot(`a second ${db} line`);
+    const rest = line.slice(name.length);
+    if (rest.includes('#')) return cannot(`a # after the ${db} name`);
+    if (!/^\s*:/.test(rest)) return cannot(`no : after the ${db} name`);
+    const sources = rest
+      .replace(/^\s*:/, '')
+      .replace(/\[[^\]]*\]/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t !== '');
+    if (sources.length === 0 || sources.some((s) => !/^[A-Za-z0-9_-]+$/.test(s)))
+      return cannot(`a ${db} line whose sources it cannot split`);
+    lines[db] = sources.join(' ');
+  }
+  if (lines.group === undefined) {
+    const viaNscd = nscd();
+    if (viaNscd !== undefined) return viaNscd;
+  }
+  for (const db of GROUP_DATABASES) {
+    for (const source of lines[db]?.split(' ') ?? []) {
+      if (LOCAL_GROUP_SOURCES.has(source)) continue;
+      if (source === 'sss' && !probes.exists(SSS_NSS_SOCKET)) continue;
+      return { directory: source, database: db };
+    }
   }
   return { local: true };
 }
@@ -305,7 +362,11 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
     // A §F7: `#gid` is looked up too, so a secondary group counts, not only the primary one
     const g = await group(name.startsWith('#') ? name.slice(1) : name);
     if ('unknown' in g) return g;
-    if ('absent' in g) return { found: name === `#${user.gid}` };
+    // #819 follow-up 2 (member 5): a `#gid` with no group entry is compared as the number sudo reads
+    if ('absent' in g) {
+      const id = numericId(name);
+      return { found: id === 'negative' || (id !== undefined && id === user.gid) };
+    }
     if (g.found.gid === user.gid || g.found.members.includes(user.name)) return { found: true };
     // #819 (08, A Outside 2): a group that lists no members may hide them (SSSD's
     // ignore_group_members), and `getent initgroups` is not one of rail 1's calls — not known
@@ -319,7 +380,7 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
     if ('unknown' in groupSource) return { unknown: groupSource.unknown };
     if ('directory' in groupSource) {
       return {
-        unknown: `/etc/nsswitch.conf lists ${groupSource.directory} for groups, so ${user.name}'s membership of ${g.found.name} may not all be listed`,
+        unknown: `/etc/nsswitch.conf lists ${groupSource.directory} for ${groupSource.database === 'group' ? 'groups' : 'initgroups'}, so ${user.name}'s membership of ${g.found.name} may not all be listed`,
       };
     }
     return { found: false, listed: true };

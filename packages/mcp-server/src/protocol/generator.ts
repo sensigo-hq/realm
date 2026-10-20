@@ -59,10 +59,11 @@ export interface WorkflowProtocol {
 /**
  * W-p1: PR-0's rule 2, the `offered` variant — byte-identical but for correction 2's words (8.6 (g)):
  * `gate.agent_hint` exists only when the author wrote `instructions`, so it is read "when the reply
- * has one".
+ * has one". #819 follow-up 2 (reader B's M4(b)): so is `gate.display`, which a gate with no message
+ * and no prompt does not carry.
  */
 const CONFIRM_RULE_OFFERED =
-  "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.";
+  "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.";
 
 /**
  * #627 W (§5.4d): rule 2 by the session's effective way — W-p1 (`offered`), W-p2 (the fallback:
@@ -81,7 +82,7 @@ function confirmRuleOf(way: EffectiveWay): string {
 
 /** PR-0's auto+gate step text, the `offered` variant (W-p8's base); correction 2 (8.6 (g)) adds "when the reply has one". */
 const AUTO_GATE_INVOLVEMENT_OFFERED =
-  'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
+  'YOU will receive `status: confirm_required` after this step runs — the engine runs it (when next_actions names advance_run, call it), then opens a gate. Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.';
 
 /** #627 W (W-p8): the auto+gate step's text by the session's effective way (correction 2, 8.6 (h): `asked` with forms on its own). */
 function autoGateInvolvementOf(way: EffectiveWay): string {

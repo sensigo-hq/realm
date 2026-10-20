@@ -403,9 +403,10 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // informational lines' label — :: "the whole output: … (the information lines marked "(fact)")".
     // #819 (C4): the economics line's three branches — separation-check-627 :: "C4: the economics
     // line — named (measured), not named in a realm.yaml read (fact), no realm.yaml read (unknown)".
+    // #819 follow-up 2 (walk --check wording): separation-check-627 :: "\"not measured\" where nothing was read now …", :: "the economics line answers its own question …", :: "a --project folder that is not there …" and the re-pinned "the whole output …", "C4: the economics line …".
     claim(
       PAGE,
-      "Each condition prints as measured, as configured but not enforced by Realm, or as unknown with its cause; the store's time basis prints as a fact, marked (fact), and so does the economics line when a `realm.yaml` the check read names no `runner.cache.economics`.",
+      "Each condition prints as measured, as configured but not enforced by Realm, as unknown with its cause, or as not measured when the check reads nothing for it: whether another Realm server or CLI uses the store, the service user when none is named, and the economics line when no `realm.yaml` is given. The store's time basis prints as a fact, marked (fact). When the `realm.yaml` the check read names no `runner.cache.economics`, the economics line says whether this login can change that `realm.yaml`. A `--project` folder that is not there reads unknown (no such folder), and a folder with no `realm.yaml` is named.",
     );
     // #819 correction 1 (walk --check wording 2, 3): separation-check-627 :: "each condition line in
     // its states …" (condition 7: "read from two files", each named under /home/agent while HOME
@@ -1013,16 +1014,18 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     // #819 correction 1 (SEP-00 Words): separation-790 :: "C-2", "C-6 (01b #6) …", "C-13 (a) …"
     // (unknown unless yes, and twice), :: "C-1 (A BLOCKING 1) …" (askpass), :: "C-17 (e) …"
     // (any case), :: "C-18 (f) …" (the group source), :: "#819 correction 1 C-20 …" (clause (g)).
+    // #819 follow-up 2: separation-790 :: the "#819 follow-up 2 — the class …" cells (members 2 and 3, A B4), C-20 (clause (g)).
     claim(
       C,
-      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting sudo lists twice with different values (issue #819); the stack `pam_askpass_service` names is read too; run-as names match in any case, as sudo matches them; a run-as group's members count only when `/etc/nsswitch.conf` lists local sources for groups, and the sentence then adds that the groups the system lists for the service user are all of its groups.",
+      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed twice with different values (issue #819); the stack `pam_askpass_service` names is read too; run-as user names match in any case, as sudo matches them, and so do run-as group names unless `!case_insensitive_group` or `match_group_by_gid` is listed; a run-as group that does not list the service user is read as not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds that the members the system lists for each group read are all of its members.",
     );
     // separation-check-627 :: 8.5's header cell and #819's "C4: a store this login cannot open — the
     // header says so"; the condition lines (condition 7's two files); #819's "C4: the economics line
     // — …" (its three branches).
+    // #819 follow-up 2 (walk --check wording): separation-check-627 :: the "#819 follow-up 2 — the walk’s --check wording …" cells.
     claim(
       C,
-      'The header says when no store was found, and when the store cannot be opened; condition 7\'s "no" names the two settings files it looked at; the store\'s time basis is marked "(fact)", and so is the economics line when a `realm.yaml` the check read names no `runner.cache.economics` (with none read, it is unknown).',
+      'The header says when no store was found, and when the store cannot be opened; condition 7\'s "no" names the two settings files it looked at; the store\'s time basis is marked "(fact)"; a condition the check reads nothing for is "not measured"; the economics line says whether this login can change the `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder that is not there reads unknown (no such folder).',
     );
     // w-627 :: "correction 1 (C1): … is refused with VALIDATION_OPTION_INVALID".
     claim(

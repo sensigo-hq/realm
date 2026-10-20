@@ -423,8 +423,9 @@ function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
           ? "Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation"
           : `get_run_state carries no question text for this gate: tell the user the run is waiting at step '${way.step}' for their answer, outside this conversation`;
     // #819 (T2): the start line's "the agent tells the user the run id" is asked for here; #819
-    // correction 1 (02 W3): a Slack thread's answer needs no run id — a terminal's does.
-    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they need it to answer from a terminal.`;
+    // correction 1 (02 W3): a Slack thread's answer needs no run id — a terminal's does. #819
+    // follow-up 2 (reader B's M2): "may", and no place named (K1: no text naming an answer way).
+    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they may need it to answer.`;
   }
   return {
     instruction: null,

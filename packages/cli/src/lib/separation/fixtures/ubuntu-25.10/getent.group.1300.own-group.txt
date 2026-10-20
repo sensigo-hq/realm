@@ -1,0 +1,5 @@
+# captured 2026-10-20 · image ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 · set up as root: groupadd -g 1100 svcgrp; groupadd -g 1300 svcown; useradd -m -u 1001 -s /bin/sh agent; useradd -r -u 999 -g svcown -s /usr/sbin/nologin svc · then as the login agent: getent group 1300
+exit 0
+--- stdout
+svcown:x:1300:
+--- stderr

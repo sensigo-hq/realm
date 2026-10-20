@@ -425,9 +425,14 @@ function trustRootWritable(
     return { basis: 'measured', answer: 'yes', detail: `${writable} can be changed` };
   }
   if (manifests.length === 0) {
+    // #819 follow-up 2 (walk --check wording): a deployment root that is not there is named
+    const missing = roots.map((r) => resolve(r)).filter((r) => !probes.exists(r));
     return {
       basis: 'unknown',
-      cause: `no realm.yaml was found to check: pass --project with the deployment root${notRead}`,
+      cause:
+        missing.length > 0
+          ? `no such folder: ${missing.join(', ')}${notRead}`
+          : `no realm.yaml was found to check: pass --project with the deployment root${notRead}`,
     };
   }
   return {
@@ -471,13 +476,27 @@ function agentSandbox(probes: SeparationProbes): ConditionReading {
       };
 }
 
-/** Condition 8 (informational): can this login write the runner's price file? */
+/** Condition 8 (informational): can this login change the runner's price file? #819 follow-up 2
+ *  (walk --check wording): a realm.yaml that names none answers by whether that realm.yaml can be
+ *  changed — the file the setting would be added to — and a realm.yaml not read says why, per root:
+ *  no such folder, no realm.yaml there, or one that cannot be read. */
 function economicsWritable(probes: SeparationProbes, roots: readonly string[]): ConditionReading {
-  let read = false;
+  const readOnes: string[] = [];
+  const why: string[] = [];
   for (const root of roots) {
-    const text = probes.readText(resolve(root, 'realm.yaml'));
-    if (text === undefined) continue;
-    read = true;
+    const manifest = resolve(root, 'realm.yaml');
+    const text = probes.readText(manifest);
+    if (text === undefined) {
+      why.push(
+        !probes.exists(resolve(root))
+          ? `no such folder: ${resolve(root)}`
+          : !probes.exists(manifest)
+            ? `no realm.yaml in ${resolve(root)}`
+            : `${manifest} cannot be read`,
+      );
+      continue;
+    }
+    readOnes.push(manifest);
     const named = /^\s*economics:\s*['"]?([^'"\s#]+)/m.exec(text)?.[1];
     if (named === undefined) continue;
     const path = isAbsolute(named) ? named : resolve(root, named);
@@ -485,18 +504,28 @@ function economicsWritable(probes: SeparationProbes, roots: readonly string[]): 
       (probes.exists(path) && probes.canWrite(path)) || probes.canWrite(dirname(path));
     return { basis: 'measured', answer: writable ? 'yes' : 'no', detail: path };
   }
-  // #819 (C4): "(fact)" only for a realm.yaml it read; with none read, the line is not known —
   // #819 correction 1 (A MINOR 9, walk --check wording 4): none given names the option that does
-  if (!read) {
+  if (readOnes.length === 0) {
     return {
       basis: 'unknown',
       cause:
         roots.length === 0
           ? 'no realm.yaml was given to read: pass --project with the deployment root'
-          : 'no realm.yaml could be read',
+          : why.join('; '),
     };
   }
-  return { basis: 'measured', answer: 'fact', detail: 'no runner.cache.economics is set' };
+  const changeableOne = readOnes.find((m) => changeable(probes, m));
+  return changeableOne !== undefined
+    ? {
+        basis: 'measured',
+        answer: 'yes',
+        detail: `${changeableOne} can be changed, and it sets no runner.cache.economics`,
+      }
+    : {
+        basis: 'measured',
+        answer: 'no',
+        detail: `${readOnes.join(', ')} cannot be changed, and ${readOnes.length === 1 ? 'it sets' : 'they set'} no runner.cache.economics`,
+      };
 }
 
 /**
@@ -600,6 +629,11 @@ export async function measureSeparation(args: {
     owns_store: ownsStore,
     door: args.door,
     extensions_unread: unread,
+    not_observed: [
+      'other_answer_host' as const,
+      ...(svc === undefined ? (['become_service_user'] as const) : []),
+      ...(args.roots.length === 0 ? (['economics_writable'] as const) : []),
+    ],
   };
 }
 
@@ -617,6 +651,10 @@ export type CheckEvidence = SeparationEvidence & {
   door: 'mcp' | 'serve';
   /** The registered workflows could not be listed, so their extension files were not checked. */
   extensions_unread: boolean;
+  /** #819 follow-up 2 (walk --check wording): the conditions whose unknown rests on nothing read
+   *  now — another answer host (never looked at), the service user when none is named (no way is
+   *  read), economics when no realm.yaml was given — printed "not measured", never "observed now". */
+  not_observed?: readonly SeparationCondition[];
 };
 
 /** The owner of the nearest folder above `path` that can be stat'ed, and that folder (correction 1
@@ -664,7 +702,10 @@ const CONDITION_WORDS: Record<
 /** W-x2: one condition's line. */
 export function conditionLine(
   c: SeparationCondition,
-  e: SeparationEvidence & { service_user_from?: string },
+  e: SeparationEvidence & {
+    service_user_from?: string;
+    not_observed?: readonly SeparationCondition[];
+  },
 ): string {
   const r = e.conditions[c];
   const words = CONDITION_WORDS[c](e);
@@ -679,7 +720,10 @@ export function conditionLine(
     case 'configured_not_enforced':
       return `${words}: configured, not enforced by Realm — ${r.detail}.`;
     case 'unknown':
-      return `${words}: unknown (${r.cause}; observed now).`;
+      // #819 follow-up 2 (walk --check wording): "observed now" only where a read made now gave it
+      return e.not_observed?.includes(c) === true
+        ? `${words}: not measured (${r.cause}).`
+        : `${words}: unknown (${r.cause}; observed now).`;
   }
 }
 
@@ -753,8 +797,9 @@ function clauseWords(c: SwitchClause, login: string, svc: string): string {
       return `nobody authenticates ${orList(c.tools)} as ${login} where the agent's processes run (${c.tools.length === 1 ? 'it then waives' : 'each then waives'} the password for some minutes)`;
     case 'c':
       // #819 (08, A F4): the refusal hides runaspw and the PAM services too
-      // #819 correction 1 (A BLOCKING 1, SEP-00 (d)): the askpass stack, and the ticket's scope
-      return `sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or ${svc}, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, and no timestamp_type setting shares one ticket across sessions)`;
+      // #819 correction 1 (A BLOCKING 1, SEP-00 (d)): the askpass stack, and the ticket's scope;
+      // #819 follow-up 2 (A S3): !tty_tickets too, and the ticket folder and owner a login could forge
+      return `sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or ${svc}, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, no timestamp_type or tty_tickets setting shares one ticket across sessions, and no timestampdir or timestampowner setting lets ${login} write the tickets)`;
     case 'd': {
       // W §8: the entry points (#819, 08 B F11: of the actions asked; "polkit's actions" when there
       // is none); W §5: each rules folder as `exists` and `canRead` (access R_OK) read it
@@ -767,8 +812,9 @@ function clauseWords(c: SwitchClause, login: string, svc: string): string {
     case 'f':
       return `${svc}'s authorized_keys holds none of ${login}'s keys`;
     case 'g':
-      // #819 correction 1 (realm-2c for the owner; SEP-03 item 1b): membership as the system lists it
-      return `the groups the system lists for ${svc} are all of its groups (a member the system does not list is not seen)`;
+      // #819 correction 1 (realm-2c for the owner; SEP-03 item 1b): membership as the system lists it;
+      // #819 follow-up 2 (A S1): what the branch read — the members each group lists
+      return `the members the system lists for each group read are all of its members (a member the system does not list is not seen)`;
   }
 }
 

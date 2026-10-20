@@ -452,21 +452,23 @@ describe('#627 W — the protocol says what this session’s way means', () => {
     const withheld = view(await protocolOf({ gateAnswers: 'withheld' }, false));
     // (a) red when W-p4 is dropped from offered, the value lines swap, or rule 2 / W-p8 keep the
     //     answer act where the session has no answer tool; (b) prints each session's texts.
+    // #819 follow-up 2 re-pin (reader B's M4(b)): the offered and fallback rule 2 and the auto+gate
+    // step text say "when the reply has one" of gate.display too — was "present … verbatim,".
     expect({ offered, fallback, forms, withheld }).toEqual({
       offered: {
         rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
+          "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice.",
         await: true,
         valueLine: expect.stringMatching(/^Optional: mint a fresh UUIDv4/),
-        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.',
+        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice.',
       },
       fallback: {
         rule2:
-          "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.",
+          "When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.",
         await: true,
         valueLine:
           'Answers to gates go through submit_human_response; your client may ask the user to approve each call.',
-        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.',
+        step: 'Read `gate.agent_hint` for presentation instructions when the reply has one, present `gate.display` to the user verbatim when the reply has one, collect their choice from `gate.response_spec.choices`, and call `submit_human_response` by copying the call in `next_actions[0].instruction.call_with` and filling in the choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.',
       },
       forms: {
         rule2:
@@ -653,6 +655,8 @@ describe('#627 W — the await entry: a question answered outside this conversat
     // (a) red when an answer call or a token reaches the reply, the gate's reply reads W-a2, the
     //     pace is missing on the reply that opened the question, or `until` is not the deadline;
     //     (b) prints the entries' texts and the pace.
+    // #819 follow-up 2 re-pin (reader B's M2): "they may need it to answer", no place named (K1) —
+    // was "they need it to answer from a terminal".
     expect({
       opened: [opened.instruction, opened.human_readable, opened.orientation],
       awaiting: opened.awaiting,
@@ -668,7 +672,7 @@ describe('#627 W — the await entry: a question answered outside this conversat
         null,
         // #819 (T2): red when the run-id instruction is missing; correction 1 (02 W3): "from a
         // terminal" — a Slack thread's answer needs no run id.
-        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they need it to answer from a terminal. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+        `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user gate.display and tell them it is waiting for their answer; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
         `Run is paused at gate '${gate.gate_id}' on step 'q', waiting for an answer outside this conversation.`,
       ],
       awaiting: {
@@ -682,8 +686,8 @@ describe('#627 W — the await entry: a question answered outside this conversat
       // them where they answer it" — false in Slack and in `realm agent`) or the row's text is
       // another's; correction 1 (02 W2): `noMessage` says what the record holds ("carries no
       // question text for this gate"), never what the definition declares.
-      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they need it to answer from a terminal. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
-      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. get_run_state carries no question text for this gate: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they need it to answer from a terminal. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+      later: `The question on step 'q' of run ${runId} is answered outside this conversation. Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation; an answer they give here is not recorded. Give the user this run id (${runId}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
+      noMessage: `The question on step 'q' of run ${bareRun} is answered outside this conversation. get_run_state carries no question text for this gate: tell the user the run is waiting at step 'q' for their answer, outside this conversation; an answer they give here is not recorded. Give the user this run id (${bareRun}); they may need it to answer. Check again no sooner than poll_after_ms; when until passes, tell the user.`,
       noAnswerCall: false,
       noToken: false,
       pace: [30_000, gate.expires_at, gate.expires_at],
