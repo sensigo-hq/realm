@@ -132,13 +132,6 @@ registry.register('adapter', 'my-adapter', myAdapter);
 | `RunStore`           |
 | `WorkflowError`      |
 
-### Processors
-
-| Symbol          |
-| --------------- |
-| `normalizeText` |
-| `computeHash`   |
-
 ### Handler primitives
 
 | Symbol                 |
