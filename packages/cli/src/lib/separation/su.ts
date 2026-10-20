@@ -44,13 +44,32 @@ async function shellOf(
   return m !== null ? { shell: m[1]!, how: call } : { unknown: `${call} says: ${toolLine(r)}` };
 }
 
+/**
+ * #819 follow-up 2 (member 7, the audit's S9): a shells file's shells, each line read as glibc's
+ * `getusershell` reads it (`misc/getusershell.c:131-136`; util-linux's `is_known_shell` asks it):
+ * the shell starts at the line's first `/` — whatever comes before it — and runs to whitespace, a
+ * `#` or the end; a line whose first `#` comes before any `/`, or that has no `/`, lists none, and so
+ * does a `/` that ends the file with no line end after it.
+ */
+export function shellsOf(text: string): string[] {
+  const shells: string[] = [];
+  const lines = text.split('\n');
+  lines.forEach((line, i) => {
+    const at = line.search(/[#/]/);
+    if (at < 0 || line[at] === '#') return;
+    if (at === line.length - 1 && i === lines.length - 1) return;
+    shells.push(/^[^\s#]*/.exec(line.slice(at))![0]);
+  });
+  return shells;
+}
+
 /** Whether `shell` is listed in a shells file; `undefined` when a file there cannot be read. */
 function listed(lk: Lookups, shell: string): boolean | undefined {
   for (const file of SHELLS_FILES) {
     if (!lk.probes.exists(file)) continue;
     const text = lk.probes.readText(file);
     if (text === undefined) return undefined;
-    if (text.split('\n').some((l) => l.trim() === shell)) return true;
+    if (shellsOf(text).includes(shell)) return true;
   }
   return false;
 }

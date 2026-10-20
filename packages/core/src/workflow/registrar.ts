@@ -195,12 +195,20 @@ function isLegacyDefinition(copy: { schema_version?: unknown }): boolean {
   );
 }
 
+/** #819 follow-up 2 (R2, the audit's B1): the remedies the refusals of a copy an older or a later
+ *  Realm registered carry — one owner of their words, for the refusal itself and for the way on at a
+ *  gate (`gateRepairOf`). */
+const LEGACY_REMEDY = 'Re-register it with: realm workflow register <path-to-workflow>';
+const NEWER_REMEDY =
+  "Use the Realm version that registered it, or register the workflow's source again with this version.";
+/** The gate fork's words for a question whose workflow cannot be read (reader B's M1). */
+const GATE_UNANSWERABLE = 'cannot be answered until its workflow can be read';
+
 /** The refusal of a copy an older Realm registered — one owner of its words for the registry read and
  *  the listing (#627 W correction 2, 8.6 (c)); the arguments of `new WorkflowError(…)`. */
 function legacyDefinitionParts(filePath: string): [string, WorkflowErrorOptions] {
   return [
-    'This workflow was registered with an older version of Realm. ' +
-      'Re-register it with: realm workflow register <path-to-workflow>',
+    `This workflow was registered with an older version of Realm. ${LEGACY_REMEDY}`,
     {
       code: 'STATE_LEGACY_FORMAT',
       category: 'STATE',
@@ -287,6 +295,36 @@ export interface RepairAct {
    *  a file nothing ever registered has no source to re-register from — `rm` is the only act,
    *  and it was named nowhere; the review walk looped on it). Rendered after the retry. */
   alternative?: string;
+}
+
+/**
+ * #819 follow-up 2 (R2, the audit's B1; reader B's S1, M1): the way on from a question whose
+ * workflow cannot be read, by the class of what the read threw — one composer (R13) for
+ * `realm run abandon`'s refusal, in the gate fork's own words. A copy that is unreadable or not a
+ * workflow: its repair act (`repairActFor`), without the alternative — never `rm` while a run waits
+ * on it; a copy an older or a later Realm registered: that class's own remedy, as its refusal words
+ * it; no copy: registering it. Any other error is named, with no repair: the question is never
+ * offered as answerable once the read has failed.
+ */
+export function gateRepairOf(err: unknown): string {
+  const lead = `Its question ${GATE_UNANSWERABLE}.`;
+  if (err instanceof WorkflowError) {
+    switch (err.code) {
+      case 'STATE_WORKFLOW_NOT_FOUND':
+        return `${lead} Repair it: realm workflow register <file>`;
+      case 'STATE_WORKFLOW_UNREADABLE':
+      case 'RESOURCE_FORMAT_INVALID': {
+        const r = repairActFor(err);
+        if (r !== undefined) return `${lead} Repair it: ${r.act}`;
+        break;
+      }
+      case 'STATE_LEGACY_FORMAT':
+        return `${lead} ${LEGACY_REMEDY}`;
+      case 'STATE_NEWER_FORMAT':
+        return `${lead} ${NEWER_REMEDY}`;
+    }
+  }
+  return `${lead} ${withFullStop(err instanceof Error ? err.message : String(err))}`;
 }
 
 export function repairActFor(err: WorkflowError): RepairAct | undefined {
@@ -680,8 +718,7 @@ function newerDefinitionParts(
     `Workflow '${workflowId}' was registered by a later version of Realm (definition format ` +
       `${String(schemaVersion)}; this version reads up to ` +
       `${CURRENT_WORKFLOW_SCHEMA_VERSION}) — refused: this version would ignore requirements ` +
-      'it cannot read. Use the Realm version that registered it, or register the ' +
-      "workflow's source again with this version. Nothing was run.",
+      `it cannot read. ${NEWER_REMEDY} Nothing was run.`,
     {
       code: 'STATE_NEWER_FORMAT',
       category: 'STATE',
@@ -892,8 +929,8 @@ export async function getWorkflowForRun(
     const disposalSentence = (leadIn: string): string =>
       gate === undefined
         ? `${leadIn} realm run abandon ${run.id}.`
-        : `This run is waiting on human gate '${gate.step_name}', which cannot be answered until ` +
-          `its workflow can be read; realm run abandon refuses a run that is waiting on a gate.`;
+        : `This run is waiting on human gate '${gate.step_name}', which ${GATE_UNANSWERABLE}; ` +
+          `realm run abandon refuses a run that is waiting on a gate.`;
 
     // Reached with `terminal_state` only through `terminalOk` (the sites whose happy path IS a
     // terminal run — drain, replay, resume, inspect): there is nothing left to END, so the

@@ -24,16 +24,38 @@ function claim(page: string, sentence: string): void {
 describe('#819 — the docs sentences this unit adds, each by the cell that executes it', () => {
   it("correction 1 (01, 02 C2): abandon's refusals — a gate whose workflow cannot be read names the repair; an empty reason is refused", () => {
     const CLI = 'docs/reference/cli/realm-run-acting.md';
-    // abandon-819 :: "the walk cases whose workflow cannot be read — A4f, A6b, A6c, B1, and the
-    // repairable causes — are each refused with their repair; the record is unchanged".
+    // #819 follow-up 2 re-pins (R2, R4): one row per repair form the refusal prints — abandon-819 ::
+    // "the walk cases whose workflow cannot be read …" (gone: B1; damaged: A4f, A6c, notJson; older:
+    // A6b; later: newer), "#819 follow-up 2 (R2): walk A4b, A5b and A6c …" (no `rm`), "#819 follow-up 2
+    // (R2, the audit's B1): walk A6a and A6b …" (the class's own remedy), "#819 follow-up 2 (R2, R13):
+    // a registry folder at mode 000 …" (the act respond names; core registrar :: repairActFor's
+    // unreadable act). Was one row naming `realm workflow validate --registered deploy`.
     claim(
       CLI,
-      "| The run is waiting at a gate whose workflow cannot be read | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its workflow cannot be read, so the question cannot be answered until it is repaired. Repair it: realm workflow validate --registered deploy` |",
+      "| The run is waiting at a gate, and its workflow's copy is gone | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Repair it: realm workflow register <file>` |",
     );
-    // abandon-819 :: "02 C2: an empty or blank --reason is refused with its four clauses …".
     claim(
       CLI,
-      "| `--reason` is empty or blank | `realm run abandon: invalid --reason value '': expected text that says why the run ends — refused: the run is not abandoned while the reason is empty, because an empty reason records nothing about why it ended. Give a reason, or leave --reason out (the record then says it was abandoned via realm run abandon). The run can be abandoned as soon as the reason is not empty.` |",
+      "| … and its copy is damaged or not a workflow | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Repair it: re-register the workflow from its source (realm workflow register <path-to-workflow>)` |",
+    );
+    claim(
+      CLI,
+      "| … and its copy cannot be read | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Repair it: make /home/ops/.realm/workflows/deploy.json readable (chmod u+r /home/ops/.realm/workflows/deploy.json)` |",
+    );
+    claim(
+      CLI,
+      "| … and an older Realm registered its copy | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Re-register it with: realm workflow register <path-to-workflow>` |",
+    );
+    claim(
+      CLI,
+      "| … and a later Realm registered its copy | `Run '4233aa3c-…' is waiting on human gate 'review' (gate '70d76b3b-…'); it cannot be abandoned while its question is open. Its question cannot be answered until its workflow can be read. Use the Realm version that registered it, or register the workflow's source again with this version.` |",
+    );
+    // #819 follow-up 2 re-pin (R1, the audit's S5): abandon-819 :: "#819 follow-up 2 (R1, the audit's
+    // S5): an empty or blank --reason is refused in respond --by's words …". Was the four-clause
+    // refusal whose last clause promised re-admission.
+    claim(
+      CLI,
+      "| `--reason` is empty or blank | `--reason: empty; nothing was recorded. Give a reason, or leave it out: the default reason is 'Abandoned via realm run abandon'.` |",
     );
   });
 
@@ -52,18 +74,24 @@ describe('#819 — the docs sentences this unit adds, each by the cell that exec
     // each telling the agent to give the user the run id (T2) …" (its later, noMessage and opened
     // rows; `has_message` produces the later row's text); correction 1 (02 W1–W3): door-627 ::
     // "#819 correction 1 (02 W1): a reply whose gate carries no display …" and the protocol rules'
-    // row (":481").
+    // row (":481"). #819 follow-up 2 re-pin (reader B's M2, M4(b)): "may need it to answer" —
+    // door-627 :: "under withheld: W-a1 …" (re-pinned); every rule-2 variant says "when the reply has
+    // one" — door-627 :: "rule 2, the await rule …" (re-pinned) and docs-pages-625-guides' live-rules
+    // cell. Was "which they need to answer from a terminal, and the withheld protocol rules …".
     claim(
       C,
-      "The awaiting entry of a reply that carries no `gate` points to `get_run_state`'s `pending_gate.resolved_message` when the gate declares a message, and otherwise says `get_run_state` carries no question text for this gate and names the step the run waits at, as does a reply whose `gate` carries no `display`; every withheld awaiting entry tells the agent to give the user the run id, which they need to answer from a terminal, and the withheld protocol rules say to present `gate.display` when the reply has one. A `respond` way gains `has_message`, present when the record keeps the question's text.",
+      "The awaiting entry of a reply that carries no `gate` points to `get_run_state`'s `pending_gate.resolved_message` when the gate declares a message, and otherwise says `get_run_state` carries no question text for this gate and names the step the run waits at, as does a reply whose `gate` carries no `display`; every withheld awaiting entry tells the agent to give the user the run id, which they may need to answer, and the protocol rules say to present `gate.display` when the reply has one. A `respond` way gains `has_message`, present when the record keeps the question's text.",
     );
-    // abandon-819 :: "the walk cases …" (the repair) and "02 C2 …" (the empty reason); core
-    // unanswerable-819 :: "getWorkflowForRun: a run at gate g-1 whose hex-suffixed workflow has no
-    // copy → not registered …" and abandon-819 :: "B1: … no CLI surface says it was created by an
-    // agent" (not registered, whatever its id); registrar-probe :: the live-gate cells (no `rm`).
+    // #819 follow-up 2 re-pin (R1, R2, reader B's M5, the audit's S7): abandon-819 :: "the walk
+    // cases …" (each copy's way on), "#819 follow-up 2 (R2): walk A4b, A5b and A6c …" (no `validate`,
+    // no `rm`), "#819 follow-up 2 (R2, the audit's B1) …" (the older and later copies' own remedies),
+    // "#819 follow-up 2 (R2, R13) …" (respond's act) and "#819 follow-up 2 (R1 …)" (nothing recorded);
+    // core unanswerable-819 :: "getWorkflowForRun: a run at gate g-1 whose hex-suffixed workflow has
+    // no copy → not registered …" and abandon-819 :: "B1: … no CLI surface says it was created by an
+    // agent" (not registered, whatever its id; `create_workflow` opens no gate).
     claim(
       C,
-      "The run is still refused, as every run waiting at a gate is; where its answer line would name an answer the run cannot take yet, the refusal says the workflow cannot be read and names its repair (`realm workflow register <file>`, or `realm workflow validate --registered <id>`). An empty or blank `--reason` is refused, and the run is not abandoned. At a gate, a workflow whose copy is gone is reported as not registered, whatever its id (a workflow created by an agent has no gate), and the copy's repair no longer offers to remove the file.",
+      'The run is still refused, as every run waiting at a gate is; where its answer line would name an answer the run cannot take yet, the refusal says the question cannot be answered until its workflow can be read, and names the way on: the repair `realm run respond` names for the copy (make it readable, or re-register it from its source), the remedy of a copy an older or a later Realm registered, or `realm workflow register <file>` when the copy is gone. It no longer names `realm workflow validate`, and no longer offers to remove the copy. An empty or blank `--reason` is refused, and nothing is recorded. At a gate, a workflow whose copy is gone is reported as not registered, whatever its id (a workflow `create_workflow` writes has no gate).',
     );
     // slack-gate-notifier :: "exact match resolves gate …".
     claim(

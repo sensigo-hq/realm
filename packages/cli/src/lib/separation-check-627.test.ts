@@ -244,7 +244,9 @@ describe('#627 W — the separation check (cell 26)', () => {
       trustRoot: [
         `${CONDITION_4}: yes (measured) — ${PROJECT}/realm.yaml can be changed.`,
         `${CONDITION_4}: no (measured) — 3 files and folders checked.`,
-        `${CONDITION_4}: unknown (no realm.yaml was found to check: pass --project with the deployment root; observed now).`,
+        // #819 follow-up 2 re-pin (walk --check wording): this machine has no folder at all, so the
+        // root is named — was "no realm.yaml was found to check: pass --project with the deployment root"
+        `${CONDITION_4}: unknown (no such folder: ${PROJECT}; observed now).`,
       ],
       // Correction 2 (8.5): the "no" names what it read.
       sandbox: [
@@ -254,7 +256,7 @@ describe('#627 W — the separation check (cell 26)', () => {
     });
   });
 
-  it('the whole output: the header names the mode and the claim, the login measured, condition 5 "observed now", conditions 6–8 (the information lines marked "(fact)"), and the value line', async () => {
+  it('the whole output: the header names the mode and the claim, the login measured, condition 5 "not measured", conditions 6–8 (the time basis marked "(fact)", the economics line measured), and the value line', async () => {
     const lines = renderSeparation(await measure(machine()));
     // (a) red when the login is omitted, condition 5 says "none", a condition line is dropped, or an
     //     information line loses its label (8.5); (b) prints the lines.
@@ -265,10 +267,13 @@ describe('#627 W — the separation check (cell 26)', () => {
       "  This login can become Realm's service user (realm) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).",
       '  This login can reach an engine that runs as root: no (measured).',
       `  ${CONDITION_4}: no (measured) — 3 files and folders checked.`,
-      '  Another Realm server or CLI that takes answers uses this store: unknown (another Realm server or CLI could use this store, and one look cannot rule it out; observed now).',
+      // #819 follow-up 2 re-pin (walk --check wording): nothing is read for it — was "unknown (…; observed now)"
+      '  Another Realm server or CLI that takes answers uses this store: not measured (another Realm server or CLI could use this store, and one look cannot rule it out).',
       "  The store's time basis: this machine's clock (the JSON store keeps no clock of its own) (fact).",
       "  The agent's app runs it in a sandbox: no (read from two files) — only /home/agent/.claude/settings.json and /home/agent/.codex/config.toml were looked at.",
-      '  This login can change runner.cache.economics (informational): no runner.cache.economics is set (fact).',
+      // #819 follow-up 2 re-pin (walk --check wording): it answers its own question — was "no
+      // runner.cache.economics is set (fact)"
+      `  This login can change runner.cache.economics (informational): no (measured) — ${PROJECT}/realm.yaml cannot be changed, and it sets no runner.cache.economics.`,
       '  The gate-answers value: withheld (given on this command line).',
     ]);
   });
@@ -313,7 +318,8 @@ describe('#627 W — the separation check (cell 26)', () => {
         header: `Separation: not measured — ${MAY} whether it can reach Realm's store was not measured; whether it can become Realm's service user without a password was not measured.`,
         store: `  This login can write Realm's store or open its files: unknown (Realm's store was not found at ${STORE}; observed now).`,
         become:
-          "  This login can become Realm's service user without a password: unknown (there is no service user to name: no store was found; observed now).",
+          // #819 follow-up 2 re-pin (walk --check wording): no way is read — was "unknown (…; observed now)"
+          "  This login can become Realm's service user without a password: not measured (there is no service user to name: no store was found).",
       },
       // Correction 2 (5.3): the owner read from the folder above the store is labelled so.
       denied: {
@@ -328,7 +334,8 @@ describe('#627 W — the separation check (cell 26)', () => {
         store:
           "  This login can write Realm's store or open its files: yes (measured) — this login owns the store, so it can change who may open it.",
         become:
-          "  This login can become Realm's service user without a password: unknown (there is no separate service user: the store belongs to this login; observed now).",
+          // #819 follow-up 2 re-pin (walk --check wording): no way is read — was "unknown (…; observed now)"
+          "  This login can become Realm's service user without a password: not measured (there is no separate service user: the store belongs to this login).",
       },
     });
   });
@@ -560,9 +567,10 @@ describe('#627 W correction 2 — the separation check says what it measured (pa
       strangerBecome: conditionLine('become_service_user', stranger),
     }).toEqual({
       rootNamed: false,
-      rootBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
+      // #819 follow-up 2 re-pin (walk --check wording): no way is read — was "unknown (…; observed now)"
+      rootBecome: `  This login can become Realm's service user without a password: not measured (the store's owner could not be read: ${STORE} cannot be opened).`,
       mineOwns: false,
-      mineBecome: `  This login can become Realm's service user without a password: unknown (the store's owner could not be read: ${STORE} cannot be opened; observed now).`,
+      mineBecome: `  This login can become Realm's service user without a password: not measured (the store's owner could not be read: ${STORE} cannot be opened).`,
       strangerBecome: `This login can become Realm's service user (realm, read from the owner of ${HOME}) without a password: no (measured now) — no sudo, su, doas, polkit or ssh way was found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH (polkitd also at /usr/lib/polkit-1/polkitd, /usr/libexec/polkitd, /usr/lib/policykit-1/polkitd; sshd's units ssh.socket, sshd.socket, ssh.service, sshd.service in /etc/systemd/system, /run/systemd/system, /usr/lib/systemd/system, /lib/systemd/system).`,
     });
   });
@@ -779,17 +787,17 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
     expect(line).toBe(`${CONDITION_4}: yes (measured) — ${PROJECT}/realm.yaml can be changed.`);
   });
 
-  it('C4: the economics line — named (measured), not named in a realm.yaml read (fact), no realm.yaml read (unknown)', async () => {
+  it('C4: the economics line — named (measured), not named in a realm.yaml read (measured by whether it can be changed), none given (not measured), no folder (unknown)', async () => {
     const economics = async (files: Record<string, string>, roots = [PROJECT]) =>
       conditionLine(
         'economics_writable',
         await measureSeparation({ probes: machine({}, files), value: FLAG, roots, door: 'mcp' }),
       );
     // (a) red per row: `named` when a named file is not measured; `notNamed` when a realm.yaml that
-    //     names none is not a fact; `none` when no realm.yaml read is called a fact (W's "(fact)"),
-    //     or — #819 correction 1 (walk --check wording 4) — when it does not name --project;
-    //     `unread` (A MINOR 9) when a root whose realm.yaml cannot be read is told to pass one;
-    //     (b) prints the four lines.
+    //     names none is not judged by whether it can be changed (#819 follow-up 2); `none` when no
+    //     realm.yaml read is called measured, or — #819 correction 1 (walk --check wording 4) — when
+    //     it does not name --project; `unread` (A MINOR 9) when a root whose realm.yaml cannot be read
+    //     is told to pass one; (b) prints the four lines.
     expect({
       named: await economics({
         [`${PROJECT}/realm.yaml`]: 'runner:\n  cache:\n    economics: prices.json\n',
@@ -799,9 +807,12 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
       unread: await economics({}, [PROJECT]),
     }).toEqual({
       named: `${ECONOMICS}: no (measured) — ${PROJECT}/prices.json.`,
-      notNamed: `${ECONOMICS}: no runner.cache.economics is set (fact).`,
-      none: `${ECONOMICS}: unknown (no realm.yaml was given to read: pass --project with the deployment root; observed now).`,
-      unread: `${ECONOMICS}: unknown (no realm.yaml could be read; observed now).`,
+      // #819 follow-up 2 re-pins (walk --check wording) — notNamed: was "no runner.cache.economics
+      // is set (fact)"; none: was "unknown (…; observed now)"; unread: this machine has no folder,
+      // was "unknown (no realm.yaml could be read; observed now)"
+      notNamed: `${ECONOMICS}: no (measured) — ${PROJECT}/realm.yaml cannot be changed, and it sets no runner.cache.economics.`,
+      none: `${ECONOMICS}: not measured (no realm.yaml was given to read: pass --project with the deployment root).`,
+      unread: `${ECONOMICS}: unknown (no such folder: ${PROJECT}; observed now).`,
     });
   });
 
@@ -880,5 +891,65 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
     expect(conditionLine('root_engine', e)).toBe(
       "This login can reach an engine that runs as root: yes (measured) — Docker's socket /var/run/docker.sock accepts.",
     );
+  });
+});
+
+describe('#819 follow-up 2 — the walk’s --check wording: each line says only what was observed', () => {
+  const ECONOMICS = 'This login can change runner.cache.economics (informational)';
+  const line = async (
+    c: Parameters<typeof conditionLine>[0],
+    probes: SeparationProbes,
+    roots = [PROJECT],
+  ) => conditionLine(c, await measureSeparation({ probes, value: FLAG, roots, door: 'mcp' }));
+
+  it('"not measured" where nothing was read now, "observed now" where a read gave the unknown', async () => {
+    const noStore = machine({ exists: (p) => p === PROJECT || p === `${PROJECT}/realm.yaml` });
+    // (a) red when a line whose unknown rests on nothing read says "observed now" (another answer
+    //     host; the service user with no store; economics with no realm.yaml given), or a line a
+    //     read gave says "not measured" (the store not found); (b) prints the four lines.
+    expect({
+      otherHost: await line('other_answer_host', machine()),
+      become: await line('become_service_user', noStore),
+      economics: await line('economics_writable', machine(), []),
+      store: await line('store_reach', noStore),
+    }).toEqual({
+      otherHost:
+        'Another Realm server or CLI that takes answers uses this store: not measured (another Realm server or CLI could use this store, and one look cannot rule it out).',
+      become:
+        "This login can become Realm's service user without a password: not measured (there is no service user to name: no store was found).",
+      economics: `${ECONOMICS}: not measured (no realm.yaml was given to read: pass --project with the deployment root).`,
+      store: `This login can write Realm's store or open its files: unknown (Realm's store was not found at ${STORE}; observed now).`,
+    });
+  });
+
+  it('the economics line answers its own question: a realm.yaml naming none reads yes when this login can change it', async () => {
+    // (a) red when a changeable realm.yaml that names none is a fact, or reads "no"; (b) prints it.
+    expect(
+      await line('economics_writable', machine({ canWrite: (p) => p === `${PROJECT}/realm.yaml` })),
+    ).toBe(
+      `${ECONOMICS}: yes (measured) — ${PROJECT}/realm.yaml can be changed, and it sets no runner.cache.economics.`,
+    );
+  });
+
+  it('a --project folder that is not there, a folder with no realm.yaml, and a realm.yaml that cannot be read are each named', async () => {
+    const folder = machine({}, {}, [PROJECT]);
+    const unreadable = machine({}, {}, [PROJECT, `${PROJECT}/realm.yaml`]);
+    // (a) red per row: `noFolder` when a missing folder is accepted without a word (no realm.yaml
+    //     found); `noFile` when a folder with none says "could be read"; `unreadable` when a file
+    //     there is called absent; `trustNoFile` when the folder is there but no realm.yaml is
+    //     called "no such folder"; (b) prints each line.
+    expect({
+      noFolder: await line('economics_writable', machine({}, {})),
+      trustNoFolder: await line('trust_root_writable', machine({}, {})),
+      noFile: await line('economics_writable', folder),
+      trustNoFile: await line('trust_root_writable', folder),
+      unreadable: await line('economics_writable', unreadable),
+    }).toEqual({
+      noFolder: `${ECONOMICS}: unknown (no such folder: ${PROJECT}; observed now).`,
+      trustNoFolder: `${CONDITION_4}: unknown (no such folder: ${PROJECT}; observed now).`,
+      noFile: `${ECONOMICS}: unknown (no realm.yaml in ${PROJECT}; observed now).`,
+      trustNoFile: `${CONDITION_4}: unknown (no realm.yaml was found to check: pass --project with the deployment root; observed now).`,
+      unreadable: `${ECONOMICS}: unknown (${PROJECT}/realm.yaml cannot be read; observed now).`,
+    });
   });
 });

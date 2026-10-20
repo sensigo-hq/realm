@@ -710,6 +710,8 @@ export {
   parseFailureError,
   probeClassOf,
   repairActFor,
+  // #819 follow-up 2 (R2): the way on at a gate whose workflow cannot be read (04 §5)
+  gateRepairOf,
   PROBE_FAILURE_CLASSES,
   STUCK_DEFINITION_PARSE_CAP_BYTES,
 } from './workflow/registrar.js';

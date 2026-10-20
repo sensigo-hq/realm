@@ -58,15 +58,18 @@ All notable changes to this project are documented here.
   allowed, and lists what no program can see from that login; a rule it does not recognise, a file
   it cannot read, or a tool's error reads "unknown", and the sentence is not printed. A sudo
   Defaults setting or long-format option the check does not read makes sudo's reading unknown,
-  unless sudo already reads yes, with sudo's own line, and so does a setting sudo lists twice with
-  different values (issue #819); the stack `pam_askpass_service` names is read too; run-as names
-  match in any case, as sudo matches them; a run-as group's members count only when
-  `/etc/nsswitch.conf` lists local sources for groups, and the sentence then adds that the groups
-  the system lists for the service user are all of its groups. The header
+  unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed
+  twice with different values (issue #819); the stack `pam_askpass_service` names is read too;
+  run-as user names match in any case, as sudo matches them, and so do run-as group names unless
+  `!case_insensitive_group` or `match_group_by_gid` is listed; a run-as group that does not list the
+  service user is read as not holding it only when the `group` and `initgroups` lines of
+  `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds
+  that the members the system lists for each group read are all of its members. The header
   says when no store was found, and when the store cannot be opened; condition 7's "no" names the
-  two settings files it looked at; the store's time basis is marked "(fact)", and so is the economics
-  line when a `realm.yaml` the check read names no `runner.cache.economics` (with none read, it is
-  unknown).
+  two settings files it looked at; the store's time basis is marked "(fact)"; a condition the check
+  reads nothing for is "not measured"; the economics line says whether this login can change the
+  `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder
+  that is not there reads unknown (no such folder).
 - **The `initialize` result names the gate-answers value (issue #627).**
   `capabilities.experimental['realm/gate_answers']` is `{ value, source_kind }`.
 - **Each answer records how it arrived (issue #627).** A `gate_response` entry gains `answer`
@@ -96,8 +99,8 @@ All notable changes to this project are documented here.
   `get_run_state`'s `pending_gate.resolved_message` when the gate declares a message, and otherwise
   says `get_run_state` carries no question text for this gate and names the step the run waits at,
   as does a reply whose `gate` carries no `display`; every withheld awaiting entry tells the agent to
-  give the user the run id, which they need to answer from a terminal, and the withheld protocol
-  rules say to present `gate.display` when the reply has one. A `respond` way gains `has_message`,
+  give the user the run id, which they may need to answer, and the protocol rules say to present
+  `gate.display` when the reply has one. A `respond` way gains `has_message`,
   present when the record keeps the question's text.
 - **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
   `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
@@ -224,11 +227,13 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 - **`realm run abandon` at a gate whose workflow cannot be read names the repair (issue #819).** The
   run is still refused, as every run waiting at a gate is; where its answer line would name an
-  answer the run cannot take yet, the refusal says the workflow cannot be read and names its repair
-  (`realm workflow register <file>`, or `realm workflow validate --registered <id>`). An empty or
-  blank `--reason` is refused, and the run is not abandoned. At a gate, a workflow whose copy is gone
-  is reported as not registered, whatever its id (a workflow created by an agent has no gate), and
-  the copy's repair no longer offers to remove the file.
+  answer the run cannot take yet, the refusal says the question cannot be answered until its
+  workflow can be read, and names the way on: the repair `realm run respond` names for the copy
+  (make it readable, or re-register it from its source), the remedy of a copy an older or a later
+  Realm registered, or `realm workflow register <file>` when the copy is gone. It no longer names
+  `realm workflow validate`, and no longer offers to remove the copy. An empty or blank `--reason` is
+  refused, and nothing is recorded. At a gate, a workflow whose copy is gone is reported as not
+  registered, whatever its id (a workflow `create_workflow` writes has no gate).
 - **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
   an `auto` step the engine could run is refused before anything is claimed: `blocked`,
   `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.`

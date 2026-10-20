@@ -122,7 +122,7 @@ and the six standard rules are:
 
 ```text
 Follow the instruction in each next_actions entry exactly. next_actions lists only what you can call now; when it is empty, agent_action says what to do.
-When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.
+When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.
 Do NOT auto-confirm any human gate. The user must decide.
 Do NOT ask the user for permission between steps unless the system tells you to.
 When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.

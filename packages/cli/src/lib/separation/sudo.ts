@@ -10,6 +10,7 @@ import type { SwitchPathReading } from '@sensigo/realm';
 import {
   findTools,
   lookedFor,
+  numericId,
   toolLine,
   type Found,
   type Lookups,
@@ -102,6 +103,9 @@ const GLOBAL_ACTED = new Set([
   'pam_askpass_service',
   'case_insensitive_user',
   'case_insensitive_group',
+  // #819 follow-up 2 (member 3, the audit's S3): how a run-as and the exempt group are matched —
+  // by gid (exactly) when set, by name in any case when not; listed twice, it reads unknown
+  'match_group_by_gid',
 ]);
 
 /**
@@ -153,14 +157,13 @@ const HARMLESS = new Set([
   'mail_no_host', // mail
   'mail_no_perms', // mail
   'mail_no_user', // mail
-  'match_group_by_gid', // invoker group matching; the listing already shows what matched; runas groups are read through getent, not sudo
   'intercept', // policy on sub-commands after the command runs
   'intercept_allow_setid', // same
   'intercept_authenticate', // asks MORE authentication, never less
   'intercept_verify', // same family
   'netgroup_tuple', // netgroup triple matching; the check takes the user field of every triple (over-covers)
   'noexec', // restricts what the command may exec
-  'noninteractive_auth', // the PAM stack is read either way; the docs' condition covers the check's own -n (gate-answers.md)
+  'noninteractive_auth', // the PAM stack is read either way; when listed, the reading says the check's own -n ran it (#819 follow-up 2, A MINOR 3)
   'pam_acct_mgmt', // account phase on/off; the scanner skips account lines; the phase only adds restrictions
   'pam_rhost', // PAM items set for logging; no admitted module grants by them
   'pam_ruser', // PAM items set for logging; no admitted module grants by them
@@ -302,6 +305,11 @@ function specificKind(item: string): Kind {
   return HARMLESS.has(k) ? 'harmless' : 'unread';
 }
 
+/** #819 follow-up 2 (A MINOR 1): a ticket setting the check reads by its value, and refuses, is one it
+ *  "does not accept"; any other unread item is one it "does not read". */
+const notReadVerb = (item: string): 'accept' | 'read' =>
+  ticketKind(item, defaultsKeyword(item)) === 'unread' ? 'accept' : 'read';
+
 /** (b): `timestamp_timeout=0`, the value that keeps no ticket. */
 const ZERO_TIMEOUT = /^timestamp_timeout=0(?:\.0*)?$/;
 
@@ -311,7 +319,7 @@ const ZERO_TIMEOUT = /^timestamp_timeout=0(?:\.0*)?$/;
 function unreadItem(listing: Listing): string | undefined {
   const global = listing.defaults.find((i) => globalKind(i) === 'unread');
   if (global !== undefined)
-    return `sudo listed a Defaults setting this check does not read: ${global}`;
+    return `sudo listed a Defaults setting this check does not ${notReadVerb(global)}: ${global}`;
   const forms = new Map<string, string[]>();
   for (const item of listing.defaults) {
     const k = defaultsKeyword(item);
@@ -326,7 +334,7 @@ function unreadItem(listing: Listing): string | undefined {
   for (const s of listing.specific) {
     const item = s.options.find((o) => specificKind(o) === 'unread');
     if (item !== undefined)
-      return `sudo listed a Defaults setting this check does not read: Defaults${s.kind}${s.targets.join(',')} ${item}`;
+      return `sudo listed a Defaults setting this check does not ${notReadVerb(item)}: Defaults${s.kind}${s.targets.join(',')} ${item}`;
   }
   const option = listing.options.find(
     (o) => o !== 'authenticate' && o !== '!authenticate' && !OPTIONS_HARMLESS.has(o),
@@ -336,12 +344,25 @@ function unreadItem(listing: Listing): string | undefined {
   return undefined;
 }
 
-/** Splits a list on commas outside double quotes, trimmed. */
+/** Splits a list on commas outside double quotes, trimmed. #819 follow-up 2 (member 6, A S4): a
+ *  backslash escapes the next character, as sudo prints it (SUDOERS_QUOTED: `mailto=root\,ops@…`) —
+ *  it only changes where the list splits; each item keeps the text sudo printed. */
 const commaList = (text: string): string[] => {
   const out: string[] = [];
   let cur = '';
   let quoted = false;
+  let escaped = false;
   for (const ch of text) {
+    if (escaped) {
+      cur += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      cur += ch;
+      escaped = true;
+      continue;
+    }
     if (ch === '"') quoted = !quoted;
     if (ch === ',' && !quoted) {
       out.push(cur.trim());
@@ -500,7 +521,9 @@ function shortItems(
 type Covers = { svc: boolean; root: boolean; listed?: true } | { unknown: string };
 
 /** (e): how sudo matches run-as names — case-insensitively unless `!case_insensitive_user` /
- *  `!case_insensitive_group` is listed (sudo's default, defaults.c; AUD-16). */
+ *  `!case_insensitive_group` is listed (sudo's default, defaults.c; AUD-16). #819 follow-up 2
+ *  (member 3, A S2): `group` is false under `match_group_by_gid`, where sudo looks the group up by
+ *  name (`getgrnam`, exact) and compares gids (pwutil.c:1172-1193). */
 interface NameMatch {
   user: boolean;
   group: boolean;
@@ -538,19 +561,36 @@ async function tokenCovers(
       // a group: `%name`, `%#gid`; a bare group in the runas group list
       const group = token.startsWith('%') ? token.slice(1) : token;
       if (!('found' in entry)) {
-        if (who === 'root' && (group === 'root' || group === '#0')) out.root = true;
+        // #819 follow-up 2 (member 5): `%#0` as sudo reads it, a number (`%#00` too)
+        if (who === 'root' && (group === 'root' || numericId(group) === 0)) out.root = true;
         else if ('unknown' in entry) return { unknown: entry.unknown };
         continue;
       }
       // #819 correction 1 (e): sudo matches a group name in any case unless told otherwise, and
       // getent only exactly — a name it finds no group for may name one of another case
-      if (ci.group && !lk.darwin && !group.startsWith('#') && 'absent' in (await lk.group(group))) {
+      const anyCase = ci.group && !lk.darwin && !group.startsWith('#');
+      if (anyCase && who === 'svc') {
+        // #819 follow-up 2 (member 3, the audit's S2): svc's primary group, named by its gid
+        // (`getent group <gid>`, rail 1's call), matched in any case as sudo matches it
+        const primary = await lk.group(String(entry.found.gid));
+        if ('found' in primary && primary.found.name.toLowerCase() === group.toLowerCase()) {
+          out[who] = true;
+          continue;
+        }
+        if ('unknown' in primary) unread ??= primary.unknown;
+      }
+      const exact = anyCase ? await lk.group(group) : undefined;
+      if (exact !== undefined && 'absent' in exact) {
         unread ??= `getent group ${group} finds no group of that name, and sudo matches group names in any case (case_insensitive_group, on by default)`;
         continue;
       }
       const inGroup = await lk.userIn(entry.found, group);
       if ('unknown' in inGroup) unread ??= inGroup.unknown;
       else if ('found' in inGroup && inGroup.found) out[who] = true;
+      // #819 follow-up 2 (member 3, A B3): a name of another case than its lower one may name, for
+      // sudo, a group of another case that getent's exact answer is not — unknown unless it covers
+      else if (anyCase && group !== group.toLowerCase())
+        unread ??= `getent group ${group} reads only the group of that exact case, and sudo matches group names in any case (case_insensitive_group, on by default)`;
       else if (who === 'svc' && 'listed' in inGroup) listed = true;
     } else if (token.startsWith('+')) {
       const net = await lk.netgroupUsers(token.slice(1));
@@ -558,9 +598,11 @@ async function tokenCovers(
       if ('found' in net && net.found.some((u) => u === '' || u === name)) out[who] = true;
     } else if (token.startsWith('#')) {
       const uid = who === 'root' ? 0 : uidOf(lk, entry);
-      if (uid === undefined)
-        out[who] = true; // svc's uid is not known: the safe direction
-      else out[who] = token === `#${uid}`;
+      // #819 follow-up 2 (member 5, A Q3's P1): `#0999` is the uid 999, as sudo reads it
+      const id = numericId(token);
+      if (uid === undefined || id === 'negative')
+        out[who] = true; // svc's uid is not known, or a negative id: the safe direction
+      else out[who] = id === uid;
     } else if (same(token, name)) {
       out[who] = true;
     } else if (token !== lk.login) {
@@ -574,6 +616,31 @@ async function tokenCovers(
   // #819 correction 1 (A MINOR 1): a cover read for root never drops ⟨svc⟩'s unknown
   if (unread !== undefined && !out.svc) return { unknown: unread };
   return listed && !out.svc ? { ...out, listed: true } : out;
+}
+
+/**
+ * Whether this login is in sudo's `exempt_group`. #819 follow-up 2 (member 4, the audit's S4 text;
+ * #838 row 1): for `exempt_group` only — `loginIn` (which `pam_wheel` and doas also use, both
+ * matching exactly) first; then this process's groups, each named by `getent group <gid>` and
+ * compared as sudo compares them: in any case under `case_insensitive_group` without
+ * `match_group_by_gid`, exactly otherwise (`user_in_group`, pwutil.c:1172-1193, via `user_is_exempt`,
+ * check.c:321). A gid getent cannot name reads unknown. An exact reading: no host flips to unknown.
+ */
+async function exemptIn(lk: Lookups, name: string, ci: NameMatch): Promise<Found<boolean>> {
+  const byName = await lk.loginIn(name);
+  if (!('found' in byName) || byName.found) return byName;
+  const gids = lk.probes.groups();
+  if (gids === undefined) return { unknown: "this process's groups could not be read" };
+  const same = (a: string): boolean =>
+    ci.group ? a.toLowerCase() === name.toLowerCase() : a === name;
+  let unnamed: string | undefined;
+  for (const gid of [...new Set(gids)]) {
+    const g = await lk.group(String(gid));
+    if ('found' in g) {
+      if (same(g.found.name)) return { found: true };
+    } else unnamed ??= 'unknown' in g ? g.unknown : `getent group ${gid} names no group`;
+  }
+  return unnamed !== undefined ? { unknown: unnamed } : { found: false };
 }
 
 /** ⟨svc⟩'s uid: from its passwd entry, or from a `uid <n>` service user (A §F10). */
@@ -779,6 +846,10 @@ async function readOne(
   }
   const listing = parseListing(text);
   if ('unknown' in listing) return unknown(how, listing.unknown);
+  // #819 follow-up 2 (A MINOR 3): with noninteractive_auth on, sudo -n runs its PAM stack, so the
+  // check's own listing is a login attempt sudo's PAM stack may log or count — said where it is listed
+  if (listing.defaults.includes('noninteractive_auth'))
+    how = `${how}, which ran sudo's PAM stack (its noninteractive_auth setting is on) and may count as a login attempt`;
   return judge(lk, path, how, listing, svc, root, flavour);
 }
 
@@ -825,7 +896,7 @@ async function judgeListing(
   const opts = new Set(listing.defaults);
   const ci: NameMatch = {
     user: !opts.has('!case_insensitive_user'),
-    group: !opts.has('!case_insensitive_group'),
+    group: !opts.has('!case_insensitive_group') && !opts.has('match_group_by_gid'),
   };
   if (opts.has('!authenticate')) {
     return [
@@ -889,7 +960,7 @@ async function judgeListing(
   }
   const exempt = listing.defaults.find((o) => o.startsWith('exempt_group='));
   if (exempt !== undefined) {
-    const m = await lk.loginIn(exempt.slice('exempt_group='.length));
+    const m = await exemptIn(lk, exempt.slice('exempt_group='.length), ci);
     if (!('found' in m) || m.found)
       return [
         reading({ outcome: 'yes', how: `${how}: Defaults ${exempt}, and this login may be in it` }),
@@ -941,19 +1012,30 @@ async function judgeListing(
     ];
   } else if (opts.has('runaspw')) {
     // #819 (08, A Outside 1): sudo's own order — rootpw, then runaspw, then targetpw (check.c:60-75)
-    if (runasDefault !== undefined && runasDefault !== 'root' && runasDefault !== lk.svc) {
+    // #819 follow-up 2 (member 5): a `#uid` runas_default is the number sudo reads
+    const asId = runasDefault !== undefined ? numericId(runasDefault) : undefined;
+    const svcUid = uidOf(lk, svc);
+    const runsAs =
+      asId === undefined || asId === 'negative'
+        ? runasDefault
+        : asId === 0
+          ? 'root'
+          : svcUid !== undefined && asId === svcUid
+            ? lk.svc
+            : runasDefault;
+    if (runsAs !== undefined && runsAs !== 'root' && runsAs !== lk.svc) {
       return [
         reading({
           outcome: 'unknown',
           how,
-          cause: `sudo asks for ${runasDefault}'s password (Defaults runaspw)`,
+          cause: `sudo asks for ${runsAs}'s password (Defaults runaspw)`,
         }),
       ];
     }
     base = [
       reading({
         outcome: 'needs_credential',
-        whose: runasDefault === lk.svc ? 'svc' : 'root',
+        whose: runsAs === lk.svc ? 'svc' : 'root',
         ...cache,
         how: `${why} (Defaults runaspw)`,
       }),

@@ -32,15 +32,17 @@ const ENTRY_POINTS = ['pkexec', 'run0', 'systemd-run', 'machinectl'] as const;
  *  each program it runs; run0 and `systemd-run` for manage-units; machinectl for machine1's shells.
  *  An action none names is named by its id. Any D-Bus client reaches the action itself. #819
  *  correction 1 (walk --check wording 6): only the entry points this host has; manage-units with
- *  neither run0 nor systemd-run is named by its id (systemd's D-Bus service is reached without them). */
+ *  neither run0 nor systemd-run is named by its id (systemd's D-Bus service is reached without them),
+ *  and so are machine1's shells without machinectl (#819 follow-up 2, member 1). */
 function entryPointsOf(a: Action, has: (name: string) => boolean): string[] {
   if (a.id === 'org.freedesktop.policykit.exec' || a.execPath) return ['pkexec'];
   if (a.id === 'org.freedesktop.systemd1.manage-units') {
     const here = ['run0', 'systemd-run'].filter(has);
     return here.length > 0 ? here : [a.id];
   }
+  // #819 follow-up 2 (member 1, A B1): machinectl where it is present, the action's id otherwise
   if (a.id === 'org.freedesktop.machine1.shell' || a.id === 'org.freedesktop.machine1.host-shell')
-    return ['machinectl'];
+    return has('machinectl') ? ['machinectl'] : [a.id];
   return [a.id];
 }
 
@@ -48,14 +50,15 @@ function entryPointsOf(a: Action, has: (name: string) => boolean): string[] {
 const SYSTEMD_BOOTED = '/run/systemd/system';
 
 /** #819 correction 1 (walk --check wording 6; #790 01b #5): whether this host has a way to the
- *  action — pkexec's actions where pkexec is present, machinectl's shells where machinectl is, and
- *  manage-units whenever systemd runs as PID 1 (its D-Bus service needs neither run0 nor
- *  systemd-run). Any other action is asked. */
+ *  action — pkexec's actions where pkexec is present, and manage-units and machine1's shells
+ *  whenever systemd runs as PID 1: systemd's and machined's D-Bus services need none of run0,
+ *  systemd-run or machinectl (#819 follow-up 2, member 1, A B1: busctl or gdbus reach
+ *  `OpenMachineShell`). Any other action is asked. */
 function reachable(a: Action, has: (name: string) => boolean, booted: boolean): boolean {
   if (a.id === 'org.freedesktop.policykit.exec' || a.execPath) return has('pkexec');
   if (a.id === 'org.freedesktop.systemd1.manage-units') return booted;
   if (a.id === 'org.freedesktop.machine1.shell' || a.id === 'org.freedesktop.machine1.host-shell')
-    return has('machinectl');
+    return booted;
   return true;
 }
 
