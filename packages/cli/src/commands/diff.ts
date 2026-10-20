@@ -1,4 +1,5 @@
 // diff command — compares the evidence chains of two runs side by side.
+import { isDeepStrictEqual } from 'node:util';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import type { RunRecord, EvidenceSnapshot } from '@sensigo/realm';
@@ -64,7 +65,8 @@ export interface DiffStepRow {
   hash_b: string;
   duration_a_ms: number;
   duration_b_ms: number;
-  /** True when both runs have the step and produce the same evidence hash. */
+  /** True when both runs have the step and its two outputs hold the same fields and values, the
+   *  fields in any order (a list's items in the same order). */
   same_output: boolean;
   /** True when both runs have the same step status (including 'missing'). */
   same_status: boolean;
@@ -107,8 +109,12 @@ export function diffRuns(runA: RunRecord, runB: RunRecord): DiffStepRow[] {
       hash_b: snapB?.evidence_hash ?? '\u2014',
       duration_a_ms: snapA?.duration_ms ?? 0,
       duration_b_ms: snapB?.duration_ms ?? 0,
+      // The outputs themselves, not their hashes: the hash is of the output as recorded, field
+      // order included, so the same output with its fields in another order hashes differently.
       same_output:
-        snapA !== undefined && snapB !== undefined && snapA.evidence_hash === snapB.evidence_hash,
+        snapA !== undefined &&
+        snapB !== undefined &&
+        isDeepStrictEqual(snapA.output_summary, snapB.output_summary),
       same_status: statusA === statusB,
     };
   });
@@ -120,8 +126,8 @@ function colorDiffStatus(status: string): string {
   return status;
 }
 
-/** Returns the comparison symbol between A and B columns. */
-function diffSymbol(row: DiffStepRow): string {
+/** Returns the comparison symbol between A and B columns. Exported for its cells only. */
+export function diffSymbol(row: DiffStepRow): string {
   if (row.status_a === 'missing' || row.status_b === 'missing') return ' ';
   if (row.same_output && row.same_status) return '=';
   return chalk.yellow('\u2260');
