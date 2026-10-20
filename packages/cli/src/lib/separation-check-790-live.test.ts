@@ -47,9 +47,10 @@ describe.skipIf(!LIVE)('#790 — the live cell on this host (D2 §3)', () => {
       offRail: argvs.filter((a) => !railOne(a)).map((a) => a.join(' ')),
       refused: rs.filter((r) => r.cause?.includes('the check refused to run') === true).map(view),
     }).toEqual({ offRail: [], refused: [] });
-    // Every reading's how names a rail-1 call or a plain read (R14).
+    // Every reading's how names a rail-1 call or a plain read (R14). #819 (08, walk friction 2): a
+    // tool looked for names the folders; (B F5) on macOS, svc's unread shell.
     const how =
-      /^(?:LC_ALL=C \/\S+ -n -l|\/\S+ -V|\/\S+ --action-id |\/\S+ -C |getent (?:passwd|group|netgroup) |\/\S+ \. -read |\/\S+(?:, \/\S+)* read|\/etc\/doas\.conf|\S+ looked for in the system folders|su's PAM stacks read|an sshd is present|this process's uid)/;
+      /^(?:LC_ALL=C \/\S+ -n -l|\/\S+ -V|\/\S+ --action-id |\/\S+ -C |getent (?:passwd|group|netgroup) |\/\S+ \. -read |\/\S+(?:, \/\S+)* read|\/etc\/doas\.conf|\S+ looked for in \/usr\/bin, \/usr\/sbin, |\S+'s shell$|su's PAM stacks read|an sshd is present|this process's uid)/;
     // (a) red when a reading's how names no call it came from; (b) prints the hows that do not.
     expect(rs.filter((r) => !how.test(r.how)).map((r) => r.how)).toEqual([]);
     // D2 §3, as #790's correction moves it (verify-first): the refusal also reads root's and

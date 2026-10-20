@@ -353,6 +353,9 @@ export function routePhraseOf(route: string): string {
       return "Realm's MCP answer tool";
     case 'cli':
       return 'a terminal';
+    // #819 (item 28): `realm agent`'s Slack thread, its own words — never the fallback.
+    case 'slack':
+      return 'a Slack thread';
     default:
       return `route '${route}'`;
   }

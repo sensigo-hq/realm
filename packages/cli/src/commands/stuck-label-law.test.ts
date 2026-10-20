@@ -449,7 +449,12 @@ describe('the --stuck listing cap (issue #558 PR-T)', () => {
 
   it('CAP5 a corrupt copy and a legacy copy render WORDS in the class slot — never an error code', async () => {
     writeFileSync(join(wfDir, 'wf-corrupt.json'), '{ not json', 'utf8');
-    writeFileSync(join(wfDir, 'wf-legacy.json'), JSON.stringify({ id: 'wf-legacy' }), 'utf8');
+    // #819 (U3): the older cohort's shape — a string name and a number version (W-C2R-CORE-12).
+    writeFileSync(
+      join(wfDir, 'wf-legacy.json'),
+      JSON.stringify({ id: 'wf-legacy', name: 'wf-legacy', version: 1 }),
+      'utf8',
+    );
     plantRun('run-corrupt', 'wf-corrupt');
     plantRun('run-legacy', 'wf-legacy');
 

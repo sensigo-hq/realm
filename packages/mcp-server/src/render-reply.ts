@@ -178,6 +178,12 @@ export interface McpHost {
    * it (a read). W-e1 says "it changed nothing" only when the reply's version is still that one.
    */
   readVersion?: number;
+  /**
+   * #819 correction 1 (02 W1): set by {@link renderReply} when the reply's own `gate` carries no
+   * `display` — a gate with no message whose step has no prompt — so no entry tells the agent to
+   * show a field the reply does not have.
+   */
+  replyGateWithoutDisplay?: true;
 }
 
 /** P-2: how long an agent waits before reading the run again, on every `await` reply (a constant). */
@@ -406,12 +412,19 @@ function awaitEntryOf(way: RespondWay, host: McpHost): McpNextAction {
       words = `The form for step '${way.step}' of run ${way.run_id} ended without an answer ${times(facts?.came_back ?? 0)}.${again} An answer given in this chat is not recorded.`;
     }
   } else {
+    // #819 (T1): where the question's text is, by whether the gate declares a message — never "where
+    // they answer it", which Slack and `realm agent` do not show; no answer way is named (K1).
+    // #819 correction 1: (02 W1) a reply whose gate carries no display is told what has no text;
+    // (W2) the words say what the record holds, not what the definition declares.
     const show =
-      way.presented === 'with_gate'
-        ? 'Show the user gate.display'
-        : // Correction 2 (2.1): no command; the separator the walk found missing.
-          "Show the user the question — get_run_state's pending_gate.resolved_message when the gate declares a message; otherwise it is shown to them where they answer it —";
-    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show} and tell them it is waiting for their answer; an answer they give here is not recorded.`;
+      way.presented === 'with_gate' && host.replyGateWithoutDisplay !== true
+        ? 'Show the user gate.display and tell them it is waiting for their answer'
+        : way.has_message === true
+          ? "Show the user the question: get_run_state's pending_gate.resolved_message, and tell them it is waiting for their answer outside this conversation"
+          : `get_run_state carries no question text for this gate: tell the user the run is waiting at step '${way.step}' for their answer, outside this conversation`;
+    // #819 (T2): the start line's "the agent tells the user the run id" is asked for here; #819
+    // correction 1 (02 W3): a Slack thread's answer needs no run id — a terminal's does.
+    words = `The question on step '${way.step}' of run ${way.run_id} is answered outside this conversation. ${show}; an answer they give here is not recorded. Give the user this run id (${way.run_id}); they need it to answer from a terminal.`;
   }
   return {
     instruction: null,
@@ -882,7 +895,12 @@ export interface RenderedReply {
  * the person block with an operator's commands, only when the launching door injected an operator
  * route (P-6). One egress assertion at the exit: no claim token outside the opening reply's answer.
  */
-export function renderReply(reply: EngineReply, host: McpHost): RenderedReply {
+export function renderReply(reply: EngineReply, hostIn: McpHost): RenderedReply {
+  // #819 correction 1 (02 W1): whether the reply's own question has text to show
+  const host: McpHost =
+    reply.gate !== undefined && reply.gate.display === undefined
+      ? { ...hostIn, replyGateWithoutDisplay: true }
+      : hostIn;
   const narrowed = narrowReply(reply, host);
   const progress = agentProgressWays(narrowed);
   const next_actions = nextActionsOf(narrowed, reply.basis, host);

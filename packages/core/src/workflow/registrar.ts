@@ -142,10 +142,13 @@ export function parseFailureError(path: string, fault: WorkflowCopyParseFault): 
 /**
  * The parse fault of a value that parsed — the ONE check `getSync` and the listing both run, so a
  * copy is damaged at both or at neither (#627 W correction 2, 3.7 and 8.6 (d)): not an object; a
- * `schema_version` that is present, not `null` and not a number; no string `id`. `undefined` for an
- * object that can be read as a workflow — legacy (no `schema_version`, `null`, or a number below
- * current), current or newer. No `steps` is NOT a fault here: the registered copies an older Realm
- * wrote (the schema_version-less cohort, #427) carry no `steps` key at all, and they are legacy.
+ * `schema_version` that is present, not `null` and not a number; no string `id`. #819 (U3): a copy
+ * with no `schema_version` (or `null`) is the older cohort's only in its shape — a string `name`
+ * and a number `version`, as all 14 real ones are (W-C2R-CORE-12) — else `not_legacy_shape`. (U2):
+ * a copy at the current format whose `steps` is not an object — `no_steps`. `undefined` for an
+ * object that can be read as a workflow — legacy, current or newer: a NEWER copy is judged by
+ * {@link isNewerDefinition} after this, so one without `steps` reads newer. The older cohort carries
+ * no `steps` key at all, so `steps` is judged only at the current format.
  */
 function copyFault(value: unknown): WorkflowCopyParseFault | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -157,6 +160,19 @@ function copyFault(value: unknown): WorkflowCopyParseFault | undefined {
     return { kind: 'not_a_workflow', fault: 'schema_version_not_number' };
   }
   if (typeof copy['id'] !== 'string') return { kind: 'not_a_workflow', fault: 'no_id' };
+  if (
+    (version === undefined || version === null) &&
+    !(typeof copy['name'] === 'string' && typeof copy['version'] === 'number')
+  ) {
+    return { kind: 'not_a_workflow', fault: 'not_legacy_shape' };
+  }
+  const steps = copy['steps'];
+  if (
+    version === CURRENT_WORKFLOW_SCHEMA_VERSION &&
+    (steps === null || typeof steps !== 'object' || Array.isArray(steps))
+  ) {
+    return { kind: 'not_a_workflow', fault: 'no_steps' };
+  }
   return undefined;
 }
 
@@ -606,10 +622,11 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
       }
       const fault = copyFault(parsedUnknown);
       if (fault !== undefined) {
+        // #819 (U2): every unreadable class names its repair — this one too.
         unreadable.push({
           file: entry,
           class: 'parse',
-          reason: parseFailureError(entryPath, fault).message,
+          ...reasonAndRepair(parseFailureError(entryPath, fault)),
         });
         continue;
       }
@@ -681,16 +698,22 @@ function newerDefinitionParts(
   ];
 }
 
+/** #819 correction 1 (01): whether `run` waits at an open question. */
+const atLiveGate = (run: Partial<Pick<RunRecord, 'pending_gate' | 'terminal_state'>>): boolean =>
+  run.pending_gate !== undefined && run.terminal_state !== true;
+
 /**
  * issue #729 PR-0 (D3 A-5, D4 T-21): why a run's definition is absent, from the error a definition
  * read threw — the `definition_absent` entry's cause, one per {@link getWorkflowForRun} arm, and the
  * stored file's path where the store knows it (the unreadable, invalid and legacy copies; a workflow
  * that was never registered, or an agent's copy that is gone, has none). `undefined` for any other
- * error.
+ * error. #819 correction 1 (01): a run waiting at a live question reads `not_registered` whatever
+ * its id's shape — an agent's workflow has no gate (create_workflow never sets `trust`; W-829-B-01),
+ * so a gate proves the workflow came from a file.
  */
 export function definitionAbsenceOf(
   err: unknown,
-  run: Pick<RunRecord, 'workflow_id'>,
+  run: Pick<RunRecord, 'workflow_id'> & Partial<Pick<RunRecord, 'pending_gate' | 'terminal_state'>>,
 ):
   | {
       absent: DefinitionAbsence;
@@ -715,7 +738,10 @@ export function definitionAbsenceOf(
   switch (err.code) {
     case 'STATE_WORKFLOW_NOT_FOUND':
       return {
-        absent: /-[0-9a-f]{16}$/.test(run.workflow_id) ? 'agent_copy_gone' : 'not_registered',
+        absent:
+          /-[0-9a-f]{16}$/.test(run.workflow_id) && !atLiveGate(run)
+            ? 'agent_copy_gone'
+            : 'not_registered',
         workflow_id: run.workflow_id,
       };
     case 'STATE_WORKFLOW_UNREADABLE':
@@ -826,12 +852,15 @@ export async function getWorkflowForRun(
     // Review fold R1: the act is keyed on the CLASS (`repairActFor`), never the code — three
     // classes share STATE_WORKFLOW_UNREADABLE and their acts differ. One joiner: the act, then
     // the retry. (`missing`/`legacy` yield no act — see `repairActFor`.)
+    // #819 correction 1 (01, B S2): at a live question the `rm` alternative is not offered —
+    // removing the copy loses the only record of where it came from, and leaves the run no way on.
     const repairClause = (withRetry: boolean): string | undefined => {
       const r = repairActFor(err);
       if (r === undefined) return undefined;
+      const alternative = gate === undefined ? r.alternative : undefined;
       return (
         `To repair: ${r.act}${withRetry ? `, then ${then}` : ''}` +
-        `${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`
+        `${alternative !== undefined ? `; ${alternative}` : ''}.`
       );
     };
 
@@ -880,7 +909,9 @@ export async function getWorkflowForRun(
         // A SHAPE heuristic, not provenance: `deriveWorkflowId` mints `dynamic-<16hex>` and
         // `<slug>-<16hex>`, so a human-registered id that happens to carry a 16-hex suffix gets
         // the agent sentence too. Keyed on the id, never on a record field realm does not have.
-        throw /-[0-9a-f]{16}$/.test(run.workflow_id)
+        // #819 correction 1 (01): never at a live question, which an agent's workflow cannot open
+        // (`definitionAbsenceOf`): there the copy came from a file, and the way on is registering it.
+        throw definitionAbsenceOf(err, run)?.absent === 'agent_copy_gone'
           ? copy(
               `Workflow '${run.workflow_id}' not found — this run's workflow was created by an ` +
                 `agent (create_workflow) and its stored copy is gone; there is no source file ` +

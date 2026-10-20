@@ -49,12 +49,15 @@ const OPTIONAL_MODULES = new Set(['pam_cap', 'pam_gnome_keyring']);
 const TYPES = new Set(['auth', 'account', 'password', 'session']);
 const MAX_DEPTH = 4;
 
-/** One auth line, split: its control (a word, or a bracket's token set), module name and args. */
+/** One auth line, split: its control (a word, or a bracket's token set), module name and args.
+ *  #819 (08, B F8): `frame`, the substacks it sits in — `[]` at the top, one id per `substack`
+ *  entered (an `include` or `@include` adds none: Linux-PAM inlines it). */
 interface AuthLine {
   text: string;
   control: string | Set<string>;
   module: string;
   args: string[];
+  frame: number[];
 }
 
 /** A service's file: `/etc/pam.d` first, then the vendor folder (D7); an absolute path as given. */
@@ -136,12 +139,15 @@ const fedoraGuard = (c: Set<string>): boolean =>
   c.has('ignore=ignore') &&
   c.has('success=ok');
 
-/** One file's auth lines, its includes followed: the lines in order, or unknown. */
+/** One file's auth lines, its includes followed: the lines in order, or unknown. `frame` is the
+ *  substacks the file is read inside; `frames` counts them, so each substack has its own id. */
 function authLines(
   lk: Lookups,
   service: string,
   depth: number,
   files: string[],
+  frame: number[] = [],
+  frames: { next: number } = { next: 1 },
 ): AuthLine[] | { unknown: string } {
   if (depth > MAX_DEPTH)
     return { unknown: `the PAM stack nests deeper than ${MAX_DEPTH} includes` };
@@ -158,7 +164,7 @@ function authLines(
         return {
           unknown: `${file} has a line this check does not read: ${line.replace(/\s+/g, ' ')}`,
         };
-      const inner = authLines(lk, target, depth + 1, files);
+      const inner = authLines(lk, target, depth + 1, files, frame, frames);
       if (!Array.isArray(inner)) return inner;
       lines.push(...inner);
       continue;
@@ -177,7 +183,16 @@ function authLines(
         unknown: `${file} has a line this check does not read: ${line.replace(/\s+/g, ' ')}`,
       };
     if (control === 'include' || control === 'substack') {
-      const inner = authLines(lk, target, depth + 1, files);
+      // #819 (08, B F8): a substack's `done` ends only the substack (Linux-PAM 1.5.3,
+      // pam_dispatch.c:301-305); its lines carry their own frame
+      const inner = authLines(
+        lk,
+        target,
+        depth + 1,
+        files,
+        control === 'substack' ? [...frame, frames.next++] : frame,
+        frames,
+      );
       if (!Array.isArray(inner)) return inner;
       lines.push(...inner);
       continue;
@@ -188,7 +203,7 @@ function authLines(
       return {
         unknown: `${file} has a line this check does not read: ${line.replace(/\s+/g, ' ')}`,
       };
-    lines.push({ text: line.replace(/\s+/g, ' '), control, module, args: rest.slice(1) });
+    lines.push({ text: line.replace(/\s+/g, ' '), control, module, args: rest.slice(1), frame });
   }
   return lines;
 }
@@ -208,13 +223,25 @@ export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
   let person = false;
   let sshAgent = false;
   let grant: string | undefined;
+  let grantFrame: number[] = [];
   let denied = false;
   // 01b #6 within one stack (B §11): a `sufficient` grant already read ends the stack when it
-  // succeeds, so it outranks anything after it this check does not read
-  const fail = (cause: string): PamScan =>
-    grant !== undefined ? { password, person, sshAgent, files, grant } : { unknown: cause };
+  // succeeds, so it outranks anything after it this check does not read. #819 (08, B F8): a grant
+  // read inside a substack ends only that substack — it outranks only the lines in its frame or
+  // nested in it; a line after its substack ends still runs, and reads unknown.
+  const within = (l: AuthLine): boolean =>
+    grantFrame.every((id, i) => l.frame[i] === id) && l.frame.length >= grantFrame.length;
+  const fail = (cause: string, l: AuthLine): PamScan =>
+    grant !== undefined && within(l)
+      ? { password, person, sshAgent, files, grant }
+      : { unknown: cause };
   const unread = (l: AuthLine): PamScan =>
-    fail(`${service}'s PAM stack has a line this check does not read: ${l.text}`);
+    fail(`${service}'s PAM stack has a line this check does not read: ${l.text}`, l);
+  const granted = (l: AuthLine): void => {
+    if (grant !== undefined) return;
+    grant = l.text;
+    grantFrame = l.frame;
+  };
   for (const [i, l] of lines.entries()) {
     const word = typeof l.control === 'string' ? l.control : undefined;
     const set = typeof l.control === 'string' ? undefined : l.control;
@@ -250,22 +277,30 @@ export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
       // B §6: a guard whose jump lands past a deny line can skip it
       const jump = Number([...set].find((t) => t.startsWith('default='))!.slice('default='.length));
       if (lines.slice(i + 1, i + 1 + jump).some((x) => x.module === 'pam_deny'))
-        return fail(`${service}'s PAM stack can jump past its deny line: ${l.text}`);
+        return fail(`${service}'s PAM stack can jump past its deny line: ${l.text}`, l);
     } else if (l.module === 'pam_wheel') {
       if (!l.args.includes('trust')) continue; // a restriction, recognised
       if (word !== 'sufficient') return unread(l);
       if (!l.args.includes('use_uid')) {
-        grant ??= l.text;
+        granted(l);
         continue;
       }
       const named = l.args.find((a) => a.startsWith('group='))?.slice('group='.length);
       const member = await wheelMember(lk, named);
-      if ('unknown' in member) return fail(`${l.text}: ${member.unknown}`);
-      if (member.found) grant ??= l.text;
-    } else if (PERSON_MODULES.has(l.module)) {
-      person = true;
-    } else if (SSH_AGENT_MODULES.has(l.module)) {
-      sshAgent = true;
+      if ('unknown' in member) return fail(`${l.text}: ${member.unknown}`, l);
+      if (member.found) granted(l);
+    } else if (PERSON_MODULES.has(l.module) || SSH_AGENT_MODULES.has(l.module)) {
+      // #819 (08, B Outside 1): recognised only under a control that cannot jump past the stack's
+      // deny line — any other (`[default=2]` …) reads unknown
+      const ok =
+        word === 'required' ||
+        word === 'requisite' ||
+        word === 'sufficient' ||
+        word === 'optional' ||
+        (set !== undefined && successSkip(set));
+      if (!ok) return unread(l);
+      if (PERSON_MODULES.has(l.module)) person = true;
+      else sshAgent = true;
     } else {
       return unread(l);
     }
@@ -282,6 +317,7 @@ export async function scanPam(lk: Lookups, service: string): Promise<PamScan> {
     if (PASSWORD_MODULES.has(l.module) && ignoresFailure && !denyAfter) {
       return fail(
         `${service}'s PAM stack lets a failed password through: no deny line follows ${l.text}`,
+        l,
       );
     }
   }

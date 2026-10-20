@@ -155,7 +155,10 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     );
     claim(
       PAGE,
-      "| `withheld` | No tool on the server records an answer, and its replies name no way to answer, except where a workflow's own text does: a gate's `agent_hint`, a gated step's `instructions` and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded; other step text and `quick_start` are forwarded as written. |",
+      // #819 correction 1 (02 W4): a gate has no agent_hint key — the gated step's instructions are
+      // sent as the reply's gate.agent_hint (door-627 :: "cell 27b — a reply’s gate.agent_hint is
+      // labelled …").
+      "| `withheld` | No tool on the server records an answer, and its replies name no way to answer, except where a workflow's own text does: a gated step's `instructions` (sent as the reply's `gate.agent_hint`) and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded; other step text and `quick_start` are forwarded as written. |",
     );
     // Correction 2 (6.4), the labelled half: executed by door-627 :: "cell 27b — author text is
     // labelled, under every value" (the instructions and the rules), :: "cell 27b — a reply’s
@@ -163,7 +166,7 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // that names an answer tool" (the warning).
     claim(
       PAGE,
-      "a gate's `agent_hint`, a gated step's `instructions` and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded",
+      "a gated step's `instructions` (sent as the reply's `gate.agent_hint`) and `protocol.rules` are forwarded labelled as the author's, and warned about when the workflow is loaded",
     );
     // The as-written half: executed below, "correction 2 (6.4): other step text and quick_start are
     // forwarded as written", and by door-627's first cell 27b (an ordinary step's instructions).
@@ -328,9 +331,11 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
   });
 
   it('what an answer records, and the inspect line the page shows', () => {
+    // #819 (item 28): `slack` — executed by slack-gate-notifier :: "exact match resolves gate and
+    // posts confirmation reply" (the answer's entry records route slack).
     claim(
       PAGE,
-      "| `answer` | `{ route, shown? }`: `mcp_form`, `mcp` or `cli`, as its door declared it; `{ absent: 'route_not_declared' }` from a program that declared none. |",
+      "| `answer` | `{ route, shown? }`: `mcp_form`, `mcp`, `cli` or `slack`, as its door declared it; `{ absent: 'route_not_declared' }` from a program that declared none. |",
     );
     // Correction 1 (F6): ":42" is executed by answer-record-627 :: "`realm run respond` records route
     // cli …" (the entry's driven_by is the program that recorded it: respond, running as ops).
@@ -376,9 +381,12 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // Correction 2 (6.3); #790: "start no server" — the only programs it runs are named below,
     // executed by separation-790 :: "S2" (one spawn site) and the spy after every cell (getent and
     // dscl among its shapes; #790 correction, W §1).
+    // #819 (08, B F10): "the version, list and check modes" — the spy's shapes (`sudo -V` among
+    // them) and separation-790 :: "S2"; (C3) "a store this login owns is within its reach" —
+    // separation-check-627 :: "C3: a store this login owns, locked (mode 000), …".
     claim(
       PAGE,
-      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the list and check modes of sudo, doas and polkit named below, and `getent` (on macOS, `dscl . -read /Users/<user> UserShell`), which looks users and groups up. Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store this login cannot open is measured out of its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
+      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the version, list and check modes of sudo, doas and polkit named below, and `getent`, which looks users and groups up (on macOS, `dscl . -read /Users/<user> UserShell`, for a user's shell). Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store of another user's that this login cannot open is measured out of its reach, a store this login owns is within its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
     );
     // Correction 1 (F6): ":56" is executed by separation-check-627 :: "correction 1 (D1): the mode is
     // never guessed" (the denied and the missing store) and :: "each condition line in its states"
@@ -393,9 +401,18 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // takes the claim away" (every conjunct but reading) and :: "correction 1 (F6): gate-answers.md
     // :58 — a store this login can only read …" (reading the store). Correction 2 (8.5): the
     // informational lines' label — :: "the whole output: … (the information lines marked "(fact)")".
+    // #819 (C4): the economics line's three branches — separation-check-627 :: "C4: the economics
+    // line — named (measured), not named in a realm.yaml read (fact), no realm.yaml read (unknown)".
     claim(
       PAGE,
-      'Each condition prints as measured, as configured but not enforced by Realm, or as unknown with its cause; the two informational lines print as facts, marked (fact).',
+      "Each condition prints as measured, as configured but not enforced by Realm, or as unknown with its cause; the store's time basis prints as a fact, marked (fact), and so does the economics line when a `realm.yaml` the check read names no `runner.cache.economics`.",
+    );
+    // #819 correction 1 (walk --check wording 2, 3): separation-check-627 :: "each condition line in
+    // its states …" (condition 7: "read from two files", each named under /home/agent while HOME
+    // holds the opposite).
+    claim(
+      PAGE,
+      "The agent's sandbox line is read from two settings files in the login's own home, and says so.",
     );
     // Correction 2 (6.2): executed by :: "the positive cell: …, with its proviso" (the first three
     // provisos) and :: "correction 1 (D1): the mode is never guessed …" (the `denied` store: the
@@ -517,7 +534,9 @@ describe('#627 W — the other pages W changed', () => {
   it('top-level-fields.md: rule 2’s variants by value', () => {
     claim(
       'docs/reference/workflow/top-level-fields.md',
-      'Under `withheld` it reads: "When you receive status \'confirm_required\', read gate.agent_hint when the reply has one, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation."',
+      // #819 correction 1 (02 W1): realm-mcp door-627 :: the protocol rules' row (":481") and
+      // "#819 correction 1 (02 W1): a reply whose gate carries no display …".
+      'Under `withheld` it reads: "When you receive status \'confirm_required\', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation."',
     );
     claim(
       'docs/reference/workflow/top-level-fields.md',
@@ -749,7 +768,8 @@ describe('#627 W correction 1 — the claims F asks for', () => {
       '- the MCP tool `submit_human_response`, on a server that lists it;',
       // form-627 :: "#627 W — the form path (cell 21)" (route mcp_form)
       '- the form a chat app shows the person, on an MCP server whose gate-answers value is `asked`, the default (added after version 0.47.0);',
-      // slack-gate-notifier.test :: "exact match resolves gate and posts confirmation reply"
+      // slack-gate-notifier.test :: "exact match resolves gate and posts confirmation reply" — it
+      // asserts the answer's entry records route slack (#819, item 28)
       '- a Slack thread, when `realm agent` is set up to post gates to Slack;',
       // run-prompt-route-627.test :: "`realm workflow run`’s gate prompt records route cli …"
       '- the prompt of `realm workflow run`, when you run by hand.',
@@ -939,9 +959,10 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
       WF,
       '⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.',
     );
+    // #819 (U4): the way out — workflow-list.test :: "L2 …" and workflow-list-classes :: "K8 …".
     claim(
       WF,
-      '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json — realm cannot audit what it cannot read.',
+      '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
     );
     // The other kinds: workflow-list-classes.test (one cell per class).
     claim(
@@ -984,15 +1005,24 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     // :: "P0: a way that reads unknown …" with the pam_succeed_if, Alpine and pkcheck-error cells
     // (unknown, and the sentence not printed); separation-check-627 :: "the whole output" (no server).
     claim(C, 'No server is started; a bad value exits 1.');
+    // #819 (08, B F10): sudo's three modes, `-V` included — the spy's shapes.
     claim(
       C,
-      'Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their list and check modes, looks users and groups up with `getent` (`dscl` on macOS), and reads su\'s login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool\'s error reads "unknown", and the sentence is not printed.',
+      "Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up with `getent` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool's error reads \"unknown\", and the sentence is not printed.",
     );
-    // separation-check-627 :: 8.5's header cell; the whole output (fact); the condition lines
-    // (condition 7's two apps).
+    // #819 correction 1 (SEP-00 Words): separation-790 :: "C-2", "C-6 (01b #6) …", "C-13 (a) …"
+    // (unknown unless yes, and twice), :: "C-1 (A BLOCKING 1) …" (askpass), :: "C-17 (e) …"
+    // (any case), :: "C-18 (f) …" (the group source), :: "#819 correction 1 C-20 …" (clause (g)).
     claim(
       C,
-      'The header says when no store was found; condition 7\'s "no" names the two apps whose settings it read; the two informational lines are marked "(fact)".',
+      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting sudo lists twice with different values (issue #819); the stack `pam_askpass_service` names is read too; run-as names match in any case, as sudo matches them; a run-as group's members count only when `/etc/nsswitch.conf` lists local sources for groups, and the sentence then adds that the groups the system lists for the service user are all of its groups.",
+    );
+    // separation-check-627 :: 8.5's header cell and #819's "C4: a store this login cannot open — the
+    // header says so"; the condition lines (condition 7's two files); #819's "C4: the economics line
+    // — …" (its three branches).
+    claim(
+      C,
+      'The header says when no store was found, and when the store cannot be opened; condition 7\'s "no" names the two settings files it looked at; the store\'s time basis is marked "(fact)", and so is the economics line when a `realm.yaml` the check read names no `runner.cache.economics` (with none read, it is unknown).',
     );
     // w-627 :: "correction 1 (C1): … is refused with VALIDATION_OPTION_INVALID".
     claim(
@@ -1000,9 +1030,12 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
       '`submitHumanResponse` refuses an empty `route`, or a `principal` it cannot read (`VALIDATION_OPTION_INVALID`).',
     );
     // w-627's one-reading cell (getSync's code and the listing's class, per copy).
+    // #819: core unanswerable-819 :: "U2: a current-format copy whose steps is not an object …" and
+    // "U3: a copy with no schema_version is the older cohort's only in its shape …"; (U4) the
+    // re-register words — workflow-list.test :: "L2 …".
     claim(
       C,
-      'A `schema_version` that is not a number, or a copy with no string `id`, marks the copy as damaged (`RESOURCE_FORMAT_INVALID`), never as one an older Realm registered. A copy an older Realm registered is listed with the copies Realm cannot read, as class `legacy`.',
+      'A `schema_version` that is not a number, a copy with no string `id`, a copy at the current format whose `steps` is not an object, or a copy with no `schema_version` that is not the shape older versions wrote (a string `name` and a number `version`) marks the copy as damaged (`RESOURCE_FORMAT_INVALID`), never as one an older Realm registered (issue #819 for the last two). A copy an older Realm registered is listed with the copies Realm cannot read, as class `legacy`; `realm workflow list` says to re-register each from its source.',
     );
     // registrar-probe C-e…C-e3 (the register way with its path); ways-renderer 3.2 and
     // answer-record-627's 3.2 cells (the command); fence-predicate and append-trace-627's 8.1 cells.

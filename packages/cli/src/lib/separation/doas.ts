@@ -5,7 +5,7 @@
 import type { SwitchPathReading, SwitchOutcome } from '@sensigo/realm';
 import { mostPermissive } from '@sensigo/realm';
 import { join } from 'node:path';
-import { findTool, toolLine, type Lookups } from './lookup.js';
+import { findTool, lookedFor, toolLine, type Lookups } from './lookup.js';
 
 const CONF = '/etc/doas.conf';
 const CONF_DIR = '/etc/doas.d';
@@ -145,7 +145,7 @@ export async function readDoas(lk: Lookups): Promise<SwitchPathReading[]> {
         path: 'doas',
         tool: 'doas',
         outcome: 'unknown',
-        how: 'doas looked for in the system folders',
+        how: lookedFor('doas'),
         cause: doas.unknown,
       },
     ];

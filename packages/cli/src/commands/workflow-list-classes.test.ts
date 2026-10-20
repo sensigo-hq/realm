@@ -146,8 +146,9 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it('K8 a LEGACY record with no name and no version is never a crash (main died at `.length`; review fold C10) — named on the older-version ⚠ line, never a table row (correction 2, 8.6 (c))', async () => {
-    writeFileSync(join(wfDir, 'wleg.json'), '{"id":"wleg"}', 'utf8');
+  it("K8 a LEGACY record (the older cohort's shape) is never a crash (main died at `.length`; review fold C10) — named on the older-version ⚠ line with its way out (#819 U4), never a table row (correction 2, 8.6 (c))", async () => {
+    // #819 (U3): the older cohort's shape — a string name and a number version (W-C2R-CORE-12).
+    writeFileSync(join(wfDir, 'wleg.json'), '{"id":"wleg","name":"wleg","version":1}', 'utf8');
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);
@@ -159,8 +160,9 @@ describe('realm workflow list — one sentence per class (issue #558 PR-T)', () 
     expect({
       row: out.split('\n').some((l: string) => l.startsWith('wleg')),
       footer: out.includes('0 workflows registered; 1 entry in the registry could not be read.'),
+      // #819 (U4): red when the ⚠ line names no way out.
       warned: stderr().includes(
-        '⚠ 1 file in the registry was registered by an older version of Realm: wleg.json',
+        '⚠ 1 file in the registry was registered by an older version of Realm: wleg.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
       ),
     }).toEqual({ row: false, footer: true, warned: true });
     expect(exitSpy).not.toHaveBeenCalled();

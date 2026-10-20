@@ -9,6 +9,7 @@ import {
   accessSync,
   constants,
   existsSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -40,9 +41,12 @@ import {
 import {
   lookups,
   measureSwitchPaths,
+  POLKITD,
   rootEngineReach,
+  SSHD_UNITS,
   SYSTEM_DIRS,
   systemRunner,
+  UNIT_DIRS,
   type SwitchProbes,
 } from './separation/index.js';
 
@@ -59,6 +63,8 @@ export interface SeparationProbes extends SwitchProbes {
   execPath: () => string;
   realmPackageDir: () => string;
   userName: (uid: number) => string | undefined;
+  /** A path's own owner and mode, a link's not its target's (#819 correction 1, SEP-00 (g)). */
+  lstat: (path: string) => { uid: number; mode: number } | { error: string };
 }
 
 const tryAccess = (path: string, mode: number): boolean => {
@@ -73,8 +79,9 @@ const tryAccess = (path: string, mode: number): boolean => {
 /** The real machine's probes. */
 export function systemProbes(): SeparationProbes {
   // Correction 2 (5.2): the uid from the process itself — it needs no passwd entry; the login's name
-  // and home only from its passwd entry, never `$HOME`.
-  const uid = (): number | undefined => osLogin()?.uid ?? process.getuid?.();
+  // and home only from its passwd entry, never `$HOME`. #819 (C4): `process.getuid` alone —
+  // `os.userInfo().uid` is -1 on Windows, which has no getuid, so there the uid is not known.
+  const uid = (): number | undefined => process.getuid?.();
   return {
     login: () => {
       const name = osLogin()?.name;
@@ -88,6 +95,14 @@ export function systemProbes(): SeparationProbes {
     stat: (path) => {
       try {
         const s = statSync(path);
+        return { uid: s.uid, mode: s.mode };
+      } catch (err) {
+        return { error: (err as NodeJS.ErrnoException).code ?? 'unknown' };
+      }
+    },
+    lstat: (path) => {
+      try {
+        const s = lstatSync(path);
         return { uid: s.uid, mode: s.mode };
       } catch (err) {
         return { error: (err as NodeJS.ErrnoException).code ?? 'unknown' };
@@ -157,7 +172,12 @@ export function systemProbes(): SeparationProbes {
 type StoreState = 'present' | 'missing' | 'denied' | { other: string };
 
 /** Condition 1: can this login write Realm's store, or open its files? */
-function storeReach(probes: SeparationProbes, store: string, state: StoreState): ConditionReading {
+function storeReach(
+  probes: SeparationProbes,
+  store: string,
+  state: StoreState,
+  ownsStore: boolean,
+): ConditionReading {
   // Correction 1 (D1): a store this login cannot even stat is measured out of its reach; one that is
   // not found is not measured — never read as the same login.
   if (state === 'missing')
@@ -166,6 +186,15 @@ function storeReach(probes: SeparationProbes, store: string, state: StoreState):
     return { basis: 'measured', answer: 'no', detail: `${store}: permission denied` };
   if (typeof state === 'object')
     return { basis: 'unknown', cause: `${store} could not be read (${state.other})` };
+  // #819 (C3): a store this login owns is within its reach whatever its mode: its owner can change
+  // who may open it.
+  if (ownsStore) {
+    return {
+      basis: 'measured',
+      answer: 'yes',
+      detail: 'this login owns the store, so it can change who may open it',
+    };
+  }
   const runs = join(store, 'runs');
   const workflows = join(store, 'workflows');
   const writable = [store, runs, workflows].filter((p) => probes.exists(p) && probes.canWrite(p));
@@ -199,8 +228,27 @@ async function becomeServiceUser(
     return { reading: { basis: 'unknown', cause } };
   }
   const paths = await measureSwitchPaths({ probes, svc });
-  const where = `in ${SYSTEM_DIRS.join(', ')} or on PATH`;
-  return { reading: switchPathsCondition(paths, (r) => switchPathEntry(r, svc), where), paths };
+  return { reading: switchPathsReading(paths, svc), paths };
+}
+
+/** #790 (D13): condition 2's reading from the ways read, in the CLI's words (01b #2). */
+export function switchPathsReading(
+  paths: readonly SwitchPathReading[],
+  svc: string,
+): ConditionReading {
+  // #819 (08, B Outside 5): every place the ways were looked for, polkitd's and sshd's included;
+  // #819 correction 1 (A MINOR 3): sshd on PATH too, and its units by name
+  const where = `in ${SYSTEM_DIRS.join(', ')} or on PATH (polkitd also at ${POLKITD.join(', ')}; sshd's units ${SSHD_UNITS.join(', ')} in ${UNIT_DIRS.join(', ')})`;
+  // #819 (08, walk new 2): an entry printed once — with Realm's service user root, its password's
+  // two readings render alike
+  const seen = new Set<string>();
+  const shown = paths.filter((r) => {
+    const entry = switchPathEntry(r, svc);
+    if (seen.has(entry)) return false;
+    seen.add(entry);
+    return true;
+  });
+  return switchPathsCondition(shown, (r) => switchPathEntry(r, svc), where);
 }
 
 /** 01b #2: whose credential a closed way needs, in words. */
@@ -221,6 +269,9 @@ function whoseWords(whose: SwitchWhose | undefined, svc: string): string {
 
 /** 01b #2: one way's entry on condition 2's line, `⟨path⟩: ⟨outcome⟩ (⟨how⟩)`. */
 export function switchPathEntry(r: SwitchPathReading, svc: string): string {
+  // #819 (08, A F1): a credential read only because sudo hides its Defaults carries its cause, and
+  // is printed as what it is — "may need"
+  const mayNeed = r.outcome === 'needs_credential' && r.cause !== undefined;
   const outcome =
     r.outcome === 'yes'
       ? 'yes'
@@ -228,15 +279,17 @@ export function switchPathEntry(r: SwitchPathReading, svc: string): string {
         ? 'not allowed'
         : r.outcome === 'unknown'
           ? `unknown: ${r.cause ?? 'not read'}`
-          : r.or_not_allowed === true
-            ? "needs this login's password or is not allowed (sudo does not say which)"
-            : r.path === 'ssh'
-              ? `needs a key ${svc} accepts`
-              : `needs ${whoseWords(r.whose, svc)}`;
-  // W's friction: an outcome's own parenthetical and the how's merge into one
-  return outcome.endsWith(')')
-    ? `${r.path}: ${outcome.slice(0, -1)}; ${r.how})`
-    : `${r.path}: ${outcome} (${r.how})`;
+          : mayNeed
+            ? `may need ${whoseWords(r.whose, svc)} (${r.cause})`
+            : r.or_not_allowed === true
+              ? "needs this login's password or is not allowed (sudo does not say which)"
+              : r.path === 'ssh'
+                ? `needs a key ${svc} accepts`
+                : `needs ${whoseWords(r.whose, svc)}`;
+  // W's friction: an outcome's own parenthetical and the how's merge into one — #819 (08, B F12):
+  // only the parentheticals this renderer writes, never an unknown's cause
+  const own = r.outcome === 'needs_credential' && (mayNeed || r.or_not_allowed === true);
+  return own ? `${r.path}: ${outcome.slice(0, -1)}; ${r.how})` : `${r.path}: ${outcome} (${r.how})`;
 }
 
 /** Correction 2 (5.2): a reading for a condition the login's own home is needed for, when it has none. */
@@ -251,7 +304,8 @@ function noLoginHome(what: string): ConditionReading {
 function trustRootFiles(probes: SeparationProbes, roots: readonly string[]): string[] {
   const files: string[] = [];
   for (const root of roots) {
-    const manifest = join(root, 'realm.yaml');
+    // #819 (C1): the root resolved, so the folders above a relative one are walked too
+    const manifest = resolve(root, 'realm.yaml');
     if (!probes.exists(manifest)) continue;
     files.push(manifest);
     const text = probes.readText(manifest) ?? '';
@@ -310,10 +364,22 @@ const STICKY = 0o1000;
 /**
  * Correction 2 (5.6): whether this login can change `path` — it, or any folder above it, is writable
  * by this login, except a sticky folder (`o+t`) whose entry on the way down is not this login's (such
- * a folder lets a login replace only its own entries).
+ * a folder lets a login replace only its own entries). #819 (C1): `path` is absolute — every file
+ * the check names is resolved where it is named (`trustRootFiles`, the executed files) — and the
+ * folders above the file a link points at count too, beside the link's own folders, never instead of
+ * them (the `realPath` probe). (C4): a sticky folder this login owns lets it rename any entry.
+ * #819 correction 1 (SEP-00 (g)): an entry's owner is its own — a link's, through `lstat`, never
+ * the file it points at.
  */
 function changeable(probes: SeparationProbes, path: string): boolean {
   if (probes.exists(path) && probes.canWrite(path)) return true;
+  if (chainChangeable(probes, path)) return true;
+  const target = probes.realPath(path);
+  return target !== undefined && target !== path && chainChangeable(probes, target);
+}
+
+/** Whether a folder on the chain above `path` lets this login replace the entry under it. */
+function chainChangeable(probes: SeparationProbes, path: string): boolean {
   const me = probes.uid();
   let entry = path;
   let dir = dirname(path);
@@ -321,8 +387,10 @@ function changeable(probes: SeparationProbes, path: string): boolean {
     if (probes.canWrite(dir)) {
       const folder = probes.stat(dir);
       const sticky = 'mode' in folder && (folder.mode & STICKY) !== 0;
-      const own = probes.stat(entry);
-      const mine = 'uid' in own && me !== undefined && own.uid === me;
+      const own = probes.lstat(entry);
+      const mine =
+        me !== undefined &&
+        (('uid' in own && own.uid === me) || ('uid' in folder && folder.uid === me));
       if (!sticky || mine) return true;
     }
     const up = dirname(dir);
@@ -375,16 +443,19 @@ function agentSandbox(probes: SeparationProbes): ConditionReading {
   // Correction 2 (5.2): with no login home, the apps' settings were never read.
   if (home === undefined) return noLoginHome("the agent apps' settings were not read");
   const found: string[] = [];
-  const claude = probes.readText(join(home, '.claude', 'settings.json'));
+  // #819 correction 1 (walk --check wording 3): each file named under the home it was read from
+  const claudeFile = join(home, '.claude', 'settings.json');
+  const codexFile = join(home, '.codex', 'config.toml');
+  const claude = probes.readText(claudeFile);
   if (claude !== undefined) {
     try {
       const parsed = JSON.parse(claude) as { sandbox?: { enabled?: unknown } };
-      if (parsed.sandbox?.enabled === true) found.push('Claude Code (~/.claude/settings.json)');
+      if (parsed.sandbox?.enabled === true) found.push(`Claude Code (${claudeFile})`);
     } catch {
       // not JSON: not a setting this check can read
     }
   }
-  const codex = probes.readText(join(home, '.codex', 'config.toml'));
+  const codex = probes.readText(codexFile);
   const mode =
     codex !== undefined ? /^\s*sandbox_mode\s*=\s*"([^"]+)"/m.exec(codex)?.[1] : undefined;
   if (mode !== undefined && mode !== 'danger-full-access')
@@ -395,21 +466,35 @@ function agentSandbox(probes: SeparationProbes): ConditionReading {
       {
         basis: 'measured',
         answer: 'no',
-        detail: "only Claude Code's and Codex's settings were read",
+        // #819 (C4): what it looked at, whether or not either file is there
+        detail: `only ${claudeFile} and ${codexFile} were looked at`,
       };
 }
 
 /** Condition 8 (informational): can this login write the runner's price file? */
 function economicsWritable(probes: SeparationProbes, roots: readonly string[]): ConditionReading {
+  let read = false;
   for (const root of roots) {
-    const text = probes.readText(join(root, 'realm.yaml'));
-    const named =
-      text !== undefined ? /^\s*economics:\s*['"]?([^'"\s#]+)/m.exec(text)?.[1] : undefined;
+    const text = probes.readText(resolve(root, 'realm.yaml'));
+    if (text === undefined) continue;
+    read = true;
+    const named = /^\s*economics:\s*['"]?([^'"\s#]+)/m.exec(text)?.[1];
     if (named === undefined) continue;
     const path = isAbsolute(named) ? named : resolve(root, named);
     const writable =
       (probes.exists(path) && probes.canWrite(path)) || probes.canWrite(dirname(path));
     return { basis: 'measured', answer: writable ? 'yes' : 'no', detail: path };
+  }
+  // #819 (C4): "(fact)" only for a realm.yaml it read; with none read, the line is not known —
+  // #819 correction 1 (A MINOR 9, walk --check wording 4): none given names the option that does
+  if (!read) {
+    return {
+      basis: 'unknown',
+      cause:
+        roots.length === 0
+          ? 'no realm.yaml was given to read: pass --project with the deployment root'
+          : 'no realm.yaml could be read',
+    };
   }
   return { basis: 'measured', answer: 'fact', detail: 'no runner.cache.economics is set' };
 }
@@ -479,7 +564,7 @@ export async function measureSeparation(args: {
   ];
   const become = await becomeServiceUser(probes, svc, noServiceUser, store);
   const conditions: Record<SeparationCondition, ConditionReading> = {
-    store_reach: storeReach(probes, store, state),
+    store_reach: storeReach(probes, store, state, ownsStore),
     become_service_user: become.reading,
     // #790 (D12): every engine that runs as root, and the groups that reach one or the disks.
     root_engine: await rootEngineReach(lookups(probes)),
@@ -511,6 +596,7 @@ export async function measureSeparation(args: {
     value: args.value,
     store,
     store_found: state !== 'missing',
+    ...(state === 'denied' || typeof state === 'object' ? { store_unopened: true as const } : {}),
     owns_store: ownsStore,
     door: args.door,
     extensions_unread: unread,
@@ -522,8 +608,9 @@ export type CheckEvidence = SeparationEvidence & {
   store: string;
   /** Whether a store was there: its stat did not answer ENOENT (correction 2, 8.5). */
   store_found: boolean;
-  /** From the store's OWN stat only (correction 2, 5.3). */
-  owns_store: boolean;
+  /** #819 (C4): its stat failed for another reason (EACCES, …) — it may be there, and this login
+   *  cannot open it. */
+  store_unopened?: true;
   /** The folder whose owner the service user was read from, when the store could not be opened
    *  (correction 2, 5.3). */
   service_user_from?: string;
@@ -585,9 +672,10 @@ export function conditionLine(
     case 'measured':
       // Correction 2 (8.5): an information line carries its label too, "(fact)".
       // #790 (D11): condition 2 is read "now" — a credential cached later is not seen (clause b).
+      // #819 correction 1 (walk --check wording 2): condition 7 is read from two files, and says so
       return r.answer === 'fact'
         ? `${words}: ${r.detail} (fact).`
-        : `${words}: ${r.answer} (${c === 'become_service_user' ? 'measured now' : 'measured'})${r.detail !== undefined ? ` — ${r.detail}` : ''}.`;
+        : `${words}: ${r.answer} (${c === 'become_service_user' ? 'measured now' : c === 'agent_sandbox' ? 'read from two files' : 'measured'})${r.detail !== undefined ? ` — ${r.detail}` : ''}.`;
     case 'configured_not_enforced':
       return `${words}: configured, not enforced by Realm — ${r.detail}.`;
     case 'unknown':
@@ -600,7 +688,7 @@ export function valueLine(e: CheckEvidence): string {
   const v = e.value;
   if (v.value === 'withheld') {
     return valueMeasuredWithheld(e)
-      ? 'The gate-answers value: withheld (measured — given on this command line).'
+      ? 'The gate-answers value: withheld (given on this command line).'
       : `The gate-answers value: withheld, configured, not enforced by Realm — from ${v.source.ref}; the running server's value is not read.`;
   }
   // Correction 1 (D5): under `asked` the answer way depends on the door — `realm mcp` sends forms to
@@ -664,10 +752,12 @@ function clauseWords(c: SwitchClause, login: string, svc: string): string {
       // B §10: only the tools whose cache fired
       return `nobody authenticates ${orList(c.tools)} as ${login} where the agent's processes run (${c.tools.length === 1 ? 'it then waives' : 'each then waives'} the password for some minutes)`;
     case 'c':
-      return 'sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, and no Defaults!… or Defaults>… line sets !authenticate)';
+      // #819 (08, A F4): the refusal hides runaspw and the PAM services too
+      // #819 correction 1 (A BLOCKING 1, SEP-00 (d)): the askpass stack, and the ticket's scope
+      return `sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or ${svc}, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, and no timestamp_type setting shares one ticket across sessions)`;
     case 'd': {
-      // W §8: the entry points present ("polkit's actions" when none is); W §5: each rules folder
-      // as stat read it
+      // W §8: the entry points (#819, 08 B F11: of the actions asked; "polkit's actions" when there
+      // is none); W §5: each rules folder as `exists` and `canRead` (access R_OK) read it
       const words = { unreadable: 'cannot be read here', unread: 'are not read' } as const;
       const tools = c.tools.length > 0 ? orList(c.tools) : "polkit's actions";
       return `no polkit rule grants ${login} ${tools} beyond what this check's own session was shown (polkit's admin rules ${words[c.admin]}; its vendor rules ${words[c.vendor]})`;
@@ -676,6 +766,9 @@ function clauseWords(c: SwitchClause, login: string, svc: string): string {
       return 'no person approves a Touch ID, fingerprint or security-key prompt the agent raises';
     case 'f':
       return `${svc}'s authorized_keys holds none of ${login}'s keys`;
+    case 'g':
+      // #819 correction 1 (realm-2c for the owner; SEP-03 item 1b): membership as the system lists it
+      return `the groups the system lists for ${svc} are all of its groups (a member the system does not list is not seen)`;
   }
 }
 
@@ -704,9 +797,18 @@ export function separationClaim(
           ]
         : []),
     ];
-    const clauses = switchClausesOf(e.switch_paths ?? []).map((c) =>
-      clauseWords(c, e.login, e.service_user ?? "Realm's service user"),
+    // #819 (08, walk new 2): each clause once — with Realm's service user root, (a) is said for it
+    // once, with "and it is not empty"; #819 correction 1 (A MINOR 4): root's password is then the
+    // service user's, whether or not (a) also fired for it
+    const svcIsRoot = e.service_user === 'root';
+    const fired = switchClausesOf(e.switch_paths ?? []).map((c) =>
+      svcIsRoot && c.clause === 'a' && c.whose === 'root' ? { ...c, whose: 'svc' as const } : c,
     );
+    const clauses = [
+      ...new Set(
+        fired.map((c) => clauseWords(c, e.login, e.service_user ?? "Realm's service user")),
+      ),
+    ];
     // W's always-clauses exactly as the base joins them; #790's clauses follow, joined by "; ",
     // since each may carry commas of its own.
     const list = (items: string[], sep: string): string =>
@@ -732,7 +834,10 @@ export function renderSeparation(e: CheckEvidence): string[] {
     // Correction 2 (8.5): a store that was not found is not one the check measured against.
     `${
       e.store_found
-        ? `Measured for the login '${e.login}', against the store at ${e.store}.`
+        ? e.store_unopened === true
+          ? // #819 correction 1 (walk --check wording 5): its stat failed, so it may not be there
+            `Measured for the login '${e.login}', against ${e.store}, which this login cannot open, so whether a store is there is not known.`
+          : `Measured for the login '${e.login}', against the store at ${e.store}.`
         : `Measured for the login '${e.login}'; no store was found at ${e.store}.`
     }${
       e.owns_store

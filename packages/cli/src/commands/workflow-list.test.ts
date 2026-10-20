@@ -84,10 +84,21 @@ describe('realm workflow list (issue #427)', () => {
       ancientRow: out.split('\n').some((l) => l.startsWith('ancient')),
       modern: out.includes('1 (current)'),
       undefinedWord: out.includes('undefined'),
+      // #819 (U4): red when the ⚠ line names no way out.
       warned: stderr().includes(
-        '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json',
+        '⚠ 1 file in the registry was registered by an older version of Realm: ancient.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.',
       ),
     }).toEqual({ ancientRow: false, modern: true, undefinedWord: false, warned: true });
+  });
+
+  it('#819 correction 1 (02 C1): the SCHEMA column says "(current)" only for the current format; another value prints as itself', () => {
+    // (a) red when "(current)" is printed for any value (U4's unconditional cell); (b) prints the
+    //     three cells.
+    expect({
+      current: schemaCell(1),
+      older: schemaCell(0),
+      none: schemaCell(undefined),
+    }).toEqual({ current: '1 (current)', older: '0', none: 'none' });
   });
 
   it('L3 an unparseable file is REPORTED, and the exit stays 0', async () => {
@@ -150,11 +161,5 @@ describe('realm workflow list (issue #427)', () => {
     expect(stderr()).toContain(
       "⚠ 1 file whose stored id differs from its filename: probe-mismatch.json (id 'something-else') — '--registered' resolves by filename.",
     );
-  });
-
-  it('schemaCell names the remedy for every non-current shape', () => {
-    expect(schemaCell(CURRENT_WORKFLOW_SCHEMA_VERSION)).toBe('1 (current)');
-    expect(schemaCell(undefined)).toBe('legacy (re-register)');
-    expect(schemaCell(0)).toBe('0 — legacy (re-register)');
   });
 });
