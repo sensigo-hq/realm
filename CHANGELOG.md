@@ -424,6 +424,7 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
 
 ### Fixed
 
+- **`realm run diff` no longer marks a step `≠` when two outputs hold the same fields and values in another order.** It compares the outputs themselves, so runs recorded before and after this change compare correctly. The hash is unchanged: it is of the output as recorded, field order included (issue #840 would change that).
 - **Three docs statements about processors are corrected (issue #642).** The core README no
   longer lists `normalizeText` and `computeHash` among its exports; the testing README says
   `testProcessor` calls a processor's `process` on a `{ text, metadata }` input; the testing
