@@ -1,0 +1,4 @@
+# captured 2026-10-19 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · set up as root: groupadd -g 1100 svcgrp; groupadd -g 1300 svcown; useradd -m -u 1002 alice; usermod -aG svcgrp alice; useradd -r -u 999 -g svcown -s /usr/sbin/nologin svc · then as the login agent: getent passwd Svc
+exit 2
+--- stdout
+--- stderr

@@ -173,7 +173,26 @@ describe('realm run abandon (CLI command)', () => {
   });
 
   it('issue #558 PR-C: the gate refusal ends in the command a CLI operator can run', async () => {
-    const { JsonFileStore } = await import('@sensigo/realm');
+    const { JsonFileStore, JsonWorkflowStore, loadWorkflowFromString } =
+      await import('@sensigo/realm');
+    // #819 (U1): the workflow is registered, so the answer is the way on — with its copy absent the
+    // refusal names the copy's repair instead (`abandon-819.test.ts`).
+    await new JsonWorkflowStore().register(
+      loadWorkflowFromString(
+        [
+          'id: wf',
+          'name: wf',
+          'version: 1',
+          'steps:',
+          '  review_changes:',
+          '    description: Review.',
+          '    execution: auto',
+          '    trust: human_confirmed',
+          '    gate:',
+          '      choices: [approve, reject]',
+        ].join('\n'),
+      ),
+    );
     const store = new JsonFileStore();
     const { run } = await store.create({ workflowId: 'wf', workflowVersion: 1, params: {} });
     await store.update({

@@ -146,11 +146,11 @@ describe('my-workflow programmatic', () => {
 
 ### Unit test helpers
 
-| Symbol            | Description                                                          |
-| ----------------- | -------------------------------------------------------------------- |
-| `testStepHandler` | Run a single step handler in isolation and return its output.        |
-| `testProcessor`   | Run a processor function against a run record and return the result. |
-| `testAdapter`     | Invoke an adapter operation and return the `ServiceResponse`.        |
+| Symbol            | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `testStepHandler` | Run a single step handler in isolation and return its output.                       |
+| `testProcessor`   | Call a processor's `process` on a `{ text, metadata }` input and return its output. |
+| `testAdapter`     | Invoke an adapter operation and return the `ServiceResponse`.                       |
 
 ### Runner
 

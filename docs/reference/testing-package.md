@@ -102,13 +102,13 @@ runFixtureTests(options: RunFixtureTestsOptions): Promise<TestResult[]>
 
 Runs the workflow once for each fixture in a folder and returns one `TestResult` for each.
 
-| Option         | Required | Holds                                                                                                                                             |
-| -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workflowPath` | Yes      | The workflow file, or the folder that holds `workflow.yaml`.                                                                                      |
-| `fixturesPath` | Yes      | The folder of fixture files.                                                                                                                      |
-| `registry`     | No       | An `ExtensionRegistry` with handlers and adapters of your own, used when a fixture has no stand-in for them.                                      |
-| `extensions`   | No       | The project code loaded for the workflow. Handlers and processors run as they are. An adapter with no stand-in in the fixture throws when called. |
-| `definition`   | No       | A workflow already loaded. With it, `workflowPath` is not read.                                                                                   |
+| Option         | Required | Holds                                                                                                                              |
+| -------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `workflowPath` | Yes      | The workflow file, or the folder that holds `workflow.yaml`.                                                                       |
+| `fixturesPath` | Yes      | The folder of fixture files.                                                                                                       |
+| `registry`     | No       | An `ExtensionRegistry` with handlers and adapters of your own, used when a fixture has no stand-in for them.                       |
+| `extensions`   | No       | The project code loaded for the workflow. Handlers run as they are. An adapter with no stand-in in the fixture throws when called. |
+| `definition`   | No       | A workflow already loaded. With it, `workflowPath` is not read.                                                                    |
 
 | `TestResult` field | Holds                                 |
 | ------------------ | ------------------------------------- |

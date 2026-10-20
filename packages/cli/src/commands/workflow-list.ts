@@ -2,12 +2,11 @@
 //
 // The registry was a black box. `realm workflow register` wrote into it, everything else read
 // from it by id, and nothing showed an operator what was there — so a definition registered
-// under an older realm sat there indefinitely and invisibly. A CURRENT-SCHEMA one keeps running,
-// grandfathered; an older one is worse than that, because it cannot run at all — every runtime
-// consumer resolves through the store's get(), which refuses it. Either way nothing surfaced it
-// until something tried to use it. This is the read surface that makes a pre-upgrade audit
-// possible: list what you have, then audit each one with
-// `realm workflow validate --registered <id>`.
+// under an older realm sat there indefinitely and invisibly: it cannot run at all — every runtime
+// consumer resolves through the store's get(), which refuses it. This is the read surface that
+// makes a pre-upgrade audit possible: the table lists the copies this version reads, a ⚠ line names
+// each copy it cannot (an older or a later Realm's among them, #627 W), and each one is audited
+// with `realm workflow validate --registered <id>`.
 import { Command } from 'commander';
 import { JsonWorkflowStore, CURRENT_WORKFLOW_SCHEMA_VERSION } from '@sensigo/realm';
 import type { WorkflowDefinition } from '@sensigo/realm';
@@ -25,13 +24,14 @@ export function sortedById(workflows: WorkflowDefinition[]): WorkflowDefinition[
   return [...workflows].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** The SCHEMA column: current, or a legacy marker naming the remedy. */
+/** The SCHEMA column. #819 (U4): every copy in the table is at the current format — a copy an older
+ *  or a later Realm registered is never listed here (#627 W correction 1 C3, correction 2 8.6 (c)):
+ *  its ⚠ line names it, with its way out. #819 correction 1 (02 C1): "(current)" only for the
+ *  current format — a schema bump that still reads older numbers would list one, and it prints as
+ *  itself. */
 export function schemaCell(schemaVersion: number | undefined): string {
   if (schemaVersion === CURRENT_WORKFLOW_SCHEMA_VERSION) return `${schemaVersion} (current)`;
-  // An absent schema_version predates the field entirely — there is no number to show, and
-  // printing `undefined — legacy` would be worse than saying only what is true.
-  if (schemaVersion === undefined) return 'legacy (re-register)';
-  return `${schemaVersion} — legacy (re-register)`;
+  return schemaVersion === undefined ? 'none' : String(schemaVersion);
 }
 
 function pad(value: string, width: number): string {
@@ -69,10 +69,10 @@ export const workflowListCommand = new Command('list')
     }
 
     const rows = sorted.map((w) => {
-      // A legacy record (`{ id }` alone — #427 lists it; its SCHEMA column is the disclosure) has
-      // no name and no version: the type says string, the file does not. Read through a Partial
-      // view so the table renders `-` instead of dying at `.length` (executed on main with
-      // `{"id":"w1"}`: a raw TypeError — the fresh walk's T4; review fold C10).
+      // The type says string; a hand-edited copy at the current format may still lack a name or a
+      // version. Read through a Partial view so the table renders `-` instead of dying at `.length`
+      // (executed on main with `{"id":"w1"}`: a raw TypeError — the fresh walk's T4; review fold
+      // C10). #819 (U4): a legacy copy is never in the table — its ⚠ line is the disclosure.
       const partial: Partial<Pick<typeof w, 'name' | 'version'>> = w;
       return {
         id: w.id,
@@ -168,12 +168,12 @@ export const workflowListCommand = new Command('list')
           },
           {
             // #627 W correction 2 (8.6 (c)): a copy an older Realm registered — every run path
-            // refuses it, so it is never in the table.
+            // refuses it, so it is never in the table. #819 (U4): its way out, re-registering.
             cls: 'legacy',
             one: (names) =>
-              `⚠ 1 file in the registry was registered by an older version of Realm: ${names}`,
+              `⚠ 1 file in the registry was registered by an older version of Realm: ${names}; re-register each from its source (realm workflow register <path-to-workflow>)`,
             many: (n, names) =>
-              `⚠ ${String(n)} files in the registry were registered by an older version of Realm: ${names}`,
+              `⚠ ${String(n)} files in the registry were registered by an older version of Realm: ${names}; re-register each from its source (realm workflow register <path-to-workflow>)`,
           },
           {
             // A directory entry that vanished between readdir and probe — a race, not a state an

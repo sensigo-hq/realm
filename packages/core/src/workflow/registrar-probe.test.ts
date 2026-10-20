@@ -127,7 +127,8 @@ const shape = {
     await writeFile(file, '{"a"');
   },
   async legacy() {
-    await writeFile(file, JSON.stringify({ id: ID, version: 1, steps: [] }));
+    // #819 (U3): the older cohort's shape — a string name and a number version (W-C2R-CORE-12)
+    await writeFile(file, JSON.stringify({ id: ID, name: ID, version: 1, steps: [] }));
   },
   async registryBroken() {
     await writeFile(file, JSON.stringify(makeDefinition(ID)));
@@ -474,9 +475,11 @@ describe('getWorkflowForRun — the composed remedy, per code, per run', () => {
         "This run is waiting on human gate 'confirm', which cannot be answered until its " +
         'workflow can be read; realm run abandon refuses a run that is waiting on a gate. ' +
         'To repair: re-register the workflow from its source (realm workflow register ' +
-        '<path-to-workflow>), then answer the gate; if it was never registered from a source, ' +
-        `remove the file (rm ${file}) instead.`,
+        '<path-to-workflow>), then answer the gate.',
     );
+    // #819 correction 1 (01, B S2): at a live question the repair offers no `rm` — removing the copy
+    // loses the only record of where it came from, and leaves the run no way on.
+    expect(err.message).not.toContain('rm ');
     // #729 PR-0 (D-C): the way on is the typed remedy, never a command in core's words. Correction 2
     // (3.1): it is the REPAIR, the listing's `register` way with the copy — never the answer, which
     // waits on the definition.

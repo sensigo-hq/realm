@@ -122,7 +122,7 @@ and the six standard rules are:
 
 ```text
 Follow the instruction in each next_actions entry exactly. next_actions lists only what you can call now; when it is empty, agent_action says what to do.
-When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.
+When you receive status 'confirm_required', read gate.agent_hint for instructions when the reply has one, present gate.display to the user verbatim when the reply has one, wait for their response, then call submit_human_response by copying the call in next_actions[0].instruction.call_with and filling in their choice. Your client may ask the user to approve that call; if the call is refused, the run keeps waiting at the gate: tell the user so.
 Do NOT auto-confirm any human gate. The user must decide.
 Do NOT ask the user for permission between steps unless the system tells you to.
 When next_actions names advance_run, call it: the engine owes steps it runs when you call advance_run.
@@ -131,7 +131,7 @@ An entry in also (reading the run, ending it) is never a next step: end a run on
 
 The fifth rule was added after version 0.46.0; the sixth, and the first rule's second sentence, after version 0.47.0. Setting `rules` removes all six, including the two about human gates.
 
-The second rule above is the one a session gets from a server whose gate-answers value is `asked`, the default, when its client shows no forms. Under `offered` it ends after "filling in their choice." Under `withheld` it reads: "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim, and follow next_actions: the question is answered outside this conversation." Under `asked` with a client that shows forms, it reads: "When you receive status 'confirm_required', read gate.agent_hint when the reply has one; the user's app shows them the question as a form; follow next_actions." A reply has `gate.agent_hint` only when the gate's step has `instructions`. See [Gate answers over MCP](../mcp/gate-answers.md). Added after version 0.47.0.
+The second rule above is the one a session gets from a server whose gate-answers value is `asked`, the default, when its client shows no forms. Under `offered` it ends after "filling in their choice." Under `withheld` it reads: "When you receive status 'confirm_required', read gate.agent_hint when the reply has one, present gate.display to the user verbatim when the reply has one, and follow next_actions: the question is answered outside this conversation." Under `asked` with a client that shows forms, it reads: "When you receive status 'confirm_required', read gate.agent_hint when the reply has one; the user's app shows them the question as a form; follow next_actions." A reply has `gate.agent_hint` only when the gate's step has `instructions`. See [Gate answers over MCP](../mcp/gate-answers.md). Added after version 0.47.0.
 
 ## `services`
 

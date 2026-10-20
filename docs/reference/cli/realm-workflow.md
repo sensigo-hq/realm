@@ -176,7 +176,7 @@ The text output counts the copies it cannot list on its last line, and names the
 
 ```text
 ⚠ 1 file in the registry was registered by a later version of Realm: rec627.json — realm cannot audit what it cannot read.
-⚠ 1 file in the registry was registered by an older version of Realm: ancient.json — realm cannot audit what it cannot read.
+⚠ 1 file in the registry was registered by an older version of Realm: ancient.json; re-register each from its source (realm workflow register <path-to-workflow>) — realm cannot audit what it cannot read.
 ```
 
 The other kinds read `could not be read (<errno>)`, `could not be parsed`, `is empty`, `is a directory, not a workflow file` and `is gone`. Added after version 0.47.0 for the later and the older version.
