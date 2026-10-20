@@ -1,0 +1,6 @@
+# captured 2026-10-19 · image alpine:latest@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 · cat /etc/nsswitch.conf
+# musl itself does not support NSS, however some third-party DNS
+# implementations use the nsswitch.conf file to determine what
+# policy to follow.
+# Editing this file is not recommended.
+hosts: files dns

@@ -12,6 +12,9 @@ import { readSudo } from './sudo.js';
 export { rootEngineReach, ROOT_GROUPS } from './engines.js';
 export { lookups, SYSTEM_DIRS, type SwitchProbes } from './lookup.js';
 export { systemRunner, railOne, type Runner, type RunResult } from './runner.js';
+// #819 (08, B Outside 5): where the no-way line also looked — polkitd's paths, ssh's unit folders.
+export { POLKITD } from './polkit.js';
+export { SSHD_UNITS, UNIT_DIRS } from './ssh.js';
 
 /**
  * Reads every way from this login to `svc` (D13's paths): root, sudo, su, doas, polkit and ssh, in

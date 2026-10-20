@@ -14,13 +14,23 @@ import {
 import { createServer } from 'node:http';
 import { rm, writeFile } from 'node:fs/promises';
 import type { BidirectionalGateParams } from './slack-gate-notifier.js';
-import type { PendingGate, RunStore, WorkflowDefinition, StepHandler } from '@sensigo/realm';
+import type {
+  EvidenceSnapshot,
+  PendingGate,
+  RunStore,
+  WorkflowDefinition,
+  StepHandler,
+} from '@sensigo/realm';
 import {
   JsonFileStore,
   ExtensionRegistry,
   executeStep,
   CURRENT_WORKFLOW_SCHEMA_VERSION,
+  answerArrivalOf,
+  answerViaOf,
 } from '@sensigo/realm';
+import { renderOutcome } from '@sensigo/realm-mcp';
+import { renderAnswerLine } from '../../lib/holder-render.js';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -459,6 +469,13 @@ function makeGateStore(gate: PendingGate): RunStore {
   return declared({ get, update } as unknown as RunStore);
 }
 
+/** #819 (item 28): the answer's entry in the store's last write — the record the answer wrote. */
+function slackAnswerOf(store: RunStore): EvidenceSnapshot | undefined {
+  const written = vi.mocked(store.update).mock.calls.at(-1)?.[0] as
+    { evidence?: EvidenceSnapshot[] } | undefined;
+  return (written?.evidence ?? []).filter((e) => e.kind === 'gate_response').at(-1);
+}
+
 function makeMinimalDefinition(): WorkflowDefinition {
   return { id: 'wf1', name: 'Test WF', version: '1', steps: {} } as unknown as WorkflowDefinition;
 }
@@ -621,7 +638,8 @@ describe('handleBidirectionalGate', () => {
       return { close: vi.fn() };
     });
 
-    const promise = handleBidirectionalGate(makeGateParams({ gate, store: makeGateStore(gate) }));
+    const store = makeGateStore(gate);
+    const promise = handleBidirectionalGate(makeGateParams({ gate, store }));
     expect(capturedOnEvent).toBeDefined();
 
     capturedOnEvent!({
@@ -642,6 +660,69 @@ describe('handleBidirectionalGate', () => {
       text: string;
     };
     expect(replyBody.text).toContain('approve');
+    // #819 (item 28): the answer records how it arrived — the store's write carries the answer's
+    // entry. (a) red when the notifier passes no route (`route_not_declared`, though the page says
+    // every answer records how it arrived); (b) prints the choice and the route recorded.
+    const entry = slackAnswerOf(store);
+    expect({
+      choice: (entry?.input_summary as Record<string, unknown> | undefined)?.['choice'],
+      route:
+        entry?.answer !== undefined && 'route' in entry.answer ? entry.answer.route : undefined,
+    }).toEqual({
+      choice: 'approve',
+      route: 'slack',
+    });
+  });
+
+  it('#819 (item 28) the cross cell: a run answered in Slack reads "a Slack thread" in the answer line `realm run inspect` renders (renderAnswerLine, from the recorded route) and in the agent\'s text after the form path', async () => {
+    const gate: PendingGate = {
+      gate_id: 'g1',
+      step_name: 'confirm_review',
+      preview: { headline: 'PR #42' },
+      choices: ['approve', 'request_changes'],
+      opened_at: new Date().toISOString(),
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    let onEvent: ((event: SlackGateEvent) => void) | undefined;
+    vi.mocked(startSlackGateServer).mockImplementationOnce((opts) => {
+      onEvent = opts.onEvent;
+      return { close: vi.fn() };
+    });
+    const store = makeGateStore(gate);
+    const promise = handleBidirectionalGate(makeGateParams({ gate, store }));
+    onEvent!({
+      event_id: 'E2',
+      thread_ts: '1234567890.000',
+      user: 'U1',
+      text: 'approve',
+      ts: '1234567890.002',
+    });
+    await promise;
+    const entry = slackAnswerOf(store)!;
+    // (a) red per carrier when 'slack' takes the fallback branch (`route "slack"` on inspect,
+    //     `route 'slack'` to the agent): one assertion per carrier, two carriers, one recorded
+    //     answer; (b) prints both texts.
+    expect({
+      inspect: renderAnswerLine(
+        {
+          choice: 'approve',
+          answered_by: { by: null, absent_cause: 'not_stated' },
+          claim_proof_absent: 'proof_not_recorded',
+        },
+        answerArrivalOf(entry),
+      ).includes(' · through a Slack thread (as its door declared), '),
+      agent: renderOutcome({
+        step: gate.step_name,
+        attempted: false,
+        by: { kind: 'answer', basis: 'stated' },
+        choice: 'approve',
+        via: answerViaOf(entry),
+      }),
+    }).toEqual({
+      inspect: true,
+      agent:
+        "Meanwhile, the question on step 'confirm_review' was answered — approve, through a Slack thread.",
+    });
   });
 
   it('non-exact input sends a clarification reply listing valid choices', async () => {

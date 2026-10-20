@@ -120,13 +120,17 @@ describe('#627 W — inspect’s answer line (W-i1…W-i8, W-i10)', () => {
       }),
       mcp: line({ answer: { route: 'mcp' }, driven_by: DRIVER }),
       cli: line({ answer: { route: 'cli' }, driven_by: DRIVER }),
+      // #819 (item 28): Slack is a route this version's own door declares — its own words.
       slack: line({ answer: { route: 'slack' }, driven_by: DRIVER }),
+      unknown: line({ answer: { route: 'pager' }, driven_by: DRIVER }),
     }).toEqual({
       form: "Answer: approve · answered by (not stated) · through the user's app, as a form (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded",
       mcp: "Answer: approve · answered by (not stated) · through Realm's MCP answer tool (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded",
       cli: 'Answer: approve · answered by (not stated) · through a terminal (realm run respond) (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
       slack:
-        'Answer: approve · answered by (not stated) · through route "slack" (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
+        'Answer: approve · answered by (not stated) · through a Slack thread (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
+      unknown:
+        'Answer: approve · answered by (not stated) · through route "pager" (as its door declared), recorded by mcp-stdio, running as host (from the OS user) · token: none recorded',
     });
   });
 

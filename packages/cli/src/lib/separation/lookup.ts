@@ -49,6 +49,16 @@ export const SYSTEM_DIRS = [
   '/run/setuid-programs',
 ] as const;
 
+/** #819 (08, walk friction 2): where a program is looked for, named — D2's folders, then PATH. */
+export function lookedFor(name: string): string {
+  return `${name} looked for in ${SYSTEM_DIRS.join(', ')} and on PATH`;
+}
+
+/** #819 (08, walk friction 2): a program found in none of the folders it is looked for in. */
+export function notFound(name: string): string {
+  return `${name} was not found in ${SYSTEM_DIRS.join(', ')} or on PATH`;
+}
+
 /** Where a program was found: in D2's folders, only elsewhere on PATH, or nowhere. */
 export function presence(
   probes: SwitchProbes,
@@ -68,13 +78,17 @@ export function presence(
 export type ToolFound = { path: string } | { unknown: string } | undefined;
 
 /** Whether `path` is a copy root owns that this login cannot change: the file and its folder, and
- *  the same for the file a link resolves to. */
-function systemCopy(probes: SwitchProbes, path: string): boolean {
+ *  the same for the file a link resolves to — `root-owned` when root owns both but this login can
+ *  change one of them (#819, 08 B Outside 3), `other` when root does not own them. */
+function systemCopy(probes: SwitchProbes, path: string): 'good' | 'root-owned' | 'other' {
   const real = probes.realPath(path) ?? path;
-  return [path, real].every((p) => {
+  const owned = [path, real].every((p) => {
     const s = probes.stat(p);
-    return 'uid' in s && s.uid === 0 && !probes.canWrite(p) && !probes.canWrite(dirname(p));
+    return 'uid' in s && s.uid === 0;
   });
+  if (!owned) return 'other';
+  const fixed = [path, real].every((p) => !probes.canWrite(p) && !probes.canWrite(dirname(p)));
+  return fixed ? 'good' : 'root-owned';
 }
 
 /** 01b #8 (A §F14): every root-owned copy of `name` in D2's folders this login cannot change, each
@@ -93,13 +107,20 @@ export function findTools(
     };
   }
   const out: { paths: string[]; unknown: string[] } = { paths: [], unknown: [] };
-  const seen = new Set<string>();
+  // #819 (08, walk new 4): a good copy, and a bad one, each named once per real file — a bad name
+  // beside a good one for the same file still reads unknown (A §F14)
+  const good = new Set<string>();
+  const bad = new Set<string>();
   for (const p of SYSTEM_DIRS.map((d) => join(d, name)).filter((q) => probes.exists(q))) {
-    if (!systemCopy(probes, p)) out.unknown.push(`${name} at ${p} is not a root-owned system copy`);
-    else if (!seen.has(probes.realPath(p) ?? p)) {
-      seen.add(probes.realPath(p) ?? p);
-      out.paths.push(p);
-    }
+    const real = probes.realPath(p) ?? p;
+    const copy = systemCopy(probes, p);
+    const seen = copy === 'good' ? good : bad;
+    if (seen.has(real)) continue;
+    seen.add(real);
+    if (copy === 'good') out.paths.push(p);
+    else if (copy === 'root-owned')
+      out.unknown.push(`${name} at ${p} is root-owned, but this login can change it`);
+    else out.unknown.push(`${name} at ${p} is not a root-owned system copy`);
   }
   return out;
 }
@@ -109,6 +130,16 @@ export function findTool(probes: SwitchProbes, name: string): ToolFound {
   const found = findTools(probes, name);
   if (found.unknown.length > 0) return { unknown: found.unknown[0]! };
   return found.paths.length > 0 ? { path: found.paths[0]! } : undefined;
+}
+
+/** #819 follow-up 2 (member 5): the id a sudoers `#uid` or `%#gid` names, as sudo reads it — a
+ *  decimal number, leading zeros and all (the lexer's `#-?[0-9]+`, parsed by `sudo_strtoid`;
+ *  W-829c1-A-09); `negative` for a `#-n`, which this check treats as covering (the safe direction);
+ *  `undefined` when `token` is not one. */
+export function numericId(token: string): number | 'negative' | undefined {
+  const m = /^#(-?)(\d+)$/.exec(token);
+  if (m === null) return undefined;
+  return m[1] === '-' ? 'negative' : Number(m[2]);
 }
 
 /** One passwd entry, read by `getent passwd`. */
@@ -152,8 +183,98 @@ export interface Lookups {
   netgroupUsers: (name: string) => Promise<Found<string[]>>;
   /** Whether this login is in the group `name`: by its process groups or the group's members. */
   loginIn: (name: string) => Promise<Found<boolean>>;
-  /** Whether `user` (svc or root) is in the group `name` (`#gid` or a name). macOS: unknown (01b #9). */
-  userIn: (user: PasswdEntry, name: string) => Promise<Found<boolean>>;
+  /** Whether `user` (svc or root) is in the group `name` (`#gid` or a name). macOS: unknown (01b #9).
+   *  `listed`: not in it, read from the members the group lists (#819 correction 1, clause (g)). */
+  userIn: (
+    user: PasswdEntry,
+    name: string,
+  ) => Promise<Found<boolean> | { found: false; listed: true }>;
+}
+
+/** #819 correction 1 (SEP-00 (f)): the group sources glibc reads locally, each complete for what it
+ *  knows — `files`; `compat` (files with NIS `+` entries); `db` (a local database of /etc/group);
+ *  `systemd` (systemd's own services and JSON drop-ins, root and nobody; nss-systemd(8)). */
+const LOCAL_GROUP_SOURCES = new Set(['files', 'compat', 'db', 'systemd']);
+/** SSSD's NSS responder socket, as libnss_sss names it (sssd-client 2.13.1, Fedora 44; captured
+ *  2026-10-19): while it is there, `sss` serves names from a directory. */
+export const SSS_NSS_SOCKET = '/var/lib/sss/pipes/nss';
+
+/** #819 follow-up 2 (member 8): nscd's socket (glibc's and musl's `/var/run/nscd/socket`, and the
+ *  `/run` it usually links to). musl reads no `/etc/nsswitch.conf`: its group lookups and
+ *  `getgrouplist` ask nscd when this socket is there (musl `src/passwd`; W-819F2-AUD-09). */
+export const NSCD_SOCKETS = ['/var/run/nscd/socket', '/run/nscd/socket'] as const;
+
+/** Where `getent group` reads groups from: only local sources, a source that may serve a directory,
+ *  or not known. */
+type GroupSource =
+  { local: true } | { directory: string; database: 'group' | 'initgroups' } | { unknown: string };
+
+/** #819 follow-up 2 (member 2): the databases whose sources decide a member list — `group`, and
+ *  `initgroups`, which `getgrouplist` (and so sudo's group match) reads when it is there (glibc
+ *  `nss/initgroups.c`; W-829c1-A-04). */
+const GROUP_DATABASES = ['group', 'initgroups'] as const;
+
+/**
+ * SEP-00 (f), #819 follow-up 2 (member 2, the audit's S1 text): `/etc/nsswitch.conf`, read once, as
+ * glibc reads it, or not known. Only a line whose first word — up to whitespace or `:`, after leading
+ * whitespace, as glibc reads it; matched in any case, so a name glibc might read is never skipped —
+ * is `group` or `initgroups` is judged. Each of these reads unknown: a second line of the same name
+ * (glibc keeps the last; one of each is not a second); a `#` after the name (glibc strips no trailing
+ * comment); no `:`; sources the parser cannot split (an unclosed bracket, a name of other characters,
+ * or none). Both lines are classed alike, the `sss` socket rule included; bracketed actions are syntax,
+ * not sources. A line that starts with `#` is a comment, and no other line is read. No file, or no
+ * `group` line, is the `files` source — unless nscd's socket is there (member 8): musl then asks nscd.
+ */
+function groupSourceOf(probes: SwitchProbes): GroupSource {
+  const path = '/etc/nsswitch.conf';
+  const nscd = (): GroupSource | undefined => {
+    const socket = NSCD_SOCKETS.find((s) => probes.exists(s));
+    return socket !== undefined
+      ? {
+          unknown: `${socket} is there and ${path} lists no group line, so groups may be listed from nscd`,
+        }
+      : undefined;
+  };
+  const stat = probes.stat(path);
+  if ('error' in stat && stat.error === 'ENOENT') return nscd() ?? { local: true };
+  const text = probes.readText(path);
+  if (text === undefined)
+    return { unknown: `${path} cannot be read, so where groups are listed from is not known` };
+  const lines: Partial<Record<(typeof GROUP_DATABASES)[number], string>> = {};
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/^\s+/, '');
+    if (line.startsWith('#')) continue;
+    const name = /^[^\s:]*/.exec(line)![0];
+    const db = GROUP_DATABASES.find((d) => d === name.toLowerCase());
+    if (db === undefined) continue;
+    const cannot = (why: string): GroupSource => ({
+      unknown: `${path} has ${why}, so where groups are listed from is not known: ${line.trimEnd()}`,
+    });
+    if (lines[db] !== undefined) return cannot(`a second ${db} line`);
+    const rest = line.slice(name.length);
+    if (rest.includes('#')) return cannot(`a # after the ${db} name`);
+    if (!/^\s*:/.test(rest)) return cannot(`no : after the ${db} name`);
+    const sources = rest
+      .replace(/^\s*:/, '')
+      .replace(/\[[^\]]*\]/g, ' ')
+      .split(/\s+/)
+      .filter((t) => t !== '');
+    if (sources.length === 0 || sources.some((s) => !/^[A-Za-z0-9_-]+$/.test(s)))
+      return cannot(`a ${db} line whose sources it cannot split`);
+    lines[db] = sources.join(' ');
+  }
+  if (lines.group === undefined) {
+    const viaNscd = nscd();
+    if (viaNscd !== undefined) return viaNscd;
+  }
+  for (const db of GROUP_DATABASES) {
+    for (const source of lines[db]?.split(' ') ?? []) {
+      if (LOCAL_GROUP_SOURCES.has(source)) continue;
+      if (source === 'sss' && !probes.exists(SSS_NSS_SOCKET)) continue;
+      return { directory: source, database: db };
+    }
+  }
+  return { local: true };
 }
 
 const parsePasswd = (line: string): PasswdEntry | undefined => {
@@ -185,7 +306,7 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
   const getent = darwin ? undefined : findTool(probes, 'getent');
   /** `getent <db> <name>`: its first line, absent (exit 2), or unknown. */
   const ask = async (db: string, name: string): Promise<Found<string>> => {
-    if (getent === undefined) return { unknown: 'getent was not found in the system folders' };
+    if (getent === undefined) return { unknown: notFound('getent') };
     if ('unknown' in getent) return { unknown: getent.unknown };
     const r = await run([getent.path, db, name]);
     if ('exit' in r && r.exit === 2 && r.stdout === '') return { absent: true };
@@ -232,13 +353,37 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
     if (gids === undefined) return { unknown: "this process's groups could not be read" };
     return { found: false };
   };
-  const userIn = async (user: PasswdEntry, name: string): Promise<Found<boolean>> => {
+  let groupSource: GroupSource | undefined;
+  const userIn = async (
+    user: PasswdEntry,
+    name: string,
+  ): Promise<Found<boolean> | { found: false; listed: true }> => {
     if (darwin) return { unknown: `macOS has no getent, so ${user.name}'s groups are not read` };
     // A §F7: `#gid` is looked up too, so a secondary group counts, not only the primary one
     const g = await group(name.startsWith('#') ? name.slice(1) : name);
     if ('unknown' in g) return g;
-    if ('absent' in g) return { found: name === `#${user.gid}` };
-    return { found: g.found.gid === user.gid || g.found.members.includes(user.name) };
+    // #819 follow-up 2 (member 5): a `#gid` with no group entry is compared as the number sudo reads
+    if ('absent' in g) {
+      const id = numericId(name);
+      return { found: id === 'negative' || (id !== undefined && id === user.gid) };
+    }
+    if (g.found.gid === user.gid || g.found.members.includes(user.name)) return { found: true };
+    // #819 (08, A Outside 2): a group that lists no members may hide them (SSSD's
+    // ignore_group_members), and `getent initgroups` is not one of rail 1's calls — not known
+    if (g.found.members.length === 0) {
+      return {
+        unknown: `getent group ${g.found.name} lists no members, so whether ${user.name} is in it is not known`,
+      };
+    }
+    // #819 correction 1 (SEP-00 (f)): a member list is complete only from a local source
+    groupSource ??= groupSourceOf(probes);
+    if ('unknown' in groupSource) return { unknown: groupSource.unknown };
+    if ('directory' in groupSource) {
+      return {
+        unknown: `/etc/nsswitch.conf lists ${groupSource.directory} for ${groupSource.database === 'group' ? 'groups' : 'initgroups'}, so ${user.name}'s membership of ${g.found.name} may not all be listed`,
+      };
+    }
+    return { found: false, listed: true };
   };
   return { probes, login, svc, darwin, run, passwd, group, netgroupUsers, loginIn, userIn };
 }

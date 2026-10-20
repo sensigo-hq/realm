@@ -78,9 +78,13 @@ export interface SwitchPathReading {
   how: string;
   cause?: string;
   or_not_allowed?: true;
-  /** #790 correction (W §5, W §8): what polkit's clause (d) can say — the entry points present and
-   *  each rules folder as `stat` read it. */
+  /** #790 correction (W §5, W §8): what polkit's clause (d) can say — the entry points (#819, 08
+   *  B F11: of the actions asked) and each rules folder as `exists` and `canRead` (access R_OK) read
+   *  it. */
   polkit?: { tools: string[]; admin: 'unreadable' | 'unread'; vendor: 'unreadable' | 'unread' };
+  /** #819 correction 1: the reading rested on a group's listed members, which did not hold Realm's
+   *  service user — clause (g): a member the system does not list is not seen. */
+  member_list?: true;
 }
 
 /** #790 (01b #6): when readings meet, the most permissive wins, and an `unknown` outranks a
@@ -131,8 +135,8 @@ export function switchPathsCondition(
  * #790 (D11): a clause the strong sentence adds, each fired by what the ways read — never printed for
  * a way that is absent. (a) a credential the agent must not be able to obtain; (b) a credential cache
  * someone could warm; (c) classic sudo's refusal, which hides `Defaults` it cannot show; (d) polkit
- * present, whose rules cannot be read here; (e) a person's touch or key; (f) an sshd present while
- * this login holds a key.
+ * present, whose rules cannot be read here; (e) a person's touch or key; (f) an sshd present; (g) a
+ * reading that rested on a group's listed members (#819 correction 1).
  */
 export type SwitchClause =
   | { clause: 'a'; whose: Exclude<SwitchWhose, 'person'> }
@@ -140,12 +144,13 @@ export type SwitchClause =
   | { clause: 'c' }
   | ({ clause: 'd' } & NonNullable<SwitchPathReading['polkit']>)
   | { clause: 'e' }
-  | { clause: 'f' };
+  | { clause: 'f' }
+  | { clause: 'g' };
 
 /** Which tool each credential cache belongs to (B §10: clause (b) names only those that fired). */
 const CACHE_TOOL = { sudo_timestamp: 'sudo', doas_persist: 'doas', polkit_keep: 'polkit' } as const;
 
-/** #790 (D11): the clauses `readings` fire, in the order (a)–(f); (a) once per whose. */
+/** #790 (D11): the clauses `readings` fire, in the order (a)–(g); (a) once per whose. */
 export function switchClausesOf(readings: readonly SwitchPathReading[]): SwitchClause[] {
   const closed = readings.filter((r) => r.outcome === 'needs_credential');
   const clauses: SwitchClause[] = [];
@@ -165,6 +170,7 @@ export function switchClausesOf(readings: readonly SwitchPathReading[]): SwitchC
   }
   if (closed.some((r) => r.whose === 'person')) clauses.push({ clause: 'e' });
   if (readings.some((r) => r.path === 'ssh')) clauses.push({ clause: 'f' });
+  if (readings.some((r) => r.member_list === true)) clauses.push({ clause: 'g' });
   return clauses;
 }
 
@@ -176,6 +182,9 @@ export interface SeparationEvidence {
   service_user?: string;
   /** Whether the store's folder belongs to another OS user (measured). */
   store_owned_by_other: boolean;
+  /** #819 (C4): whether this login owns the store, from the store's own stat — the same-login modes
+   *  need it (an unknown uid owns nothing). */
+  owns_store: boolean;
   conditions: Record<SeparationCondition, ConditionReading>;
   /** The gate-answers value the check judged, with its WINNING source (restrictive wins). */
   value: { value: GateAnswers; source: Source };
@@ -193,14 +202,15 @@ const measuredYes = (r: ConditionReading): boolean => r.basis === 'measured' && 
 /**
  * The mode, derived — never guessed (§5.9; correction 1 D1; correction 2, 5.4): the store belongs to
  * another OS user → `separate_user`, whatever condition 1 reads (the "cannot record" claim still
- * needs condition 1 measured "no": {@link separationPrevents}); else condition 1 measured "yes" —
- * this login owns the store — `sandbox_configured` if the agent's app configures a sandbox (the "no"
- * would come only through it), else `same_account`; otherwise `not_measured`.
+ * needs condition 1 measured "no": {@link separationPrevents}); else condition 1 measured "yes" and
+ * this login owns the store (#819, C4: a reachable store whose owner is not known is not the same
+ * login) — `sandbox_configured` if the agent's app configures a sandbox (the "no" would come only
+ * through it), else `same_account`; otherwise `not_measured`.
  */
 export function separationModeOf(e: SeparationEvidence): SeparationMode {
   const reach = e.conditions.store_reach;
   if (e.store_owned_by_other) return 'separate_user';
-  if (measuredYes(reach)) {
+  if (measuredYes(reach) && e.owns_store) {
     return e.conditions.agent_sandbox.basis === 'configured_not_enforced'
       ? 'sandbox_configured'
       : 'same_account';

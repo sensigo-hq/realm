@@ -1378,8 +1378,9 @@ export interface RunRecord {
 
 // ─── #627 W (§5.8): how a gate answer arrived ───────────────────────────────────────────────────
 
-/** #627 W: the routes this version's own doors declare (a door may declare another id). */
-export const ANSWER_ROUTES = ['mcp_form', 'mcp', 'cli'] as const;
+/** #627 W: the routes this version's own doors declare (a door may declare another id). #819: the
+ *  Slack thread `realm agent` posts a gate to is one. */
+export const ANSWER_ROUTES = ['mcp_form', 'mcp', 'cli', 'slack'] as const;
 export type AnswerRoute = (typeof ANSWER_ROUTES)[number];
 
 /** #627 W: a recorded answer's route as its door declared it, and what showed a form. */

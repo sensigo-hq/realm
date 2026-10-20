@@ -145,6 +145,12 @@ export type RespondWay = Base<'respond'> & {
   holds: readonly string[];
   /** Whether the reply that carries this way also carries the question's `gate` (the opening reply and the already-open reply) or names the question alone. */
   presented: 'with_gate' | 'alone';
+  /**
+   * #819 (T1): present when the record keeps the question's text — the gate's message, resolved
+   * when it opened (`pending_gate.resolved_message`) — so a door can say where the text is. Absent:
+   * a gate that declares no message carries no question text on the record.
+   */
+  has_message?: true;
   owner?: string;
   /**
    * The ONLY carrier of a claim's token (A-17): set only on the reply whose own call opened the
@@ -1229,6 +1235,7 @@ function respondWayOf(
     ...(gate.on_expiry !== undefined ? { on_expiry: gate.on_expiry } : {}),
     holds: [...(pending.waiting_on_answer ?? [])],
     presented: ctx.presented ?? 'alone',
+    ...(gate.resolved_message !== undefined ? { has_message: true as const } : {}),
     ...(ctx.opening_token !== undefined ? { proof: { claim_token: ctx.opening_token } } : {}),
   };
 }
@@ -1394,7 +1401,15 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       ...(ctx.definition.path !== undefined ? { path: ctx.definition.path } : {}),
       ...(ctx.definition.format !== undefined ? { format: ctx.definition.format } : {}),
     };
-    ways.push(register);
+    // #819 (U5): a copy that never had a file has no `register` way; the run's way on is ending it.
+    // #819 correction 1 (01): never at a live question — a gate proves the workflow came from a
+    // file (an agent's workflow has none; W-829-B-01), so there the repair is `register`.
+    const gate = run.pending_gate;
+    const noFile =
+      ctx.definition.absent === 'agent_copy_gone' && !(gate !== undefined && !run.terminal_state);
+    const abandon: AbandonWay = { verb: 'abandon', conditions: [], run_id: run.id };
+    const repair: WayOn[] = noFile ? [abandon] : [register];
+    if (!noFile) ways.push(register);
     if (run.terminal_state) {
       const ended = { phase: deriveRunPhase(run) };
       const noRemedy = {
@@ -1413,11 +1428,10 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
       return { ways, unavailable, basis };
     }
     for (const verb of ['advance', 'run_step'] as const) {
-      unavailable.push({ verb, code: 'definition_absent', facts, remedy: [register] });
+      unavailable.push({ verb, code: 'definition_absent', facts, remedy: repair });
     }
     // abandon reads no definition: offered, unless a question is open (then the answer is the way
     // on, and it too waits on the definition — listed above, so the remedy is judged).
-    const gate = run.pending_gate;
     if (gate !== undefined) {
       const respond: RespondWay = {
         ...respondWayOfGate(run.id, gate),
@@ -1428,7 +1442,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
         step: gate.step_name,
         code: 'definition_absent',
         facts,
-        remedy: [register],
+        remedy: repair,
       });
       // #627 W (Amendment 5): `present` shares respond's snapshot code.
       unavailable.push({
@@ -1436,7 +1450,7 @@ export function composeWaysOn(snap: Snapshot, ctx: WaysContext): ComposedWays {
         step: gate.step_name,
         code: 'definition_absent',
         facts,
-        remedy: [register],
+        remedy: repair,
       });
       unavailable.push({
         verb: 'abandon',

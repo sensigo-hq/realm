@@ -47,21 +47,34 @@ All notable changes to this project are documented here.
   it would start with and where it came from, then a separation check of the login that runs it: how
   far that login reaches into Realm's store and the programs Realm runs, each condition measured,
   configured or unknown, and what that means for who can answer a gate. No server is started; a
-  bad value exits 1. Condition 2 asks sudo (`-n -l`), doas (`-C`) and polkit (`pkcheck`, with no
-  interaction) in their list and check modes, looks users and groups up with `getent` (`dscl` on
-  macOS), and reads su's login rules from their files — it never
+  bad value exits 1. Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit
+  (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up
+  with `getent` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files —
+  it never
   switches user, never asks for a password and never opens a login connection; condition 3
   (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus,
   Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an
   agent cannot record a gate answer only when every way it found needs a credential or is not
   allowed, and lists what no program can see from that login; a rule it does not recognise, a file
-  it cannot read, or a tool's error reads "unknown", and the sentence is not printed. The header
-  says when no store was found; condition 7's "no" names the two apps whose settings it read; the
-  two informational lines are marked "(fact)".
+  it cannot read, or a tool's error reads "unknown", and the sentence is not printed. A sudo
+  Defaults setting or long-format option the check does not read makes sudo's reading unknown,
+  unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed
+  twice with different values (issue #819); the stack `pam_askpass_service` names is read too;
+  run-as user names match in any case, as sudo matches them, and so do run-as group names unless
+  `!case_insensitive_group` or `match_group_by_gid` is listed; a run-as group that does not list the
+  service user is read as not holding it only when the `group` and `initgroups` lines of
+  `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds
+  that the members the system lists for each group read are all of its members. The header
+  says when no store was found, and when the store cannot be opened; condition 7's "no" names the
+  two settings files it looked at; the store's time basis is marked "(fact)"; a condition the check
+  reads nothing for is "not measured"; the economics line says whether this login can change the
+  `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder
+  that is not there reads unknown (no such folder).
 - **The `initialize` result names the gate-answers value (issue #627).**
   `capabilities.experimental['realm/gate_answers']` is `{ value, source_kind }`.
 - **Each answer records how it arrived (issue #627).** A `gate_response` entry gains `answer`
-  (`{ route, shown? }`: `mcp_form`, `mcp` or `cli`, as its door declared it, or
+  (`{ route, shown? }`: `mcp_form`, `mcp`, `cli` or `slack` — `realm agent`'s Slack thread, issue
+  #819 — as its door declared it, or
   `{ absent: 'route_not_declared' }`), `driven_by`, `client_prompt_requested` and `principal` (an API
   key's id, `realm serve`'s shared token, or the door's typed absence). `submitHumanResponse` takes
   `route`, `shown`, `principal` and `clientPromptRequested`; an answer's reply `outcome` gains `via`.
@@ -74,10 +87,21 @@ All notable changes to this project are documented here.
   line. It is a text match: it finds tool names, not every way of asking.
 - **A code for a workflow a later Realm registered (issue #627).** `STATE_NEWER_FORMAT`
   (`report_to_user`, not retryable), with typed facts (`path`, `schema_version`, `reads_up_to`); a
-  run's ways name it as the definition absence `newer`. A `schema_version` that is not a number, or
-  a copy with no string `id`, marks the copy as damaged (`RESOURCE_FORMAT_INVALID`), never as one an
-  older Realm registered. A copy an older Realm registered is listed with the copies Realm cannot
-  read, as class `legacy`.
+  run's ways name it as the definition absence `newer`. A `schema_version` that is not a number, a
+  copy with no string `id`, a copy at the current format whose `steps` is not an object, or a copy
+  with no `schema_version` that is not the shape older versions wrote (a string `name` and a number
+  `version`) marks the copy as damaged (`RESOURCE_FORMAT_INVALID`), never as one an older Realm
+  registered (issue #819 for the last two). A copy an older Realm registered is listed with the
+  copies Realm cannot read, as class `legacy`; `realm workflow list` says to re-register each from
+  its source.
+- **Under `withheld`, the agent is told where a question is, and to pass the run id on (issue
+  #819).** The awaiting entry of a reply that carries no `gate` points to
+  `get_run_state`'s `pending_gate.resolved_message` when the gate declares a message, and otherwise
+  says `get_run_state` carries no question text for this gate and names the step the run waits at,
+  as does a reply whose `gate` carries no `display`; every withheld awaiting entry tells the agent to
+  give the user the run id, which they may need to answer, and the protocol rules say to present
+  `gate.display` when the reply has one. A `respond` way gains `has_message`,
+  present when the record keeps the question's text.
 - **A host's slip is refused where it called, naming every defect (issue #719).** A new code,
   `VALIDATION_OPTION_INVALID` (`report_to_user`, not retryable): an engine entry (`executeStep`,
   `executeChain`, `executeEngineStep`, `advanceRun`, `submitHumanResponse`, `drainFinalizers`,
@@ -201,6 +225,15 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
 
 ### Changed
 
+- **`realm run abandon` at a gate whose workflow cannot be read names the repair (issue #819).** The
+  run is still refused, as every run waiting at a gate is; where its answer line would name an
+  answer the run cannot take yet, the refusal says the question cannot be answered until its
+  workflow can be read, and names the way on: the repair `realm run respond` names for the copy
+  (make it readable, or re-register it from its source), the remedy of a copy an older or a later
+  Realm registered, or `realm workflow register <file>` when the copy is gone. It no longer names
+  `realm workflow validate`, and no longer offers to remove the copy. An empty or blank `--reason` is
+  refused, and nothing is recorded. At a gate, a workflow whose copy is gone is reported as not
+  registered, whatever its id (a workflow `create_workflow` writes has no gate).
 - **BREAKING for assistants that called the engine's steps by name (issue #729).** `execute_step` on
   an `auto` step the engine could run is refused before anything is claimed: `blocked`,
   `Step '<step>' cannot be called now: it is an automatic step: the engine runs it when it is owed.`

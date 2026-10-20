@@ -142,10 +142,13 @@ export function parseFailureError(path: string, fault: WorkflowCopyParseFault): 
 /**
  * The parse fault of a value that parsed — the ONE check `getSync` and the listing both run, so a
  * copy is damaged at both or at neither (#627 W correction 2, 3.7 and 8.6 (d)): not an object; a
- * `schema_version` that is present, not `null` and not a number; no string `id`. `undefined` for an
- * object that can be read as a workflow — legacy (no `schema_version`, `null`, or a number below
- * current), current or newer. No `steps` is NOT a fault here: the registered copies an older Realm
- * wrote (the schema_version-less cohort, #427) carry no `steps` key at all, and they are legacy.
+ * `schema_version` that is present, not `null` and not a number; no string `id`. #819 (U3): a copy
+ * with no `schema_version` (or `null`) is the older cohort's only in its shape — a string `name`
+ * and a number `version`, as all 14 real ones are (W-C2R-CORE-12) — else `not_legacy_shape`. (U2):
+ * a copy at the current format whose `steps` is not an object — `no_steps`. `undefined` for an
+ * object that can be read as a workflow — legacy, current or newer: a NEWER copy is judged by
+ * {@link isNewerDefinition} after this, so one without `steps` reads newer. The older cohort carries
+ * no `steps` key at all, so `steps` is judged only at the current format.
  */
 function copyFault(value: unknown): WorkflowCopyParseFault | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -157,6 +160,19 @@ function copyFault(value: unknown): WorkflowCopyParseFault | undefined {
     return { kind: 'not_a_workflow', fault: 'schema_version_not_number' };
   }
   if (typeof copy['id'] !== 'string') return { kind: 'not_a_workflow', fault: 'no_id' };
+  if (
+    (version === undefined || version === null) &&
+    !(typeof copy['name'] === 'string' && typeof copy['version'] === 'number')
+  ) {
+    return { kind: 'not_a_workflow', fault: 'not_legacy_shape' };
+  }
+  const steps = copy['steps'];
+  if (
+    version === CURRENT_WORKFLOW_SCHEMA_VERSION &&
+    (steps === null || typeof steps !== 'object' || Array.isArray(steps))
+  ) {
+    return { kind: 'not_a_workflow', fault: 'no_steps' };
+  }
   return undefined;
 }
 
@@ -179,12 +195,20 @@ function isLegacyDefinition(copy: { schema_version?: unknown }): boolean {
   );
 }
 
+/** #819 follow-up 2 (R2, the audit's B1): the remedies the refusals of a copy an older or a later
+ *  Realm registered carry — one owner of their words, for the refusal itself and for the way on at a
+ *  gate (`gateRepairOf`). */
+const LEGACY_REMEDY = 'Re-register it with: realm workflow register <path-to-workflow>';
+const NEWER_REMEDY =
+  "Use the Realm version that registered it, or register the workflow's source again with this version.";
+/** The gate fork's words for a question whose workflow cannot be read (reader B's M1). */
+const GATE_UNANSWERABLE = 'cannot be answered until its workflow can be read';
+
 /** The refusal of a copy an older Realm registered — one owner of its words for the registry read and
  *  the listing (#627 W correction 2, 8.6 (c)); the arguments of `new WorkflowError(…)`. */
 function legacyDefinitionParts(filePath: string): [string, WorkflowErrorOptions] {
   return [
-    'This workflow was registered with an older version of Realm. ' +
-      'Re-register it with: realm workflow register <path-to-workflow>',
+    `This workflow was registered with an older version of Realm. ${LEGACY_REMEDY}`,
     {
       code: 'STATE_LEGACY_FORMAT',
       category: 'STATE',
@@ -271,6 +295,36 @@ export interface RepairAct {
    *  a file nothing ever registered has no source to re-register from — `rm` is the only act,
    *  and it was named nowhere; the review walk looped on it). Rendered after the retry. */
   alternative?: string;
+}
+
+/**
+ * #819 follow-up 2 (R2, the audit's B1; reader B's S1, M1): the way on from a question whose
+ * workflow cannot be read, by the class of what the read threw — one composer (R13) for
+ * `realm run abandon`'s refusal, in the gate fork's own words. A copy that is unreadable or not a
+ * workflow: its repair act (`repairActFor`), without the alternative — never `rm` while a run waits
+ * on it; a copy an older or a later Realm registered: that class's own remedy, as its refusal words
+ * it; no copy: registering it. Any other error is named, with no repair: the question is never
+ * offered as answerable once the read has failed.
+ */
+export function gateRepairOf(err: unknown): string {
+  const lead = `Its question ${GATE_UNANSWERABLE}.`;
+  if (err instanceof WorkflowError) {
+    switch (err.code) {
+      case 'STATE_WORKFLOW_NOT_FOUND':
+        return `${lead} Repair it: realm workflow register <file>`;
+      case 'STATE_WORKFLOW_UNREADABLE':
+      case 'RESOURCE_FORMAT_INVALID': {
+        const r = repairActFor(err);
+        if (r !== undefined) return `${lead} Repair it: ${r.act}`;
+        break;
+      }
+      case 'STATE_LEGACY_FORMAT':
+        return `${lead} ${LEGACY_REMEDY}`;
+      case 'STATE_NEWER_FORMAT':
+        return `${lead} ${NEWER_REMEDY}`;
+    }
+  }
+  return `${lead} ${withFullStop(err instanceof Error ? err.message : String(err))}`;
 }
 
 export function repairActFor(err: WorkflowError): RepairAct | undefined {
@@ -606,10 +660,11 @@ export class JsonWorkflowStore implements WorkflowRegistrar {
       }
       const fault = copyFault(parsedUnknown);
       if (fault !== undefined) {
+        // #819 (U2): every unreadable class names its repair — this one too.
         unreadable.push({
           file: entry,
           class: 'parse',
-          reason: parseFailureError(entryPath, fault).message,
+          ...reasonAndRepair(parseFailureError(entryPath, fault)),
         });
         continue;
       }
@@ -663,8 +718,7 @@ function newerDefinitionParts(
     `Workflow '${workflowId}' was registered by a later version of Realm (definition format ` +
       `${String(schemaVersion)}; this version reads up to ` +
       `${CURRENT_WORKFLOW_SCHEMA_VERSION}) — refused: this version would ignore requirements ` +
-      'it cannot read. Use the Realm version that registered it, or register the ' +
-      "workflow's source again with this version. Nothing was run.",
+      `it cannot read. ${NEWER_REMEDY} Nothing was run.`,
     {
       code: 'STATE_NEWER_FORMAT',
       category: 'STATE',
@@ -681,16 +735,22 @@ function newerDefinitionParts(
   ];
 }
 
+/** #819 correction 1 (01): whether `run` waits at an open question. */
+const atLiveGate = (run: Partial<Pick<RunRecord, 'pending_gate' | 'terminal_state'>>): boolean =>
+  run.pending_gate !== undefined && run.terminal_state !== true;
+
 /**
  * issue #729 PR-0 (D3 A-5, D4 T-21): why a run's definition is absent, from the error a definition
  * read threw — the `definition_absent` entry's cause, one per {@link getWorkflowForRun} arm, and the
  * stored file's path where the store knows it (the unreadable, invalid and legacy copies; a workflow
  * that was never registered, or an agent's copy that is gone, has none). `undefined` for any other
- * error.
+ * error. #819 correction 1 (01): a run waiting at a live question reads `not_registered` whatever
+ * its id's shape — an agent's workflow has no gate (create_workflow never sets `trust`; W-829-B-01),
+ * so a gate proves the workflow came from a file.
  */
 export function definitionAbsenceOf(
   err: unknown,
-  run: Pick<RunRecord, 'workflow_id'>,
+  run: Pick<RunRecord, 'workflow_id'> & Partial<Pick<RunRecord, 'pending_gate' | 'terminal_state'>>,
 ):
   | {
       absent: DefinitionAbsence;
@@ -715,7 +775,10 @@ export function definitionAbsenceOf(
   switch (err.code) {
     case 'STATE_WORKFLOW_NOT_FOUND':
       return {
-        absent: /-[0-9a-f]{16}$/.test(run.workflow_id) ? 'agent_copy_gone' : 'not_registered',
+        absent:
+          /-[0-9a-f]{16}$/.test(run.workflow_id) && !atLiveGate(run)
+            ? 'agent_copy_gone'
+            : 'not_registered',
         workflow_id: run.workflow_id,
       };
     case 'STATE_WORKFLOW_UNREADABLE':
@@ -826,12 +889,15 @@ export async function getWorkflowForRun(
     // Review fold R1: the act is keyed on the CLASS (`repairActFor`), never the code — three
     // classes share STATE_WORKFLOW_UNREADABLE and their acts differ. One joiner: the act, then
     // the retry. (`missing`/`legacy` yield no act — see `repairActFor`.)
+    // #819 correction 1 (01, B S2): at a live question the `rm` alternative is not offered —
+    // removing the copy loses the only record of where it came from, and leaves the run no way on.
     const repairClause = (withRetry: boolean): string | undefined => {
       const r = repairActFor(err);
       if (r === undefined) return undefined;
+      const alternative = gate === undefined ? r.alternative : undefined;
       return (
         `To repair: ${r.act}${withRetry ? `, then ${then}` : ''}` +
-        `${r.alternative !== undefined ? `; ${r.alternative}` : ''}.`
+        `${alternative !== undefined ? `; ${alternative}` : ''}.`
       );
     };
 
@@ -863,8 +929,8 @@ export async function getWorkflowForRun(
     const disposalSentence = (leadIn: string): string =>
       gate === undefined
         ? `${leadIn} realm run abandon ${run.id}.`
-        : `This run is waiting on human gate '${gate.step_name}', which cannot be answered until ` +
-          `its workflow can be read; realm run abandon refuses a run that is waiting on a gate.`;
+        : `This run is waiting on human gate '${gate.step_name}', which ${GATE_UNANSWERABLE}; ` +
+          `realm run abandon refuses a run that is waiting on a gate.`;
 
     // Reached with `terminal_state` only through `terminalOk` (the sites whose happy path IS a
     // terminal run — drain, replay, resume, inspect): there is nothing left to END, so the
@@ -880,7 +946,9 @@ export async function getWorkflowForRun(
         // A SHAPE heuristic, not provenance: `deriveWorkflowId` mints `dynamic-<16hex>` and
         // `<slug>-<16hex>`, so a human-registered id that happens to carry a 16-hex suffix gets
         // the agent sentence too. Keyed on the id, never on a record field realm does not have.
-        throw /-[0-9a-f]{16}$/.test(run.workflow_id)
+        // #819 correction 1 (01): never at a live question, which an agent's workflow cannot open
+        // (`definitionAbsenceOf`): there the copy came from a file, and the way on is registering it.
+        throw definitionAbsenceOf(err, run)?.absent === 'agent_copy_gone'
           ? copy(
               `Workflow '${run.workflow_id}' not found — this run's workflow was created by an ` +
                 `agent (create_workflow) and its stored copy is gone; there is no source file ` +

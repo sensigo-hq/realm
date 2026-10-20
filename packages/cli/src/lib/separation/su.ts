@@ -5,6 +5,8 @@ import type { SwitchPathReading } from '@sensigo/realm';
 import { basename } from 'node:path';
 import {
   findTool,
+  lookedFor,
+  notFound,
   presence,
   toolLine,
   type Found,
@@ -33,7 +35,7 @@ async function shellOf(
     return 'unknown' in entry ? entry : { unknown: `${lk.svc} has no passwd entry` };
   }
   const dscl = findTool(lk.probes, 'dscl');
-  if (dscl === undefined) return { unknown: 'dscl was not found in the system folders' };
+  if (dscl === undefined) return { unknown: notFound('dscl') };
   if ('unknown' in dscl) return dscl;
   const call = `${dscl.path} . -read /Users/${lk.svc} UserShell`;
   const r = await lk.run([dscl.path, '.', '-read', `/Users/${lk.svc}`, 'UserShell']);
@@ -42,13 +44,32 @@ async function shellOf(
   return m !== null ? { shell: m[1]!, how: call } : { unknown: `${call} says: ${toolLine(r)}` };
 }
 
+/**
+ * #819 follow-up 2 (member 7, the audit's S9): a shells file's shells, each line read as glibc's
+ * `getusershell` reads it (`misc/getusershell.c:131-136`; util-linux's `is_known_shell` asks it):
+ * the shell starts at the line's first `/` — whatever comes before it — and runs to whitespace, a
+ * `#` or the end; a line whose first `#` comes before any `/`, or that has no `/`, lists none, and so
+ * does a `/` that ends the file with no line end after it.
+ */
+export function shellsOf(text: string): string[] {
+  const shells: string[] = [];
+  const lines = text.split('\n');
+  lines.forEach((line, i) => {
+    const at = line.search(/[#/]/);
+    if (at < 0 || line[at] === '#') return;
+    if (at === line.length - 1 && i === lines.length - 1) return;
+    shells.push(/^[^\s#]*/.exec(line.slice(at))![0]);
+  });
+  return shells;
+}
+
 /** Whether `shell` is listed in a shells file; `undefined` when a file there cannot be read. */
 function listed(lk: Lookups, shell: string): boolean | undefined {
   for (const file of SHELLS_FILES) {
     if (!lk.probes.exists(file)) continue;
     const text = lk.probes.readText(file);
     if (text === undefined) return undefined;
-    if (text.split('\n').some((l) => l.trim() === shell)) return true;
+    if (shellsOf(text).includes(shell)) return true;
   }
   return false;
 }
@@ -70,7 +91,7 @@ async function readSuOne(
     return {
       path: 'su',
       outcome: 'unknown',
-      how: 'su looked for in the system folders',
+      how: lookedFor('su'),
       cause: `su at ${where.elsewhere} is not a root-owned system copy`,
     };
   }
@@ -86,6 +107,17 @@ async function readSuOne(
   const busybox = basename(lk.probes.realPath(su) ?? su) === 'busybox' && !pamFile;
   // (c) before (b): a shell that runs no command runs nothing, even with an empty password.
   const shell = await shellOf(lk, entry);
+  // #819 (08, B F5): B §9 on macOS too — svc's shell not read (dscl absent or failing) is unknown,
+  // never "needs svc's password" (BusyBox's su, which asks it whatever the shell, aside)
+  if (lk.darwin && !busybox && 'unknown' in shell) {
+    return {
+      path: 'su',
+      tool: su,
+      outcome: 'unknown',
+      how: `${lk.svc}'s shell`,
+      cause: shell.unknown,
+    };
+  }
   if (!busybox && 'shell' in shell && NO_COMMAND_SHELLS.has(shell.shell)) {
     const inFiles = listed(lk, shell.shell);
     if (inFiles === false) {

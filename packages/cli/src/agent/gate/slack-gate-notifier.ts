@@ -397,6 +397,8 @@ export async function handleBidirectionalGate(params: BidirectionalGateParams): 
           runId,
           gateId: gate.gate_id,
           choice: exactMatch,
+          // #819 (item 28): the answer records how it arrived — a Slack thread.
+          route: 'slack',
           // decision C151: an expiry this late answer carries out names `realm agent`.
           caller: 'agent',
           ...(registry !== undefined ? { registry } : {}),
