@@ -505,6 +505,18 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   this change and 0.6–0.7 s after. The exported `compileSchema` is unchanged: it compiles a fresh
   validator on every call.
 
+### Security
+
+- **`@modelcontextprotocol/sdk` 1.31.0 → 1.32.0** — one HIGH advisory,
+  [GHSA-22jm-h49p-29qw](https://github.com/advisories/GHSA-22jm-h49p-29qw) (CVSS 8.6): the SDK's
+  experimental in-memory task store did not tie a task to the session that created it. Realm pins
+  the SDK exactly, so `@sensigo/realm-cli` and `@sensigo/realm-mcp` now depend on exactly `1.32.0`.
+  Exposure: none. Realm's MCP server creates no task store and declares no tasks capability, and
+  no SDK module realm imports loads the store (`experimental/tasks/stores/in-memory.js`). 1.32.0
+  also accepts a `tools/call` or `prompts/get` request that omits its arguments, validating it as
+  an empty set, and its HTTP client transports follow a redirect only within the same origin;
+  realm's client side uses the stdio transport only.
+
 ---
 
 ## [0.47.1] — 2026-10-17
