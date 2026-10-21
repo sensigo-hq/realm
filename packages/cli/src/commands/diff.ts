@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import type { RunRecord, EvidenceSnapshot } from '@sensigo/realm';
 import { formatPrecondColumn } from './replay-format.js';
 import type { ReplayRecord } from '../store/replay-store.js';
+import { recordedAnswer } from '../lib/holder-render.js';
 
 /** Returns true when the given ID is a replay ID (starts with "rpl_"). */
 export function isReplayId(id: string): boolean {
@@ -70,6 +71,36 @@ export interface DiffStepRow {
   same_output: boolean;
   /** True when both runs have the same step status (including 'missing'). */
   same_status: boolean;
+  /** True when both runs have the step and its two `error` fields are equal — the message a failed
+   *  step's entry keeps, its output being `{}` (both absent counts as equal). */
+  same_error: boolean;
+  /** True when both runs have the step and its question ended the same way in both: the same kind
+   *  of answer (answered, settled by the gate's expiry, ended by an `on_expiry: abort` expiry, or
+   *  none) and the same choice. Who answered is not compared. */
+  same_answer: boolean;
+}
+
+/** How a step's question ended, for the comparison: answered, settled by the gate's expiry (its
+ *  default choice), ended by an `on_expiry: abort` expiry, or none (still open, or no question). */
+interface StepAnswer {
+  kind: 'answered' | 'settled_by_expiry' | 'ended_by_expiry' | 'none';
+  choice?: string;
+}
+
+/** A step's answer, read through the CLI's one answer reader (`recordedAnswer`: the last answer of
+ *  the step's view); with none, an abort expiry is read where `realm run inspect` reads it. */
+function answerOf(run: RunRecord, stepId: string): StepAnswer {
+  const view = recordedAnswer(run, stepId);
+  if (view === undefined) {
+    return {
+      kind: run.skip_details?.[stepId]?.kind === 'gate_expired' ? 'ended_by_expiry' : 'none',
+    };
+  }
+  const kind =
+    view.answered_by.by === null && view.answered_by.absent_cause === 'settled_by_expiry'
+      ? 'settled_by_expiry'
+      : 'answered';
+  return view.choice !== undefined ? { kind, choice: view.choice } : { kind };
 }
 
 /**
@@ -101,6 +132,8 @@ export function diffRuns(runA: RunRecord, runB: RunRecord): DiffStepRow[] {
     const snapB = lastB.get(stepId);
     const statusA = snapA?.status ?? 'missing';
     const statusB = snapB?.status ?? 'missing';
+    const answerA = answerOf(runA, stepId);
+    const answerB = answerOf(runB, stepId);
     return {
       step_id: stepId,
       status_a: statusA,
@@ -116,6 +149,16 @@ export function diffRuns(runA: RunRecord, runB: RunRecord): DiffStepRow[] {
         snapB !== undefined &&
         isDeepStrictEqual(snapA.output_summary, snapB.output_summary),
       same_status: statusA === statusB,
+      // A failed step's message is in its entry's `error`, its output `{}`: the outputs alone would
+      // call two different failures the same.
+      same_error: snapA !== undefined && snapB !== undefined && snapA.error === snapB.error,
+      // A question's answer is in the entries its answers wrote, which the rows leave out: the
+      // step's own entry holds the output it copied before the question was put.
+      same_answer:
+        snapA !== undefined &&
+        snapB !== undefined &&
+        answerA.kind === answerB.kind &&
+        answerA.choice === answerB.choice,
     };
   });
 }
@@ -129,7 +172,7 @@ function colorDiffStatus(status: string): string {
 /** Returns the comparison symbol between A and B columns. Exported for its cells only. */
 export function diffSymbol(row: DiffStepRow): string {
   if (row.status_a === 'missing' || row.status_b === 'missing') return ' ';
-  if (row.same_output && row.same_status) return '=';
+  if (row.same_output && row.same_status && row.same_error && row.same_answer) return '=';
   return chalk.yellow('\u2260');
 }
 
