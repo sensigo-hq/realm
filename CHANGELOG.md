@@ -505,6 +505,22 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   this change and 0.6–0.7 s after. The exported `compileSchema` is unchanged: it compiles a fresh
   validator on every call.
 
+### Security
+
+- **`@modelcontextprotocol/sdk` 1.31.0 → 1.32.0** — two advisories. HIGH
+  [GHSA-22jm-h49p-29qw](https://github.com/advisories/GHSA-22jm-h49p-29qw) / CVE-2026-111767 (CVSS
+  8.6): the SDK's experimental in-memory task store did not tie a task to the session that created
+  it. MODERATE [GHSA-6prh-2h8m-c8cw](https://github.com/advisories/GHSA-6prh-2h8m-c8cw) /
+  CVE-2026-111769 (CVSS 6.5): the SDK's HTTP client transports and OAuth requests followed a
+  redirect to any origin, re-sending custom headers and, on a 307 or 308, the body; they now follow
+  one only within the same origin. Realm pins the SDK exactly, so `@sensigo/realm-cli` and
+  `@sensigo/realm-mcp` now depend on exactly `1.32.0`. Exposure: none. Realm's MCP server creates
+  no task store and declares no tasks capability, and no SDK module realm imports loads the store
+  (`experimental/tasks/stores/in-memory.js`); realm's client side uses the stdio transport only and
+  loads neither the HTTP client transports nor the OAuth client. Visible in realm: a `tools/call`
+  that omits its arguments is now checked as if it sent `{}`, so every tool that takes parameters
+  still refuses it, and the refusal names each missing parameter (`Required at run_id`).
+
 ---
 
 ## [0.47.1] — 2026-10-17
