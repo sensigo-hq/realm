@@ -48,6 +48,19 @@ export function boundResolvedValue(v: unknown): unknown {
 }
 
 /**
+ * decision C183: the ONE spelling of a control character a terminal line shows — JSON's: `\t`,
+ * `\n`, `\r`, `\b`, `\f`, and `\u00XX` for the others below U+0020; `\uXXXX` for U+007F–U+009F
+ * (the house's control set; U+009B starts a terminal sequence), which JSON leaves raw. `realm run
+ * inspect`'s `Message:` and `Warn:` lines, `realm workflow run`'s question and the `check_quotes`
+ * warning print the same escape. Moved here from the CLI (issue #760, correction H2) so core's
+ * handler and the CLI share one escaper.
+ */
+export function controlEscape(c: string): string {
+  const code = c.charCodeAt(0);
+  return code < 0x20 ? JSON.stringify(c).slice(1, -1) : `\\u${code.toString(16).padStart(4, '0')}`;
+}
+
+/**
  * The escaped, bounded value renderer (issue #625 PR-2a, F2; F5 renders the precondition refusal's
  * value through it): a free-text or step-output value as one line a surface can print — written as
  * JSON, so a newline, an escape character or any other control character is its escape sequence and

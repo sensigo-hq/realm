@@ -702,6 +702,9 @@ export { generateSchemaSkeleton } from './utils/schema-skeleton.js';
 // issue #729 PR-0 (E1 (b), (d)): the ONE escaped, bounded value renderer — a value read from a run or
 // stored text from elsewhere, printed as one line with no terminal escape (the doors use it).
 export { escapedBoundedValue } from './utils/redaction.js';
+// decision C183 (issue #760, correction H2): the ONE spelling of a control character a terminal line
+// shows — the CLI's printers and the `check_quotes` warning share it.
+export { controlEscape } from './utils/redaction.js';
 // issue #558 PR-T — the classification table, its builders and the listing cap. The CLI's
 // `--stuck` probe closure mints the SAME errors `get()` does, so a corrupt or unreadable copy
 // speaks with one voice on every surface.
@@ -775,6 +778,13 @@ export { walkField } from './handlers/primitives/walk-field.js';
 export { partitionBySubstring } from './handlers/primitives/partition-by-substring.js';
 export { countResults } from './handlers/primitives/count-results.js';
 export { compareStrings } from './handlers/primitives/compare-strings.js';
+export {
+  locateQuote,
+  QUOTE_STATES,
+  DEFAULT_MIN_PART_CHARS,
+  MIN_PART_CHARS_LEAST,
+} from './handlers/primitives/locate-quote.js';
+export type { QuoteCheck, QuoteState, QuoteSpan } from './handlers/primitives/locate-quote.js';
 
 // Trace buffer store (B-lite)
 export type {

@@ -2,9 +2,9 @@
 
 <!-- description: Reference for handlers: the interface, what execute receives, what each return value and thrown error does, registration, and the helper functions. -->
 
-A handler is code from your project that an `auto` step or a finalizer runs. This page gives the handler interface, what `execute` receives, what each return value and each thrown error does, how a handler is registered, and the 5 helper functions that `@sensigo/realm` exports for handlers. Every output shown came from a run.
+A handler is code from your project that an `auto` step or a finalizer runs. This page gives the handler interface, what `execute` receives, what each return value and each thrown error does, how a handler is registered, and the 6 helper functions that `@sensigo/realm` exports for handlers. Every output shown came from a run.
 
-Realm has no handlers of its own. Every handler a workflow names comes from the project. For a walk through a first handler, see [Write a step handler](../guides/step-handlers.md).
+Realm has one handler of its own, `check_quotes` (see [Built-in handlers](#built-in-handlers)); every other handler a workflow names comes from the project. For a walk through a first handler, see [Write a step handler](../guides/step-handlers.md).
 
 ## The interface
 
@@ -132,7 +132,7 @@ The message is stored in the step's entry in the run's record, as `warn`:
 }
 ```
 
-A caller over MCP gets it in the reply's `warnings` list. `realm agent` and `realm run inspect` do not print it. To read it afterwards, use `realm run export`.
+A caller over MCP gets it in the reply's `warnings` list. `realm run inspect` prints it on the step's `Warn:` line; `realm agent` does not print it. To read it afterwards, use `realm run export`.
 
 ### `abort`
 
@@ -336,11 +336,180 @@ The re-attach command repeats the flags the drive was started with: the model fl
 
 The run stays open, and the step can be run later by a process that has the handler.
 
-This is also what happens to a step that names `validate_verbatim_quotes` or `validate_field_match`. Earlier versions of this page described those two as built in. Neither is registered.
+`check_quotes` is registered, added after version 0.47.1 (see [Built-in handlers](#built-in-handlers)). `validate_verbatim_quotes` and `validate_field_match` were never registered: a step naming them is blocked, as any unregistered handler is (above).
+
+## Built-in handlers
+
+Every registry `createDefaultRegistry()` returns has them: the CLI, `realm agent`, `realm listen`, the MCP server and the testing runner. A registry built with `new ExtensionRegistry()` does not.
+
+### `check_quotes`
+
+Checks, for each value an earlier step extracted, that the value's quote appears in a source document, and records how it was found. A missing quote never stops the run, and the step never judges whether a value is correct; a guard on its `all_found` stops the run (below).
+
+| `config` key       | Default      | What it names                                                                          |
+| ------------------ | ------------ | -------------------------------------------------------------------------------------- |
+| `source_step`      | required     | The step whose output holds the document.                                              |
+| `source_field`     | `text`       | The field of that output that holds the document's text.                               |
+| `candidates_step`  | required     | The step whose output holds the extracted values.                                      |
+| `candidates_field` | `candidates` | The field of that output that holds the values, a list of objects.                     |
+| `quote_field`      | `quote`      | The field of each value that holds its quote.                                          |
+| `min_part_chars`   | `20`         | The shortest part a stitched quote may rest on, in canonical characters; at least `4`. |
+
+Both steps are read from the run's record by their ids, never from the step's input. Any other key, a missing required key, a step with no output yet, a document that is not text, or values that are not a list of objects ends the step `failed` with `ENGINE_HANDLER_FAILED` and a message saying what to change; every fault in the config is named at once. List the steps the check reads in its own `depends_on`. Without it the check can run first, before the values exist, and fail; the run goes on, every step that depends on the check under the default `all_success` trigger rule is skipped (a guard on `all_found` included), and the run can end `completed` with nothing checked.
+
+Each value is an object: its `quote_field` holds the quote, its `value` key the value, and its `field` key its name in the warning; a value with no `value` key and no quote counts as `not_found`.
+
+Each value gets a `quote_check` with one of six states. The state describes the quote's match, never the value's correctness.
+
+| State                   | Means                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exact`                 | The quote is in the document character for character, and starts and ends at word and number edges; an invisible character inside a word, such as a soft hyphen or a zero-width space, does not make a word edge (U+FEFF excepted: the canonical form reads it as a space).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `reformatted`           | The quote is in the document once letter case, punctuation, quotation marks, dash variants and spacing are set aside. Digits, the separators between two digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions never are: `9.5` is not `9-5`, `2,000` is not `2.000`, `$1,200` is not `£1,200`, and `<5%` is not `>5%`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `stitched`              | The quote joins whole pieces of the document, in the document's order. A piece ends where the quote breaks: at `…` or `...`, a sentence end, `;` or `:` (not one between two digits, as in `9:30`), a double quotation mark or a line break. Inside one piece nothing may be left out, and every piece is at least `min_part_chars` long, counting pieces that sit together in the document as one. After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`) or a line. A line counts only after a blank line, or a line that ends a sentence, a clause or a table row; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark is skipped only at such a line start, and a clause number only before a capital letter or a quotation mark. After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or a quotation mark. The piece before a skip may end mid-sentence. A `.` after an initial or one of `e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.` is not a sentence end. |
+| `stitched_out_of_order` | The same, with the pieces in another order.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `not_found`             | A piece is not in the document, or a part is shorter than `min_part_chars`, or locating the quote took more than 1,000 substring searches; or the value has no quote.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `unquoted`              | The value has no quote, and its `value` key holds `null` or an empty string. It does not count as missing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+
+A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest.
+
+A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number's separator or beside a group of thousands. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, `18` and `18.` not in `18.5`, `1 200` not in `1 200 000`, and `75%` not in `.75%`. A sign belongs to its number: `48,000` is not found in `€48,000`, and `5` not in `-5`. A number written in words is matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`. A reviewer can trust `exact` more than `reformatted`, and `reformatted` more than `stitched`.
+
+#### What `check_quotes` does not catch
+
+`check_quotes` is built to catch the mistakes models make when they quote: a word dropped or added, a number cut short, a piece resumed in the middle of a sentence. A quote written on purpose to mislead it can still read found in the cases below.
+
+What can still read found:
+
+- A clause joined to a later sentence: the piece before a skip may end mid-sentence.
+- A number written in words, matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.
+- A true quote that stops before its sentence ends is found. It is marked `cut_short` only when the quote ends with its own `.`, `!` or `?`.
+- An abbreviation the check does not know, followed by a capitalised word (`a.m. Monday`, `excl. VAT`): a skip may land there.
+- A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).
+- Combining marks read as the letters they carry (`n̶o̶t̶` reads `not`), and enclosed letters (`🅽🅾🆃`) are set aside like other symbols, so a struck-through or boxed word reads found.
+- Symbols other than the kept ones (bullets, emoji) are set aside.
+- U+FEFF inside a word reads `reformatted`, since the canonical form reads it as a space.
+
+What reads not found although it is honest:
+
+- A quote that skips into the middle of a sentence, with or without `…`.
+- A skip onto a sentence that opens with a digit, a currency sign, a lowercase word (`iPhones…`), or a script with no capital letters.
+- A skip onto a clause number in the middle of a line after a sentence end.
+- A zero-width space used as the only separator between two words.
+- A skip onto a new line, a list item included, after a line that ends mid-sentence, or onto a line under a heading with no stop.
+- A sentence after a no-break space or a form feed; a sentence after a footnote marker; a tab-separated row with no stop; the bullets `●`, U+F0B7 and `>`; the labels `a)`, `A)` and `A.`; `Ltd.`, `Inc.` or `etc.` ending a sentence; `Schedule A.` (read as an initial); a bullet in the middle of a line after a sentence end.
+
+The step's output, for a document `The rent is €48,000 a year, paid quarterly in advance on the usual quarter days.` and two values:
+
+```json
+{
+  "results": [
+    {
+      "field": "annual_rent",
+      "value": "48000",
+      "quote": "The rent is €48,000 a year",
+      "quote_check": { "state": "exact", "parts": [{ "start": 0, "end": 26 }], "occurrences": 1 }
+    },
+    {
+      "field": "payment",
+      "value": "quarterly",
+      "quote": "the rent is paid quarterly",
+      "quote_check": {
+        "state": "not_found",
+        "parts": [],
+        "occurrences": 0,
+        "nearest": { "start": 28, "end": 42 }
+      }
+    }
+  ],
+  "by_state": {
+    "exact": 1,
+    "reformatted": 0,
+    "stitched": 0,
+    "stitched_out_of_order": 0,
+    "not_found": 1,
+    "unquoted": 0
+  },
+  "all_found": false,
+  "candidates_found": 2
+}
+```
+
+`parts` are where each part was found, as offsets into the document (`text.slice(start, end)`). `occurrences` is how many times the whole quote occurs; it is `0` when the quote is stitched or not found. `nearest` is where the longest piece of the quote that is in the document lies; it is absent when no whole word of the quote is found. `cut_short` and `cut_short_at` (the document offsets where the quote's sentences stop short) appear only when it does.
+
+`all_found` is true when no value is `not_found`: `exact`, `reformatted`, `stitched` and `stitched_out_of_order` count as found, and `unquoted` is not counted.
+
+When any quote is not found, the step completes with a warning that names each one: its field, the quote's first 80 characters, and the offsets of its nearest match; a value with no quote reads `no quote given`. It prints the quote as the model gave it, cut at 80 characters, and offsets; it never prints text it read from the document. It names ten at most, then `and N more`:
+
+```text
+Quote check: 1 of 2 values not found in 'fetch_document.text': payment — "the rent is paid quarterly" (nearest match at 28–42).
+```
+
+To stop the run when a quote is missing, follow the check with a guard on `all_found`. A whole workflow: the document's text comes in the run's params, the agent extracts the values, the check reads both, and the guard stops the run:
+
+```yaml
+id: lease-quotes
+name: Lease quotes
+version: 1
+params_schema:
+  type: object
+  required: [text]
+  properties:
+    text: { type: string }
+steps:
+  fetch_document:
+    description: Take the document's text from the run's params
+    execution: auto
+  extract_fields:
+    description: Extract each value with the quote that supports it
+    execution: agent
+    depends_on: [fetch_document]
+    prompt: |
+      Extract each value from the document below, with its field name and the quote it comes
+      from. Copy the quote character for character as one contiguous span, or as two spans joined
+      by …, the second starting where a sentence or clause of the document starts.
+
+      {{ context.resources.fetch_document.text }}
+    input_schema:
+      type: object
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items:
+            type: object
+            required: [field, value, quote]
+            properties:
+              field: { type: string }
+              value: { type: string }
+              quote: { type: string }
+  quote_check:
+    description: Check each value's quote against the document
+    execution: auto
+    handler: check_quotes
+    depends_on: [fetch_document, extract_fields]
+    config:
+      source_step: fetch_document
+      candidates_step: extract_fields
+      candidates_field: fields
+  stop_if_not_found:
+    description: Stop when a quote is not in the document
+    execution: guard
+    depends_on: [quote_check]
+    abort_unless: ['quote_check.all_found']
+    abort_message: A quote is not in the document; check the values against the source.
+```
+
+The guard needs `depends_on: [quote_check]`. Without it the guard is checked when the run starts, before the check has an output, and the run ends `failed` with a resolution error instead of `aborted`. With it, the run ends `aborted` and the check's record is kept. Register it with `realm workflow register <file>`.
+
+The step checks quotes, not meaning. A value whose quote is in the document may still be wrong: the quote can say `4.5%` while the value says `5%`. A model-based check, such as Azure AI Content Safety's groundedness detection, can catch that; this step cannot. Nor does it know whether a later part of the document, such as a deed of variation, changed the clause it quotes.
+
+Ask the model for one contiguous span copied character for character, or two spans joined by `…`; each span after the first starts where a sentence or clause of the document starts, or at a new line after a finished sentence, a finished clause or a blank line; after a full stop, a sentence starts with a capital letter.
+
+The per-value record is the step's output: read it afterwards with `realm run export <run-id>`, which writes the whole run. `get_run_state` does not carry a step's output, and `realm run inspect` prints the step's output cut at 120 characters and its warning whole, on the `Warn:` line.
 
 ## Helper functions
 
-`@sensigo/realm` exports 5 functions for use inside handlers. The list comes from the package's exports.
+`@sensigo/realm` exports 6 functions for use inside handlers. The list comes from the package's exports.
 
 ```js
 import {
@@ -349,6 +518,7 @@ import {
   partitionBySubstring,
   countResults,
   compareStrings,
+  locateQuote,
 } from '@sensigo/realm';
 ```
 
@@ -400,6 +570,24 @@ Splits a list of objects in two. An object is `accepted` if its `quoteField` is 
 | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `partitionBySubstring(candidates, 'quote', 'Payment is due in 30 days.')` | `{"accepted":[{"quote":"due in 30 days"}],"rejected":[{"quote":"due in 60 days"},{"quote":30},{"other":"x"},{"quote":"payment"}]}` |
 | `partitionBySubstring([{ quote: '' }], 'quote', 'abc')`                   | `{"accepted":[{"quote":""}],"rejected":[]}`                                                                                        |
+
+### `locateQuote(quote, source, options)`
+
+Finds `quote` in `source` and says how, as `check_quotes` does for each value; it is the one rule that handler uses. It returns `{ state, parts, occurrences, nearest? }`, with the offsets into `source`. The first rule that holds wins:
+
+1. `exact`: `quote` is a substring of `source`, starting and ending at word and number edges.
+2. `reformatted`: their canonical forms match (below).
+3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`) or a line. A line counts only after a blank line, or a line that ends a sentence, a clause or a table row (`|`); a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark is skipped only at such a line start, and a clause number only before a capital letter or a quotation mark. After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or a quotation mark. The piece before a skip may end mid-sentence. A quote with no break is never stitched.
+4. `stitched_out_of_order`: the same, with the parts in another order.
+5. `not_found`: otherwise, with `nearest` when a piece of the quote holding a whole word is in `source`; it is absent when no whole word of the quote is found.
+
+The canonical form is the text after Unicode NFKC normalisation, in lower case, with every dash and hyphen read as `-` (two hyphens outside the Basic Multilingual Plane excepted; a soft hyphen is not a dash: it is invisible, and the literal match reads past it), every punctuation mark and quotation mark dropped and spaces collapsed, keeping letters, digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits. A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands. An empty `source`, or a `quote` with no letter or digit, is `not_found` with no parts.
+
+| Call                                                  | Returns                                                                            |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `locateQuote('due in 30 days', resources.fetch.text)` | `{"state":"exact","parts":[{"start":11,"end":25}],"occurrences":1}`                |
+| `locateQuote('PAYMENT is due', resources.fetch.text)` | `{"state":"reformatted","parts":[{"start":0,"end":14}],"occurrences":1}`           |
+| `locateQuote('due in 60 days', resources.fetch.text)` | `{"state":"not_found","parts":[],"occurrences":0,"nearest":{"start":11,"end":17}}` |
 
 ### `countResults(accepted, rejected)`
 

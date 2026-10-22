@@ -8,6 +8,36 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **`check_quotes`: a built-in handler that checks each extracted value's quote against the source
+  document (issue #760).** It records, per value, how the quote was found — `exact`,
+  `reformatted`, `stitched`, `stitched_out_of_order`, `not_found` or `unquoted` — with offsets into
+  the document, and counts them in `by_state` and `all_found`. When a quote is not found, the step
+  completes with a warning naming each one by field and nearest offsets; it prints the quote as
+  the model gave it, cut at 80 characters, and offsets, never text it read from the document. A
+  missing quote never stops the run; a guard on its `all_found`, with `depends_on` on the check,
+  does. Registered in `createDefaultRegistry()`.
+- **`locateQuote`, the sixth helper `@sensigo/realm` exports for handlers (issue #760).** The rule
+  `check_quotes` uses, for a handler of your own. A quote may skip document text only where it
+  breaks (at `…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation
+  mark or a line break), and only to where the document starts a sentence, a clause or a line. A
+  line counts only after a blank line, or a line that ends a sentence, a clause or a table row,
+  so text whose lines break inside sentences is read correctly; a clause number or a list mark is
+  skipped only at such a line start, and after a full stop the next piece must begin with a
+  capital letter or a quotation mark. The part before a skip may still end mid-sentence, so a
+  clause can be joined to a later sentence and read `stitched`.
+  Whole sentences quoted from far apart read `stitched` (`stitched_out_of_order` when reversed). A
+  number written in digits is one unit: a digit never matches inside a longer number or next to a
+  letter, and a quote never starts or ends on a number's separator or beside a group of
+  thousands. A sign belongs to its number. A number written in words is matched as words.
+  Mathematical signs, primes, ballot boxes and check marks, superscripts and fractions are kept,
+  and every dash and hyphen reads as `-` (two hyphens outside the Basic Multilingual Plane
+  excepted); a soft hyphen is not a dash, and the literal match reads past it and every other
+  invisible character. A quote's own leading or trailing space never counts as an edge. A quote
+  that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`.
+- **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
+  every control character written out. Core exports `controlEscape`, the one spelling of a control
+  character a terminal line shows.
+
 - **`error_count`: the total number of problems a refusal found (issue #759).** On the MCP
   reply's `error_details` for `VALIDATION_INPUT_SCHEMA` and `VALIDATION_OUTPUT_SCHEMA`, beside the
   first 10 `errors`; on each record `realm run attempts` reads; and as `last_error_count` in a
@@ -224,6 +254,9 @@ fields? }`: type words only, never a value). Core exports `isRunRecordShape`, th
   `realm run list --stuck` labels it `<step>=cannot_go_on(<check>) (realm run inspect <run-id>)`.
 
 ### Changed
+
+- **`ValidateVerbatimQuotesHandler`, never registered or exported, is removed (issue #760);** the
+  handlers reference points to `check_quotes`.
 
 - **`realm run abandon` at a gate whose workflow cannot be read names the repair (issue #819).** The
   run is still refused, as every run waiting at a gate is; where its answer line would name an
