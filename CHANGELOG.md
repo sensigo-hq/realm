@@ -30,16 +30,19 @@ All notable changes to this project are documented here.
   joined to a later sentence and read `stitched`. Whole sentences quoted from far apart read
   `stitched` (`stitched_out_of_order` when reversed). A number written in digits is one unit: a
   digit never matches inside a longer number or next to a letter, and a quote never starts or ends
-  on a number's separator or beside a group of thousands. A currency or mathematical sign belongs to its number. A number
+  on a number's separator or beside a group of thousands. A currency or mathematical sign, or a dash, written right before a
+  number belongs to it. A number
   written in words is matched as words. Mathematical signs, primes, ballot boxes and check marks,
   superscripts and fractions are kept, and every dash and hyphen reads as `-` (two hyphens outside
   the Basic Multilingual Plane excepted); a soft hyphen is not a dash: it, like every other
   invisible format character (Unicode's `Cf`) but U+FEFF (which the canonical form reads as a
   space), makes no word edge. A quote's own leading or trailing space never counts as an edge. A
   quote that ends a sentence where the document's goes on is marked `cut_short`, with
-  `cut_short_at`; an `exact` quote is marked at its own last stop when the document goes on with a
-  lowercase letter or a digit, and every other state at each sentence end inside the quote where the
-  document has no stop and goes on. The handlers reference lists what a crafted quote can still get
+  `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the
+  document goes on, past the closing marks `"` `'` `)` `]` `}` `»` `’` `”`, spaces and tabs, with a
+  lowercase letter or a digit, and every other state at each `.`, `!` or `?` inside the quote that
+  whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an
+  initial, where the document has no stop and goes on. The handlers reference lists what a crafted quote can still get
   read as found, and what an honest quote is still refused ("What `check_quotes` does not catch").
 - **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
   every control character written out. Core exports `controlEscape`, the one spelling of a control

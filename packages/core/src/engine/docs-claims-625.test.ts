@@ -1860,7 +1860,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     // Correction 2 (03, N8): each example is run below (`numbers`, `signs`, `words`).
     claimOn(
       HANDLERS,
-      'A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number\'s separator or beside a group of thousands. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, `18` and `18.` not in `18.5`, `1 200` not in `1 200 000`, and `75%` not in `.75%`. A currency or mathematical sign belongs to its number (the exceptions are listed under "What `check_quotes` does not catch"): `48,000` is not found in `€48,000`, and `5` not in `-5`. A number written in words is matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
+      'A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number\'s separator or beside a group of thousands. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, `18` and `18.` not in `18.5`, `1 200` not in `1 200 000`, and `75%` not in `.75%`. A currency or mathematical sign, or a dash, written right before a number belongs to it (the exceptions are listed under "What `check_quotes` does not catch"): `48,000` is not found in `€48,000`, and `5` not in `-5`. A number written in words is matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
     );
     claimOn(
       HANDLERS,
@@ -2032,7 +2032,7 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     );
     claimOn(
       CL,
-      "A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number's separator or beside a group of thousands. A currency or mathematical sign belongs to its number. A number written in words is matched as words.",
+      "A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number's separator or beside a group of thousands. A currency or mathematical sign, or a dash, written right before a number belongs to it. A number written in words is matched as words.",
     );
     claimOn(
       CL,
@@ -2107,7 +2107,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A clause joined to a later sentence (`stitched`) or an earlier one (`stitched_out_of_order`): the piece before a skip may end mid-sentence.',
       'A number written in words, matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
       'A true quote that stops before its sentence ends is found. It is marked `cut_short` only at a `.`, `!` or `?` the quote itself carries.',
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and a single capital letter's initial), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and a single capital letter's initial (one letter of the Basic Multilingual Plane that has a lowercase form)), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
       'A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).',
       // The follow-up (§2): which enclosed letters read as letters, run by its own cell.
       'Combining marks read as the letters they carry (`n̶o̶t̶` reads `not`), and so do circled, squared and parenthesised letters (`ⓃⓄⓉ` reads `not`). Negative squared and negative circled letters (`🅽🅾🆃`, `🅝🅞🅣`) and regional indicators are set aside like other symbols, so a quote reads found whether it carries them or leaves them out.',
@@ -2387,7 +2387,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it('§2 can still read found: an invisible format character inside a number, or between a sign and its number', () => {
     claimOn(
       HANDLERS,
-      'An invisible format character (`Cf`) inside a number, between a leading decimal point and its digits, or between a minus sign, hyphen or dash and its number (every dash reads as `-`), so part of the number reads found: `12` in a `12500` with a soft hyphen after `12`, `75%` in a `.75%` with a zero-width space after the `.`, and `5` in a `-5` with a zero-width space after the `-`. U+FEFF reads as a space, so `12` is not found in `12`, U+FEFF, `500`, which reads as a group of thousands. After `€`, `$`, `+`, `±` or `<` the number is not found.',
+      'An invisible format character (`Cf`) inside a number, between a leading decimal point and its digits, or between a minus sign, hyphen or dash and its number (every dash in the Basic Multilingual Plane reads as `-`), so part of the number reads found: `12` in a `12500` with a soft hyphen after `12`, `75%` in a `.75%` with a zero-width space after the `.`, and `5` in a `-5` with a zero-width space after the `-`. U+FEFF reads as a space, so `12` is not found in `12`, U+FEFF, `500`, which reads as a group of thousands. After `€`, `$`, `+`, `±` or `<` the number is not found, except across U+FEFF, which reads as a space: `48,000` is found in `€`, U+FEFF, `48,000`.',
     );
     // (a) red when the gap closes, or the plain number stops being one unit; (b) prints the states.
     expect([
@@ -2442,7 +2442,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     // #855's correction (§4): `:396`'s `U.S.` sentence merged into the abbreviation bullet.
     claimOn(
       HANDLERS,
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and a single capital letter's initial), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and a single capital letter's initial (one letter of the Basic Multilingual Plane that has a lowercase form)), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
     );
     const capital = 'Capital rules apply to the Tenant at all times';
     // (a) red when the gap closes, or an initial starts ending a sentence; (b) prints the states.
@@ -2457,7 +2457,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     // #855's correction (§5, M2): the space sentence names the four; every `Zs` runs in its own cell.
     claimOn(
       HANDLERS,
-      'A group of thousands spaced with any space but a plain space, a no-break space (U+00A0), a thin space (U+2009) or a narrow no-break space (U+202F) — such as U+2007, U+2002 or U+3000: `1 200` is found in `1 200 000` written with one of them.',
+      'A group of thousands spaced with any space but a plain space, a no-break space (U+00A0), a thin space (U+2009) or a narrow no-break space (U+202F) — such as U+2007, U+2002 or U+3000: `1 200` written with the same space is found in `1 200 000` written with one of them.',
     );
     claimOn(
       HANDLERS,
@@ -2518,14 +2518,14 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     });
   });
 
-  it("§2 `cut_short`: an `exact` quote is marked at its own last stop when the document goes on with a lowercase letter or a digit, not when the quote carries a space after it (every member: #855's correction §1)", () => {
+  it("§2 `cut_short`: an `exact` quote is marked when its last character is its stop and the document goes on with a lowercase letter or a digit, not when the quote carries a space after it (every member: #855's correction §1)", () => {
     claimOn(
       HANDLERS,
-      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past closing marks, spaces and tabs, goes on with a lowercase letter or a digit (`approx. 412`); a no-break space or a line break in the document there, or a space, tab or line break the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each sentence end inside the quote where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, spaces and tabs, goes on with a lowercase letter or a digit (`approx. 412`); a no-break space or a line break in the document there, or a space, tab or line break the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
     );
     claimOn(
       CL,
-      'A quote that ends a sentence where the document\'s goes on is marked `cut_short`, with `cut_short_at`; an `exact` quote is marked at its own last stop when the document goes on with a lowercase letter or a digit, and every other state at each sentence end inside the quote where the document has no stop and goes on. The handlers reference lists what a crafted quote can still get read as found, and what an honest quote is still refused ("What `check_quotes` does not catch").',
+      "A quote that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the document goes on, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, spaces and tabs, with a lowercase letter or a digit, and every other state at each `.`, `!` or `?` inside the quote that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and goes on. The handlers reference lists what a crafted quote can still get read as found, and what an honest quote is still refused (\"What `check_quotes` does not catch\").",
     );
     const doc = 'The area is not less than approx. 412 square metres.';
     const marked = (q: string) => {
@@ -2546,7 +2546,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it("§2 honest refusals: a skip past a clause number onto a lowercase first word; quoting the label too reads stitched after `:` (every member: #855's correction §2)", () => {
     claimOn(
       HANDLERS,
-      'A skip past a clause number onto a lowercase first word (`… keep the Premises` after `(b)`); quoting the label as well reads `stitched` after a line that ends with `;` or `:`, or after a blank line; after a sentence end, only a bracketed label does (`(b) keep…`), since `(` is an opening mark, and a numbered one needs a capital letter or an opening mark after it (`2. Send…`). `b.` and `a)` are not read as labels.',
+      'A skip past a clause number onto a lowercase first word (`… keep the Premises` after `(b)`); quoting the label as well reads `stitched` after a line that ends with `;` or `:`, or after a blank line; after a line that ends a sentence, only a bracketed label does (`(b) keep…`), since `(` is an opening mark, and a numbered one needs a capital letter or an opening mark after it (`2. Send…`). `b.` and `a)` are not read as labels.',
     );
     const item = 'keep the Premises in good and substantial repair';
     // (a) red when the skip past the label reads found (the bullet would then be false), or the label
@@ -2561,7 +2561,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     // #855's correction (§5, M3): two bullets now; the header's every form runs in its own cell.
     claimOn(
       HANDLERS,
-      'A page header crossed without `…`, joined with a space; a quote that keeps the line break, or skips the header with `…`, reads `stitched` only when the header sits between blank lines or ends with `;` or `:`.',
+      'A page header crossed without `…`, joined with a space; a quote that keeps the line break, or skips the header with `…`, reads `stitched` only when a blank line follows the header, or the header ends with `;`, `:` or `|`, or ends a sentence and the words after it open with a capital letter or an opening mark.',
     );
     claimOn(
       HANDLERS,
@@ -2662,14 +2662,29 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
 });
 
 // #855's correction (MA 3, 2026-10-22): a sentence that names a set is true only for the members its
-// cell runs. Each cell enumerates its members from the code (the constant, the regex or the branch
-// named beside it), runs every member as its own row, and when red prints only the rows that differ:
-// the member (its code point, or a short label) and the state it read. Every document is fictional.
+// cell runs. #855's second correction (the owner's option A, 2026-10-22): every cell iterates its
+// WHOLE group — Unicode's own property walked over the code points the sentence covers (the BMP
+// unless it says every plane), or the code's own list (exported, or copied with its file:line and run
+// over the whole range) — asserts that the list it iterates is the whole group (computed again
+// inside the assertion), asserts each member's state and never a count, and when red prints only the
+// rows that differ: the member as `U+XXXX` (or a short label) and the state it read. A big group is
+// split into `it.each` rows along one axis, so no single `it` nears the 5 s `testTimeout`. Every
+// document is fictional.
 describe("#855's correction: each sentence's members", () => {
   const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const CL = 'CHANGELOG.md';
   const raw = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  // A table cell writes the list mark `|` as `\|`; the reader sees `|`.
+  const flatten = (t: string) => t.replace(/\\\|/g, '|').replace(/\s+/g, ' ');
+  /** (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+  const claimOn = (p: string, sentence: string): void => {
+    expect(flatten(raw(p)), `${p} no longer says: ${sentence}`).toContain(flatten(sentence));
+  };
   const ch = String.fromCodePoint;
+  const cp = (c: string) => c.codePointAt(0)!;
   const hex = (c: number) => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`;
+  const BMP = 0xffff;
   /** Every code point from `from` to `to` (surrogates skipped) that `re` matches. */
   const codePoints = (re: RegExp, from = 0, to = 0x10ffff): number[] => {
     const out: number[] = [];
@@ -2678,6 +2693,17 @@ describe("#855's correction: each sentence's members", () => {
       if (re.test(ch(c))) out.push(c);
     }
     return out;
+  };
+  /** (a) red when `list` leaves out a member of the group `re` names over `from`–`to`, or holds one
+   *  outside it; (b) prints those members as `U+XXXX`. The group is computed again here. */
+  const whole = (list: readonly number[], re: RegExp, from = 0, to = 0x10ffff): void => {
+    const group = codePoints(re, from, to);
+    const listed = new Set(list);
+    const inGroup = new Set(group);
+    expect({
+      missing: group.filter((c) => !listed.has(c)).map(hex),
+      extra: list.filter((c) => !inGroup.has(c)).map(hex),
+    }).toEqual({ missing: [], extra: [] });
   };
   /** A located quote's state, with `+cut_short` when it is marked. */
   const read = (quote: string, source: string): string => {
@@ -2691,13 +2717,29 @@ describe("#855's correction: each sentence's members", () => {
       .filter(([, got, want]) => got !== want)
       .map(([member, got, want]) => `${member}: ${got} (want ${want})`);
   const F = 'The Landlord shall insure the Building';
-  /** `\p{Cf}`, the class `FORMAT` (`locate-quote.ts`) reads: 170 code points (the §3 dash cell's
-   *  row counts assert the 170 and the 28). */
+  /** `\p{Cf}`, the class `FORMAT` (`locate-quote.ts:304`) reads, every plane. */
   const CF = codePoints(/^\p{Cf}$/u);
-  /** `isDash`'s 28: every BMP `\p{Pd}`, U+2212, U+2796, U+02D7. */
-  const DASHES = [...codePoints(/^\p{Pd}$/u, 0, 0xffff), 0x2212, 0x2796, 0x02d7];
+  /** `isDash` (`locate-quote.ts:98-101`): every BMP `\p{Pd}`, and these three, copied. */
+  const DASH_ADDED = [0x2212, 0x2796, 0x02d7];
+  const DASHES = [...codePoints(/^\p{Pd}$/u, 0, BMP), ...DASH_ADDED];
+  /** U+207B and U+208B read as a minus: NFKC makes them U+2212. */
+  const NFKC_MINUS = [0x207b, 0x208b];
+  /** Every BMP `\p{Sc}` and `\p{Sm}`: `isNumberSymbol`'s `CURRENCY` and `MATH` (`:157`). */
+  const SIGNS = codePoints(/^[\p{Sc}\p{Sm}]$/u, 0, BMP);
+  /** The minus signs among `SIGNS`, which the check reads as a dash. */
+  const MINUS = [0x2212, ...NFKC_MINUS];
+  /** Every `\s` (`SPACE`, `locate-quote.ts:140`), every plane. */
+  const WS = codePoints(/^\s$/u);
+  /** `START_OPENING` (`locate-quote.ts:660`), copied: the code does not export it. */
+  const OPENING = ['"', '“', '„', '«', "'", '‘', '(', '['].map(cp);
+  /** The punctuation the opening marks are told apart from: every BMP `Ps`, `Pi`, `Pf`, `Pe`, and
+   *  the two plain quotation marks. */
+  const MARK_GROUP = /^[\p{Ps}\p{Pi}\p{Pf}\p{Pe}"']$/u;
+  const MARKS = codePoints(MARK_GROUP, 0, BMP);
+  /** `CAPITAL` (`locate-quote.ts:665`): every BMP `\p{Lu}` and `\p{Lt}`. */
+  const CAPITALS = codePoints(/^[\p{Lu}\p{Lt}]$/u, 0, BMP);
 
-  it('§1 `cut_short`: every member of the two tests, each its own row', () => {
+  it('§1 `cut_short`: every member of both tests, each its own row', () => {
     const approx = 'The area is not less than approx.';
     const at = (rest: string) => `The area is not less than approx.${rest}`;
     const rent = 'The Tenant shall pay the Rent';
@@ -2854,67 +2896,613 @@ describe("#855's correction: each sentence's members", () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('§2 a label quoted with the skip: 9 labels × 4 lines before, the skip past them, and a capital after a numbered one', () => {
-    const item = 'keep the Premises in good and substantial repair';
-    const cap = 'Keep the Premises in good and substantial repair';
-    const doc = (before: string, label: string, it = item) =>
-      `${F} for its full reinstatement cost${before}${label} ${it} at the end of each year.`;
-    const labels = ['(b)', '(iv)', '(2)', '2.', '12.', '2)', '6.2', 'b.', 'a)'];
-    const bracketed = new Set(['(b)', '(iv)', '(2)']);
-    const lines = { '.⏎': '.\n', ':⏎': ':\n', ';⏎': ';\n', 'blank line': '.\n\n' };
+  // ─── #855's second correction: the fifteen ─────────────────────────────────────────────────────
+
+  it("B1 the CHANGELOG's `exact` sentence: marked only when the quote's last character is its `.`, `!` or `?`", () => {
+    // The sentence is claimed by the re-pinned "§2 `cut_short` …" cell (#760 follow-up).
+    const set = (stop: string) => `The fee is set${stop}`;
+    const rows: Row[] = [
+      // F760-855CR-01: a quote whose last character is not its stop is not marked
+      [
+        'a space after the stop',
+        read('The fee is approx. ', 'The fee is approx. 412 euro.'),
+        'exact',
+      ],
+      [
+        'a closing `"` after the stop',
+        read('The fee is approx."', 'The fee is approx." and 412 euro.'),
+        'exact',
+      ],
+      ...['.', '!', '?'].flatMap((stop): Row[] => [
+        [
+          `${stop} then a lowercase letter`,
+          read(set(stop), `${set(stop)} and paid monthly.`),
+          'exact+cut_short',
+        ],
+        [
+          `${stop} then a digit`,
+          read(set(stop), `${set(stop)} 412 euro a month.`),
+          'exact+cut_short',
+        ],
+      ]),
+    ];
+    // (1) red when an `exact` quote whose last character is not its stop is marked, or a stop the
+    //     sentence names stops marking; (2) prints each differing row's label and state.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  const LOWER = codePoints(/^\p{Ll}$/u, 0, BMP);
+  const DIGITS = codePoints(/^\p{Nd}$/u, 0, BMP);
+
+  it('B1 the groups after the stop: every BMP `\\p{Ll}` and `\\p{Nd}` (`LOWERCASE`, `isDigit`, `:1023`)', () => {
+    // (1) red when a member is left out of its row's iteration; (2) prints the members missing.
+    whole(LOWER, /^\p{Ll}$/u, 0, BMP);
+    whole(DIGITS, /^\p{Nd}$/u, 0, BMP);
+  });
+
+  it.each([
+    ['a lowercase letter, `\\p{Ll}`', LOWER],
+    ['a digit, `\\p{Nd}`', DIGITS],
+  ] as const)('B1 an `exact` quote is marked when the document goes on with %s', (_, group) => {
+    const approx = 'The area is not less than approx.';
+    const rows = group.map((c): Row => [
+      hex(c),
+      read(approx, `${approx} ${ch(c)}12 square metres.`),
+      'exact+cut_short',
+    ]);
+    // (1) red when one member does not mark the quote; (2) prints each differing code point and state.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('B2 the groups: every `Cf`; every BMP `Sc` and `Sm`, the sentence’s signs among them; and its example, `48,000` in `€`, U+FEFF, `48,000`', () => {
+    // (1) red when a member is left out of an iteration, a named sign is not in its group, or the
+    //     example is not found; (2) prints the members missing, the signs outside and the state.
+    whole(CF, /^\p{Cf}$/u);
+    whole(SIGNS, /^[\p{Sc}\p{Sm}]$/u, 0, BMP);
+    expect({
+      outside: ['€', '$', '+', '±', '<'].filter((s) => !SIGNS.includes(cp(s))),
+      example: read('48,000 a year', `The rent is €${ch(0xfeff)}48,000 a year.`),
+    }).toEqual({ outside: [], example: 'reformatted' });
+  });
+
+  it.each(CF.map((x) => [hex(x), x] as const))(
+    'B2 %s between every BMP `Sc` or `Sm` and `5`: found across U+FEFF, and after a minus sign; otherwise not',
+    (_, x) => {
+      const rows = SIGNS.map((s): Row => [
+        hex(s),
+        read('5 degrees', `The reading is ${ch(s)}${ch(x)}5 degrees today.`),
+        x === 0xfeff || MINUS.includes(s) ? 'reformatted' : 'not_found',
+      ]);
+      // (1) red when U+FEFF stops reading as a space, a minus sign stops reading as a dash, or another
+      //     sign stops belonging to its number across this `Cf`; (2) prints each differing sign's code
+      //     point and state.
+      expect(misses(rows)).toEqual([]);
+    },
+  );
+
+  it('B3 the groups after a header that ends a sentence: every BMP capital (`CAPITAL`), and the opening marks against every other BMP `Ps` `Pi` `Pf` `Pe`', () => {
+    // (1) red when a member is left out of an iteration; (2) prints the members missing.
+    whole(CAPITALS, /^[\p{Lu}\p{Lt}]$/u, 0, BMP);
+    whole(MARKS, MARK_GROUP, 0, BMP);
+  });
+
+  it('B3 a page header: the line break kept, or `…`, reads `stitched` only when a blank line follows it, or it ends with `;`, `:` or `|`, or ends a sentence before a capital letter or an opening mark', () => {
+    const A = `${F} for its full reinstatement cost. The Tenant shall`;
+    const rest = 'not be responsible for repairs to the structure';
+    const H = 'Lease of Office Premises — page 4';
+    const headers: Record<string, readonly [between: string, after: string, kept: string]> = {
+      'between blank lines': [`\n\n${H}\n\n`, rest, 'stitched'],
+      'a blank line after it only': [`\n${H}\n\n`, rest, 'stitched'],
+      'ending with `:`': [`\n${H}:\n`, rest, 'stitched'],
+      'ending with `;`': [`\n${H};\n`, rest, 'stitched'],
+      'ending with `|`': [`\n| ${H} |\n`, rest, 'stitched'],
+      'ending a sentence, a capital next': [
+        `\n${H}.\n`,
+        'The Landlord shall be responsible for repairs to the structure',
+        'stitched',
+      ],
+      'ending a sentence, an opening mark next': [`\n${H}.\n`, `(${rest}`, 'stitched'],
+      'between single line breaks': [`\n${H}\n`, rest, 'not_found'],
+      'ending a sentence, a lowercase word next': [
+        '\nLease of Office Premises. Page 4.\n',
+        rest,
+        'not_found',
+      ],
+    };
+    const rows: Row[] = Object.entries(headers).flatMap(([name, [between, after, kept]]): Row[] => {
+      const doc = `${A}${between}${after}.`;
+      return [
+        [`${name}, joined with a space`, read(`${A} ${after}`, doc), 'not_found'],
+        [`${name}, the line break kept`, read(`${A}\n${after}`, doc), kept],
+        [`${name}, skipped with …`, read(`${A} … ${after}`, doc), kept],
+      ];
+    });
+    // (1) red when `|` stops ending a line that counts (`lineStart`), or one of the other endings
+    //     moves; (2) prints each differing row's label and state.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it.each([
+    ['`.`', '.'],
+    ['`!`', '!'],
+    ['`?`', '?'],
+  ] as const)(
+    'B3 a header ending with %s: every BMP capital, and each opening mark, next reads `stitched`; every other mark, and a lowercase word, not',
+    (_, stop) => {
+      const A = 'The Tenant shall keep the Premises in good and substantial repair';
+      const tail = 'he Landlord shall insure the building at its own cost';
+      const header = `Page 3 of 9${stop}\n`;
+      const both = (B: string): string => {
+        const doc = `${A}\n${header}${B} and expense.`;
+        return `${read(`${A}\n${B}`, doc)}/${read(`${A} … ${B}`, doc)}`;
+      };
+      const rows: Row[] = [
+        ...CAPITALS.map((c): Row => [hex(c), both(`${ch(c)}${tail}`), 'stitched/stitched']),
+        ...MARKS.map((m): Row => [
+          hex(m),
+          both(`${ch(m)}t${tail}`),
+          OPENING.includes(m) ? 'stitched/stitched' : 'not_found/not_found',
+        ]),
+        ['a lowercase word', both(`t${tail}`), 'not_found/not_found'],
+      ];
+      // (1) red when a capital or an opening mark stops opening a sentence (`isSentenceOpening`), or
+      //     another mark starts to; (2) prints each differing code point and the two states.
+      expect(misses(rows)).toEqual([]);
+    },
+  );
+
+  it('S1 every dash in the Basic Multilingual Plane reads as `-`: every BMP `\\p{Pd}`, `isDash`’s additions and the NFKC minus signs; the dashes outside it do not', () => {
+    const outside = codePoints(/^\p{Pd}$/u, 0x10000);
+    whole(DASHES.slice(0, -DASH_ADDED.length), /^\p{Pd}$/u, 0, BMP);
+    whole(outside, /^\p{Pd}$/u, 0x10000);
+    const minus5 = (d: number) => read('-5 degrees', `The reading is ${ch(d)}5 degrees today.`);
+    const rows: Row[] = [
+      ...[...DASHES, ...NFKC_MINUS].map((d): Row => [
+        hex(d),
+        minus5(d),
+        d === 0x2d ? 'exact' : 'reformatted',
+      ]),
+      ...outside.map((d): Row => [hex(d), minus5(d), 'not_found']),
+    ];
+    // (1) red when a member is left out of an iteration, the copied additions differ from the
+    //     iteration's, a BMP dash stops reading as `-`, or one outside the BMP starts to; (2) prints
+    //     the members missing and each differing code point and state.
+    expect({
+      added: DASHES.slice(-DASH_ADDED.length).map(hex),
+      named: [0x10d6e, 0x10ead].filter((d) => !outside.includes(d)).map(hex),
+      misses: misses(rows),
+    }).toEqual({ added: DASH_ADDED.map(hex), named: [], misses: [] });
+  });
+
+  it('S2 every `\\p{Zs}` space in a group of thousands: `1 200` written with the same space is found unless it is one of the group spaces; written with a plain space it is not found', () => {
+    const spaces = codePoints(/^\p{Zs}$/u);
+    whole(spaces, /^\p{Zs}$/u);
+    /** `GROUP_SPACES` (`locate-quote.ts:134`), copied; its members are read over every `Zs` below. */
+    const GROUP = [0x20, 0xa0, 0x2009, 0x202f];
+    const doc = (s: number) => `the rent is 1${ch(s)}200${ch(s)}000 euro`;
+    const rows: Row[] = spaces.flatMap((s): Row[] => [
+      [
+        `${hex(s)}, the same space`,
+        read(`the rent is 1${ch(s)}200`, doc(s)),
+        GROUP.includes(s) ? 'not_found' : 'exact',
+      ],
+      [`${hex(s)}, a plain space`, read('the rent is 1 200', doc(s)), 'not_found'],
+    ]);
+    // (1) red when a member is left out of the iteration, U+2009 leaves `GROUP_SPACES` (its row reads
+    //     found), or a plain-space quote is found in a document grouped otherwise; (2) prints the
+    //     members missing and each differing row.
+    expect({
+      named: [0x2007, 0x2002, 0x3000]
+        .filter((s) => !spaces.includes(s) || GROUP.includes(s))
+        .map(hex),
+      misses: misses(rows),
+    }).toEqual({ named: [], misses: [] });
+  });
+
+  it('S3 a sign or a dash written right before a number belongs to it: every BMP `Sc` and `Sm` and every dash `isDash` reads, before `5`; a dash after `5` does not; a sign outside the BMP does not', () => {
+    whole(SIGNS, /^[\p{Sc}\p{Sm}]$/u, 0, BMP);
+    const astral = codePoints(/^[\p{Sc}\p{Sm}\p{Pd}]$/u, 0x10000);
+    whole(astral, /^[\p{Sc}\p{Sm}\p{Pd}]$/u, 0x10000);
+    const before5 = (between: string) =>
+      read('5 degrees', `The reading is ${between}5 degrees today.`);
+    const rows: Row[] = [
+      ...[...SIGNS, ...DASHES].map((s): Row => [`${hex(s)} before 5`, before5(ch(s)), 'not_found']),
+      // F760-DTC2A-05: written after the number, a dash is not right before it
+      ...DASHES.map((d): Row => [
+        `${hex(d)} after 5`,
+        read('reads 5', `The gauge reads 5${ch(d)} today.`),
+        'exact',
+      ]),
+      // `isNumberSymbol` reads one UTF-16 unit, so a sign outside the BMP is not a sign (#845).
+      ...astral.map((s): Row => [`${hex(s)} before 5`, before5(ch(s)), 'exact']),
+    ];
+    // (1) red when a member is left out of an iteration, currency signs leave `isNumberSymbol` (every
+    //     `Sc` row), a dash after the number starts to bind, or a sign outside the BMP starts to;
+    //     (2) prints the members missing and each differing code point and state.
+    expect({
+      named: [0x1e2ff, 0x11fdd, 0x10d6e, 0x10ead].filter((s) => !astral.includes(s)).map(hex),
+      misses: misses(rows),
+    }).toEqual({ named: [], misses: [] });
+  });
+
+  it('S3 can still read found: a sign set apart from its number by a space (`48,000` in `€ 48,000`; U+FEFF reads as a space)', () => {
+    claimOn(
+      HANDLERS,
+      'A sign set apart from its number by a space (`48,000` in `€ 48,000`; U+FEFF reads as a space).',
+    );
+    const rent = (doc: string, quote = '48,000 a year') =>
+      read(quote, `The rent is ${doc} a year.`);
+    const rows: Row[] = [
+      ['€ 48,000', rent('€ 48,000'), 'exact'],
+      ['€ U+00A0 48,000', rent('€\u00a048,000'), 'exact'],
+      ['€ U+202F 48,000', rent('€\u202f48,000'), 'exact'],
+      ['€ U+FEFF 48,000', rent('€\ufeff48,000'), 'reformatted'],
+      ['48,000 €', read('48,000', 'The rent is 48,000 € a year.'), 'exact'],
+      ['€ 48.000', read('48.000', 'The rent is € 48.000 a year.'), 'exact'],
+    ];
+    // (1) red when a spaced sign starts to bind (the bullet would then be false); (2) prints each
+    //     differing row's label and state.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('S3 the group: every `\\s` (`SPACE`, `:140`), every plane', () => {
+    // (1) red when a member is left out of the iteration; (2) prints the members missing.
+    whole(WS, /^\s$/u);
+  });
+
+  it.each(WS.map((w) => [hex(w), w] as const))(
+    'S3 every BMP sign and every dash, then %s, then `5`: the number is found',
+    (_, w) => {
+      const rows = [...SIGNS, ...DASHES].map((s): Row => [
+        hex(s),
+        read('5', `The deposit is ${ch(s)}${ch(w)}5 of the rent.`),
+        w === 0xfeff ? 'reformatted' : 'exact',
+      ]);
+      // (1) red when a sign set apart by this space starts to bind; (2) prints each differing sign's
+      //     code point and state.
+      expect(misses(rows)).toEqual([]);
+    },
+  );
+
+  it('M1 past the closing marks `"` `\'` `)` `]` `}` `»` `’` `”`: an exact quote is marked past each of them, and past no other BMP `Ps` `Pi` `Pf` `Pe` or quotation mark', () => {
+    /** `CLOSING` (`locate-quote.ts:963`) less `.`, which `exactGoesOn` skips (`:1018`), copied. */
+    const CLOSERS = ['"', '”', '»', "'", '’', ')', ']', '}'].map(cp);
+    const printed = (p: string) => {
+      const t = flatten(raw(p));
+      const from = t.indexOf('past the closing marks ') + 'past the closing marks '.length;
+      return [...t.slice(from, t.indexOf(', spaces and tabs', from)).matchAll(/`([^`]+)`/g)]
+        .map((m) => cp(m[1]!))
+        .sort((a, b) => a - b);
+    };
+    whole(MARKS, MARK_GROUP, 0, BMP);
+    const rent = 'The Tenant shall pay the Rent';
+    const rows = MARKS.map((c): Row => [
+      hex(c),
+      read(`${rent}.`, `${rent}.${ch(c)} and more on demand.`),
+      CLOSERS.includes(c) ? 'exact+cut_short' : 'exact',
+    ]);
+    const sorted = [...CLOSERS].sort((a, b) => a - b).map(hex);
+    // (1) red when a member is left out of the iteration, `»` leaves `CLOSING` (its row reads
+    //     unmarked), or a page prints another list; (2) prints the lists and each differing row.
+    expect({
+      handlers: printed(HANDLERS).map(hex),
+      changelog: printed(CL).map(hex),
+      misses: misses(rows),
+    }).toEqual({ handlers: sorted, changelog: sorted, misses: [] });
+  });
+
+  it("M2 each `.`, `!` or `?` inside the quote that whitespace or the quote's end follows marks it, unless it ends an abbreviation on the check's list or an initial", () => {
+    whole(WS, /^\s$/u);
+    const doc = 'THE TENANT SHALL PAY THE RENT AND THE RATES ON THE USUAL QUARTER DAYS.';
+    const lease = (a: string) =>
+      `THE RENT IS SET OUT IN ${a.replace(/\./g, '').toUpperCase()} FOUR OF THE LEASE AND NOWHERE ELSE.`;
+    const abbreviation = (v: string, a: string) =>
+      read(`The rent is set out in ${v} four of the lease`, lease(a));
+    const rows: Row[] = [
+      ...['.', '!', '?'].flatMap((stop): Row[] => [
+        ...WS.map((w): Row => [
+          `${stop} then ${hex(w)}`,
+          read(`The Tenant shall pay the Rent${stop}${ch(w)}and the rates`, doc),
+          'reformatted+cut_short',
+        ]),
+        [
+          `${stop} at the quote's end`,
+          read(`The Tenant shall pay the Rent${stop}`, doc),
+          'reformatted+cut_short',
+        ],
+        [
+          `${stop} then \`"\``,
+          read(`The Tenant shall pay the Rent${stop}" and the rates`, doc),
+          'reformatted',
+        ],
+        [
+          `${stop} then \`)\``,
+          read(`The Tenant shall pay the Rent${stop}) and the rates`, doc),
+          'reformatted',
+        ],
+      ]),
+      ...NOT_SENTENCE_ENDS.flatMap((a): Row[] =>
+        [a, a.toUpperCase(), a.toLowerCase()].map((v): Row => [
+          v,
+          abbreviation(v, a),
+          'reformatted',
+        ]),
+      ),
+      // an initial: a single capital letter's (a lowercase `j.` is none, and ends a sentence)
+      ['J.', abbreviation('J.', 'J.'), 'reformatted'],
+      // off the list: each ends a sentence
+      ...['approx.', 'U.S.'].map((a): Row => [a, abbreviation(a, a), 'reformatted+cut_short']),
+    ];
+    // (1) red when a member is left out of the iteration, a `.` followed by a quotation mark starts to
+    //     end a sentence, or an entry or an initial ends one; (2) prints the members missing and each
+    //     differing row.
+    expect(misses(rows)).toEqual([]);
+  });
+
+  it('M3 a label quoted with the skip: every label × every line before it, the skip past it, and a capital or an opening mark after it; on the same line as a sentence end, `2. Send` is refused', () => {
+    const tail = 'keep the Premises in good and substantial repair';
+    const labels = [
+      '(b)',
+      '(iv)',
+      '(2)',
+      '2.',
+      '12.',
+      '2)',
+      '6.2',
+      'b.',
+      'a)',
+      '(B)',
+      '3.4.1',
+      '(abcd)',
+      '(abcde)',
+      'B.',
+      'A)',
+    ];
+    /** F760-855CR-09: the line before, and the first piece quoted from it. `free` lines end with
+     *  `;`, `:` or `|`, or are blank; `sentence` lines end a sentence; `same` is the sentence end on
+     *  the label's own line. */
+    const befores: Record<
+      string,
+      readonly [kind: 'free' | 'sentence' | 'same', before: string, first: string]
+    > = {
+      '.⏎': [
+        'sentence',
+        'The Landlord shall insure the building at its own cost and expense.\n',
+        'The Landlord shall insure the building',
+      ],
+      '!⏎': [
+        'sentence',
+        'The Landlord shall insure the building at its own cost and expense!\n',
+        'The Landlord shall insure the building',
+      ],
+      '?⏎': [
+        'sentence',
+        'Shall the Landlord insure the building at its own cost and expense?\n',
+        'Shall the Landlord insure the building',
+      ],
+      ':⏎': [
+        'free',
+        'The Tenant covenants with the Landlord as follows:\n',
+        'The Tenant covenants with the Landlord',
+      ],
+      ';⏎': [
+        'free',
+        'The Tenant shall pay the Rent on the usual quarter days;\n',
+        'The Tenant shall pay the Rent on the usual',
+      ],
+      'a blank line': [
+        'free',
+        'The Tenant shall pay the Rent on the usual quarter days\n\n',
+        'The Tenant shall pay the Rent on the usual',
+      ],
+      '|⏎': [
+        'free',
+        '| The Landlord shall insure the building at its own cost |\n',
+        'The Landlord shall insure the building',
+      ],
+      '. on the same line': [
+        'same',
+        'The Landlord shall insure the building at its own cost and expense. ',
+        'The Landlord shall insure the building',
+      ],
+    };
+    // The bullet's rule: a bracketed label opens with `(`, an opening mark; a label that opens with a
+    // capital letter passes the capital condition itself; a numbered label needs a capital or an
+    // opening mark after it at a line start; `b.` and `a)` are not labels.
+    const opens = (l: string) => l.startsWith('(') || /^[A-Z]/.test(l);
+    const numbered = (l: string) => /^\d/.test(l);
     const rows: Row[] = [];
-    for (const [name, before] of Object.entries(lines)) {
+    for (const [name, [kind, before, first]] of Object.entries(befores)) {
       for (const l of labels) {
-        // `clauseNumberBack`, `opensWithClauseNumber`, `START_OPENING`: after a sentence end only a
-        // bracketed label passes (`(` is an opening mark); after `:`, `;` or a blank line any line does.
-        const want = name === '.⏎' && !bracketed.has(l) ? 'not_found' : 'stitched';
-        rows.push([`${l} quoted after ${name}`, read(`${F} … ${l} ${item}`, doc(before, l)), want]);
+        const doc = (it: string) => `${before}${l} ${it} at all times.`;
+        const quoted = kind === 'free' || opens(l) ? 'stitched' : 'not_found';
+        const after =
+          kind === 'free' || opens(l) || (kind === 'sentence' && numbered(l))
+            ? 'stitched'
+            : 'not_found';
+        rows.push([
+          `${l} quoted after ${name}`,
+          read(`${first} … ${l} ${tail}`, doc(tail)),
+          quoted,
+        ]);
         rows.push([
           `${l} skipped after ${name}`,
-          read(`${F} … ${item}`, doc(before, l)),
+          read(`${first} … ${tail}`, doc(tail)),
           'not_found',
+        ]);
+        const cap = 'Keep the Premises in good and substantial repair';
+        rows.push([
+          `${l} then a capital after ${name}`,
+          read(`${first} … ${l} ${cap}`, doc(cap)),
+          after,
+        ]);
+        const open = '(the Premises) in good and substantial repair';
+        rows.push([
+          `${l} then \`(\` after ${name}`,
+          read(`${first} … ${l} ${open}`, doc(open)),
+          after,
         ]);
       }
     }
-    for (const l of labels.slice(3)) {
-      const want = l === 'b.' || l === 'a)' ? 'not_found' : 'stitched';
-      rows.push([
-        `${l} before a capital after .⏎`,
-        read(`${F} … ${l} ${cap}`, doc('.\n', l, cap)),
-        want,
-      ]);
-    }
-    // (1) red when `(` leaves `START_OPENING` (the bracketed rows after `.⏎`), or a label's reading
-    // moves; (2) prints each differing row's label and state.
-    expect([rows.length, misses(rows)]).toEqual([78, []]);
+    // (1) red when `(` leaves `START_OPENING` (the bracketed rows after a sentence end), `|` stops
+    //     ending a line that counts, or a label's reading moves; (2) prints each differing row.
+    expect(misses(rows)).toEqual([]);
   });
 
-  it('§3 a dash and an invisible format character: 30 dashes with U+200B, and 28 dashes × 170 `Cf`, before `5`', () => {
-    const doc = (between: string) => `The reading is ${between}5 degrees today.`;
-    // U+207B and U+208B read as a minus: NFKC makes them U+2212.
-    const thirty: Row[] = [...DASHES, 0x207b, 0x208b].map((d) => [
-      `${hex(d)} + U+200B`,
-      read('5 degrees', doc(`${ch(d)}\u200b`)),
-      'reformatted',
-    ]);
-    const cross: Row[] = DASHES.flatMap((d) =>
-      CF.map((x): Row => [
-        `${hex(d)} + ${hex(x)}`,
-        read('5 degrees', doc(`${ch(d)}${ch(x)}`)),
-        'reformatted',
-      ]),
+  /** `KEPT_SYMBOLS` (`locate-quote.ts:106-129`), copied: the code does not export it. */
+  const KEPT = [
+    '%',
+    '‰',
+    '°',
+    '\u2031',
+    '\u2032',
+    '\u2033',
+    '\u2034',
+    '\u2035',
+    '\u2036',
+    '\u2037',
+    '\u2610',
+    '\u2611',
+    '\u2612',
+    '\u2713',
+    '\u2714',
+    '\u2715',
+    '\u2716',
+    '\u2717',
+    '\u2718',
+    '\u2705',
+    '\u274c',
+    '\u274e',
+  ].map(cp);
+  /** The kept signs, every plane: `\p{Sc}`, `\p{Sm}` and `KEPT_SYMBOLS`. */
+  const KEPT_SIGNS = [...new Set([...codePoints(/^[\p{Sc}\p{Sm}]$/u), ...KEPT])];
+
+  it('M4 the kept signs: every `\\p{Sc}` and `\\p{Sm}`, every plane, and `KEPT_SYMBOLS`, each as the code reads it over every BMP `\\p{So}`', () => {
+    claimOn(
+      HANDLERS,
+      'An item that opens with another mark (`+`, `○`, `●`, `■`, `>`, U+F0B7), at any line start; quoting a kept sign other than a minus sign (`+`, `>`, `=` …) with the item reads `stitched` after a line ending with `;` or `:` or a blank line.',
     );
-    // (1) red when U+2212 leaves `isDash` (its rows, and U+207B's and U+208B's); (2) prints each
-    // differing pair's code points and state.
-    expect([thirty.length, cross.length, misses(thirty), misses(cross)]).toEqual([
-      30,
-      4760,
-      [],
-      [],
-    ]);
+    whole(
+      KEPT_SIGNS.filter((c) => !KEPT.includes(c)),
+      /^[\p{Sc}\p{Sm}]$/u,
+    );
+    // The copied list against the code: a BMP `\p{So}` belongs to its number exactly when it is kept,
+    // or `isDash` reads it as a dash (U+2796); `%` and `‰` (`\p{Po}`) belong too.
+    const binds = (c: number) =>
+      read('5 degrees', `The reading is ${ch(c)}5 degrees today.`) === 'not_found'
+        ? 'binds'
+        : 'set aside';
+    const rows: Row[] = [
+      ...codePoints(/^\p{So}$/u, 0, BMP).map((c): Row => [
+        hex(c),
+        binds(c),
+        KEPT.includes(c) || DASHES.includes(c) ? 'binds' : 'set aside',
+      ]),
+      ...['%', '‰'].map((c): Row => [hex(cp(c)), binds(cp(c)), 'binds']),
+    ];
+    // (1) red when a member is left out of the iteration, the copied list differs from the code's,
+    //     or a named sign is not kept; (2) prints the members missing and each differing row.
+    expect({
+      named: ['+', '>', '='].filter((s) => !KEPT_SIGNS.includes(cp(s))),
+      misses: misses(rows),
+    }).toEqual({ named: [], misses: [] });
   });
 
-  it('§3 an invisible format character inside a number: `12`+X+`500` for every `Cf`, U+FEFF before `5000`, a leading decimal point', () => {
+  it.each([
+    [
+      ':⏎',
+      'The Tenant covenants with the Landlord as follows:\n',
+      'The Tenant covenants with the Landlord',
+    ],
+    [
+      ';⏎',
+      'The Tenant shall pay the Rent on the usual quarter days;\n',
+      'The Tenant shall pay the Rent on the usual',
+    ],
+    [
+      'a blank line',
+      'The Tenant shall pay the Rent on the usual quarter days\n\n',
+      'The Tenant shall pay the Rent on the usual',
+    ],
+    [
+      '|⏎',
+      '| The Landlord shall insure the building at its own cost |\n',
+      'The Landlord shall insure the building',
+    ],
+  ] as const)(
+    'M4 every kept sign quoted with the item after %s reads `stitched`, a minus sign excepted',
+    (_, before, first) => {
+      const item = 'keep the Premises in good and substantial repair';
+      const rows = KEPT_SIGNS.map((m): Row => [
+        hex(m),
+        read(`${first} … ${ch(m)} ${item}`, `${before}${ch(m)} ${item} at all times.`),
+        MINUS.includes(m) ? 'not_found' : 'stitched',
+      ]);
+      // (1) red when a kept sign quoted with its item stops reading `stitched` here, or a minus sign
+      //     starts to; (2) prints each differing sign's code point and state.
+      expect(misses(rows)).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['with a lowercase form', true],
+    ['with no lowercase form', false],
+  ] as const)(
+    "M5 a single capital letter's initial: every BMP `\\p{Lu}`/`\\p{Lt}` %s",
+    (_, lowers) => {
+      const A = 'The Landlord shall insure the building at its own cost';
+      const B = 'The Tenant shall keep the Premises in good and substantial repair';
+      const after = (abbr: string) => read(`${A} … ${B}`, `${A} under ${abbr} ${B} at all times.`);
+      const LOWERS = /^\p{Changes_When_Lowercased}$/u;
+      const rows = CAPITALS.filter((c) => LOWERS.test(ch(c)) === lowers).map((c): Row => [
+        hex(c),
+        after(`${ch(c)}.`),
+        // an initial ends no sentence, so the skip after it is refused
+        lowers ? 'not_found' : 'stitched',
+      ]);
+      // (1) red when an initial with a lowercase form ends a sentence, or a capital with none stops
+      //     ending one; (2) prints each differing code point and state.
+      expect(misses(rows)).toEqual([]);
+    },
+  );
+
+  it('M5 the group: every BMP capital; a decomposed `É` and U+1D400 end a sentence (their code half is on #845)', () => {
+    whole(CAPITALS, /^[\p{Lu}\p{Lt}]$/u, 0, BMP);
+    const A = 'The Landlord shall insure the building at its own cost';
+    const B = 'The Tenant shall keep the Premises in good and substantial repair';
+    const after = (abbr: string) => read(`${A} … ${B}`, `${A} under ${abbr} ${B} at all times.`);
+    // (1) red when a member is left out of an iteration, or one of these two moves (then #845's code
+    //     half has landed, and the sentence may say more); (2) prints the two states.
+    expect({ decomposed: after('E\u0301.'), outside: after(`${ch(0x1d400)}.`) }).toEqual({
+      decomposed: 'stitched',
+      outside: 'stitched',
+    });
+  });
+
+  it('§3 a dash and an invisible format character: the groups are every BMP dash `isDash` reads, the NFKC minus signs, and every `Cf`', () => {
+    // (1) red when a member is left out of an iteration, or the copied additions differ; (2) prints
+    //     the members missing.
+    whole(DASHES.slice(0, -DASH_ADDED.length), /^\p{Pd}$/u, 0, BMP);
+    whole(CF, /^\p{Cf}$/u);
+    expect(DASHES.slice(-DASH_ADDED.length).map(hex)).toEqual(DASH_ADDED.map(hex));
+  });
+
+  it.each([...DASHES, ...NFKC_MINUS].map((d) => [hex(d), d] as const))(
+    '§3 the dash %s, then every `Cf`, then `5`: part of the number reads found',
+    (_, d) => {
+      const rows = CF.map((x): Row => [
+        hex(x),
+        read('5 degrees', `The reading is ${ch(d)}${ch(x)}5 degrees today.`),
+        'reformatted',
+      ]);
+      // (1) red when U+2212 leaves `isDash` (its row, and U+207B's and U+208B's); (2) prints each
+      //     differing `Cf`'s code point and state.
+      expect(misses(rows)).toEqual([]);
+    },
+  );
+
+  it('§3 an invisible format character inside a number: `12`+X+`500` for every `Cf`, U+FEFF before `5000`, a leading decimal point or comma before every `Cf`', () => {
+    whole(CF, /^\p{Cf}$/u);
     const inside = (x: number, digits: string) =>
       read('the fee is 12', `the fee is 12${ch(x)}${digits} euro`);
     const rows: Row[] = [
@@ -2925,90 +3513,83 @@ describe("#855's correction: each sentence's members", () => {
         x === 0xfeff ? 'not_found' : 'reformatted',
       ]),
       ['12 U+FEFF 5000', inside(0xfeff, '5000'), 'reformatted'],
-      [
-        '.75% with U+200B after the `.`',
-        read('75% of the cost', 'The Tenant pays .\u200b75% of the cost.'),
-        'reformatted',
-      ],
-      [
-        ',75% with U+200B after the `,`',
-        read('75% of the cost', 'The Tenant pays ,\u200b75% of the cost.'),
-        'reformatted',
-      ],
+      // M9: every `Cf` after a leading `.` or `,`
+      ...['.', ','].flatMap((p) =>
+        CF.map((x): Row => [
+          `${p}${hex(x)}75%`,
+          read('75% of the cost', `The Tenant pays ${p}${ch(x)}75% of the cost.`),
+          'reformatted',
+        ]),
+      ),
       [
         '.75%, nothing between',
         read('75% of the cost', 'The Tenant pays .75% of the cost.'),
         'not_found',
       ],
     ];
-    // (1) red when U+FEFF stops reading as a space (the U+FEFF rows); (2) prints each differing row's
-    // code point and state.
-    expect([rows.length, misses(rows)]).toEqual([174, []]);
+    // (1) red when a member is left out of the iteration, or U+FEFF stops reading as a space (the
+    //     U+FEFF rows); (2) prints the members missing and each differing row's code point and state.
+    expect(misses(rows)).toEqual([]);
   });
 
-  it('§3 a currency or mathematical sign belongs to its number: every BMP `Sc` and `Sm`, the five counter-signs with U+200B; four signs outside the BMP do not', () => {
-    const before5 = (between: string) =>
-      read('5 degrees', `The reading is ${between}5 degrees today.`);
-    const signs = codePoints(/^[\p{Sc}\p{Sm}]$/u, 0, 0xffff);
-    const rows: Row[] = [
-      ...signs.map((s): Row => [`${hex(s)} directly before 5`, before5(ch(s)), 'not_found']),
-      ...['€', '$', '+', '±', '<'].flatMap((s): Row[] => [
-        [`${s} + U+200B before 5`, before5(`${s}\u200b`), 'not_found'],
-        [
-          `${s} + U+200B before 48,000`,
-          read('48,000 a year', `rent ${s}\u200b48,000 a year`),
-          'not_found',
-        ],
-      ]),
-      // `isNumberSymbol` reads one UTF-16 unit, so a sign outside the BMP is not a sign (#845).
-      ...[0x1e2ff, 0x11fdd, 0x10d6e, 0x10ead].map((s): Row => [
-        `${hex(s)} directly before 5`,
-        before5(ch(s)),
-        'exact',
-      ]),
-    ];
-    // (1) red when currency signs leave `isNumberSymbol` (every `Sc` row), or a sign outside the BMP
-    // starts belonging to its number; (2) prints each differing row's code point and state.
-    expect([signs.includes(0x20ac) && signs.includes(0x2212), misses(rows)]).toEqual([true, []]);
-  });
-
-  it('§4 the opening marks: the eight pass and seven others fail, after `. ` and after a clause number', () => {
+  it('§4 the opening marks pass, and every other BMP `Ps` `Pi` `Pf` `Pe` and quotation mark fails, after `. ` and after a clause number', () => {
+    whole(MARKS, MARK_GROUP, 0, BMP);
     const lc = 'the Tenant shall pay the insurance rent';
-    const open8 = ['"', '“', '„', '«', "'", '‘', '(', '['];
-    const counters = ['”', '’', '‹', '「', '»', '{', '<'];
-    const rows: Row[] = [...open8, ...counters].flatMap((m): Row[] => {
-      const want = open8.includes(m) ? 'stitched' : 'not_found';
+    const rows: Row[] = MARKS.flatMap((m): Row[] => {
+      const want = OPENING.includes(m) ? 'stitched' : 'not_found';
       return [
         [
-          `${m} after ". "`,
-          read(`${F} … ${lc}`, `${F} for its cost. ${m}${lc} at the end of each year.`),
+          `${hex(m)} after ". "`,
+          read(`${F} … ${ch(m)}${lc}`, `${F} for its cost. ${ch(m)}${lc} at the end of each year.`),
           want,
         ],
         [
-          `${m} after .⏎6.2`,
-          read(`${F} … ${lc}`, `${F} for its cost.\n6.2 ${m}${lc} at the end of each year.`),
+          `${hex(m)} after .⏎6.2`,
+          read(
+            `${F} … 6.2 ${ch(m)}${lc}`,
+            `${F} for its cost.\n6.2 ${ch(m)}${lc} at the end of each year.`,
+          ),
           want,
         ],
       ];
     });
-    // (1) red when `«` leaves `START_OPENING` (its two rows); (2) prints each differing mark and state.
-    expect([rows.length, misses(rows)]).toEqual([30, []]);
+    // (1) red when a member is left out of the iteration, `«` leaves `START_OPENING` (its two rows),
+    //     or another mark starts to open; (2) prints the members missing and each differing row.
+    expect(misses(rows)).toEqual([]);
   });
 
-  it('§4 the list marks: the ten and a run of `#` pass; six other marks are refused at every line start, `+` and `>` quoted excepted', () => {
+  /** `LIST_MARKS` (`locate-quote.ts:664`), copied, and a run of `#` (`:741`). */
+  const LIST = ['-', '*', '•', '◦', '▪', '‣', '·', '–', '—', '|'];
+  const LIST_LINES = {
+    '.⏎': '.\n',
+    ':⏎': ':\n',
+    ';⏎': ';\n',
+    'a blank line': '.\n\n',
+  } as const;
+  /** `START_CLOSING` (`locate-quote.ts:662`), copied: with the opening marks, `;` and `:`, these
+   *  open an item for their own reasons. */
+  const CLOSING_BACK = ['"', '”', '’', "'", ')', ']', '»'];
+  const LIST_GROUP = /^[\p{P}\p{S}]$/u;
+  const NOT_LIST = codePoints(LIST_GROUP, 0, BMP).filter(
+    (c) => ![...LIST, '#', ';', ':', ...CLOSING_BACK].map(cp).includes(c) && !OPENING.includes(c),
+  );
+
+  it('§4 the list marks and a run of `#` pass at every line start; the other marks named are refused, `+` and `>` quoted excepted', () => {
     const lc = 'the Tenant shall pay the insurance rent';
     const Cap = 'The Tenant shall pay the insurance rent';
     const doc = (before: string, m: string, it: string) =>
       `${F} for its cost${before}${m} ${it} at the end of each year.`;
-    const lines = { '.⏎': '.\n', ':⏎': ':\n', ';⏎': ';\n', 'blank line': '.\n\n' };
-    const listMarks = ['-', '*', '•', '◦', '▪', '‣', '·', '–', '—', '|', '#', '##', '###'];
-    const refused = ['+', '○', '●', '■', '>', ''];
+    const refused = ['+', '○', '●', '■', '>', '\uf0b7'];
     const rows: Row[] = [];
-    for (const [name, before] of Object.entries(lines)) {
-      for (const m of listMarks)
-        rows.push([`${m} after ${name}`, read(`${F} … ${lc}`, doc(before, m, lc)), 'stitched']);
+    for (const [name, before] of Object.entries(LIST_LINES)) {
+      for (const m of [...LIST, '#', '##', '###'])
+        rows.push([
+          `${hex(cp(m))}${m.length > 1 ? ` ×${m.length}` : ''} after ${name}`,
+          read(`${F} … ${lc}`, doc(before, m, lc)),
+          'stitched',
+        ]);
       for (const m of refused) {
-        const label = hex(m.codePointAt(0)!);
+        const label = hex(cp(m));
         rows.push([
           `${label} after ${name}, lowercase`,
           read(`${F} … ${lc}`, doc(before, m, lc)),
@@ -3028,11 +3609,49 @@ describe("#855's correction: each sentence's members", () => {
       }
     }
     // (1) red when `•` leaves `LIST_MARKS` (its four rows); (2) prints each differing mark and state.
-    expect([rows.length, misses(rows)]).toEqual([124, []]);
+    expect(misses(rows)).toEqual([]);
   });
 
+  it('§4 the list marks against the rest: the group is every BMP `\\p{P}` and `\\p{S}`, less the list marks, `#`, the opening and closing marks, `;` and `:`', () => {
+    // (1) red when a member is left out of the iteration; (2) prints the members missing.
+    whole(
+      [...NOT_LIST, ...[...LIST, '#', ';', ':', ...CLOSING_BACK].map(cp), ...OPENING].filter(
+        (c, i, all) => all.indexOf(c) === i,
+      ),
+      LIST_GROUP,
+      0,
+      BMP,
+    );
+  });
+
+  /** The rest, split by kind so that no row nears the timeout. */
+  const NOT_LIST_KINDS = [
+    ['`\\p{P}`', /^\p{P}$/u],
+    ['`\\p{So}`', /^\p{So}$/u],
+    ['`\\p{Sc}` `\\p{Sm}` `\\p{Sk}`', /^[\p{Sc}\p{Sm}\p{Sk}]$/u],
+  ] as const;
+
+  it.each(
+    Object.entries(LIST_LINES).flatMap(([line, before]) =>
+      NOT_LIST_KINDS.map(([kind, re]) => [kind, line, before, re] as const),
+    ),
+  )(
+    '§4 every other BMP %s mark opening an item after %s: a skip onto its lowercase item is refused',
+    (_, __, before, re) => {
+      const lc = 'the Tenant shall pay the insurance rent';
+      const rows = NOT_LIST.filter((m) => re.test(ch(m))).map((m): Row => [
+        hex(m),
+        read(`${F} … ${lc}`, `${F} for its cost${before}${ch(m)} ${lc} at the end of each year.`),
+        'not_found',
+      ]);
+      // (1) red when a mark outside `LIST_MARKS` starts to open a list item; (2) prints each
+      //     differing mark's code point and state.
+      expect(misses(rows)).toEqual([]);
+    },
+  );
+
   it('§4 the abbreviations: the printed list is `NOT_SENTENCE_ENDS`; each entry and an initial ends no sentence; each example does', () => {
-    const text = raw('docs/reference/handlers.md');
+    const text = raw(HANDLERS);
     const sentence = text.slice(
       text.indexOf("- An abbreviation that is not on the check's list ("),
     );
@@ -3066,45 +3685,8 @@ describe("#855's correction: each sentence's members", () => {
     expect({
       onlyPrinted: listed.filter((a) => !(NOT_SENTENCE_ENDS as readonly string[]).includes(a)),
       onlyInCode: NOT_SENTENCE_ENDS.filter((a) => !listed.includes(a)),
-      count: listed.length,
       misses: misses(rows),
-    }).toEqual({ onlyPrinted: [], onlyInCode: [], count: 16, misses: [] });
-  });
-
-  it('§5 M2: every `Zs` space in a group of thousands — all but the four group spaces read found', () => {
-    const spaces = codePoints(/^\p{Zs}$/u);
-    const groupSpaces = [0x20, 0xa0, 0x2009, 0x202f];
-    const rows: Row[] = spaces.map((s) => [
-      hex(s),
-      read(`the rent is 1${ch(s)}200`, `the rent is 1${ch(s)}200${ch(s)}000 euro`),
-      groupSpaces.includes(s) ? 'not_found' : 'exact',
-    ]);
-    // (1) red when U+2009 leaves `GROUP_SPACES` (its row reads found); (2) prints each differing
-    // space's code point and state.
-    expect([rows.length, misses(rows)]).toEqual([17, []]);
-  });
-
-  it('§5 M3: a page header between blank lines, after `:` or `;`, and between single line breaks', () => {
-    const A = `${F} for its full reinstatement cost. The Tenant shall`;
-    const rest = 'not be responsible for repairs to the structure';
-    const headers = {
-      'between blank lines': ['\n\nLease of Office Premises — page 4\n\n', 'stitched'],
-      'ending with `:`': ['\nLease of Office Premises — page 4:\n', 'stitched'],
-      'ending with `;`': ['\nLease of Office Premises — page 4;\n', 'stitched'],
-      'between single line breaks': ['\nLease of Office Premises — page 4\n', 'not_found'],
-      'ending with a stop, single breaks': ['\nLease of Office Premises. Page 4.\n', 'not_found'],
-    } as const;
-    const rows: Row[] = Object.entries(headers).flatMap(([name, [between, kept]]): Row[] => {
-      const doc = `${A}${between}${rest}.`;
-      return [
-        [`${name}, joined with a space`, read(`${A} ${rest}`, doc), 'not_found'],
-        [`${name}, the line break kept`, read(`${A}\n${rest}`, doc), kept],
-        [`${name}, skipped with …`, read(`${A} … ${rest}`, doc), kept],
-      ];
-    });
-    // (1) red when a line ending with `:` stops counting as a line start (`lineStart`); (2) prints each
-    // differing row's label and state.
-    expect(misses(rows)).toEqual([]);
+    }).toEqual({ onlyPrinted: [], onlyInCode: [], misses: [] });
   });
 
   it('§5 M5: a clause joined to a later sentence reads `stitched`, to an earlier one `stitched_out_of_order`', () => {
@@ -3136,21 +3718,27 @@ describe("#855's correction: each sentence's members", () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('§5 the exact row and T2 `u034f-inside-a-word`: every `Cf` (U+FEFF excepted) and the four Hangul fillers make no word edge; U+034F and all 256 variation selectors do', () => {
+  it('§5 the exact row and T2 `u034f-inside-a-word`: every `Cf` (U+FEFF excepted) and the Hangul fillers make no word edge; every combining mark (`\\p{M}`, every plane, U+034F and the variation selectors among them) does', () => {
+    const marks = codePoints(/^\p{M}$/u);
+    whole(CF, /^\p{Cf}$/u);
+    whole(marks, /^\p{M}$/u);
     const inside = (c: number) =>
       read(
         'lawful use of the Premises',
         `The Tenant shall not permit any un${ch(c)}lawful use of the Premises.`,
       );
-    const selectors = [...codePoints(/./u, 0xfe00, 0xfe0f), ...codePoints(/./u, 0xe0100, 0xe01ef)];
     const rows: Row[] = [
       ...CF.map((c): Row => [hex(c), inside(c), c === 0xfeff ? 'reformatted' : 'not_found']),
+      // The Hangul fillers are letters (`\p{Lo}`) that show nothing.
       ...[0x115f, 0x1160, 0x3164, 0xffa0].map((c): Row => [hex(c), inside(c), 'not_found']),
-      [hex(0x034f), inside(0x034f), 'exact'],
-      ...selectors.map((c): Row => [hex(c), inside(c), 'exact']),
+      ...marks.map((c): Row => [hex(c), inside(c), 'exact']),
     ];
-    // (1) red when the variation selectors read as format characters (their rows); (2) prints each
-    // differing code point and state.
-    expect([selectors.length, misses(rows)]).toEqual([256, []]);
+    // (1) red when a member is left out of an iteration, the variation selectors read as format
+    //     characters (their rows), or a named one leaves its group; (2) prints the members missing and
+    //     each differing code point and state.
+    expect({
+      named: [0x034f, 0xfe0f, 0xe0100].filter((c) => !marks.includes(c)).map(hex),
+      misses: misses(rows),
+    }).toEqual({ named: [], misses: [] });
   });
 });
