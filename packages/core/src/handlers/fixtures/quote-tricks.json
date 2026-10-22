@@ -1,0 +1,2724 @@
+{
+  "T1": [
+    {
+      "group": "walk",
+      "id": "s_cross_ellipsis",
+      "quote": "The Landlord shall insure the Building…not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_drop_not_71",
+      "quote": "7.1 Repair. The Tenant shall keep the Premises in good and substantial repair and condition, damage by the Insured Risks excepted. The Tenant shall\nbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_semi_drop_not_71",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall; be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_colon_drop_not_71",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall: be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_dq_drop_not_71",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall \"be responsible for repairs to the structure, roof, foundations or exterior of the Building\"",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_period_drop_not_71",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall. Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_drop_not_75",
+      "quote": "save that the Tenant may assign the whole of the Premises with the Landlord's consent, such consent\nto be unreasonably withheld.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_ins_not_sc",
+      "quote": "the Tenant shall not\npay the Service Charge on account by quarterly instalments on the quarter days.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_ins_not_51",
+      "quote": "The Tenant shall not\npay the Service Charge in accordance with Schedule 3.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_ll_not_resp",
+      "quote": "6.1 The Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_ll_not_resp_oo",
+      "quote": "Subject to payment of the Service Charge, the Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_assign_any_part",
+      "quote": "the Tenant may assign the whole\nor any part of the Premises",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_indemnity_500k",
+      "quote": "a limit of indemnity of not less than\nfive hundred thousand euro",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_regno_swap",
+      "quote": "NORTHWIND ANALYTICS LTD, a company incorporated in Ireland\n(registered number FICT-0001)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_break_2030",
+      "quote": "is varied so that the Break Date is\n30 April 2030. The notice period in clause 9.1 is not changed.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_rent_48k_sideletter",
+      "quote": "the initial annual rent shall be\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_sc_cap_48k",
+      "quote": "The Service Charge payable in respect of any service charge year shall not exceed\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_deposit_48k",
+      "quote": "On the date of this Lease the Tenant shall pay to the Landlord the sum of\nforty-eight thousand euro (€48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_dq_expiry_2030",
+      "quote": "\"Term Expiry Date\" means\n30 April 2030 (the \"Break Date\")",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_colon_expiry_2030",
+      "quote": "\"Term Expiry Date\" means: 30 April 2030 (the \"Break Date\")",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_nl_interest_14",
+      "quote": "\"Interest\" means interest at the rate of\nfourteen (14) days of its due date",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "b_ell_drop_not_71",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall … be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "w_solvent",
+      "quote": "solvent, the Landlord may re-enter the Premises (or any part of them) at any time afterwards",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "w_paid",
+      "quote": "paid twenty-one (21) days after becoming payable (whether formally demanded or not)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "w_dependent",
+      "quote": "dependent chartered surveyor acting as an expert",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "w_eight_hours",
+      "quote": "eight (48) hours' notice (except in an emergency)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "w_four_thousand",
+      "quote": "four thousand euro (€24,000) to be held as a rent deposit",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "w_notify_not",
+      "quote": "or to such other address as the Landlord may not",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_ls_drop_not",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_cr_drop_not",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\rbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_curly_dq_drop_not",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall “be responsible for repairs to the structure, roof, foundations or exterior of the Building”",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_q_mark_drop_not",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall? Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_bang_drop_not",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall! Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A1-18",
+      "quote": "of the Building, being 18.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A1-48c",
+      "quote": "an initial annual rent of forty-eight thousand euro (€48,",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A1-9c",
+      "quote": "a cap of €9,",
+      "source": {
+        "doc": "The Tenant pays a cap of €9,200 a year towards the costs."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A1-45",
+      "quote": ".5% above",
+      "source": {
+        "doc": "Interest runs at the rate of 4.5% above the base rate."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A1-48p",
+      "quote": "The daily rate is €48.",
+      "source": {
+        "doc": "The daily rate is €48.50 per day."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A2-61-dq",
+      "quote": "6.1 The Landlord shall\"not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A2-61-colon",
+      "quote": "6.1 The Landlord shall: not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A2-61-semi",
+      "quote": "6.1 The Landlord shall; not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "AUD-wrap-rent",
+      "quote": "assessed on the assumptions and disregards set out in this Schedule. The Rent shall\nbe reduced on review.",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "W2-pets",
+      "quote": "The Tenant may keep pets at the Premises only with the Landlord's consent\ndogs may be kept there at any time without a licence.",
+      "source": {
+        "doc": "The Tenant may keep pets at the Premises only with the Landlord's consent and no more than\n2 dogs may be kept there at any time without a licence."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "W2-S4s",
+      "quote": "Interest is payable at the Base Rate. per cent is added to it for each month of delay.",
+      "source": {
+        "doc": "Interest is payable at the Base Rate. 4.5 per cent is added to it for each month of delay."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "W2-S1",
+      "quote": "The Tenant pays the rent on the first day of each month.\nlate payments in a year end the lease at once.",
+      "source": {
+        "doc": "The Tenant pays the rent on the first day of each month. 2 late payments in a year end the lease at once."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "W2-S3",
+      "quote": "The Landlord may end this Lease by giving not less than … months' prior written notice to the Tenant at its address.",
+      "source": {
+        "doc": "The Landlord may end this Lease by giving not less than\n6 months' prior written notice to the Tenant at its address."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-breakdate",
+      "quote": "is varied so that the Break Date is 30\nApril 2030. The notice period in clause 9.1 is not changed.",
+      "source": {
+        "wrap": 48
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-am",
+      "quote": "The Tenant and its contractors shall\nuse the loading bay or the goods lift.",
+      "source": {
+        "doc": "The Tenant and its contractors shall not before 9 a.m. use the loading bay or the goods lift."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-approx",
+      "quote": "The Landlord warrants that the Lettable Area is\n412 square metres of floor space.",
+      "source": {
+        "doc": "The Landlord warrants that the Lettable Area is not less than approx. 412 square metres of floor space."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-pa",
+      "quote": "Interest is payable at 4%\non all arrears from the due date until payment.",
+      "source": {
+        "doc": "Interest is payable at 4% p.a. on all arrears from the due date until payment."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "MA3-2024",
+      "quote": "The Tenant shall pay the rent … the Landlord shall not raise it before then.",
+      "source": {
+        "doc": "The Tenant shall pay the rent in 2024. the Landlord shall not raise it before then."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-sh-lawful",
+      "quote": "lawful use of the Premises",
+      "source": {
+        "doc": "The Tenant shall not permit any un\u00adlawful use of the Premises."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-sh-solvent",
+      "quote": "solvent, the Landlord may re-enter the Premises",
+      "source": {
+        "doc": "If the Tenant becomes in\u00adsolvent, the Landlord may re-enter the Premises at any time."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-sh-notify",
+      "quote": "the Landlord may not",
+      "source": {
+        "doc": "Notices go to such other address as the Landlord may not\u00adify in writing."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-zwsp-lawful",
+      "quote": "lawful use of the Premises",
+      "source": {
+        "doc": "The Tenant shall not permit any un\u200blawful use of the Premises."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-cant",
+      "quote": "The Tenant can",
+      "source": {
+        "doc": "The Tenant can't assign or underlet the Premises."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-cant-curly",
+      "quote": "The Tenant can",
+      "source": {
+        "doc": "The Tenant can’t assign or underlet the Premises."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-wont",
+      "quote": "The Landlord won",
+      "source": {
+        "doc": "The Landlord won't repair the roof in winter."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-sp-trail",
+      "quote": "the rent is 1 200 ",
+      "source": {
+        "doc": "the rent is 1 200 000 euro a year"
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "extra",
+      "id": "A3-sp-lead",
+      "quote": " 200 000 euro",
+      "source": {
+        "doc": "the rent is 1 200 000 euro a year"
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_drop_not_71@60",
+      "quote": "7.1 Repair. The Tenant shall keep the Premises in good and substantial repair and condition, damage by the Insured Risks excepted. The Tenant shall\nbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_semi_drop_not_71@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall; be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_colon_drop_not_71@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall: be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_dq_drop_not_71@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall \"be responsible for repairs to the structure, roof, foundations or exterior of the Building\"",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_period_drop_not_71@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall. Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_drop_not_75@60",
+      "quote": "save that the Tenant may assign the whole of the Premises with the Landlord's consent, such consent\nto be unreasonably withheld.",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ins_not_sc@60",
+      "quote": "the Tenant shall not\npay the Service Charge on account by quarterly instalments on the quarter days.",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ins_not_51@60",
+      "quote": "The Tenant shall not\npay the Service Charge in accordance with Schedule 3.",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ll_not_resp@60",
+      "quote": "6.1 The Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ll_not_resp_oo@60",
+      "quote": "Subject to payment of the Service Charge, the Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_assign_any_part@60",
+      "quote": "the Tenant may assign the whole\nor any part of the Premises",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_indemnity_500k@60",
+      "quote": "a limit of indemnity of not less than\nfive hundred thousand euro",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_regno_swap@60",
+      "quote": "NORTHWIND ANALYTICS LTD, a company incorporated in Ireland\n(registered number FICT-0001)",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_break_2030@60",
+      "quote": "is varied so that the Break Date is\n30 April 2030. The notice period in clause 9.1 is not changed.",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_rent_48k_sideletter@60",
+      "quote": "the initial annual rent shall be\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_sc_cap_48k@60",
+      "quote": "The Service Charge payable in respect of any service charge year shall not exceed\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_deposit_48k@60",
+      "quote": "On the date of this Lease the Tenant shall pay to the Landlord the sum of\nforty-eight thousand euro (€48,000)",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_dq_expiry_2030@60",
+      "quote": "\"Term Expiry Date\" means\n30 April 2030 (the \"Break Date\")",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_colon_expiry_2030@60",
+      "quote": "\"Term Expiry Date\" means: 30 April 2030 (the \"Break Date\")",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_interest_14@60",
+      "quote": "\"Interest\" means interest at the rate of\nfourteen (14) days of its due date",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_ell_cross@60",
+      "quote": "The Landlord shall insure the Building…not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_ell_drop_not_71@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall … be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_ls_drop_not@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_cr_drop_not@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\rbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_curly_dq_drop_not@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall “be responsible for repairs to the structure, roof, foundations or exterior of the Building”",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_q_mark_drop_not@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall? Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_bang_drop_not@60",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall! Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "audit_wrap_rent@60",
+      "quote": "assessed on the assumptions and disregards set out in this Schedule. The Rent shall\nbe reduced on review.",
+      "source": {
+        "wrap": 60
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_drop_not_71@72",
+      "quote": "7.1 Repair. The Tenant shall keep the Premises in good and substantial repair and condition, damage by the Insured Risks excepted. The Tenant shall\nbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_semi_drop_not_71@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall; be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_colon_drop_not_71@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall: be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_dq_drop_not_71@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall \"be responsible for repairs to the structure, roof, foundations or exterior of the Building\"",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_period_drop_not_71@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall. Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_drop_not_75@72",
+      "quote": "save that the Tenant may assign the whole of the Premises with the Landlord's consent, such consent\nto be unreasonably withheld.",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ins_not_sc@72",
+      "quote": "the Tenant shall not\npay the Service Charge on account by quarterly instalments on the quarter days.",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ins_not_51@72",
+      "quote": "The Tenant shall not\npay the Service Charge in accordance with Schedule 3.",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ll_not_resp@72",
+      "quote": "6.1 The Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ll_not_resp_oo@72",
+      "quote": "Subject to payment of the Service Charge, the Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_assign_any_part@72",
+      "quote": "the Tenant may assign the whole\nor any part of the Premises",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_indemnity_500k@72",
+      "quote": "a limit of indemnity of not less than\nfive hundred thousand euro",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_regno_swap@72",
+      "quote": "NORTHWIND ANALYTICS LTD, a company incorporated in Ireland\n(registered number FICT-0001)",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_break_2030@72",
+      "quote": "is varied so that the Break Date is\n30 April 2030. The notice period in clause 9.1 is not changed.",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_rent_48k_sideletter@72",
+      "quote": "the initial annual rent shall be\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_sc_cap_48k@72",
+      "quote": "The Service Charge payable in respect of any service charge year shall not exceed\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_deposit_48k@72",
+      "quote": "On the date of this Lease the Tenant shall pay to the Landlord the sum of\nforty-eight thousand euro (€48,000)",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_dq_expiry_2030@72",
+      "quote": "\"Term Expiry Date\" means\n30 April 2030 (the \"Break Date\")",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_colon_expiry_2030@72",
+      "quote": "\"Term Expiry Date\" means: 30 April 2030 (the \"Break Date\")",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_interest_14@72",
+      "quote": "\"Interest\" means interest at the rate of\nfourteen (14) days of its due date",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_ell_cross@72",
+      "quote": "The Landlord shall insure the Building…not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_ell_drop_not_71@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall … be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_ls_drop_not@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_cr_drop_not@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\rbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_curly_dq_drop_not@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall “be responsible for repairs to the structure, roof, foundations or exterior of the Building”",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_q_mark_drop_not@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall? Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_bang_drop_not@72",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall! Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 72
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_drop_not_71@90",
+      "quote": "7.1 Repair. The Tenant shall keep the Premises in good and substantial repair and condition, damage by the Insured Risks excepted. The Tenant shall\nbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_semi_drop_not_71@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall; be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_colon_drop_not_71@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall: be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_dq_drop_not_71@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall \"be responsible for repairs to the structure, roof, foundations or exterior of the Building\"",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_period_drop_not_71@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall. Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_drop_not_75@90",
+      "quote": "save that the Tenant may assign the whole of the Premises with the Landlord's consent, such consent\nto be unreasonably withheld.",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ins_not_sc@90",
+      "quote": "the Tenant shall not\npay the Service Charge on account by quarterly instalments on the quarter days.",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ins_not_51@90",
+      "quote": "The Tenant shall not\npay the Service Charge in accordance with Schedule 3.",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ll_not_resp@90",
+      "quote": "6.1 The Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_ll_not_resp_oo@90",
+      "quote": "Subject to payment of the Service Charge, the Landlord shall\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_assign_any_part@90",
+      "quote": "the Tenant may assign the whole\nor any part of the Premises",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_indemnity_500k@90",
+      "quote": "a limit of indemnity of not less than\nfive hundred thousand euro",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_regno_swap@90",
+      "quote": "NORTHWIND ANALYTICS LTD, a company incorporated in Ireland\n(registered number FICT-0001)",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_break_2030@90",
+      "quote": "is varied so that the Break Date is\n30 April 2030. The notice period in clause 9.1 is not changed.",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_rent_48k_sideletter@90",
+      "quote": "the initial annual rent shall be\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_sc_cap_48k@90",
+      "quote": "The Service Charge payable in respect of any service charge year shall not exceed\nforty-eight thousand euro (€48,000), exclusive of value added tax",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_deposit_48k@90",
+      "quote": "On the date of this Lease the Tenant shall pay to the Landlord the sum of\nforty-eight thousand euro (€48,000)",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_dq_expiry_2030@90",
+      "quote": "\"Term Expiry Date\" means\n30 April 2030 (the \"Break Date\")",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_colon_expiry_2030@90",
+      "quote": "\"Term Expiry Date\" means: 30 April 2030 (the \"Break Date\")",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_nl_interest_14@90",
+      "quote": "\"Interest\" means interest at the rate of\nfourteen (14) days of its due date",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_ell_cross@90",
+      "quote": "The Landlord shall insure the Building…not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "b_ell_drop_not_71@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall … be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_ls_drop_not@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\u2028be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_cr_drop_not@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall\rbe responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_curly_dq_drop_not@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall “be responsible for repairs to the structure, roof, foundations or exterior of the Building”",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_q_mark_drop_not@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall? Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "e_bang_drop_not@90",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall! Be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-attack",
+      "id": "audit_wrap_rent@90",
+      "quote": "assessed on the assumptions and disregards set out in this Schedule. The Rent shall\nbe reduced on review.",
+      "source": {
+        "wrap": 90
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-1@40",
+      "quote": "registered office is at 7 Halloran Row, Dublin 2, D02 QX61, Ireland\nLandlord\"); and  (2) NORTHWIND ANALYTICS",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-2@40",
+      "quote": "office is at 41 Kestrel Street Lower, Dublin 2, D02 QX25, Ireland\nTenant\").  BACKGROUND  (A) The Landlord is",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-3@40",
+      "quote": "instalments in advance on the usual quarter days, namely 1 February, 1 May,\nAugust and 1 November in each year, by bank",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-4@40",
+      "quote": "If any Rent or other sum due under this Lease is not paid within fourteen\ndays of its due date, the Tenant shall pay",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-5@40",
+      "quote": "30 April 2030 (the \"Break Date\") by giving the Landlord not less than six\nmonths' prior written notice.  9.2 A break",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-6@40",
+      "quote": "Notices to the Landlord shall be sent to its asset management office at\nAshgrove Square South, Dublin 2, D02 QK53",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-7@40",
+      "quote": "the Lettable Area bears to the total lettable area of the Building, being\nper cent at the date of this Lease.  2. The",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-8@40",
+      "quote": "If the Landlord and the Tenant have not agreed the open market rent three\nmonths before the Review Date, either party",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-9@40",
+      "quote": "THIS DEED is made on 2 September 2025 between Tallowmere Estates Limited\nLandlord\") and Northwind Analytics Ltd (the",
+      "source": {
+        "wrap": 40
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-10@41",
+      "quote": "right for the Landlord to enter the Premises on not less than forty-eight\nhours' notice (except in an emergency) to",
+      "source": {
+        "wrap": 41
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-11@41",
+      "quote": "ANALYTICS LTD, acting by a director in the presence of a witness, on\nMarch 2025.  ---  SIDE LETTER  From: Tallowmere",
+      "source": {
+        "wrap": 41
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-12@42",
+      "quote": "in Ireland (registered number FICT-0001), whose registered office is at\nHalloran Row, Dublin 2, D02 QX61, Ireland",
+      "source": {
+        "wrap": 42
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-13@42",
+      "quote": "in Ireland (registered number FICT-0002), whose registered office is at\nKestrel Street Lower, Dublin 2, D02 QX25",
+      "source": {
+        "wrap": 42
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-14@42",
+      "quote": "of the lease of the third floor of Quayside House dated 14 March 2025\nLease\") is varied so that the Break Date",
+      "source": {
+        "wrap": 42
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-15@44",
+      "quote": "means use as offices within the meaning of Class 2 of Part 4 of Schedule\nto the Planning and Development Regulations",
+      "source": {
+        "wrap": 44
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-16@44",
+      "quote": "in advance on the usual quarter days, namely 1 February, 1 May, 1 August and\nNovember in each year, by bank transfer to",
+      "source": {
+        "wrap": 44
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-17@44",
+      "quote": "as a deed by TALLOWMERE ESTATES LIMITED, acting by two directors, on\nMarch 2025.  SIGNED AND DELIVERED as a deed",
+      "source": {
+        "wrap": 44
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-18@44",
+      "quote": "Tallowmere Estates Limited (the \"Landlord\") and Northwind Analytics Ltd\nTenant\").  1. The Landlord and the Tenant",
+      "source": {
+        "wrap": 44
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-19@44",
+      "quote": "House dated 14 March 2025 (the \"Lease\") is varied so that the Break Date is\nApril 2031 instead of 30 April 2030. The",
+      "source": {
+        "wrap": 44
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-20@46",
+      "quote": "and the Tenant agree that, with effect from the date of this Deed, clause\nof the lease of the third floor of Quayside",
+      "source": {
+        "wrap": 46
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-21@47",
+      "quote": "entering into the Lease, the Landlord agrees that, notwithstanding clause\nof the Lease, the initial annual rent shall",
+      "source": {
+        "wrap": 47
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-22@63",
+      "quote": "known as Quayside House, 3 Saltwater Quay, Dublin 2, D02 QT44, Ireland\nBuilding\").  (B) The Landlord has agreed",
+      "source": {
+        "wrap": 63
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-23@63",
+      "quote": "the higher of (a) the Rent payable immediately before the Review Date and\nthe open market rent of the Premises at the",
+      "source": {
+        "wrap": 63
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-24@81",
+      "quote": "9.1 of the lease of the third floor of Quayside House dated 14 March\nthe \"Lease\") is varied so that the Break",
+      "source": {
+        "wrap": 81
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-25@85",
+      "quote": "Code of Measuring Practice (6th edition), agreed between the parties at\nsquare metres.  \"Permitted Use\" means use",
+      "source": {
+        "wrap": 85
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-26@86",
+      "quote": "or any other sum due under this Lease, and the Tenant shall within ten\nworking days of written demand pay to the",
+      "source": {
+        "wrap": 86
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-27@93",
+      "quote": "is 30 April 2031 instead of 30 April 2030. The notice period in clause\nis not changed.  2. Save as varied by this",
+      "source": {
+        "wrap": 93
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrap-only",
+      "id": "wrap-only-28@97",
+      "quote": "paid by four equal instalments in advance on the usual quarter days, namely\nFebruary, 1 May, 1 August and 1 November",
+      "source": {
+        "wrap": 97
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3a-J5@70",
+      "quote": "(A) The Landlord is the owner of the building known as\nSaltwater Quay, Dublin 2, D02 QT44, Ireland (the \"Building\")",
+      "source": {
+        "wrap": 70
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3b-S1",
+      "quote": "Payment is due on the first day of each month … late payments in a year end the lease.",
+      "source": {
+        "doc": "Payment is due on the first day of each month. 2 late payments in a year end the lease. The Tenant shall keep the Premises clean."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3b-S2",
+      "quote": "The Tenant may keep pets at the Premises only with the Landlord's consent … dogs may be kept there at any time without a licence.",
+      "source": {
+        "doc": "The Tenant may keep pets at the Premises only with the Landlord's consent and no more than\n2 dogs may be kept there at any time without a licence."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3b-S3",
+      "quote": "The Tenant shall give the Landlord not less than … months' prior written notice before the Break Date.",
+      "source": {
+        "doc": "The Tenant shall give the Landlord not less than\n6 months' prior written notice before the Break Date."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3b-S4",
+      "quote": "Interest is payable at the Base Rate. … per cent is added to it for each late payment made by the Tenant.",
+      "source": {
+        "doc": "Interest is payable at the Base Rate. 4.5 per cent is added to it for each late payment made by the Tenant."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3b-S5",
+      "quote": "The Tenant shall not keep animals at the Premises. … dogs are allowed with the Landlord's written consent.",
+      "source": {
+        "doc": "The Tenant shall not keep animals at the Premises. (a) dogs are allowed with the Landlord's written consent."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3d-S1n",
+      "quote": "Payment is due on the first day of each month.\nlate payments in a year end the lease.",
+      "source": {
+        "doc": "Payment is due on the first day of each month. 2 late payments in a year end the lease. The Tenant shall keep the Premises clean."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3d-S4n",
+      "quote": "Interest is payable at the Base Rate.\nper cent is added to it for each late payment made by the Tenant.",
+      "source": {
+        "doc": "Interest is payable at the Base Rate. 4.5 per cent is added to it for each late payment made by the Tenant."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "second-walk",
+      "id": "s3d-S4s",
+      "quote": "Interest is payable at the Base Rate. per cent is added to it for each late payment made by the Tenant.",
+      "source": {
+        "doc": "Interest is payable at the Base Rate. 4.5 per cent is added to it for each late payment made by the Tenant."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "constructed",
+      "id": "dotted-at-line-start",
+      "quote": "The Landlord charges interest at the Base Rate.\nper cent is added to it for each month of delay.",
+      "source": {
+        "doc": "The Landlord charges interest at the Base Rate.\n4.5 per cent is added to it for each month of delay."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-abbreviation",
+      "id": "line-broken-after-a.m.",
+      "quote": "The Tenant and its contractors shall\nuse the loading bay or the goods lift.",
+      "source": {
+        "doc": "The Tenant and its contractors shall not before 9 a.m.\nuse the loading bay or the goods lift."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-abbreviation",
+      "id": "line-broken-after-approx.",
+      "quote": "The Landlord warrants that the Lettable Area is\n412 square metres of floor space.",
+      "source": {
+        "doc": "The Landlord warrants that the Lettable Area is not less than approx.\n412 square metres of floor space."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-abbreviation",
+      "id": "line-broken-after-p.a.",
+      "quote": "Interest is payable at 4%\non all arrears from the due date until payment.",
+      "source": {
+        "doc": "Interest is payable at 4% p.a.\non all arrears from the due date until payment."
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "wrapped-abbreviation",
+      "id": "line-broken-after-2024.",
+      "quote": "The Tenant shall pay the rent … the Landlord shall not raise it before then.",
+      "source": {
+        "doc": "The Tenant shall pay the rent in 2024.\nthe Landlord shall not raise it before then."
+      },
+      "expect": "not_found"
+    }
+  ],
+  "T2": [
+    {
+      "group": "walk",
+      "id": "d_side_rent",
+      "quote": "the initial annual rent shall be forty-five thousand six hundred euro (€45,600)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "a true quote that stops before its sentence ends; exact, no cut_short (no stop of its own)",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "n_insert_not_44",
+      "quote": "The Rent shall not be reduced on review",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "true quote: the lease says it word for word",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "s_tenant_may_assign",
+      "quote": "The Tenant shall not assign, underlet, charge or part with possession of the whole or any part of the Premises",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "a true quote that stops before its sentence ends; exact, no cut_short (no stop of its own)",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "s_landlord_refund",
+      "quote": "the Landlord shall refund to the Tenant any Rent, Service Charge or insurance rent paid",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "a true quote that stops before its sentence ends; exact, no cut_short (no stop of its own)",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_sixmillion",
+      "quote": "a limit of indemnity of not less than six million five hundred thousand euro (€6,500,000) for any one occurrence",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "true quote: the lease says it word for word",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "c_shall_not_refund",
+      "quote": "Following termination under this clause, the Landlord shall refund to the Tenant any Rent",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "a true quote that stops before its sentence ends; exact, no cut_short (no stop of its own)",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "e_lead_area",
+      "quote": "parties at 412 square metres",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "true quote: the lease says it word for word",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "w_500k_words",
+      "quote": "five hundred thousand euro (€6,500,000) for any one occurrence",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "a number written in words",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "w_two_hundred",
+      "quote": "two hundred euro (€9,200), save to the extent that any increase is caused by a change in law",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "a number written in words",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "c_assign_period",
+      "quote": "The Tenant shall not assign, underlet, charge or part with possession of the whole or any part of the Premises.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "reformatted",
+      "why": "a true quote cut short (marked cut_short)",
+      "cut_short": true
+    },
+    {
+      "group": "walk",
+      "id": "c_refund_period",
+      "quote": "Following termination under this clause, the Landlord shall refund to the Tenant any Rent.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "reformatted",
+      "why": "a true quote cut short (marked cut_short)",
+      "cut_short": true
+    },
+    {
+      "group": "walk",
+      "id": "x_neg_squared_not",
+      "quote": "6.1 The Landlord shall 🅽🅾🆃 insure the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "reformatted",
+      "why": "#822: enclosed letters",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "x_strike_not",
+      "quote": "The Tenant shall n̶o̶t̶ be responsible for repairs to the structure",
+      "source": {
+        "fixture": true
+      },
+      "expect": "reformatted",
+      "why": "#822: combining marks",
+      "cut_short": false
+    },
+    {
+      "group": "walk",
+      "id": "e_sq_no_break",
+      "quote": "the Tenant's covenants in this Lease, the Landlord lets the Premises",
+      "source": {
+        "fixture": true
+      },
+      "expect": "exact",
+      "why": "the walk's honest control",
+      "cut_short": false
+    },
+    {
+      "group": "second-walk",
+      "id": "s3a-J1",
+      "quote": "or if the Tenant becomes insolvent,\nThe Tenant may terminate this Lease on 30 April 2030",
+      "source": {
+        "fixture": true
+      },
+      "expect": "stitched_out_of_order",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "cut_short": false
+    },
+    {
+      "group": "second-walk",
+      "id": "s3a-J1@70",
+      "quote": "or if the Tenant becomes insolvent,\nThe Tenant may terminate this Lease on 30 April 2030",
+      "source": {
+        "wrap": 70
+      },
+      "expect": "stitched_out_of_order",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "cut_short": false
+    },
+    {
+      "group": "second-walk",
+      "id": "s3a-J2",
+      "quote": "THIS DEED is made on\n14 March 2025\nDear Sirs,",
+      "source": {
+        "fixture": true
+      },
+      "expect": "stitched_out_of_order",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "cut_short": false
+    },
+    {
+      "group": "second-walk",
+      "id": "s3a-J2@70",
+      "quote": "THIS DEED is made on\n14 March 2025\nDear Sirs,",
+      "source": {
+        "wrap": 70
+      },
+      "expect": "stitched_out_of_order",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "cut_short": false
+    },
+    {
+      "group": "audit",
+      "id": "subject-to-payment",
+      "quote": "Subject to payment of the Service Charge,\nThe Landlord shall insure the Building (excluding any tenant's fixtures and fittings) against the Insured Risks",
+      "source": {
+        "fixture": true
+      },
+      "expect": "stitched_out_of_order",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "cut_short": false
+    },
+    {
+      "group": "second-walk",
+      "id": "s3c-X35",
+      "quote": "500 euro",
+      "source": {
+        "doc": "the deposit is EUR2 500 euro"
+      },
+      "expect": "exact",
+      "why": "a grouped amount with a letter prefix (`EUR2 500`) is not read as one number",
+      "cut_short": false
+    },
+    {
+      "group": "second-walk",
+      "id": "s3c-X38",
+      "quote": "is 5 percent higher",
+      "source": {
+        "doc": "the rent is ·5 percent higher"
+      },
+      "expect": "reformatted",
+      "why": "a middle-dot decimal (`·5`) is not a decimal mark",
+      "cut_short": false
+    },
+    {
+      "group": "symbols",
+      "id": "bullet",
+      "quote": "The Tenant shall pay the Rent and keep the Premises",
+      "source": {
+        "doc": "The Tenant shall pay the Rent ■ and keep the Premises"
+      },
+      "expect": "reformatted",
+      "why": "a symbol other than the kept ones (a bullet) is set aside",
+      "cut_short": false
+    },
+    {
+      "group": "symbols",
+      "id": "emoji",
+      "quote": "⭐ The Tenant may keep pets",
+      "source": {
+        "doc": "🔥 The Tenant may keep pets"
+      },
+      "expect": "reformatted",
+      "why": "a symbol other than the kept ones (an emoji) is set aside",
+      "cut_short": false
+    },
+    {
+      "group": "audit",
+      "id": "a.m.-Monday",
+      "quote": "The Tenant and its contractors shall … Monday to Friday use the loading bay or the goods lift.",
+      "source": {
+        "doc": "The Tenant and its contractors shall not before 9 a.m. Monday to Friday use the loading bay or the goods lift."
+      },
+      "expect": "stitched",
+      "why": "an abbreviation the check does not know, before a capitalised word: a skip may land there",
+      "cut_short": false
+    },
+    {
+      "group": "audit",
+      "id": "excl.-VAT",
+      "quote": "The Tenant shall pay an annual rent of €48,000 … VAT and the Service Charge on each quarter day.",
+      "source": {
+        "doc": "The Tenant shall pay an annual rent of €48,000 excl. VAT and the Service Charge on each quarter day."
+      },
+      "expect": "stitched",
+      "why": "an abbreviation the check does not know, before a capitalised word: a skip may land there",
+      "cut_short": false
+    },
+    {
+      "group": "audit",
+      "id": "feff-inside-a-word",
+      "quote": "lawful use of the Premises",
+      "source": {
+        "doc": "The Tenant shall not permit any un\ufefflawful use of the Premises."
+      },
+      "expect": "reformatted",
+      "why": "U+FEFF inside a word: the canonical form reads it as a space",
+      "cut_short": false
+    }
+  ],
+  "T3": [
+    {
+      "group": "walk",
+      "id": "c_drop_six",
+      "quote": "a limit of indemnity of not less than five hundred thousand euro (€500,000) for any one occurrence",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_pct_18",
+      "quote": "the total lettable area of the Building, being 18 per cent at the date of this Lease",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_eur_mid",
+      "quote": "an initial annual rent of forty-eight thousand euro (48,000), exclusive of value added tax, subject to review under Schedule 4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_pct_dropsign",
+      "quote": "the rate of four per cent (4) per annum above the Base Rate",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_drop_not_71",
+      "quote": "7.1 Repair. The Tenant shall keep the Premises in good and substantial repair and condition, damage by the Insured Risks excepted. The Tenant shall be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_not_unreas_long",
+      "quote": "the Tenant may assign the whole of the Premises with the Landlord's consent, such consent to be unreasonably withheld",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_landlord_not_resp",
+      "quote": "6.1 The Landlord shall not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_insert_not_51",
+      "quote": "The Tenant shall not pay the Service Charge in accordance with Schedule 3.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_insert_not_32",
+      "quote": "The Rent shall not be paid by four equal instalments in advance on the usual quarter days",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "p_swap2",
+      "quote": "The Landlord shall pay to the Landlord an initial annual rent of forty-eight thousand euro (€48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "s_tenant_may_all",
+      "quote": "the Tenant may assign the whole or any part of the Premises",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_rent_49k",
+      "quote": "an initial annual rent of forty-eight thousand euro (€49,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_area_413",
+      "quote": "agreed between the parties at 413 square metres",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_regno",
+      "quote": "TALLOWMERE ESTATES LIMITED, a company incorporated in Ireland (registered number 990613)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_expiry",
+      "quote": "\"Term Expiry Date\" means 30 April 2036.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_pct_18_6",
+      "quote": "being 18.6 per cent at the date of this Lease",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_pct_sep",
+      "quote": "being 18,5 per cent at the date of this Lease",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_pct_dropdigit",
+      "quote": "being 8.5 per cent at the date of this Lease",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_permille",
+      "quote": "the rate of four per cent (4‰) per annum above the Base Rate",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_cur_gbp",
+      "quote": "an initial annual rent of forty-eight thousand euro (£48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_cur_usd",
+      "quote": "an initial annual rent of forty-eight thousand euro ($48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_cur_none",
+      "quote": "an initial annual rent of forty-eight thousand euro (48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_cur_EUR",
+      "quote": "an initial annual rent of forty-eight thousand euro (EUR 48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_6_5m_short",
+      "quote": "a limit of indemnity of not less than six million five hundred thousand euro (€6,500,00)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_6_5m_dots",
+      "quote": "a limit of indemnity of not less than six million five hundred thousand euro (€6.500.000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_6_5m_space",
+      "quote": "a limit of indemnity of not less than six million five hundred thousand euro (€6 500 000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_date_drop",
+      "quote": "THIS LEASE is made on 4 March 2025",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_date_year",
+      "quote": "\"Term Commencement Date\" means 1 May 2026.",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_break",
+      "quote": "The Tenant may terminate this Lease on 30 April 2031 (the \"Break Date\")",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_days_14_41",
+      "quote": "is not paid within fourteen (41) days of its due date",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_words_only",
+      "quote": "an initial annual rent of forty-nine thousand euro (€48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_48h",
+      "quote": "on not less than forty-eight (84) hours' notice",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_10y_minus",
+      "quote": "the term of ten (-10) years",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_trailing_digit",
+      "quote": "an initial annual rent of forty-eight thousand euro (€48,0000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "d_leading_digit",
+      "quote": "an initial annual rent of forty-eight thousand euro (€148,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_drop_not_short",
+      "quote": "The Tenant shall be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_insert_not_61",
+      "quote": "6.1 The Landlord shall not insure the Building (excluding any tenant's fixtures and fittings) against the Insured Risks",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_remove_not_rev",
+      "quote": "The Rent shall be reduced on review",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_unreason",
+      "quote": "such consent to be unreasonably withheld",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_landlord_not_resp_oo",
+      "quote": "Subject to payment of the Service Charge, the Landlord shall not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "s_shall_be_liable",
+      "quote": "The Tenant shall be liable for repairs to the structure",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "s_tenant_refund",
+      "quote": "the Tenant shall refund to the Landlord any Rent, Service Charge or insurance rent paid in respect of any period after the Break Date",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "p_swap",
+      "quote": "The Landlord shall pay to the Tenant an initial annual rent of forty-eight thousand euro (€48,000)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_gbp_mid",
+      "quote": "an initial annual rent of forty-eight thousand euro (£48,000), exclusive of value added tax, subject to review under Schedule 4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_usd_mid",
+      "quote": "an initial annual rent of forty-eight thousand euro ($48,000), exclusive of value added tax, subject to review under Schedule 4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_49k_mid",
+      "quote": "an initial annual rent of forty-eight thousand euro (€49,000), exclusive of value added tax, subject to review under Schedule 4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_480k_mid",
+      "quote": "an initial annual rent of forty-eight thousand euro (€480,000), exclusive of value added tax, subject to review under Schedule 4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_digit_mid",
+      "quote": "an initial annual rent of forty-eight thousand euro (€8,000), exclusive of value added tax, subject to review under Schedule 4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_num_mid",
+      "quote": "an initial annual rent of forty-eight thousand euro, exclusive of value added tax, subject to review under Schedule 4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_10y_to_1y",
+      "quote": "the term of ten (1) years beginning on and including the Term Commencement Date",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_dot5",
+      "quote": "the total lettable area of the Building, being 18. per cent at the date of this Lease",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_million_digits",
+      "quote": "maintain public liability insurance in respect of its use of the Premises with a limit of indemnity of not less than (€500,000) for any one occurrence",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_21",
+      "quote": "If any Rent is unpaid (21) days after becoming payable (whether formally demanded or not)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_drop_unreason",
+      "quote": "such consent not to be withheld",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_break_drop_ref",
+      "quote": "The Tenant may terminate this Lease on 30 April (the \"Break Date\") by giving the Landlord not less than six (6) months' prior written notice",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_break_drop_less",
+      "quote": "by giving the Landlord not less than six months' prior written notice",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_shall_not_refund2",
+      "quote": "Following termination under this clause, the Landlord shall not refund to the Tenant any Rent, Service Charge or insurance rent paid",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "c_not_shall_refund",
+      "quote": "Following termination under this clause, the Landlord shall refund to the Tenant any Rent, Service Charge or insurance rent paid in respect of any period before the Break Date",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_9_20_short",
+      "quote": "(€9,20)",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_9_20_long",
+      "quote": "shall not exceed nine thousand two hundred euro (€9,20), save to the extent that any increase is caused by a change in law",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_9_long",
+      "quote": "shall not exceed nine thousand two hundred euro (€9), save to the extent that any increase is caused by a change in law",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_200_long",
+      "quote": "shall not exceed nine thousand two hundred euro (€200), save to the extent that any increase is caused by a change in law",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_000_long",
+      "quote": "the sum of twenty-four thousand euro (€000) to be held as a rent deposit in accordance with the rent deposit deed of even date",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_2025_to_202",
+      "quote": "THIS DEED is made on 2 September 202 between Tallowmere Estates Limited (the \"Landlord\") and Northwind Analytics Ltd",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_412_to_12",
+      "quote": "measured in accordance with the RICS Code of Measuring Practice (6th edition), agreed between the parties at 12 square metres",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_412_to_41",
+      "quote": "measured in accordance with the RICS Code of Measuring Practice (6th edition), agreed between the parties at 41 square metres",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_FICT-0001_to_612",
+      "quote": "TALLOWMERE ESTATES LIMITED, a company incorporated in Ireland (registered number 612), whose registered office is at 7 Halloran Row",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_trunc_regno",
+      "quote": "(registered number 99061",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_trunc_clause",
+      "quote": "the Landlord agrees that, notwithstanding clause 3",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_trunc_clause_mid",
+      "quote": "the Landlord agrees that, notwithstanding clause 3 of the Lease, the initial annual rent shall be forty-five thousand six hundred euro",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_trunc_rent",
+      "quote": "an initial annual rent of forty-eight thousand euro (€48",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_trunc_rent2",
+      "quote": "an initial annual rent of forty-eight thousand euro (€48,0",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_trunc_area",
+      "quote": "agreed between the parties at 41",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_inside",
+      "quote": "12 square metres",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_pct18",
+      "quote": "being 18",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_regno_cut",
+      "quote": "(registered number FICT-000",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_48000_nosign",
+      "quote": "an initial annual rent of forty-eight thousand euro 48,000",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_9_dot",
+      "quote": "notwithstanding clause 3",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_d02",
+      "quote": "Dublin 2, D0",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_pct_4",
+      "quote": "four per cent (4",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "n_quote_numsign",
+      "quote": "48,000",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_ell_in_number",
+      "quote": "a limit of indemnity of not less than six million five hundred thousand euro (€6…500,000) for any one occurrence",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_ell_in_number2",
+      "quote": "an initial annual rent of forty-eight thousand euro (€48…000), exclusive of value added tax",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_abbrev_no_break",
+      "quote": "the Tenant shall pay Interest on it e.g. on the Rent",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "e_initial_drop_not",
+      "quote": "damage by the Insured Risks excepted. The Tenant shall A. be responsible for repairs to the structure",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    }
+  ]
+}

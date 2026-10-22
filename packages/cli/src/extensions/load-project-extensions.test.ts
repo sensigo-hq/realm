@@ -356,7 +356,8 @@ describe('makeRegistryProvider', () => {
       makeDefinition({ source_dir: undefined, trust_root: undefined }),
     );
     expect(registry.getAdapter('filesystem')).toBeDefined();
-    expect(registry.names('handler')).toEqual([]);
+    // No project handler is loaded; the one handler is the built-in `check_quotes` (issue #760).
+    expect(registry.names('handler')).toEqual(['check_quotes']);
   });
 
   it('propagates loader errors (broken module rejects the provider call)', async () => {
