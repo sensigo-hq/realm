@@ -19,21 +19,26 @@ All notable changes to this project are documented here.
 - **`locateQuote`, the sixth helper `@sensigo/realm` exports for handlers (issue #760).** The rule
   `check_quotes` uses, for a handler of your own. A quote may skip document text only where it
   breaks (at `…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation
-  mark or a line break), and only to where the document starts a sentence, a clause or a line. A
-  line counts only after a blank line, or a line that ends a sentence, a clause or a table row,
-  so text whose lines break inside sentences is read correctly; a clause number or a list mark is
-  skipped only at such a line start, and after a full stop the next piece must begin with a
-  capital letter or a quotation mark. The part before a skip may still end mid-sentence, so a
-  clause can be joined to a later sentence and read `stitched`.
-  Whole sentences quoted from far apart read `stitched` (`stitched_out_of_order` when reversed). A
-  number written in digits is one unit: a digit never matches inside a longer number or next to a
-  letter, and a quote never starts or ends on a number's separator or beside a group of
-  thousands. A sign belongs to its number. A number written in words is matched as words.
-  Mathematical signs, primes, ballot boxes and check marks, superscripts and fractions are kept,
-  and every dash and hyphen reads as `-` (two hyphens outside the Basic Multilingual Plane
-  excepted); a soft hyphen is not a dash, and the literal match reads past it and every other
-  invisible character. A quote's own leading or trailing space never counts as an edge. A quote
-  that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`.
+  mark or a line break), and by the rule only to where the document starts a sentence, a clause or a
+  line; the handlers reference lists where a crafted quote can still land elsewhere ("What
+  `check_quotes` does not catch"). A line counts only after a blank line, or a line that ends a
+  sentence, a clause or a table row, so text whose lines break inside sentences is read correctly; a
+  clause number or a list mark is skipped only at such a line start, and after a full stop the next
+  piece must begin with a capital letter or an opening mark (a quotation mark, `(` or `[`), or start
+  right after one in the document; at a new line that counts, an item after a list mark (`-`, `*`,
+  `•` …) may open with any word, and a line quoted with its own clause number before a capital
+  letter (`2. Send…`) passes. The part before a skip may still end mid-sentence, so a clause can be
+  joined to a later sentence and read `stitched`. Whole sentences quoted from far apart read
+  `stitched` (`stitched_out_of_order` when reversed). A number written in digits is one unit: a
+  digit never matches inside a longer number or next to a letter, and a quote never starts or ends
+  on a number's separator or beside a group of thousands. A sign belongs to its number. A number
+  written in words is matched as words. Mathematical signs, primes, ballot boxes and check marks,
+  superscripts and fractions are kept, and every dash and hyphen reads as `-` (two hyphens outside
+  the Basic Multilingual Plane excepted); a soft hyphen is not a dash: it, like every other
+  invisible format character (Unicode's `Cf`) but U+FEFF (which the canonical form reads as a
+  space), makes no word edge. A quote's own leading or trailing space never counts as an edge. A
+  quote that ends a sentence where the document's goes on is marked `cut_short`, with
+  `cut_short_at`; a quote that carries a trailing space after its stop is not marked.
 - **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
   every control character written out. Core exports `controlEscape`, the one spelling of a control
   character a terminal line shows.
