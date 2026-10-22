@@ -1950,7 +1950,7 @@
         "doc": "The Tenant shall not permit any un\ufefflawful use of the Premises."
       },
       "expect": "reformatted",
-      "why": "U+FEFF inside a word: the canonical form reads it as a space",
+      "why": "a quote that starts or ends at U+FEFF inside a word reads `reformatted`: the canonical form reads it as a space",
       "cut_short": false
     },
     {
@@ -1961,7 +1961,7 @@
         "doc": "The Tenant shall not permit any un\u034flawful use of the Premises."
       },
       "expect": "exact",
-      "why": "a combining invisible character (U+034F) inside a word makes a word edge; only format characters (Cf) do not",
+      "why": "inside a word, a format character (`Cf`, U+FEFF excepted) or a Hangul filler (U+115F, U+1160, U+3164, U+FFA0) makes no edge; a combining mark (U+034F) does",
       "cut_short": false
     },
     {
@@ -2005,7 +2005,7 @@
         "doc": "THE LANDLORD CAN'T REFUSE CONSENT."
       },
       "expect": "exact",
-      "why": "a contraction in capitals: only a lowercase t after the apostrophe is read",
+      "why": "a contraction in capitals: only a lowercase t after the apostrophe `'` or `’` is read (`can´t` is not read)",
       "cut_short": false
     },
     {
