@@ -849,8 +849,9 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
             : { error: 'ENOENT' },
       ),
     }).toEqual({
-      denied: `Measured for the login 'agent', against ${STORE}, which this login cannot open, so whether a store is there is not known.`,
-      other: `Measured for the login 'agent', against ${STORE}, which this login cannot open, so whether a store is there is not known.`,
+      // #819 Unit B correction re-pin (item 4): was "is not known" — one state, one word
+      denied: `Measured for the login 'agent', against ${STORE}, which this login cannot open, so whether a store is there is unknown.`,
+      other: `Measured for the login 'agent', against ${STORE}, which this login cannot open, so whether a store is there is unknown.`,
     });
   });
 
@@ -1119,7 +1120,8 @@ describe('#819 Unit B: the words', () => {
 
     it('(b) two tools whose hows differ: each keeps its own; (b′) one tool read two ways: each keeps its own', () => {
       const P = '/etc/pam.d/sudo read';
-      // (a) red: `twoTools` when an entry of another tool, read another way, prints "as above";
+      // (a) red: `twoTools` when an entry of another tool, read another way, prints "as above"
+      //     (#819 Unit B correction, item 5: nothing compared, `asAbove = prev !== undefined`);
       //     `oneToolTwoWays` when the tool alone decides (the how is not compared); (b) prints each line.
       expect({
         twoTools: line([refusal('/usr/bin/sudo')[1]!, su('svc')]),

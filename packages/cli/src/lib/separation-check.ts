@@ -899,7 +899,7 @@ export function renderSeparation(e: CheckEvidence): string[] {
       e.store_found
         ? e.store_unopened === true
           ? // #819 correction 1 (walk --check wording 5): its stat failed, so it may not be there
-            `Measured for the login '${e.login}', against ${e.store}, which this login cannot open, so whether a store is there is not known.`
+            `Measured for the login '${e.login}', against ${e.store}, which this login cannot open, so whether a store is there is unknown.`
           : `Measured for the login '${e.login}', against the store at ${e.store}.`
         : `Measured for the login '${e.login}'; no store was found at ${e.store}.`
     }${
