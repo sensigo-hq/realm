@@ -1015,9 +1015,11 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     // (unknown unless yes, and twice), :: "C-1 (A BLOCKING 1) …" (askpass), :: "C-17 (e) …"
     // (any case), :: "C-18 (f) …" (the group source), :: "#819 correction 1 C-20 …" (clause (g)).
     // #819 follow-up 2: separation-790 :: the "#819 follow-up 2 — the class …" cells (members 2 and 3, A B4), C-20 (clause (g)).
+    // #819 follow-up 3 (A B4): the group-name clause — separation-790 :: "the audit’s S2 (Q1a) …"
+    // (primary group, any case) and "the audit’s S2, recorded (Q1b) …" (a secondary group not seen).
     claim(
       C,
-      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed twice with different values (issue #819); the stack `pam_askpass_service` names is read too; run-as user names match in any case, as sudo matches them, and so do run-as group names unless `!case_insensitive_group` or `match_group_by_gid` is listed; a run-as group that does not list the service user is read as not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds that the members the system lists for each group read are all of its members.",
+      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed twice with different values (issue #819); the stack `pam_askpass_service` names is read too; run-as user names match in any case, as sudo matches them; unless `!case_insensitive_group` or `match_group_by_gid` is listed, run-as group names are compared in any case with the service user's primary group and with the group `getent` finds, and a secondary group named only in another case is not seen; a run-as group that does not list the service user is read as not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds that the members the system lists for each group read are all of its members.",
     );
     // separation-check-627 :: 8.5's header cell and #819's "C4: a store this login cannot open — the
     // header says so"; the condition lines (condition 7's two files); #819's "C4: the economics line

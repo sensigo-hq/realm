@@ -90,8 +90,10 @@ All notable changes to this project are documented here.
   Defaults setting or long-format option the check does not read makes sudo's reading unknown,
   unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed
   twice with different values (issue #819); the stack `pam_askpass_service` names is read too;
-  run-as user names match in any case, as sudo matches them, and so do run-as group names unless
-  `!case_insensitive_group` or `match_group_by_gid` is listed; a run-as group that does not list the
+  run-as user names match in any case, as sudo matches them; unless `!case_insensitive_group` or
+  `match_group_by_gid` is listed, run-as group names are compared in any case with the service user's
+  primary group and with the group `getent` finds, and a secondary group named only in another case
+  is not seen; a run-as group that does not list the
   service user is read as not holding it only when the `group` and `initgroups` lines of
   `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds
   that the members the system lists for each group read are all of its members. The header
