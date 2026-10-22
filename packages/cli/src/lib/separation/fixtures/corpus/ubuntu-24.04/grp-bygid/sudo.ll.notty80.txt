@@ -1,0 +1,16 @@
+# captured 2026-10-22 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -ll
+exit 0
+--- stdout
+Matching Defaults entries for agent on c794022fe128:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
+    use_pty, match_group_by_gid
+
+User agent may run the following commands on c794022fe128:
+
+Sudoers entry: /etc/sudoers.d/t
+    RunAsUsers: %svcgrp
+    Options: !authenticate
+    Commands:
+	/usr/bin/true
+--- stderr

@@ -1,0 +1,9 @@
+# captured 2026-10-22 · image ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 · as the login agent through the check's spawn (no terminal, 80 columns): /usr/bin/sudo -V
+exit 0
+--- stdout
+Sudo version 1.9.9
+Sudoers policy plugin version 1.9.9
+Sudoers file grammar version 48
+Sudoers I/O plugin version 1.9.9
+Sudoers audit plugin version 1.9.9
+--- stderr

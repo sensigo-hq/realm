@@ -1,0 +1,6 @@
+# captured 2026-10-22 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · cat /etc/pam.d/sudo
+#%PAM-1.0
+auth       include      system-auth
+account    include      system-auth
+password   include      system-auth
+session    include      system-auth

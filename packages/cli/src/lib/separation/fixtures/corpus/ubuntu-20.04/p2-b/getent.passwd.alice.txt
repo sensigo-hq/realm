@@ -1,0 +1,5 @@
+# captured 2026-10-22 · image ubuntu@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 · as the login agent through the check's spawn (no terminal, 80 columns): /usr/bin/getent passwd alice
+exit 0
+--- stdout
+alice:x:1502:1502::/home/alice:/bin/sh
+--- stderr

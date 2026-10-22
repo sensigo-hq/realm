@@ -1,0 +1,7 @@
+# captured 2026-10-22 · image ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 · cat /etc/pam.d/su-l
+#%PAM-1.0
+auth		include		su
+account		include		su
+password	include		su
+session		optional	pam_keyinit.so force revoke
+session		include		su

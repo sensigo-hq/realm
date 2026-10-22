@@ -1,0 +1,16 @@
+# captured 2026-10-22 · image ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -l
+exit 0
+--- stdout
+Matching Defaults entries for agent on 984ab9b35f3e:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
+    use_pty
+
+Runas and Command-specific defaults for agent:
+    Defaults!/usr/bin/true mailsub="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"
+    Defaults!/usr/bin/false mailfrom=\"q\", !authenticate
+
+User agent may run the following commands on 984ab9b35f3e:
+    (nobody) NOPASSWD: /bin/true
+    (svc) /usr/bin/true
+--- stderr

@@ -1,0 +1,5 @@
+# captured 2026-10-22 · image fedora@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 · as the login agent through the check's spawn (no terminal, 80 columns): /usr/sbin/getent group 2001
+exit 0
+--- stdout
+SVCGRP:x:2001:svc
+--- stderr

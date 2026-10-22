@@ -1,0 +1,9 @@
+# captured 2026-10-22 · image debian@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · cat /etc/pam.d/sudo
+#%PAM-1.0
+
+# Set up user limits from /etc/security/limits.conf.
+session    required   pam_limits.so
+
+@include common-auth
+@include common-account
+@include common-session-noninteractive

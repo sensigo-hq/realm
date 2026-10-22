@@ -1,0 +1,9 @@
+# captured 2026-10-22 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · cat /etc/pam.d/postlogin
+#%PAM-1.0
+# This file is auto-generated.
+# User changes will be destroyed the next time authselect is run.
+
+session optional                   pam_umask.so silent
+session [success=1 default=ignore] pam_succeed_if.so service !~ gdm* service !~ su* quiet
+session [default=1]                pam_lastlog.so nowtmp showfailed
+session optional                   pam_lastlog.so silent noupdate showfailed

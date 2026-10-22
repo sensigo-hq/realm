@@ -1,0 +1,7 @@
+# captured 2026-10-22 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · each tool in the folders the check looks in: path, real path, owner uid
+/usr/bin/sudo /usr/bin/sudo 0
+/bin/sudo /usr/bin/sudo 0
+/usr/bin/getent /usr/bin/getent 0
+/bin/getent /usr/bin/getent 0
+/usr/bin/id /usr/bin/id 0
+/bin/id /usr/bin/id 0

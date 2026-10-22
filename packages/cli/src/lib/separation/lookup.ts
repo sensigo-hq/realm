@@ -1,7 +1,7 @@
 // lookup.ts — #790: what every switch-path reader shares. The probes they read through; which copy of
 // a tool is asked (01b #8: a root-owned system copy only); and the user and group lookups of rail 1
-// (`getent passwd|group|netgroup`; `dscl . -read /Users/<svc> UserShell` on macOS), each asked once
-// per measurement.
+// (`getent passwd|group|netgroup`; `id -G <user>`, #819 Unit A; `dscl . -read /Users/<svc> UserShell`
+// on macOS), each asked once per measurement.
 import { delimiter, dirname, join } from 'node:path';
 import type { Runner, RunResult } from './runner.js';
 
@@ -36,6 +36,11 @@ export interface SwitchProbes {
   /** The one way a reader starts a process (`runner.ts`): rail 1's calls only. */
   run: Runner;
 }
+
+/** A name rail 1 passes to a lookup (`runner.ts`). #819 Unit A: the lookups and the sudo reader (A6)
+ *  never ask one the rail would refuse — a run-as name read from a listing may hold a space or a
+ *  backslash. */
+export const RAIL_NAME = /^[A-Za-z0-9_.][A-Za-z0-9_.@+-]*$/;
 
 /** D2's system folders (D2, with NixOS's two). */
 export const SYSTEM_DIRS = [
@@ -183,6 +188,11 @@ export interface Lookups {
   netgroupUsers: (name: string) => Promise<Found<string[]>>;
   /** Whether this login is in the group `name`: by its process groups or the group's members. */
   loginIn: (name: string) => Promise<Found<boolean>>;
+  /** #819 Unit A (A3): `user`'s group ids as sudo reads them (`id -G`: `getgrouplist`, the primary
+   *  gid first) — `undefined` where they cannot be read so (no `id`, one that is not a root-owned
+   *  system copy, a refusal, an error or time-out, an exit other than 0, an answer that is not a
+   *  list of gids or does not hold the primary gid; and on macOS, where it is not asked). */
+  groupsOf: (user: PasswdEntry) => Promise<number[] | undefined>;
   /** Whether `user` (svc or root) is in the group `name` (`#gid` or a name). macOS: unknown (01b #9).
    *  `listed`: not in it, read from the members the group lists (#819 correction 1, clause (g)). */
   userIn: (
@@ -239,7 +249,7 @@ function groupSourceOf(probes: SwitchProbes): GroupSource {
   if ('error' in stat && stat.error === 'ENOENT') return nscd() ?? { local: true };
   const text = probes.readText(path);
   if (text === undefined)
-    return { unknown: `${path} cannot be read, so where groups are listed from is not known` };
+    return { unknown: `${path} cannot be read, so where groups are listed from is unknown` };
   const lines: Partial<Record<(typeof GROUP_DATABASES)[number], string>> = {};
   for (const raw of text.split('\n')) {
     const line = raw.replace(/^\s+/, '');
@@ -248,7 +258,7 @@ function groupSourceOf(probes: SwitchProbes): GroupSource {
     const db = GROUP_DATABASES.find((d) => d === name.toLowerCase());
     if (db === undefined) continue;
     const cannot = (why: string): GroupSource => ({
-      unknown: `${path} has ${why}, so where groups are listed from is not known: ${line.trimEnd()}`,
+      unknown: `${path} has ${why}, so where groups are listed from is unknown: ${line.trimEnd()}`,
     });
     if (lines[db] !== undefined) return cannot(`a second ${db} line`);
     const rest = line.slice(name.length);
@@ -308,6 +318,11 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
   const ask = async (db: string, name: string): Promise<Found<string>> => {
     if (getent === undefined) return { unknown: notFound('getent') };
     if ('unknown' in getent) return { unknown: getent.unknown };
+    // #819 Unit A: a name rail 1 refuses is not asked; the answer is the runner's own refusal
+    if (!RAIL_NAME.test(name))
+      return {
+        unknown: `getent ${db} ${name}: the check refused to run ${getent.path} ${db} ${name}`,
+      };
     const r = await run([getent.path, db, name]);
     if ('exit' in r && r.exit === 2 && r.stdout === '') return { absent: true };
     if ('exit' in r && r.exit === 0 && r.stderr === '') return { found: r.stdout.split('\n')[0]! };
@@ -369,10 +384,13 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
     }
     if (g.found.gid === user.gid || g.found.members.includes(user.name)) return { found: true };
     // #819 (08, A Outside 2): a group that lists no members may hide them (SSSD's
-    // ignore_group_members), and `getent initgroups` is not one of rail 1's calls — not known
+    // ignore_group_members). #819 Unit A (A3): this is the fallback, read only where `id -G` cannot
+    // be — `id -G` is the call because it reads a user's groups as sudo does (`getgrouplist` with the
+    // primary gid), where `getent initgroups` leaves the primary gid out, answers an unknown user
+    // like one with no groups, and is missing on musl (W-UA-L1-11, W-UA-L3-19/-20)
     if (g.found.members.length === 0) {
       return {
-        unknown: `getent group ${g.found.name} lists no members, so whether ${user.name} is in it is not known`,
+        unknown: `getent group ${g.found.name} lists no members, so whether ${user.name} is in it is unknown`,
       };
     }
     // #819 correction 1 (SEP-00 (f)): a member list is complete only from a local source
@@ -385,5 +403,27 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
     }
     return { found: false, listed: true };
   };
-  return { probes, login, svc, darwin, run, passwd, group, netgroupUsers, loginIn, userIn };
+  const id = darwin ? undefined : findTool(probes, 'id');
+  const groupsOf = async (user: PasswdEntry): Promise<number[] | undefined> => {
+    if (id === undefined || 'unknown' in id) return undefined;
+    const r = await run([id.path, '-G', user.name]);
+    if (!('exit' in r) || r.exit !== 0) return undefined;
+    const out = r.stdout.trim();
+    if (!/^\d+(?: \d+)*$/.test(out)) return undefined;
+    const gids = out.split(' ').map(Number);
+    return gids.includes(user.gid) ? gids : undefined;
+  };
+  return {
+    probes,
+    login,
+    svc,
+    darwin,
+    run,
+    passwd,
+    group,
+    netgroupUsers,
+    loginIn,
+    groupsOf,
+    userIn,
+  };
 }

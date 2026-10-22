@@ -1,0 +1,13 @@
+# captured 2026-10-22 · image fedora@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 · each tool in the folders the check looks in: path, real path, owner uid
+/usr/bin/sudo /usr/bin/sudo 0
+/usr/sbin/sudo /usr/bin/sudo 0
+/bin/sudo /usr/bin/sudo 0
+/sbin/sudo /usr/bin/sudo 0
+/usr/bin/getent /usr/bin/getent 0
+/usr/sbin/getent /usr/bin/getent 0
+/bin/getent /usr/bin/getent 0
+/sbin/getent /usr/bin/getent 0
+/usr/bin/id /usr/bin/id 0
+/usr/sbin/id /usr/bin/id 0
+/bin/id /usr/bin/id 0
+/sbin/id /usr/bin/id 0

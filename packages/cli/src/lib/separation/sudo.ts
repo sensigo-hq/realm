@@ -11,6 +11,7 @@ import {
   findTools,
   lookedFor,
   numericId,
+  RAIL_NAME,
   toolLine,
   type Found,
   type Lookups,
@@ -18,7 +19,8 @@ import {
 } from './lookup.js';
 import { scanPam } from './pam.js';
 
-/** One listed entry: who it runs as (users, groups), whether it needs no password, its commands. */
+/** One listed entry: who it runs as (users, groups), whether it needs no password, its commands.
+ *  #819 Unit A (A1): each run-as member unquoted and unescaped, as sudo stores it. */
 interface Entry {
   users: string[];
   groups: string[];
@@ -26,22 +28,107 @@ interface Entry {
   commands: string[];
 }
 
-/** A `Defaults!<cmd>` or `Defaults><runas>` line of "Runas and Command-specific defaults". */
+/** #819 Unit A (A1): one Defaults item as sudo printed it — its text, its keyword (with `!`), its
+ *  operator, and its value: a quoted one with each `\"` read as the one valid reading chose, an
+ *  unquoted one as printed (`defaultsValue` unescapes it by sudo's version). Exported for its cells. */
+export interface DefaultsItem {
+  text: string;
+  key: string;
+  op?: '=' | '+=' | '-=';
+  value?: string;
+  quoted: boolean;
+}
+
+/** A `Defaults!<cmd>` or `Defaults><runas>` line of "Runas and Command-specific defaults": its
+ *  targets (a `Defaults>` target unquoted and unescaped, as a run-as member is), its items. */
 interface Specific {
   kind: '!' | '>';
   targets: string[];
   options: string[];
+  items: DefaultsItem[];
 }
 
 interface Listing {
   defaults: string[];
+  /** #819 Unit A (A1): the global Defaults items, read. */
+  items: DefaultsItem[];
   specific: Specific[];
   entries: Entry[];
   /** Every value of the long format's `Options:` fields, in order (#819 correction 1). */
   options: string[];
-  /** #819 follow-up 3: the Defaults items whose split this check cannot tell, as printed. */
+  /** #819 follow-up 3, Unit A (A1, A4): why a list could not be split, each a cause as printed —
+   *  unknown unless sudo already reads yes. */
   unsplit: string[];
+  /** #819 Unit A (A1): the sudo that printed it, read from `sudo -V`, or not known. */
+  version: SudoVersion | undefined;
 }
+
+/** #819 Unit A (A1): sudo's version, from the first line of `sudo -V` (`Sudo version 1.9.15p5`). */
+export interface SudoVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  p: number;
+}
+
+/** The version `sudo -V`'s first line names, or `undefined` when it names none this check reads.
+ *  Exported for its cells. */
+export function sudoVersion(first: string | undefined): SudoVersion | undefined {
+  const m = /^Sudo version (\d+)\.(\d+)\.(\d+)(?:p(\d+))?$/.exec(first ?? '');
+  if (m === null) return undefined;
+  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), p: Number(m[4] ?? 0) };
+}
+
+/** Whether `v` is `at` or later. */
+function atLeast(v: SudoVersion, at: readonly [number, number, number, number]): boolean {
+  const own = [v.major, v.minor, v.patch, v.p];
+  for (let i = 0; i < 4; i++) if (own[i] !== at[i]) return own[i]! > at[i]!;
+  return true;
+}
+
+/** sudo ≤ 1.9.9 escapes a backslash outside quotes (`\\`); 1.9.10 stopped (W-UA-L1-02). */
+const BACKSLASH_PLAIN_FROM = [1, 9, 10, 0] as const;
+/** A `Defaults!`/`Defaults>` target list is separated by ", " from 1.9.8, by " ," before it
+ *  (W-UA-L1-15, W-UA-L3-11). */
+const TARGET_COMMA_FROM = [1, 9, 8, 0] as const;
+
+/**
+ * #819 Unit A (A1): a value printed outside quotes, unescaped as sudo printed it — on ≤ 1.9.9 `\X` is
+ * `X`; on ≥ 1.9.10 `\X` is `X` for `X` in `:,=#"`, and a backslash before any other character is
+ * itself. `undefined` when the version cannot be read and the value holds a backslash. Exported for
+ * its cells.
+ */
+export function unescapePrinted(raw: string, version: SudoVersion | undefined): string | undefined {
+  if (!raw.includes('\\')) return raw;
+  if (version === undefined) return undefined;
+  const old = !atLeast(version, BACKSLASH_PLAIN_FROM);
+  let out = '';
+  for (let i = 0; i < raw.length; i++) {
+    const next = raw[i + 1];
+    if (raw[i] === '\\' && next !== undefined && (old || ':,=#"'.includes(next))) {
+      out += next;
+      i++;
+    } else out += raw[i];
+  }
+  return out;
+}
+
+/** #819 Unit A (A1): one Defaults item's keyword (with `!`, and `+`/`-` for `+=`/`-=`) and its
+ *  value as sudo stores it — or why it cannot be read. Exported for its cells (T1). */
+export function defaultsValue(
+  item: DefaultsItem,
+  version: SudoVersion | undefined,
+): { key: string; value?: string } | { unknown: string } {
+  const key = item.key + (item.op === '+=' ? '+' : item.op === '-=' ? '-' : '');
+  if (item.value === undefined) return { key };
+  if (item.quoted) return { key, value: item.value };
+  const value = unescapePrinted(item.value, version);
+  return value === undefined ? { unknown: cannotUnescape(item.text) } : { key, value };
+}
+
+/** #819 Unit A (A1): why a printed backslash cannot be read without sudo's version. */
+const cannotUnescape = (text: string): string =>
+  `sudo's version could not be read, and sudo prints a backslash differently before and after 1.9.10: ${text}`;
 
 /** The short format's tags (`NOPASSWD:` …); any other tag is not read. */
 const TAGS = new Set([
@@ -109,6 +196,34 @@ const GLOBAL_ACTED = new Set([
   // by gid (exactly) when set, by name in any case when not; listed twice, it reads unknown
   'match_group_by_gid',
 ]);
+
+/** #819 Unit A (A1): the keywords whose VALUE this reader reads — every key `judgeListing` and
+ *  `unreadItem` read a value of (`GLOBAL_ACTED`'s valued keys, and `timestamp_type`); their values
+ *  are unescaped by sudo's version before they are read. `rootpw`, `runaspw`, `targetpw`,
+ *  `authenticate`, `case_insensitive_*` and `match_group_by_gid` are booleans: no value. */
+const VALUE_ACTED = new Set([
+  'exempt_group',
+  'listpw',
+  'runas_default',
+  'timestamp_timeout',
+  'timestamp_type',
+  'pam_service',
+  'pam_login_service',
+  'pam_askpass_service',
+]);
+
+/** #819 Unit A (A1): the value of the first item keyed `key`, as sudo stores it — `undefined` when
+ *  none is listed or it cannot be unescaped (`unreadItem` then reports it). */
+function valueOf(
+  items: readonly DefaultsItem[],
+  key: string,
+  version: SudoVersion | undefined,
+): string | undefined {
+  const item = items.find((i) => i.key === key && i.op === '=');
+  if (item === undefined) return undefined;
+  const read = defaultsValue(item, version);
+  return 'unknown' in read ? undefined : read.value;
+}
 
 /**
  * #819 correction 1 (SEP-00): the Defaults keywords that cannot change who can become whom without
@@ -319,10 +434,15 @@ const ZERO_TIMEOUT = /^timestamp_timeout=0(?:\.0*)?$/;
  *  acted-on keyword listed with different forms or values is not read either: sudo applies the
  *  last matching entry, and the listing does not show which that is (AUD-11). */
 function unreadItem(listing: Listing): string | undefined {
-  // #819 follow-up 3: an item whose split cannot be told may hide a setting — reported first
+  // #819 follow-up 3, Unit A (A1, A4): a list whose split cannot be told may hide a setting — first
   const unsplit = listing.unsplit[0];
-  if (unsplit !== undefined)
-    return `sudo listed a Defaults setting this check cannot split: ${unsplit}`;
+  if (unsplit !== undefined) return unsplit;
+  // Unit A (A1): a value the check acts on, which it cannot unescape without sudo's version
+  for (const item of [...listing.items, ...listing.specific.flatMap((s) => s.items)]) {
+    if (!VALUE_ACTED.has(defaultsKeyword(item.text))) continue;
+    const read = defaultsValue(item, listing.version);
+    if ('unknown' in read) return read.unknown;
+  }
   const global = listing.defaults.find((i) => globalKind(i) === 'unread');
   if (global !== undefined)
     return `sudo listed a Defaults setting this check does not ${notReadVerb(global)}: ${global}`;
@@ -350,169 +470,604 @@ function unreadItem(listing: Listing): string | undefined {
   return undefined;
 }
 
-/**
- * Splits a list on commas outside double quotes, trimmed; each item keeps the text sudo printed.
- * #819 follow-up 2 (member 6, A S4): a backslash escapes the next character, as sudo prints it
- * (SUDOERS_QUOTED: `mailto=root\,ops@…`). #819 follow-up 3 (A B3): sudo never escapes a backslash
- * itself, and separates items with ", ", so a value ending in a literal backslash prints `\,`
- * before the next item. Outside quotes, `\,` is an escape only when a character other than a space
- * or a tab follows it; followed by a space, a tab or the end of the text, the split cannot be told
- * and the item is returned in `unsplit` (kept whole). Inside quotes only `\"` escapes, and one
- * followed by `,` or the end cannot be told either. `\\` stays a pair.
- */
-function splitList(text: string): { items: string[]; unsplit: string[] } {
-  const items: string[] = [];
-  const unsplit: string[] = [];
-  const chars = [...text];
-  let cur = '';
-  let quoted = false;
-  let ambiguous = false;
-  const push = (): void => {
-    const item = cur.trim();
-    if (item !== '') {
-      items.push(item);
-      if (ambiguous) unsplit.push(item);
-    }
-    cur = '';
-    ambiguous = false;
-  };
-  for (let i = 0; i < chars.length; i++) {
-    const ch = chars[i]!;
-    const next = chars[i + 1];
-    if (ch === '\\' && quoted) {
-      if (next === '"') {
-        const after = chars[i + 2];
-        if (after === undefined || after === ',') ambiguous = true;
-        cur += ch + next;
-        i++;
-      } else cur += ch;
-      continue;
-    }
-    if (ch === '\\' && next !== undefined) {
-      if (next === ',') {
-        const after = chars[i + 2];
-        if (after === undefined || after === ' ' || after === '\t') ambiguous = true;
-      }
-      cur += ch + next;
-      i++;
-      continue;
-    }
-    if (ch === '"') quoted = !quoted;
-    if (ch === ',' && !quoted) push();
-    else cur += ch;
-  }
-  push();
-  return { items, unsplit };
+// ─── #819 Unit A (A1): sudo's printout read by its grammar (D3 D1; the prompt's rules) ──────────
+//
+// A Defaults list as sudo prints it (`sudoers_format_default`, W-UA-L1-01): items separated by ", ";
+// a value quoted exactly when it holds a space or a tab, so a `"` opens a quote only right after `=`,
+// `+=` or `-=`. Outside quotes, ", " always ends an item, even right after a backslash (an unquoted
+// value never holds a space); there a backslash escapes the next character — `\:` `\,` `\=` `\#`
+// `\"`, and `\\` (a pair) on sudo ≤ 1.9.9 only — which matters only for unescaping a value and for a
+// `\"` that opens no quote. Inside quotes only `\"` is an escape; a backslash is otherwise raw on
+// every version. So the one choice a reading makes is, for each `\"` inside quotes, an escaped quote
+// or a raw backslash before the closing quote. A reading is valid when every quote that opens closes;
+// each closing quote and each unquoted item is followed by ", ", the end of its entry's text, or a
+// candidate boundary that starts an entry; and no bare `"` sits inside a quoted value. Exactly one
+// valid reading is taken; with none, or more than one, the list is unsplit, and every reading short of
+// yes is unknown.
+
+/** A reader's states: an item's start, an unquoted value, a quoted value, after an item, an entry's
+ *  start (the Runas and Command-specific section); a run-as member's start, and its start after `!`. */
+const ITEM = 0;
+const PLAIN = 1;
+const QUOTE = 2;
+const AFTER = 3;
+const ENTRY = 4;
+const NEGATED = 4;
+
+/** One step of a reading: to `to` in state `mode`; `tag` says what the step read. */
+interface Edge {
+  to: number;
+  mode: number;
+  tag?: 'sep' | 'open' | 'escaped' | 'raw' | 'close' | 'entry' | 'groups';
+  header?: { kind: '!' | '>'; targets: string[]; at: number };
+}
+type Next = 'accept' | 'reject' | Edge[];
+
+/** A printed text read as a machine: every step moves forward, so the readings are counted right to
+ *  left, each state's count capped at 2. */
+interface Machine {
+  text: string;
+  modes: number;
+  next(p: number, mode: number): Next;
 }
 
-/** Reads one listing (either format): its sections, every line recognised — or unknown. Exported
- *  for its cells only. */
-export function parseListing(stdout: string): Listing | { unknown: string } {
-  const listing: Listing = { defaults: [], specific: [], entries: [], options: [], unsplit: [] };
+/** How many valid readings run from each state: 0, 1, or 2 for "two or more". Every step moves
+ *  forward, so the states are counted right to left. */
+function counts(m: Machine): Uint8Array {
+  const len = m.text.length;
+  const count = new Uint8Array((len + 1) * m.modes);
+  for (let p = len; p >= 0; p--) {
+    for (let mode = 0; mode < m.modes; mode++) {
+      const s = m.next(p, mode);
+      let n = s === 'accept' ? 1 : 0;
+      if (Array.isArray(s)) for (const e of s) n += count[e.to * m.modes + e.mode]!;
+      count[p * m.modes + mode] = Math.min(n, 2);
+    }
+  }
+  return count;
+}
+
+/** The states a reading from `start` reaches (only they are asked their next steps). */
+function reached(m: Machine, start: number): Uint8Array {
+  const len = m.text.length;
+  const reach = new Uint8Array((len + 1) * m.modes);
+  reach[start] = 1;
+  for (let p = 0; p <= len; p++) {
+    for (let mode = 0; mode < m.modes; mode++) {
+      if (reach[p * m.modes + mode] !== 1) continue;
+      const s = m.next(p, mode);
+      if (Array.isArray(s)) for (const e of s) reach[e.to * m.modes + e.mode] = 1;
+    }
+  }
+  return reach;
+}
+
+/** One valid reading from `start`: the steps it takes. At its `turn`-th choice between two live
+ *  steps it takes the second (`turn` −1: always the first; 0 gives a second reading wherever there
+ *  are two, since two readings part at a choice on the first one's way). */
+function walk(
+  m: Machine,
+  count: Uint8Array,
+  start: number,
+  turn = -1,
+): { steps: { p: number; mode: number; edge?: Edge }[]; choices: number } {
+  const steps: { p: number; mode: number; edge?: Edge }[] = [];
+  let state = start;
+  let choices = 0;
+  for (;;) {
+    const p = Math.floor(state / m.modes);
+    const mode = state % m.modes;
+    const s = m.next(p, mode);
+    if (s === 'accept' || s === 'reject') {
+      steps.push({ p, mode });
+      return { steps, choices };
+    }
+    const live = s.filter((e) => count[e.to * m.modes + e.mode]! > 0);
+    let edge = live[0]!;
+    if (live.length > 1) {
+      if (choices === turn) edge = live[1]!;
+      choices++;
+    }
+    steps.push({ p, mode, edge });
+    state = edge.to * m.modes + edge.mode;
+  }
+}
+
+/** A Defaults list's machine: the global list (`candidates` undefined), or the whole Runas and
+ *  Command-specific section, whose entries start at the candidate boundaries outside quotes. */
+function defaultsMachine(
+  text: string,
+  candidates: ReadonlySet<number> | undefined,
+  version: SudoVersion | undefined,
+  cannot: Map<number, string>,
+): Machine {
+  const len = text.length;
+  const KEY = /!?[A-Za-z_][A-Za-z0-9_]*/y;
+  const entry = (q: number): Next => {
+    const h = entryHeader(text, q, candidates!, version);
+    if (h === undefined) return 'reject';
+    if ('cannot' in h) {
+      cannot.set(q, h.cannot);
+      return 'reject';
+    }
+    return [
+      { to: h.next, mode: ITEM, tag: 'entry', header: { kind: h.kind, targets: h.targets, at: q } },
+    ];
+  };
+  /** A candidate boundary after the spaces at `p`, or none. */
+  const boundary = (p: number): number | undefined => {
+    if (candidates === undefined) return undefined;
+    let q = p;
+    while (text[q] === ' ') q++;
+    return q > p && candidates.has(q) ? q : undefined;
+  };
+  const after = (p: number): Next => {
+    if (p === len) return 'accept';
+    if (text.startsWith(', ', p)) return [{ to: p + 2, mode: ITEM, tag: 'sep' }];
+    const q = boundary(p);
+    return q === undefined ? 'reject' : entry(q);
+  };
+  return {
+    text,
+    modes: 5,
+    next(p, mode) {
+      if (mode === ENTRY) return candidates?.has(p) === true ? entry(p) : 'reject';
+      if (mode === AFTER) return after(p);
+      if (mode === QUOTE) {
+        if (p === len) return 'reject';
+        if (text[p] === '\\' && text[p + 1] === '"')
+          return [
+            { to: p + 2, mode: QUOTE, tag: 'escaped' },
+            { to: p + 2, mode: AFTER, tag: 'raw' },
+          ];
+        return text[p] === '"'
+          ? [{ to: p + 1, mode: AFTER, tag: 'close' }]
+          : [{ to: p + 1, mode: QUOTE }];
+      }
+      if (mode === PLAIN) {
+        if (p === len || text.startsWith(', ', p)) return after(p);
+        const ch = text[p];
+        if (ch === '\\')
+          return [
+            { to: text.startsWith(', ', p + 1) || p + 1 === len ? p + 1 : p + 2, mode: PLAIN },
+          ];
+        if (ch === '"') return 'reject';
+        if (ch === ' ' || ch === '\t') return after(p);
+        return [{ to: p + 1, mode: PLAIN }];
+      }
+      KEY.lastIndex = p;
+      const key = KEY.exec(text);
+      if (key === null) return 'reject';
+      let k = p + key[0].length;
+      if (text.startsWith('+=', k) || text.startsWith('-=', k)) k += 2;
+      else if (text[k] === '=') k += 1;
+      else return [{ to: k, mode: AFTER }];
+      return text[k] === '"' ? [{ to: k + 1, mode: QUOTE, tag: 'open' }] : [{ to: k, mode: PLAIN }];
+    },
+  };
+}
+
+/** `Defaults!`/`Defaults>` at `q`: its targets, each a run-as member (`>`, unquoted and unescaped) or
+ *  a command (`!`, as printed), and where its items start — or why its targets cannot be split
+ *  (W-UA-L1-15: ", " from 1.9.8, " ," before; a digest holds a space; a `^…$` regex is printed raw). */
+function entryHeader(
+  text: string,
+  q: number,
+  candidates: ReadonlySet<number>,
+  version: SudoVersion | undefined,
+): { kind: '!' | '>'; targets: string[]; next: number } | { cannot: string } | undefined {
+  if (!/^Defaults[!>]/.test(text.slice(q, q + 9))) return undefined;
+  const kind = text[q + 8] as '!' | '>';
+  const read = (comma: boolean): { raw: string[]; next: number } | undefined => {
+    const raw: string[] = [];
+    let p = q + 9;
+    for (;;) {
+      const s = p;
+      while (p < text.length && text[p] !== ' ' && !(comma && text.startsWith(', ', p))) p++;
+      if (p === s) return undefined;
+      raw.push(text.slice(s, p));
+      if (comma && text.startsWith(', ', p)) p += 2;
+      else if (!comma && text.startsWith(' ,', p)) p += 2;
+      else return { raw, next: p < text.length ? p + 1 : p };
+    }
+  };
+  const cannot = (): { cannot: string } => {
+    const end = [...candidates].filter((c) => c > q).sort((a, b) => a - b)[0];
+    const line = text.slice(q, end).trim();
+    return { cannot: `sudo listed a Defaults line's target this check cannot split: ${line}` };
+  };
+  const comma = version === undefined ? undefined : atLeast(version, TARGET_COMMA_FROM);
+  const tried = comma === undefined ? [read(true), read(false)] : [read(comma)];
+  if (
+    tried.some(
+      (t) => t !== undefined && t.raw.some((r) => /^(?:sha(?:224|256|384|512):|\^|!?")/.test(r)),
+    )
+  )
+    return cannot();
+  const ok = tried.filter((t) => t !== undefined);
+  if (ok.length === 0) return undefined;
+  if (ok.some((t) => t.raw.join('\0') !== ok[0]!.raw.join('\0') || t.next !== ok[0]!.next))
+    return cannot();
+  const targets: string[] = [];
+  for (const r of ok[0]!.raw) {
+    const t = kind === '>' ? unescapePrinted(r, version) : r;
+    if (t === undefined) return { cannot: cannotUnescape(r) };
+    targets.push(t);
+  }
+  return { kind, targets, next: ok[0]!.next };
+}
+
+/** One Defaults list, read: its entries (the global list is one, with no header), each with its items;
+ *  or why it cannot be split. */
+type DefaultsRead =
+  | { entries: { header?: { kind: '!' | '>'; targets: string[] }; items: DefaultsItem[] }[] }
+  | { unsplit: string };
+
+function readDefaults(
+  text: string,
+  candidates: ReadonlySet<number> | undefined,
+  version: SudoVersion | undefined,
+): DefaultsRead {
+  if (text.trim() === '') return { entries: [] };
+  const cannot = new Map<number, string>();
+  const m = defaultsMachine(text, candidates, version, cannot);
+  const start = candidates === undefined ? ITEM : ENTRY;
+  const count = counts(m);
+  // a target that cannot be split, where a reading reaches it, makes the section unsplit
+  cannot.clear();
+  const reach = reached(m, start);
+  const target = [...cannot.values()][0];
+  if (target !== undefined) return { unsplit: target };
+  const n = count[start]!;
+  if (n === 1) return { entries: itemsOf(m, walk(m, count, start).steps) };
+  const cannotSplit = 'sudo listed a Defaults setting this check cannot split';
+  if (n === 0) {
+    // the furthest item a reading reached, up to the next ", "
+    let at = 0;
+    for (let p = text.length; p >= 0; p--)
+      if (reach[p * m.modes + ITEM] === 1) {
+        at = p;
+        break;
+      }
+    const end = text.indexOf(', ', at);
+    const cut = text.slice(at, end === -1 ? text.length : end);
+    const item = cut.trim() === '' ? text.trim() : cut;
+    // the audit's S3 words hold where a quotation mark is in it; any other text no printer of sudo's
+    // gives is a line this check does not read
+    return {
+      unsplit: item.includes('"')
+        ? `${cannotSplit}: ${item} (its quotation marks do not pair as sudo prints them)`
+        : `sudo listed a line this check does not read: ${item}`,
+    };
+  }
+  // two or more: the first item where two readings differ, spanning both
+  const a = spansOf(walk(m, count, start).steps);
+  const b = spansOf(walk(m, count, start, 0).steps);
+  let i = 0;
+  while (i < a.length && i < b.length && a[i]![0] === b[i]![0] && a[i]![1] === b[i]![1]) i++;
+  const from = Math.min(a[i]?.[0] ?? text.length, b[i]?.[0] ?? text.length);
+  const to = Math.max(a[i]?.[1] ?? from, b[i]?.[1] ?? from);
+  return {
+    unsplit: `${cannotSplit}: ${text.slice(from, to)} (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another; write it without one)`,
+  };
+}
+
+/** Each item's span along a reading (start, end), in order. */
+function spansOf(steps: { p: number; mode: number; edge?: Edge }[]): [number, number][] {
+  const out: [number, number][] = [];
+  let start: number | undefined;
+  for (const s of steps) {
+    if (s.mode === ITEM && start === undefined) start = s.p;
+    const ends = s.edge === undefined || s.edge.tag === 'sep' || s.edge.tag === 'entry';
+    if ((s.mode === PLAIN || s.mode === AFTER) && ends && start !== undefined) {
+      out.push([start, s.p]);
+      start = undefined;
+    }
+  }
+  return out;
+}
+
+/** A reading's entries and items, read off its steps. */
+function itemsOf(
+  m: Machine,
+  steps: { p: number; mode: number; edge?: Edge }[],
+): { header?: { kind: '!' | '>'; targets: string[] }; items: DefaultsItem[] }[] {
+  const text = m.text;
+  const entries: { header?: { kind: '!' | '>'; targets: string[] }; items: DefaultsItem[] }[] = [];
+  let cur: { header?: { kind: '!' | '>'; targets: string[] }; items: DefaultsItem[] } | undefined;
+  let item:
+    | {
+        start: number;
+        key: string;
+        op?: '=' | '+=' | '-=';
+        valueAt?: number;
+        quoted: boolean;
+        value: string;
+      }
+    | undefined;
+  const KEY = /!?[A-Za-z_][A-Za-z0-9_]*/y;
+  for (const s of steps) {
+    if (s.mode === ITEM && item === undefined) {
+      if (cur === undefined) entries.push((cur = { items: [] }));
+      KEY.lastIndex = s.p;
+      const key = KEY.exec(text)![0];
+      const k = s.p + key.length;
+      const op = text.startsWith('+=', k)
+        ? '+='
+        : text.startsWith('-=', k)
+          ? '-='
+          : text[k] === '='
+            ? '='
+            : undefined;
+      item = { start: s.p, key, quoted: false, value: '' };
+      if (op !== undefined) {
+        item.op = op;
+        item.valueAt = k + op.length;
+      }
+    }
+    const e = s.edge;
+    if (s.mode === QUOTE && item !== undefined && e !== undefined) {
+      if (e.tag === 'escaped') item.value += '"';
+      else if (e.tag === 'raw') item.value += '\\';
+      else if (e.tag !== 'close') item.value += text[s.p];
+    }
+    if (e?.tag === 'open' && item !== undefined) item.quoted = true;
+    const ends = e === undefined || e.tag === 'sep' || e.tag === 'entry';
+    if ((s.mode === PLAIN || s.mode === AFTER) && ends && item !== undefined) {
+      const out: DefaultsItem = {
+        text: text.slice(item.start, s.p),
+        key: item.key,
+        quoted: item.quoted,
+      };
+      if (item.op !== undefined) {
+        out.op = item.op;
+        out.value = item.quoted ? item.value : text.slice(item.valueAt, s.p);
+      }
+      cur!.items.push(out);
+      item = undefined;
+    }
+    if (e?.tag === 'entry' && e.header !== undefined)
+      entries.push((cur = { header: e.header, items: [] }));
+  }
+  return entries;
+}
+
+/** A run-as list's machine (W-UA-L1-16): members separated by ", " outside quotes; a member is
+ *  `#uid`, a name, `%group`, `+netgroup`, `ALL`, or `"…"` (a space inside, `%` inside the quotes), each
+ *  maybe after `!`; quotes read as in a Defaults value. `short`: the short format's `(users : groups)`,
+ *  read up to its `)`. A state of the groups half is its mode plus 5. */
+function membersMachine(text: string, short: boolean): Machine {
+  const len = text.length;
+  return {
+    text,
+    modes: 10,
+    next(p, at) {
+      const groups = at >= 5;
+      const mode = at % 5;
+      const g = groups ? 5 : 0;
+      const end = (q: number): Next => {
+        if (q === len) return short ? 'reject' : 'accept';
+        if (text.startsWith(', ', q)) return [{ to: q + 2, mode: ITEM + g, tag: 'sep' }];
+        if (short && text[q] === ')') return 'accept';
+        if (short && !groups && text.startsWith(' : ', q))
+          return [{ to: q + 3, mode: ITEM + 5, tag: 'groups' }];
+        return 'reject';
+      };
+      if (mode === ITEM && text[p] === '!') return [{ to: p + 1, mode: NEGATED + g }];
+      if (mode === ITEM || mode === NEGATED) {
+        if (text[p] === '"') return [{ to: p + 1, mode: QUOTE + g, tag: 'open' }];
+        if (
+          p === len ||
+          text.startsWith(', ', p) ||
+          ' \t"'.includes(text[p]!) ||
+          (short && text[p] === ')')
+        )
+          return 'reject';
+        return text[p] === '\\'
+          ? [{ to: text.startsWith(', ', p + 1) || p + 1 === len ? p + 1 : p + 2, mode: PLAIN + g }]
+          : [{ to: p + 1, mode: PLAIN + g }];
+      }
+      if (mode === QUOTE) {
+        if (p === len) return 'reject';
+        if (text[p] === '\\' && text[p + 1] === '"')
+          return [
+            { to: p + 2, mode: QUOTE + g, tag: 'escaped' },
+            { to: p + 2, mode: AFTER + g, tag: 'raw' },
+          ];
+        return text[p] === '"'
+          ? [{ to: p + 1, mode: AFTER + g, tag: 'close' }]
+          : [{ to: p + 1, mode: QUOTE + g }];
+      }
+      if (mode === AFTER) return end(p);
+      // an unquoted member
+      const e = end(p);
+      if (e !== 'reject' || p === len) return e;
+      const ch = text[p]!;
+      if (ch === '\\')
+        return [
+          { to: text.startsWith(', ', p + 1) || p + 1 === len ? p + 1 : p + 2, mode: PLAIN + g },
+        ];
+      if (ch === '"' || ch === ' ' || ch === '\t') return 'reject';
+      return [{ to: p + 1, mode: PLAIN + g }];
+    },
+  };
+}
+
+/** A run-as list, read: its users and groups, each member unquoted and unescaped, and (short format)
+ *  where its `)` stands — or why it cannot be read. */
+function readMembers(
+  text: string,
+  short: boolean,
+  version: SudoVersion | undefined,
+): { users: string[]; groups: string[]; close: number } | { unknown: string } {
+  const m = membersMachine(text, short);
+  const count = counts(m);
+  if (count[ITEM] !== 1)
+    return { unknown: `sudo listed a run-as list this check cannot split: ${text}` };
+  const { steps } = walk(m, count, ITEM);
+  const users: string[] = [];
+  const groups: string[] = [];
+  let cur: { start: number; neg: boolean; quoted: boolean; value: string } | undefined;
+  let into = users;
+  for (const s of steps) {
+    const mode = s.mode % 5;
+    if (mode === ITEM && cur === undefined)
+      cur = { start: s.p, neg: false, quoted: false, value: '' };
+    if (mode === NEGATED && cur !== undefined) cur.neg = true;
+    const e = s.edge;
+    if (e?.tag === 'open' && cur !== undefined) cur.quoted = true;
+    if (mode === QUOTE && cur !== undefined && e !== undefined) {
+      if (e.tag === 'escaped') cur.value += '"';
+      else if (e.tag === 'raw') cur.value += '\\';
+      else if (e.tag !== 'close') cur.value += text[s.p];
+    }
+    const ends = e === undefined || e.tag === 'sep' || e.tag === 'groups';
+    if ((mode === PLAIN || mode === AFTER) && ends && cur !== undefined) {
+      const raw = cur.quoted ? cur.value : text.slice(cur.start + (cur.neg ? 1 : 0), s.p);
+      const value = cur.quoted ? raw : unescapePrinted(raw, version);
+      if (value === undefined) return { unknown: cannotUnescape(text.slice(cur.start, s.p)) };
+      into.push((cur.neg ? '!' : '') + value);
+      cur = undefined;
+      if (e?.tag === 'groups') into = groups;
+    }
+  }
+  return { users, groups, close: steps[steps.length - 1]!.p };
+}
+
+/** Reads one listing (either format): its sections, every line recognised — or unknown. #819 Unit A
+ *  (A1): first the logical lines — a privileges-section line of 8 spaces then a non-space continues
+ *  the line before, joined with one space (sudo drops the blanks at a break, W-UA-L3-12); every
+ *  4-space line of a Defaults section continues that section's one text — then each text read by
+ *  its grammar. `version`: the sudo that printed it (`sudo -V`), which decides how a backslash and a
+ *  target list print. Exported for its cells. */
+export function parseListing(stdout: string, version?: SudoVersion): Listing | { unknown: string } {
+  const listing: Listing = {
+    defaults: [],
+    items: [],
+    specific: [],
+    entries: [],
+    options: [],
+    unsplit: [],
+    version,
+  };
   let mode: 'none' | 'defaults' | 'specific' | 'entries' = 'none';
   let header = false;
-  let defaultsText = '';
-  /** #819 follow-up 3: each `Defaults!`/`Defaults>` line's options text, its wrapped lines joined
-   *  before it is split, as the global Defaults are — a wrap after an ambiguous `\,` then reads as
-   *  one item, never as a setting of its own. */
-  const specificText: string[] = [];
+  const defaultsText: string[] = [];
+  /** The Runas and Command-specific section's one text, and its candidate boundaries: each
+   *  `Defaults[!>]` at a line's start, or after the 4 spaces that join two entries on one line. */
+  let specificText = '';
+  const candidates = new Set<number>();
   let entry: (Entry & { long: boolean; inCommands: boolean }) | undefined;
   const close = (): void => {
     if (entry !== undefined) listing.entries.push(entry);
     entry = undefined;
   };
-  /** The short format's runas and tag state at the end of its last line: a wrapped line goes on
-   *  with both (a line may end on a bare `PASSWD:`). */
-  let short: { users: string[]; groups: string[]; nopasswd: boolean } | undefined;
   const unread = (line: string) => ({
     unknown: `sudo listed a line this check does not read: ${line.trim()}`,
   });
-  for (const line of stdout.split('\n')) {
-    if (line.trim() === '') continue;
-    if (/^Matching Defaults entries for \S+ on \S+:$/.test(line)) {
-      mode = 'defaults';
-      continue;
-    }
-    if (/^Runas and Command-specific defaults for \S+:$/.test(line)) {
-      mode = 'specific';
-      continue;
-    }
-    if (/^User \S+ may run the following commands on \S+:$/.test(line)) {
-      mode = 'entries';
-      header = true;
-      continue;
-    }
-    if (mode === 'defaults' && line.startsWith('    ')) {
-      defaultsText += ` ${line.trim()}`;
-    } else if (mode === 'specific' && /^ {4}Defaults[!>]/.test(line)) {
-      const m = /^ {4}Defaults([!>])(\S+)\s+(.+)$/.exec(line);
-      if (m === null) return unread(line);
-      const targets = splitList(m[2]!);
-      listing.unsplit.push(...targets.unsplit);
-      listing.specific.push({ kind: m[1] as '!' | '>', targets: targets.items, options: [] });
-      specificText.push(m[3]!);
-    } else if (mode === 'specific' && line.startsWith('        ') && listing.specific.length > 0) {
-      specificText[specificText.length - 1] += ` ${line.trim()}`;
-    } else if (mode === 'entries' && /^Sudoers entry:/.test(line)) {
-      close();
-      entry = {
-        users: [],
-        groups: [],
-        nopasswd: false,
-        commands: [],
-        long: true,
-        inCommands: false,
-      };
-    } else if (mode === 'entries' && entry?.long === true && line.startsWith('\t')) {
-      if (!entry.inCommands) return unread(line);
-      entry.commands.push(line.trim());
-    } else if (mode === 'entries' && entry?.long === true && /^ {4}Commands:$/.test(line)) {
+  // The logical lines: a column-0 line, a 4-space line, a tab line — each with its 8-space lines.
+  const logical: { kind: 'col0' | 'four' | 'tab'; text: string }[] = [];
+  for (const raw of stdout.split('\n')) {
+    if (raw.trim() === '') continue; // a blank line, or a section's 3-space first line (W-UA-DR-03)
+    const last = logical[logical.length - 1];
+    if (/^ {8}\S/.test(raw) && last !== undefined) last.text += ` ${raw.slice(8)}`;
+    else if (/^ {4}\S/.test(raw)) logical.push({ kind: 'four', text: raw.slice(4) });
+    else if (raw.startsWith('\t')) logical.push({ kind: 'tab', text: raw.slice(1) });
+    else if (/^\S/.test(raw)) logical.push({ kind: 'col0', text: raw });
+    else return unread(raw);
+  }
+  for (const { kind, text } of logical) {
+    if (kind === 'col0') {
+      if (/^Matching Defaults entries for \S+ on \S+:$/.test(text)) mode = 'defaults';
+      else if (/^Runas and Command-specific defaults for \S+:$/.test(text)) mode = 'specific';
+      else if (/^User \S+ may run the following commands on \S+:$/.test(text)) {
+        mode = 'entries';
+        header = true;
+      } else if (mode === 'entries' && /^Sudoers entry:/.test(text)) {
+        close();
+        entry = {
+          users: [],
+          groups: [],
+          nopasswd: false,
+          commands: [],
+          long: true,
+          inCommands: false,
+        };
+      } else return unread(text);
+    } else if (kind === 'four' && mode === 'defaults') {
+      defaultsText.push(text);
+    } else if (kind === 'four' && mode === 'specific') {
+      const at = specificText === '' ? 0 : specificText.length + 1;
+      if (/^Defaults[!>]/.test(text)) candidates.add(at);
+      for (const m of text.matchAll(/ {4}(?=Defaults[!>])/g)) candidates.add(at + m.index + 4);
+      specificText = specificText === '' ? text : `${specificText} ${text}`;
+    } else if (kind === 'tab' && mode === 'entries' && entry?.long === true) {
+      if (!entry.inCommands) return unread(text);
+      entry.commands.push(text.trim());
+    } else if (
+      kind === 'four' &&
+      mode === 'entries' &&
+      entry?.long === true &&
+      text === 'Commands:'
+    ) {
       entry.inCommands = true;
-    } else if (mode === 'entries' && entry?.long === true && /^ {4}\w+: /.test(line)) {
-      const [, field, value] = /^ {4}(\w+): (.*)$/.exec(line)!;
-      if (!LONG_FIELDS.has(field!)) return unread(line);
-      // #819 follow-up 3: a run-as list or Options whose split cannot be told reads unknown
-      const list = splitList(value!);
-      if (list.unsplit.length > 0 && ['RunAsUsers', 'RunAsGroups', 'Options'].includes(field!))
-        return unread(line);
-      if (field === 'RunAsUsers') entry.users = list.items;
-      if (field === 'RunAsGroups') entry.groups = list.items;
-      if (field === 'Options') {
-        const opts = list.items;
-        listing.options.push(...opts);
-        if (opts.includes('!authenticate')) entry.nopasswd = true;
-        if (opts.includes('authenticate')) entry.nopasswd = false;
+    } else if (
+      kind === 'four' &&
+      mode === 'entries' &&
+      entry?.long === true &&
+      /^\w+: /.test(text)
+    ) {
+      const [, field, value] = /^(\w+): (.*)$/.exec(text)!;
+      if (!LONG_FIELDS.has(field!)) return unread(text);
+      if (field === 'RunAsUsers' || field === 'RunAsGroups') {
+        const members = readMembers(value!, false, version);
+        if ('unknown' in members) return members;
+        if (field === 'RunAsUsers') entry.users = members.users;
+        else entry.groups = members.users;
       }
-    } else if (mode === 'entries' && /^ {4}\(/.test(line)) {
+      if (field === 'Options') {
+        // Unit A (A4): an Options list that cannot be split lets a yes win
+        const read = readDefaults(value!, undefined, version);
+        if ('unsplit' in read) listing.unsplit.push(read.unsplit);
+        else {
+          const opts = (read.entries[0]?.items ?? []).map((i) => i.text);
+          listing.options.push(...opts);
+          if (opts.includes('!authenticate')) entry.nopasswd = true;
+          if (opts.includes('authenticate')) entry.nopasswd = false;
+        }
+      }
+    } else if (kind === 'four' && mode === 'entries' && text.startsWith('(')) {
       close();
-      const m = /^ {4}\(([^)]*)\)\s+(.*)$/.exec(line);
-      if (m === null) return unread(line);
-      const [usersText, groupsText] = m[1]!.split(' : ');
-      const users = splitList(usersText ?? '');
-      const groups = splitList(groupsText ?? '');
-      if (users.unsplit.length > 0 || groups.unsplit.length > 0) return unread(line);
-      short = { users: users.items, groups: groups.items, nopasswd: false };
-      const items = shortItems(m[2]!, short);
-      if ('unknown' in items) return items;
-      listing.entries.push(...items.entries);
-    } else if (mode === 'entries' && line.startsWith('        ') && short !== undefined) {
-      // a wrapped short line: it continues the line before, its runas and its tag state
-      const items = shortItems(line.trim(), short);
+      const members = readMembers(text.slice(1), true, version);
+      if ('unknown' in members) return members;
+      const rest = text.slice(1 + members.close + 1);
+      if (!/^\s/.test(rest)) return unread(text);
+      const state = { users: members.users, groups: members.groups, nopasswd: false };
+      const items = shortItems(rest.trim(), state);
       if ('unknown' in items) return items;
       listing.entries.push(...items.entries);
     } else {
-      return unread(line);
+      return unread(text);
     }
   }
   close();
-  const defaults = splitList(defaultsText);
-  listing.defaults = defaults.items;
-  listing.unsplit.push(...defaults.unsplit);
-  listing.specific.forEach((spec, i) => {
-    const options = splitList(specificText[i]!);
-    spec.options = options.items;
-    listing.unsplit.push(...options.unsplit);
-  });
+  const global = readDefaults(defaultsText.join(' '), undefined, version);
+  if ('unsplit' in global) listing.unsplit.push(global.unsplit);
+  else listing.items = global.entries[0]?.items ?? [];
+  listing.defaults = listing.items.map((i) => i.text);
+  const specific = readDefaults(specificText, candidates, version);
+  if ('unsplit' in specific) listing.unsplit.push(specific.unsplit);
+  else {
+    for (const e of specific.entries) {
+      if (e.header === undefined) continue;
+      listing.specific.push({
+        kind: e.header.kind,
+        targets: e.header.targets,
+        options: e.items.map((i) => i.text),
+        items: e.items,
+      });
+    }
+  }
   // P0 (A §F11, A's Held B16): a listing with no rules header, or an entry naming no run-as user
   if (!header) return { unknown: 'sudo listed no rules section' };
   if (listing.entries.some((e) => e.users.length === 0))
@@ -572,6 +1127,49 @@ type Covers = { svc: boolean; root: boolean; listed?: true } | { unknown: string
 interface NameMatch {
   user: boolean;
   group: boolean;
+  /** #819 Unit A (A3): `case_insensitive_group` in force (sudo's default), and `match_group_by_gid`
+   *  listed — the two flags the exact group read is keyed on. */
+  anyCaseGroup: boolean;
+  byGid: boolean;
+}
+
+/** strcasecmp's fold: ASCII letters only. */
+const fold = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+/**
+ * #819 Unit A (A3): whether a run-as group covers a user whose gids `id -G` gave, as sudo's
+ * `user_in_group` reads it (pwutil.c, W-UA-L1-09/-10): `#gid` as a number; under `match_group_by_gid`,
+ * the gid of the group named exactly (`getent group <name>`; absent is not covering, as sudo's
+ * `getgrnam` NULL denies; an all-digit name `getent` would read as a gid reads unknown); otherwise each
+ * gid named (`getent group <gid>`; a gid with no name skipped, as sudo skips it) and compared with the
+ * token — in any case under `case_insensitive_group`, exactly under `!case_insensitive_group`. A
+ * lookup that errs or is refused reads unknown.
+ */
+async function exactGroup(
+  lk: Lookups,
+  group: string,
+  gids: readonly number[],
+  ci: NameMatch,
+): Promise<boolean | { unknown: string }> {
+  const id = numericId(group);
+  if (id === 'negative') return true;
+  if (id !== undefined) return gids.includes(id);
+  if (ci.byGid) {
+    if (/^\d+$/.test(group))
+      return {
+        unknown: `getent group ${group} reads ${group} as a gid, and sudo looks it up as a group name (match_group_by_gid)`,
+      };
+    const g = await lk.group(group);
+    if ('found' in g) return gids.includes(g.found.gid);
+    return 'absent' in g ? false : { unknown: g.unknown };
+  }
+  for (const gid of gids) {
+    const g = await lk.group(String(gid));
+    if ('absent' in g) continue;
+    if ('unknown' in g) return { unknown: g.unknown };
+    if (ci.anyCaseGroup ? fold(g.found.name) === fold(group) : g.found.name === group) return true;
+  }
+  return false;
 }
 
 /** A sudoers alias's shape: upper case (sudo-rs lists runas aliases unexpanded). */
@@ -609,6 +1207,20 @@ async function tokenCovers(
         // #819 follow-up 2 (member 5): `%#0` as sudo reads it, a number (`%#00` too)
         if (who === 'root' && (group === 'root' || numericId(group) === 0)) out.root = true;
         else if ('unknown' in entry) return { unknown: entry.unknown };
+        continue;
+      }
+      // #819 Unit A (A3): `%:name` is matched only through sudo's group plugin
+      if (group.startsWith(':')) {
+        unread ??= `sudo matches ${token} only through its group plugin, which this check does not read`;
+        continue;
+      }
+      // #819 Unit A (A3): the user's groups as sudo reads them, where `id -G` gives them — that
+      // compare replaces the reading below, which stays the fallback (and its clause (g) with it)
+      const gids = lk.darwin ? undefined : await lk.groupsOf(entry.found);
+      if (gids !== undefined) {
+        const c = await exactGroup(lk, group, gids, ci);
+        if (c === true) out[who] = true;
+        else if (c !== false) unread ??= c.unknown;
         continue;
       }
       // #819 correction 1 (e): sudo matches a group name in any case unless told otherwise, and
@@ -777,18 +1389,28 @@ async function withPam(
   if (worst !== undefined) return worst;
   const readings = base.map((r) => ({ ...r, how: `${r.how}; ${files} read` }));
   if (!person) return readings;
+  // #819 Unit A (A7, W-UB-AUD-11): the person reading carries the how of the base reading it
+  // accompanies, so the renderer says it once ("as above")
   return [
     ...readings,
-    { path: 'sudo', tool, outcome: 'needs_credential', whose: 'person', how: read },
+    {
+      path: 'sudo',
+      tool,
+      outcome: 'needs_credential',
+      whose: 'person',
+      how: readings[readings.length - 1]?.how ?? read,
+    },
   ];
 }
 
 /** A §F4: where sudo shows no Defaults, the credential may be this login's, root's or ⟨svc⟩'s; the
- *  cause says why each may be needed (#819, 08 A F1: printed as "may need"). */
-const UNSEEN_LISTED = 'sudo does not list its Defaults, so rootpw or targetpw cannot be ruled out';
+ *  cause says why each may be needed (#819, 08 A F1: printed as "may need"). #819 Unit A (A7, L2-18):
+ *  `runaspw` asks too, and each names whose password it asks for. */
+const UNSEEN_WHOSE =
+  "rootpw, targetpw or runaspw cannot be ruled out (rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's)";
+const UNSEEN_LISTED = `sudo does not list its Defaults, so ${UNSEEN_WHOSE}`;
 /** #819 (08, A F1): the original sudo's refusal hides its Defaults and whether a rule exists. */
-const UNSEEN_REFUSED =
-  'sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out';
+const UNSEEN_REFUSED = `sudo does not show its Defaults or whether a rule exists, so ${UNSEEN_WHOSE}`;
 function unseenDefaults(r: SwitchPathReading, cause = UNSEEN_LISTED): SwitchPathReading[] {
   const { or_not_allowed: _drop, ...rest } = r;
   return [r, { ...rest, whose: 'root', cause }, { ...rest, whose: 'svc', cause }];
@@ -889,7 +1511,8 @@ async function readOne(
     }
     text = ll.stdout;
   }
-  const listing = parseListing(text);
+  // #819 Unit A (A1): the printout read with the version that printed it (sudo-rs prints none)
+  const listing = parseListing(text, flavour === 'classic' ? sudoVersion(first) : undefined);
   if ('unknown' in listing) return unknown(how, listing.unknown);
   // #819 follow-up 2 (A MINOR 3): with noninteractive_auth on, sudo -n runs its PAM stack, so the
   // check's own listing is a login attempt sudo's PAM stack may log or count — said where it is listed
@@ -922,6 +1545,25 @@ async function judge(
   return seen.listed ? rs.map((r) => ({ ...r, member_list: true as const })) : rs;
 }
 
+/**
+ * #819 Unit A (A6): under `runaspw`, why sudo does not ask for the service user's password, for a
+ * `runas_default` that is not root — or `undefined` when it is the service user (by exact name, and
+ * found). `#…` is looked up as a name and found nowhere (rail 1's NAME refuses `#`, so it is not asked);
+ * an all-digit name `getent` would read as a uid (`getpwuid`) where sudo reads a name, and a name the
+ * rail refuses, cannot be looked up exactly.
+ */
+async function runaspwCause(lk: Lookups, name: string): Promise<string | undefined> {
+  if (name.startsWith('#'))
+    return `sudo looks ${name} up as a user name, finds none and refuses every command (Defaults runaspw)`;
+  if (/^\d+$/.test(name) || !RAIL_NAME.test(name))
+    return `sudo looks ${name} up as a user name, which this check cannot look up exactly (Defaults runaspw)`;
+  const found = await lk.passwd(name);
+  if ('unknown' in found) return found.unknown;
+  if ('absent' in found)
+    return `sudo finds no user ${name} and refuses every command (Defaults runaspw)`;
+  return name === lk.svc ? undefined : `sudo asks for ${name}'s password (Defaults runaspw)`;
+}
+
 /** D3: a listing's reading, before what the reader did not read is composed in (`judge`). */
 async function judgeListing(
   lk: Lookups,
@@ -942,7 +1584,11 @@ async function judgeListing(
   const ci: NameMatch = {
     user: !opts.has('!case_insensitive_user'),
     group: !opts.has('!case_insensitive_group') && !opts.has('match_group_by_gid'),
+    anyCaseGroup: !opts.has('!case_insensitive_group'),
+    byGid: opts.has('match_group_by_gid'),
   };
+  // Unit A (A1): a value the check acts on, as sudo stores it
+  const value = (key: string): string | undefined => valueOf(listing.items, key, listing.version);
   if (opts.has('!authenticate')) {
     return [
       reading({
@@ -1004,14 +1650,15 @@ async function judgeListing(
     return [reading({ outcome: 'not_allowed', how: `${how}: no rule runs as ${lk.svc} or root` })];
   }
   const exempt = listing.defaults.find((o) => o.startsWith('exempt_group='));
-  if (exempt !== undefined) {
-    const m = await exemptIn(lk, exempt.slice('exempt_group='.length), ci);
+  const exemptGroup = value('exempt_group');
+  if (exempt !== undefined && exemptGroup !== undefined) {
+    const m = await exemptIn(lk, exemptGroup, ci);
     if (!('found' in m) || m.found)
       return [
         reading({ outcome: 'yes', how: `${how}: Defaults ${exempt}, and this login may be in it` }),
       ];
   }
-  if (opts.has('listpw=all') && listing.entries.some((e) => !e.nopasswd)) {
+  if (value('listpw') === 'all' && listing.entries.some((e) => !e.nopasswd)) {
     // A §F8: listpw=all asks a password unless every rule is NOPASSWD — it was waived somehow
     return [
       reading({
@@ -1022,17 +1669,15 @@ async function judgeListing(
   }
   if (listing.entries.every((e) => !e.nopasswd)) {
     // D3 (review 19): listed although no rule waives the password — a cache, exempt_group,
-    // listpw=never: the cause is not known, and a cached credential lets the agent through
+    // listpw=never: the cause is unknown, and a cached credential lets the agent through
     return [
       reading({
         outcome: 'yes',
-        how: `${how}: the rules were listed without a password (the cause is not known)`,
+        how: `${how}: the rules were listed without a password (the cause is unknown)`,
       }),
     ];
   }
-  const runasDefault = listing.defaults
-    .find((o) => o.startsWith('runas_default='))
-    ?.slice('runas_default='.length);
+  const runasDefault = value('runas_default');
   // #819 correction 1 (b): a non-zero timeout anywhere keeps a ticket — a `Defaults!…`/`Defaults>…`
   // line applies before sudo authenticates and governs the ticket (AUD-13); `=0` drops it only when
   // no line sets another value
@@ -1060,23 +1705,20 @@ async function judgeListing(
     // #819 follow-up 3 (A S1; the audit's S3): sudo reads runas_default as a user NAME — `#0` (it
     // prints `\#0`) is looked up as a name, found nowhere, and every command is refused ("unknown
     // user #0"), so it is never root's or the service user's password
+    // #819 Unit A (A6): runas_default, unescaped (A1), looked up as sudo looks it up — by name
+    // (`getpwnam`, exact; W-UA-L1-12): unset or `root` is root's password; the service user's is
+    // its; any other answer reads unknown
     const runsAs = runasDefault;
-    if (runsAs !== undefined && runsAs !== 'root' && runsAs !== lk.svc) {
-      const name = runsAs.replace(/^\\#/, '#');
-      return [
-        reading({
-          outcome: 'unknown',
-          how,
-          cause: name.startsWith('#')
-            ? `sudo looks ${name} up as a user name, finds none and refuses every command (Defaults runaspw)`
-            : `sudo asks for ${runsAs}'s password (Defaults runaspw)`,
-        }),
-      ];
+    let whose: 'root' | 'svc' = 'root';
+    if (runsAs !== undefined && runsAs !== 'root') {
+      const cause = await runaspwCause(lk, runsAs);
+      if (cause !== undefined) return [reading({ outcome: 'unknown', how, cause })];
+      whose = 'svc';
     }
     base = [
       reading({
         outcome: 'needs_credential',
-        whose: runsAs === lk.svc ? 'svc' : 'root',
+        whose,
         ...cache,
         how: `${why} (Defaults runaspw)`,
       }),
@@ -1108,12 +1750,10 @@ async function judgeListing(
     const r = reading({ outcome: 'needs_credential', whose: 'this_login', ...cache, how: why });
     base = flavour === 'rs' ? unseenDefaults(r) : [r];
   }
-  const option = (k: string) =>
-    listing.defaults.find((o) => o.startsWith(`${k}=`))?.slice(k.length + 1);
-  const askpass = option('pam_askpass_service');
+  const askpass = value('pam_askpass_service');
   const services = {
-    main: option('pam_service') ?? 'sudo',
-    login: option('pam_login_service'),
+    main: value('pam_service') ?? 'sudo',
+    login: value('pam_login_service'),
     ...(askpass !== undefined ? { askpass } : {}),
   };
   return withPam(lk, base, how, path, 'listing', services);

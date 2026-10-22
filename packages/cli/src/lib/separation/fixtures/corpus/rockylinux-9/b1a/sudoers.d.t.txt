@@ -1,0 +1,4 @@
+# captured 2026-10-22 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · cat /etc/sudoers.d/t
+Defaults!/usr/bin/true mailsub=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ \"\ Defaults!/usr/bin/false\ mailfrom\=\"q\\, !authenticate
+agent ALL=(nobody) NOPASSWD: /bin/true
+agent ALL=(svc) /usr/bin/true
