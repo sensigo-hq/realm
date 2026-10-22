@@ -3218,7 +3218,7 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
     });
   });
 
-  describe('member 5 (A Q3’s P1, the audit’s S8): `#uid`, `%#gid` and runas_default read as numbers', () => {
+  describe('member 5 (A Q3’s P1, the audit’s S8): `#uid` and `%#gid` read as numbers; a `#` runas_default is a name sudo cannot find (follow-up 3)', () => {
     it('P1: `(#0999)` with !authenticate → yes; `Defaults>#0999 !authenticate` → yes', async () => {
       // (a) red when `#0999` is compared as text with `#999` (not allowed — sudo reads 999); (b)
       //     prints both.
@@ -3239,16 +3239,25 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
       // (a) red when a `%#gid` with no group entry is compared as text (not allowed); (b) prints it.
       expect(view(rs)).toEqual(['sudo yes']);
     });
-    it('runaspw with `runas_default=#0` → root’s password, never "another user"', async () => {
-      // (a) red when `#0` is compared as text with root (unknown: sudo asks #0's password); (b)
-      //     prints the reading.
-      expect(view(await third(defaults('runaspw', 'runas_default=#0')))).toEqual([
-        'sudo needs_credential root sudo_timestamp',
-      ]);
+    it('#819 follow-up 3 (A S1, the audit’s S3): runaspw with a `#0` runas_default → unknown — sudo looks #0 up as a user name and refuses every command', async () => {
+      const CAUSE =
+        'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw)';
+      // (a) the raw `#0` (a shape sudo never prints): red when `#0` is read as root's uid again
+      //     (root's password, a false "cannot"-side reading); (b) the printed `\#0` (sudo's own
+      //     listing, W-819F3-AUD-07): its outcome is unknown before and after this fix — a control,
+      //     labelled so — and its red is the old cause text ("sudo asks for \#0's password"). Prints
+      //     each reading and cause.
+      expect({
+        raw: await read(third(defaults('runaspw', 'runas_default=#0'))),
+        printed: await read(third(defaults('runaspw', 'runas_default=\\#0'))),
+      }).toEqual({
+        raw: { readings: ['sudo unknown'], cause: CAUSE },
+        printed: { readings: ['sudo unknown'], cause: CAUSE },
+      });
     });
   });
 
-  describe('member 6 (A S4): sudo’s `\\,` escape only changes where a list splits', () => {
+  describe('member 6 (A S4) with follow-up 3 (A B3): `\\,` escapes only where sudo could print an escaped comma; a split the check cannot tell reads unknown', () => {
     it('P11: `mailto=root\\,ops@example.com` reads as the base; P11b: `passprompt=pw\\,rootpw` never names root’s password', async () => {
       // (a) red when `\,` splits the list (P11: unknown, the fragment unread; P11b: root's password,
       //     the fragment acted on); (b) prints both.
@@ -3256,6 +3265,88 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
         p11: view(await third(defaults('mailto=root\\,ops@example.com'))),
         p11b: view(await third(defaults('passprompt=pw\\,rootpw'))),
       }).toEqual({ p11: NEEDS, p11b: NEEDS });
+    });
+
+    const SPLIT = 'sudo listed a Defaults setting this check cannot split: ';
+    it('#819 follow-up 3 (A B3): a value ending in a literal backslash — `passprompt=Password\\, !authenticate`, and before `exempt_group=sudo` — reads unknown, never "needs a password"', async () => {
+      const n6c = await read(third(defaults('passprompt=Password\\', '!authenticate')));
+      // the agent in sudo's group (its process gid 27, the captured sudo group)
+      const n6d = await read(
+        third(defaults('passprompt=Password\\', 'exempt_group=sudo'), {
+          ...calls({ 'group sudo': 'getent.group.sudo' }),
+          groups: [1001, 27],
+        }),
+      );
+      // (a) red under today's rule, where `\,` always escapes (the next item is swallowed into the
+      //     passprompt: "needs this login's password"); (b) prints each reading and cause.
+      expect({ n6c, n6d }).toEqual({
+        n6c: {
+          readings: ['sudo unknown'],
+          cause: `${SPLIT}passprompt=Password\\, !authenticate`,
+        },
+        n6d: {
+          readings: ['sudo unknown'],
+          cause: `${SPLIT}passprompt=Password\\, exempt_group=sudo`,
+        },
+      });
+    });
+
+    it('#819 follow-up 3 (the audit’s S1): inside quotes a `\\"` before `,` cannot be told — `passprompt="Pass word\\", !authenticate` reads unknown; `passprompt="x y", !authenticate` (control) reads yes', async () => {
+      // (a) `n6a` red under today's rule (the quote stays open: "needs this login's password");
+      //     `n6b` red if a quoted value with a space were ever unsplittable; (b) prints both.
+      expect({
+        n6a: await read(third(defaults('passprompt="Pass word\\"', '!authenticate'))),
+        n6b: view(await third(defaults('passprompt="x y"', '!authenticate'))),
+      }).toEqual({
+        n6a: {
+          readings: ['sudo unknown'],
+          cause: `${SPLIT}passprompt="Pass word\\", !authenticate`,
+        },
+        n6b: ['sudo yes'],
+      });
+    });
+
+    it('#819 follow-up 3 (the audit’s S1, X13): a wrapped `Defaults!` line ending in `passprompt=Password\\,` reads unknown — its next line is never read as a setting of its own', async () => {
+      const rs = await read(
+        third(specific('Defaults!/usr/bin/realm passprompt=Password\\,\n        !authenticate')),
+      );
+      // (a) red under today's rule (the wrapped `!authenticate` covers the rule: yes), and when a
+      //     wrapped line is split on its own; (b) prints the reading and cause.
+      expect(rs).toEqual({
+        readings: ['sudo unknown'],
+        cause: `${SPLIT}passprompt=Password\\, !authenticate`,
+      });
+    });
+
+    it('#819 follow-up 3 (the audit’s S2): a run-as list or `Options:` line the check cannot split makes the listing unknown, naming the line', async () => {
+      // (a) red when such a line is split anyway (each then reads by its pieces: another cause);
+      //     (b) prints each reading and cause.
+      expect({
+        options: await read(third(runAs('svc', 'passprompt=Password\\, !authenticate'))),
+        runAs: await read(third(runAs('alice\\, svc'))),
+      }).toEqual({
+        options: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo listed a line this check does not read: Options: passprompt=Password\\, !authenticate',
+        },
+        runAs: {
+          readings: ['sudo unknown'],
+          cause: 'sudo listed a line this check does not read: RunAsUsers: alice\\, svc',
+        },
+      });
+    });
+
+    it('#819 follow-up 3 (the audit’s S2, X8): an item the check cannot split never outranks a yes — N6c’s Defaults beside a NOPASSWD rule for svc reads yes', async () => {
+      // (a) red when a split the check cannot tell makes the whole listing unknown (it would hide
+      //     the NOPASSWD rule's yes); (b) prints the reading.
+      expect(
+        view(
+          await third(
+            both(defaults('passprompt=Password\\', '!authenticate'), runAs('svc', '!authenticate')),
+          ),
+        ),
+      ).toEqual(['sudo yes']);
     });
   });
 
@@ -3377,8 +3468,10 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     );
     // :: "C-17 (e): sudo matches run-as names in any case …".
     // #819 follow-up 2 (member 3): :: "the audit’s S2 (Q1a) …", :: "the audit’s S2: `%Svcgrp`, absent …", :: "A B3: `%SVCGRP` …", :: "A S2: under match_group_by_gid …"; C-17 (the any-case user names).
+    // #819 follow-up 3 (A B4): "a secondary group named only in another case is not seen" — :: "the
+    // audit’s S2, recorded (Q1b): svc listed in SVCGRP, `%svcgrp` naming only alice’s → not allowed …".
     claim(
-      "Run-as user names match in any case, as sudo matches them, unless `!case_insensitive_user` is listed. Run-as group names match in any case too, unless `!case_insensitive_group` or `match_group_by_gid` is listed, either of which makes sudo match a group exactly: while they match in any case, a run-as group that names the user's primary group in any case covers it, and one that `getent` finds no group for, or one written with capitals, reads unknown unless it covers the user.",
+      "Run-as user names match in any case, as sudo matches them, unless `!case_insensitive_user` is listed. Unless `!case_insensitive_group` or `match_group_by_gid` is listed, either of which makes sudo match a group exactly, run-as group names are compared in any case with the user's primary group and with the group `getent` finds, and a secondary group named only in another case is not seen; a name `getent` finds no group for, or one written with capitals, then reads unknown unless it covers the user.",
     );
     // :: "C-18 (f): the group source …" (its first cell: each source; (vi): this login's own groups).
     // #819 follow-up 2 (members 2, 8; A MINOR 5): :: "P4 …", "P5 …", "P6 …", "P7 …", "controls: one group and one initgroups line …", "no group line, or no file, with /var/run/nscd/socket there …"; C-18 (a member found from any source counts: its ldap row's unknown, never a "not in it").

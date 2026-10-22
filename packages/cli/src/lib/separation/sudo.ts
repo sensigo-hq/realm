@@ -39,6 +39,8 @@ interface Listing {
   entries: Entry[];
   /** Every value of the long format's `Options:` fields, in order (#819 correction 1). */
   options: string[];
+  /** #819 follow-up 3: the Defaults items whose split this check cannot tell, as printed. */
+  unsplit: string[];
 }
 
 /** The short format's tags (`NOPASSWD:` …); any other tag is not read. */
@@ -317,6 +319,10 @@ const ZERO_TIMEOUT = /^timestamp_timeout=0(?:\.0*)?$/;
  *  acted-on keyword listed with different forms or values is not read either: sudo applies the
  *  last matching entry, and the listing does not show which that is (AUD-11). */
 function unreadItem(listing: Listing): string | undefined {
+  // #819 follow-up 3: an item whose split cannot be told may hide a setting — reported first
+  const unsplit = listing.unsplit[0];
+  if (unsplit !== undefined)
+    return `sudo listed a Defaults setting this check cannot split: ${unsplit}`;
   const global = listing.defaults.find((i) => globalKind(i) === 'unread');
   if (global !== undefined)
     return `sudo listed a Defaults setting this check does not ${notReadVerb(global)}: ${global}`;
@@ -344,42 +350,72 @@ function unreadItem(listing: Listing): string | undefined {
   return undefined;
 }
 
-/** Splits a list on commas outside double quotes, trimmed. #819 follow-up 2 (member 6, A S4): a
- *  backslash escapes the next character, as sudo prints it (SUDOERS_QUOTED: `mailto=root\,ops@…`) —
- *  it only changes where the list splits; each item keeps the text sudo printed. */
-const commaList = (text: string): string[] => {
-  const out: string[] = [];
+/**
+ * Splits a list on commas outside double quotes, trimmed; each item keeps the text sudo printed.
+ * #819 follow-up 2 (member 6, A S4): a backslash escapes the next character, as sudo prints it
+ * (SUDOERS_QUOTED: `mailto=root\,ops@…`). #819 follow-up 3 (A B3): sudo never escapes a backslash
+ * itself, and separates items with ", ", so a value ending in a literal backslash prints `\,`
+ * before the next item. Outside quotes, `\,` is an escape only when a character other than a space
+ * or a tab follows it; followed by a space, a tab or the end of the text, the split cannot be told
+ * and the item is returned in `unsplit` (kept whole). Inside quotes only `\"` escapes, and one
+ * followed by `,` or the end cannot be told either. `\\` stays a pair.
+ */
+function splitList(text: string): { items: string[]; unsplit: string[] } {
+  const items: string[] = [];
+  const unsplit: string[] = [];
+  const chars = [...text];
   let cur = '';
   let quoted = false;
-  let escaped = false;
-  for (const ch of text) {
-    if (escaped) {
-      cur += ch;
-      escaped = false;
+  let ambiguous = false;
+  const push = (): void => {
+    const item = cur.trim();
+    if (item !== '') {
+      items.push(item);
+      if (ambiguous) unsplit.push(item);
+    }
+    cur = '';
+    ambiguous = false;
+  };
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i]!;
+    const next = chars[i + 1];
+    if (ch === '\\' && quoted) {
+      if (next === '"') {
+        const after = chars[i + 2];
+        if (after === undefined || after === ',') ambiguous = true;
+        cur += ch + next;
+        i++;
+      } else cur += ch;
       continue;
     }
-    if (ch === '\\') {
-      cur += ch;
-      escaped = true;
+    if (ch === '\\' && next !== undefined) {
+      if (next === ',') {
+        const after = chars[i + 2];
+        if (after === undefined || after === ' ' || after === '\t') ambiguous = true;
+      }
+      cur += ch + next;
+      i++;
       continue;
     }
     if (ch === '"') quoted = !quoted;
-    if (ch === ',' && !quoted) {
-      out.push(cur.trim());
-      cur = '';
-    } else cur += ch;
+    if (ch === ',' && !quoted) push();
+    else cur += ch;
   }
-  if (cur.trim() !== '') out.push(cur.trim());
-  return out.filter((s) => s !== '');
-};
+  push();
+  return { items, unsplit };
+}
 
 /** Reads one listing (either format): its sections, every line recognised — or unknown. Exported
  *  for its cells only. */
 export function parseListing(stdout: string): Listing | { unknown: string } {
-  const listing: Listing = { defaults: [], specific: [], entries: [], options: [] };
+  const listing: Listing = { defaults: [], specific: [], entries: [], options: [], unsplit: [] };
   let mode: 'none' | 'defaults' | 'specific' | 'entries' = 'none';
   let header = false;
   let defaultsText = '';
+  /** #819 follow-up 3: each `Defaults!`/`Defaults>` line's options text, its wrapped lines joined
+   *  before it is split, as the global Defaults are — a wrap after an ambiguous `\,` then reads as
+   *  one item, never as a setting of its own. */
+  const specificText: string[] = [];
   let entry: (Entry & { long: boolean; inCommands: boolean }) | undefined;
   const close = (): void => {
     if (entry !== undefined) listing.entries.push(entry);
@@ -411,13 +447,12 @@ export function parseListing(stdout: string): Listing | { unknown: string } {
     } else if (mode === 'specific' && /^ {4}Defaults[!>]/.test(line)) {
       const m = /^ {4}Defaults([!>])(\S+)\s+(.+)$/.exec(line);
       if (m === null) return unread(line);
-      listing.specific.push({
-        kind: m[1] as '!' | '>',
-        targets: commaList(m[2]!),
-        options: commaList(m[3]!),
-      });
+      const targets = splitList(m[2]!);
+      listing.unsplit.push(...targets.unsplit);
+      listing.specific.push({ kind: m[1] as '!' | '>', targets: targets.items, options: [] });
+      specificText.push(m[3]!);
     } else if (mode === 'specific' && line.startsWith('        ') && listing.specific.length > 0) {
-      listing.specific.at(-1)!.options.push(...commaList(line));
+      specificText[specificText.length - 1] += ` ${line.trim()}`;
     } else if (mode === 'entries' && /^Sudoers entry:/.test(line)) {
       close();
       entry = {
@@ -436,10 +471,14 @@ export function parseListing(stdout: string): Listing | { unknown: string } {
     } else if (mode === 'entries' && entry?.long === true && /^ {4}\w+: /.test(line)) {
       const [, field, value] = /^ {4}(\w+): (.*)$/.exec(line)!;
       if (!LONG_FIELDS.has(field!)) return unread(line);
-      if (field === 'RunAsUsers') entry.users = commaList(value!);
-      if (field === 'RunAsGroups') entry.groups = commaList(value!);
+      // #819 follow-up 3: a run-as list or Options whose split cannot be told reads unknown
+      const list = splitList(value!);
+      if (list.unsplit.length > 0 && ['RunAsUsers', 'RunAsGroups', 'Options'].includes(field!))
+        return unread(line);
+      if (field === 'RunAsUsers') entry.users = list.items;
+      if (field === 'RunAsGroups') entry.groups = list.items;
       if (field === 'Options') {
-        const opts = commaList(value!);
+        const opts = list.items;
         listing.options.push(...opts);
         if (opts.includes('!authenticate')) entry.nopasswd = true;
         if (opts.includes('authenticate')) entry.nopasswd = false;
@@ -449,11 +488,10 @@ export function parseListing(stdout: string): Listing | { unknown: string } {
       const m = /^ {4}\(([^)]*)\)\s+(.*)$/.exec(line);
       if (m === null) return unread(line);
       const [usersText, groupsText] = m[1]!.split(' : ');
-      short = {
-        users: commaList(usersText ?? ''),
-        groups: commaList(groupsText ?? ''),
-        nopasswd: false,
-      };
+      const users = splitList(usersText ?? '');
+      const groups = splitList(groupsText ?? '');
+      if (users.unsplit.length > 0 || groups.unsplit.length > 0) return unread(line);
+      short = { users: users.items, groups: groups.items, nopasswd: false };
       const items = shortItems(m[2]!, short);
       if ('unknown' in items) return items;
       listing.entries.push(...items.entries);
@@ -467,7 +505,14 @@ export function parseListing(stdout: string): Listing | { unknown: string } {
     }
   }
   close();
-  listing.defaults = commaList(defaultsText);
+  const defaults = splitList(defaultsText);
+  listing.defaults = defaults.items;
+  listing.unsplit.push(...defaults.unsplit);
+  listing.specific.forEach((spec, i) => {
+    const options = splitList(specificText[i]!);
+    spec.options = options.items;
+    listing.unsplit.push(...options.unsplit);
+  });
   // P0 (A §F11, A's Held B16): a listing with no rules header, or an entry naming no run-as user
   if (!header) return { unknown: 'sudo listed no rules section' };
   if (listing.entries.some((e) => e.users.length === 0))
@@ -1012,23 +1057,19 @@ async function judgeListing(
     ];
   } else if (opts.has('runaspw')) {
     // #819 (08, A Outside 1): sudo's own order — rootpw, then runaspw, then targetpw (check.c:60-75)
-    // #819 follow-up 2 (member 5): a `#uid` runas_default is the number sudo reads
-    const asId = runasDefault !== undefined ? numericId(runasDefault) : undefined;
-    const svcUid = uidOf(lk, svc);
-    const runsAs =
-      asId === undefined || asId === 'negative'
-        ? runasDefault
-        : asId === 0
-          ? 'root'
-          : svcUid !== undefined && asId === svcUid
-            ? lk.svc
-            : runasDefault;
+    // #819 follow-up 3 (A S1; the audit's S3): sudo reads runas_default as a user NAME — `#0` (it
+    // prints `\#0`) is looked up as a name, found nowhere, and every command is refused ("unknown
+    // user #0"), so it is never root's or the service user's password
+    const runsAs = runasDefault;
     if (runsAs !== undefined && runsAs !== 'root' && runsAs !== lk.svc) {
+      const name = runsAs.replace(/^\\#/, '#');
       return [
         reading({
           outcome: 'unknown',
           how,
-          cause: `sudo asks for ${runsAs}'s password (Defaults runaspw)`,
+          cause: name.startsWith('#')
+            ? `sudo looks ${name} up as a user name, finds none and refuses every command (Defaults runaspw)`
+            : `sudo asks for ${runsAs}'s password (Defaults runaspw)`,
         }),
       ];
     }
