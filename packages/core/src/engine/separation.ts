@@ -7,7 +7,7 @@ import type { GateAnswers } from './ways.js';
 /**
  * The mode a login's reach puts the deployment in: the agent's login IS Realm's (`same_account`);
  * the agent runs inside a sandbox its app configured (`sandbox_configured`); Realm's store belongs to
- * another OS user (`separate_user`); or the check could not tell (`not_measured`, correction 1 D1:
+ * another OS user (`separate_user`); or the check could not tell (`unknown`, correction 1 D1:
  * condition 1 not measured "yes" and the separate-user conditions not met — never guessed as the
  * same login). `container` enters with the image unit, its producer.
  */
@@ -15,7 +15,7 @@ export const SEPARATION_MODES = [
   'same_account',
   'sandbox_configured',
   'separate_user',
-  'not_measured',
+  'unknown',
 ] as const;
 export type SeparationMode = (typeof SEPARATION_MODES)[number];
 
@@ -205,7 +205,7 @@ const measuredYes = (r: ConditionReading): boolean => r.basis === 'measured' && 
  * needs condition 1 measured "no": {@link separationPrevents}); else condition 1 measured "yes" and
  * this login owns the store (#819, C4: a reachable store whose owner is not known is not the same
  * login) — `sandbox_configured` if the agent's app configures a sandbox (the "no" would come only
- * through it), else `same_account`; otherwise `not_measured`.
+ * through it), else `same_account`; otherwise `unknown`.
  */
 export function separationModeOf(e: SeparationEvidence): SeparationMode {
   const reach = e.conditions.store_reach;
@@ -215,7 +215,7 @@ export function separationModeOf(e: SeparationEvidence): SeparationMode {
       ? 'sandbox_configured'
       : 'same_account';
   }
-  return 'not_measured';
+  return 'unknown';
 }
 
 /**
@@ -250,7 +250,8 @@ export function separationPrevents(e: SeparationEvidence): boolean {
 
 /**
  * One gap of a "may still be able to answer" claim: a prevents condition not measured "no", with its
- * reading (correction 1 D1: an `unknown` reads "not measured", never "it can"), or the value.
+ * reading (#819 Unit B: an `unknown` reads "is unknown", or "was not measured" when nothing was
+ * read for it), or the value.
  */
 export type SeparationGap =
   { gap: (typeof PREVENTS_CONDITIONS)[number]; reading: ConditionReading } | { gap: 'value' };

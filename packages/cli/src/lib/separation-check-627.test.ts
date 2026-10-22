@@ -17,14 +17,22 @@ import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import type { GateAnswers, Source } from '@sensigo/realm';
+import type {
+  ConditionReading,
+  GateAnswers,
+  SeparationCondition,
+  Source,
+  SwitchPathReading,
+} from '@sensigo/realm';
 import {
   conditionLine,
   measureSeparation,
   renderSeparation,
   separationClaim,
+  switchPathsReading,
   systemProbes,
   valueLine,
+  type CheckEvidence,
   type SeparationProbes,
 } from './separation-check.js';
 import { notFoundRunner } from '../test-support/separation-fixtures.js';
@@ -156,7 +164,8 @@ describe('#627 W — the separation check (cell 26)', () => {
       // Correction 2 (5.4): another user's store this login can write — a separate user who can write
       // Realm's store, never "the same login".
       store: `${MAY} it can write Realm's store.`,
-      become: `${MAY} whether it can become Realm's service user without a password was not measured.`,
+      // #819 Unit B re-pin (reversal 2): su was read and not settled — was "was not measured"
+      become: `${MAY} whether it can become Realm's service user without a password is unknown.`,
       docker: `${MAY} it can reach an engine that runs as root.`,
       trustRoot: `${MAY} it can change the files Realm executes.`,
       asked: `${MAY} the gate-answers value: give it on this command line, and read the running server's start line.`,
@@ -315,7 +324,9 @@ describe('#627 W — the separation check (cell 26)', () => {
       ownedNo: await out(machine({}, PROJECT_FILES, [], {})),
     }).toEqual({
       missing: {
-        header: `Separation: not measured — ${MAY} whether it can reach Realm's store was not measured; whether it can become Realm's service user without a password was not measured.`,
+        // #819 Unit B re-pin (reversals 1 and 2): was "Separation: not measured" and the store's "was
+        // not measured"; the service user, never named (`not_observed`), keeps "was not measured"
+        header: `Separation: unknown — ${MAY} whether it can reach Realm's store is unknown; whether it can become Realm's service user without a password was not measured.`,
         store: `  This login can write Realm's store or open its files: unknown (Realm's store was not found at ${STORE}; observed now).`,
         become:
           // #819 follow-up 2 re-pin (walk --check wording): no way is read — was "unknown (…; observed now)"
@@ -453,8 +464,9 @@ describe('#627 W — the separation check (cell 26)', () => {
   it('correction 1 (D2): with su on the host the claim is "may still", never "cannot record"', async () => {
     const claim = separationClaim(await measure(machine({}, PROJECT_FILES, ['/usr/bin/su'])));
     // (a) red when an unprobed su lets the "cannot record" form print; (b) prints the claim.
+    // #819 Unit B re-pin (reversal 2): su was read and not settled — was "was not measured"
     expect(claim).toBe(
-      `${MAY} whether it can become Realm's service user without a password was not measured.`,
+      `${MAY} whether it can become Realm's service user without a password is unknown.`,
     );
   });
 });
@@ -857,7 +869,7 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
     }
   });
 
-  it('C4: with no uid, a store this login can read is not the same login — not measured', async () => {
+  it('C4: with no uid, a store this login can read is not the same login — unknown', async () => {
     const lines = renderSeparation(
       await measure(
         machine(
@@ -870,8 +882,10 @@ describe('#819 — the reach lines say only what was measured (01: C1, C3, C4)',
     );
     // (a) red when core's same_account arm does not need this login to own the store (an unknown
     //     uid owns nothing); (b) prints the header.
+    // #819 Unit B re-pin (reversal 1): the header word only — was "Separation: not measured"; the
+    // service user, never named (`not_observed`), keeps "was not measured"
     expect(lines[0]).toBe(
-      `Separation: not measured — An agent running as agent may still be able to answer a gate: it can read Realm's store; whether it can become Realm's service user without a password was not measured.`,
+      `Separation: unknown — An agent running as agent may still be able to answer a gate: it can read Realm's store; whether it can become Realm's service user without a password was not measured.`,
     );
   });
 
@@ -950,6 +964,352 @@ describe('#819 follow-up 2 — the walk’s --check wording: each line says only
       noFile: `${ECONOMICS}: unknown (no realm.yaml in ${PROJECT}; observed now).`,
       trustNoFile: `${CONDITION_4}: unknown (no realm.yaml was found to check: pass --project with the deployment root; observed now).`,
       unreadable: `${ECONOMICS}: unknown (${PROJECT}/realm.yaml cannot be read; observed now).`,
+    });
+  });
+});
+
+describe('#819 Unit B: the words', () => {
+  const NO: ConditionReading = { basis: 'measured', answer: 'no' };
+  const YES: ConditionReading = { basis: 'measured', answer: 'yes' };
+  // crown b3's reading of condition 2 (the walk of #851): sudo asked now, and not settled
+  const SUDO_UNSPLIT: ConditionReading = {
+    basis: 'unknown',
+    cause:
+      'sudo: unknown: sudo listed a Defaults setting this check cannot split: passprompt=Password\\, !authenticate (LC_ALL=C /usr/bin/sudo -n -l)',
+  };
+  /** Hand-made evidence: another user's store, every prevents condition measured "no" and the value
+   *  withheld on the line, unless `conds` says otherwise; `not_observed` as the check sets it with a
+   *  service user named (another answer host only), plus `more`. */
+  const evidence = (
+    conds: Partial<CheckEvidence['conditions']> = {},
+    more: SeparationCondition[] = [],
+  ): CheckEvidence => ({
+    login: 'agent',
+    service_user: 'realm',
+    store_owned_by_other: true,
+    owns_store: false,
+    conditions: {
+      store_reach: NO,
+      become_service_user: NO,
+      root_engine: NO,
+      trust_root_writable: NO,
+      other_answer_host: { basis: 'unknown', cause: 'one look' },
+      time_basis: { basis: 'measured', answer: 'fact', detail: 'clock' },
+      agent_sandbox: NO,
+      economics_writable: { basis: 'measured', answer: 'fact', detail: 'none' },
+      ...conds,
+    },
+    value: FLAG,
+    store: STORE,
+    store_found: true,
+    door: 'mcp',
+    extensions_unread: false,
+    not_observed: ['other_answer_host', ...more],
+  });
+  /** No store at HOME: the project and getent are there, and `more` (a socket that accepts). */
+  const noStore = (more: string[] = []) =>
+    machine({
+      exists: (p) =>
+        p === PROJECT || p === `${PROJECT}/realm.yaml` || p === GETENT || more.includes(p),
+      connect: async (t) => 'path' in t && more.includes(t.path),
+    });
+  /** The header's words up to the claim. */
+  const head = (lines: string[]) => lines[0]!.slice(0, lines[0]!.indexOf(' — ') + 3);
+  /** The line of a condition, by its words' start. */
+  const lineOf = (lines: string[], start: string) => lines.find((l) => l.startsWith(`  ${start}`));
+
+  it('1. the header, each mode: "Separation: unknown" when the check cannot tell (no store first); the other three unchanged', async () => {
+    const SANDBOX = {
+      ...PROJECT_FILES,
+      '/home/agent/.claude/settings.json': '{"sandbox":{"enabled":true}}',
+    };
+    // (a) red: `unknown` when the header word for a separation the check cannot tell is not
+    //     "unknown" (reversal 1 undone: "not measured"); the other three when the header word is
+    //     not the mode's own; (b) prints the four header starts.
+    expect({
+      unknown: head(renderSeparation(await measure(noStore()))),
+      sameAccount: head(renderSeparation(await measure(machine({}, PROJECT_FILES, [], {})))),
+      separateUser: head(renderSeparation(await measure(machine()))),
+      sandbox: head(renderSeparation(await measure(machine({}, SANDBOX, [], {})))),
+    }).toEqual({
+      unknown: 'Separation: unknown — ',
+      sameAccount: 'Separation: same login — ',
+      separateUser: 'Separation: separate user — ',
+      sandbox: 'Separation: sandbox configured — ',
+    });
+  });
+
+  it('2. the summary, each gap × basis: "is unknown" when read and not settled, "was not measured" when nothing was read, "it can" and "configured" unchanged', () => {
+    const UNK: ConditionReading = { basis: 'unknown', cause: 'c' };
+    const claim = (conds: Partial<CheckEvidence['conditions']>, more: SeparationCondition[] = []) =>
+      separationClaim(evidence(conds, more)).slice(MAY.length + 1);
+    // (a) red: `becomeObserved`, `store`, `engine`, `files` when an unknown read now says "was not
+    //     measured" (reversal 2 undone); `becomeNotObserved` when the summary is not given the
+    //     conditions nothing was read for; `yes` when a measured yes is not "it can"; `configured`
+    //     when a configured reading is not named so; (b) prints each gap's words.
+    expect({
+      becomeObserved: claim({ become_service_user: SUDO_UNSPLIT }),
+      becomeNotObserved: claim({ become_service_user: UNK }, ['become_service_user']),
+      store: claim({ store_reach: UNK }),
+      engine: claim({ root_engine: UNK }),
+      files: claim({ trust_root_writable: UNK }),
+      yes: claim({ root_engine: YES }),
+      configured: claim({
+        become_service_user: { basis: 'configured_not_enforced', detail: 'a sudoers rule' },
+      }),
+    }).toEqual({
+      becomeObserved: "whether it can become Realm's service user without a password is unknown.",
+      becomeNotObserved:
+        "whether it can become Realm's service user without a password was not measured.",
+      store: "whether it can reach Realm's store is unknown.",
+      engine: 'whether it can reach an engine that runs as root is unknown.',
+      files: 'whether it can change the files Realm executes is unknown.',
+      yes: 'it can reach an engine that runs as root.',
+      configured:
+        "whether it can become Realm's service user without a password is configured, not enforced by Realm.",
+    });
+  });
+
+  describe('3. condition 2\'s line: how a tool was read, said once — "as above" for each next entry read the same way', () => {
+    const line = (paths: SwitchPathReading[]) => {
+      const r = switchPathsReading(paths, 'svc');
+      return (r.basis === 'unknown' ? r.cause : r.detail) ?? '';
+    };
+    const C =
+      'sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out';
+    const howOf = (tool: string) =>
+      `LC_ALL=C ${tool} -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth read`;
+    /** sudo's refusal (sudo.ts's unseenDefaults): three entries, one tool, one how. */
+    const refusal = (tool: string): SwitchPathReading[] => [
+      {
+        path: 'sudo',
+        tool,
+        outcome: 'needs_credential',
+        whose: 'this_login',
+        how: howOf(tool),
+        or_not_allowed: true,
+      },
+      {
+        path: 'sudo',
+        tool,
+        outcome: 'needs_credential',
+        whose: 'root',
+        how: howOf(tool),
+        cause: C,
+      },
+      { path: 'sudo', tool, outcome: 'needs_credential', whose: 'svc', how: howOf(tool), cause: C },
+    ];
+    const H = howOf('/usr/bin/sudo');
+    const SU = '/etc/pam.d/su, /etc/pam.d/common-auth read';
+    const su = (whose: 'svc' | 'person'): SwitchPathReading => ({
+      path: 'su',
+      tool: '/usr/bin/su',
+      outcome: 'needs_credential',
+      whose,
+      how: SU,
+    });
+
+    it('(a) sudo\'s refusal: one full how, then "(⟨cause⟩; as above)" twice', () => {
+      // (a) red when the next entries read the same way print the how again, or the merged form
+      //     drops the cause; (b) prints the line.
+      expect(line(refusal('/usr/bin/sudo'))).toBe(
+        `sudo: needs this login's password or is not allowed (sudo does not say which; ${H}); sudo: may need root's password (${C}; as above); sudo: may need svc's password (${C}; as above)`,
+      );
+    });
+
+    it('(b) two tools whose hows differ: each keeps its own; (b′) one tool read two ways: each keeps its own', () => {
+      const P = '/etc/pam.d/sudo read';
+      // (a) red: `twoTools` when an entry of another tool, read another way, prints "as above";
+      //     `oneToolTwoWays` when the tool alone decides (the how is not compared); (b) prints each line.
+      expect({
+        twoTools: line([refusal('/usr/bin/sudo')[1]!, su('svc')]),
+        oneToolTwoWays: line([
+          {
+            path: 'sudo',
+            tool: '/usr/bin/sudo',
+            outcome: 'needs_credential',
+            whose: 'root',
+            how: H,
+          },
+          {
+            path: 'sudo',
+            tool: '/usr/bin/sudo',
+            outcome: 'needs_credential',
+            whose: 'person',
+            how: P,
+          },
+        ]),
+      }).toEqual({
+        twoTools: `sudo: may need root's password (${C}; ${H}); su: needs svc's password (${SU})`,
+        oneToolTwoWays: `sudo: needs root's password (${H}); sudo: needs a person's touch or key (${P})`,
+      });
+    });
+
+    it('(c) two sudo copies, root then svc, read the same way: each keeps its own how', () => {
+      // (a) red when the tool is not compared (only the how); (b) prints the line.
+      expect(
+        line([
+          {
+            path: 'sudo',
+            tool: '/usr/bin/sudo',
+            outcome: 'needs_credential',
+            whose: 'root',
+            how: 'H',
+          },
+          {
+            path: 'sudo',
+            tool: '/usr/local/bin/sudo',
+            outcome: 'needs_credential',
+            whose: 'svc',
+            how: 'H',
+          },
+        ]),
+      ).toBe("sudo: needs root's password (H); sudo: needs svc's password (H)");
+    });
+
+    it('(d) one entry: unchanged', () => {
+      // (a) red when the first entry prints "as above" (there is nothing above it); (b) prints it.
+      expect(line([su('svc')])).toBe(`su: needs svc's password (${SU})`);
+    });
+
+    it('(e) the plain form: su\'s service user and a person module (su.ts), "(as above)"', () => {
+      // (a) red when the second entry prints the how again; (b) prints the line.
+      expect(line([su('svc'), su('person')])).toBe(
+        `su: needs svc's password (${SU}); su: needs a person's touch or key (as above)`,
+      );
+    });
+
+    it('(f) polkit\'s two whose, the merged form: "(⟨cause⟩; as above)"', () => {
+      const how =
+        "/usr/bin/pkcheck --action-id <A> --process <this check's pid> asked for org.freedesktop.systemd1.manage-units";
+      const cause = "polkit's rules may change whose it asks";
+      const pk = (whose: 'administrator' | 'this_login'): SwitchPathReading => ({
+        path: 'polkit',
+        tool: '/usr/bin/pkcheck',
+        outcome: 'needs_credential',
+        whose,
+        how,
+        cause,
+      });
+      // (a) red when the second whose prints the how again, or loses its cause; (b) prints the line.
+      expect(line([pk('administrator'), pk('this_login')])).toBe(
+        `polkit: may need an administrator's password (${cause}; ${how}); polkit: may need this login's password (${cause}; as above)`,
+      );
+    });
+
+    it('(g) "as above" is the entry just before: [sudo A (H), su, sudo A again (H)] — the third keeps its own how', () => {
+      // (a) red when an entry is compared with any earlier entry of its tool, not the one just
+      //     before it; (b) prints the line.
+      expect(
+        line([
+          {
+            path: 'sudo',
+            tool: '/usr/bin/sudo',
+            outcome: 'needs_credential',
+            whose: 'root',
+            how: H,
+          },
+          su('svc'),
+          {
+            path: 'sudo',
+            tool: '/usr/bin/sudo',
+            outcome: 'needs_credential',
+            whose: 'svc',
+            how: H,
+          },
+        ]),
+      ).toBe(
+        `sudo: needs root's password (${H}); su: needs svc's password (${SU}); sudo: needs svc's password (${H})`,
+      );
+    });
+
+    it('(h) the dedupe comes first: two root-owned copies that both refuse print all six entries', () => {
+      const out = line([...refusal('/usr/bin/sudo'), ...refusal('/usr/local/bin/sudo')]);
+      // (a) red when "as above" is written before the dedupe (the second copy's two "as above"
+      //     entries then match the first's, and drop: 4); (b) prints the count and the line.
+      expect({ entries: out.split('; sudo: ').length, out }).toEqual({
+        entries: 6,
+        out: [
+          `sudo: needs this login's password or is not allowed (sudo does not say which; ${H})`,
+          `sudo: may need root's password (${C}; as above)`,
+          `sudo: may need svc's password (${C}; as above)`,
+          `sudo: needs this login's password or is not allowed (sudo does not say which; ${howOf('/usr/local/bin/sudo')})`,
+          `sudo: may need root's password (${C}; as above)`,
+          `sudo: may need svc's password (${C}; as above)`,
+        ].join('; '),
+      });
+    });
+  });
+
+  it('4. the cross cell: for the same evidence, the condition line and the summary use one word — unknown, and not measured', async () => {
+    const lines = renderSeparation(await measure(noStore()));
+    const b3 = renderSeparation(evidence({ become_service_user: SUDO_UNSPLIT }));
+    const STORE_LINE = "This login can write Realm's store or open its files:";
+    const BECOME_LINE = "This login can become Realm's service user";
+    /** The line's word for a reading not settled. */
+    const lineWord = (l: string | undefined) =>
+      l?.includes(': unknown (') === true
+        ? 'unknown'
+        : l?.includes(': not measured (') === true
+          ? 'not measured'
+          : `neither: ${l ?? 'no line'}`;
+    /** The summary's word for that condition's gap. */
+    const summaryWord = (header: string, subject: string) =>
+      header.includes(`${subject} is unknown`)
+        ? 'unknown'
+        : header.includes(`${subject} was not measured`)
+          ? 'not measured'
+          : `neither: ${header}`;
+    // (a) red when the summary and the line disagree: the summary not given the conditions nothing
+    //     was read for, or the line not keyed on them; (b) prints each pair of words.
+    expect({
+      noStoreReach: [
+        lineWord(lineOf(lines, STORE_LINE)),
+        summaryWord(lines[0]!, "reach Realm's store"),
+      ],
+      noStoreBecome: [
+        lineWord(lineOf(lines, BECOME_LINE)),
+        summaryWord(lines[0]!, "become Realm's service user without a password"),
+      ],
+      crownB3Become: [
+        lineWord(lineOf(b3, BECOME_LINE)),
+        summaryWord(b3[0]!, "become Realm's service user without a password"),
+      ],
+    }).toEqual({
+      noStoreReach: ['unknown', 'unknown'],
+      noStoreBecome: ['not measured', 'not measured'],
+      crownB3Become: ['unknown', 'unknown'],
+    });
+  });
+
+  it('6. the header\'s mode is not a condition\'s basis: "Separation: unknown" beside a measured yes; "Separation: separate user" beside condition 2\'s unknown', async () => {
+    const DOCKER = '/var/run/docker.sock';
+    const engineYes = renderSeparation(await measure(noStore([DOCKER])));
+    const sepUnknown = renderSeparation(evidence({ become_service_user: SUDO_UNSPLIT }));
+    // (a) red: `engineYes` when a condition's line takes the mode's word (or the header a
+    //     condition's); `sepUnknown` when the header word comes from a condition's basis, not the
+    //     mode; (b) prints the header starts and the two lines.
+    expect({
+      engineYes: [
+        head(engineYes),
+        lineOf(engineYes, 'This login can reach an engine that runs as root:'),
+      ],
+      sepUnknown: [
+        head(sepUnknown),
+        lineOf(
+          sepUnknown,
+          "This login can become Realm's service user (realm) without a password:",
+        ),
+      ],
+    }).toEqual({
+      engineYes: [
+        'Separation: unknown — ',
+        `  This login can reach an engine that runs as root: yes (measured) — Docker's socket ${DOCKER} accepts.`,
+      ],
+      sepUnknown: [
+        'Separation: separate user — ',
+        `  This login can become Realm's service user (realm) without a password: unknown (${SUDO_UNSPLIT.cause}; observed now).`,
+      ],
     });
   });
 });
