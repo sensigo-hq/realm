@@ -486,11 +486,36 @@ describe('fix-run-diff-errors-answers — a failed step’s message and a questi
       mark: says(
         "`=` if the step has the same status and the same output in both runs (the same fields and values, the fields in any order, a list's items in the same order) and, for a step that failed, the same error message, and for a step with a question, the same last answer — the same choice, both answered or both settled by the gate's expiry (who answered is not compared), or, with no answer, both still open or both ended by an `on_expiry: abort` expiry — `≠` if not, and blank if the step is missing from either run.",
       ),
-      // D3's same_output (the rows leave the answers' entries out)
+      // D3's same_output (the rows leave the answers' entries out); the abort-expiry half ("read
+      // from the run's record of skipped steps"): D5 and D11, whose abort expiry is read from
+      // `skip_details` (#852's docs correction re-pin: was "…; the answer comes from those entries.")
       entries: says(
-        "The status, the output and the error message come from each step's last entry other than the entries its question's answers or its expiry wrote; the answer comes from those entries.",
+        "The status, the output and the error message come from each step's last entry other than the entries its question's answers or its expiry wrote; the answer comes from those entries, and a question an `on_expiry: abort` expiry ended is read from the run's record of skipped steps.",
       ),
     }).toEqual({ statuses: true, mark: true, entries: true });
+  });
+
+  it('D13: the hash row says equal hashes can sit beside `≠` — two failures with different messages (D1’s fixture) carry the same hash, and the mark is `≠`', () => {
+    const row = diffRuns(
+      makeRun([failedWork("Handler 'envthrow' threw: the filing system is down")]),
+      makeRun([failedWork("Handler 'envthrow' threw: quota exceeded")]),
+    ).find((r) => r.step_id === 'work')!;
+    const page = readFileSync(
+      fileURLToPath(
+        new URL('../../../../docs/reference/cli/realm-run-reading.md', import.meta.url),
+      ),
+      'utf8',
+    ).replace(/\s+/g, ' ');
+    // (a) red when the page no longer says the sentence word for word, or the two hashes stop
+    //     being equal beside a `≠` (then the sentence would claim more than its fixture shows); (b)
+    //     prints the two 8-character prefixes, the mark and whether the page says it.
+    expect({
+      hashes: [row.hash_a.slice(0, 8), row.hash_b.slice(0, 8)],
+      mark: markOf(row),
+      pageSays: page.includes(
+        "Equal hashes can also sit beside `≠`, when only the error message or the answer differs: a failed step's output is `{}`.",
+      ),
+    }).toEqual({ hashes: ['44136fa3', '44136fa3'], mark: '\u2260', pageSays: true });
   });
 });
 
