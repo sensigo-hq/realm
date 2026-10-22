@@ -101,7 +101,10 @@ All notable changes to this project are documented here.
   two settings files it looked at; the store's time basis is marked "(fact)"; a condition the check
   reads nothing for is "not measured"; the economics line says whether this login can change the
   `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder
-  that is not there reads unknown (no such folder).
+  that is not there reads unknown (no such folder). The separation check's first line reads
+  "Separation: unknown" when the check cannot tell which separation holds; its summary says "is
+  unknown" and "was not measured" as the condition lines do; and condition 2 prints "as above" in
+  place of how an entry was read when it was read the same way as the entry before it.
 - **The `initialize` result names the gate-answers value (issue #627).**
   `capabilities.experimental['realm/gate_answers']` is `{ value, source_kind }`.
 - **Each answer records how it arrived (issue #627).** A `gate_response` entry gains `answer`

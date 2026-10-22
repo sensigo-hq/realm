@@ -384,9 +384,13 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // #819 (08, B F10): "the version, list and check modes" — the spy's shapes (`sudo -V` among
     // them) and separation-790 :: "S2"; (C3) "a store this login owns is within its reach" —
     // separation-check-627 :: "C3: a store this login owns, locked (mode 000), …".
+    // #819 Unit B re-pin (was "one that is not found is not measured"; the correction: "(Realm's
+    // store was not found)", "the separation check's first line"): "reads unknown (…), so the
+    // separation check's first line reads "Separation: unknown"" — separation-check-627 :: "correction 1 (D1):
+    // the mode is never guessed …" (the missing store) and "#819 Unit B: the words" :: "1. …".
     claim(
       PAGE,
-      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the version, list and check modes of sudo, doas and polkit named below, and `getent`, which looks users and groups up (on macOS, `dscl . -read /Users/<user> UserShell`, for a user's shell). Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store of another user's that this login cannot open is measured out of its reach, a store this login owns is within its reach, and one that is not found is not measured. The agent's own app settings are read from the login's own home, never from `HOME`.",
+      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the version, list and check modes of sudo, doas and polkit named below, and `getent`, which looks users and groups up (on macOS, `dscl . -read /Users/<user> UserShell`, for a user's shell). Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store of another user's that this login cannot open is measured out of its reach, a store this login owns is within its reach, and one that is not found reads unknown (Realm's store was not found), so the separation check's first line reads \"Separation: unknown\". The agent's own app settings are read from the login's own home, never from `HOME`.",
     );
     // Correction 1 (F6): ":56" is executed by separation-check-627 :: "correction 1 (D1): the mode is
     // never guessed" (the denied and the missing store) and :: "each condition line in its states"
@@ -407,6 +411,13 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     claim(
       PAGE,
       "Each condition prints as measured, as configured but not enforced by Realm, as unknown with its cause, or as not measured when the check reads nothing for it: whether another Realm server or CLI uses the store, the service user when none is named, and the economics line when no `realm.yaml` is given. The store's time basis prints as a fact, marked (fact). When the `realm.yaml` the check read names no `runner.cache.economics`, the economics line says whether this login can change that `realm.yaml`. A `--project` folder that is not there reads unknown (no such folder), and a folder with no `realm.yaml` is named.",
+    );
+    // #819 Unit B: separation-check-627 :: "#819 Unit B: the words" — "1. the header, each mode …"
+    // (the first line's word), "2. the summary, each gap × basis …" (its two words) and "4. the cross
+    // cell …" (the condition lines' words, the same evidence).
+    claim(
+      PAGE,
+      'The separation check\'s first line uses the condition lines\' words: it reads "Separation: unknown" when the check cannot tell which separation holds, and its summary says a condition "is unknown" when the check read it and could not settle it, and "was not measured" only when the check read nothing for it.',
     );
     // #819 correction 1 (walk --check wording 2, 3): separation-check-627 :: "each condition line in
     // its states …" (condition 7: "read from two files", each named under /home/agent while HOME
@@ -1028,6 +1039,12 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     claim(
       C,
       'The header says when no store was found, and when the store cannot be opened; condition 7\'s "no" names the two settings files it looked at; the store\'s time basis is marked "(fact)"; a condition the check reads nothing for is "not measured"; the economics line says whether this login can change the `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder that is not there reads unknown (no such folder).',
+    );
+    // #819 Unit B: separation-check-627 :: "#819 Unit B: the words" — "1. the header …", "2. the
+    // summary …" and "3. condition 2's line …" (a)–(h).
+    claim(
+      C,
+      'The separation check\'s first line reads "Separation: unknown" when the check cannot tell which separation holds; its summary says "is unknown" and "was not measured" as the condition lines do; and condition 2 prints "as above" in place of how an entry was read when it was read the same way as the entry before it.',
     );
     // w-627 :: "correction 1 (C1): … is refused with VALIDATION_OPTION_INVALID".
     claim(

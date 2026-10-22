@@ -1142,11 +1142,11 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
   it('the mode: same_account when this login reaches its own store; separate_user for another user’s store whatever condition 1 reads (correction 2, 5.4); sandbox_configured when a sandbox is configured and the store is reachable from outside it; the sandbox cross (5.8)', () => {
     // (a) red when same_account is derived with condition 1 "no" and another owner, or from a
     //     condition 1 that is not measured "yes" (correction 1, D1: an unknown, or "no" on an owned
-    //     store, is `not_measured`); (b) prints each mode.
+    //     store, is `unknown`); (b) prints each mode.
     // Correction 2 (5.4): the reach, unknown and sandbox rows are this login's own store
     // (`store_owned_by_other: false`), so they keep their subject; another user's store is
     // `separate_user` whatever condition 1 reads; 5.8, the sandbox cross: a configured sandbox with
-    // condition 1 not measured is `not_measured`, never `sandbox_configured`.
+    // condition 1 not measured is `unknown`, never `sandbox_configured`.
     // #819 (C4): this login's own store — it owns it (the same-login modes need that).
     const own = { store_owned_by_other: false, owns_store: true };
     // #819 (C4): a store this login reaches whose owner is not known (no uid) — never the same login.
@@ -1173,19 +1173,20 @@ describe('#627 W — the separation check: the mode derived, "prevents" only whe
       separate: 'separate_user',
       otherReadable: 'separate_user',
       reach: 'same_account',
-      unknown: 'not_measured',
-      ownStore: 'not_measured',
+      unknown: 'unknown',
+      ownStore: 'unknown',
       sandbox: 'sandbox_configured',
-      sandboxCross: 'not_measured',
+      sandboxCross: 'unknown',
       // #819 (C4): red when same_account or sandbox_configured does not need `owns_store`.
-      reachUnowned: 'not_measured',
-      sandboxUnowned: 'not_measured',
+      reachUnowned: 'unknown',
+      sandboxUnowned: 'unknown',
     });
   });
 
   it('the gaps the "may still" form names: the prevents conditions not measured no, and the value', () => {
     // (a) red when a met condition is named, the env-set value is not, or a gap loses its reading
-    //     (correction 1, D1: an unknown must read "not measured"); (b) prints the gaps.
+    //     (#819 Unit B: an unknown reads "is unknown", or "was not measured" when nothing was read
+    //     for it); (b) prints the gaps.
     expect(
       separationGaps(
         evidence(

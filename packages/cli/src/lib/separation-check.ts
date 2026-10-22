@@ -179,7 +179,7 @@ function storeReach(
   ownsStore: boolean,
 ): ConditionReading {
   // Correction 1 (D1): a store this login cannot even stat is measured out of its reach; one that is
-  // not found is not measured — never read as the same login.
+  // not found reads unknown (#819 Unit B: and so does the first line) — never read as the same login.
   if (state === 'missing')
     return { basis: 'unknown', cause: `Realm's store was not found at ${store}` };
   if (state === 'denied')
@@ -248,7 +248,15 @@ export function switchPathsReading(
     seen.add(entry);
     return true;
   });
-  return switchPathsCondition(shown, (r) => switchPathEntry(r, svc), where);
+  // #819 Unit B: how a tool was read is said once — an entry read by the same tool the same way as
+  // the one just before it prints "as above" in its place (after the dedupe, so a second copy's
+  // entries are kept)
+  const entries = shown.map((r, i) => {
+    const prev = shown[i - 1];
+    const asAbove = prev !== undefined && prev.tool === r.tool && prev.how === r.how;
+    return switchPathEntry(asAbove ? { ...r, how: 'as above' } : r, svc);
+  });
+  return switchPathsCondition(shown, (r) => entries[shown.indexOf(r)]!, where);
 }
 
 /** 01b #2: whose credential a closed way needs, in words. */
@@ -750,7 +758,8 @@ const MODE_WORDS: Record<SeparationMode, string> = {
   same_account: 'same login',
   sandbox_configured: 'sandbox configured',
   separate_user: 'separate user',
-  not_measured: 'not measured',
+  // #819 Unit B: the condition lines' word for a state the check could not tell
+  unknown: 'unknown',
 };
 
 /** What each prevents condition is about, for its gap's words. */
@@ -761,8 +770,10 @@ const GAP_SUBJECT: Record<Exclude<SeparationGap['gap'], 'value'>, string> = {
   trust_root_writable: 'change the files Realm executes',
 };
 
-/** One gap's words, by its reading (correction 1 D1: an unknown is "not measured", never "it can"). */
-function gapWords(g: SeparationGap): string {
+/** One gap's words, by its reading (correction 1 D1: an unknown never reads "it can"; #819 Unit B:
+ *  it reads as its condition line does — "is unknown", or "was not measured" when nothing was read
+ *  for it, its condition in `not_observed`). */
+function gapWords(g: SeparationGap, notObserved: readonly SeparationCondition[]): string {
   if (g.gap === 'value') {
     return "the gate-answers value: give it on this command line, and read the running server's start line";
   }
@@ -777,6 +788,8 @@ function gapWords(g: SeparationGap): string {
   if (r.basis === 'measured' && r.answer === 'yes') return `it can ${subject}`;
   if (r.basis === 'configured_not_enforced')
     return `whether it can ${subject} is configured, not enforced by Realm`;
+  if (r.basis === 'unknown' && !notObserved.includes(g.gap))
+    return `whether it can ${subject} is unknown`;
   return `whether it can ${subject} was not measured`;
 }
 
@@ -824,7 +837,11 @@ const orList = (xs: readonly string[]): string =>
 
 /** W-x3: the claim, chosen by the measured mode and the predicate. */
 export function separationClaim(
-  e: SeparationEvidence & { extensions_unread?: boolean; service_user_from?: string },
+  e: SeparationEvidence & {
+    extensions_unread?: boolean;
+    service_user_from?: string;
+    not_observed?: readonly SeparationCondition[];
+  },
 ): string {
   if (separationPrevents(e)) {
     // Correction 1 (D3): what the check could not read is named in the proviso, as the running
@@ -869,7 +886,7 @@ export function separationClaim(
     return "An agent running as this login could answer a gate through the terminal or by editing Realm's files; Realm records how each answer arrived but cannot stop it.";
   }
   return `An agent running as ${e.login} may still be able to answer a gate: ${separationGaps(e)
-    .map(gapWords)
+    .map((g) => gapWords(g, e.not_observed ?? []))
     .join('; ')}.`;
 }
 
@@ -882,7 +899,7 @@ export function renderSeparation(e: CheckEvidence): string[] {
       e.store_found
         ? e.store_unopened === true
           ? // #819 correction 1 (walk --check wording 5): its stat failed, so it may not be there
-            `Measured for the login '${e.login}', against ${e.store}, which this login cannot open, so whether a store is there is not known.`
+            `Measured for the login '${e.login}', against ${e.store}, which this login cannot open, so whether a store is there is unknown.`
           : `Measured for the login '${e.login}', against the store at ${e.store}.`
         : `Measured for the login '${e.login}'; no store was found at ${e.store}.`
     }${
