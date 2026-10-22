@@ -11,6 +11,22 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as core from '../index.js';
+import { CheckQuotesHandler } from '../handlers/check-quotes.js';
+import {
+  NOT_SENTENCE_ENDS,
+  QUOTE_SEARCH_BUDGET,
+  QUOTE_STATES,
+  locateQuote,
+  segmentsOf,
+} from '../handlers/primitives/locate-quote.js';
+import { createDefaultRegistry } from '../extensions/default-registry.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
+import {
+  loadWorkflowFromString,
+  loadWorkflowFromStringWithDiagnostics,
+} from '../workflow/yaml-loader.js';
+import { JsonWorkflowStore } from '../workflow/registrar.js';
 import {
   advanceRun,
   executeChain,
@@ -27,7 +43,8 @@ import { WorkflowError } from '../types/workflow-error.js';
 import type { WorkflowDefinition } from '../types/workflow-definition.js';
 import type { RunStore } from '../store/store-interface.js';
 import { agentActionFor, nextCalls, owedOf } from '../test-support/ways-view.js';
-import { composeWaysAt } from './ways.js';
+import { composeWaysAt, stepBrief } from './ways.js';
+import { compareStrings } from '../handlers/primitives/compare-strings.js';
 
 const PAGE = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -1225,5 +1242,1003 @@ describe('#625 PR-2a, C174 — the sweep’s corrected sentences about the libra
     expect(page('docs/reference/run-record-and-export.md')).toContain(
       `the ${fields} fields of an evidence entry (32 rows below: two rows hold two fields each),`,
     );
+  });
+});
+
+// issue #760: the sentences `docs/reference/handlers.md` adds or changes about `check_quotes` and
+// `locateQuote`, each quoted and then executed; and the CHANGELOG's #760 bullets under their
+// headings. What a failing cell prints: the sentence, or the values it compares.
+describe('#760 — handlers.md: check_quotes and locateQuote', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const raw = (p: string) => readFileSync(join(ROOT, p), 'utf8');
+  const flatten = (t: string) => t.replace(/\s+/g, ' ');
+  /** (a) red when the page no longer holds the sentence word for word; (b) prints it. */
+  const claimOn = (p: string, sentence: string): void => {
+    expect(flatten(raw(p)), `${p} no longer says: ${sentence}`).toContain(flatten(sentence));
+  };
+  /** The fenced block of the page that holds `marker`. */
+  const block = (p: string, marker: string): string => {
+    const blocks = raw(p)
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1);
+    return blocks.find((b) => b.includes(marker)) ?? '';
+  };
+  /** The body rows of the page's table whose header row starts with `header`, as cell lists. */
+  const rows = (p: string, header: string): string[][] => {
+    const lines = raw(p).split('\n');
+    const top = lines.findIndex((l) => l.startsWith(`| ${header}`));
+    const body: string[][] = [];
+    for (let i = top + 2; top >= 0 && lines[i]?.startsWith('|'); i++) {
+      body.push(
+        lines[i]!.split('|')
+          .slice(1, -1)
+          .map((c) => c.trim()),
+      );
+    }
+    return body;
+  };
+
+  const DOC = 'The rent is €48,000 a year, paid quarterly in advance on the usual quarter days.';
+
+  it(':135 — `realm run inspect` prints a handler warning on its Warn: line; `realm agent` does not', () => {
+    // The Warn: line itself is pinned by the CLI's `inspect.test.ts` ("the Warn: line (issue #760)").
+    claimOn(
+      HANDLERS,
+      "A caller over MCP gets it in the reply's `warnings` list. `realm run inspect` prints it on the step's `Warn:` line; `realm agent` does not print it. To read it afterwards, use `realm run export`.",
+    );
+  });
+
+  it(':339 — check_quotes is registered; a step naming an old name is blocked, the run kept open (correction 1, 05 item 1)', async () => {
+    claimOn(
+      HANDLERS,
+      '`check_quotes` is registered, added after version 0.47.1 (see [Built-in handlers](#built-in-handlers)). `validate_verbatim_quotes` and `validate_field_match` were never registered: a step naming them is blocked, as any unregistered handler is (above).',
+    );
+    const registry = createDefaultRegistry();
+    const def = {
+      id: 'docs-760-old',
+      name: 'O',
+      version: 1,
+      steps: {
+        extract: { description: 'E', execution: 'agent', depends_on: [] },
+        verify: {
+          description: 'V',
+          execution: 'auto',
+          handler: 'validate_verbatim_quotes',
+          depends_on: ['extract'],
+        },
+      },
+    } as unknown as WorkflowDefinition;
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-old-')));
+    const { run } = await store.create({ workflowId: def.id, workflowVersion: 1, params: {} });
+    const reply = await executeChain(store, def, {
+      runId: run.id,
+      command: 'extract',
+      registry,
+      input: { text: 'x' },
+      dispatcher: async (_n, i) => ({ ...i }),
+    });
+    const after = await store.get(run.id);
+    // (a) red when check_quotes is not registered, an old name is, or a step naming it ends the run;
+    //     (b) prints three booleans, the code and the run's end.
+    expect({
+      registered: [
+        registry.has('handler', 'check_quotes'),
+        registry.has('handler', 'validate_verbatim_quotes'),
+        registry.has('handler', 'validate_field_match'),
+      ],
+      code: reply.error_code,
+      ended: after.terminal_state === true,
+    }).toEqual({
+      registered: [true, false, false],
+      code: 'ENGINE_HANDLER_NOT_REGISTERED',
+      ended: false,
+    });
+  });
+
+  it(':5, :7 and :343 — the 6 helpers; one built-in handler; every default registry has it, a bare one does not (correction 1, 05 items 2, 13)', () => {
+    claimOn(HANDLERS, 'and the 6 helper functions that `@sensigo/realm` exports for handlers.');
+    claimOn(
+      HANDLERS,
+      'Realm has one handler of its own, `check_quotes` (see [Built-in handlers](#built-in-handlers)); every other handler a workflow names comes from the project.',
+    );
+    claimOn(
+      HANDLERS,
+      'Every registry `createDefaultRegistry()` returns has them: the CLI, `realm agent`, `realm listen`, the MCP server and the testing runner. A registry built with `new ExtensionRegistry()` does not.',
+    );
+    const helpers = [
+      'resolveResource',
+      'walkField',
+      'partitionBySubstring',
+      'countResults',
+      'compareStrings',
+      'locateQuote',
+    ];
+    const exported = core as unknown as Record<string, unknown>;
+    // (a) red when the count, the handler list or a registry drifts; (b) prints the count, the
+    //     handler names and a boolean. (The door list is the census's reading, F760-PIN-09: every
+    //     one of them builds its registry with createDefaultRegistry.)
+    expect({
+      helpers: helpers.filter((n) => typeof exported[n] === 'function').length,
+      handlers: createDefaultRegistry().names('handler'),
+      bare: new ExtensionRegistry().has('handler', 'check_quotes'),
+    }).toEqual({ helpers: 6, handlers: ['check_quotes'], bare: false });
+  });
+
+  it('core-library.md and deployment-manifest.md name the built-in handler (correction 1, 05 items 14, 15)', () => {
+    claimOn(
+      'docs/reference/core-library.md',
+      'Returns an `ExtensionRegistry` that holds the `filesystem` adapter and the `check_quotes` handler.',
+    );
+    claimOn(
+      'docs/reference/core-library.md',
+      'The adapters and handlers the steps can use. Without it, only the `filesystem` adapter and the `check_quotes` handler.',
+    );
+    claimOn(
+      'docs/reference/deployment-manifest.md',
+      'The manifest has no catalogue for handlers or processors; the built-in handler `check_quotes` needs no entry.',
+    );
+    const registry = createDefaultRegistry();
+    // (a) red when the default registry holds another handler set, or loses the adapter; (b) prints
+    //     the names.
+    expect({
+      handlers: registry.names('handler'),
+      adapter: registry.has('adapter', 'filesystem'),
+    }).toEqual({
+      handlers: ['check_quotes'],
+      adapter: true,
+    });
+  });
+
+  it(':343 — six helper functions, the import block names them, and each is exported', () => {
+    claimOn(HANDLERS, '`@sensigo/realm` exports 6 functions for use inside handlers.');
+    const names = [...block(HANDLERS, '  partitionBySubstring,').matchAll(/^ {2}(\w+),$/gm)].map(
+      (m) => m[1]!,
+    );
+    const exported = core as unknown as Record<string, unknown>;
+    // (a) red when the count, the list or an export drifts; (b) prints the names and their kinds.
+    expect(names.map((n) => [n, typeof exported[n]])).toEqual(
+      [
+        'resolveResource',
+        'walkField',
+        'partitionBySubstring',
+        'countResults',
+        'compareStrings',
+        'locateQuote',
+      ].map((n) => [n, 'function']),
+    );
+  });
+
+  it('the config table lists the handler’s keys, with its defaults', async () => {
+    const table = rows(HANDLERS, '`config` key');
+    const result = await new CheckQuotesHandler().execute(
+      { params: {} },
+      {
+        run_id: 'r',
+        run_params: {},
+        config: { source_step: 'doc', candidates_step: 'extract' },
+        resources: {
+          doc: { text: DOC },
+          extract: {
+            candidates: [{ field: 'f', quote: 'paid quarterly in advance on the usual' }],
+          },
+        },
+      },
+    );
+    const state = (result.data?.['results'] as Array<{ quote_check: { state: string } }>)[0]!
+      .quote_check.state;
+    // (a) red when a key is missing from the table, a default differs, or the defaults are not the
+    //     handler's (the defaulted fields would not be read); (b) prints the rows' key and default,
+    //     and the state.
+    expect({ table: table.map((c) => [c[0], c[1]]), state }).toEqual({
+      table: [
+        ['`source_step`', 'required'],
+        ['`source_field`', '`text`'],
+        ['`candidates_step`', 'required'],
+        ['`candidates_field`', '`candidates`'],
+        ['`quote_field`', '`quote`'],
+        ['`min_part_chars`', '`20`'],
+      ],
+      state: 'exact',
+    });
+  });
+
+  it('the states table lists the six states, in order', () => {
+    claimOn(HANDLERS, "The state describes the quote's match, never the value's correctness.");
+    // (a) red when a state is renamed, added or dropped on one side only; (b) prints both lists.
+    expect(rows(HANDLERS, 'State').map((c) => c[0]!.replace(/`/g, ''))).toEqual([...QUOTE_STATES]);
+  });
+
+  it('the record and the warning shown are what the step returns for that document', async () => {
+    const shown = JSON.parse(block(HANDLERS, '"candidates_found"')) as {
+      results: Array<Record<string, unknown>>;
+    };
+    const candidates = shown.results.map(({ quote_check: _qc, ...c }) => c);
+    const result = await new CheckQuotesHandler().execute(
+      { params: {} },
+      {
+        run_id: 'r',
+        run_params: {},
+        // Correction 1 (05 item 11): the guard pattern's own config, so the warning names the
+        // source the workflow below reads.
+        config: {
+          source_step: 'fetch_document',
+          candidates_step: 'extract_fields',
+          candidates_field: 'fields',
+        },
+        resources: { fetch_document: { text: DOC }, extract_fields: { fields: candidates } },
+      },
+    );
+    claimOn(HANDLERS, `The step's output, for a document \`${DOC}\` and two values:`);
+    // (a) red when the shown output or warning drifts from what the step returns; (b) prints both.
+    expect({ data: result.data, warning: result.warn?.message }).toEqual({
+      data: shown,
+      warning: block(HANDLERS, 'Quote check: 1 of 2').trim(),
+    });
+  });
+
+  it('the guard pattern: the guard depends on the check, and the pattern stops the run `aborted`', async () => {
+    claimOn(
+      HANDLERS,
+      "The guard needs `depends_on: [quote_check]`. Without it the guard is checked when the run starts, before the check has an output, and the run ends `failed` with a resolution error instead of `aborted`. With it, the run ends `aborted` and the check's record is kept.",
+    );
+    // "Without it … `failed`" is pinned by `check-quotes.test.ts` ("without depends_on the guard
+    // runs first and the run FAILS"). Correction 1 (05 item 13b): the block is a whole workflow —
+    // loaded as registering loads it, and run once with an altered quote.
+    claimOn(
+      HANDLERS,
+      "A whole workflow: the document's text comes in the run's params, the agent extracts the values, the check reads both, and the guard stops the run:",
+    );
+    const def = loadWorkflowFromString(block(HANDLERS, 'handler: check_quotes'));
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-')));
+    const { run } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: { text: DOC },
+    });
+    await advanceRun(store, def, { runId: run.id, registry: createDefaultRegistry() });
+    // Correction 2 (03, D4): the agent step's prompt carries the document, read from the record
+    // after `advanceRun` ran `fetch_document` (the record as first created renders none).
+    const prompt = stepBrief(def, await store.get(run.id), 'extract_fields').prompt;
+    const reply = await executeChain(store, def, {
+      runId: run.id,
+      command: 'extract_fields',
+      registry: createDefaultRegistry(),
+      input: {
+        fields: [
+          { field: 'annual_rent', value: '48000', quote: 'The rent is €48,000 a year' },
+          { field: 'payment', value: 'quarterly', quote: 'the rent is paid quarterly' },
+        ],
+      },
+      dispatcher: async (_n, i) => ({ ...i }),
+    });
+    const after = await store.get(run.id);
+    const check = after.evidence.find((e) => e.step_id === 'quote_check');
+    // (a) red when the workflow does not load, its agent step's prompt does not carry the document,
+    //     its guard cannot stop the run, the record is lost, or the warning does not reach the reply;
+    //     (b) prints two booleans, the phase, the seal and the flag.
+    expect({
+      promptHasDocument: typeof prompt === 'string' && prompt.includes(DOC),
+      phase: after.run_phase,
+      sealedBy: after.sealed_by?.arm,
+      all_found: (check?.output_summary as { all_found?: boolean } | undefined)?.all_found,
+      warned: reply.warnings.some((w) =>
+        w.startsWith("Quote check: 1 of 2 values not found in 'fetch_document.text'"),
+      ),
+    }).toEqual({
+      promptHasDocument: true,
+      phase: 'aborted',
+      sealedBy: 'guard_abort',
+      all_found: false,
+      warned: true,
+    });
+  });
+
+  it('the locateQuote table is what it returns', () => {
+    const text = 'Payment is due in 30 days.';
+    const table = raw(HANDLERS)
+      .split('\n')
+      .filter((l) => l.startsWith('| `locateQuote('))
+      .map((l) =>
+        l
+          .split('|')
+          .slice(1, -1)
+          .map((c) => c.trim()),
+      );
+    const results = table.map(([call, returns]) => {
+      const quote = /locateQuote\('([^']*)'/.exec(call!)![1]!;
+      return [JSON.stringify(locateQuote(quote, text)), returns!.replace(/`/g, '')];
+    });
+    // (a) red when a row's result drifts from the function's; (b) prints each pair.
+    expect(results.map(([got]) => got)).toEqual(results.map(([, shown]) => shown));
+    expect(results).toHaveLength(3);
+  });
+
+  it('what the step does not check, the quote instruction, and where the record is read', () => {
+    claimOn(
+      HANDLERS,
+      'The step checks quotes, not meaning. A value whose quote is in the document may still be wrong: the quote can say `4.5%` while the value says `5%`.',
+    );
+    claimOn(
+      HANDLERS,
+      'Ask the model for one contiguous span copied character for character, or two spans joined by `…`; each span after the first starts where a sentence or clause of the document starts, or at a new line after a finished sentence, a finished clause or a blank line; after a full stop, a sentence starts with a capital letter.',
+    );
+    // Correction 2 (03): the instruction is true of the rule — a second span that starts a sentence
+    // stitches; one that starts mid-sentence does not.
+    const doc =
+      'The Tenant shall pay the rent quarterly in advance. The Landlord shall repair the roof.';
+    // (a) red when the instruction's second span may start mid-sentence, or may not start a sentence;
+    //     (b) prints the two states.
+    expect([
+      locateQuote(
+        'The Tenant shall pay the rent quarterly … The Landlord shall repair the roof',
+        doc,
+      ).state,
+      locateQuote('The Tenant shall pay the rent quarterly … shall repair the roof', doc).state,
+    ]).toEqual(['stitched', 'not_found']);
+    // Correction 3 (03): a new line after a finished sentence counts; after a full stop a lowercase
+    // span does not start a sentence.
+    const lines =
+      'The Tenant shall pay the rent quarterly in advance.\nThe Landlord shall repair the roof.';
+    // (a) red when a span at a new line after a finished sentence is refused, or a lowercase span
+    //     after a full stop is accepted; (b) prints the two states.
+    expect([
+      locateQuote(
+        'The Tenant shall pay the rent quarterly … The Landlord shall repair the roof',
+        lines,
+      ).state,
+      locateQuote(
+        'The Tenant shall pay the rent quarterly … the roof is repaired by the Landlord',
+        'The Tenant shall pay the rent quarterly in advance. the roof is repaired by the Landlord.',
+      ).state,
+    ]).toEqual(['stitched', 'not_found']);
+    // `realm run export` is pinned by the CLI's `docs-claims-625.test.ts` (#760 cell); `get_run_state`
+    // carrying no step output by `step-view.ts`'s StepView (F760-AUD-06).
+    claimOn(
+      HANDLERS,
+      // Correction 1 (05 item 12): the 120-character Output: cut and the whole Warn: line are
+      // executed by the CLI's docs-claims-625 (#760 cell).
+      "The per-value record is the step's output: read it afterwards with `realm run export <run-id>`, which writes the whole run. `get_run_state` does not carry a step's output, and `realm run inspect` prints the step's output cut at 120 characters and its warning whole, on the `Warn:` line.",
+    );
+  });
+
+  it('CHANGELOG: the #760 bullets sit under [Unreleased] → Added and → Changed', () => {
+    const log = raw('CHANGELOG.md');
+    const start = log.indexOf('## [Unreleased]');
+    const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
+    const section = (h: string) => {
+      const at = unreleased.indexOf(`\n### ${h}\n`);
+      const next = unreleased.indexOf('\n### ', at + 1);
+      return unreleased.slice(at, next < 0 ? undefined : next);
+    };
+    const count = (h: string) => (section(h).match(/\(issue #760\)/g) ?? []).length;
+    // (a) red when a bullet lands under the wrong heading or is lost; (b) prints the counts.
+    expect({ added: count('Added'), changed: count('Changed'), fixed: count('Fixed') }).toEqual({
+      added: 3,
+      changed: 1,
+      fixed: 0,
+    });
+  });
+});
+
+// issue #760 correction 1 (part 05): every sentence the correction changes in handlers.md, quoted and
+// then executed. What a failing cell prints: states, booleans and the sentence.
+describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const flatten = (t: string) => t.replace(/\s+/g, ' ');
+  const claimOn = (p: string, sentence: string): void => {
+    expect(
+      flatten(readFileSync(join(ROOT, p), 'utf8')),
+      `${p} no longer says: ${sentence}`,
+    ).toContain(flatten(sentence));
+  };
+  /** The page's fenced block that holds `marker` (correction 2: D2 runs the page's own workflow). */
+  const block = (p: string, marker: string): string =>
+    readFileSync(join(ROOT, p), 'utf8')
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1)
+      .find((b) => b.includes(marker)) ?? '';
+  /** The states table's row text for `state`. */
+  const stateRow = (state: string): string => {
+    const line = readFileSync(join(ROOT, HANDLERS), 'utf8')
+      .split('\n')
+      .find((l) => l.startsWith(`| \`${state}\``));
+    return (line ?? '').split('|')[2]!.trim();
+  };
+  const handler = new CheckQuotesHandler();
+  const SOURCE =
+    'The Tenant shall pay the rent quarterly in advance. The Landlord shall repair the roof.';
+  const run = async (candidates: unknown[], config: Record<string, unknown> = {}) =>
+    handler.execute(
+      { params: {} },
+      {
+        run_id: 'r',
+        run_params: {},
+        config: { source_step: 'doc', candidates_step: 'extract', ...config },
+        resources: { doc: { text: SOURCE }, extract: { candidates } },
+      },
+    );
+
+  it(':347 and the keys sentence — a missing quote never stops the run; the keys each value is read by', async () => {
+    claimOn(
+      HANDLERS,
+      'A missing quote never stops the run, and the step never judges whether a value is correct; a guard on its `all_found` stops the run (below).',
+    );
+    claimOn(
+      HANDLERS,
+      'Each value is an object: its `quote_field` holds the quote, its `value` key the value, and its `field` key its name in the warning; a value with no `value` key and no quote counts as `not_found`.',
+    );
+    const result = await run([
+      { field: 'rent', value: 'x', quote: 'nothing like this at all' },
+      { name: 'deposit', answer: '24000', quote: '' },
+    ]);
+    const states = (result.data?.['results'] as Array<{ quote_check: { state: string } }>).map(
+      (r) => r.quote_check.state,
+    );
+    // (a) red when a missing quote aborts, the field is not the warning's name, or a value with no
+    //     `value` key and no quote is not counted; (b) prints the abort's presence, the states and
+    //     two booleans.
+    expect({
+      aborted: result.abort !== undefined,
+      states,
+      named: result.warn?.message.includes('rent — "nothing like this at all"'),
+      second: result.warn?.message.includes('candidate 2 — no quote given'),
+    }).toEqual({ aborted: false, states: ['not_found', 'not_found'], named: true, second: true });
+  });
+
+  it("the fault sentence and the depends_on sentence — every fault named; the docs' workflow without the check's depends_on completes with the guard skipped (walk 4)", async () => {
+    claimOn(
+      HANDLERS,
+      'ends the step `failed` with `ENGINE_HANDLER_FAILED` and a message saying what to change; every fault in the config is named at once.',
+    );
+    // Correction 2 (03, D2): walk 4 — the guard needs the check, yet the run completes.
+    claimOn(
+      HANDLERS,
+      'List the steps the check reads in its own `depends_on`. Without it the check can run first, before the values exist, and fail; the run goes on, every step that depends on the check under the default `all_success` trigger rule is skipped (a guard on `all_found` included), and the run can end `completed` with nothing checked.',
+    );
+    let message = '';
+    try {
+      await run([], { quote_feild: 'q', min_part_chars: 3 });
+    } catch (err) {
+      message = err instanceof WorkflowError ? err.message : '';
+    }
+    // The page's own whole workflow, its prompt included, with the check's `depends_on` taken out.
+    const shown = block(HANDLERS, 'handler: check_quotes');
+    const without = shown.replace('    depends_on: [fetch_document, extract_fields]\n', '');
+    const def = loadWorkflowFromString(without);
+    const store = new JsonFileStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-w4-')));
+    const { run: created } = await store.create({
+      workflowId: def.id,
+      workflowVersion: 1,
+      params: { text: SOURCE },
+    });
+    await advanceRun(store, def, { runId: created.id, registry: createDefaultRegistry() });
+    await executeChain(store, def, {
+      runId: created.id,
+      command: 'extract_fields',
+      registry: createDefaultRegistry(),
+      input: { fields: [{ field: 'rent', value: 'x', quote: 'nothing like this at all' }] },
+      dispatcher: async (_n, i) => ({ ...i }),
+    });
+    const after = await store.get(created.id);
+    // (a) red when only the first fault is named, the depends_on line was not the one taken out, or
+    //     the run does not complete with the check failed and the guard skipped by its trigger rule;
+    //     (b) prints two booleans, the phase, the failed steps, the guard's skip kind and the seal.
+    expect({
+      both:
+        message.includes("'quote_feild'") &&
+        message.includes('min_part_chars must be a whole number'),
+      removed: without !== shown,
+      phase: after.run_phase,
+      failed: after.failed_steps,
+      guard: after.skip_details?.['stop_if_not_found']?.kind,
+      sealedBy: after.sealed_by?.arm,
+    }).toEqual({
+      both: true,
+      removed: true,
+      phase: 'completed',
+      failed: ['quote_check'],
+      guard: 'trigger_rule_unsatisfiable',
+      sealedBy: 'complete',
+    });
+  });
+
+  it('the states table: reformatted, stitched, out of order, not_found, unquoted — each row executed', async () => {
+    claimOn(HANDLERS, stateRow('reformatted'));
+    expect(stateRow('reformatted')).toContain('and `<5%` is not `>5%`.');
+    expect(stateRow('stitched')).toContain(
+      'A piece ends where the quote breaks: at `…` or `...`, a sentence end, `;` or `:` (not one between two digits, as in `9:30`), a double quotation mark or a line break.',
+    );
+    // Correction 2 (03): the skip rule's sentences, run below (`skipMidSentence`, `skipToLine`).
+    expect(stateRow('stitched')).toContain(
+      // Correction 3 (03, D2): rule rev 3, run by locate-quote.test.ts's "correction 3, 01" cells.
+      'After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`) or a line. A line counts only after a blank line, or a line that ends a sentence, a clause or a table row; a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark is skipped only at such a line start, and a clause number only before a capital letter or a quotation mark. After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or a quotation mark. The piece before a skip may end mid-sentence.',
+    );
+    // Correction 2 (03): the exact row's edges, run below (`exactMidWord`); correction 3 (03, D2):
+    // the invisible character, run below (`exactInvisible`).
+    expect(stateRow('exact')).toBe(
+      'The quote is in the document character for character, and starts and ends at word and number edges; an invisible character inside a word, such as a soft hyphen or a zero-width space, does not make a word edge (U+FEFF excepted: the canonical form reads it as a space).',
+    );
+    // Correction 2 (03): the kept list, its `±` and `☒` members run below.
+    expect(stateRow('reformatted')).toContain(
+      'Digits, the separators between two digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions never are',
+    );
+    expect(stateRow('stitched_out_of_order')).toBe('The same, with the pieces in another order.');
+    expect(stateRow('not_found')).toBe(
+      'A piece is not in the document, or a part is shorter than `min_part_chars`, or locating the quote took more than 1,000 substring searches; or the value has no quote.',
+    );
+    expect(stateRow('unquoted')).toBe(
+      'The value has no quote, and its `value` key holds `null` or an empty string. It does not count as missing.',
+    );
+    const lease = 'First, the rent. Second, the repairs and the roof are the Landlord’s own duty.';
+    const unquoted = await run([{ field: 'g', value: null, quote: '' }]);
+    // (a) red when a row's behaviour drifts: a sign dropped, an abbreviation or `9:30` read as a
+    //     break, a drop inside a piece found, reversed pieces not labelled, the budget not applied, an
+    //     empty value not unquoted; (b) prints the states.
+    expect({
+      signs: locateQuote('the deposit is <5% of the rent', 'the deposit is >5% of the rent').state,
+      breaks: [segmentsOf('see e.g. the roof').length, segmentsOf('at 9:30 on Monday').length],
+      inOrder: locateQuote(
+        'The Tenant shall pay the rent quarterly… The Landlord shall repair the roof',
+        SOURCE,
+      ).state,
+      dropInside: locateQuote('The Tenant shall pay the rent in advance', SOURCE).state,
+      reversed: locateQuote(
+        'The Landlord shall repair the roof. The Tenant shall pay the rent quarterly',
+        SOURCE,
+      ).state,
+      tooShort: locateQuote('First, the rent… the roof', lease).state,
+      slow: locateQuote('a1'.repeat(200), 'a1'.repeat(4_000)).state,
+      unquoted: (unquoted.data?.['results'] as Array<{ quote_check: { state: string } }>)[0]!
+        .quote_check.state,
+      skipMidSentence: locateQuote(
+        'The Tenant shall pay the rent quarterly… shall repair the roof',
+        SOURCE,
+      ).state,
+      skipToLine: locateQuote(
+        'The account manager owns the renewal … Escalate any discount above ten per cent',
+        // Correction 3: the line before ends with `:`, so the list line counts (a line ending
+        // `and` does not, under rule rev 3); the text between the pieces is what the skip leaves.
+        'The account manager owns the renewal and its terms:\n- Escalate any discount above ten per cent.',
+      ).state,
+      exactMidWord: [
+        locateQuote('solvent, the Landlord', 'if the Tenant is insolvent, the Landlord').state,
+        locateQuote('the Landlord', 'if the Tenant is insolvent, the Landlord').state,
+      ],
+      exactInvisible: [0xad, 0x200b, 0xfeff].map(
+        (code) =>
+          locateQuote(
+            'lawful use of the Premises',
+            `any un${String.fromCharCode(code)}lawful use of the Premises`,
+          ).state,
+      ),
+      plusMinus: locateQuote('a tolerance of ±5 mm', 'a tolerance of 5 mm').state,
+      ballot: locateQuote('☒ The Tenant may keep pets', '☐ The Tenant may keep pets').state,
+    }).toEqual({
+      signs: 'not_found',
+      breaks: [1, 1],
+      inOrder: 'stitched',
+      dropInside: 'not_found',
+      reversed: 'stitched_out_of_order',
+      tooShort: 'not_found',
+      slow: 'not_found',
+      unquoted: 'unquoted',
+      skipMidSentence: 'not_found',
+      skipToLine: 'stitched',
+      exactMidWord: ['not_found', 'exact'],
+      exactInvisible: ['not_found', 'not_found', 'reformatted'],
+      plusMinus: 'not_found',
+      ballot: 'not_found',
+    });
+  });
+
+  it("the stitched row's abbreviations and the not_found row's 1,000 searches are the code's own (L1, A8)", () => {
+    const row = stateRow('stitched');
+    const listed = [...row.slice(row.indexOf('one of ')).matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
+    // (a) red when the row's list and the code's differ, a listed abbreviation or an initial ends a
+    //     piece, or the budget is not the row's figure; (b) prints the two lists, the abbreviations
+    //     that split a quote, the initial's piece count and the budget.
+    expect({
+      listed,
+      splits: listed.filter((a) => segmentsOf(`see ${a} the roof`).length !== 1),
+      initial: segmentsOf('signed by J. Smith today').length,
+      budget: QUOTE_SEARCH_BUDGET,
+    }).toEqual({ listed: [...NOT_SENTENCE_ENDS], splits: [], initial: 1, budget: 1_000 });
+    expect(stateRow('not_found')).toContain('more than 1,000 substring searches');
+  });
+
+  it('cut_short, the number sentence and `nearest` — each executed', () => {
+    claimOn(
+      HANDLERS,
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest.",
+    );
+    // Correction 2 (03, N8): each example is run below (`numbers`, `signs`, `words`).
+    claimOn(
+      HANDLERS,
+      "A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number's separator or beside a group of thousands. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, `18` and `18.` not in `18.5`, `1 200` not in `1 200 000`, and `75%` not in `.75%`. A sign belongs to its number: `48,000` is not found in `€48,000`, and `5` not in `-5`. A number written in words is matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.",
+    );
+    claimOn(
+      HANDLERS,
+      '`nearest` is where the longest piece of the quote that is in the document lies; it is absent when no whole word of the quote is found.',
+    );
+    claimOn(
+      HANDLERS,
+      '`all_found` is true when no value is `not_found`: `exact`, `reformatted`, `stitched` and `stitched_out_of_order` count as found, and `unquoted` is not counted.',
+    );
+    const cut = locateQuote('The Tenant shall pay the rent.', SOURCE);
+    // (a) red when the label is missing, a shorter number is found inside a longer one, or a
+    //     one-letter `nearest` is kept; (b) prints the label and the states.
+    expect({
+      cut: cut.cut_short,
+      numbers: [
+        locateQuote('see clause 9', 'see clause 9a').state,
+        locateQuote('a cap of 9,20', 'a cap of 9,200 a year').state,
+        locateQuote('a rent of €48', 'a rent of €48,000').state,
+        locateQuote('being 18', 'being 18.5 per cent').state,
+        locateQuote('being 18.', 'being 18.5 per cent').state,
+        locateQuote('the rent is 1 200', 'the rent is 1 200 000 euro').state,
+        // Correction 3 (03, D2): true after 02 C — the quote's own trailing space is no edge.
+        locateQuote('the rent is 1 200 ', 'the rent is 1 200 000 euro').state,
+        locateQuote('75%', 'a margin of .75% above').state,
+      ],
+      signs: [locateQuote('48,000', '€48,000').state, locateQuote('5', '-5').state],
+      words: locateQuote(
+        'five hundred thousand euro',
+        'a limit of six million five hundred thousand euro',
+      ).state,
+      nearest: locateQuote('zzzz qqqq', SOURCE).nearest,
+    }).toEqual({
+      cut: true,
+      numbers: [
+        'not_found',
+        'not_found',
+        'not_found',
+        'not_found',
+        'not_found',
+        'not_found',
+        'not_found',
+        'not_found',
+      ],
+      signs: ['not_found', 'not_found'],
+      words: 'exact',
+      nearest: undefined,
+    });
+  });
+
+  it('the warning sentence — the quote as the model gave it, cut at 80, and offsets; never text read from the document', async () => {
+    claimOn(
+      HANDLERS,
+      'It prints the quote as the model gave it, cut at 80 characters, and offsets; it never prints text it read from the document.',
+    );
+    const long = `${'The Landlord shall repaint every window each spring and every door each autumn'} and more`;
+    // Correction 2 (ride-along, F760-C1R-B-09): the source spells the shared words its own way, so
+    // its text at `nearest` differs from the quote and the check below can fail.
+    const source = 'the LANDLORD, shall repair the roof and the structure at its own cost.';
+    const result = await handler.execute(
+      { params: {} },
+      {
+        run_id: 'r',
+        run_params: {},
+        config: { source_step: 'doc', candidates_step: 'extract' },
+        resources: {
+          doc: { text: source },
+          extract: { candidates: [{ field: 'paint', value: 'v', quote: long }] },
+        },
+      },
+    );
+    const near = (
+      result.data?.['results'] as Array<{
+        quote_check: { nearest?: { start: number; end: number } };
+      }>
+    )[0]!.quote_check.nearest;
+    const sourceSpan = near === undefined ? '' : source.slice(near.start, near.end);
+    // (a) red when the warning prints the source at `nearest`, or more than 80 characters of the
+    //     quote; (b) prints booleans.
+    expect({
+      head: result.warn?.message.includes(`"${long.slice(0, 80)}…"`),
+      sourceSpanDiffers: sourceSpan !== '' && !long.includes(sourceSpan),
+      sourceText: result.warn?.message.includes(sourceSpan),
+    }).toEqual({ head: true, sourceSpanDiffers: true, sourceText: false });
+  });
+
+  it("the locateQuote section — the ladder's stitched, out-of-order and not_found items, and the kept characters", () => {
+    claimOn(
+      HANDLERS,
+      '1. `exact`: `quote` is a substring of `source`, starting and ending at word and number edges.',
+    );
+    claimOn(
+      HANDLERS,
+      "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`) or a line. A line counts only after a blank line, or a line that ends a sentence, a clause or a table row (`|`); a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark is skipped only at such a line start, and a clause number only before a capital letter or a quotation mark. After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or a quotation mark. The piece before a skip may end mid-sentence. A quote with no break is never stitched.",
+    );
+    claimOn(HANDLERS, '4. `stitched_out_of_order`: the same, with the parts in another order.');
+    claimOn(
+      HANDLERS,
+      '5. `not_found`: otherwise, with `nearest` when a piece of the quote holding a whole word is in `source`; it is absent when no whole word of the quote is found.',
+    );
+    claimOn(
+      HANDLERS,
+      "with every dash and hyphen read as `-` (two hyphens outside the Basic Multilingual Plane excepted; a soft hyphen is not a dash: it is invisible, and the literal match reads past it), every punctuation mark and quotation mark dropped and spaces collapsed, keeping letters, digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits. A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands.",
+    );
+    // (a) red when a mid-word quote or piece is found, a skip lands mid-sentence, a quote with no
+    //     break stitches, a sign, a superscript, a dash or a leading decimal is folded, or a number
+    //     is cut at its separator; (b) prints the states.
+    expect([
+      locateQuote('solvent, the Landlord', 'if the Tenant is insolvent, the Landlord').state,
+      locateQuote('The Tenant shall pa… y the rent quarterly', SOURCE).state,
+      locateQuote('The Tenant shall pay the rent quarterly … shall repair the roof', SOURCE).state,
+      locateQuote('The Tenant shall pay the roof', SOURCE).state,
+      locateQuote('a fee of ≥ 10%', 'a fee of ≤ 10%').state,
+      locateQuote('clause 91', 'clause 9¹').state,
+      locateQuote('a balance of 5 units', 'a balance of \u20115 units').state,
+      locateQuote('a margin of 75%', 'a margin of .75%').state,
+      locateQuote('being 18.', 'being 18.5 per cent').state,
+    ]).toEqual([
+      'not_found',
+      'not_found',
+      'not_found',
+      'not_found',
+      'not_found',
+      'not_found',
+      'not_found',
+      'not_found',
+      'not_found',
+    ]);
+  });
+
+  it('the `compareStrings` `exact` row says what the mode does (correction 2, D1)', () => {
+    claimOn(HANDLERS, '| `exact`  | `a` and `b` are the same string.');
+    // (a) red when the row carries another function's text, or the mode drifts; (b) prints the two
+    //     results.
+    expect([
+      compareStrings('INV-2041', 'INV-20', 'exact'),
+      compareStrings('INV-20', 'INV-20', 'exact'),
+    ]).toEqual([false, true]);
+  });
+
+  it("the CHANGELOG's `locateQuote` bullet, sentence by sentence, each state it names run (correction 2, D3)", () => {
+    const CL = 'CHANGELOG.md';
+    claimOn(
+      CL,
+      'A quote may skip document text only where it breaks (at `…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), and only to where the document starts a sentence, a clause or a line.',
+    );
+    claimOn(
+      CL,
+      // Correction 3 (03, D2): rule rev 3, run by locate-quote.test.ts's "correction 3, 01" cells.
+      'A line counts only after a blank line, or a line that ends a sentence, a clause or a table row, so text whose lines break inside sentences is read correctly; a clause number or a list mark is skipped only at such a line start, and after a full stop the next piece must begin with a capital letter or a quotation mark.',
+    );
+    // Correction 3 (03, D2): run by locate-quote.test.ts's "correction 3, 02 B" and "02 C" cells.
+    claimOn(
+      CL,
+      "every dash and hyphen reads as `-` (two hyphens outside the Basic Multilingual Plane excepted); a soft hyphen is not a dash, and the literal match reads past it and every other invisible character. A quote's own leading or trailing space never counts as an edge.",
+    );
+    // The joined-clause gap is pinned by locate-quote.test.ts ("a known gap: the part BEFORE a skip
+    // may end mid-sentence…"), and run here too.
+    claimOn(
+      CL,
+      'The part before a skip may still end mid-sentence, so a clause can be joined to a later sentence and read `stitched`.',
+    );
+    claimOn(
+      CL,
+      'Whole sentences quoted from far apart read `stitched` (`stitched_out_of_order` when reversed).',
+    );
+    claimOn(
+      CL,
+      "A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number's separator or beside a group of thousands. A sign belongs to its number. A number written in words is matched as words.",
+    );
+    claimOn(
+      CL,
+      'Mathematical signs, primes, ballot boxes and check marks, superscripts and fractions are kept,',
+    );
+    const doc =
+      'The Tenant shall pay the Rent, subject to payment of the Service Charge,\nwhen due.\n\nThe Landlord shall insure the Building. The Landlord shall repair the roof.\n\nThe Tenant shall keep the Premises clean.';
+    const first = 'The Landlord shall insure the Building.';
+    const last = 'The Tenant shall keep the Premises clean.';
+    // (a) red when a skip lands inside a sentence, the joined clause is refused (the gap closed
+    //     without the docs saying so), or whole far sentences do not stitch; (b) prints the states.
+    expect({
+      intoSentence: locateQuote('The Tenant shall pay the Rent … when due.', doc).state,
+      joinedClause: locateQuote(
+        'subject to payment of the Service Charge, … The Landlord shall repair the roof.',
+        doc,
+      ).state,
+      far: locateQuote(`${first} … ${last}`, doc).state,
+      reversed: locateQuote(`${last} … ${first}`, doc).state,
+    }).toEqual({
+      intoSentence: 'not_found',
+      joinedClause: 'stitched',
+      far: 'stitched',
+      reversed: 'stitched_out_of_order',
+    });
+  });
+});
+
+// issue #760 correction 3 (03, D1): the handlers page's "What `check_quotes` does not catch", each
+// sentence quoted and then run; and how to register the page's whole workflow. What a failing cell
+// prints: states and booleans.
+describe('#760 correction 3 — handlers.md: what check_quotes does not catch, and registering the workflow (03, D1)', () => {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+  const HANDLERS = 'docs/reference/handlers.md';
+  const flatten = (t: string) => t.replace(/\s+/g, ' ');
+  const claimOn = (sentence: string): void => {
+    expect(
+      flatten(readFileSync(join(ROOT, HANDLERS), 'utf8')),
+      `${HANDLERS} no longer says: ${sentence}`,
+    ).toContain(flatten(sentence));
+  };
+  const block = (marker: string): string =>
+    readFileSync(join(ROOT, HANDLERS), 'utf8')
+      .split(/^```[a-z]*\n/m)
+      .filter((_, i) => i % 2 === 1)
+      .find((b) => b.includes(marker)) ?? '';
+  const FIRST = 'The Landlord shall insure the Building';
+  const skipTo = (join: string, second: string): [string, string] => [
+    `${FIRST} … ${second}`,
+    `${FIRST} for its full reinstatement cost${join}${second} at the end of each year.`,
+  ];
+  const CAPITAL = 'The Tenant shall pay the insurance rent';
+  const ch = String.fromCharCode;
+  const state = (quote: string, source: string) => locateQuote(quote, source).state;
+
+  it('the bar: built for the mistakes models make; a quote written to mislead it can read found', () => {
+    claimOn(
+      '`check_quotes` is built to catch the mistakes models make when they quote: a word dropped or added, a number cut short, a piece resumed in the middle of a sentence. A quote written on purpose to mislead it can still read found in the cases below.',
+    );
+    const doc =
+      'The Tenant shall not pay the Rent late. The cap is €9,200 for each year of the term.';
+    // (a) red when one of the three mistakes is found; (b) prints the three states.
+    expect([
+      state('The Tenant shall pay the Rent late.', doc),
+      state('The cap is €9,', doc),
+      state('The Tenant shall not pay … for each year of the term.', doc),
+    ]).toEqual(['not_found', 'not_found', 'not_found']);
+  });
+
+  it("what can still read found — each bullet run (the test set's T2 rows pin them too)", () => {
+    for (const sentence of [
+      'A clause joined to a later sentence: the piece before a skip may end mid-sentence.',
+      'A number written in words, matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
+      'A true quote that stops before its sentence ends is found. It is marked `cut_short` only when the quote ends with its own `.`, `!` or `?`.',
+      'An abbreviation the check does not know, followed by a capitalised word (`a.m. Monday`, `excl. VAT`): a skip may land there.',
+      'A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).',
+      'Combining marks read as the letters they carry (`n̶o̶t̶` reads `not`), and enclosed letters (`🅽🅾🆃`) are set aside like other symbols, so a struck-through or boxed word reads found.',
+      'Symbols other than the kept ones (bullets, emoji) are set aside.',
+      'U+FEFF inside a word reads `reformatted`, since the canonical form reads it as a space.',
+    ])
+      claimOn(sentence);
+    const stop = locateQuote('The area is approx.', 'The area is approx. 412 square metres.');
+    const open = locateQuote(
+      'The Tenant shall pay the Rent',
+      'The Tenant shall pay the Rent on each quarter day.',
+    );
+    // (a) red when one of these behaviours changes (a gap closed, or a true quote no longer found);
+    //     (b) prints the states and the two labels.
+    expect({
+      joinedClause: state(
+        'subject to payment of the Service Charge, … The Landlord shall repair the roof.',
+        'The Tenant shall pay the Rent, subject to payment of the Service Charge,\nwhen due.\n\nThe Landlord shall insure the Building. The Landlord shall repair the roof.',
+      ),
+      words: state(
+        'five hundred thousand euro',
+        'a limit of six million five hundred thousand euro',
+      ),
+      stopsShort: [open.state, open.cut_short === true, stop.state, stop.cut_short === true],
+      abbreviations: [
+        state(
+          'The Tenant and its contractors shall … Monday to Friday use the loading bay or the goods lift.',
+          'The Tenant and its contractors shall not before 9 a.m. Monday to Friday use the loading bay or the goods lift.',
+        ),
+        state(
+          'The Tenant shall pay an annual rent of €48,000 … VAT and the Service Charge on each quarter day.',
+          'The Tenant shall pay an annual rent of €48,000 excl. VAT and the Service Charge on each quarter day.',
+        ),
+      ],
+      amounts: [
+        state('500 euro', 'the deposit is EUR2 500 euro'),
+        state('is 5 percent higher', 'the rent is ·5 percent higher'),
+      ],
+      marks: [
+        state('The Tenant shall n̶o̶t̶ pay the Rent', 'The Tenant shall not pay the Rent late.'),
+        state(
+          'The Landlord shall 🅽🅾🆃 insure the Building',
+          'The Landlord shall insure the Building.',
+        ),
+      ],
+      symbols: [
+        state(
+          'The Tenant shall pay the Rent and keep the Premises',
+          'The Tenant shall pay the Rent ■ and keep the Premises',
+        ),
+        state('⭐ The Tenant may keep pets', '🔥 The Tenant may keep pets'),
+      ],
+      feff: state('lawful use of the Premises', `any un${ch(0xfeff)}lawful use of the Premises`),
+    }).toEqual({
+      joinedClause: 'stitched',
+      words: 'exact',
+      stopsShort: ['exact', false, 'exact', true],
+      abbreviations: ['stitched', 'stitched'],
+      amounts: ['exact', 'reformatted'],
+      marks: ['reformatted', 'reformatted'],
+      symbols: ['reformatted', 'reformatted'],
+      feff: 'reformatted',
+    });
+  });
+
+  it('what reads not found although it is honest — each bullet run', () => {
+    for (const sentence of [
+      'A quote that skips into the middle of a sentence, with or without `…`.',
+      'A skip onto a sentence that opens with a digit, a currency sign, a lowercase word (`iPhones…`), or a script with no capital letters.',
+      'A skip onto a clause number in the middle of a line after a sentence end.',
+      'A zero-width space used as the only separator between two words.',
+      'A skip onto a new line, a list item included, after a line that ends mid-sentence, or onto a line under a heading with no stop.',
+      'A sentence after a no-break space or a form feed; a sentence after a footnote marker; a tab-separated row with no stop; the bullets `●`, U+F0B7 and `>`; the labels `a)`, `A)` and `A.`; `Ltd.`, `Inc.` or `etc.` ending a sentence; `Schedule A.` (read as an initial); a bullet in the middle of a line after a sentence end.',
+    ])
+      claimOn(sentence);
+    const cases: Array<[string, string, string]> = [
+      [
+        'into a sentence, with …',
+        `${FIRST} … for its full reinstatement cost`,
+        `${FIRST} and the roof, for its full reinstatement cost.`,
+      ],
+      [
+        'into a sentence, at a line break',
+        `${FIRST}\nfor its full reinstatement cost`,
+        `${FIRST} and the roof, for its full reinstatement cost.`,
+      ],
+      ['opens with a digit', ...skipTo('. ', '12 payments of the insurance rent are due')],
+      ['opens with a currency sign', ...skipTo('. ', '€500 of the insurance rent is due')],
+      ['opens with a lowercase word', ...skipTo('. ', 'iPhones are not covered by the insurance')],
+      ['a script with no capital letters', ...skipTo('. ', 'השוכר ישלם את דמי הביטוח')],
+      ['a clause number mid-line', ...skipTo('. 6.2 ', CAPITAL)],
+      ['a list item after a line ending mid-sentence', ...skipTo(' and\n- ', CAPITAL)],
+      [
+        'a line under a heading with no stop',
+        'The following words have these meanings … "Rent" means the rent specified in clause 3.1',
+        'The following words have these meanings in this Lease\n"Rent" means the rent specified in clause 3.1.',
+      ],
+      ['after a no-break space', ...skipTo(`.${ch(0xa0)}`, CAPITAL)],
+      ['after a form feed', ...skipTo(`.${ch(0x0c)}`, CAPITAL)],
+      ['after a footnote marker', ...skipTo('.¹ ', CAPITAL)],
+      [
+        'a tab-separated row with no stop',
+        'Rent\tforty-eight thousand euro a year … Service Charge\tnine thousand two hundred euro',
+        'Rent\tforty-eight thousand euro a year\nDeposit\ttwenty-four thousand euro\nService Charge\tnine thousand two hundred euro',
+      ],
+      ['the bullet ●', ...skipTo(':\n● ', CAPITAL)],
+      ['the bullet U+F0B7', ...skipTo(`:\n${ch(0xf0b7)} `, CAPITAL)],
+      ['the bullet >', ...skipTo(':\n> ', CAPITAL)],
+      ['the label a)', ...skipTo('.\n\na) ', CAPITAL)],
+      ['the label A)', ...skipTo('.\n\nA) ', CAPITAL)],
+      ['the label A.', ...skipTo('.\n\nA. ', CAPITAL)],
+      ['Ltd. ending a sentence', ...skipTo(' by Northwind Analytics Ltd. ', CAPITAL)],
+      ['Inc. ending a sentence', ...skipTo(' by Northwind Analytics Inc. ', CAPITAL)],
+      ['etc. ending a sentence', ...skipTo(', the roof, the lifts etc. ', CAPITAL)],
+      ['Schedule A.', ...skipTo(' set out in Schedule A. ', CAPITAL)],
+      ['a bullet mid-line after a sentence end', ...skipTo('. • ', CAPITAL)],
+    ];
+    // (a) red when one of these honest shapes starts to read found (its bullet would then be false);
+    //     (b) prints every case that reads found, and the zero-width case's state.
+    expect({
+      found: cases
+        .filter(([, quote, source]) => state(quote, source) !== 'not_found')
+        .map(([n]) => n),
+      zeroWidth: state('the Tenant', `the Tenant${ch(0x200b)}shall pay`),
+    }).toEqual({ found: [], zeroWidth: 'not_found' });
+  });
+
+  it('the whole workflow: "Register it with `realm workflow register <file>`" — it registers', async () => {
+    claimOn('Register it with `realm workflow register <file>`.');
+    const { definition, warnings } = loadWorkflowFromStringWithDiagnostics(
+      block('handler: check_quotes'),
+    );
+    const store = new JsonWorkflowStore(await mkdtemp(join(tmpdir(), 'realm-dc-760-reg-')));
+    await store.register(definition);
+    const stored = await store.get(definition.id);
+    // (a) red when the page's workflow carries an error the register command refuses, or does not
+    //     register; (b) prints the error codes and the registered id.
+    expect({
+      errors: warnings.filter((w) => w.severity === 'error').map((w) => w.code),
+      registered: stored.id,
+    }).toEqual({ errors: [], registered: 'lease-quotes' });
   });
 });

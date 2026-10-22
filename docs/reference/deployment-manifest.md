@@ -98,7 +98,7 @@ Each of the three is a map from a name to an entry. The name is the one a workfl
 
 ### `use` with a built-in adapter
 
-For an adapter, `use` may be one of 10 names: `github`, `slack`, `http`, `airtable`, `gorgias`, `shopify`, `notion`, `parcelpanel`, `filesystem`, `mock`. The settings each one takes are in [Adapters](adapters.md). There are no built-in handlers or processors.
+For an adapter, `use` may be one of 10 names: `github`, `slack`, `http`, `airtable`, `gorgias`, `shopify`, `notion`, `parcelpanel`, `filesystem`, `mock`. The settings each one takes are in [Adapters](adapters.md). The manifest has no catalogue for handlers or processors; the built-in handler `check_quotes` needs no entry.
 
 ### `use` with a code file
 

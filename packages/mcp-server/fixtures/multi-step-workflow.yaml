@@ -47,7 +47,11 @@ steps:
   validate_candidates:
     description: Validate extracted quote citations against source document
     execution: auto
-    handler: validate_verbatim_quotes
+    handler: check_quotes
+    config:
+      source_step: fetch_document
+      candidates_step: extract_fields
+      quote_field: verbatim_quote
     depends_on: [extract_fields]
     instructions: 'Engine validates your citations automatically. No action needed.'
 

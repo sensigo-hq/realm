@@ -7,6 +7,7 @@
 import {
   answerArrivalOf,
   composeStepViews,
+  controlEscape,
   deriveRunPhase,
   describeClaimHolder,
   isAnswerEntry,
@@ -463,17 +464,6 @@ export function recordedArrival(run: RunRecord, step: string): AnswerArrival {
     (e) => isAnswerEntry(e) && (e as { step_id?: unknown }).step_id === step,
   );
   return answerArrivalOf(entries[entries.length - 1]);
-}
-
-/**
- * decision C183: the ONE spelling of a control character a terminal line shows — JSON's: `\t`,
- * `\n`, `\r`, `\b`, `\f`, and `\u00XX` for the others below U+0020; `\uXXXX` for U+007F–U+009F
- * (the house's control set, `holder.ts`; U+009B starts a terminal sequence), which JSON leaves raw.
- * `realm run inspect`'s `Message:` line and `realm workflow run`'s question print the same escape.
- */
-export function controlEscape(c: string): string {
-  const code = c.charCodeAt(0);
-  return code < 0x20 ? JSON.stringify(c).slice(1, -1) : `\\u${code.toString(16).padStart(4, '0')}`;
 }
 
 /**
