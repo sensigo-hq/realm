@@ -2107,7 +2107,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A clause joined to a later sentence (`stitched`) or an earlier one (`stitched_out_of_order`): the piece before a skip may end mid-sentence.',
       'A number written in words, matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
       'A true quote that stops before its sentence ends is found. It is marked `cut_short` only at a `.`, `!` or `?` the quote itself carries.',
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and a single capital letter's initial (one letter of the Basic Multilingual Plane that has a lowercase form)), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and an initial), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
       'A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).',
       // The follow-up (§2): which enclosed letters read as letters, run by its own cell.
       'Combining marks read as the letters they carry (`n̶o̶t̶` reads `not`), and so do circled, squared and parenthesised letters (`ⓃⓄⓉ` reads `not`). Negative squared and negative circled letters (`🅽🅾🆃`, `🅝🅞🅣`) and regional indicators are set aside like other symbols, so a quote reads found whether it carries them or leaves them out.',
@@ -2180,7 +2180,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A skip onto a clause number in the middle of a line after a sentence end.',
       'A zero-width space used as the only separator between two words.',
       'A skip onto a new line, a list item included, after a line that ends mid-sentence, or onto a line under a heading with no stop.',
-      'A sentence after a no-break space or a form feed; a sentence after a footnote marker; a tab-separated row with no stop; the labels `a)`, `A)` and `A.`; `Ltd.`, `Inc.` or `etc.` ending a sentence; `Schedule A.` (read as an initial); a bullet in the middle of a line after a sentence end.',
+      'A sentence after a no-break space or a form feed; a sentence after a footnote marker; a tab-separated row with no stop; a skip past the labels `a)`, `A)` and `A.`, which are not read as clause numbers; `Ltd.`, `Inc.` or `etc.` ending a sentence; `Schedule A.` (read as an initial); a bullet in the middle of a line after a sentence end.',
     ])
       claimOn(sentence);
     const cases: Array<[string, string, string]> = [
@@ -2387,7 +2387,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it('§2 can still read found: an invisible format character inside a number, or between a sign and its number', () => {
     claimOn(
       HANDLERS,
-      'An invisible format character (`Cf`) inside a number, between a leading decimal point and its digits, or between a minus sign, hyphen or dash and its number (every dash in the Basic Multilingual Plane reads as `-`), so part of the number reads found: `12` in a `12500` with a soft hyphen after `12`, `75%` in a `.75%` with a zero-width space after the `.`, and `5` in a `-5` with a zero-width space after the `-`. U+FEFF reads as a space, so `12` is not found in `12`, U+FEFF, `500`, which reads as a group of thousands. After `€`, `$`, `+`, `±` or `<` the number is not found, except across U+FEFF, which reads as a space: `48,000` is found in `€`, U+FEFF, `48,000`.',
+      'An invisible format character (`Cf`) inside a number, between a leading decimal point and its digits, or between a dash and its number (every dash reads as `-`), so part of the number reads found: `12` in a `12500` with a soft hyphen after `12`, `75%` in a `.75%` with a zero-width space after the `.`, and `5` in a `-5` with a zero-width space after the `-`. U+FEFF reads as a space, so `12` is not found in `12`, U+FEFF, `500`, which reads as a group of thousands. After `€`, `$`, `+`, `±` or `<` the number is not found, except across U+FEFF, which reads as a space: `48,000` is found in `€`, U+FEFF, `48,000`.',
     );
     // (a) red when the gap closes, or the plain number stops being one unit; (b) prints the states.
     expect([
@@ -2442,7 +2442,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     // #855's correction (§4): `:396`'s `U.S.` sentence merged into the abbreviation bullet.
     claimOn(
       HANDLERS,
-      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and a single capital letter's initial (one letter of the Basic Multilingual Plane that has a lowercase form)), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
+      "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and an initial), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
     );
     const capital = 'Capital rules apply to the Tenant at all times';
     // (a) red when the gap closes, or an initial starts ending a sentence; (b) prints the states.
@@ -2521,11 +2521,11 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it("§2 `cut_short`: an `exact` quote is marked when its last character is its stop and the document goes on with a lowercase letter or a digit, not when the quote carries a space after it (every member: #855's correction §1)", () => {
     claimOn(
       HANDLERS,
-      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, spaces and tabs, goes on with a lowercase letter or a digit (`approx. 412`); a no-break space or a line break in the document there, or a space, tab or line break the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, plain spaces and tabs, goes on with a lowercase letter or a digit (`approx. 412`); any other whitespace there, a `\\p{Ll}` or `\\p{Nd}` character outside the Basic Multilingual Plane, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
     );
     claimOn(
       CL,
-      "A quote that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the document goes on, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, spaces and tabs, with a lowercase letter or a digit, and every other state at each `.`, `!` or `?` inside the quote that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and goes on. The handlers reference lists what a crafted quote can still get read as found, and what an honest quote is still refused (\"What `check_quotes` does not catch\").",
+      "A quote that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the document goes on, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, U+0020 and U+0009, with a lowercase letter (`\\p{Ll}`) or a digit (`\\p{Nd}`) of the Basic Multilingual Plane, and every other state at each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace (`\\s`) or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and goes on. The handlers reference lists what a crafted quote can still get read as found, and what an honest quote is still refused (\"What `check_quotes` does not catch\").",
     );
     const doc = 'The area is not less than approx. 412 square metres.';
     const marked = (q: string) => {
@@ -2546,7 +2546,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it("§2 honest refusals: a skip past a clause number onto a lowercase first word; quoting the label too reads stitched after `:` (every member: #855's correction §2)", () => {
     claimOn(
       HANDLERS,
-      'A skip past a clause number onto a lowercase first word (`… keep the Premises` after `(b)`); quoting the label as well reads `stitched` after a line that ends with `;` or `:`, or after a blank line; after a line that ends a sentence, only a bracketed label does (`(b) keep…`), since `(` is an opening mark, and a numbered one needs a capital letter or an opening mark after it (`2. Send…`). `b.` and `a)` are not read as labels.',
+      'A skip past a clause number onto a lowercase first word (`… keep the Premises` after `(b)`); quoting the label as well reads `stitched` after a line that ends with `;` or `:`, or after a blank line; after a line that ends a sentence, a label that opens with an opening mark or a capital letter does (`(b) keep…`, `A) keep…`, `IV. keep…`), and one that opens with a digit needs a capital letter or an opening mark after it (`2. Send…`). `b.` and `a)` are not read as labels.',
     );
     const item = 'keep the Premises in good and substantial repair';
     // (a) red when the skip past the label reads found (the bullet would then be false), or the label
@@ -2561,7 +2561,7 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     // #855's correction (§5, M3): two bullets now; the header's every form runs in its own cell.
     claimOn(
       HANDLERS,
-      'A page header crossed without `…`, joined with a space; a quote that keeps the line break, or skips the header with `…`, reads `stitched` only when a blank line follows the header, or the header ends with `;`, `:` or `|`, or ends a sentence and the words after it open with a capital letter or an opening mark.',
+      'A page header crossed without `…`, joined with a space; a quote that keeps the line break, or skips the header with `…`, reads `stitched` only when a blank line follows the header, or the header ends with `;`, `:` or `|`, or ends a sentence and the line after it opens with a capital letter, an opening mark, a list mark or a run of U+0023; a line that opens with `;` or `:` reads `stitched` after any header, since a clause starts there.',
     );
     claimOn(
       HANDLERS,
@@ -2738,6 +2738,37 @@ describe("#855's correction: each sentence's members", () => {
   const MARKS = codePoints(MARK_GROUP, 0, BMP);
   /** `CAPITAL` (`locate-quote.ts:665`): every BMP `\p{Lu}` and `\p{Lt}`. */
   const CAPITALS = codePoints(/^[\p{Lu}\p{Lt}]$/u, 0, BMP);
+  /** #855's last commit: the glossary under "What `check_quotes` does not catch", word → its set's
+   *  cell, read from the page. */
+  const GLOSSARY = ((): Map<string, string> => {
+    const lines = raw(HANDLERS).split('\n');
+    const head = lines.findIndex((l) => /^\|\s*word\s*\|\s*set\s*\|$/.test(l));
+    const rows = new Map<string, string>();
+    for (const line of lines.slice(head + 1)) {
+      if (!line.startsWith('|')) break;
+      if (/^\|[\s-]+\|[\s-]+\|$/.test(line)) continue;
+      const [word, set] = line
+        .split('|')
+        .slice(1, -1)
+        .map((c) => c.trim());
+      rows.set(word!, set!);
+    }
+    return rows;
+  })();
+  /** A glossary row's listed members: its `U+XXXX` entries. */
+  const glossaryCodes = (word: string): number[] =>
+    [...(GLOSSARY.get(word) ?? '').matchAll(/U\+([0-9A-F]{4,6})/g)].map((m) => parseInt(m[1]!, 16));
+  /** A glossary row's properties (its `\p{…}` names, before `upTo`), as one BMP set. */
+  const glossaryProps = (word: string, upTo?: string): number[] => {
+    const cell = GLOSSARY.get(word) ?? '';
+    const names = [
+      ...cell
+        .slice(0, upTo === undefined ? undefined : cell.indexOf(upTo))
+        .matchAll(/\\p\{(\w+)\}/g),
+    ];
+    if (names.length === 0) return [];
+    return codePoints(new RegExp(`^[${names.map((m) => `\\p{${m[1]!}}`).join('')}]$`, 'u'), 0, BMP);
+  };
 
   it('§1 `cut_short`: every member of both tests, each its own row', () => {
     const approx = 'The area is not less than approx.';
@@ -3064,14 +3095,15 @@ describe("#855's correction: each sentence's members", () => {
       ]),
       ...outside.map((d): Row => [hex(d), minus5(d), 'not_found']),
     ];
-    // (1) red when a member is left out of an iteration, the copied additions differ from the
-    //     iteration's, a BMP dash stops reading as `-`, or one outside the BMP starts to; (2) prints
-    //     the members missing and each differing code point and state.
+    // #855's last commit (M7): the whole-BMP walk against the glossary's dash set is the glossary
+    // describe's "a dash" rows; the copy's own check, true by construction, is gone.
+    // (1) red when a member is left out of an iteration, a BMP dash stops reading as `-`, or one
+    //     outside the BMP starts to; (2) prints the members missing and each differing code point and
+    //     state.
     expect({
-      added: DASHES.slice(-DASH_ADDED.length).map(hex),
       named: [0x10d6e, 0x10ead].filter((d) => !outside.includes(d)).map(hex),
       misses: misses(rows),
-    }).toEqual({ added: DASH_ADDED.map(hex), named: [], misses: [] });
+    }).toEqual({ named: [], misses: [] });
   });
 
   it('S2 every `\\p{Zs}` space in a group of thousands: `1 200` written with the same space is found unless it is one of the group spaces; written with a plain space it is not found', () => {
@@ -3170,9 +3202,8 @@ describe("#855's correction: each sentence's members", () => {
     const printed = (p: string) => {
       const t = flatten(raw(p));
       const from = t.indexOf('past the closing marks ') + 'past the closing marks '.length;
-      return [...t.slice(from, t.indexOf(', spaces and tabs', from)).matchAll(/`([^`]+)`/g)]
-        .map((m) => cp(m[1]!))
-        .sort((a, b) => a - b);
+      const list = t.slice(from).split(/, (?:plain spaces and tabs|U\+0020 and U\+0009)/)[0]!;
+      return [...list.matchAll(/`([^`]+)`/g)].map((m) => cp(m[1]!)).sort((a, b) => a - b);
     };
     whole(MARKS, MARK_GROUP, 0, BMP);
     const rent = 'The Tenant shall pay the Rent';
@@ -3191,7 +3222,7 @@ describe("#855's correction: each sentence's members", () => {
     }).toEqual({ handlers: sorted, changelog: sorted, misses: [] });
   });
 
-  it("M2 each `.`, `!` or `?` inside the quote that whitespace or the quote's end follows marks it, unless it ends an abbreviation on the check's list or an initial", () => {
+  it("M2 each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace or the quote's end follows marks it, unless it ends an abbreviation on the check's list or an initial", () => {
     whole(WS, /^\s$/u);
     const doc = 'THE TENANT SHALL PAY THE RENT AND THE RATES ON THE USUAL QUARTER DAYS.';
     const lease = (a: string) =>
@@ -3239,116 +3270,6 @@ describe("#855's correction: each sentence's members", () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('M3 a label quoted with the skip: every label × every line before it, the skip past it, and a capital or an opening mark after it; on the same line as a sentence end, `2. Send` is refused', () => {
-    const tail = 'keep the Premises in good and substantial repair';
-    const labels = [
-      '(b)',
-      '(iv)',
-      '(2)',
-      '2.',
-      '12.',
-      '2)',
-      '6.2',
-      'b.',
-      'a)',
-      '(B)',
-      '3.4.1',
-      '(abcd)',
-      '(abcde)',
-      'B.',
-      'A)',
-    ];
-    /** F760-855CR-09: the line before, and the first piece quoted from it. `free` lines end with
-     *  `;`, `:` or `|`, or are blank; `sentence` lines end a sentence; `same` is the sentence end on
-     *  the label's own line. */
-    const befores: Record<
-      string,
-      readonly [kind: 'free' | 'sentence' | 'same', before: string, first: string]
-    > = {
-      '.⏎': [
-        'sentence',
-        'The Landlord shall insure the building at its own cost and expense.\n',
-        'The Landlord shall insure the building',
-      ],
-      '!⏎': [
-        'sentence',
-        'The Landlord shall insure the building at its own cost and expense!\n',
-        'The Landlord shall insure the building',
-      ],
-      '?⏎': [
-        'sentence',
-        'Shall the Landlord insure the building at its own cost and expense?\n',
-        'Shall the Landlord insure the building',
-      ],
-      ':⏎': [
-        'free',
-        'The Tenant covenants with the Landlord as follows:\n',
-        'The Tenant covenants with the Landlord',
-      ],
-      ';⏎': [
-        'free',
-        'The Tenant shall pay the Rent on the usual quarter days;\n',
-        'The Tenant shall pay the Rent on the usual',
-      ],
-      'a blank line': [
-        'free',
-        'The Tenant shall pay the Rent on the usual quarter days\n\n',
-        'The Tenant shall pay the Rent on the usual',
-      ],
-      '|⏎': [
-        'free',
-        '| The Landlord shall insure the building at its own cost |\n',
-        'The Landlord shall insure the building',
-      ],
-      '. on the same line': [
-        'same',
-        'The Landlord shall insure the building at its own cost and expense. ',
-        'The Landlord shall insure the building',
-      ],
-    };
-    // The bullet's rule: a bracketed label opens with `(`, an opening mark; a label that opens with a
-    // capital letter passes the capital condition itself; a numbered label needs a capital or an
-    // opening mark after it at a line start; `b.` and `a)` are not labels.
-    const opens = (l: string) => l.startsWith('(') || /^[A-Z]/.test(l);
-    const numbered = (l: string) => /^\d/.test(l);
-    const rows: Row[] = [];
-    for (const [name, [kind, before, first]] of Object.entries(befores)) {
-      for (const l of labels) {
-        const doc = (it: string) => `${before}${l} ${it} at all times.`;
-        const quoted = kind === 'free' || opens(l) ? 'stitched' : 'not_found';
-        const after =
-          kind === 'free' || opens(l) || (kind === 'sentence' && numbered(l))
-            ? 'stitched'
-            : 'not_found';
-        rows.push([
-          `${l} quoted after ${name}`,
-          read(`${first} … ${l} ${tail}`, doc(tail)),
-          quoted,
-        ]);
-        rows.push([
-          `${l} skipped after ${name}`,
-          read(`${first} … ${tail}`, doc(tail)),
-          'not_found',
-        ]);
-        const cap = 'Keep the Premises in good and substantial repair';
-        rows.push([
-          `${l} then a capital after ${name}`,
-          read(`${first} … ${l} ${cap}`, doc(cap)),
-          after,
-        ]);
-        const open = '(the Premises) in good and substantial repair';
-        rows.push([
-          `${l} then \`(\` after ${name}`,
-          read(`${first} … ${l} ${open}`, doc(open)),
-          after,
-        ]);
-      }
-    }
-    // (1) red when `(` leaves `START_OPENING` (the bracketed rows after a sentence end), `|` stops
-    //     ending a line that counts, or a label's reading moves; (2) prints each differing row.
-    expect(misses(rows)).toEqual([]);
-  });
-
   /** `KEPT_SYMBOLS` (`locate-quote.ts:106-129`), copied: the code does not export it. */
   const KEPT = [
     '%',
@@ -3377,7 +3298,7 @@ describe("#855's correction: each sentence's members", () => {
   /** The kept signs, every plane: `\p{Sc}`, `\p{Sm}` and `KEPT_SYMBOLS`. */
   const KEPT_SIGNS = [...new Set([...codePoints(/^[\p{Sc}\p{Sm}]$/u), ...KEPT])];
 
-  it('M4 the kept signs: every `\\p{Sc}` and `\\p{Sm}`, every plane, and `KEPT_SYMBOLS`, each as the code reads it over every BMP `\\p{So}`', () => {
+  it('M4 the kept signs: every `\\p{Sc}` and `\\p{Sm}`, every plane, and `KEPT_SYMBOLS`, each as the code reads it over every BMP `\\p{P}` and `\\p{S}` but `\\p{Sc}` and `\\p{Sm}`', () => {
     claimOn(
       HANDLERS,
       'An item that opens with another mark (`+`, `○`, `●`, `■`, `>`, U+F0B7), at any line start; quoting a kept sign other than a minus sign (`+`, `>`, `=` …) with the item reads `stitched` after a line ending with `;` or `:` or a blank line.',
@@ -3386,20 +3307,21 @@ describe("#855's correction: each sentence's members", () => {
       KEPT_SIGNS.filter((c) => !KEPT.includes(c)),
       /^[\p{Sc}\p{Sm}]$/u,
     );
-    // The copied list against the code: a BMP `\p{So}` belongs to its number exactly when it is kept,
-    // or `isDash` reads it as a dash (U+2796); `%` and `‰` (`\p{Po}`) belong too.
+    // The copied list against the code (#855's last commit, M7): over every BMP `\p{P}` and `\p{S}`
+    // but `\p{Sc}` and `\p{Sm}`, a character binds to its number exactly when it is kept, a dash (the
+    // glossary's set), `,` or `.`.
     const binds = (c: number) =>
       read('5 degrees', `The reading is ${ch(c)}5 degrees today.`) === 'not_found'
         ? 'binds'
         : 'set aside';
-    const rows: Row[] = [
-      ...codePoints(/^\p{So}$/u, 0, BMP).map((c): Row => [
+    const dash = glossaryCodes('a dash');
+    const rows: Row[] = codePoints(/^[\p{P}\p{S}]$/u, 0, BMP)
+      .filter((c) => !/^[\p{Sc}\p{Sm}]$/u.test(ch(c)))
+      .map((c): Row => [
         hex(c),
         binds(c),
-        KEPT.includes(c) || DASHES.includes(c) ? 'binds' : 'set aside',
-      ]),
-      ...['%', '‰'].map((c): Row => [hex(cp(c)), binds(cp(c)), 'binds']),
-    ];
+        KEPT.includes(c) || dash.includes(c) || c === 0x2c || c === 0x2e ? 'binds' : 'set aside',
+      ]);
     // (1) red when a member is left out of the iteration, the copied list differs from the code's,
     //     or a named sign is not kept; (2) prints the members missing and each differing row.
     expect({
@@ -3448,7 +3370,7 @@ describe("#855's correction: each sentence's members", () => {
     ['with a lowercase form', true],
     ['with no lowercase form', false],
   ] as const)(
-    "M5 a single capital letter's initial: every BMP `\\p{Lu}`/`\\p{Lt}` %s",
+    'M5 an initial, one capital letter: every BMP `\\p{Lu}`/`\\p{Lt}` %s',
     (_, lowers) => {
       const A = 'The Landlord shall insure the building at its own cost';
       const B = 'The Tenant shall keep the Premises in good and substantial repair';
@@ -3480,11 +3402,10 @@ describe("#855's correction: each sentence's members", () => {
   });
 
   it('§3 a dash and an invisible format character: the groups are every BMP dash `isDash` reads, the NFKC minus signs, and every `Cf`', () => {
-    // (1) red when a member is left out of an iteration, or the copied additions differ; (2) prints
-    //     the members missing.
+    // (1) red when a member is left out of an iteration; (2) prints the members missing. #855's last
+    // commit (M7): the additions are checked by the glossary's "a dash" rows, not against their copy.
     whole(DASHES.slice(0, -DASH_ADDED.length), /^\p{Pd}$/u, 0, BMP);
     whole(CF, /^\p{Cf}$/u);
-    expect(DASHES.slice(-DASH_ADDED.length).map(hex)).toEqual(DASH_ADDED.map(hex));
   });
 
   it.each([...DASHES, ...NFKC_MINUS].map((d) => [hex(d), d] as const))(
@@ -3612,8 +3533,14 @@ describe("#855's correction: each sentence's members", () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('§4 the list marks against the rest: the group is every BMP `\\p{P}` and `\\p{S}`, less the list marks, `#`, the opening and closing marks, `;` and `:`', () => {
-    // (1) red when a member is left out of the iteration; (2) prints the members missing.
+  it('§4 the list marks against the rest: the group is every BMP `\\p{P}` and `\\p{S}`, less the list marks, `#`, the opening and closing marks, `;` and `:`; each member is in exactly one kind', () => {
+    // (1) red when a member is left out of the iteration, or falls in no kind's rows or in two
+    //     (#855's last commit, M8); (2) prints the members missing and those code points.
+    expect(
+      NOT_LIST.filter((c) => NOT_LIST_KINDS.filter(([, re]) => re.test(ch(c))).length !== 1).map(
+        hex,
+      ),
+    ).toEqual([]);
     whole(
       [...NOT_LIST, ...[...LIST, '#', ';', ':', ...CLOSING_BACK].map(cp), ...OPENING].filter(
         (c, i, all) => all.indexOf(c) === i,
@@ -3655,7 +3582,7 @@ describe("#855's correction: each sentence's members", () => {
     const sentence = text.slice(
       text.indexOf("- An abbreviation that is not on the check's list ("),
     );
-    const printed = sentence.slice(0, sentence.indexOf(', and a single capital'));
+    const printed = sentence.slice(0, sentence.indexOf(', and an initial'));
     const listed = [...printed.matchAll(/`([^`]+)`/g)].map((m) => m[1]!);
     const Cap = 'Capital rules apply to the Tenant at all times';
     const skip = (ab: string, second = Cap) =>
@@ -3740,5 +3667,347 @@ describe("#855's correction: each sentence's members", () => {
       named: [0x034f, 0xfe0f, 0xe0100].filter((c) => !marks.includes(c)).map(hex),
       misses: misses(rows),
     }).toEqual({ named: [], misses: [] });
+  });
+  // ─── #855's last commit (the owner's option A, 2026-10-23): the glossary, four sentences in its
+  //     words, and the stop rule (in the PR body). Each glossary row is checked against the code's
+  //     BEHAVIOUR over the BMP, by the test named beside it, never against a copy of the code's set.
+  //     A big walk is split into blocks of 4,096 code points. ─────────────────────────────────────
+
+  describe("#855's last commit: the glossary", () => {
+    const WORDS = [
+      'a plain space',
+      'a tab',
+      'whitespace',
+      'a line break',
+      'a closing mark',
+      'an opening mark',
+      'a list mark',
+      'a dash',
+      'a capital letter',
+      'a lowercase letter',
+      'a digit',
+      'an initial',
+    ];
+    /** The BMP in blocks, each `[label, from, to]`. */
+    const BLOCKS = Array.from({ length: 16 }, (_, i) => {
+      const from = i * 0x1000;
+      return [`${hex(from)}–${hex(from + 0xfff)}`, from, from + 0xfff] as const;
+    });
+    /** Every code point from `from` to `to` (surrogates skipped). */
+    const range = (from: number, to: number) => codePoints(/^[^]$/u, from, to);
+    /** What `got` holds and `want` does not, and the reverse, within `from`–`to`, as `U+XXXX`. */
+    const differ = (got: readonly number[], want: readonly number[], from = 0, to = 0x10ffff) => {
+      const has = new Set(got);
+      const wanted = new Set(want.filter((c) => c >= from && c <= to));
+      return {
+        extra: got.filter((c) => !wanted.has(c)).map(hex),
+        missing: [...wanted].filter((c) => !has.has(c)).map(hex),
+      };
+    };
+    const NONE = { extra: [], missing: [] };
+    const state = (quote: string, source: string) => locateQuote(quote, source).state;
+    const approx = 'The area is not less than approx.';
+    /** A label quoted with its item after a line that ends a sentence. */
+    const label = (lb: string, item: string) =>
+      state(
+        `The Landlord shall insure the building … ${lb} ${item}`,
+        `The Landlord shall insure the building at its own cost and expense.\n${lb} ${item} at all times.`,
+      );
+    const keep = 'keep the Premises in good and substantial repair';
+    const Keep = 'Keep the Premises in good and substantial repair';
+    /** A header ending with `end`, then a line opening with `m`: both quote forms, kept and with `…`. */
+    const header = (end: string, m: string) => {
+      const A = `${F} for its full reinstatement cost. The Tenant shall`;
+      const rest = 'not be responsible for repairs to the structure';
+      const doc = `${A}\nLease of Office Premises — page 4${end}\n${m} ${rest}.`;
+      return `${state(`${A}\n${rest}`, doc)}/${state(`${A} … ${rest}`, doc)}`;
+    };
+    /** `;` and `:` start a clause wherever they stand (the B3 sentence's last clause, and `:368`). */
+    const CLAUSE = [0x3a, 0x3b];
+    const PS = codePoints(/^[\p{P}\p{S}]$/u, 0, BMP);
+    /** `PS` split by kind, so that no row nears the timeout. */
+    const PS_KINDS = [
+      ['`\\p{P}`', /^\p{P}$/u],
+      ['`\\p{So}`', /^\p{So}$/u],
+      ['`\\p{Sc}` `\\p{Sm}` `\\p{Sk}`', /^[\p{Sc}\p{Sm}\p{Sk}]$/u],
+    ] as const;
+
+    it('the paragraph, the words, and the two notes under the table', () => {
+      claimOn(
+        HANDLERS,
+        'The words below name exact sets, here and in the `cut_short` paragraph above, so they can be applied as written. Each is the set the check uses, as the running Node.js reads Unicode (Node 24: Unicode 17.0); anything outside it is not one.',
+      );
+      claimOn(
+        HANDLERS,
+        'U+2053 SWUNG DASH is not a dash here. U+000B, U+000C and U+0085 are not line breaks here.',
+      );
+      // (1) red when the table loses or renames a word, or the initial row's rule (run below) changes
+      //     its words; (2) prints the words and a boolean.
+      expect({
+        words: [...GLOSSARY.keys()],
+        initialRule: (GLOSSARY.get('an initial') ?? '').includes(
+          'that changes when lowercased, with neither a letter nor `.` right before it, followed by `.`',
+        ),
+      }).toEqual({ words: WORDS, initialRule: true });
+    });
+
+    it.each(BLOCKS)(
+      'whitespace: the characters a `.` ends a sentence before (`segmentsOf`), %s',
+      (_, from, to) => {
+        const got = range(from, to).filter(
+          (c) => segmentsOf(`Alpha beta.${ch(c)}gamma`)[0]?.endsSentence === true,
+        );
+        // (1) red when the page's whitespace row and the code's sentence end differ here; (2) prints
+        //     the code points each has and the other lacks.
+        expect(differ(got, glossaryCodes('whitespace'), from, to)).toEqual(NONE);
+      },
+    );
+
+    it.each(BLOCKS)(
+      'a dash: the characters `-5 degrees` reads found against, %s',
+      (_, from, to) => {
+        const got = range(from, to).filter((c) =>
+          ['exact', 'reformatted'].includes(state('-5 degrees', `${ch(c)}5 degrees`)),
+        );
+        // (1) red when the page's dash row and the characters read as `-` differ here (U+2053 is not
+        //     one); (2) prints the code points each has and the other lacks.
+        expect(differ(got, glossaryCodes('a dash'), from, to)).toEqual(NONE);
+      },
+    );
+
+    it.each(BLOCKS)(
+      'a closing mark, a plain space, a tab, a lowercase letter, a digit: what an `exact` `approx.` is marked before, %s',
+      (_, from, to) => {
+        const got = range(from, to).filter(
+          (c) => read(approx, `${approx}${ch(c)}412 square metres.`) === 'exact+cut_short',
+        );
+        const want = [
+          ...glossaryCodes('a closing mark'),
+          ...glossaryCodes('a plain space'),
+          ...glossaryCodes('a tab'),
+          ...glossaryProps('a lowercase letter'),
+          ...glossaryProps('a digit', ';'),
+        ];
+        // (1) red when the five rows together and what marks the quote differ here; (2) prints the
+        //     code points each has and the other lacks.
+        expect(differ(got, want, from, to)).toEqual(NONE);
+      },
+    );
+
+    it.each(BLOCKS)(
+      'a capital letter: the BMP letters `X) keep…` reads `stitched` with, after a line that ends a sentence, %s',
+      (_, from, to) => {
+        const got = codePoints(/^\p{L}$/u, from, to).filter(
+          (c) => label(`${ch(c)})`, keep) === 'stitched',
+        );
+        // (1) red when the page's capital row and the letters that open a sentence differ here; (2)
+        //     prints the code points each has and the other lacks.
+        expect(differ(got, glossaryProps('a capital letter'), from, to)).toEqual(NONE);
+      },
+    );
+
+    it('a digit: the BMP numbers `N) Keep…` reads `stitched` with, after a line that ends a sentence', () => {
+      const got = codePoints(/^\p{N}$/u, 0, BMP).filter(
+        (c) => label(`${ch(c)})`, Keep) === 'stitched',
+      );
+      // (1) red when the page's digit row (before its `;`) and the digits a clause number opens with
+      //     differ; (2) prints the code points each has and the other lacks.
+      expect(differ(got, glossaryProps('a digit', ';'))).toEqual(NONE);
+    });
+
+    it.each(PS_KINDS)(
+      'a list mark and an opening mark: what opens the line after a header that ends a sentence (with `;` and `:`), among the BMP %s marks',
+      (_, re) => {
+        const got = PS.filter((c) => re.test(ch(c)) && header('.', ch(c)) === 'stitched/stitched');
+        const want = [
+          ...glossaryCodes('a list mark'),
+          ...glossaryCodes('an opening mark'),
+          ...CLAUSE,
+        ].filter((c) => re.test(ch(c)));
+        // (1) red when the page's list-mark and opening-mark rows and what opens that line differ; (2)
+        //     prints the code points each has and the other lacks.
+        expect(differ(got, want)).toEqual(NONE);
+      },
+    );
+
+    it('a list mark: a run of U+0023 opens the line after a header that ends a sentence', () => {
+      // (1) red when a run of `#` stops opening it; (2) prints the two states.
+      expect(header('.', '##')).toBe('stitched/stitched');
+    });
+
+    it('an opening mark: what opens a sentence in the middle of a line after `. ` (with `;` and `:`)', () => {
+      const lc = 'the Tenant shall pay the insurance rent';
+      const got = PS.filter(
+        (c) =>
+          state(
+            `${F} … ${ch(c)}${lc}`,
+            `${F} for its cost. ${ch(c)}${lc} at the end of each year.`,
+          ) === 'stitched',
+      );
+      // (1) red when the page's opening-mark row and what opens a sentence there differ; (2) prints
+      //     the code points each has and the other lacks.
+      expect(differ(got, [...glossaryCodes('an opening mark'), ...CLAUSE])).toEqual(NONE);
+    });
+
+    it('a line break: the whitespace after which a stop inside a reformatted quote is not marked, where the document has it', () => {
+      const quote = 'The Tenant shall pay the Rent. and the rates';
+      const doc = (c: number) =>
+        `THE TENANT SHALL PAY THE RENT${ch(c)}AND THE RATES ON THE USUAL QUARTER DAYS.`;
+      const pool = [...glossaryCodes('whitespace'), 0x85];
+      const got = pool.filter((c) => read(quote, doc(c)) === 'reformatted');
+      // (1) red when the page's line-break row and what ends a line here differ, or a note's member
+      //     ends one; (2) prints the code points each has and the other lacks.
+      expect({
+        lineBreak: differ(got, glossaryCodes('a line break')),
+        notes: [0x0b, 0x0c, 0x85].filter((c) => got.includes(c)).map(hex),
+      }).toEqual({ lineBreak: NONE, notes: [] });
+    });
+
+    it.each(BLOCKS)(
+      'an initial: the BMP letters `segmentsOf` ends no sentence after, as `Alpha X. Gamma`, %s',
+      (_, from, to) => {
+        const initial = (x: string) =>
+          segmentsOf(`Alpha ${x}. Gamma`).every((p) => !p.endsSentence);
+        const got = codePoints(/^\p{L}$/u, from, to).filter((c) => initial(ch(c)));
+        // the row's rule: a letter of its property that changes when lowercased
+        const want = glossaryProps('an initial').filter((c) => ch(c).toLowerCase() !== ch(c));
+        // (1) red when the page's initial row and the letters read as an initial differ here; (2)
+        //     prints the code points each has and the other lacks.
+        expect(differ(got, want, from, to)).toEqual(NONE);
+      },
+    );
+
+    it('an initial in context: a letter with a letter or `.` right before it is none (`U.S.`, `xA.`); `2A.` is one', () => {
+      const ends = (q: string) => segmentsOf(q)[0]!.endsSentence;
+      // (1) red when the row's context clause no longer holds; (2) prints the three booleans.
+      expect({
+        'U.S.': ends('Alpha U.S. Gamma'),
+        'xA.': ends('Alpha xA. Gamma'),
+        '2A.': ends('Alpha 2A. Gamma'),
+      }).toEqual({ 'U.S.': true, 'xA.': true, '2A.': false });
+    });
+
+    it('B1 and M5: plain spaces and tabs mark, other whitespace does not; a `\\p{Ll}` or `\\p{Nd}` character outside the BMP leaves the quote unmarked; the dots of `...` do not mark', () => {
+      const marking = [...glossaryCodes('a plain space'), ...glossaryCodes('a tab')];
+      const doc = 'THE TENANT SHALL PAY THE RENT AND THE RATES ON THE USUAL QUARTER DAYS.';
+      const rows: Row[] = [
+        ...glossaryCodes('whitespace').map((w): Row => [
+          hex(w),
+          read(approx, `${approx}${ch(w)}412 square metres.`),
+          marking.includes(w) ? 'exact+cut_short' : 'exact',
+        ]),
+        // pinned: the code half is #845 item 13 (`exactGoesOn` reads one UTF-16 unit)
+        ...codePoints(/^[\p{Ll}\p{Nd}]$/u, 0x10000).map((c): Row => [
+          hex(c),
+          read(approx, `${approx} ${ch(c)}12 square metres.`),
+          'exact',
+        ]),
+        [
+          '`...` before a space',
+          read('The Tenant shall pay the Rent... and the rates', doc),
+          'reformatted',
+        ],
+        ['`...` at the quote’s end', read('The Tenant shall pay the Rent...', doc), 'reformatted'],
+      ];
+      // (1) red when whitespace other than a plain space or a tab marks the quote, an astral letter or
+      //     digit starts to (then #845's code half has landed), or the dots of `...` mark; (2) prints
+      //     each differing row.
+      expect(misses(rows)).toEqual([]);
+    });
+
+    it("B2 a label quoted with its item: the sentence's own rule over the glossary's sets, never the code's states", () => {
+      const open = glossaryCodes('an opening mark');
+      const capital = glossaryProps('a capital letter');
+      const digit = glossaryProps('a digit', ';');
+      const opensWith = (t: string, set: readonly number[]) => set.includes(cp(t));
+      // The sentence (`:410`): after a line that ends with `;` or `:`, or after a blank line, quoting
+      // the label as well reads `stitched`; after a line that ends a sentence, a label that opens with
+      // an opening mark or a capital letter does, and one that opens with a digit needs a capital
+      // letter or an opening mark after it; any other label is refused there.
+      const rule = (lb: string, item: string): string =>
+        opensWith(lb, open) || opensWith(lb, capital)
+          ? 'stitched'
+          : opensWith(lb, digit) && (opensWith(item, capital) || opensWith(item, open))
+            ? 'stitched'
+            : 'not_found';
+      const name = (lb: string, item: string) =>
+        `${[...lb].map((c) => hex(cp(c))).join(' ')} before ${item.slice(0, 4)}`;
+      const afterStop: Array<[string, string]> = [
+        ...capital.flatMap((c): Array<[string, string]> => [
+          [`${ch(c)})`, keep],
+          [`${ch(c)}.`, keep],
+        ]),
+        ...open.map((m): [string, string] => [`${ch(m)}b)`, keep]),
+        ...['2.', '2)', '6.2', '12.', '3.4.1', 'b.', 'a)', 'iv.', 'iv)', 'ab)'].flatMap(
+          (l): Array<[string, string]> => [
+            [l, Keep],
+            [l, keep],
+          ],
+        ),
+      ];
+      const free = {
+        ':⏎': [
+          'The Tenant covenants with the Landlord as follows:\n',
+          'The Tenant covenants with the Landlord',
+        ],
+        ';⏎': [
+          'The Tenant shall pay the Rent on the usual quarter days;\n',
+          'The Tenant shall pay the Rent on the usual',
+        ],
+        'a blank line': [
+          'The Tenant shall pay the Rent on the usual quarter days\n\n',
+          'The Tenant shall pay the Rent on the usual',
+        ],
+      } as const;
+      const rows: Row[] = [
+        ...afterStop.map(([lb, item]): Row => [name(lb, item), label(lb, item), rule(lb, item)]),
+        ...Object.entries(free).flatMap(([line, [before, first]]) =>
+          ['(b)', '(iv)', '2.', '12.', '2)', '6.2', 'b.', 'a)', 'A)'].map((lb): Row => [
+            `${name(lb, keep)} after ${line}`,
+            state(`${first} … ${lb} ${keep}`, `${before}${lb} ${keep} at all times.`),
+            'stitched',
+          ]),
+        ),
+      ];
+      // (1) red when the code and the sentence part, for a label the sentence names; (2) prints each
+      //     differing label's code points and state.
+      expect(misses(rows)).toEqual([]);
+    });
+
+    it.each(
+      (['.', '!'] as const).flatMap((end) =>
+        PS_KINDS.map(([kind, re]) => [`\`${end}\``, kind, end, re] as const),
+      ),
+    )(
+      'B3 a header ending with %s, then a line opening with a BMP %s mark: `stitched` for a list mark, an opening mark, `;` or `:`, and for no other',
+      (_, __, end, re) => {
+        const opens = new Set([
+          ...glossaryCodes('a list mark'),
+          ...glossaryCodes('an opening mark'),
+          ...CLAUSE,
+        ]);
+        const rows = PS.filter((c) => re.test(ch(c))).map((c): Row => [
+          hex(c),
+          header(end, ch(c)),
+          opens.has(c) ? 'stitched/stitched' : 'not_found/not_found',
+        ]);
+        // (1) red when a mark the sentence names stops opening the line, or another starts to; (2)
+        //     prints each differing mark's code point and the two states.
+        expect(misses(rows)).toEqual([]);
+      },
+    );
+
+    it('B3 a run of U+0023 after a header that ends a sentence, and `;` and `:` after a header with no stop, read `stitched`', () => {
+      // (1) red when one of these stops opening its line; (2) prints the three states.
+      expect({
+        run: [header('.', '##'), header('!', '##')],
+        semicolon: header('', ';'),
+        colon: header('', ':'),
+      }).toEqual({
+        run: ['stitched/stitched', 'stitched/stitched'],
+        semicolon: 'stitched/stitched',
+        colon: 'stitched/stitched',
+      });
+    });
   });
 });
