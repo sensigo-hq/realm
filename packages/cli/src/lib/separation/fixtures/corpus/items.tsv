@@ -1,0 +1,183 @@
+# items.tsv — #819 Unit A (A2): every item of every corpus scenario, as sudo STORES it — the oracle of
+# sudo-corpus.test.ts (T1), taken from the sources, never from the reader. Columns: id, set (the
+# scenario; * = every one), image (* = every one), scope (Defaults and Defaults:agent print in sudo's
+# global section, stock rows first; a Defaults!/Defaults> line; RUNAS-USER#n / RUNAS-GROUP#n, the
+# n-th rule), key (with ! for a negated flag, + or - for += and -=; "member" for a run-as member),
+# value (a JSON string; - for none). I01-I61 are L3's items (lanes/l3/f/f-items.txt, I59 dropped).
+# A set's row with a stock row's id and scope replaces that stock row in the set (grp-fedora-edited:
+# Fedora's stock match_group_by_gid line, edited in place).
+S01	*	ubuntu-20.04	Defaults	env_reset	-
+S02	*	ubuntu-20.04	Defaults	mail_badpass	-
+S03	*	ubuntu-20.04	Defaults	secure_path	"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+S01	*	ubuntu-22.04	Defaults	env_reset	-
+S02	*	ubuntu-22.04	Defaults	mail_badpass	-
+S03	*	ubuntu-22.04	Defaults	secure_path	"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+S04	*	ubuntu-22.04	Defaults	use_pty	-
+S01	*	ubuntu-24.04	Defaults	env_reset	-
+S02	*	ubuntu-24.04	Defaults	mail_badpass	-
+S03	*	ubuntu-24.04	Defaults	secure_path	"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+S04	*	ubuntu-24.04	Defaults	use_pty	-
+S01	*	debian-stable	Defaults	env_reset	-
+S02	*	debian-stable	Defaults	mail_badpass	-
+S03	*	debian-stable	Defaults	secure_path	"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+S04	*	debian-stable	Defaults	use_pty	-
+S01	*	fedora-latest	Defaults	!visiblepw	-
+S02	*	fedora-latest	Defaults	always_set_home	-
+S03	*	fedora-latest	Defaults	match_group_by_gid	-
+S04	*	fedora-latest	Defaults	always_query_group_plugin	-
+S05	*	fedora-latest	Defaults	env_reset	-
+S06	*	fedora-latest	Defaults	env_keep	"COLORS DISPLAY HOSTNAME HISTSIZE KDEDIR LS_COLORS"
+S07	*	fedora-latest	Defaults	env_keep+	"MAIL QTDIR USERNAME LANG LC_ADDRESS LC_CTYPE"
+S08	*	fedora-latest	Defaults	env_keep+	"LC_COLLATE LC_IDENTIFICATION LC_MEASUREMENT LC_MESSAGES"
+S09	*	fedora-latest	Defaults	env_keep+	"LC_MONETARY LC_NAME LC_NUMERIC LC_PAPER LC_TELEPHONE"
+S10	*	fedora-latest	Defaults	env_keep+	"LC_TIME LC_ALL LANGUAGE LINGUAS _XKB_CHARSET XAUTHORITY"
+S11	*	fedora-latest	Defaults	secure_path	"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/lib/snapd/snap/bin"
+S01	*	rockylinux-9	Defaults	!visiblepw	-
+S02	*	rockylinux-9	Defaults	always_set_home	-
+S03	*	rockylinux-9	Defaults	match_group_by_gid	-
+S04	*	rockylinux-9	Defaults	always_query_group_plugin	-
+S05	*	rockylinux-9	Defaults	env_reset	-
+S06	*	rockylinux-9	Defaults	env_keep	"COLORS DISPLAY HOSTNAME HISTSIZE KDEDIR LS_COLORS"
+S07	*	rockylinux-9	Defaults	env_keep+	"MAIL PS1 PS2 QTDIR USERNAME LANG LC_ADDRESS LC_CTYPE"
+S08	*	rockylinux-9	Defaults	env_keep+	"LC_COLLATE LC_IDENTIFICATION LC_MEASUREMENT LC_MESSAGES"
+S09	*	rockylinux-9	Defaults	env_keep+	"LC_MONETARY LC_NAME LC_NUMERIC LC_PAPER LC_TELEPHONE"
+S10	*	rockylinux-9	Defaults	env_keep+	"LC_TIME LC_ALL LANGUAGE LINGUAS _XKB_CHARSET XAUTHORITY"
+S11	*	rockylinux-9	Defaults	secure_path	"/sbin:/bin:/usr/sbin:/usr/bin"
+I01	main	*	Defaults	mailsub	"\\u0"
+I02	main	*	Defaults:agent	passprompt	"u1\\m"
+I03	main	*	Defaults!/usr/bin/true	badpass_message	"u2\\"
+I04	main	*	Defaults>svc	mailerflags	",u3"
+I05	main	*	Defaults	mailfrom	"u4,m"
+I06	main	*	Defaults:agent	mailsub	"u5,"
+I07	main	*	Defaults!/usr/bin/true	passprompt	"\"u6"
+I08	main	*	Defaults>svc	badpass_message	"u7\"m"
+I09	main	*	Defaults	mailerflags	"u8\""
+I10	main	*	Defaults:agent	mailfrom	":u9"
+I11	main	*	Defaults!/usr/bin/true	mailsub	"u10:m"
+I12	main	*	Defaults>svc	passprompt	"u11:"
+I13	main	*	Defaults	badpass_message	"=u12"
+I14	main	*	Defaults:agent	mailerflags	"u13=m"
+I15	main	*	Defaults!/usr/bin/true	mailfrom	"u14="
+I16	main	*	Defaults>svc	mailsub	"#u15"
+I17	main	*	Defaults	passprompt	"u16#m"
+I18	main	*	Defaults:agent	badpass_message	"u17#"
+I19	main	*	Defaults!/usr/bin/true	mailerflags	" u18"
+I20	main	*	Defaults>svc	mailfrom	"u19 m"
+I21	main	*	Defaults	mailsub	"u20 "
+I22	main	*	Defaults:agent	passprompt	"\tu21"
+I23	main	*	Defaults!/usr/bin/true	badpass_message	"u22\tm"
+I24	main	*	Defaults>svc	mailerflags	"u23\t"
+I25	main	*	Defaults	mailfrom	"\\q24 s"
+I26	main	*	Defaults:agent	mailsub	"q25\\m s"
+I27	main	*	Defaults!/usr/bin/true	passprompt	"q26 s\\"
+I28	main	*	Defaults>svc	badpass_message	",q27 s"
+I29	main	*	Defaults	mailerflags	"q28,m s"
+I30	main	*	Defaults:agent	mailfrom	"q29 s,"
+I31	main	*	Defaults!/usr/bin/true	mailsub	"\"q30 s"
+I32	main	*	Defaults>svc	passprompt	"q31\"m s"
+I33	main	*	Defaults	badpass_message	"q32 s\""
+I34	main	*	Defaults:agent	mailerflags	":q33 s"
+I35	main	*	Defaults!/usr/bin/true	mailfrom	"q34:m s"
+I36	main	*	Defaults>svc	mailsub	"q35 s:"
+I37	main	*	Defaults	passprompt	"=q36 s"
+I38	main	*	Defaults:agent	badpass_message	"q37=m s"
+I39	main	*	Defaults!/usr/bin/true	mailerflags	"q38 s="
+I40	main	*	Defaults>svc	mailfrom	"#q39 s"
+I41	main	*	Defaults	mailsub	"q40#m s"
+I42	main	*	Defaults:agent	passprompt	"q41 s#"
+I43	main	*	Defaults!/usr/bin/true	badpass_message	" q42 s"
+I44	main	*	Defaults>svc	mailerflags	"q43 m s"
+I45	main	*	Defaults	mailfrom	"q44 s "
+I46	main	*	Defaults:agent	mailsub	"\tq45 s"
+I47	main	*	Defaults!/usr/bin/true	passprompt	"q46\tm s"
+I48	main	*	Defaults>svc	badpass_message	"q47 s\t"
+I49	main	*	Defaults	mailerflags	"n48,m"
+I50	main	*	Defaults:agent	mailfrom	"n49:m"
+I51	main	*	Defaults!/usr/bin/true	mailsub	"n50\"m"
+I52	main	*	Defaults>svc	passprompt	"n51=m"
+I53	main	*	Defaults	badpass_message	"n52#m"
+I54	main	*	Defaults:agent	mailerflags	"n53\\m"
+I55	main	*	Defaults	env_keep+	"FOO_A FOO_B"
+I56	main	*	Defaults:agent	env_keep-	"FOO_C"
+I57	main	*	Defaults!/usr/bin/true, /usr/bin/false	mailsub	"tl1"
+I58	main	*	Defaults>svc, nobody	mailsub	"rl1"
+I60	main	*	Defaults>#1001	mailsub	"rl2"
+I61	main	*	Defaults>%svcgrp	mailsub	"rl3"
+I81	main	*	Defaults>alice	passprompt	"e1\\"
+I82	main	*	Defaults>root	mailsub	"e2\\\"m"
+I79	main	*	Defaults:agent	mailsub	"z w\\"
+I80	main	*	Defaults>nobody	mailsub	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa Defaults!/usr/bin/true !authenticate"
+U01	main	*	RUNAS-USER#1	member	"svc"
+U02	main	*	RUNAS-USER#1	member	"nobody"
+U03	main	*	RUNAS-USER#1	member	"#1001"
+U04	main	*	RUNAS-USER#1	member	"%svcgrp"
+U05	main	*	RUNAS-USER#1	member	"%#0"
+U06	main	*	RUNAS-USER#1	member	"a,b"
+U07	main	*	RUNAS-USER#1	member	"a b"
+U08	main	*	RUNAS-USER#1	member	"c d"
+U09	main	*	RUNAS-USER#1	member	"e:f"
+U10	main	*	RUNAS-USER#1	member	"g=h"
+U11	main	*	RUNAS-USER#1	member	"i#j"
+U12	main	*	RUNAS-USER#1	member	"k\"l"
+U13	main	*	RUNAS-USER#1	member	"m\\n"
+U14	main	*	RUNAS-USER#1	member	"!alice"
+U15	main	*	RUNAS-USER#1	member	"!n m"
+U16	main	*	RUNAS-USER#1	member	"+svcnet"
+U17	main	*	RUNAS-USER#1	member	"%:plugingrp"
+U18	main	*	RUNAS-USER#1	member	"ALL"
+U19	main	*	RUNAS-USER#1	member	"%g h"
+U20	main	*	RUNAS-USER#1	member	"x y\\"
+G01	main	*	RUNAS-GROUP#1	member	"svcgrp"
+G02	main	*	RUNAS-GROUP#1	member	"#2001"
+G03	main	*	RUNAS-GROUP#1	member	"g h"
+G04	main	*	RUNAS-GROUP#1	member	"g,i"
+U21	main	*	RUNAS-USER#2	member	"nobody"
+L01	long-target	*	Defaults!/usr/bin/llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll	mailsub	"lt1"
+L02	long-target	*	RUNAS-USER#1	member	"nobody"
+B31	b3	*	Defaults	passprompt	"Password\\"
+B32	b3	*	Defaults	!authenticate	-
+B33	b3	*	RUNAS-USER#1	member	"nobody"
+B34	b3	*	RUNAS-USER#2	member	"svc"
+B41	b4	*	Defaults	passprompt	"Pass word\\"
+B42	b4	*	Defaults	!authenticate	-
+B43	b4	*	RUNAS-USER#1	member	"nobody"
+B44	b4	*	RUNAS-USER#2	member	"svc"
+C2	grp-default	*	RUNAS-USER#1	member	"%svcgrp"
+C1	grp-nocase	*	Defaults	!case_insensitive_group	-
+C2	grp-nocase	*	RUNAS-USER#1	member	"%svcgrp"
+C1	grp-bygid	*	Defaults	match_group_by_gid	-
+C2	grp-bygid	*	RUNAS-USER#1	member	"%svcgrp"
+C2	grp-fedora	*	RUNAS-USER#1	member	"%svcgrp"
+C1	grp-fedora-nogid	*	Defaults	!match_group_by_gid	-
+C2	grp-fedora-nogid	*	RUNAS-USER#1	member	"%svcgrp"
+S03	grp-fedora-edited	fedora-latest	Defaults	!match_group_by_gid	-
+C2	grp-fedora-edited	*	RUNAS-USER#1	member	"%svcgrp"
+P1	plugin	*	Defaults	group_plugin	"group_file.so /etc/sudo-group"
+P2	plugin	*	Defaults	always_query_group_plugin	-
+P3	plugin	*	RUNAS-USER#1	member	"%plugingrp"
+P1	plugin-colon	*	Defaults	group_plugin	"group_file.so /etc/sudo-group"
+P2	plugin-colon	*	Defaults	always_query_group_plugin	-
+P3	plugin-colon	*	RUNAS-USER#1	member	"%:plugingrp"
+R1	runaspw-nosuchuser	*	Defaults	runaspw	-
+R2	runaspw-nosuchuser	*	Defaults	runas_default	"nosuchuser"
+R3	runaspw-nosuchuser	*	RUNAS-USER#1	member	"nobody"
+R4	runaspw-nosuchuser	*	RUNAS-USER#2	member	"ALL"
+R1	runaspw-ROOT	*	Defaults	runaspw	-
+R2	runaspw-ROOT	*	Defaults	runas_default	"ROOT"
+R3	runaspw-ROOT	*	RUNAS-USER#1	member	"nobody"
+R4	runaspw-ROOT	*	RUNAS-USER#2	member	"ALL"
+R1	runaspw-hash0	*	Defaults	runaspw	-
+R2	runaspw-hash0	*	Defaults	runas_default	"#0"
+R3	runaspw-hash0	*	RUNAS-USER#1	member	"nobody"
+R4	runaspw-hash0	*	RUNAS-USER#2	member	"ALL"
+R1	runaspw-svc	*	Defaults	runaspw	-
+R2	runaspw-svc	*	Defaults	runas_default	"svc"
+R3	runaspw-svc	*	RUNAS-USER#1	member	"nobody"
+R4	runaspw-svc	*	RUNAS-USER#2	member	"ALL"
+N1	norunas	*	Defaults	runas_default	"nosuchuser"
+N2	norunas	*	RUNAS-USER#1	member	"nosuchuser"
+H1	longhost	*	Defaults	passprompt	"lh1"
+H2	longhost	*	Defaults>nobody	mailsub	"lh2"
+H3	longhost	*	Defaults!/usr/bin/true	!authenticate	-
+H4	longhost	*	RUNAS-USER#1	member	"nobody"
+H5	longhost	*	RUNAS-USER#2	member	"svc"

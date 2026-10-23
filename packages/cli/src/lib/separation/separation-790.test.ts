@@ -17,8 +17,14 @@ import {
   systemRunner,
 } from './index.js';
 import { scanPam } from './pam.js';
-import { parseListing } from './sudo.js';
-import { railOne } from './runner.js';
+import {
+  defaultsValue,
+  parseListing,
+  sudoVersion,
+  unescapePrinted,
+  type SudoVersion,
+} from './sudo.js';
+import { railOne, type RunResult } from './runner.js';
 import {
   conditionLine,
   separationClaim,
@@ -84,6 +90,8 @@ function railOneShape(a: readonly string[]): boolean {
     word(a[2])
   )
     return true;
+  // #819 Unit A (A3): a user's groups, as sudo reads them
+  if (a.length === 3 && named(a[0], 'id') && a[1] === '-G' && word(a[2])) return true;
   return (
     a.length === 5 &&
     named(a[0], 'dscl') &&
@@ -215,7 +223,10 @@ const paths = (spec: MachineSpec, svc = 'svc') =>
  *  the svc rule's run-as edited to `%svcgrp` (the cut-capture standard); svcgrp lists alice, not
  *  svc, and svc's primary group is another (the captures of 2026-10-19) — a reading that rests on a
  *  group's listed members. */
-const groupBacked = (): Promise<SwitchPathReading[]> => {
+/** The Unit A correction (C2, the audit's S3): under sudo's default flags a group's member list no
+ *  longer decides where `id -G` cannot be read (the case gap reads unknown), so the cells about the
+ *  member list read it under `!case_insensitive_group` (`flags`), where it still decides. */
+const groupBacked = (flags?: string): Promise<SwitchPathReading[]> => {
   const machine = fixtureMachine(
     linux(
       U24,
@@ -235,9 +246,13 @@ const groupBacked = (): Promise<SwitchPathReading[]> => {
       ...machine,
       run: async (argv) => {
         const r = await run(argv);
-        return argv.join(' ') === 'LC_ALL=C /usr/bin/sudo -n -ll' && 'exit' in r
-          ? { ...r, stdout: r.stdout.replace('    RunAsUsers: svc\n', '    RunAsUsers: %svcgrp\n') }
-          : r;
+        if (argv.join(' ') !== 'LC_ALL=C /usr/bin/sudo -n -ll' || !('exit' in r)) return r;
+        const out = r.stdout.replace('    RunAsUsers: svc\n', '    RunAsUsers: %svcgrp\n');
+        return {
+          ...r,
+          stdout:
+            flags === undefined ? out : out.replace('    use_pty\n', `    use_pty, ${flags}\n`),
+        };
       },
     },
     svc: 'svc',
@@ -303,7 +318,8 @@ describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
     //     says why.
     expect({
       readings: view(rs),
-      said: rs.map((r) => r.how.endsWith('listed without a password (the cause is not known)')),
+      // #819 Unit A re-pin (A9): "is unknown", one state one word — was "the cause is not known"
+      said: rs.map((r) => r.how.endsWith('listed without a password (the cause is unknown)')),
     }).toEqual({ readings: ['sudo yes', 'sudo yes'], said: [true, true] });
   });
 
@@ -1252,11 +1268,29 @@ describe("#790 — the probes: the spy, the one spawn site, the runner's refusal
       run: (argv: readonly string[]) => (railOne(argv) ? machine.run(argv) : systemRunner(argv)),
     };
     const rs = await measureSwitchPaths({ probes, svc: 'svc' });
-    // (a) red when the runner's check is removed (echo runs; doas is started); (b) prints the
-    //     runner's answer and the doas reading's cause.
-    expect({ refused, outside, doas: view(rs), cause: rs[0]?.cause }).toEqual({
+    // #819 Unit A (A3): `<id> -G <NAME>`, id from a D2 folder (/usr/sbin on Fedora 44); never `-Gn`,
+    // a relative id, or a second argument — those the runner refuses, never starting them
+    const id = {
+      admitted: [railOne(['/usr/bin/id', '-G', 'svc']), railOne(['/usr/sbin/id', '-G', 'svc'])],
+      refused: [
+        await systemRunner(['/usr/bin/id', '-Gn', 'svc']),
+        await systemRunner(['id', '-G', 'svc']),
+        await systemRunner(['/usr/bin/id', '-G', 'svc', 'root']),
+      ],
+    };
+    // (a) red when the runner's check is removed (echo runs; doas is started), or the id shape is
+    //     widened or narrowed; (b) prints the runner's answers and the doas reading's cause.
+    expect({ refused, outside, id, doas: view(rs), cause: rs[0]?.cause }).toEqual({
       refused: { refused: '/bin/echo started' },
       outside: { refused: '/tmp/x/sudo -V' },
+      id: {
+        admitted: [true, true],
+        refused: [
+          { refused: '/usr/bin/id -Gn svc' },
+          { refused: 'id -G svc' },
+          { refused: '/usr/bin/id -G svc root' },
+        ],
+      },
       doas: ['doas unknown'],
       cause:
         '/usr/bin/doas -C /etc/doas.conf -u svc -x: the check refused to run /usr/bin/doas -C /etc/doas.conf -u svc -x',
@@ -1308,8 +1342,9 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     );
   });
 
-  it('W-x3b: every way the clauses guard is found → every clause, (a) once per whose', async () => {
-    const found = await paths(
+  /** W-x3b's machine: every way each clause guards (sudo, su, polkit, ssh). */
+  const x3bWays = () =>
+    paths(
       linux(
         U24,
         merge(merge(sudos(U24, 'password', ['sudo']), su(U24, 'getent.passwd.svc.bash')), {
@@ -1341,8 +1376,13 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
         }),
       ),
     );
-    // #819 correction 1 (C-10): and a second sudo's reading that rests on a group's listed members
-    const ways = [...found, ...(await groupBacked())];
+
+  it('W-x3b: every way the clauses guard is found → every clause, (a) once per whose', async () => {
+    const found = await x3bWays();
+    // #819 correction 1 (C-10): and a second sudo's reading that rests on a group's listed members —
+    // the Unit A correction re-pin (C2, the audit's S3): under `!case_insensitive_group`, where the
+    // member list still decides (under the default flags it reads unknown: the twin below)
+    const ways = [...found, ...(await groupBacked('!case_insensitive_group'))];
     // #819 follow-up 2 re-pin: clause (c) as in W-x3a (A S3); clause (g) words what the branch read,
     // the members each group lists (A S1)
     // (a) red when a fired clause is left out of the sentence; (b) prints the sentence.
@@ -1351,8 +1391,42 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     );
   });
 
+  it('W-x3b’s twin, the Unit A correction (C2, the audit’s S3): the same ways, the group read under sudo’s default flags with no `id` → "may still", the case gap unknown', async () => {
+    const ways = [...(await x3bWays()), ...(await groupBacked())];
+    // (1) red when the group's member list decides under the default flags with no `id` (the strong
+    //     sentence with clause (g): the walk's wrong "no", W-UA-MA3-02); (2) prints the sentence and
+    //     the group reading's cause.
+    expect({
+      sentence: separationClaim(evidence(ways)),
+      cause: ways.find((r) => r.outcome === 'unknown')?.cause,
+    }).toEqual({
+      sentence:
+        "An agent running as agent may still be able to answer a gate: whether it can become Realm's service user without a password is unknown.",
+      cause: 'sudo matches group names in any case, and no id was found in the system folders',
+    });
+  });
+
+  it('the Unit A correction (C2): the typical server — classic sudo refused, su closed by svc’s shell — prints the same strong sentence with `id` absent as with it', async () => {
+    const typical = async (over: MachineSpec) =>
+      separationClaim(
+        evidence(
+          await paths(linux(U24, merge(merge(sudos(U24, 'password', ['sudo']), su(U24)), over))),
+        ),
+      );
+    const withoutId = await typical({});
+    // (1) red when the case gap reaches a way that reads no group (the refusal reads unknown with
+    //     `id` absent); (2) prints the sentence and whether it is the same with `id`.
+    expect({
+      strong: withoutId.startsWith(`${HEAD};`),
+      sameWithId: withoutId === (await typical({ programs: { '/usr/bin/id': 0 } })),
+      sentence: withoutId.slice(0, HEAD.length),
+    }).toEqual({ strong: true, sameWithId: true, sentence: HEAD });
+  });
+
   it("#819 correction 1 C-20: clause (g) prints once when a reading rested on a group's listed members, and never for a run-as user, a group found by its gid, or this login's own groups", async () => {
-    const grouped = await groupBacked();
+    // the Unit A correction re-pin (C2, the audit's S3): the member list read under
+    // `!case_insensitive_group`, where it still decides
+    const grouped = await groupBacked('!case_insensitive_group');
     // (ii) the captured listing as it is, `(svc)`; (ii-b) `%svcgrp` with svc in it by its primary
     // gid (the captured svcgrp, gid 1100, svc's gid 1100)
     const plain = await paths(linux(U24, sudos(U24, 'third-nopasswd', ['sudo'])));
@@ -1429,8 +1503,9 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     // (a) red when W's words come back ("(measured)", W's detail); #819 Unit B: when sudo's next
     //     two entries print its how again, not "as above"; (b) prints the line.
     // #819 Unit B re-pin: sudo's second and third entries were read as its first was — "; as above)"
+    // #819 Unit A re-pin (A7): the cause names runaspw too, and whose password each asks for
     expect(conditionLine('become_service_user', evidence(ways))).toBe(
-      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out; as above); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out; as above); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command).",
+      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command).",
     );
   });
 
@@ -2079,7 +2154,8 @@ describe("#819 (08) — #790's leftovers, each its cell", () => {
     //     not allowed — a wrong "cannot" where SSSD hides the members); (b) prints readings, cause.
     expect({ readings: view(rs), cause: rs[0]?.cause }).toEqual({
       readings: ['sudo unknown'],
-      cause: 'getent group svcgrp lists no members, so whether svc is in it is not known',
+      // #819 Unit A re-pin (A9): was "is not known"
+      cause: 'getent group svcgrp lists no members, so whether svc is in it is unknown',
     });
   });
 
@@ -2593,11 +2669,18 @@ describe('#819 correction 1 — the separation half, each finding its cell', () 
     // #819 follow-up 2 (member 3; divergence 1): the group half's svc has another primary group
     // (svcown, gid 1300, captured), so `%Svcgrp` names none of svc's groups in any case — with the
     // base svc, whose primary group is svcgrp, it would now cover svc (the member-3 cell below)
+    // #819 Unit A re-pin (A3, W-UA-AUD2-08): the group half's machine gains `id -G svc` (1300) and
+    // `id -G root` from its own setup — `%Svcgrp` names none of svc's groups, read exactly as sudo
+    // reads them (unknown → not allowed); the user and exact halves do not change
     const ownGroup: MachineSpec = {
+      programs: { '/usr/bin/id': 0 },
       calls: {
         ...lookupsOf.calls,
         [`${GETENT} passwd svc`]: `${U24}/getent.passwd.svc.own-group`,
         [`${GETENT} group 1300`]: `${U24}/getent.group.1300.own-group`,
+        [`${GETENT} group 0`]: `${U24}/getent.group.0`,
+        '/usr/bin/id -G svc': `${U24}/id.G.svc.own-group`,
+        '/usr/bin/id -G root': `${U24}/id.G.root`,
       },
     };
     // (a) red: `user` when names are compared exactly (not allowed); `group` when an absent group
@@ -2609,20 +2692,18 @@ describe('#819 correction 1 — the separation half, each finding its cell', () 
     }).toEqual({
       user: NEEDS,
       exact: ['sudo not_allowed'],
-      group: {
-        readings: ['sudo unknown'],
-        cause:
-          'getent group Svcgrp finds no group of that name, and sudo matches group names in any case (case_insensitive_group, on by default)',
-      },
+      group: { readings: ['sudo not_allowed'], cause: undefined },
     });
   });
 
   describe('C-18 (f): the group source — a member list is trusted only from a local source', () => {
     /** The svc rule's run-as edited to `%svcgrp`; svcgrp lists alice, not svc, and svc's primary
      *  group is svcown (the captures of 2026-10-19, Ubuntu 24.04). */
+    // the Unit A correction re-pin (C2, the audit's S3): read under `!case_insensitive_group`, where
+    // the member list still decides (under the default flags, with no `id`, it reads unknown)
     const grouped = (over: MachineSpec = {}) =>
       third(
-        runAs('%svcgrp'),
+        both(runAs('%svcgrp'), defaults('!case_insensitive_group')),
         merge(
           {
             calls: {
@@ -2735,7 +2816,8 @@ describe('#819 correction 1 — the separation half, each finding its cell', () 
     //     cause.
     expect(await cause(Promise.resolve(rs))).toEqual({
       readings: ['sudo unknown'],
-      cause: 'getent group root lists no members, so whether svc is in it is not known',
+      // #819 Unit A re-pin (A9): was "is not known"
+      cause: 'getent group root lists no members, so whether svc is in it is unknown',
     });
   });
 });
@@ -2976,10 +3058,11 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
   describe('member 2 (A B2, the audit’s S1): /etc/nsswitch.conf read as glibc reads it, or unknown', () => {
     /** C-18's base: the svc rule's run-as edited to `%svcgrp`; svcgrp lists alice, not svc; svc's
      *  primary group is svcown (the captures of 2026-10-19 and 2026-10-20). */
+    // the Unit A correction re-pin (C2, the audit's S3): read under `!case_insensitive_group`
     const grouped = (nss: string, over: MachineSpec = {}) =>
       read(
         third(
-          runAs('%svcgrp'),
+          both(runAs('%svcgrp'), defaults('!case_insensitive_group')),
           merge(
             merge(
               calls({
@@ -2995,7 +3078,8 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
       );
     const cannot = (why: string, line: string) => ({
       readings: ['sudo unknown'],
-      cause: `/etc/nsswitch.conf has ${why}, so where groups are listed from is not known: ${line}`,
+      // #819 Unit A re-pin (A9): was "is not known"
+      cause: `/etc/nsswitch.conf has ${why}, so where groups are listed from is unknown: ${line}`,
     });
 
     it('P4: a second group line (glibc keeps the last) → unknown', async () => {
@@ -3048,10 +3132,11 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
   });
 
   describe('member 8 (the audit’s S9): no group line, and nscd’s socket there (musl asks nscd)', () => {
+    // the Unit A correction re-pin (C2, the audit's S3): read under `!case_insensitive_group`
     const grouped = (spec: MachineSpec) =>
       read(
         third(
-          runAs('%svcgrp'),
+          both(runAs('%svcgrp'), defaults('!case_insensitive_group')),
           merge(
             calls({
               'group svcgrp': 'getent.group.svcgrp.others',
@@ -3127,20 +3212,34 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
           'getent group SVCGRP reads only the group of that exact case, and sudo matches group names in any case (case_insensitive_group, on by default)',
       });
     });
-    it('the audit’s S2, recorded (Q1b): svc listed in SVCGRP, `%svcgrp` naming only alice’s → not allowed, clause (g) (04 problem 7)', async () => {
+    // #819 Unit A re-pin (A3, W-UA-AUD2-07): the machine gains `id -G svc` from its own setup
+    // (1300 1500, captured 2026-10-22) — svc's SVCGRP matches `%svcgrp` in any case, as sudo matches
+    // it: item 2 fixed, sudo still asking for a password (not allowed, clause g → needs a password)
+    it('the audit’s S2, recorded (Q1b), Unit A (A3): svc listed in SVCGRP, `%svcgrp` naming only alice’s → covered, as sudo reads it; the rule needs a password', async () => {
       const rs = await third(
         runAs('%svcgrp'),
-        calls({
-          'passwd svc': 'getent.passwd.svc.secondary-SVCGRP',
-          'group svcgrp': 'getent.group.svcgrp.secondary-SVCGRP',
-          'group 1300': 'getent.group.1300.secondary-SVCGRP',
-        }),
+        merge(
+          calls({
+            'passwd svc': 'getent.passwd.svc.secondary-SVCGRP',
+            'group svcgrp': 'getent.group.svcgrp.secondary-SVCGRP',
+            'group 1300': 'getent.group.1300.secondary-SVCGRP',
+            'group 1500': 'getent.group.1500.secondary-SVCGRP',
+            'group 0': 'getent.group.0',
+          }),
+          {
+            programs: { '/usr/bin/id': 0 },
+            calls: {
+              '/usr/bin/id -G svc': `${U24}/id.G.svc.secondary-SVCGRP`,
+              '/usr/bin/id -G root': `${U24}/id.G.root`,
+            },
+          },
+        ),
       );
-      // (a) red when this recorded UNLIKELY variant changes (a fix lands, or clause g stops firing);
-      //     (b) prints the readings and the clauses.
+      // (a) red when the group is read from its listed members again (not allowed, clause g); (b)
+      //     prints the readings and the clauses.
       expect({ readings: view(rs), clauses: switchClausesOf(rs).map((c) => c.clause) }).toEqual({
-        readings: ['sudo not_allowed'],
-        clauses: ['g'],
+        readings: ['sudo needs_credential this_login sudo_timestamp'],
+        clauses: ['a', 'b'],
       });
     });
     it('A S2: under match_group_by_gid an absent `%Svcgrp` is not a member (sudo matches exactly); listed with !match_group_by_gid too → unknown (the audit’s S3)', async () => {
@@ -3164,7 +3263,7 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
         twice: {
           readings: ['sudo unknown'],
           cause:
-            'sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid',
+            'sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid (change the stock line instead of adding a second)',
         },
       });
     });
@@ -3245,7 +3344,7 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
     });
     it('#819 follow-up 3 (A S1, the audit’s S3): runaspw with a `#0` runas_default → unknown — sudo looks #0 up as a user name and refuses every command', async () => {
       const CAUSE =
-        'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw)';
+        'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut';
       // (a) the raw `#0` (a shape sudo never prints): red when `#0` is read as root's uid again
       //     (root's password, a false "cannot"-side reading); (b) the printed `\#0` (sudo's own
       //     listing, W-819F3-AUD-07): its outcome is unknown before and after this fix — a control,
@@ -3271,8 +3370,9 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
       }).toEqual({ p11: NEEDS, p11b: NEEDS });
     });
 
-    const SPLIT = 'sudo listed a Defaults setting this check cannot split: ';
-    it('#819 follow-up 3 (A B3): a value ending in a literal backslash — `passprompt=Password\\, !authenticate`, and before `exempt_group=sudo` — reads unknown, never "needs a password"', async () => {
+    // #819 Unit A re-pin (A1): ", " always ends an item outside quotes, even after a backslash, so b3's
+    // shape has its one reading — what sudo does (real rc 0): unknown → yes
+    it('#819 follow-up 3 (A B3), Unit A (A1): a value ending in a literal backslash — `passprompt=Password\\, !authenticate`, and before `exempt_group=sudo` — reads yes, as sudo does', async () => {
       const n6c = await read(third(defaults('passprompt=Password\\', '!authenticate')));
       // the agent in sudo's group (its process gid 27, the captured sudo group)
       const n6d = await read(
@@ -3281,62 +3381,56 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
           groups: [1001, 27],
         }),
       );
-      // (a) red under today's rule, where `\,` always escapes (the next item is swallowed into the
-      //     passprompt: "needs this login's password"); (b) prints each reading and cause.
+      // (a) red where `\,` escapes (the next item is swallowed into the passprompt: "needs this
+      //     login's password"), or the split is left unread (unknown); (b) prints each reading and
+      //     cause.
       expect({ n6c, n6d }).toEqual({
-        n6c: {
-          readings: ['sudo unknown'],
-          cause: `${SPLIT}passprompt=Password\\, !authenticate`,
-        },
-        n6d: {
-          readings: ['sudo unknown'],
-          cause: `${SPLIT}passprompt=Password\\, exempt_group=sudo`,
-        },
+        n6c: { readings: ['sudo yes'], cause: undefined },
+        n6d: { readings: ['sudo yes'], cause: undefined },
       });
     });
 
-    it('#819 follow-up 3 (the audit’s S1): inside quotes a `\\"` before `,` cannot be told — `passprompt="Pass word\\", !authenticate` reads unknown; `passprompt="x y", !authenticate` (control) reads yes', async () => {
-      // (a) `n6a` red under today's rule (the quote stays open: "needs this login's password");
-      //     `n6b` red if a quoted value with a space were ever unsplittable; (b) prints both.
+    // #819 Unit A re-pin (A1): a reading is valid only if its quotes close, so b4's shape has one —
+    // what sudo does (real rc 0): unknown → yes
+    it('#819 follow-up 3 (the audit’s S1), Unit A (A1): inside quotes a `\\"` before `, ` has one valid reading — `passprompt="Pass word\\", !authenticate` reads yes; `passprompt="x y", !authenticate` (control) reads yes', async () => {
+      // (a) `n6a` red when a reading whose quote never closes is counted (two readings: unknown),
+      //     or the quote stays open ("needs this login's password"); `n6b` red if a quoted value
+      //     with a space were ever unsplittable; (b) prints both.
       expect({
         n6a: await read(third(defaults('passprompt="Pass word\\"', '!authenticate'))),
         n6b: view(await third(defaults('passprompt="x y"', '!authenticate'))),
       }).toEqual({
-        n6a: {
-          readings: ['sudo unknown'],
-          cause: `${SPLIT}passprompt="Pass word\\", !authenticate`,
-        },
+        n6a: { readings: ['sudo yes'], cause: undefined },
         n6b: ['sudo yes'],
       });
     });
 
-    it('#819 follow-up 3 (the audit’s S1, X13): a wrapped `Defaults!` line ending in `passprompt=Password\\,` reads unknown — its next line is never read as a setting of its own', async () => {
+    // #819 Unit A re-pin (A1): the wrapped line joins the line before, and ", " ends `passprompt`'s
+    // value — sudo's own reading: the `!authenticate` covers the rule (unknown → yes). The Unit A
+    // correction re-pin (C5, the reader's F5): sudo wraps a Defaults section with 4 spaces — the
+    // 8-space shape this cell held is the privileges section's, which sudo never prints here
+    it('#819 follow-up 3 (the audit’s S1, X13), Unit A (A1): a wrapped `Defaults!` line ending in `passprompt=Password\\,` is joined to its next 4-space line, which holds `!authenticate`: yes', async () => {
       const rs = await read(
-        third(specific('Defaults!/usr/bin/realm passprompt=Password\\,\n        !authenticate')),
+        third(specific('Defaults!/usr/bin/realm passprompt=Password\\,\n    !authenticate')),
       );
-      // (a) red under today's rule (the wrapped `!authenticate` covers the rule: yes), and when a
-      //     wrapped line is split on its own; (b) prints the reading and cause.
-      expect(rs).toEqual({
-        readings: ['sudo unknown'],
-        cause: `${SPLIT}passprompt=Password\\, !authenticate`,
-      });
+      // (a) red when the wrapped line is not joined, or `\,` swallows the next item; (b) prints the
+      //     reading and cause.
+      expect(rs).toEqual({ readings: ['sudo yes'], cause: undefined });
     });
 
-    it('#819 follow-up 3 (the audit’s S2): a run-as list or `Options:` line the check cannot split makes the listing unknown, naming the line', async () => {
-      // (a) red when such a line is split anyway (each then reads by its pieces: another cause);
-      //     (b) prints each reading and cause.
+    // #819 Unit A re-pin (A1, A4): both lines now split — the Options line's `!authenticate` gives
+    // yes (unknown → yes); the run-as `alice\` is a name rail 1 refuses to look up (unknown, its cause)
+    it('#819 follow-up 3 (the audit’s S2), Unit A (A1, A4): an `Options:` line ending a value in a backslash splits (yes); a run-as name rail 1 cannot look up reads unknown', async () => {
+      // (a) red when such a line is left unread again (unknown, "does not read"), or the run-as
+      //     name is asked off rail 1; (b) prints each reading and cause.
       expect({
         options: await read(third(runAs('svc', 'passprompt=Password\\, !authenticate'))),
         runAs: await read(third(runAs('alice\\, svc'))),
       }).toEqual({
-        options: {
-          readings: ['sudo unknown'],
-          cause:
-            'sudo listed a line this check does not read: Options: passprompt=Password\\, !authenticate',
-        },
+        options: { readings: ['sudo yes'], cause: undefined },
         runAs: {
           readings: ['sudo unknown'],
-          cause: 'sudo listed a line this check does not read: RunAsUsers: alice\\, svc',
+          cause: 'getent passwd alice\\: the check refused to run /usr/bin/getent passwd alice\\',
         },
       });
     });
@@ -3408,6 +3502,1055 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
   });
 });
 
+describe('#819 Unit A — the sudo reader built from real sudo’s printouts, and item 2’s exact group read', () => {
+  /** Ubuntu 24.04's captured `third-nopasswd` listing (classic sudo 1.9.15p5, `-ll`): stock Defaults,
+   *  a NOPASSWD rule for `nobody`, a password rule `(svc) /usr/bin/realm` — edited per cell (the
+   *  cut-capture standard: each edit named beside its cell). A rule that covers svc reads NEEDS; one
+   *  that does not reads "not allowed". */
+  const LL24 = 'LC_ALL=C /usr/bin/sudo -n -ll';
+  const ID = '/usr/bin/id';
+  const third = (
+    edit: (out: string) => string = (o) => o,
+    over: MachineSpec = {},
+    wrap?: (argv: readonly string[], r: RunResult) => RunResult,
+    svc = 'svc',
+  ) => {
+    const machine = fixtureMachine(linux(U24, merge(sudos(U24, 'third-nopasswd', ['sudo']), over)));
+    const run = machine.run;
+    return measureSwitchPaths({
+      probes: {
+        ...machine,
+        run: async (argv) => {
+          const r = await run(argv);
+          const edited =
+            argv.join(' ') === LL24 && 'exit' in r ? { ...r, stdout: edit(r.stdout) } : r;
+          return wrap !== undefined ? wrap(argv, edited) : edited;
+        },
+      },
+      svc,
+    });
+  };
+  const defaults =
+    (...items: string[]) =>
+    (out: string) =>
+      out.replace('    use_pty\n', `    use_pty, ${items.join(', ')}\n`);
+  const runAs = (users: string, options?: string) => (out: string) =>
+    out.replace(
+      '    RunAsUsers: svc\n',
+      `    RunAsUsers: ${users}\n${options !== undefined ? `    Options: ${options}\n` : ''}`,
+    );
+  const specific =
+    (...lines: string[]) =>
+    (out: string) =>
+      out.replace(
+        '\nUser agent may run',
+        `\nRunas and Command-specific defaults for agent:\n${lines.join('\n')}\n\nUser agent may run`,
+      );
+  const both =
+    (...edits: ((out: string) => string)[]) =>
+    (out: string) =>
+      edits.reduce((o, e) => e(o), out);
+  const calls = (m: Record<string, string>): MachineSpec => ({
+    calls: Object.fromEntries(Object.entries(m).map(([k, v]) => [`${GETENT} ${k}`, `${U24}/${v}`])),
+  });
+  /** The corpus's Ubuntu 24.04 item-2 machine (svc 1501:1500 in SVCGRP 2001; svcgrp 2002 holds alice;
+   *  captured 2026-10-22 by scripts/capture-sudo-corpus.sh): `id` at /usr/bin/id, and every lookup the
+   *  exact read makes, from scenario `set`. */
+  const item2 = (set = 'grp-default', drop: string[] = []): MachineSpec => {
+    const dir = `corpus/${U24}/${set}`;
+    const names = ['svc', 'root', 'nobody'];
+    const groups = ['0', '1500', '2001', '2002', 'svcgrp', 'Svcgrp', 'SVCGRP'];
+    const all: Record<string, string> = {
+      ...Object.fromEntries(
+        names.map((n) => [`${GETENT} passwd ${n}`, `${dir}/getent.passwd.${n}`]),
+      ),
+      ...Object.fromEntries(
+        groups
+          .filter((g) => captured(`${dir}/getent.group.${g}`))
+          .map((g) => [`${GETENT} group ${g}`, `${dir}/getent.group.${g}`]),
+      ),
+      [`${ID} -G svc`]: `${dir}/id.G.svc`,
+      [`${ID} -G root`]: `${dir}/id.G.root`,
+    };
+    for (const d of drop) delete all[d];
+    return { programs: { [ID]: 0 }, calls: all };
+  };
+  const NEEDS = ['sudo needs_credential this_login sudo_timestamp'];
+  const NOT = ['sudo not_allowed'];
+  const read = async (rs: Promise<SwitchPathReading[]>) =>
+    rs.then((r) => ({ readings: view(r), cause: r[0]?.cause }));
+  const v = (s: string) => sudoVersion(`Sudo version ${s}`);
+  const listing = (stdout: string, version = v('1.9.15p5')) => parseListing(stdout, version);
+  /** A listing printout: its global Defaults text, its specific section's lines, its long-format
+   *  entries (each `RunAsUsers` with an optional `Options`). */
+  const printout = (
+    global: string,
+    specificLines: string[] = [],
+    runas: [string, string?][] = [['svc']],
+  ) =>
+    [
+      'Matching Defaults entries for agent on h:',
+      `    ${global}`,
+      '',
+      ...(specificLines.length > 0
+        ? ['Runas and Command-specific defaults for agent:', ...specificLines, '']
+        : []),
+      'User agent may run the following commands on h:',
+      '',
+      ...runas.flatMap(([users, options]) => [
+        'Sudoers entry: /etc/sudoers.d/realm',
+        `    RunAsUsers: ${users}`,
+        ...(options !== undefined ? [`    Options: ${options}`] : []),
+        '    Commands:',
+        '\t/usr/bin/realm',
+        '',
+      ]),
+    ].join('\n');
+  const decoded = (l: ReturnType<typeof listing>, version = v('1.9.15p5')) =>
+    'unknown' in l
+      ? l.unknown
+      : {
+          global: l.items.map((i) => defaultsValue(i, version)),
+          specific: l.specific.map((s) => ({
+            at: `Defaults${s.kind}${s.targets.join(', ')}`,
+            items: s.items.map((i) => defaultsValue(i, version)),
+          })),
+          users: l.entries.map((e) => e.users),
+          unsplit: l.unsplit,
+        };
+
+  describe('A1: the grammar', () => {
+    it('each escape on each side of the version boundary (1.9.10), and a version this check cannot read', () => {
+      const raw = ['a\\:b', 'a\\,b', 'a\\=b', 'a\\#b', 'a\\"b', 'a\\\\b', 'a\\qb'];
+      // (1) red when the boundary moves (1.9.9 read as 1.9.10: `\\` and `\q` kept) or the escape set
+      //     changes; (2) prints each value as each version reads it.
+      expect({
+        v199: raw.map((r) => unescapePrinted(r, v('1.9.9'))),
+        v1910: raw.map((r) => unescapePrinted(r, v('1.9.10'))),
+        unknown: raw.map((r) => unescapePrinted(r, undefined)),
+        plain: unescapePrinted('abc', undefined),
+      }).toEqual({
+        v199: ['a:b', 'a,b', 'a=b', 'a#b', 'a"b', 'a\\b', 'aqb'],
+        v1910: ['a:b', 'a,b', 'a=b', 'a#b', 'a"b', 'a\\\\b', 'a\\qb'],
+        unknown: [undefined, undefined, undefined, undefined, undefined, undefined, undefined],
+        plain: 'abc',
+      });
+    });
+
+    it('a quoted value keeps a raw backslash on every version; ", " ends an item even right after a backslash', () => {
+      const out = printout('mailfrom="\\q24 s", passprompt=u5\\, mailsub=x');
+      // (1) red when a backslash inside quotes is unescaped by the version, or `\,` before a space
+      //     joins the next item; (2) prints the items as each version reads them.
+      expect({
+        v199: decoded(listing(out, v('1.9.9')), v('1.9.9')),
+        v1915: decoded(listing(out)),
+      }).toEqual({
+        v199: {
+          global: [
+            { key: 'mailfrom', value: '\\q24 s' },
+            { key: 'passprompt', value: 'u5\\' },
+            { key: 'mailsub', value: 'x' },
+          ],
+          specific: [],
+          users: [['svc']],
+          unsplit: [],
+        },
+        v1915: {
+          global: [
+            { key: 'mailfrom', value: '\\q24 s' },
+            { key: 'passprompt', value: 'u5\\' },
+            { key: 'mailsub', value: 'x' },
+          ],
+          specific: [],
+          users: [['svc']],
+          unsplit: [],
+        },
+      });
+    });
+
+    it('b3 (`passprompt=Password\\, !authenticate`) and b4 (`passprompt="Pass word\\", !authenticate`) read yes; a quoted value ending in a backslash as a list’s last item has its one reading', async () => {
+      // (1) red: b3 when `\,` is consumed as an escape (zero readings); b4 when a reading whose quote
+      //     never closes is counted (two readings); `last` when the last item is split anywhere else;
+      //     (2) prints the readings and the last item's value.
+      expect({
+        b3: view(await third(defaults('passprompt=Password\\', '!authenticate'))),
+        b4: view(await third(defaults('passprompt="Pass word\\"', '!authenticate'))),
+        last: decoded(listing(printout('env_reset, passprompt="Pass word\\"'))),
+      }).toEqual({
+        b3: ['sudo yes'],
+        b4: ['sudo yes'],
+        last: {
+          global: [{ key: 'env_reset' }, { key: 'passprompt', value: 'Pass word\\' }],
+          specific: [],
+          users: [['svc']],
+          unsplit: [],
+        },
+      });
+    });
+
+    it('P2 (two sources print `passprompt="x \\", !authenticate, mailsub=w\\"`) reads unknown; zero valid readings reads unknown', async () => {
+      // (1) red: `p2` when one of its two readings is taken (A: yes; B: needs a password); `zero`
+      //     when an unclosed quote is read anyway; `noQuote` when a text with no quotation mark is
+      //     said to have unpaired ones; (2) prints the readings and causes.
+      expect({
+        p2: await read(third(defaults('passprompt="x \\"', '!authenticate', 'mailsub=w\\"'))),
+        zero: await read(third(defaults('passprompt="x y', '!authenticate'))),
+        noQuote: await read(third(specific('    Defaults!/usr/bin/realm'))),
+      }).toEqual({
+        p2: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo listed a Defaults setting this check cannot split: passprompt="x \\", !authenticate, mailsub=w\\" (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another setting; write it without one)',
+        },
+        zero: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo listed a Defaults setting this check cannot split: passprompt="x y (its quotation marks do not pair as sudo prints them)',
+        },
+        noQuote: {
+          readings: ['sudo unknown'],
+          cause: 'sudo listed a line this check does not read: Defaults!/usr/bin/realm',
+        },
+      });
+    });
+
+    it('the second audit’s B1(a) and B1(b) printouts read unknown; the real corpus’s joined Defaults>/Defaults! line has its one reading, the cut', async () => {
+      const b1a = [
+        '    Defaults!/usr/bin/realm mailsub="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \\"',
+        '    Defaults!/usr/bin/false mailfrom=\\"q\\", !authenticate',
+      ];
+      const b1b = [
+        '    Defaults>svc passprompt="x \\"    Defaults!/usr/bin/realm !authenticate, mailsub=w\\"',
+      ];
+      const joined = listing(
+        (capture(`corpus/${U24}/main/sudo.ll.notty80`) as { stdout: string }).stdout,
+      );
+      // (1) red: `b1a`/`b1b` when one reading is taken (b1a's two entries: "needs a password"; b1b's
+      //     one value: the !authenticate swallowed); `cut` when the 4-space join is not cut;
+      //     (2) prints the readings, and the two entries the joined line holds.
+      expect({
+        b1a: (await read(third(specific(...b1a)))).readings,
+        b1b: (await read(third(specific(...b1b)))).readings,
+        cut:
+          'unknown' in joined
+            ? joined.unknown
+            : joined.specific
+                .filter(
+                  (s) =>
+                    s.targets.join(', ') === '%svcgrp' || s.targets.join(', ') === '/usr/bin/true',
+                )
+                .map((s) => `Defaults${s.kind}${s.targets.join(', ')} ${s.items.length} items`),
+      }).toEqual({
+        b1a: ['sudo unknown'],
+        b1b: ['sudo unknown'],
+        cut: ['Defaults>%svcgrp 1 items', 'Defaults!/usr/bin/true 13 items'],
+      });
+    });
+
+    it('a candidate boundary outside quotes starts an entry; inside quotes it is text; where a `\\"` decides it there are two readings', () => {
+      const out = (line: string) => decoded(listing(printout('env_reset', [line])));
+      // (1) red: `outside` when the 4-space join is read as text; `inside` when it is cut inside a
+      //     quoted value; `decides` when one reading is taken; (2) prints the entries and causes.
+      expect({
+        outside: out('    Defaults>svc mailsub=x    Defaults!/usr/bin/realm !authenticate'),
+        inside: out('    Defaults>svc mailsub="x    Defaults!/usr/bin/realm !authenticate"'),
+        decides: out(
+          '    Defaults>svc mailsub="x \\"    Defaults!/usr/bin/realm !authenticate, mailfrom=y\\"',
+        ),
+      }).toEqual({
+        outside: {
+          global: [{ key: 'env_reset' }],
+          specific: [
+            { at: 'Defaults>svc', items: [{ key: 'mailsub', value: 'x' }] },
+            { at: 'Defaults!/usr/bin/realm', items: [{ key: '!authenticate' }] },
+          ],
+          users: [['svc']],
+          unsplit: [],
+        },
+        inside: {
+          global: [{ key: 'env_reset' }],
+          specific: [
+            {
+              at: 'Defaults>svc',
+              items: [{ key: 'mailsub', value: 'x    Defaults!/usr/bin/realm !authenticate' }],
+            },
+          ],
+          users: [['svc']],
+          unsplit: [],
+        },
+        decides: {
+          global: [{ key: 'env_reset' }],
+          specific: [],
+          users: [['svc']],
+          unsplit: [
+            'sudo listed a Defaults setting this check cannot split: mailsub="x \\"    Defaults!/usr/bin/realm !authenticate, mailfrom=y\\" (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another setting; write it without one)',
+          ],
+        },
+      });
+    });
+
+    it('an entry against a continuation in the specific section; the 3-space first line', () => {
+      const continued = listing(
+        printout('env_reset', [
+          '    Defaults>svc mailsub=a,',
+          '    mailfrom=b',
+          '    Defaults!/usr/bin/realm mailto=c',
+        ]),
+      );
+      const long = listing(
+        (capture(`corpus/${U24}/long-target/sudo.ll.notty80`) as { stdout: string }).stdout,
+      );
+      // (1) red: `continued` when a 4-space line that is not an entry starts one (or is not read);
+      //     `long` when the 3-space line is read as a line of its own; (2) prints the entries.
+      const specificOf = (l: ReturnType<typeof listing>) => {
+        const d = decoded(l);
+        return typeof d === 'string' ? d : d.specific;
+      };
+      expect({
+        continued: specificOf(continued),
+        long: specificOf(long),
+      }).toEqual({
+        continued: [
+          {
+            at: 'Defaults>svc',
+            items: [
+              { key: 'mailsub', value: 'a' },
+              { key: 'mailfrom', value: 'b' },
+            ],
+          },
+          { at: 'Defaults!/usr/bin/realm', items: [{ key: 'mailto', value: 'c' }] },
+        ],
+        long: [
+          { at: `Defaults!/usr/bin/${'l'.repeat(70)}`, items: [{ key: 'mailsub', value: 'lt1' }] },
+        ],
+      });
+    });
+
+    it('a target list in each separator (", " from 1.9.8, " ," before); a version this check cannot read; a digest or a regex target', () => {
+      const targets = (line: string, version: SudoVersion | undefined) => {
+        const l = parseListing(printout('env_reset', [line]), version);
+        return 'unknown' in l ? l.unknown : (l.unsplit[0] ?? l.specific.map((s) => s.targets));
+      };
+      // (1) red when a separator is read on the wrong side of 1.9.8, a version this check cannot read
+      //     picks one, or a target holding a space or a regex is split; (2) prints targets or causes.
+      expect({
+        comma: targets('    Defaults!/usr/bin/true, /usr/bin/false mailsub=x', v('1.9.15p5')),
+        spaceComma: targets('    Defaults!/usr/bin/true ,/usr/bin/false mailsub=x', v('1.8.31')),
+        unknownVersion: targets('    Defaults>svc ,nobody mailsub=x', undefined),
+        sameEither: targets('    Defaults>svc mailsub=x', undefined),
+        digest: targets(
+          '    Defaults!sha224:0GomF8mNN3wlDt1HD9XldjJ3SNgpFdbjO1+NsQ== /usr/bin/realm !authenticate',
+          v('1.9.15p5'),
+        ),
+        regex: targets('    Defaults!^/usr/bin/realm .*$ !authenticate', v('1.9.15p5')),
+      }).toEqual({
+        comma: [['/usr/bin/true', '/usr/bin/false']],
+        spaceComma: [['/usr/bin/true', '/usr/bin/false']],
+        unknownVersion:
+          "sudo listed a Defaults line's target this check cannot split: Defaults>svc ,nobody mailsub=x (sudo's version could not be read, and sudo separates targets differently before and after 1.9.8)",
+        sameEither: [['svc']],
+        digest:
+          "sudo listed a Defaults line's target this check cannot split: Defaults!sha224:0GomF8mNN3wlDt1HD9XldjJ3SNgpFdbjO1+NsQ== /usr/bin/realm !authenticate (sudo prints a digest with a space; name the command without one)",
+        regex:
+          "sudo listed a Defaults line's target this check cannot split: Defaults!^/usr/bin/realm .*$ !authenticate (name the command by its path)",
+      });
+    });
+
+    it('each run-as member form, unquoted and unescaped by the version (A5: the short format too)', () => {
+      const members =
+        '#1001, svc, !alice, %svcgrp, %:plugingrp, %#2001, +svcnet, ALL, "a b", !"n m", "%g h", e\\:f, m\\\\n';
+      const long = listing(printout('env_reset', [], [[members]]), v('1.9.9'));
+      const short = parseListing(
+        [
+          'User agent may run the following commands on h:',
+          `    (${members} : svcgrp, "g h") NOPASSWD: /usr/bin/realm`,
+        ].join('\n'),
+        v('1.9.9'),
+      );
+      const want = [
+        '#1001',
+        'svc',
+        '!alice',
+        '%svcgrp',
+        '%:plugingrp',
+        '%#2001',
+        '+svcnet',
+        'ALL',
+        'a b',
+        '!n m',
+        '%g h',
+        'e:f',
+        'm\\n',
+      ];
+      // (1) red when a member form is split, unquoted or unescaped other than as sudo stores it;
+      //     (2) prints both formats' members.
+      expect({
+        long: 'unknown' in long ? long.unknown : long.entries.map((e) => e.users),
+        short: 'unknown' in short ? short.unknown : short.entries.map((e) => [e.users, e.groups]),
+      }).toEqual({ long: [want], short: [[want, ['svcgrp', 'g h']]] });
+    });
+  });
+
+  describe('A3: item 2, the exact group read (`id -G`)', () => {
+    it('by name (no match_group_by_gid): a case-insensitive hit covers; an exact miss under !case_insensitive_group does not; a gid with no name is skipped; a getent error reads unknown', async () => {
+      // svc's gids 1500 (svcown) and 2001 (SVCGRP); `%svcgrp` names SVCGRP in another case. For the
+      // gid with no name: Ubuntu 24.04's captured svc whose primary gid 1400 has no group (id -G: 1400).
+      const noName: MachineSpec = {
+        programs: { [ID]: 0 },
+        calls: {
+          [`${GETENT} passwd svc`]: `${U24}/getent.passwd.svc.gid-1400-no-group`,
+          [`${GETENT} group 1400`]: `${U24}/getent.group.1400.absent`,
+          [`${ID} -G svc`]: `${U24}/id.G.svc.gid-1400-no-group`,
+          [`${ID} -G root`]: `${U24}/id.G.root`,
+          [`${GETENT} group 0`]: `${U24}/getent.group.0`,
+        },
+      };
+      // (1) red: `hit` when names are compared exactly (or the fallback is read: not allowed,
+      //     clause g); `exact` when !case_insensitive_group is ignored; `skipped` when a gid with no
+      //     name reads unknown; `error` when a lookup that errs is read as no match; (2) prints them.
+      expect({
+        hit: view(await third(runAs('%svcgrp'), item2())),
+        exact: view(
+          await third(both(runAs('%svcgrp'), defaults('!case_insensitive_group')), item2()),
+        ),
+        skipped: view(await third(runAs('%svcgrp'), noName)),
+        error: (await read(third(runAs('%svcgrp'), item2('grp-default', [`${GETENT} group 2001`]))))
+          .readings,
+      }).toEqual({ hit: NEEDS, exact: NOT, skipped: NOT, error: ['sudo unknown'] });
+    });
+
+    it('by gid (match_group_by_gid): covering, not covering, an absent group, a getent error and an all-digit token', async () => {
+      const byGid = (token: string, drop: string[] = []) =>
+        read(third(both(runAs(token), defaults('match_group_by_gid')), item2('grp-default', drop)));
+      // (1) red: `covering` when SVCGRP's gid is not compared with the set; `notCovering` and
+      //     `absent` when an exact name is matched in any case or an absent group reads unknown;
+      //     `error` when an error reads absent; `digits` when getent's gid lookup is trusted for a
+      //     name; (2) prints readings and causes.
+      expect({
+        covering: (await byGid('%SVCGRP')).readings,
+        notCovering: (await byGid('%svcgrp')).readings,
+        absent: (await byGid('%Svcgrp')).readings,
+        error: (await byGid('%SVCGRP', [`${GETENT} group SVCGRP`])).readings,
+        digits: await byGid('%2001'),
+      }).toEqual({
+        covering: NEEDS,
+        notCovering: NOT,
+        absent: NOT,
+        error: ['sudo unknown'],
+        digits: {
+          readings: ['sudo unknown'],
+          cause:
+            'getent group 2001 reads 2001 as a gid, and sudo looks it up as a group name (match_group_by_gid)',
+        },
+      });
+    });
+
+    it('`%#gid` compared with the set as a number; root’s `%group` in RunAsUsers read through `id -G root`; `%:name` reads unknown', async () => {
+      // (1) red when a `%#gid` is looked up as a name, root's groups are not read (root's %root then
+      //     falls back), or `%:name` is read as a Unix group; (2) prints the readings.
+      expect({
+        inSet: view(await third(runAs('%#2001'), item2())),
+        notInSet: view(await third(runAs('%#2002'), item2())),
+        root: view(await third(runAs('%root'), item2())),
+        colon: await read(third(runAs('%:svcgrp'), item2())),
+      }).toEqual({
+        inSet: NEEDS,
+        notInSet: NOT,
+        root: NEEDS,
+        colon: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo matches %:svcgrp only through its group plugin, which this check does not read',
+        },
+      });
+    });
+
+    // the Unit A correction re-pin (C2, W-UA-MA3-02): under sudo's default flags each fallback reads
+    // unknown with its own cause (a secondary group named only in another case is not seen) — was
+    // "not allowed", clause (g); `uid n` never reaches the group branch and stays as pinned
+    it('each fallback — no id, refused, not a root-owned copy, exit 1, empty stdout, no primary gid, svc known only as `uid n` — reads unknown with its cause; `uid n` as today', async () => {
+      const edit =
+        (stdout: string) =>
+        (argv: readonly string[], r: RunResult): RunResult =>
+          argv[0] === ID && 'exit' in r ? { ...r, stdout } : r;
+      const noId = (): MachineSpec => {
+        const m = item2();
+        return { calls: m.calls! };
+      };
+      const fallback = async (rs: Promise<SwitchPathReading[]>) =>
+        rs.then((r) => ({
+          readings: view(r),
+          clauses: switchClausesOf(r).map((c) => c.clause),
+          ...(r[0]?.cause !== undefined ? { cause: r[0].cause } : {}),
+        }));
+      const gap = (why: string) => ({
+        readings: ['sudo unknown'],
+        clauses: [],
+        cause: `sudo matches group names in any case, and ${why}`,
+      });
+      // (1) red when a fallback condition is read as an answer (each would then cover svc: NEEDS),
+      //     or as "not allowed" again (the walk's wrong "no"); (2) prints each reading, its clauses
+      //     and cause.
+      expect({
+        absent: await fallback(third(runAs('%svcgrp'), noId())),
+        refused: await fallback(
+          third(runAs('%svcgrp'), item2(), (argv, r) =>
+            argv[0] === ID ? { refused: argv.join(' ') } : r,
+          ),
+        ),
+        notRoot: await fallback(
+          third(runAs('%svcgrp'), merge(item2(), { programs: { [ID]: 1001 } })),
+        ),
+        exit1: await fallback(
+          third(
+            runAs('%svcgrp'),
+            merge(item2(), { calls: { [`${ID} -G svc`]: `${U24}/id.G.nosuchuser` } }),
+          ),
+        ),
+        empty: await fallback(third(runAs('%svcgrp'), item2(), edit('\n'))),
+        noPrimary: await fallback(third(runAs('%svcgrp'), item2(), edit('2001\n'))),
+        uidOnly: await fallback(
+          third(
+            runAs('%svcgrp'),
+            merge(item2(), { calls: { [`${GETENT} passwd 1501`]: `${U25}/getent.passwd.none` } }),
+            undefined,
+            'uid 1501',
+          ),
+        ),
+      }).toEqual({
+        absent: gap('no id was found in the system folders'),
+        refused: gap('the check refused to run id'),
+        notRoot: gap('id is not a root-owned system copy'),
+        exit1: gap('id -G svc exited 1'),
+        empty: gap('id -G svc printed no list of groups'),
+        noPrimary: gap("id -G svc did not list svc's primary group"),
+        uidOnly: { readings: NOT, clauses: [] },
+      });
+    });
+
+    it('`group_plugin` listed with a Unix miss reads unknown; on macOS the group reads unknown and `id` is not asked; `/usr/sbin/id` is admitted', async () => {
+      const fed = `corpus/${FED}/grp-fedora`;
+      const sbin: MachineSpec = {
+        programs: { '/usr/sbin/id': 0, '/usr/sbin/getent': 0 },
+        files: Object.fromEntries(
+          (PAM[U24] ?? []).map((n) => [`/etc/pam.d/${n}`, { fixture: `${U24}/pam.${n}` }]),
+        ),
+        calls: {
+          '/usr/sbin/getent group 0': `${fed}/getent.group.0`,
+          '/usr/sbin/getent passwd svc': `${fed}/getent.passwd.svc`,
+          '/usr/sbin/getent passwd root': `${fed}/getent.passwd.root`,
+          '/usr/sbin/getent passwd nobody': `${fed}/getent.passwd.nobody`,
+          '/usr/sbin/getent group 1500': `${fed}/getent.group.1500`,
+          '/usr/sbin/getent group 2001': `${fed}/getent.group.2001`,
+          '/usr/sbin/id -G svc': `${fed}/id.G.svc`,
+          '/usr/sbin/id -G root': `${fed}/id.G.root`,
+        },
+      };
+      const fedMachine = fixtureMachine(merge(sudos(U24, 'third-nopasswd', ['sudo']), sbin));
+      const fedRun = fedMachine.run;
+      const fedora = await measureSwitchPaths({
+        probes: {
+          ...fedMachine,
+          run: async (argv) => {
+            const r = await fedRun(argv);
+            return argv.join(' ') === LL24 && 'exit' in r
+              ? { ...r, stdout: runAs('%svcgrp')(r.stdout) }
+              : r;
+          },
+        },
+        svc: 'svc',
+      });
+      const askedId = () => asked.some((a) => a[0]?.endsWith('/id') === true);
+      const plugin = await read(
+        third(
+          both(
+            runAs('%svcgrp'),
+            defaults('group_plugin="group_file.so /etc/sudo-group"', '!case_insensitive_group'),
+          ),
+          item2(),
+        ),
+      );
+      asked.length = 0;
+      const mac = await read(third(runAs('%svcgrp'), merge(item2(), { platform: 'darwin' })));
+      const macAskedId = askedId();
+      // (1) red: `plugin` when group_plugin is made harmless (the miss then reads "not allowed");
+      //     `mac` when darwin asks id; `sbin` when /usr/sbin/id is refused (the fallback then reads
+      //     not allowed); (2) prints the readings and whether id was asked.
+      expect({
+        plugin,
+        mac,
+        macAskedId,
+        sbin: view(fedora.filter((r) => r.path === 'sudo')),
+      }).toEqual({
+        plugin: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo listed a Defaults setting this check does not read: group_plugin="group_file.so /etc/sudo-group"',
+        },
+        mac: {
+          readings: ['sudo unknown'],
+          cause: "macOS has no getent, so this user's entry is not read",
+        },
+        macAskedId: false,
+        sbin: NEEDS,
+      });
+    });
+  });
+
+  describe('A4, A6, A7, A9', () => {
+    it('A4: an `Options:` list that cannot be split lets a yes win; alone it reads unknown with its split; a run-as list that cannot be split reads unknown', async () => {
+      // (1) red when an unsplit Options list makes the whole listing unknown again (`withYes`), or a
+      //     run-as list that cannot be split is read anyway; (2) prints the readings and causes.
+      expect({
+        withYes: view(
+          await third(
+            both(
+              runAs('svc', 'passprompt="x \\", !authenticate, mailsub=w\\"'),
+              defaults('!authenticate'),
+            ),
+          ),
+        ),
+        alone: await read(third(runAs('svc', 'passprompt="x \\", !authenticate, mailsub=w\\"'))),
+        runAs: await read(third(runAs('"a b\\", svc, "c'))),
+      }).toEqual({
+        withYes: ['sudo yes'],
+        alone: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo listed a Defaults setting this check cannot split: passprompt="x \\", !authenticate, mailsub=w\\" (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another setting; write it without one)',
+        },
+        runAs: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo listed a run-as list this check cannot split: "a b\\", svc, "c (write the name without a space or a backslash)',
+        },
+      });
+    });
+
+    it('A6: runaspw — unset or root, the service user, another user, absent, `#…`, all digits, a name the rail refuses', async () => {
+      const runaspw = (...items: string[]) =>
+        read(
+          third(
+            defaults('runaspw', ...items),
+            calls({
+              'passwd nobody': 'getent.passwd.nobody',
+              'passwd Svc': 'getent.passwd.Svc.absent',
+            }),
+          ),
+        );
+      // (1) red when a branch moves: the value not unescaped (`\#0`), the lookup skipped or made by
+      //     uid, the service user compared in any case, a name the rail refuses asked anyway; (2)
+      //     prints each reading and cause.
+      expect({
+        unset: await runaspw(),
+        root: await runaspw('runas_default=root'),
+        svc: await runaspw('runas_default=svc'),
+        other: await runaspw('runas_default=nobody'),
+        absent: await runaspw('runas_default=Svc'),
+        hash: await runaspw('runas_default=\\#0'),
+        digits: await runaspw('runas_default=1001'),
+        refused: await runaspw('runas_default="a b"'),
+      }).toEqual({
+        unset: { readings: ['sudo needs_credential root sudo_timestamp'], cause: undefined },
+        root: { readings: ['sudo needs_credential root sudo_timestamp'], cause: undefined },
+        svc: { readings: ['sudo needs_credential svc sudo_timestamp'], cause: undefined },
+        other: {
+          readings: ['sudo unknown'],
+          cause: "sudo asks for nobody's password (Defaults runaspw)",
+        },
+        absent: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo finds no user Svc and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+        },
+        hash: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+        },
+        digits: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo looks 1001 up as a user name, which this check cannot look up exactly (Defaults runaspw)',
+        },
+        refused: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo looks a b up as a user name, which this check cannot look up exactly (Defaults runaspw)',
+        },
+      });
+    });
+
+    it('A7: the unseen-Defaults causes name rootpw, targetpw and runaspw, and whose password each asks for; the person reading carries its base reading’s how ("as above")', async () => {
+      const refusal = await paths(
+        linux(
+          U24,
+          merge(sudos(U24, 'password', ['sudo']), {
+            files: { '/etc/pam.d/sudo': { fixture: `${U24}/variant.sudo-u2f` } },
+          }),
+        ),
+      );
+      const rs = await paths(linux(U25, sudos(U25, 'password', ['sudo-rs'])));
+      const WHOSE =
+        "rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's";
+      // (1) red when a cause names only rootpw or targetpw, or the person reading's how differs from
+      //     its base reading's (the renderer then prints it again); (2) prints the causes, the hows'
+      //     equality and the rendered person entry.
+      expect({
+        refused: refusal.filter((r) => r.cause !== undefined).map((r) => r.cause),
+        listed: rs.filter((r) => r.cause !== undefined).map((r) => r.cause),
+        sameHow: refusal.map((r) => r.how === refusal[0]!.how),
+        person: ((r) => (r.basis === 'unknown' ? r.cause : r.detail) ?? '')(
+          switchPathsReading(refusal, 'svc'),
+        ).endsWith("sudo: needs a person's touch or key (as above)"),
+      }).toEqual({
+        refused: [
+          `sudo does not show its Defaults or whether a rule exists, so ${WHOSE}`,
+          `sudo does not show its Defaults or whether a rule exists, so ${WHOSE}`,
+        ],
+        listed: [
+          `sudo does not list its Defaults, so ${WHOSE}`,
+          `sudo does not list its Defaults, so ${WHOSE}`,
+        ],
+        sameHow: [true, true, true, true],
+        person: true,
+      });
+    });
+
+    it('A9: "is unknown", never "is not known" — the four causes', async () => {
+      const unreadable = await read(
+        third(runAs('%svcgrp'), {
+          ...calls({
+            'group svcgrp': 'getent.group.svcgrp.others',
+            'passwd svc': 'getent.passwd.svc.own-group',
+            'group 1300': 'getent.group.1300.own-group',
+          }),
+          unreadable: ['/etc/nsswitch.conf'],
+        }),
+      );
+      // (1) red when a cause says "is not known" again; (2) prints the causes.
+      expect({
+        nsswitch: unreadable.cause,
+        cached: (await paths(linux(U25, sudos(U25, 'cached', ['sudo.ws'])))).map((r) =>
+          r.how.split(': ').pop(),
+        ),
+      }).toEqual({
+        nsswitch: '/etc/nsswitch.conf cannot be read, so where groups are listed from is unknown',
+        cached: ['the rules were listed without a password (the cause is unknown)'],
+      });
+    });
+  });
+
+  describe('the Unit A correction (#860’s first review): each finding its cell', () => {
+    /** The captured `sudo -V` answer's first line edited to `Sudo version ⟨s⟩` (the cut-capture
+     *  standard): another side of 1.9.10, or (`1.9.x`) a version this check cannot read. */
+    const asVersion =
+      (s: string) =>
+      (argv: readonly string[], r: RunResult): RunResult =>
+        argv[1] === '-V' && 'exit' in r
+          ? { ...r, stdout: r.stdout.replace(/^Sudo version \S+/, `Sudo version ${s}`) }
+          : r;
+    /** The walk's shape 3: `(%svcgrp) NOPASSWD` — svc (1501:1500) in SVCGRP (2001); svcgrp lists alice. */
+    const shape3 = runAs('%svcgrp', '!authenticate');
+    /** The item-2 machine with no `id` anywhere. */
+    const noId = (): MachineSpec => ({ calls: item2().calls! });
+    const idSays =
+      (stdout: string) =>
+      (argv: readonly string[], r: RunResult): RunResult =>
+        argv[0] === ID && 'exit' in r ? { ...r, stdout } : r;
+    const GAP = 'sudo matches group names in any case, and';
+    const fallback = async (rs: Promise<SwitchPathReading[]>) =>
+      rs.then((r) => ({ readings: view(r), clauses: switchClausesOf(r).map((c) => c.clause) }));
+    /** The tail of a reading's how: what decided it. */
+    const decided = async (rs: Promise<SwitchPathReading[]>) =>
+      rs.then((r) => ({ readings: view(r), how: r[0]?.how.split(': ').pop() }));
+
+    it('C1: a backslash outside quotes pairs only where that version printed a pair — S1 and G1 as real sudo printed them, each side of 1.9.10', async () => {
+      // The probes of 2026-10-23 (plans/issue-627/w/unit-a/ia3/correction/probes/): S1 stores
+      // `Password\` for nobody beside `Defaults>svc !authenticate` — 1.9.15p5 prints `Password\`,
+      // 1.9.9 `Password\\`; G1 stores `a\"b` — 1.9.15p5 prints `a\\"b`. Real sudo exits 0 on each.
+      const s1 = (value: string) =>
+        specific(`    Defaults>nobody passprompt=${value}`, '    Defaults>svc !authenticate');
+      // (1) red when a backslash pairs with any next character on every version (9752398a: S1 on
+      //     1.9.15p5 reads unknown, G1 has no reading); (2) prints each reading and G1's value.
+      expect({
+        s1v1915: (await read(third(s1('Password\\')))).readings,
+        s1v199: (await read(third(s1('Password\\\\'), {}, asVersion('1.9.9')))).readings,
+        g1v1915: (await read(third(defaults('passprompt=a\\\\"b', '!authenticate')))).readings,
+        g1Value: decoded(listing(printout('env_reset, passprompt=a\\\\"b, !authenticate'))),
+      }).toEqual({
+        s1v1915: ['sudo yes'],
+        s1v199: ['sudo yes'],
+        g1v1915: ['sudo yes'],
+        g1Value: {
+          global: [
+            { key: 'env_reset' },
+            { key: 'passprompt', value: 'a\\"b' },
+            { key: '!authenticate' },
+          ],
+          specific: [],
+          users: [['svc']],
+          unsplit: [],
+        },
+      });
+    });
+
+    it('C1: with sudo’s version not known, a text is read as each side of 1.9.10 and split only where both split it alike', async () => {
+      const unknown = asVersion('1.9.x');
+      // two entries joined on one line by 4 spaces, the first value ending in a backslash: ≤ 1.9.9
+      // pairs `\ ` (the value `a\ `), ≥ 1.9.10 does not (`a\`)
+      const twoWays = specific('    Defaults>nobody mailsub=a\\    Defaults>svc !authenticate');
+      // (1) red when two paths that rejoin are counted as two readings (the audit's S2: b3 then reads
+      //     unknown), when one side is read alone (G1 has no ≤ 1.9.9 reading), or when the sides'
+      //     splits are not compared (`twoWays` reads yes); (2) prints each reading and cause.
+      expect({
+        b3: (await read(third(defaults('passprompt=Password\\\\', '!authenticate'), {}, unknown)))
+          .readings,
+        g1: (await read(third(defaults('passprompt=a\\\\"b', '!authenticate'), {}, unknown)))
+          .readings,
+        twoWays: await read(third(twoWays, {}, unknown)),
+        twoWaysKnown: [
+          (await read(third(twoWays))).readings,
+          (await read(third(twoWays, {}, asVersion('1.9.9')))).readings,
+        ],
+      }).toEqual({
+        b3: ['sudo yes'],
+        g1: ['sudo yes'],
+        twoWays: {
+          readings: ['sudo unknown'],
+          cause:
+            "sudo's version could not be read, and this line splits differently before and after 1.9.10: mailsub=a\\ ",
+        },
+        twoWaysKnown: [['sudo yes'], ['sudo yes']],
+      });
+    });
+
+    it('C1: a run-as list is read by the version too — a name ending in a backslash, as each side prints it, and with no version', () => {
+      const users = (text: string, version: SudoVersion | undefined) => {
+        const l = parseListing(
+          [
+            'User agent may run the following commands on h:',
+            `    (${text}) NOPASSWD: /usr/bin/realm`,
+          ].join('\n'),
+          version,
+        );
+        return 'unknown' in l ? l.unknown : l.entries.map((e) => e.users);
+      };
+      // (1) red when `\)` pairs on every version (1.9.15p5's `alice\` then has no reading); (2)
+      //     prints the members or the cause.
+      expect({
+        v1915: users('svc, alice\\', v('1.9.15p5')),
+        v199: users('svc, alice\\\\', v('1.9.9')),
+        none: users('svc, alice\\', undefined),
+      }).toEqual({
+        v1915: [['svc', 'alice\\']],
+        v199: [['svc', 'alice\\']],
+        none: "sudo's version could not be read, and sudo prints a backslash differently before and after 1.9.10: alice\\",
+      });
+    });
+
+    it('C2: where `id -G` cannot be read, the walk’s shape 3 reads unknown — each way it cannot, with its own cause', async () => {
+      const kinds: Record<string, Promise<SwitchPathReading[]>> = {
+        absent: third(shape3, noId()),
+        refused: third(shape3, item2(), (argv, r) =>
+          argv[0] === ID ? { refused: argv.join(' ') } : r,
+        ),
+        notRoot: third(shape3, merge(item2(), { programs: { [ID]: 1001 } })),
+        writable: third(shape3, merge(item2(), { writable: [ID] })),
+        exit1: third(
+          shape3,
+          merge(item2(), { calls: { [`${ID} -G svc`]: `${U24}/id.G.nosuchuser` } }),
+        ),
+        empty: third(shape3, item2(), idSays('\n')),
+        noPrimary: third(shape3, item2(), idSays('2001\n')),
+        // the runner's own words for a call that gives no answer in time
+        error: third(shape3, item2(), (argv, r) =>
+          argv[0] === ID ? { error: 'id gave no answer within 5 s' } : r,
+        ),
+      };
+      const got: Record<string, unknown> = {};
+      for (const [k, rs] of Object.entries(kinds)) got[k] = await read(rs);
+      const gap = (why: string) => ({ readings: ['sudo unknown'], cause: `${GAP} ${why}` });
+      // (1) red when a way `id -G` cannot be read falls back to "not allowed" again (9752398a: each
+      //     reads not allowed, clause (g) — the walk's wrong "no", real rc 0), or names another
+      //     reason; (2) prints each reading and cause.
+      expect(got).toEqual({
+        absent: gap('no id was found in the system folders'),
+        refused: gap('the check refused to run id'),
+        notRoot: gap('id is not a root-owned system copy'),
+        writable: gap('id is root-owned, but this login can change it'),
+        exit1: gap('id -G svc exited 1'),
+        empty: gap('id -G svc printed no list of groups'),
+        noPrimary: gap("id -G svc did not list svc's primary group"),
+        error: gap('id gave no answer within 5 s'),
+      });
+    });
+
+    it('C2’s scope: a group in the groups half and a `Defaults>%group` target read unknown too; a `%#gid` is matched by its number and keeps today’s reading', async () => {
+      const groupsHalf = (out: string) =>
+        out.replace(
+          '    RunAsUsers: svc\n',
+          '    RunAsUsers: agent\n    RunAsGroups: svcgrp\n    Options: !authenticate\n',
+        );
+      // (1) red: `groupsHalf` / `target` when the gap is read only for a run-as user list (not
+      //     allowed); `gid` when a `%#gid` is matched by name in any case (unknown); (2) prints each.
+      expect({
+        groupsHalf: await read(third(groupsHalf, noId())),
+        target: await read(third(specific('    Defaults>%svcgrp !authenticate'), noId())),
+        gid: await fallback(third(runAs('%#2002', '!authenticate'), noId())),
+      }).toEqual({
+        groupsHalf: {
+          readings: ['sudo unknown'],
+          cause: `${GAP} no id was found in the system folders`,
+        },
+        target: {
+          readings: ['sudo unknown'],
+          cause: `${GAP} no id was found in the system folders`,
+        },
+        gid: { readings: NOT, clauses: ['g'] },
+      });
+    });
+
+    it('C2: no case gap — under `!case_insensitive_group` or `match_group_by_gid` the fallback keeps today’s reading, clause (g) and all', async () => {
+      const flagged = (flag: string) => fallback(third(both(shape3, defaults(flag)), noId()));
+      // (1) red when the gap is read whatever the flags (each then reads unknown); (2) prints each.
+      expect({
+        nocase: await flagged('!case_insensitive_group'),
+        byGid: await flagged('match_group_by_gid'),
+      }).toEqual({
+        nocase: { readings: NOT, clauses: ['g'] },
+        byGid: { readings: NOT, clauses: ['g'] },
+      });
+    });
+
+    it('C2: yes still beats unknown with no `id` — the audit’s B, B2, C and H, and one run-as list holding the group and svc', async () => {
+      /** The captured nobody entry (NOPASSWD) with its run-as edited to `users`. */
+      const nobodyTo = (users: string) => (out: string) =>
+        out.replace('    RunAsUsers: nobody\n', `    RunAsUsers: ${users}\n`);
+      const wheel = merge(noId(), {
+        calls: { [`${GETENT} group wheel`]: `${U24}/getent.group.wheel.lists-root` },
+      });
+      const passwordNobody = (out: string) =>
+        out.replace(
+          '    RunAsUsers: nobody\n    Options: !authenticate\n',
+          '    RunAsUsers: nobody\n',
+        );
+      // (1) red: `B`/`B2` when an entry that reads unknown ends the reading; `C` when svc's unknown
+      //     drops root's cover; `H` when only the two NOPASSWD and `!authenticate` paths outrank the
+      //     kept unknown (divergence 2); `one` when a token that reads unknown ends its entry
+      //     (divergence 1); (2) prints each reading and what decided it.
+      expect({
+        B: await decided(third(both(nobodyTo('%svcgrp'), runAs('svc', '!authenticate')), noId())),
+        B2: await decided(third(both(shape3, nobodyTo('svc')), noId())),
+        C: await decided(third(nobodyTo('%wheel'), wheel)),
+        H: await decided(
+          third(both(specific('    Defaults>%svcgrp !authenticate'), passwordNobody), noId()),
+        ),
+        one: await decided(third(runAs('%svcgrp, svc', '!authenticate'), noId())),
+      }).toEqual({
+        B: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as svc' },
+        B2: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as svc' },
+        C: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as root' },
+        H: {
+          readings: ['sudo yes'],
+          how: 'the rules were listed without a password (the cause is unknown)',
+        },
+        one: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as svc' },
+      });
+    });
+
+    it('C3: a wrapped section header — a long host name at 80 columns, a 40-column terminal — reads as the header unwrapped, with or without a trailing space', () => {
+      const HOST = 'realm-corpus-host-name-forty-five-characters1';
+      const body = (matching: string[], runas: string[], user: string[]) =>
+        [
+          ...matching,
+          '    env_reset, !authenticate',
+          '',
+          ...runas,
+          '    Defaults>svc mailsub=x',
+          '',
+          ...user,
+          '',
+          'Sudoers entry: /etc/sudoers.d/realm',
+          '    RunAsUsers: svc',
+          '    Commands:',
+          '\t/usr/bin/realm',
+        ].join('\n');
+      const flat = body(
+        [`Matching Defaults entries for agent on ${HOST}:`],
+        ['Runas and Command-specific defaults for agent:'],
+        [`User agent may run the following commands on ${HOST}:`],
+      );
+      // as sudo 1.9.9 printed them in a 40-column terminal (the probes of 2026-10-23); the trailing
+      // space is no printout's, and is read the same
+      const wrapped = body(
+        ['Matching Defaults entries for agent on', `    ${HOST}:`],
+        ['Runas and Command-specific defaults for', '    agent:'],
+        ['User agent may run the following', '        commands on', `        ${HOST}:`],
+      );
+      const spaced = body(
+        ['Matching Defaults entries for agent on ', `    ${HOST}:`],
+        ['Runas and Command-specific defaults for ', '    agent:'],
+        [`User agent may run the following commands on ${HOST}:`],
+      );
+      // (1) red when a wrapped header is read as a line this check does not read (9752398a: unknown)
+      //     or its 4-space line is read as the section's text; (2) prints each listing.
+      expect({ wrapped: decoded(listing(wrapped)), spaced: decoded(listing(spaced)) }).toEqual({
+        wrapped: decoded(listing(flat)),
+        spaced: decoded(listing(flat)),
+      });
+    });
+
+    it('C5: an 8-space line continues the line before only in the privileges section — in a Defaults section it is a line this check does not read', () => {
+      const out = (line: string) =>
+        listing(
+          [
+            'Matching Defaults entries for agent on h:',
+            '    env_reset,',
+            line,
+            '',
+            'User agent may run the following commands on h:',
+            '    (svc) /usr/bin/realm',
+          ].join('\n'),
+        );
+      // (1) red when an 8-space line joins in a Defaults section (sudo prints none there: it wraps a
+      //     Defaults section with 4 spaces); (2) prints each listing's items or cause.
+      expect({
+        eight: out('        !authenticate'),
+        four: decoded(out('    !authenticate')),
+      }).toEqual({
+        eight: { unknown: 'sudo listed a line this check does not read: !authenticate' },
+        four: {
+          global: [{ key: 'env_reset' }, { key: '!authenticate' }],
+          specific: [],
+          users: [['svc']],
+          unsplit: [],
+        },
+      });
+    });
+
+    it('C6: a quoted `Defaults>` target says to write it without a space or a backslash; the exact read is named in the reading’s how', async () => {
+      const target = parseListing(
+        printout('env_reset', ['    Defaults>"a b" mailsub=x']),
+        v('1.9.15p5'),
+      );
+      // (1) red: `quoted` when a target cause gives no remedy, or another branch's; `named` when the
+      //     reading does not say `id -G` was read; (2) prints the cause and the how.
+      expect({
+        quoted: 'unknown' in target ? target.unknown : target.unsplit,
+        named: (await read(third(shape3, item2()))).readings,
+        how: (await third(shape3, item2()))[0]?.how,
+      }).toEqual({
+        quoted: [
+          'sudo listed a Defaults line\'s target this check cannot split: Defaults>"a b" mailsub=x (write the target without a space or a backslash)',
+        ],
+        named: ['sudo yes'],
+        how: 'LC_ALL=C /usr/bin/sudo -n -l and -n -ll and id -G svc and id -G root read: a NOPASSWD rule runs as svc',
+      });
+    });
+  });
+});
+
 describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten separation section names its cell', () => {
   const PAGE = new URL('../../../../../docs/reference/mcp/gate-answers.md', import.meta.url);
   const flat = (t: string) => t.replace(/\s+/g, ' ');
@@ -3449,8 +4592,13 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     );
     // :: "`rootpw` …", :: "`targetpw` …", :: "A §F6: `runaspw` …", :: "A §F4: sudo-rs's listings …",
     // :: "classic sudo refused …", :: "sudo-rs "interactive authentication is required" …".
+    // #819 Unit A re-pin (A8): the two sentences now hold A6's runaspw sentence between them (its own
+    // claim, below); each is claimed apart.
     claim(
-      "In the original sudo's listing, a rule that needs a password reads \"needs\" that password: this login's, or root's or the user's under `rootpw`, `targetpw` or `runaspw`. Where sudo shows no Defaults — sudo-rs's listings and either sudo's refusal — the password may be this login's, root's or the user's, and all three are read.",
+      "In the original sudo's listing, a rule that needs a password reads \"needs\" that password: this login's, or root's or the user's under `rootpw`, `targetpw` or `runaspw`.",
+    );
+    claim(
+      "Where sudo shows no Defaults — sudo-rs's listings and either sudo's refusal — the password may be this login's, root's or the user's, and all three are read.",
     );
     // :: "classic sudo refused …", :: "sudo-rs "interactive authentication is required" …",
     // :: "sudo-rs "Sorry, user agent may not run sudo on h."".
@@ -3475,8 +4623,50 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // #819 follow-up 2 (member 3): :: "the audit’s S2 (Q1a) …", :: "the audit’s S2: `%Svcgrp`, absent …", :: "A B3: `%SVCGRP` …", :: "A S2: under match_group_by_gid …"; C-17 (the any-case user names).
     // #819 follow-up 3 (A B4): "a secondary group named only in another case is not seen" — :: "the
     // audit’s S2, recorded (Q1b): svc listed in SVCGRP, `%svcgrp` naming only alice’s → not allowed …".
+    // #819 Unit A (A1, A4; A8 rewrites this paragraph's group sentences): the listing read as sudo
+    // prints it — sudo-corpus :: T1 (every item, six versions), T2; "#819 Unit A" :: "P2 …" and "the
+    // second audit’s B1(a) …" (cannot split), "a target list in each separator …" (a target holding a
+    // space, a regex), "A4: …" (a run-as list it cannot split).
+    // The Unit A correction re-pin (C1): "on each version" now holds for a backslash outside quotes —
+    // "the Unit A correction" :: "C1: a backslash outside quotes pairs only where …" (S1, G1), "C1:
+    // with sudo’s version not known …", "C1: a run-as list is read by the version too …"; sudo-corpus
+    // :: T1's rows I81, I82 (a value ending in a backslash before another line, a stored `\"`).
     claim(
-      "Run-as user names match in any case, as sudo matches them, unless `!case_insensitive_user` is listed. Unless `!case_insensitive_group` or `match_group_by_gid` is listed, either of which makes sudo match a group exactly, run-as group names are compared in any case with the user's primary group and with the group `getent` finds, and a secondary group named only in another case is not seen; a name `getent` finds no group for, or one written with capitals, then reads unknown unless it covers the user.",
+      "The check reads sudo's listing as sudo prints it on each version: a Defaults setting it cannot split reads unknown, unless sudo already reads yes, since a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another setting — write such a value without one; so does a `Defaults!` target holding a space or a regular expression, and a run-as list it cannot split reads unknown.",
+    );
+    // :: "C-17 (e): sudo matches run-as names in any case …" (its user halves).
+    claim(
+      'Run-as user names match in any case, as sudo matches them, unless `!case_insensitive_user` is listed.',
+    );
+    // #819 Unit A (A3): "#819 Unit A" :: "by gid (match_group_by_gid) …" (an exact name's gid; absent
+    // does not hold; all digits unknown), :: "by name …" (each gid named, any case, exactly under
+    // !case_insensitive_group, a gid with no name skipped); sudo-corpus :: T3 grp-* (sudo's verdicts).
+    claim(
+      "A run-as group is compared with the user's groups as sudo reads them, which `id -G` lists: under `match_group_by_gid`, by the gid of the group `getent` finds by that exact name (a name it finds no group for does not hold the user, and an all-digit name reads unknown); otherwise by the name `getent` gives each of those groups, in any case unless `!case_insensitive_group` is listed (a group with no name is skipped, as sudo skips it).",
+    );
+    // #819 Unit A (A3): :: "`%#gid` compared with the set as a number …" (and `%:name`).
+    claim(
+      "`%#gid` is compared as a number, and `%:group`, which only sudo's group plugin matches, reads unknown.",
+    );
+    // #819 Unit A (A3): :: "each fallback …" (no id, refused, not root-owned, exit 1, empty, no
+    // primary gid); the fallback's own cells: "the audit’s S2 (Q1a) …", "the audit’s S2: `%Svcgrp`,
+    // absent …", "A B3: `%SVCGRP` …", "A S2: under match_group_by_gid …" (member 3), C-17's history.
+    // The Unit A correction re-pin (C2): the sentence ends at the group `getent` finds; what a group
+    // that does not hold the user reads is the next sentence.
+    claim(
+      "Where `id -G` gives no answer that holds the user's primary group, a run-as group is read from the groups' lists instead: unless `!case_insensitive_group` or `match_group_by_gid` is listed, either of which makes sudo match a group exactly, run-as group names are compared in any case with the user's primary group and with the group `getent` finds.",
+    );
+    // The Unit A correction (C2, W-UA-MA3-02): "the Unit A correction" :: "C2: where `id -G` cannot be
+    // read, the walk’s shape 3 reads unknown …" (each way), "C2’s scope …", "C2: no case gap …"
+    // (either flag: as today), "C2: yes still beats unknown …"; "#819 Unit A" :: "each fallback …";
+    // sudo-corpus :: T3 (grp-fedora-edited: the exact read decides).
+    claim(
+      'When `id -G` cannot be read, unless `!case_insensitive_group` or `match_group_by_gid` is listed, a run-as group that does not hold the user by its list or primary group reads unknown, since a secondary group named only in another case is not seen.',
+    );
+    // #819 Unit A (A6): :: "A6: runaspw — unset or root, the service user, another user, absent, `#…`,
+    // all digits, a name the rail refuses"; sudo-corpus :: T3 runaspw-* (sudo refuses each).
+    claim(
+      'Under `runaspw`, `runas_default` is looked up by name, as sudo looks it up: another user, a name no user has, and `#0` or an all-digit name, which sudo reads as a name, read unknown.',
     );
     // :: "C-18 (f): the group source …" (its first cell: each source; (vi): this login's own groups).
     // #819 follow-up 2 (members 2, 8; A MINOR 5): :: "P4 …", "P5 …", "P6 …", "P7 …", "controls: one group and one initgroups line …", "no group line, or no file, with /var/run/nscd/socket there …"; C-18 (a member found from any source counts: its ldap row's unknown, never a "not in it").

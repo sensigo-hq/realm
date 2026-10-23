@@ -972,11 +972,13 @@ describe('#819 follow-up 2 — the walk’s --check wording: each line says only
 describe('#819 Unit B: the words', () => {
   const NO: ConditionReading = { basis: 'measured', answer: 'no' };
   const YES: ConditionReading = { basis: 'measured', answer: 'yes' };
-  // crown b3's reading of condition 2 (the walk of #851): sudo asked now, and not settled
+  // a reading of condition 2 sudo was asked for now and did not settle — the Unit A correction (C6,
+  // divergence 7 of #860): P2's printout, in the words the reader prints today (crown b3's old
+  // "cannot split" reading reads yes since Unit A)
   const SUDO_UNSPLIT: ConditionReading = {
     basis: 'unknown',
     cause:
-      'sudo: unknown: sudo listed a Defaults setting this check cannot split: passprompt=Password\\, !authenticate (LC_ALL=C /usr/bin/sudo -n -l)',
+      'sudo: unknown: sudo listed a Defaults setting this check cannot split: passprompt="x \\", !authenticate, mailsub=w\\" (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another setting; write it without one) (LC_ALL=C /usr/bin/sudo -n -l and -n -ll)',
   };
   /** Hand-made evidence: another user's store, every prevents condition measured "no" and the value
    *  withheld on the line, unless `conds` says otherwise; `not_observed` as the check sets it with a
@@ -1076,8 +1078,9 @@ describe('#819 Unit B: the words', () => {
       const r = switchPathsReading(paths, 'svc');
       return (r.basis === 'unknown' ? r.cause : r.detail) ?? '';
     };
+    // the Unit A correction (C6, divergence 7 of #860): the refusal's cause as sudo.ts prints it today
     const C =
-      'sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out';
+      "sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's";
     const howOf = (tool: string) =>
       `LC_ALL=C ${tool} -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth read`;
     /** sudo's refusal (sudo.ts's unseenDefaults): three entries, one tool, one how. */

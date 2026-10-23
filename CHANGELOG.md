@@ -79,9 +79,9 @@ All notable changes to this project are documented here.
   configured or unknown, and what that means for who can answer a gate. No server is started; a
   bad value exits 1. Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit
   (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up
-  with `getent` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files —
-  it never
-  switches user, never asks for a password and never opens a login connection; condition 3
+  with `getent` and a user's groups with `id -G` (on macOS, `dscl` for a user's shell), and reads
+  su's login rules from their files — it never switches user, never asks for a password and never
+  opens a login connection; condition 3
   (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus,
   Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an
   agent cannot record a gate answer only when every way it found needs a credential or is not
@@ -90,14 +90,22 @@ All notable changes to this project are documented here.
   Defaults setting or long-format option the check does not read makes sudo's reading unknown,
   unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed
   twice with different values (issue #819); the stack `pam_askpass_service` names is read too;
-  run-as user names match in any case, as sudo matches them; unless `!case_insensitive_group` or
-  `match_group_by_gid` is listed, run-as group names are compared in any case with the service user's
-  primary group and with the group `getent` finds, and a secondary group named only in another case
-  is not seen; a run-as group that does not list the
-  service user is read as not holding it only when the `group` and `initgroups` lines of
-  `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds
-  that the members the system lists for each group read are all of its members. The header
-  says when no store was found, and when the store cannot be opened; condition 7's "no" names the
+  sudo's listing is read as sudo prints it on each version, and a Defaults setting it cannot split
+  (a value with a space that ends in a backslash, or holds a backslash before a quotation mark,
+  prints the same as another setting) reads unknown unless sudo already reads yes; under `runaspw`,
+  `runas_default` is looked up by name, as sudo looks it up; run-as user names match in any case, as
+  sudo matches them; a run-as group is compared with the service user's groups as sudo reads them,
+  which `id -G` lists — by gid under `match_group_by_gid`, by name otherwise, in any case unless
+  `!case_insensitive_group` is listed — and where `id -G` gives no answer that holds the service
+  user's primary group, with the service user's primary group and the group `getent` finds (unless
+  `!case_insensitive_group` or `match_group_by_gid` is listed, in any case); when `id -G` cannot be
+  read, unless `!case_insensitive_group` or `match_group_by_gid` is listed, a run-as group that does
+  not hold the user by its list or primary group reads unknown, since a secondary group named only
+  in another case is not seen; a run-as group that does not list the service user is then read as
+  not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`,
+  read as glibc reads them, list local sources, and the sentence then adds that the members the
+  system lists for each group read are all of its members. The "Measured for …" line says when no
+  store was found, and when the store cannot be opened; condition 7's "no" names the
   two settings files it looked at; the store's time basis is marked "(fact)"; a condition the check
   reads nothing for is "not measured"; the economics line says whether this login can change the
   `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder

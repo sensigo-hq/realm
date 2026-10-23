@@ -1,0 +1,21 @@
+# captured 2026-10-23 · image ubuntu@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -ll
+exit 0
+--- stdout
+Matching Defaults entries for agent on 7af7d3daf7dd:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
+    runaspw, runas_default=\#0
+
+User agent may run the following commands on 7af7d3daf7dd:
+
+Sudoers entry:
+    RunAsUsers: nobody
+    Options: !authenticate
+    Commands:
+	/bin/true
+
+Sudoers entry:
+    RunAsUsers: ALL
+    Commands:
+	/usr/bin/true
+--- stderr

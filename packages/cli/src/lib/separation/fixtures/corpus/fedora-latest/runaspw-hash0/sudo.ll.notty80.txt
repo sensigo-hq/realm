@@ -1,0 +1,26 @@
+# captured 2026-10-23 · image fedora@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -ll
+exit 0
+--- stdout
+Matching Defaults entries for agent on 768267438f62:
+    !visiblepw, always_set_home, match_group_by_gid, always_query_group_plugin,
+    env_reset, env_keep="COLORS DISPLAY HOSTNAME HISTSIZE KDEDIR LS_COLORS",
+    env_keep+="MAIL QTDIR USERNAME LANG LC_ADDRESS LC_CTYPE",
+    env_keep+="LC_COLLATE LC_IDENTIFICATION LC_MEASUREMENT LC_MESSAGES",
+    env_keep+="LC_MONETARY LC_NAME LC_NUMERIC LC_PAPER LC_TELEPHONE",
+    env_keep+="LC_TIME LC_ALL LANGUAGE LINGUAS _XKB_CHARSET XAUTHORITY",
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/var/lib/snapd/snap/bin,
+    runaspw, runas_default=\#0
+
+User agent may run the following commands on 768267438f62:
+
+Sudoers entry: /etc/sudoers.d/t
+    RunAsUsers: nobody
+    Options: !authenticate
+    Commands:
+	/bin/true
+
+Sudoers entry: /etc/sudoers.d/t
+    RunAsUsers: ALL
+    Commands:
+	/usr/bin/true
+--- stderr
