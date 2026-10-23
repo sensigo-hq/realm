@@ -1,7 +1,7 @@
-# captured 2026-10-22 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent through the check's spawn (a 30x60 terminal): LC_ALL=C /usr/bin/sudo -n -ll
+# captured 2026-10-23 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent through the check's spawn (a 30x60 terminal): LC_ALL=C /usr/bin/sudo -n -ll
 exit 0
 --- stdout
-Matching Defaults entries for agent on c794022fe128:
+Matching Defaults entries for agent on aad1f192a154:
     env_reset, mail_badpass,
     secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
     use_pty, mailsub=\u0, mailfrom=u4\,m, mailerflags=u8\",
@@ -30,6 +30,8 @@ Runas and Command-specific defaults for agent:
     Defaults>nobody
     mailsub="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     Defaults!/usr/bin/true !authenticate"
+    Defaults>alice passprompt=e1\
+    Defaults>root mailsub=e2\\"m
     Defaults>%svcgrp mailsub=rl3    Defaults!/usr/bin/true
     badpass_message=u2\, passprompt=\"u6, mailsub=u10\:m,
     mailfrom=u14\=, mailerflags=" u18",
@@ -39,7 +41,7 @@ Runas and Command-specific defaults for agent:
     mailsub=n50\"m
     Defaults!/usr/bin/true, /usr/bin/false mailsub=tl1
 
-User agent may run the following commands on c794022fe128:
+User agent may run the following commands on aad1f192a154:
 
 Sudoers entry: /etc/sudoers.d/t
     RunAsUsers: svc, nobody, #1001, %svcgrp, %#0, a\,b, "a

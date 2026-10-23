@@ -88,6 +88,8 @@ function atLeast(v: SudoVersion, at: readonly [number, number, number, number]):
 
 /** sudo ≤ 1.9.9 escapes a backslash outside quotes (`\\`); 1.9.10 stopped (W-UA-L1-02). */
 const BACKSLASH_PLAIN_FROM = [1, 9, 10, 0] as const;
+/** The characters sudo ≥ 1.9.10 escapes outside quotes (≤ 1.9.9 escapes a backslash too). */
+const PRINTED_ESCAPES = ':,=#"';
 /** A `Defaults!`/`Defaults>` target list is separated by ", " from 1.9.8, by " ," before it
  *  (W-UA-L1-15, W-UA-L3-11). */
 const TARGET_COMMA_FROM = [1, 9, 8, 0] as const;
@@ -105,7 +107,7 @@ export function unescapePrinted(raw: string, version: SudoVersion | undefined): 
   let out = '';
   for (let i = 0; i < raw.length; i++) {
     const next = raw[i + 1];
-    if (raw[i] === '\\' && next !== undefined && (old || ':,=#"'.includes(next))) {
+    if (raw[i] === '\\' && next !== undefined && (old || PRINTED_ESCAPES.includes(next))) {
       out += next;
       i++;
     } else out += raw[i];
@@ -454,9 +456,10 @@ function unreadItem(listing: Listing): string | undefined {
     if (!seen.includes(item)) seen.push(item);
     forms.set(k, seen);
   }
-  const repeated = [...forms.values()].find((items) => items.length > 1);
+  const repeated = [...forms.entries()].find(([, items]) => items.length > 1);
   if (repeated !== undefined)
-    return `sudo listed a Defaults setting more than once, and does not show which one it applies: ${repeated.join(', ')}`;
+    // the Unit A correction (C6): Fedora's and Rocky's stock sudoers list match_group_by_gid
+    return `sudo listed a Defaults setting more than once, and does not show which one it applies: ${repeated[1].join(', ')}${repeated[0] === 'match_group_by_gid' ? ' (change the stock line instead of adding a second)' : ''}`;
   for (const s of listing.specific) {
     const item = s.options.find((o) => specificKind(o) === 'unread');
     if (item !== undefined)
@@ -475,15 +478,16 @@ function unreadItem(listing: Listing): string | undefined {
 // A Defaults list as sudo prints it (`sudoers_format_default`, W-UA-L1-01): items separated by ", ";
 // a value quoted exactly when it holds a space or a tab, so a `"` opens a quote only right after `=`,
 // `+=` or `-=`. Outside quotes, ", " always ends an item, even right after a backslash (an unquoted
-// value never holds a space); there a backslash escapes the next character — `\:` `\,` `\=` `\#`
-// `\"`, and `\\` (a pair) on sudo ≤ 1.9.9 only — which matters only for unescaping a value and for a
-// `\"` that opens no quote. Inside quotes only `\"` is an escape; a backslash is otherwise raw on
-// every version. So the one choice a reading makes is, for each `\"` inside quotes, an escaped quote
-// or a raw backslash before the closing quote. A reading is valid when every quote that opens closes;
-// each closing quote and each unquoted item is followed by ", ", the end of its entry's text, or a
-// candidate boundary that starts an entry; and no bare `"` sits inside a quoted value. Exactly one
-// valid reading is taken; with none, or more than one, the list is unsplit, and every reading short of
-// yes is unknown.
+// value never holds a space); there a backslash and the next character are a pair where that sudo
+// printed one — any character on sudo ≤ 1.9.9, only `:` `,` `=` `#` `"` on ≥ 1.9.10, where a backslash
+// before any other character is a step of its own (the Unit A correction, C1). Inside quotes only `\"`
+// is an escape; a backslash is otherwise raw on every version. So the one choice a reading makes is,
+// for each `\"` inside quotes, an escaped quote or a raw backslash before the closing quote. A reading
+// is valid when every quote that opens closes; each closing quote and each unquoted item is followed by
+// ", ", the end of its entry's text, or a candidate boundary that starts an entry; and no bare `"` sits
+// inside a quoted value. Exactly one valid reading is taken; with none, or more than one, the list is
+// unsplit, and every reading short of yes is unknown. With sudo's version not known, the text is read
+// once as each side of 1.9.10 prints it, and split only where every valid reading splits it alike.
 
 /** A reader's states: an item's start, an unquoted value, a quoted value, after an item, an entry's
  *  start (the Runas and Command-specific section); a run-as member's start, and its start after `!`. */
@@ -573,12 +577,23 @@ function walk(
   }
 }
 
+/** Whether a backslash outside quotes at `p` pairs with the next character, as a sudo of that side
+ *  of 1.9.10 prints it (`old`: ≤ 1.9.9) — never before ", " or the end, where it ends the value. */
+function pairAt(text: string, p: number, old: boolean): boolean {
+  const next = text[p + 1];
+  return (
+    next !== undefined && !text.startsWith(', ', p + 1) && (old || PRINTED_ESCAPES.includes(next))
+  );
+}
+
 /** A Defaults list's machine: the global list (`candidates` undefined), or the whole Runas and
- *  Command-specific section, whose entries start at the candidate boundaries outside quotes. */
+ *  Command-specific section, whose entries start at the candidate boundaries outside quotes. `old`:
+ *  read as sudo ≤ 1.9.9 prints a backslash (C1). */
 function defaultsMachine(
   text: string,
   candidates: ReadonlySet<number> | undefined,
   version: SudoVersion | undefined,
+  old: boolean,
   cannot: Map<number, string>,
 ): Machine {
   const len = text.length;
@@ -627,10 +642,7 @@ function defaultsMachine(
       if (mode === PLAIN) {
         if (p === len || text.startsWith(', ', p)) return after(p);
         const ch = text[p];
-        if (ch === '\\')
-          return [
-            { to: text.startsWith(', ', p + 1) || p + 1 === len ? p + 1 : p + 2, mode: PLAIN },
-          ];
+        if (ch === '\\') return [{ to: pairAt(text, p, old) ? p + 2 : p + 1, mode: PLAIN }];
         if (ch === '"') return 'reject';
         if (ch === ' ' || ch === '\t') return after(p);
         return [{ to: p + 1, mode: PLAIN }];
@@ -671,23 +683,33 @@ function entryHeader(
       else return { raw, next: p < text.length ? p + 1 : p };
     }
   };
-  const cannot = (): { cannot: string } => {
+  // the Unit A correction (C6): each cause says what to do, by why the target cannot be split
+  const cannot = (why: string): { cannot: string } => {
     const end = [...candidates].filter((c) => c > q).sort((a, b) => a - b)[0];
     const line = text.slice(q, end).trim();
-    return { cannot: `sudo listed a Defaults line's target this check cannot split: ${line}` };
+    return {
+      cannot: `sudo listed a Defaults line's target this check cannot split: ${line} (${why})`,
+    };
   };
   const comma = version === undefined ? undefined : atLeast(version, TARGET_COMMA_FROM);
   const tried = comma === undefined ? [read(true), read(false)] : [read(comma)];
-  if (
-    tried.some(
-      (t) => t !== undefined && t.raw.some((r) => /^(?:sha(?:224|256|384|512):|\^|!?")/.test(r)),
-    )
-  )
-    return cannot();
+  const odd = tried
+    .flatMap((t) => t?.raw ?? [])
+    .find((r) => /^(?:sha(?:224|256|384|512):|\^|!?")/.test(r));
+  if (odd !== undefined)
+    return cannot(
+      odd.startsWith('sha')
+        ? 'sudo prints a digest with a space; name the command without one'
+        : odd.startsWith('^')
+          ? 'name the command by its path'
+          : 'write the target without a space or a backslash',
+    );
   const ok = tried.filter((t) => t !== undefined);
   if (ok.length === 0) return undefined;
   if (ok.some((t) => t.raw.join('\0') !== ok[0]!.raw.join('\0') || t.next !== ok[0]!.next))
-    return cannot();
+    return cannot(
+      "sudo's version could not be read, and sudo separates targets differently before and after 1.9.8",
+    );
   const targets: string[] = [];
   for (const r of ok[0]!.raw) {
     const t = kind === '>' ? unescapePrinted(r, version) : r;
@@ -703,32 +725,58 @@ type DefaultsRead =
   | { entries: { header?: { kind: '!' | '>'; targets: string[] }; items: DefaultsItem[] }[] }
   | { unsplit: string };
 
+/** The sides of 1.9.10 a text is read as (`old`: ≤ 1.9.9): the one its sudo is on, or both when
+ *  sudo's version could not be read (the Unit A correction, C1). */
+const sidesOf = (version: SudoVersion | undefined): boolean[] =>
+  version === undefined ? [true, false] : [!atLeast(version, BACKSLASH_PLAIN_FROM)];
+
+/** C1: why a text read as each side of 1.9.10 splits two ways — the first item where they part. */
+const splitsByVersion = (span: string): string =>
+  `sudo's version could not be read, and this line splits differently before and after 1.9.10: ${span}`;
+
+/** The first item where two readings' spans differ, spanning both. */
+function partedAt(text: string, a: [number, number][], b: [number, number][]): string {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i]![0] === b[i]![0] && a[i]![1] === b[i]![1]) i++;
+  const from = Math.min(a[i]?.[0] ?? text.length, b[i]?.[0] ?? text.length);
+  const to = Math.max(a[i]?.[1] ?? from, b[i]?.[1] ?? from);
+  return text.slice(from, to);
+}
+
+/** Whether two readings' spans are the same. */
+const sameSpans = (a: [number, number][], b: [number, number][]): boolean =>
+  a.length === b.length && a.every((s, i) => s[0] === b[i]![0] && s[1] === b[i]![1]);
+
 function readDefaults(
   text: string,
   candidates: ReadonlySet<number> | undefined,
   version: SudoVersion | undefined,
 ): DefaultsRead {
   if (text.trim() === '') return { entries: [] };
-  const cannot = new Map<number, string>();
-  const m = defaultsMachine(text, candidates, version, cannot);
   const start = candidates === undefined ? ITEM : ENTRY;
-  const count = counts(m);
-  // a target that cannot be split, where a reading reaches it, makes the section unsplit
-  cannot.clear();
-  const reach = reached(m, start);
-  const target = [...cannot.values()][0];
+  // C1: read as the side of 1.9.10 that printed it — or as each, where the version is not known
+  const reads = sidesOf(version).map((old) => {
+    const cannot = new Map<number, string>();
+    const m = defaultsMachine(text, candidates, version, old, cannot);
+    const count = counts(m);
+    // a target that cannot be split, where a reading reaches it, makes the section unsplit
+    cannot.clear();
+    const reach = reached(m, start);
+    return { m, count, reach, n: count[start]!, target: [...cannot.values()][0] };
+  });
+  const target = reads.find((r) => r.target !== undefined)?.target;
   if (target !== undefined) return { unsplit: target };
-  const n = count[start]!;
-  if (n === 1) return { entries: itemsOf(m, walk(m, count, start).steps) };
+  const valid = reads.filter((r) => r.n > 0);
   const cannotSplit = 'sudo listed a Defaults setting this check cannot split';
-  if (n === 0) {
+  if (valid.length === 0) {
     // the furthest item a reading reached, up to the next ", "
     let at = 0;
-    for (let p = text.length; p >= 0; p--)
-      if (reach[p * m.modes + ITEM] === 1) {
-        at = p;
-        break;
-      }
+    for (const { m, reach } of reads)
+      for (let p = text.length; p > at; p--)
+        if (reach[p * m.modes + ITEM] === 1) {
+          at = p;
+          break;
+        }
     const end = text.indexOf(', ', at);
     const cut = text.slice(at, end === -1 ? text.length : end);
     const item = cut.trim() === '' ? text.trim() : cut;
@@ -740,16 +788,24 @@ function readDefaults(
         : `sudo listed a line this check does not read: ${item}`,
     };
   }
-  // two or more: the first item where two readings differ, spanning both
-  const a = spansOf(walk(m, count, start).steps);
-  const b = spansOf(walk(m, count, start, 0).steps);
-  let i = 0;
-  while (i < a.length && i < b.length && a[i]![0] === b[i]![0] && a[i]![1] === b[i]![1]) i++;
-  const from = Math.min(a[i]?.[0] ?? text.length, b[i]?.[0] ?? text.length);
-  const to = Math.max(a[i]?.[1] ?? from, b[i]?.[1] ?? from);
-  return {
-    unsplit: `${cannotSplit}: ${text.slice(from, to)} (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another; write it without one)`,
-  };
+  const two = valid.find((r) => r.n > 1);
+  if (two !== undefined) {
+    // two or more: the first item where two readings differ, spanning both
+    const a = spansOf(walk(two.m, two.count, start).steps);
+    const b = spansOf(walk(two.m, two.count, start, 0).steps);
+    return {
+      unsplit: `${cannotSplit}: ${partedAt(text, a, b)} (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another setting; write it without one)`,
+    };
+  }
+  const [one, other] = valid as [(typeof valid)[0], ...typeof valid];
+  const steps = walk(one.m, one.count, start).steps;
+  if (other !== undefined) {
+    // C1: each side of 1.9.10 has one reading — taken where they split the text alike
+    const a = spansOf(steps);
+    const b = spansOf(walk(other.m, other.count, start).steps);
+    if (!sameSpans(a, b)) return { unsplit: splitsByVersion(partedAt(text, a, b)) };
+  }
+  return { entries: itemsOf(one.m, steps) };
 }
 
 /** Each item's span along a reading (start, end), in order. */
@@ -835,8 +891,9 @@ function itemsOf(
 /** A run-as list's machine (W-UA-L1-16): members separated by ", " outside quotes; a member is
  *  `#uid`, a name, `%group`, `+netgroup`, `ALL`, or `"…"` (a space inside, `%` inside the quotes), each
  *  maybe after `!`; quotes read as in a Defaults value. `short`: the short format's `(users : groups)`,
- *  read up to its `)`. A state of the groups half is its mode plus 5. */
-function membersMachine(text: string, short: boolean): Machine {
+ *  read up to its `)`. A state of the groups half is its mode plus 5. `old`: read as sudo ≤ 1.9.9
+ *  prints a backslash (C1). */
+function membersMachine(text: string, short: boolean, old: boolean): Machine {
   const len = text.length;
   return {
     text,
@@ -863,8 +920,8 @@ function membersMachine(text: string, short: boolean): Machine {
           (short && text[p] === ')')
         )
           return 'reject';
-        return text[p] === '\\'
-          ? [{ to: text.startsWith(', ', p + 1) || p + 1 === len ? p + 1 : p + 2, mode: PLAIN + g }]
+        return text[p] === '\\' && pairAt(text, p, old)
+          ? [{ to: p + 2, mode: PLAIN + g }]
           : [{ to: p + 1, mode: PLAIN + g }];
       }
       if (mode === QUOTE) {
@@ -883,10 +940,7 @@ function membersMachine(text: string, short: boolean): Machine {
       const e = end(p);
       if (e !== 'reject' || p === len) return e;
       const ch = text[p]!;
-      if (ch === '\\')
-        return [
-          { to: text.startsWith(', ', p + 1) || p + 1 === len ? p + 1 : p + 2, mode: PLAIN + g },
-        ];
+      if (ch === '\\') return [{ to: pairAt(text, p, old) ? p + 2 : p + 1, mode: PLAIN + g }];
       if (ch === '"' || ch === ' ' || ch === '\t') return 'reject';
       return [{ to: p + 1, mode: PLAIN + g }];
     },
@@ -900,11 +954,24 @@ function readMembers(
   short: boolean,
   version: SudoVersion | undefined,
 ): { users: string[]; groups: string[]; close: number } | { unknown: string } {
-  const m = membersMachine(text, short);
-  const count = counts(m);
-  if (count[ITEM] !== 1)
-    return { unknown: `sudo listed a run-as list this check cannot split: ${text}` };
-  const { steps } = walk(m, count, ITEM);
+  // C1: read as the side of 1.9.10 that printed it — or as each, where the version is not known
+  const reads = sidesOf(version).map((old) => {
+    const m = membersMachine(text, short, old);
+    const count = counts(m);
+    return { m, count, n: count[ITEM]! };
+  });
+  const valid = reads.filter((r) => r.n > 0);
+  if (valid.length === 0 || valid.some((r) => r.n > 1))
+    return {
+      unknown: `sudo listed a run-as list this check cannot split: ${text} (write the name without a space or a backslash)`,
+    };
+  const [one, other] = valid as [(typeof valid)[0], ...typeof valid];
+  const { steps } = walk(one.m, one.count, ITEM);
+  if (other !== undefined) {
+    const a = memberSpans(steps);
+    const b = memberSpans(walk(other.m, other.count, ITEM).steps);
+    if (!sameSpans(a, b)) return { unknown: splitsByVersion(partedAt(text, a, b)) };
+  }
   const users: string[] = [];
   const groups: string[] = [];
   let cur: { start: number; neg: boolean; quoted: boolean; value: string } | undefined;
@@ -934,11 +1001,29 @@ function readMembers(
   return { users, groups, close: steps[steps.length - 1]!.p };
 }
 
+/** Each run-as member's span along a reading (start, end), in order. */
+function memberSpans(steps: { p: number; mode: number; edge?: Edge }[]): [number, number][] {
+  const out: [number, number][] = [];
+  let start: number | undefined;
+  for (const s of steps) {
+    const mode = s.mode % 5;
+    if (mode === ITEM && start === undefined) start = s.p;
+    const e = s.edge;
+    const ends = e === undefined || e.tag === 'sep' || e.tag === 'groups';
+    if ((mode === PLAIN || mode === AFTER) && ends && start !== undefined) {
+      out.push([start, s.p]);
+      start = undefined;
+    }
+  }
+  return out;
+}
+
 /** Reads one listing (either format): its sections, every line recognised — or unknown. #819 Unit A
  *  (A1): first the logical lines — a privileges-section line of 8 spaces then a non-space continues
- *  the line before, joined with one space (sudo drops the blanks at a break, W-UA-L3-12); every
- *  4-space line of a Defaults section continues that section's one text — then each text read by
- *  its grammar. `version`: the sudo that printed it (`sudo -V`), which decides how a backslash and a
+ *  the line before, joined with one space (sudo drops the blanks at a break, W-UA-L3-12); a wrapped
+ *  Defaults section header takes its 4-space lines (the Unit A correction, C3); every other 4-space
+ *  line of a Defaults section continues that section's one text — then each text read by its
+ *  grammar. `version`: the sudo that printed it (`sudo -V`), which decides how a backslash and a
  *  target list print. Exported for its cells. */
 export function parseListing(stdout: string, version?: SudoVersion): Listing | { unknown: string } {
   const listing: Listing = {
@@ -965,16 +1050,32 @@ export function parseListing(stdout: string, version?: SudoVersion): Listing | {
   const unread = (line: string) => ({
     unknown: `sudo listed a line this check does not read: ${line.trim()}`,
   });
-  // The logical lines: a column-0 line, a 4-space line, a tab line — each with its 8-space lines.
+  // The logical lines: a column-0 line, a 4-space line, a tab line — each, in the privileges section
+  // (from the column-0 `User ` line on), with its 8-space lines (the Unit A correction, C5).
   const logical: { kind: 'col0' | 'four' | 'tab'; text: string }[] = [];
+  let privileges = false;
+  // C3: a Defaults section's header that wraps (a long host name, a narrow terminal) — a column-0
+  // `Matching …` or `Runas …` line not ending with `:` takes each 4-space line after it until it does
+  // (a header ends with its only `:`), joined with one space as the line it was cut from
+  let wrapped: { text: string } | undefined;
   for (const raw of stdout.split('\n')) {
     if (raw.trim() === '') continue; // a blank line, or a section's 3-space first line (W-UA-DR-03)
     const last = logical[logical.length - 1];
-    if (/^ {8}\S/.test(raw) && last !== undefined) last.text += ` ${raw.slice(8)}`;
+    if (wrapped !== undefined && /^ {4}\S/.test(raw)) {
+      wrapped.text = `${wrapped.text.replace(/ +$/, '')} ${raw.slice(4)}`;
+      if (wrapped.text.endsWith(':')) wrapped = undefined;
+      continue;
+    }
+    wrapped = undefined;
+    if (privileges && /^ {8}\S/.test(raw) && last !== undefined) last.text += ` ${raw.slice(8)}`;
     else if (/^ {4}\S/.test(raw)) logical.push({ kind: 'four', text: raw.slice(4) });
     else if (raw.startsWith('\t')) logical.push({ kind: 'tab', text: raw.slice(1) });
-    else if (/^\S/.test(raw)) logical.push({ kind: 'col0', text: raw });
-    else return unread(raw);
+    else if (/^\S/.test(raw)) {
+      const line = { kind: 'col0' as const, text: raw };
+      logical.push(line);
+      if (raw.startsWith('User ')) privileges = true;
+      if (/^(?:Matching|Runas)/.test(raw) && !raw.endsWith(':')) wrapped = line;
+    } else return unread(raw);
   }
   for (const { kind, text } of logical) {
     if (kind === 'col0') {
@@ -1116,9 +1217,10 @@ function shortItems(
   return { entries };
 }
 
-/** Who a runas covers, of Realm's service user and root — or unknown. `listed`: the token does not
- *  cover ⟨svc⟩, and that rested on a group's listed members (clause (g), #819 correction 1). */
-type Covers = { svc: boolean; root: boolean; listed?: true } | { unknown: string };
+/** Who a runas covers, of Realm's service user and root. `listed`: the token does not cover ⟨svc⟩,
+ *  and that rested on a group's listed members (clause (g), #819 correction 1). `unknown`: what could
+ *  not be read — carried beside the covers read (the Unit A correction, C2: only a yes outranks it). */
+type Covers = { svc: boolean; root: boolean; listed?: true; unknown?: string };
 
 /** (e): how sudo matches run-as names — case-insensitively unless `!case_insensitive_user` /
  *  `!case_insensitive_group` is listed (sudo's default, defaults.c; AUD-16). #819 follow-up 2
@@ -1184,16 +1286,19 @@ async function tokenCovers(
   root: Found<PasswdEntry>,
   asGroup: boolean,
   ci: NameMatch,
+  idRead?: Set<string>,
 ): Promise<Covers> {
   if (token === 'ALL' || token.startsWith('!') || (ALIAS.test(token) && token !== lk.svc)) {
     return { svc: true, root: true };
   }
   const users = { svc, root };
   const out = { svc: false, root: false };
+  const none = (unknown: string): Covers => ({ svc: false, root: false, unknown });
   // #819 (08, A Outside 2): a group whose members may be hidden reads unknown — and a cover already
   // read outranks it (yes > unknown, 01b #6). A runas GROUP never makes the command run as root
   // (`entryCovers`), so root is not judged for one.
   let unread: string | undefined;
+  let gap: string | undefined;
   let listed = false;
   const same = (a: string, b: string): boolean =>
     ci.user ? a.toLowerCase() === b.toLowerCase() : a === b;
@@ -1206,7 +1311,7 @@ async function tokenCovers(
       if (!('found' in entry)) {
         // #819 follow-up 2 (member 5): `%#0` as sudo reads it, a number (`%#00` too)
         if (who === 'root' && (group === 'root' || numericId(group) === 0)) out.root = true;
-        else if ('unknown' in entry) return { unknown: entry.unknown };
+        else if ('unknown' in entry) return none(entry.unknown);
         continue;
       }
       // #819 Unit A (A3): `%:name` is matched only through sudo's group plugin
@@ -1216,9 +1321,10 @@ async function tokenCovers(
       }
       // #819 Unit A (A3): the user's groups as sudo reads them, where `id -G` gives them — that
       // compare replaces the reading below, which stays the fallback (and its clause (g) with it)
-      const gids = lk.darwin ? undefined : await lk.groupsOf(entry.found);
-      if (gids !== undefined) {
-        const c = await exactGroup(lk, group, gids, ci);
+      const read = lk.darwin ? undefined : await lk.groupsOf(entry.found);
+      if (read !== undefined && 'gids' in read) {
+        idRead?.add(entry.found.name);
+        const c = await exactGroup(lk, group, read.gids, ci);
         if (c === true) out[who] = true;
         else if (c !== false) unread ??= c.unknown;
         continue;
@@ -1248,10 +1354,15 @@ async function tokenCovers(
       // sudo, a group of another case that getent's exact answer is not — unknown unless it covers
       else if (anyCase && group !== group.toLowerCase())
         unread ??= `getent group ${group} reads only the group of that exact case, and sudo matches group names in any case (case_insensitive_group, on by default)`;
+      // the Unit A correction (C2, W-UA-MA3-02): where `id -G` cannot be read and sudo matches group
+      // names in any case, a secondary group named only in another case is not seen — a group that
+      // holds neither user by its list or primary group reads unknown, not "no"
+      else if (anyCase && read !== undefined)
+        gap ??= `sudo matches group names in any case, and ${read.fails}`;
       else if (who === 'svc' && 'listed' in inGroup) listed = true;
     } else if (token.startsWith('+')) {
       const net = await lk.netgroupUsers(token.slice(1));
-      if ('unknown' in net) return { unknown: net.unknown };
+      if ('unknown' in net) return none(net.unknown);
       if ('found' in net && net.found.some((u) => u === '' || u === name)) out[who] = true;
     } else if (token.startsWith('#')) {
       const uid = who === 'root' ? 0 : uidOf(lk, entry);
@@ -1265,13 +1376,16 @@ async function tokenCovers(
     } else if (token !== lk.login) {
       // A §F10: another name may share svc's uid or root's (a `toor`): compared by uid
       const other = await lk.passwd(token);
-      if ('unknown' in other) return { unknown: other.unknown };
+      if ('unknown' in other) return none(other.unknown);
       const uid = who === 'root' ? 0 : uidOf(lk, entry);
       if ('found' in other && (uid === undefined || other.found.uid === uid)) out[who] = true;
     }
   }
-  // #819 correction 1 (A MINOR 1): a cover read for root never drops ⟨svc⟩'s unknown
-  if (unread !== undefined && !out.svc) return { unknown: unread };
+  // #819 correction 1 (A MINOR 1): a cover read for root never drops ⟨svc⟩'s unknown — the Unit A
+  // correction (C2, the audit's S1): it is carried beside root's cover, so a NOPASSWD rule that runs
+  // as root still reads yes. The case gap reads unknown only where the group holds neither user.
+  const unknown = unread ?? (out.root ? undefined : gap);
+  if (unknown !== undefined && !out.svc) return { ...out, unknown };
   return listed && !out.svc ? { ...out, listed: true } : out;
 }
 
@@ -1313,22 +1427,27 @@ async function entryCovers(
   svc: Found<PasswdEntry>,
   root: Found<PasswdEntry>,
   ci: NameMatch,
+  exact?: Set<string>,
 ): Promise<Covers> {
   const out: { svc: boolean; root: boolean; listed?: true } = { svc: false, root: false };
+  // the Unit A correction (C2, the audit's S1): a token that reads unknown no longer ends the entry —
+  // its first cause is kept beside what the other tokens cover
+  let unknown: string | undefined;
   for (const [tokens, asGroup] of [
     [e.users, false],
     [e.groups, true],
   ] as const) {
     for (const t of tokens) {
-      const c = await tokenCovers(lk, t, svc, root, asGroup, ci);
-      if ('unknown' in c) return c;
+      const c = await tokenCovers(lk, t, svc, root, asGroup, ci, exact);
+      unknown ??= c.unknown;
       out.svc ||= c.svc;
       // a runas group onto root's group does not make the command run as root
       if (!asGroup) out.root ||= c.root;
       if (c.listed === true) out.listed = true;
     }
   }
-  return out.svc ? { svc: out.svc, root: out.root } : out;
+  const covers = out.svc ? { svc: out.svc, root: out.root } : out;
+  return unknown !== undefined ? { ...covers, unknown } : covers;
 }
 
 /** Where a credential reading is composed: a listing, sudo-rs's refusal (both show a rule exists),
@@ -1407,7 +1526,7 @@ async function withPam(
  *  cause says why each may be needed (#819, 08 A F1: printed as "may need"). #819 Unit A (A7, L2-18):
  *  `runaspw` asks too, and each names whose password it asks for. */
 const UNSEEN_WHOSE =
-  "rootpw, targetpw or runaspw cannot be ruled out (rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's)";
+  "rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's";
 const UNSEEN_LISTED = `sudo does not list its Defaults, so ${UNSEEN_WHOSE}`;
 /** #819 (08, A F1): the original sudo's refusal hides its Defaults and whether a rule exists. */
 const UNSEEN_REFUSED = `sudo does not show its Defaults or whether a rule exists, so ${UNSEEN_WHOSE}`;
@@ -1537,7 +1656,7 @@ async function judge(
   flavour: 'classic' | 'rs',
 ): Promise<SwitchPathReading[]> {
   const unread = unreadItem(listing);
-  const seen = { listed: false };
+  const seen: { listed: boolean; exact?: Set<string> } = { listed: false };
   const rs = await judgeListing(lk, path, how, listing, svc, root, flavour, seen);
   if (rs.some((r) => r.outcome === 'yes' || r.outcome === 'unknown')) return rs;
   if (unread !== undefined)
@@ -1553,14 +1672,16 @@ async function judge(
  * rail refuses, cannot be looked up exactly.
  */
 async function runaspwCause(lk: Lookups, name: string): Promise<string | undefined> {
+  // the Unit A correction (C6): why a way sudo shuts reads unknown, said where it is
+  const shut = '; this check reads that as unknown, not as a way shut';
   if (name.startsWith('#'))
-    return `sudo looks ${name} up as a user name, finds none and refuses every command (Defaults runaspw)`;
+    return `sudo looks ${name} up as a user name, finds none and refuses every command (Defaults runaspw)${shut}`;
   if (/^\d+$/.test(name) || !RAIL_NAME.test(name))
     return `sudo looks ${name} up as a user name, which this check cannot look up exactly (Defaults runaspw)`;
   const found = await lk.passwd(name);
   if ('unknown' in found) return found.unknown;
   if ('absent' in found)
-    return `sudo finds no user ${name} and refuses every command (Defaults runaspw)`;
+    return `sudo finds no user ${name} and refuses every command (Defaults runaspw)${shut}`;
   return name === lk.svc ? undefined : `sudo asks for ${name}'s password (Defaults runaspw)`;
 }
 
@@ -1573,7 +1694,7 @@ async function judgeListing(
   svc: Found<PasswdEntry>,
   root: Found<PasswdEntry>,
   flavour: 'classic' | 'rs',
-  seen: { listed: boolean },
+  seen: { listed: boolean; exact?: Set<string> },
 ): Promise<SwitchPathReading[]> {
   const reading = (r: Omit<SwitchPathReading, 'path' | 'tool'>): SwitchPathReading => ({
     path: 'sudo',
@@ -1598,9 +1719,19 @@ async function judgeListing(
     ];
   }
   const covering: { entry: Entry; svc: boolean; root: boolean }[] = [];
+  // the Unit A correction (C2, the audit's S1): an entry that reads unknown no longer ends the
+  // reading — the first cause is kept, every entry read, and only a covering NOPASSWD rule or a
+  // covering `!authenticate` line outranks it (yes > unknown, 01b #6)
+  let kept: string | undefined;
+  // the Unit A correction (C6): where the exact read was made, the reading names it
+  const idRead = (seen.exact ??= new Set<string>());
+  const named = (): string =>
+    idRead.size === 0
+      ? how
+      : `${how} and ${[...idRead].map((u) => `id -G ${u}`).join(' and ')} read`;
   for (const entry of listing.entries) {
-    const c = await entryCovers(lk, entry, svc, root, ci);
-    if ('unknown' in c) return [reading({ outcome: 'unknown', how, cause: c.unknown })];
+    const c = await entryCovers(lk, entry, svc, root, ci, seen.exact);
+    kept ??= c.unknown;
     if (c.listed === true) seen.listed = true;
     if (c.svc || c.root) covering.push({ entry, svc: c.svc, root: c.root });
   }
@@ -1609,15 +1740,17 @@ async function judgeListing(
     c.svc && c.root ? (lk.svc === 'root' ? 'root' : `${lk.svc} or root`) : c.svc ? lk.svc : 'root';
   const open = covering.find((c) => c.entry.nopasswd);
   if (open !== undefined) {
-    return [reading({ outcome: 'yes', how: `${how}: a NOPASSWD rule runs as ${runsAs(open)}` })];
+    return [
+      reading({ outcome: 'yes', how: `${named()}: a NOPASSWD rule runs as ${runsAs(open)}` }),
+    ];
   }
   for (const s of listing.specific) {
     if (!s.options.includes('!authenticate')) continue;
     for (const target of s.targets) {
       let hit: boolean;
       if (s.kind === '>') {
-        const c = await tokenCovers(lk, target, svc, root, false, ci);
-        if ('unknown' in c) return [reading({ outcome: 'unknown', how, cause: c.unknown })];
+        const c = await tokenCovers(lk, target, svc, root, false, ci, seen.exact);
+        kept ??= c.unknown;
         if (c.listed === true) seen.listed = true;
         hit = c.svc || c.root;
       } else {
@@ -1638,16 +1771,19 @@ async function judgeListing(
         return [
           reading({
             outcome: 'yes',
-            how: `${how}: Defaults${s.kind}${target} !authenticate covers a rule`,
+            how: `${named()}: Defaults${s.kind}${target} !authenticate covers a rule`,
           }),
         ];
       }
     }
   }
   // D3 reads the entries that run as ⟨svc⟩ or root: with none, the listing names no way, whatever
-  // let it be shown.
+  // let it be shown — unless an entry read unknown (the Unit A correction, C2: its kept cause)
   if (covering.length === 0) {
-    return [reading({ outcome: 'not_allowed', how: `${how}: no rule runs as ${lk.svc} or root` })];
+    if (kept !== undefined) return [reading({ outcome: 'unknown', how: named(), cause: kept })];
+    return [
+      reading({ outcome: 'not_allowed', how: `${named()}: no rule runs as ${lk.svc} or root` }),
+    ];
   }
   const exempt = listing.defaults.find((o) => o.startsWith('exempt_group='));
   const exemptGroup = value('exempt_group');
@@ -1655,7 +1791,10 @@ async function judgeListing(
     const m = await exemptIn(lk, exemptGroup, ci);
     if (!('found' in m) || m.found)
       return [
-        reading({ outcome: 'yes', how: `${how}: Defaults ${exempt}, and this login may be in it` }),
+        reading({
+          outcome: 'yes',
+          how: `${named()}: Defaults ${exempt}, and this login may be in it`,
+        }),
       ];
   }
   if (value('listpw') === 'all' && listing.entries.some((e) => !e.nopasswd)) {
@@ -1663,7 +1802,7 @@ async function judgeListing(
     return [
       reading({
         outcome: 'yes',
-        how: `${how}: listed under listpw=all although a rule needs a password`,
+        how: `${named()}: listed under listpw=all although a rule needs a password`,
       }),
     ];
   }
@@ -1673,10 +1812,13 @@ async function judgeListing(
     return [
       reading({
         outcome: 'yes',
-        how: `${how}: the rules were listed without a password (the cause is unknown)`,
+        how: `${named()}: the rules were listed without a password (the cause is unknown)`,
       }),
     ];
   }
+  // the Unit A correction (C2): every yes above outranks an entry that read unknown (yes > unknown,
+  // 01b #6); the credential readings below do not — they return its kept cause
+  if (kept !== undefined) return [reading({ outcome: 'unknown', how: named(), cause: kept })];
   const runasDefault = value('runas_default');
   // #819 correction 1 (b): a non-zero timeout anywhere keeps a ticket — a `Defaults!…`/`Defaults>…`
   // line applies before sudo authenticates and governs the ticket (AUD-13); `=0` drops it only when
@@ -1689,7 +1831,7 @@ async function judgeListing(
     timeouts.every((o) => ZERO_TIMEOUT.test(o))
       ? {}
       : { cache: 'sudo_timestamp' as const };
-  const why = `${how}: a rule runs as ${runsAs({ svc: covering.some((c) => c.svc), root: covering.some((c) => c.root) })} with a password`;
+  const why = `${named()}: a rule runs as ${runsAs({ svc: covering.some((c) => c.svc), root: covering.some((c) => c.root) })} with a password`;
   let base: SwitchPathReading[];
   if (opts.has('rootpw')) {
     base = [
@@ -1712,7 +1854,7 @@ async function judgeListing(
     let whose: 'root' | 'svc' = 'root';
     if (runsAs !== undefined && runsAs !== 'root') {
       const cause = await runaspwCause(lk, runsAs);
-      if (cause !== undefined) return [reading({ outcome: 'unknown', how, cause })];
+      if (cause !== undefined) return [reading({ outcome: 'unknown', how: named(), cause })];
       whose = 'svc';
     }
     base = [
@@ -1756,7 +1898,7 @@ async function judgeListing(
     login: value('pam_login_service'),
     ...(askpass !== undefined ? { askpass } : {}),
   };
-  return withPam(lk, base, how, path, 'listing', services);
+  return withPam(lk, base, named(), path, 'listing', services);
 }
 
 /** D2: every sudo present (`sudo`, `sudo.ws`, `sudo-rs`) — every root-owned copy in D2's folders,

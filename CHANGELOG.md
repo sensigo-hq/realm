@@ -92,15 +92,17 @@ All notable changes to this project are documented here.
   twice with different values (issue #819); the stack `pam_askpass_service` names is read too;
   sudo's listing is read as sudo prints it on each version, and a Defaults setting it cannot split
   (a value with a space that ends in a backslash, or holds a backslash before a quotation mark,
-  prints the same as another) reads unknown unless sudo already reads yes; under `runaspw`,
+  prints the same as another setting) reads unknown unless sudo already reads yes; under `runaspw`,
   `runas_default` is looked up by name, as sudo looks it up; run-as user names match in any case, as
   sudo matches them; a run-as group is compared with the service user's groups as sudo reads them,
   which `id -G` lists — by gid under `match_group_by_gid`, by name otherwise, in any case unless
   `!case_insensitive_group` is listed — and where `id -G` gives no answer that holds the service
   user's primary group, with the service user's primary group and the group `getent` finds (unless
-  `!case_insensitive_group` or `match_group_by_gid` is listed, in any case, and a secondary group
-  named only in another case is not seen); a run-as group that does not list the service user is
-  then read as not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`,
+  `!case_insensitive_group` or `match_group_by_gid` is listed, in any case); when `id -G` cannot be
+  read, unless `!case_insensitive_group` or `match_group_by_gid` is listed, a run-as group that does
+  not hold the user by its list or primary group reads unknown, since a secondary group named only
+  in another case is not seen; a run-as group that does not list the service user is then read as
+  not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`,
   read as glibc reads them, list local sources, and the sentence then adds that the members the
   system lists for each group read are all of its members. The "Measured for …" line says when no
   store was found, and when the store cannot be opened; condition 7's "no" names the

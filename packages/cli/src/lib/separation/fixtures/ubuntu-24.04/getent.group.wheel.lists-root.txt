@@ -1,0 +1,5 @@
+# captured 2026-10-23 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · set up as root: groupadd -g 1101 wheel; gpasswd -a root wheel · then as the login agent: getent group wheel
+exit 0
+--- stdout
+wheel:x:1101:root
+--- stderr

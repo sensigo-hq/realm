@@ -4,6 +4,8 @@
 # global section, stock rows first; a Defaults!/Defaults> line; RUNAS-USER#n / RUNAS-GROUP#n, the
 # n-th rule), key (with ! for a negated flag, + or - for += and -=; "member" for a run-as member),
 # value (a JSON string; - for none). I01-I61 are L3's items (lanes/l3/f/f-items.txt, I59 dropped).
+# A set's row with a stock row's id and scope replaces that stock row in the set (grp-fedora-edited:
+# Fedora's stock match_group_by_gid line, edited in place).
 S01	*	ubuntu-20.04	Defaults	env_reset	-
 S02	*	ubuntu-20.04	Defaults	mail_badpass	-
 S03	*	ubuntu-20.04	Defaults	secure_path	"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
@@ -101,6 +103,8 @@ I57	main	*	Defaults!/usr/bin/true, /usr/bin/false	mailsub	"tl1"
 I58	main	*	Defaults>svc, nobody	mailsub	"rl1"
 I60	main	*	Defaults>#1001	mailsub	"rl2"
 I61	main	*	Defaults>%svcgrp	mailsub	"rl3"
+I81	main	*	Defaults>alice	passprompt	"e1\\"
+I82	main	*	Defaults>root	mailsub	"e2\\\"m"
 I79	main	*	Defaults:agent	mailsub	"z w\\"
 I80	main	*	Defaults>nobody	mailsub	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa Defaults!/usr/bin/true !authenticate"
 U01	main	*	RUNAS-USER#1	member	"svc"
@@ -146,6 +150,8 @@ C2	grp-bygid	*	RUNAS-USER#1	member	"%svcgrp"
 C2	grp-fedora	*	RUNAS-USER#1	member	"%svcgrp"
 C1	grp-fedora-nogid	*	Defaults	!match_group_by_gid	-
 C2	grp-fedora-nogid	*	RUNAS-USER#1	member	"%svcgrp"
+S03	grp-fedora-edited	fedora-latest	Defaults	!match_group_by_gid	-
+C2	grp-fedora-edited	*	RUNAS-USER#1	member	"%svcgrp"
 P1	plugin	*	Defaults	group_plugin	"group_file.so /etc/sudo-group"
 P2	plugin	*	Defaults	always_query_group_plugin	-
 P3	plugin	*	RUNAS-USER#1	member	"%plugingrp"
@@ -170,3 +176,8 @@ R3	runaspw-svc	*	RUNAS-USER#1	member	"nobody"
 R4	runaspw-svc	*	RUNAS-USER#2	member	"ALL"
 N1	norunas	*	Defaults	runas_default	"nosuchuser"
 N2	norunas	*	RUNAS-USER#1	member	"nosuchuser"
+H1	longhost	*	Defaults	passprompt	"lh1"
+H2	longhost	*	Defaults>nobody	mailsub	"lh2"
+H3	longhost	*	Defaults!/usr/bin/true	!authenticate	-
+H4	longhost	*	RUNAS-USER#1	member	"nobody"
+H5	longhost	*	RUNAS-USER#2	member	"svc"

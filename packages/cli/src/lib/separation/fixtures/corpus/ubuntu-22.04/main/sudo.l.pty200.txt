@@ -1,7 +1,7 @@
-# captured 2026-10-22 · image ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 · as the login agent through the check's spawn (a 50x200 terminal): LC_ALL=C /usr/bin/sudo -n -l
+# captured 2026-10-23 · image ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 · as the login agent through the check's spawn (a 50x200 terminal): LC_ALL=C /usr/bin/sudo -n -l
 exit 0
 --- stdout
-Matching Defaults entries for agent on 984ab9b35f3e:
+Matching Defaults entries for agent on 3c7c25679273:
     env_reset, mail_badpass,
     secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
     use_pty, mailsub=\\u0, mailfrom=u4\,m, mailerflags=u8\",
@@ -23,6 +23,8 @@ Runas and Command-specific defaults for agent:
     Defaults>#1001 mailsub=rl2
     Defaults>nobody mailsub="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     Defaults!/usr/bin/true !authenticate"
+    Defaults>alice passprompt=e1\\
+    Defaults>root mailsub=e2\\\"m
     Defaults>%svcgrp mailsub=rl3    Defaults!/usr/bin/true
     badpass_message=u2\\, passprompt=\"u6, mailsub=u10\:m, mailfrom=u14\=,
     mailerflags=" u18", badpass_message="u22	m", passprompt="q26 s\",
@@ -30,7 +32,7 @@ Runas and Command-specific defaults for agent:
     badpass_message=" q42 s", passprompt="q46	m s", mailsub=n50\"m
     Defaults!/usr/bin/true, /usr/bin/false mailsub=tl1
 
-User agent may run the following commands on 984ab9b35f3e:
+User agent may run the following commands on 3c7c25679273:
     (svc, nobody, #1001, %svcgrp, %#0, a\,b, "a b", "c d", e\:f, g\=h, i\#j,
         k\"l, m\\n, !alice, !"n m", +svcnet, %:plugingrp, ALL, "%g h", "x y\" :
         svcgrp, #2001, "g h", g\,i) NOPASSWD: /usr/bin/true

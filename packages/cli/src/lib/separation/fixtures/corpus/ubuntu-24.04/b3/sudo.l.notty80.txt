@@ -1,12 +1,12 @@
-# captured 2026-10-22 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -l
+# captured 2026-10-23 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -l
 exit 0
 --- stdout
-Matching Defaults entries for agent on c794022fe128:
+Matching Defaults entries for agent on aad1f192a154:
     env_reset, mail_badpass,
     secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin,
     use_pty, passprompt=Password\, !authenticate
 
-User agent may run the following commands on c794022fe128:
+User agent may run the following commands on aad1f192a154:
     (nobody) NOPASSWD: /usr/bin/true
     (svc) /usr/bin/true
 --- stderr

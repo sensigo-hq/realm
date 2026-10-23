@@ -1,4 +1,4 @@
-# captured 2026-10-22 · image ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 · each tool in the folders the check looks in: path, real path, owner uid
+# captured 2026-10-23 · image ubuntu@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956 · each tool in the folders the check looks in: path, real path, owner uid
 /usr/bin/sudo /usr/bin/sudo 0
 /bin/sudo /usr/bin/sudo 0
 /usr/bin/getent /usr/bin/getent 0

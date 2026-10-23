@@ -1,0 +1,6 @@
+# captured 2026-10-23 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · cat /etc/sudoers.d/t
+Defaults passprompt=lh1
+Defaults>nobody mailsub=lh2
+Defaults!/usr/bin/true !authenticate
+agent ALL=(nobody) NOPASSWD: /usr/bin/false
+agent ALL=(svc) /usr/bin/true

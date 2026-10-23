@@ -1,7 +1,7 @@
-# captured 2026-10-22 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · as the login agent through the check's spawn (a 50x200 terminal): LC_ALL=C /usr/bin/sudo -n -l
+# captured 2026-10-23 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · as the login agent through the check's spawn (a 50x200 terminal): LC_ALL=C /usr/bin/sudo -n -l
 exit 0
 --- stdout
-Matching Defaults entries for agent on ddb901754430:
+Matching Defaults entries for agent on c8e460fc08e7:
     !visiblepw, always_set_home, match_group_by_gid, always_query_group_plugin, env_reset, env_keep="COLORS DISPLAY HOSTNAME HISTSIZE KDEDIR LS_COLORS", env_keep+="MAIL PS1 PS2 QTDIR USERNAME LANG
     LC_ADDRESS LC_CTYPE", env_keep+="LC_COLLATE LC_IDENTIFICATION LC_MEASUREMENT LC_MESSAGES", env_keep+="LC_MONETARY LC_NAME LC_NUMERIC LC_PAPER LC_TELEPHONE", env_keep+="LC_TIME LC_ALL LANGUAGE
     LINGUAS _XKB_CHARSET XAUTHORITY", secure_path=/sbin\:/bin\:/usr/sbin\:/usr/bin, mailsub=\u0, mailfrom=u4\,m, mailerflags=u8\", badpass_message=\=u12, passprompt=u16\#m, mailsub="u20 ",
@@ -15,11 +15,13 @@ Runas and Command-specific defaults for agent:
     Defaults>svc, nobody mailsub=rl1
     Defaults>#1001 mailsub=rl2
     Defaults>nobody mailsub="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa Defaults!/usr/bin/true !authenticate"
+    Defaults>alice passprompt=e1\
+    Defaults>root mailsub=e2\\"m
     Defaults>%svcgrp mailsub=rl3    Defaults!/usr/bin/true badpass_message=u2\, passprompt=\"u6, mailsub=u10\:m, mailfrom=u14\=, mailerflags=" u18", badpass_message="u22	m", passprompt="q26 s\",
     mailsub="\"q30 s", mailfrom="q34:m s", mailerflags="q38 s=", badpass_message=" q42 s", passprompt="q46	m s", mailsub=n50\"m
     Defaults!/usr/bin/true, /usr/bin/false mailsub=tl1
 
-User agent may run the following commands on ddb901754430:
+User agent may run the following commands on c8e460fc08e7:
     (svc, nobody, #1001, %svcgrp, %#0, a\,b, "a b", "c d", e\:f, g\=h, i\#j, k\"l, m\n, !alice, !"n m", +svcnet, %:plugingrp, ALL, "%g h", "x y\" : svcgrp, #2001, "g h", g\,i) NOPASSWD: /usr/bin/true
     (nobody) NOPASSWD: /usr/bin/true, /usr/bin/false, /usr/bin/printf aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb cccccccccccccccc, /usr/bin/id
 --- stderr

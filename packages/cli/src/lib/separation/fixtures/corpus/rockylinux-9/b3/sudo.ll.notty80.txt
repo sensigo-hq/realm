@@ -1,7 +1,7 @@
-# captured 2026-10-22 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -ll
+# captured 2026-10-23 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · as the login agent through the check's spawn (no terminal, 80 columns): LC_ALL=C /usr/bin/sudo -n -ll
 exit 0
 --- stdout
-Matching Defaults entries for agent on ddb901754430:
+Matching Defaults entries for agent on c8e460fc08e7:
     !visiblepw, always_set_home, match_group_by_gid, always_query_group_plugin,
     env_reset, env_keep="COLORS DISPLAY HOSTNAME HISTSIZE KDEDIR LS_COLORS",
     env_keep+="MAIL PS1 PS2 QTDIR USERNAME LANG LC_ADDRESS LC_CTYPE",
@@ -11,7 +11,7 @@ Matching Defaults entries for agent on ddb901754430:
     secure_path=/sbin\:/bin\:/usr/sbin\:/usr/bin, passprompt=Password\,
     !authenticate
 
-User agent may run the following commands on ddb901754430:
+User agent may run the following commands on c8e460fc08e7:
 
 Sudoers entry: /etc/sudoers.d/t
     RunAsUsers: nobody

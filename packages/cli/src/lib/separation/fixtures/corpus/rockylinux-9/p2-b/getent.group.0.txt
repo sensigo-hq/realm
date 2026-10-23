@@ -1,4 +1,4 @@
-# captured 2026-10-22 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · as the login agent through the check's spawn (no terminal, 80 columns): /usr/bin/getent group 0
+# captured 2026-10-23 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · as the login agent through the check's spawn (no terminal, 80 columns): /usr/bin/getent group 0
 exit 0
 --- stdout
 root:x:0:

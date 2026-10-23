@@ -1,4 +1,4 @@
-# captured 2026-10-22 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent: sudo -n /usr/bin/true
+# captured 2026-10-23 · image ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · as the login agent: sudo -n /usr/bin/true
 exit 1
 --- stdout
 --- stderr

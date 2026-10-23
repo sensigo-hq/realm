@@ -189,10 +189,11 @@ export interface Lookups {
   /** Whether this login is in the group `name`: by its process groups or the group's members. */
   loginIn: (name: string) => Promise<Found<boolean>>;
   /** #819 Unit A (A3): `user`'s group ids as sudo reads them (`id -G`: `getgrouplist`, the primary
-   *  gid first) — `undefined` where they cannot be read so (no `id`, one that is not a root-owned
-   *  system copy, a refusal, an error or time-out, an exit other than 0, an answer that is not a
-   *  list of gids or does not hold the primary gid; and on macOS, where it is not asked). */
-  groupsOf: (user: PasswdEntry) => Promise<number[] | undefined>;
+   *  gid first) — or, where they cannot be read so, why (the Unit A correction, C2: no `id`, one that
+   *  is not a root-owned system copy or this login can change, a refusal, an error or time-out, an
+   *  exit other than 0, an answer that is not a list of gids or does not hold the primary gid). Not
+   *  asked on macOS. */
+  groupsOf: (user: PasswdEntry) => Promise<{ gids: number[] } | { fails: string }>;
   /** Whether `user` (svc or root) is in the group `name` (`#gid` or a name). macOS: unknown (01b #9).
    *  `listed`: not in it, read from the members the group lists (#819 correction 1, clause (g)). */
   userIn: (
@@ -404,14 +405,24 @@ export function lookups(probes: SwitchProbes, svc = ''): Lookups {
     return { found: false, listed: true };
   };
   const id = darwin ? undefined : findTool(probes, 'id');
-  const groupsOf = async (user: PasswdEntry): Promise<number[] | undefined> => {
-    if (id === undefined || 'unknown' in id) return undefined;
+  const groupsOf = async (user: PasswdEntry): Promise<{ gids: number[] } | { fails: string }> => {
+    // the Unit A correction (C2): each way `id -G` cannot be read, in words the fallback's cause
+    // carries ("sudo matches group names in any case, and …")
+    if (id === undefined) return { fails: 'no id was found in the system folders' };
+    // findTool's own words, `id at <path> is …`, said of id: not a root-owned system copy, or one
+    // this login can change
+    if ('unknown' in id) return { fails: id.unknown.replace(/^id at \S+ /, 'id ') };
     const r = await run([id.path, '-G', user.name]);
-    if (!('exit' in r) || r.exit !== 0) return undefined;
+    if ('refused' in r) return { fails: 'the check refused to run id' };
+    if ('error' in r) return { fails: r.error };
+    const asked = `id -G ${user.name}`;
+    if (r.exit !== 0) return { fails: `${asked} exited ${r.exit}` };
     const out = r.stdout.trim();
-    if (!/^\d+(?: \d+)*$/.test(out)) return undefined;
+    if (!/^\d+(?: \d+)*$/.test(out)) return { fails: `${asked} printed no list of groups` };
     const gids = out.split(' ').map(Number);
-    return gids.includes(user.gid) ? gids : undefined;
+    return gids.includes(user.gid)
+      ? { gids }
+      : { fails: `${asked} did not list ${user.name}'s primary group` };
   };
   return {
     probes,

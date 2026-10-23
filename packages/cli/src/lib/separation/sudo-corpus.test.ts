@@ -15,7 +15,7 @@
 // fictional logins at most.
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
-import type { SwitchPathReading } from '@sensigo/realm';
+import { switchClausesOf, type SwitchPathReading } from '@sensigo/realm';
 import { measureSwitchPaths } from './index.js';
 import { defaultsValue, parseListing, sudoVersion } from './sudo.js';
 import { railOne } from './runner.js';
@@ -88,10 +88,15 @@ function expected(img: string, set: string) {
   const mine = ROWS.filter(
     (r) => (r.set === set || r.set === '*') && (r.image === img || r.image === '*'),
   );
+  // the Unit A correction (C4): a set's row with a stock row's id replaces it (a stock line edited)
+  const own = mine.filter((r) => r.set === set);
+  const replaces = (r: Row) => (x: Row) => x.id === r.id && x.scope === r.scope;
   const global = [
-    ...mine.filter((r) => r.set === '*'),
-    ...mine.filter((r) => r.set === set && r.scope === 'Defaults'),
-    ...mine.filter((r) => r.set === set && r.scope === 'Defaults:agent'),
+    ...mine.filter((r) => r.set === '*').map((r) => own.find(replaces(r)) ?? r),
+    ...own.filter(
+      (r) => r.scope === 'Defaults' && !mine.some((x) => x.set === '*' && replaces(x)(r)),
+    ),
+    ...own.filter((r) => r.scope === 'Defaults:agent'),
   ];
   const specific = new Map<string, Row[]>();
   for (const r of mine.filter((x) => /^Defaults[!>]/.test(x.scope)))
@@ -183,10 +188,16 @@ describe('#819 Unit A (A2) — T1: the reader cuts every item where sudo printed
     const sets = IMAGES.map((img) => dirs(`${img}/`).filter((s) => !AMBIGUOUS.has(s)));
     const rowless = sets.flat().filter((s) => !ROWS.some((r) => r.set === s));
     const main = IMAGES.map((img) => files(`${img}/main/`).filter((f) => /^sudo\./.test(f)).length);
-    expect({ images: IMAGES.length, rowless, main }).toEqual({
+    // the Unit A correction (C3): the long host name at 80 columns everywhere, and in a 40-column
+    // terminal on sudo 1.9.14 and later (Ubuntu 24.04, Debian, Fedora, Rocky: 1.9.15p5–1.9.17p2)
+    const longhost = IMAGES.map(
+      (img) => files(`${img}/longhost/`).filter((f) => /^sudo\./.test(f)).length,
+    );
+    expect({ images: IMAGES.length, rowless, main, longhost }).toEqual({
       images: 6,
       rowless: [],
       main: [6, 6, 6, 6, 6, 6],
+      longhost: [2, 2, 4, 4, 4, 4],
     });
   });
 });
@@ -227,12 +238,39 @@ function corpusMachine(img: string, set: string): MachineSpec {
   return spec;
 }
 
+/** A scenario's sudo readings, and (the Unit A correction, C4) every argv its machine was asked that
+ *  the scenario has no capture for — counted from the machine itself, not from a printed cause. */
+const sudoRead = async (
+  img: string,
+  set: string,
+): Promise<{ rs: SwitchPathReading[]; uncaptured: string[] }> => {
+  const spec = corpusMachine(img, set);
+  const from = asked.length;
+  const all = await measureSwitchPaths({ probes: fixtureMachine(spec), svc: 'svc' });
+  const uncaptured = asked
+    .slice(from)
+    .map((a) => a.join(' '))
+    .filter((a) => !(a in spec.calls!));
+  return { rs: all.filter((r) => r.path === 'sudo'), uncaptured };
+};
 const sudoReadings = async (img: string, set: string): Promise<SwitchPathReading[]> =>
-  (
-    await measureSwitchPaths({ probes: fixtureMachine(corpusMachine(img, set)), svc: 'svc' })
-  ).filter((r) => r.path === 'sudo');
-const view = (rs: SwitchPathReading[]): string[] =>
-  rs.map((r) => [r.outcome, r.whose, r.cache, r.cause].filter((x) => x !== undefined).join(' '));
+  (await sudoRead(img, set)).rs;
+/** Each reading: outcome, whose, cache, `member_list` (the fallback read a member list) and cause —
+ *  then the clause letters the readings fire, where any do (C4: the exact read and the fallback
+ *  print apart). */
+const view = (rs: SwitchPathReading[]): string[] => {
+  const letters = switchClausesOf(rs)
+    .map((c) => c.clause)
+    .join('');
+  return [
+    ...rs.map((r) =>
+      [r.outcome, r.whose, r.cache, r.member_list === true ? 'member_list' : undefined, r.cause]
+        .filter((x) => x !== undefined)
+        .join(' '),
+    ),
+    ...(letters !== '' ? [`clauses ${letters}`] : []),
+  ];
+};
 const verdict = (img: string, set: string, name = 'verdict.u-svc'): number =>
   Number(/^exit (\d+)/.exec(fixtureFile(`corpus/${img}/${set}/${name}`))![1]);
 
@@ -266,7 +304,7 @@ const T3: Record<string, string[]> = {
   'grp-bygid': ['not_allowed'],
   'grp-fedora': ['not_allowed'],
   'grp-fedora-nogid': [
-    'unknown sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid',
+    'unknown sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid (change the stock line instead of adding a second)',
   ],
   // a group plugin grants svc a group it is not a Unix member of: group_plugin stays unread
   plugin: [
@@ -277,30 +315,40 @@ const T3: Record<string, string[]> = {
   ],
   // item 7 (A6): runas_default under runaspw, looked up as sudo looks it up
   'runaspw-nosuchuser': [
-    'unknown sudo finds no user nosuchuser and refuses every command (Defaults runaspw)',
+    'unknown sudo finds no user nosuchuser and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
   ],
-  'runaspw-ROOT': ['unknown sudo finds no user ROOT and refuses every command (Defaults runaspw)'],
+  'runaspw-ROOT': [
+    'unknown sudo finds no user ROOT and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+  ],
   'runaspw-hash0': [
-    'unknown sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw)',
+    'unknown sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
   ],
-  'runaspw-svc': ['needs_credential svc sudo_timestamp'],
+  // the Unit A correction re-pin (C4): the view now prints the clause letters — (a) svc's password,
+  // (b) sudo's ticket
+  'runaspw-svc': ['needs_credential svc sudo_timestamp', 'clauses ab'],
   // D7b dropped (W-UA-MA3-01): no Runas_Spec and an unknown runas_default; real sudo refuses all three
   norunas: ['not_allowed'],
+  // the Unit A correction (C4): Fedora's stock match_group_by_gid line edited to !match_group_by_gid —
+  // svc's groups read by `id -G` decide (the fallback would read the case gap unknown)
+  'grp-fedora-edited': ['yes'],
+  // (C3) a 45-character host name: every section header wrapped, read as unwrapped
+  longhost: ['yes'],
 };
 
 describe("#819 Unit A (A2) — T3: each real verdict, read by the check on that scenario's machine", () => {
   for (const img of IMAGES) {
     for (const set of dirs(`${img}/`).filter((s) => s in T3 || AMBIGUOUS.has(s))) {
       it(`${img} ${set}: real sudo -n -u svc exit ${verdict(img, set)}`, async () => {
-        const rs = await sudoReadings(img, set);
+        const { rs, uncaptured } = await sudoRead(img, set);
         const no = rs.filter((r) => r.outcome !== 'yes' && r.outcome !== 'unknown');
-        // (a) red when the check reads "no" where real sudo exited 0, a lookup the reader makes was not
-        //     captured, or the reading moves from the one pinned; (b) prints the readings and causes.
+        // (a) red when the check reads "no" where real sudo exited 0, the machine was asked a lookup
+        //     the scenario has no capture for (the Unit A correction, C4: counted from the machine,
+        //     so a fallback that reads "not allowed" cannot hide it), or the reading — member list
+        //     and clauses with it — moves from the one pinned; (b) prints the readings, causes and
+        //     each uncaptured argv.
         expect({
           noWhereSudoSaysYes: verdict(img, set) === 0 ? view(no) : [],
-          uncaptured: rs
-            .filter((r) => (r.cause ?? '').includes('no capture for'))
-            .map((r) => r.cause),
+          uncaptured,
           ...(set in T3 ? { reading: view(rs) } : {}),
         }).toEqual({
           noWhereSudoSaysYes: [],

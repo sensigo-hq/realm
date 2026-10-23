@@ -10,7 +10,9 @@
 # stdout is a socket, never a FIFO) — at 80 columns with no terminal, and for the corpus also under
 # `script` terminals of 30x60 and 50x200 (`su --session-command`, which keeps the terminal; `su -c`
 # drops it). Every lookup the reader makes is recorded beside each listing, and each scenario's real
-# `sudo -n -u svc /usr/bin/true` is run and kept with its exit status. Fixtures land in
+# `sudo -n -u svc /usr/bin/true` is run and kept with its exit status. The scenario `longhost` runs in
+# a second container per image, started with a 45-character host name (`--hostname`), so its section
+# headers wrap. Fixtures land in
 # fixtures/corpus/<image>/, in the captured-call format (`# captured …` header, `exit N`,
 # `--- stdout`, `--- stderr`); a copied file is its header line and the file's text.
 #
@@ -33,11 +35,17 @@ fi
 #   b1a, b1b      the second prompt audit's B1 printouts: two sources print the same text (T2)
 #   p2-a, p2-b    W-UA-L3-14's pair: one printout, real verdicts rc 0 and rc 1 (T2, T3)
 #   grp-*, plugin*, runaspw-*, norunas    item 2's, the group plugin's, item 7's and D7b's verdicts (T3)
+#   grp-fedora-edited  Fedora's stock `Defaults match_group_by_gid` line edited to !match_group_by_gid
+#                 (no second line), so item 2's exact read decides; /etc/sudoers restored after it (T3)
+#   longhost      the Unit A correction (C3): a 45-character host name wraps the section headers — at 80
+#                 columns with no terminal, and in a 30x40 terminal on sudo 1.9.14 and later (T1, T3)
+# The host name `longhost` runs under (45 characters, no dot: sudo prints the name before the first dot).
+LONGHOST=realm-corpus-host-name-forty-five-characters1
 scenarios() {
   local base="main long-target b3 b4 b1a b1b p2-a p2-b"
   case "$1" in
     ubuntu:24.04) echo "$base grp-default grp-nocase grp-bygid plugin plugin-colon runaspw-nosuchuser runaspw-ROOT runaspw-hash0 runaspw-svc norunas" ;;
-    fedora:latest) echo "$base grp-fedora grp-fedora-nogid runaspw-nosuchuser runaspw-ROOT runaspw-hash0 runaspw-svc norunas" ;;
+    fedora:latest) echo "$base grp-fedora grp-fedora-nogid grp-fedora-edited runaspw-nosuchuser runaspw-ROOT runaspw-hash0 runaspw-svc norunas" ;;
     ubuntu:20.04) echo "$base runaspw-nosuchuser runaspw-ROOT runaspw-hash0 runaspw-svc norunas" ;;
     *) echo "$base" ;;
   esac
@@ -46,14 +54,14 @@ scenarios() {
 # The script one container runs: it stages its body in a file and runs it with stdin from /dev/null,
 # so `script` and `su` cannot read the rest of it (L3's Fedora and Rocky lesson).
 container_script() {
-  local image=$1 digest=$2
+  local image=$1 digest=$2 sets=${3:-$(scenarios "$1")} keep=${4:-.}
   cat <<EOF
 cat > /tmp/runjs <<'EOJ'
 // The separation check's spawn (runner.ts): env PATH, plus LC_ALL=C when argv opens with it; stdio
 // ignore/pipe/pipe; no shell. Writes one fixture: its header line, then the call's exit and output.
 var spawn = require('child_process').spawn, fs = require('fs');
 var out = process.argv[2], where = process.argv[3], argv = process.argv.slice(4);
-var notes = { notty80: 'no terminal, 80 columns', pty60: 'a 30x60 terminal', pty200: 'a 50x200 terminal' };
+var notes = { notty80: 'no terminal, 80 columns', pty40: 'a 30x40 terminal', pty60: 'a 30x60 terminal', pty200: 'a 50x200 terminal' };
 var lc = argv[0] === 'LC_ALL=C';
 if (lc) argv = argv.slice(1);
 var env = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
@@ -74,7 +82,8 @@ $(cat "$corpus/sudoers.corpus")
 EOS
 printf '# captured %s · image %s\n' '$date' '$digest' > /tmp/capture-head
 cat > /tmp/main.sh <<'MAINEOF'
-SCENARIOS='$(scenarios "$image")'
+SCENARIOS='$sets'
+KEEP='$keep'
 $(main_body)
 MAINEOF
 sh /tmp/main.sh </dev/null
@@ -110,6 +119,7 @@ spawn() {
   d=$1 n=$2 w=$3; shift 3
   case "$w" in
     notty80) su agent -s /bin/sh -c "$NODE /tmp/run.js /cap/$d/$n.txt $w $*" </dev/null ;;
+    pty40) script -qc "stty rows 30 cols 40; su agent -s /bin/sh --session-command '$NODE /tmp/run.js /cap/$d/$n.txt $w $*'" /dev/null </dev/null >/dev/null ;;
     pty60) script -qc "stty rows 30 cols 60; su agent -s /bin/sh --session-command '$NODE /tmp/run.js /cap/$d/$n.txt $w $*'" /dev/null </dev/null >/dev/null ;;
     pty200) script -qc "stty rows 50 cols 200; su agent -s /bin/sh --session-command '$NODE /tmp/run.js /cap/$d/$n.txt $w $*'" /dev/null </dev/null >/dev/null ;;
   esac
@@ -199,12 +209,31 @@ for s in $SCENARIOS; do
       else line='Defaults passprompt=x\ \"\,\ !authenticate\,\ mailsub\=w\\'; fi
       printf '%s\n' "$line" 'agent ALL=(svc) /usr/bin/true' 'agent ALL=(nobody) NOPASSWD: /usr/bin/true' | rules "$s" || continue
       listing "$s" notty80; lookups "$s"; verdict "$s" verdict.u-svc -n -u svc /usr/bin/true ;;
+    grp-fedora-edited)
+      # the stock line edited in place (a second line reads unknown), restored before the next scenario
+      printf 'SVCGRP:x:2001:svc\nsvcgrp:x:2002:alice\n' >> /etc/group
+      cp -p /etc/sudoers /tmp/sudoers.stock
+      sed -i 's/^Defaults\([[:space:]]*\)match_group_by_gid$/Defaults\1!match_group_by_gid/' /etc/sudoers
+      if grep -q '^Defaults[[:space:]]*!match_group_by_gid$' /etc/sudoers && visudo -c >/dev/null 2>&1 &&
+        echo 'agent ALL=(%svcgrp) NOPASSWD: /usr/bin/true' | rules "$s"; then
+        grab "$s/sudoers" /etc/sudoers
+        listing "$s" notty80; lookups "$s" group:svcgrp group:Svcgrp group:SVCGRP group:2002; verdict "$s" verdict.u-svc -n -u svc /usr/bin/true
+      else say "the stock match_group_by_gid line was not edited"; cp -p /tmp/sudoers.stock /etc/sudoers; exit 1; fi
+      cp -p /tmp/sudoers.stock /etc/sudoers
+      sed -i '/^SVCGRP:/d; /^svcgrp:/d' /etc/group ;;
+    longhost)
+      printf '%s\n' 'Defaults passprompt=lh1' 'Defaults>nobody mailsub=lh2' 'Defaults!/usr/bin/true !authenticate' 'agent ALL=(nobody) NOPASSWD: /usr/bin/false' 'agent ALL=(svc) /usr/bin/true' | rules "$s" || continue
+      # sudo 1.9.14 and later wraps a header to the terminal's width (the walk's F2): a 40-column one too
+      v=$("$SUDO" -V | sed -n '1s/^Sudo version \([0-9.]*\).*/\1/p')
+      if [ "$(printf '%s\n' 1.9.14 "$v" | sort -V | head -1)" = 1.9.14 ]; then listing "$s" notty80 pty40; else listing "$s" notty80; fi
+      lookups "$s"; verdict "$s" verdict.u-svc -n -u svc /usr/bin/true ;;
     grp-*)
       printf 'SVCGRP:x:2001:svc\nsvcgrp:x:2002:alice\n' >> /etc/group
       case "$s" in grp-nocase) def='Defaults !case_insensitive_group' ;; grp-bygid) def='Defaults match_group_by_gid' ;;
         grp-fedora-nogid) def='Defaults !match_group_by_gid' ;; *) def='' ;; esac
       { [ -n "$def" ] && echo "$def"; echo 'agent ALL=(%svcgrp) NOPASSWD: /usr/bin/true'; } | rules "$s" || continue
-      listing "$s" notty80; lookups "$s" group:svcgrp group:Svcgrp group:SVCGRP; verdict "$s" verdict.u-svc -n -u svc /usr/bin/true
+      # 2002, svcgrp's gid: a `%#gid` that holds neither user (the Unit A correction's C2 scope cell)
+      listing "$s" notty80; lookups "$s" group:svcgrp group:Svcgrp group:SVCGRP group:2002; verdict "$s" verdict.u-svc -n -u svc /usr/bin/true
       sed -i '/^SVCGRP:/d; /^svcgrp:/d' /etc/group ;;
     plugin|plugin-colon)
       printf 'plugingrp:*:3001:svc\n' > /etc/sudo-group; chmod 644 /etc/sudo-group
@@ -223,20 +252,27 @@ for s in $SCENARIOS; do
   say "$s done"
 done
 rm -f /etc/sudoers.d/t
-echo '@@CORPUS-BEGIN@@'; (cd /cap && tar cf - .) | base64; echo '@@CORPUS-END@@'
+echo '@@CORPUS-BEGIN@@'; (cd /cap && tar cf - $KEEP) | base64; echo '@@CORPUS-END@@'
 BODY
+}
+
+# one container run: the script for SETS, KEEP's files of it unpacked into the image's folder
+run_one() {
+  local image=$1 digest=$2 name=$3 sets=$4 keep=$5; shift 5
+  out=$(mktemp); err=$(mktemp)
+  container_script "$image" "$digest" "$sets" "$keep" | "$docker" run --rm -i "$@" "$image" sh >"$out" 2>"$err" || true
+  grep '^\[capture\]' "$err" >&2 || true
+  if ! grep -q '^@@CORPUS-END@@' "$out"; then echo "capture-sudo-corpus: $image gave no corpus" >&2; tail -20 "$err" >&2; exit 1; fi
+  sed -n '/^@@CORPUS-BEGIN@@/,/^@@CORPUS-END@@/p' "$out" | sed '1d;$d' | tr -d '\r' | base64 -d | tar -xf - -C "$corpus/$name"
+  rm -f "$out" "$err"
 }
 
 for image in "${images[@]}"; do
   name=$(printf '%s' "$image" | tr ':' '-')
   if ! "$docker" image inspect "$image" >/dev/null 2>&1; then "$docker" pull -q "$image" >/dev/null; fi
   digest=$("$docker" image inspect --format '{{index .RepoDigests 0}}' "$image" | tr -d '\r')
-  out=$(mktemp); err=$(mktemp)
   echo "capture-sudo-corpus: $image ($digest)" >&2
-  container_script "$image" "$digest" | "$docker" run --rm -i "$image" sh >"$out" 2>"$err" || true
-  grep '^\[capture\]' "$err" >&2 || true
-  if ! grep -q '^@@CORPUS-END@@' "$out"; then echo "capture-sudo-corpus: $image gave no corpus" >&2; tail -20 "$err" >&2; exit 1; fi
   rm -rf "${corpus:?}/$name"; mkdir -p "$corpus/$name"
-  sed -n '/^@@CORPUS-BEGIN@@/,/^@@CORPUS-END@@/p' "$out" | sed '1d;$d' | tr -d '\r' | base64 -d | tar -xf - -C "$corpus/$name"
-  rm -f "$out" "$err"
+  run_one "$image" "$digest" "$name" "$(scenarios "$image")" .
+  run_one "$image" "$digest" "$name" longhost ./longhost --hostname "$LONGHOST"
 done

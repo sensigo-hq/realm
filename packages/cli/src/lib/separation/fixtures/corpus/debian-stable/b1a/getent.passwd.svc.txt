@@ -1,4 +1,4 @@
-# captured 2026-10-22 · image debian@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · as the login agent through the check's spawn (no terminal, 80 columns): /usr/bin/getent passwd svc
+# captured 2026-10-23 · image debian@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · as the login agent through the check's spawn (no terminal, 80 columns): /usr/bin/getent passwd svc
 exit 0
 --- stdout
 svc:x:1501:1500::/home/svc:/bin/sh
