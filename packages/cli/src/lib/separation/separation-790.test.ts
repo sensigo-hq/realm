@@ -1276,7 +1276,8 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     store_owned_by_other: true,
     conditions: {
       store_reach: NO,
-      become_service_user: switchPathsCondition(ways, (w) => switchPathEntry(w, 'svc'), 'here'),
+      // #819 Unit B: through the renderer (its dedupe and "as above"), as the check builds it
+      become_service_user: switchPathsReading(ways, 'svc'),
       root_engine: NO,
       trust_root_writable: NO,
       other_answer_host: { basis: 'unknown', cause: 'one look' },
@@ -1417,16 +1418,19 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
   it('P0: a way that reads unknown keeps the stronger sentence back — "may still", condition 2 not measured', async () => {
     const ways = await paths(linux(U25, sudos(U25, 'requiretty', ['sudo.ws'])));
     // (a) red when an unknown way lets the sentence print; (b) prints the sentence.
+    // #819 Unit B re-pin (reversal 2): sudo was read and not settled — was "was not measured"
     expect(separationClaim(evidence(ways))).toBe(
-      "An agent running as agent may still be able to answer a gate: whether it can become Realm's service user without a password was not measured.",
+      "An agent running as agent may still be able to answer a gate: whether it can become Realm's service user without a password is unknown.",
     );
   });
 
   it('01b #2: condition 2\'s line — "measured now", one entry per way, `⟨path⟩: ⟨outcome⟩ (⟨how⟩)`', async () => {
     const ways = await paths(linux(U24, merge(sudos(U24, 'password', ['sudo']), su(U24))));
-    // (a) red when W's words come back ("(measured)", W's detail); (b) prints the line.
+    // (a) red when W's words come back ("(measured)", W's detail); #819 Unit B: when sudo's next
+    //     two entries print its how again, not "as above"; (b) prints the line.
+    // #819 Unit B re-pin: sudo's second and third entries were read as its first was — "; as above)"
     expect(conditionLine('become_service_user', evidence(ways))).toBe(
-      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command).",
+      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out; as above); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw or targetpw cannot be ruled out; as above); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command).",
     );
   });
 
@@ -3420,9 +3424,10 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     claim(
       'The check never switches user, never asks for or tries a password, and never opens a login connection.',
     );
-    // :: "01b #2: condition 2's line".
+    // :: "01b #2: condition 2's line"; #819 Unit B: "as above" — separation-check-627 :: "#819 Unit B:
+    // the words" (3a–3h) and the re-pinned "01b #2: condition 2's line".
     claim(
-      'It reads each way from this login to the user Realm runs as, and prints one entry per way, `way: reading (how it was read)`, measured now:',
+      'It reads each way from this login to the user Realm runs as, and prints one entry per way, `way: reading (how it was read)`, measured now, with `as above` in place of how it was read when an entry was read the same way as the one before it:',
     );
     // :: "01b #13", :: "A §F14: every root-owned system copy is asked …"; W §4: classic sudo's -ll
     // only after -l lists (:: "classic sudo refused …" asks no -ll; the spy).
