@@ -6,7 +6,7 @@
     {
       "GHSA-mrhx-c7xc-m3w5": {
         "active": true,
-        "notes": "ACCEPTED RISK, temporary (owner, 2026-10-24): zod 3.25.76 has no fixed v3 release. Exposure measured: one 1 MiB failing array = 524,288 issues, +160 MB heap, 0.6 s; reachable only by an authenticated caller (the stdio client that started the server, or a holder of REALM_SERVE_TOKEN; realm serve caps bodies at 1 MiB); availability only. Removed when the zod 4 unit (zod >= 4.6.6 plus a size limit on every array schema; issue #324) lands, before the 0.48.0 tag.",
+        "notes": "ACCEPTED RISK, temporary (owner, 2026-10-24; SECURITY.md triage item 4): zod 3.25.76 has no fixed v3 release. Exposure measured on zod 3.25.76: one 1 MiB request whose array elements all fail costs up to ~640 MB of heap and ~3.9 s (execute_step's trace data, a record of unions; a plain string array ~130 MB). Who can send it: the stdio client that started the server; a holder of REALM_SERVE_TOKEN; anyone who can reach a `realm serve --dev` or REALM_DEV=1 server, which needs no token; an MCP server that `realm agent` starts, whose replies are parsed with zod and have no size cap. Availability only; nothing is read. Removed by the zod 4 unit (zod >= 4.6.6, a size limit on every array schema, the SDK's maxToolInputElements; #324) before the 0.48.0 tag; the release checklist refuses a tag while this entry is present.",
         "expiry": "2026-11-07",
       },
     },
