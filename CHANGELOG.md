@@ -41,10 +41,11 @@ All notable changes to this project are documented here.
   `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the
   document goes on, past the closing marks `"` `'` `)` `]` `}` `»` `’` `”`, U+0020 and U+0009, with a
   lowercase letter (`\p{Ll}`) or a digit (`\p{Nd}`) of the Basic Multilingual Plane, and every other
-  state at each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace (`\s`) or the
-  quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the
-  document has no stop and goes on. The handlers reference lists what a crafted quote can still get
-  read as found, and what an honest quote is still refused ("What `check_quotes` does not catch").
+  state at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`,
+  that whitespace (`\s`) or the quote's end follows, unless it ends an abbreviation on the check's
+  list or an initial, where the document has no stop and goes on. The handlers reference lists what
+  a crafted quote can still get read as found, and what an honest quote is still refused ("What
+  `check_quotes` does not catch").
 - **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
   every control character written out. Core exports `controlEscape`, the one spelling of a control
   character a terminal line shows.

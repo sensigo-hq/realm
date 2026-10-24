@@ -2537,9 +2537,11 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
       HANDLERS,
       "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, plain spaces and tabs, goes on with a lowercase letter or a digit (`approx. 412`); any other whitespace there, a `\\p{Ll}` or `\\p{Nd}` character outside the Basic Multilingual Plane, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
     );
+    // the owner's word, 2026-10-24 ("i agree"): a `.` right after `…` is no sentence end inside a
+    // quote — the `…` run takes it (locate-quote.ts, `segmentsWithin`); its row: B1 and M5
     claimOn(
       CL,
-      "A quote that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the document goes on, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, U+0020 and U+0009, with a lowercase letter (`\\p{Ll}`) or a digit (`\\p{Nd}`) of the Basic Multilingual Plane, and every other state at each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace (`\\s`) or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and goes on. The handlers reference lists what a crafted quote can still get read as found, and what an honest quote is still refused (\"What `check_quotes` does not catch\").",
+      "A quote that ends a sentence where the document's goes on is marked `cut_short`, with `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the document goes on, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, U+0020 and U+0009, with a lowercase letter (`\\p{Ll}`) or a digit (`\\p{Nd}`) of the Basic Multilingual Plane, and every other state at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace (`\\s`) or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and goes on. The handlers reference lists what a crafted quote can still get read as found, and what an honest quote is still refused (\"What `check_quotes` does not catch\").",
     );
     const doc = 'The area is not less than approx. 412 square metres.';
     const marked = (q: string) => {
@@ -3912,7 +3914,7 @@ describe("#855's correction: each sentence's members", () => {
       }).toEqual({ 'U.S.': true, 'xA.': true, '2A.': false });
     });
 
-    it('B1 and M5: plain spaces and tabs mark, other whitespace does not; a `\\p{Ll}` or `\\p{Nd}` character outside the BMP leaves the quote unmarked; the dots of `...` do not mark', () => {
+    it('B1 and M5: plain spaces and tabs mark, other whitespace does not; a `\\p{Ll}` or `\\p{Nd}` character outside the BMP leaves the quote unmarked; the dots of `...` and a `.` right after `…` do not mark', () => {
       const marking = [...glossaryCodes('a plain space'), ...glossaryCodes('a tab')];
       const doc = 'THE TENANT SHALL PAY THE RENT AND THE RATES ON THE USUAL QUARTER DAYS.';
       const rows: Row[] = [
@@ -3933,10 +3935,16 @@ describe("#855's correction: each sentence's members", () => {
           'reformatted',
         ],
         ['`...` at the quote’s end', read('The Tenant shall pay the Rent...', doc), 'reformatted'],
+        [
+          'a `.` right after `…`',
+          read('The Tenant shall pay the Rent…. and the rates', doc),
+          'reformatted',
+        ],
       ];
       // (1) red when whitespace other than a plain space or a tab marks the quote, an astral letter or
-      //     digit starts to (then #845's code half has landed), or the dots of `...` mark; (2) prints
-      //     each differing row.
+      //     digit starts to (then #845's code half has landed), or the dots of `...` or a `.` right
+      //     after `…` mark (the `…` run no longer taking the dots after it); (2) prints each differing
+      //     row.
       expect(misses(rows)).toEqual([]);
     });
 
