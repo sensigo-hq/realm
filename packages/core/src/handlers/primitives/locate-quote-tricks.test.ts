@@ -5,16 +5,25 @@
 // pilots; a trick built on purpose and found after correction 3 is filed and fixed in a follow-up,
 // never a merge blocker; and every trick found so far stays here, each asserted, so none can come
 // back. The rows are DERIVED from the reviews' classified files (`plans/issue-760/review/testset-c3/`,
-// by `plans/issue-760/correction-3-ia/derive-testset.mjs`), never typed by hand. Every quote is
-// fictional and runs against the fictional lease (`fixtures/lease-public.txt`), its word-wrapped
-// copies, or a short constructed document held in its row.
+// by `plans/issue-760/correction-3-ia/derive-testset.mjs`), never typed by hand — except, by hand:
+// T2's rows of group `follow-up`, from the inputs of correction 3's review and its follow-up's audit
+// (`plans/issue-760/review/review-818c3-raw.md`, `walk-818c3-raw.md`, `audit-dt-raw.md`), one for
+// each case the docs' "can still read found" list names, and `u034f-inside-a-word`, which pins the gap
+// the docs' `exact` row states (a combining invisible character makes a word edge); and the `why` of
+// nine T2 rows, re-titled: `s3a-J1`, `s3a-J1@70`, `s3a-J2`, `s3a-J2@70`, `subject-to-payment`,
+// `x_neg_squared_not`, `x_strike_not`, `e_sq_no_break` and `feff-inside-a-word`. The script carries
+// both as data, so the fixture stays what it writes (#855's correction). Every quote is fictional
+// and runs against the fictional lease (`fixtures/lease-public.txt`), its word-wrapped copies, or a
+// short constructed document held in its row.
 //
 // - T1: every trick found so far, each `not_found`.
 // - T2: rows pinned at their present state, each with why it reads found — not tricks the check is
 //   meant to refuse; they make a change in that behaviour visible (the docs' "what the check does not
 //   catch" names them).
 // - T3: the walks' attempts refused since be982455, each `not_found` (a regression guard; some fooled
-//   the first build, 8801569d).
+//   the first build, 8801569d). Thirteen of them carry a value or word the lease never says, so no
+//   rule of the check turns them red: they have their own describe, a guard against a future fuzzy
+//   match.
 //
 // What a failing cell prints: the row's id and its state, never a span of the source.
 import { describe, it, expect } from 'vitest';
@@ -124,10 +133,47 @@ describe('the permanent test set, T2: rows pinned at their present state, each w
   }
 });
 
+/** T3's rows that carry a value or word the lease never says (correction 3's review, S1): no rule of
+ *  the check turns them red; only a fuzzy match would turn them red: one character changed turns 6 of
+ *  them red, up to two words changed all 13 (#855's red-first log). */
+const NEVER_SAID = new Set([
+  'd_rent_49k',
+  'd_area_413',
+  'd_regno',
+  'd_expiry',
+  'd_pct_18_6',
+  'd_date_year',
+  'd_words_only',
+  'd_48h',
+  'd_leading_digit',
+  's_shall_be_liable',
+  'c_49k_mid',
+  'x_FICT-0001_to_612',
+  'e_trunc_regno',
+]);
+
 describe('the permanent test set, T3: the walks’ attempts refused since be982455', () => {
-  for (const row of SET.T3) {
+  for (const row of SET.T3.filter((r) => !NEVER_SAID.has(r.id))) {
     it(`T3 ${row.id} → not_found`, () => {
       // (a) red when an attempt refused since be982455 reads found again; (b) prints the state.
+      expect(locateQuote(row.quote, sourceOf(row)).state).toBe('not_found');
+    });
+  }
+});
+
+describe('the permanent test set, T3: values the lease never says: a guard against a future fuzzy match', () => {
+  it('names 13 rows, each one of T3’s', () => {
+    // (a) red when a name here matches no T3 row (a typo would move nothing); (b) prints the names
+    //     that match none.
+    const ids = new Set(SET.T3.map((r) => r.id));
+    expect([...NEVER_SAID].filter((id) => !ids.has(id))).toEqual([]);
+    expect(NEVER_SAID.size).toBe(13);
+  });
+  for (const row of SET.T3.filter((r) => NEVER_SAID.has(r.id))) {
+    it(`T3 ${row.id} → not_found`, () => {
+      // (a) red when a quote whose value the lease never says reads found: only a fuzzy match would
+      //     turn them red (one character changed turns 6 of them red, up to two words changed all
+      //     13; #855's red-first log); (b) prints the state.
       expect(locateQuote(row.quote, sourceOf(row)).state).toBe('not_found');
     });
   }
