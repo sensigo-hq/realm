@@ -42,6 +42,11 @@ surfaces an advisory in a dependency, the order of preference is:
 2. **Merge the Dependabot pull request**, if one exists and resolves the advisory.
 3. **Only if the code is genuinely not affected** — document it (an [OpenVEX](https://openvex.dev/)
    statement plus the `audit-ci` allowlist) and dismiss.
+4. **Only when no patched release exists in the dependency's current major, and only for a short
+   time** — record an accepted risk: one GHSA-scoped `audit-ci` allowlist entry, identical in both
+   tiers, whose notes state the measured exposure and name the change that removes it, with an
+   `expiry` at most two weeks out. The release checklist refuses a tag while such an entry is
+   present.
 
 **We never downgrade a dependency to dodge an advisory.** A downgrade trades a known, documented
 risk for an unreviewed, older set of risks — that is not an acceptable substitution.
@@ -69,4 +74,4 @@ consumer's install will actually resolve.** If you depend on a `@sensigo/*` pack
 Suppressed advisories that are `not_affected` are additionally documented as
 [OpenVEX](https://openvex.dev/) statements under [`security/vex/`](security/vex/) — see
 [`security/vex/GHSA-frvp-7c67-39w9.openvex.json`](security/vex/GHSA-frvp-7c67-39w9.openvex.json)
-for the current example.
+for an example (retired 2026-07-27, when the upstream fix was adopted).

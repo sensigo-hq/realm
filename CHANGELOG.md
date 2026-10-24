@@ -570,6 +570,12 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   loads neither the HTTP client transports nor the OAuth client. Visible in realm: a `tools/call`
   that omits its arguments is now checked as if it sent `{}`, so every tool that takes parameters
   still refuses it, and the refusal names each missing parameter (`Required at run_id`).
+- **`body-parser` 2.3.0 → 2.4.0** (lockfile only; `content-type` 2.1.0, `iconv-lite` 0.7.3 and `qs`
+  6.16.1 move with it) — HIGH
+  [GHSA-27r3-jxmh-p828](https://github.com/advisories/GHSA-27r3-jxmh-p828) / CVE-2026-111181 (CVSS
+  7.5): a compressed request body followed by trailing bytes could deny service. It reaches realm only
+  through the MCP SDK's Express helpers. Exposure: none. None of the SDK modules realm imports loads
+  Express, `body-parser`, `raw-body`, `qs` or `iconv-lite`.
 
 ---
 
