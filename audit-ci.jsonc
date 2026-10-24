@@ -2,5 +2,13 @@
   "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
   "high": true,
   "skip-dev": true,
-  "allowlist": [],
+  "allowlist": [
+    {
+      "GHSA-mrhx-c7xc-m3w5": {
+        "active": true,
+        "notes": "ACCEPTED RISK, temporary (owner, 2026-10-24): zod 3.25.76 has no fixed v3 release. Exposure measured: one 1 MiB failing array = 524,288 issues, +160 MB heap, 0.6 s; reachable only by an authenticated caller (the stdio client that started the server, or a holder of REALM_SERVE_TOKEN; realm serve caps bodies at 1 MiB); availability only. Removed when the zod 4 unit (zod >= 4.6.6 plus a size limit on every array schema; issue #324) lands, before the 0.48.0 tag.",
+        "expiry": "2026-11-07",
+      },
+    },
+  ],
 }
