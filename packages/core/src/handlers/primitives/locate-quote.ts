@@ -143,8 +143,26 @@ const MATH = /^\p{Sm}$/u;
 const MARK = /^\p{M}$/u;
 const WORD_CHAR = /[\p{L}\p{Nd}]/u;
 const LOWERCASE = /^\p{Ll}$/u;
+/** The language unit (§2): a code point that is default-ignorable (CGJ U+034F and the variation
+ *  selectors are such marks). */
+const DEFAULT_IGNORABLE = /^\p{Default_Ignorable_Code_Point}$/u;
+/** §4: a code point whose script extensions hold Arabic or Hebrew — read by property, never a range
+ *  list. */
+const ARABIC_OR_HEBREW = /^[\p{scx=Arabic}\p{scx=Hebrew}]$/u;
 
 const isLetter = (c: string | undefined): boolean => c !== undefined && LETTER.test(c);
+/** A mark (`\p{M}`); none lies below U+0300, so most characters are answered without the regex. */
+const isMark = (c: string | undefined): boolean =>
+  c !== undefined && c.charCodeAt(0) >= 0x300 && MARK.test(c);
+/** §2: a visible mark — a `\p{M}` that is not default-ignorable (an accent, a vowel sign, a tone
+ *  mark; never CGJ or a variation selector). */
+const isVisibleMark = (c: string | undefined): boolean => isMark(c) && !DEFAULT_IGNORABLE.test(c!);
+/** §4: an Arabic or Hebrew mark (`\p{M}` with either script extension: 175 code points on Unicode 17),
+ *  which a quote may leave out when it sits on an Arabic or Hebrew letter. */
+const isOptionalMark = (c: string | undefined): boolean => isMark(c) && ARABIC_OR_HEBREW.test(c!);
+/** §4: an Arabic or Hebrew letter (`\p{L}` with either script extension: 1,227 on Unicode 17, tatweel
+ *  U+0640 among them), the only base on which a mark is optional. */
+const isOptionalBase = (c: string | undefined): boolean => isLetter(c) && ARABIC_OR_HEBREW.test(c!);
 /** A digit for numbers and edges: `\p{Nd}`, and superscripts and fractions (`\p{No}`, A1/A4). */
 const isNum = (c: string | undefined): boolean =>
   c !== undefined && (DIGIT.test(c) || OTHER_NUMBER.test(c));
@@ -200,15 +218,31 @@ interface Canonical {
  * directly before a digit is kept (`-5` ≠ `5`). Each base character is normalised with at most 30
  * combining marks that follow it, so every canonical character maps back to one span of the
  * original, and a long run of marks costs no more than its length.
+ *
+ * The language unit (§2): on the NFKC form and before lower-casing, a visible mark (`isVisibleMark`)
+ * whose base — the nearest earlier character that is not a mark — is a letter is kept, with its
+ * letter: `काम` is not `कम`, and `q́uote` is not `quote`. The base is carried forward in one pass —
+ * the nearest character that is not a mark, asked once, at its first mark, whether it is a letter —
+ * so a run of marks costs no more than its length.
+ * Every other mark is dropped as before (a default-ignorable one, and one on a digit, a sign or
+ * punctuation, unless a digit run keeps it); so is a mark lower-casing adds (`İ` lower-cases to `i` and
+ * U+0307). §1: `from`/`to` hold one entry per UTF-16 code unit of `text`, so every canonical offset is
+ * a code-unit offset, as the search's offsets are.
  */
 function canonicalize(text: string): Canonical {
   const chars: string[] = [];
+  /** §2: the character is a visible mark kept with its letter. */
+  const kept: boolean[] = [];
   const from: number[] = [];
   const to: number[] = [];
+  /** §2: the nearest earlier character that is not a mark, and (asked once, at its first mark)
+   *  whether it is a letter. */
+  let base: string | undefined;
+  let onLetter: boolean | undefined;
   let i = 0;
   while (i < text.length) {
-    const base = String.fromCodePoint(text.codePointAt(i)!);
-    let j = i + base.length;
+    const first = String.fromCodePoint(text.codePointAt(i)!);
+    let j = i + first.length;
     let marks = 0;
     while (
       j < text.length &&
@@ -220,17 +254,31 @@ function canonicalize(text: string): Canonical {
     }
     const unit = text.slice(i, j);
     const normal =
-      OTHER_NUMBER.test(base) || UNFOLDED_PRIMES.has(base) ? unit : unit.normalize('NFKC');
-    for (const ch of normal.toLowerCase()) {
-      chars.push(isDash(ch) ? '-' : ch);
-      from.push(i);
-      to.push(j);
+      OTHER_NUMBER.test(first) || UNFOLDED_PRIMES.has(first) ? unit : unit.normalize('NFKC');
+    for (const c of normal) {
+      if (isMark(c)) {
+        onLetter ??= isLetter(base);
+        chars.push(c);
+        kept.push(onLetter && isVisibleMark(c));
+        from.push(i);
+        to.push(j);
+        continue;
+      }
+      base = c;
+      onLetter = undefined;
+      // lower-cased one code point at a time: a mark that lower-casing adds is not kept
+      for (const ch of c.toLowerCase()) {
+        chars.push(isDash(ch) ? '-' : ch);
+        kept.push(false);
+        from.push(i);
+        to.push(j);
+      }
     }
     i = j;
   }
 
-  const kind: Array<'keep' | 'space' | 'drop'> = chars.map((c) =>
-    isAlnum(c) || isNumberSymbol(c) ? 'keep' : SPACE.test(c) ? 'space' : 'drop',
+  const kind: Array<'keep' | 'space' | 'drop'> = chars.map((c, k) =>
+    isAlnum(c) || isNumberSymbol(c) || kept[k] ? 'keep' : SPACE.test(c) ? 'space' : 'drop',
   );
   // (i) a run of non-letter, non-digit characters between two digits is kept as itself.
   for (let k = 0; k < chars.length;) {
@@ -275,8 +323,11 @@ function canonicalize(text: string): Canonical {
     }
     pendingSpace = -1;
     out += chars[k];
-    outFrom.push(from[k]!);
-    outTo.push(to[k]!);
+    // §1: one entry per code unit of the character (two for one outside the BMP)
+    for (let u = 0; u < chars[k]!.length; u++) {
+      outFrom.push(from[k]!);
+      outTo.push(to[k]!);
+    }
   }
   return { text: out, from: outFrom, to: outTo };
 }
@@ -287,8 +338,141 @@ export function canonicalForm(text: string): string {
   return canonicalize(text).text;
 }
 
+/** The canonical text with its map back to the original, one entry per code unit (the language
+ *  unit's §1 cells; not part of core's exports). */
+export function canonicalMap(text: string): {
+  readonly text: string;
+  readonly from: readonly number[];
+  readonly to: readonly number[];
+} {
+  return canonicalize(text);
+}
+
+// ─── The language unit (§4): an Arabic or Hebrew vowel mark a quote leaves out is optional ─────
+
+/** §4: the optional marks a text carries, per letter — the offset of the letter's first code unit in
+ *  its `Bare` text → the marks on it. */
+type Marks = ReadonlyMap<number, string>;
+const NO_MARKS: Marks = new Map();
+const HAS_MARK = /\p{M}/u;
+
+/** §4: a canonical text with its optional marks left out — an Arabic or Hebrew mark
+ *  (`isOptionalMark`) whose base is an Arabic or Hebrew letter (`isOptionalBase`) — with its map back
+ *  to the original (`from`/`to`, per code unit), the offset in the full canonical text of each of its
+ *  code units (`at`, one past the end too), the full text itself, and the marks left out, per letter.
+ *  One pass over the code units, the base carried forward, so an astral character before a vowelled
+ *  word shifts nothing and a run of marks costs its length. */
+interface Bare extends Canonical {
+  readonly at: readonly number[];
+  readonly full: string;
+  readonly marks: Marks;
+}
+function bareOf(canonical: Canonical): Bare {
+  const full = canonical.text;
+  // a text with no mark at all has none to leave out
+  if (!HAS_MARK.test(full)) {
+    return {
+      ...canonical,
+      at: Array.from({ length: full.length + 1 }, (_, k) => k),
+      full,
+      marks: NO_MARKS,
+    };
+  }
+  let text = '';
+  const from: number[] = [];
+  const to: number[] = [];
+  const at: number[] = [];
+  const marks = new Map<number, string>();
+  /** The bare offset of the nearest earlier character that is not a mark, when it is an Arabic or
+   *  Hebrew letter; -1 otherwise. */
+  let base = -1;
+  for (let i = 0; i < full.length;) {
+    const c = cpAt(full, i)!;
+    if (base >= 0 && isOptionalMark(c)) {
+      marks.set(base, (marks.get(base) ?? '') + c);
+    } else {
+      if (!isMark(c)) base = isOptionalBase(c) ? text.length : -1;
+      text += c;
+      for (let u = 0; u < c.length; u++) {
+        from.push(canonical.from[i + u]!);
+        to.push(canonical.to[i + u]!);
+        at.push(i + u);
+      }
+    }
+    i += c.length;
+  }
+  at.push(full.length);
+  return { text, from, to, at, full, marks };
+}
+
+/** §4, per letter: every optional mark `marks` puts on a letter of a match at `at` of `source`'s bare
+ *  text is on that letter in the source's full text — which may carry more. */
+function marksHold(source: Bare, at: number, marks: Marks): boolean {
+  if (marks.size === 0) return true;
+  for (const [k, wanted] of marks) {
+    const f = source.at[at + k]!;
+    let q = f + cpAt(source.full, f)!.length;
+    let carried = '';
+    for (let c = cpAt(source.full, q); isMark(c); c = cpAt(source.full, q)) {
+      carried += c;
+      q += c!.length;
+    }
+    for (const m of wanted) if (!carried.includes(m)) return false;
+  }
+  return true;
+}
+
 function codePointLength(text: string, at: number): number {
   return text.codePointAt(at)! > 0xffff ? 2 : 1;
+}
+
+// ─── The language unit (§3): neighbours read by code point, past marks ──────────────────────────
+
+/** The code point that ends at `i` (a whole surrogate pair), or `undefined` at the start. */
+function cpBefore(s: string, i: number): string | undefined {
+  if (i <= 0) return undefined;
+  const low = s.charCodeAt(i - 1);
+  if (low >= 0xdc00 && low <= 0xdfff && i >= 2) {
+    const high = s.charCodeAt(i - 2);
+    if (high >= 0xd800 && high <= 0xdbff) return s.slice(i - 2, i);
+  }
+  return s[i - 1];
+}
+
+/** The code point that starts at `i`, or `undefined` at the end. */
+function cpAt(s: string, i: number): string | undefined {
+  if (i >= s.length) return undefined;
+  const c = s.charCodeAt(i);
+  return c >= 0xd800 && c <= 0xdbff ? String.fromCodePoint(s.codePointAt(i)!) : s[i];
+}
+
+/** From `i` back past every mark (`\p{M}`, visible or not), to just after the base character. */
+function pastMarks(s: string, i: number): number {
+  let k = i;
+  for (let c = cpBefore(s, k); isMark(c); c = cpBefore(s, k)) k -= c!.length;
+  return k;
+}
+
+/** From `i` forward past every mark (`\p{M}`, visible or not). */
+function pastMarksAfter(s: string, i: number): number {
+  let k = i;
+  for (let c = cpAt(s, k); isMark(c); c = cpAt(s, k)) k += c!.length;
+  return k;
+}
+
+/** UAX #29 GB9: whether a visible mark stands at `i`, past default-ignorable code points — a span
+ *  starting or ending there would split a letter from its mark. */
+function visibleMarkAt(s: string, i: number): boolean {
+  let k = i;
+  // no default-ignorable code point lies below U+00AD
+  for (
+    let c = cpAt(s, k);
+    c !== undefined && c.charCodeAt(0) >= 0xad && DEFAULT_IGNORABLE.test(c);
+    c = cpAt(s, k)
+  ) {
+    k += c.length;
+  }
+  return isVisibleMark(cpAt(s, k));
 }
 
 /** The source as the literal layer's edge rule reads it: each dash or hyphen (N4's `isDash`) as
@@ -329,12 +513,14 @@ function literalView(text: string): LiteralView {
 let lastSource: string | undefined;
 let lastPrepared: Prepared | undefined;
 interface Prepared {
-  readonly canonical: Canonical;
+  /** §4: the canonical form with its optional marks left out — what the canonical layer searches —
+   *  cached beside the full form it reads them from. */
+  readonly canonical: Bare;
   readonly view: LiteralView;
 }
 function prepared(source: string): Prepared {
   if (lastSource !== source || lastPrepared === undefined) {
-    lastPrepared = { canonical: canonicalize(source), view: literalView(source) };
+    lastPrepared = { canonical: bareOf(canonicalize(source)), view: literalView(source) };
     lastSource = source;
   }
   return lastPrepared;
@@ -368,8 +554,11 @@ function numberEdgesHold(hay: string, at: number, needle: string): boolean {
 
 function leftNumberEdgeHolds(hay: string, at: number, needle: string): boolean {
   const first = needle[0];
-  const b1 = at > 0 ? hay[at - 1] : undefined;
-  const b2 = at > 1 ? hay[at - 2] : undefined;
+  // the language unit (§3, UAX #29 WB4): the characters before read by code point, each past its
+  // marks (the needle's own reads stay code-unit until #845's R-A2)
+  const p1 = pastMarks(hay, at);
+  const b1 = cpBefore(hay, p1);
+  const b2 = b1 === undefined ? undefined : cpBefore(hay, pastMarks(hay, p1 - b1.length));
   if (isNum(first)) {
     if (isAlnum(b1)) return false;
     if (isJoiner(b1) && isNum(b2)) return false;
@@ -400,8 +589,11 @@ function leftNumberEdgeHolds(hay: string, at: number, needle: string): boolean {
 function rightNumberEdgeHolds(hay: string, at: number, needle: string): boolean {
   const last = needle[needle.length - 1];
   const end = at + needle.length;
-  const a1 = hay[end];
-  const a2 = hay[end + 1];
+  // the language unit (§3): the characters after read by code point, past marks (the needle's last
+  // character stays as today until #845's R-A2)
+  const q1 = pastMarksAfter(hay, end);
+  const a1 = cpAt(hay, q1);
+  const a2 = a1 === undefined ? undefined : cpAt(hay, pastMarksAfter(hay, q1 + a1.length));
   if (isNum(last)) {
     if (isAlnum(a1)) return false;
     if (isJoiner(a1) && isNum(a2)) return false;
@@ -436,11 +628,17 @@ const isWordHyphen = (c: string | undefined): boolean => c !== undefined && WORD
 /** A2, N6: a match starts and ends at a word edge — never with a letter or digit on both sides of the
  *  boundary (`whole o|r`; a "not" cut out of "notify"; `can|t`; `in|solvent`), and never right after
  *  or before a hyphen between two letters (`non-|refundable`). Pieces read the canonical source; the
- *  literal layer reads the raw one. */
+ *  literal layer reads the raw one. The language unit (§3): a match never starts on a visible mark
+ *  nor ends right before one (UAX #29 GB9, past default-ignorable code points: `ไม` is not cut from
+ *  `ไม้`); and each side is read by code point, past every mark to its base character (UAX #29 WB4),
+ *  the needle's first and last characters past their own marks (`ताब` is not cut from `किताब`). */
 function wordEdgesHold(hay: string, at: number, needle: string): boolean {
   const end = at + needle.length;
-  if (at > 0 && isAlnum(hay[at - 1]) && isAlnum(needle[0])) return false;
-  if (end < hay.length && isAlnum(hay[end]) && isAlnum(needle[needle.length - 1])) return false;
+  if (visibleMarkAt(hay, at) || visibleMarkAt(hay, end)) return false;
+  const first = cpAt(needle, pastMarksAfter(needle, 0));
+  if (isAlnum(cpBefore(hay, pastMarks(hay, at))) && isAlnum(first)) return false;
+  const last = cpBefore(needle, pastMarks(needle, needle.length));
+  if (isAlnum(cpAt(hay, pastMarksAfter(hay, end))) && isAlnum(last)) return false;
   if (isLetter(needle[0]) && isWordHyphen(hay[at - 1]) && isLetter(hay[at - 2])) return false;
   if (isLetter(needle[needle.length - 1]) && isWordHyphen(hay[end]) && isLetter(hay[end + 1])) {
     return false;
@@ -450,8 +648,8 @@ function wordEdgesHold(hay: string, at: number, needle: string): boolean {
 
 /** The first occurrence at or after `fromIndex` whose number edges hold — read from `edgeHay` and
  *  `edgeNeedle` (the dash-mapped source and quote, for the literal layer; the same offsets) — and,
- *  when `words` is set, whose word edges hold in `hay` itself (N6: the literal and canonical layers);
- *  or -1. */
+ *  when `words` is set, whose word edges hold in `hay` itself (N6: the literal and canonical layers),
+ *  and which `accept` takes (§4: the canonical layer's optional marks, per letter); or -1. */
 function findWithEdges(
   budget: Budget,
   hay: string,
@@ -460,12 +658,17 @@ function findWithEdges(
   edgeHay: string = hay,
   edgeNeedle: string = needle,
   words = false,
+  accept: (at: number) => boolean = () => true,
 ): number {
   if (needle === '') return -1;
   let at = budget.indexOf(hay, needle, fromIndex);
   while (
     at >= 0 &&
-    !(numberEdgesHold(edgeHay, at, edgeNeedle) && (!words || wordEdgesHold(hay, at, needle)))
+    !(
+      numberEdgesHold(edgeHay, at, edgeNeedle) &&
+      (!words || wordEdgesHold(hay, at, needle)) &&
+      accept(at)
+    )
   ) {
     at = budget.indexOf(hay, needle, at + 1);
   }
@@ -508,12 +711,15 @@ function findLiteral(budget: Budget, source: string, quote: string, view: Litera
   return at;
 }
 
-/** Non-overlapping occurrences whose number and word edges hold (N6). */
-function countWithEdges(budget: Budget, hay: string, needle: string): number {
+/** Non-overlapping occurrences whose number and word edges hold (N6), and whose optional marks hold
+ *  (§4: the quote's own). */
+function countWithEdges(budget: Budget, source: Bare, needle: string, marks: Marks): number {
+  const accept = (at: number): boolean => marksHold(source, at, marks);
+  const hay = source.text;
   let count = 0;
-  for (let at = findWithEdges(budget, hay, needle, 0, hay, needle, true); at >= 0;) {
+  for (let at = findWithEdges(budget, hay, needle, 0, hay, needle, true, accept); at >= 0;) {
     count++;
-    at = findWithEdges(budget, hay, needle, at + needle.length, hay, needle, true);
+    at = findWithEdges(budget, hay, needle, at + needle.length, hay, needle, true, accept);
   }
   return count;
 }
@@ -525,11 +731,13 @@ function spanOf(canonical: Canonical, at: number, length: number): QuoteSpan {
 // ─── Part S: the quote's breaks and its pieces ──────────────────────────────────────────────────
 
 /** One piece of a quote between two breaks (Part S): its raw offsets in the quote, its canonical
- *  text with the map back, and whether the break after it ends a sentence (L2). */
+ *  text with the map back — its optional marks left out (§4) — the marks it carries (§4: each piece
+ *  its own, never looked up by its text), and whether the break after it ends a sentence (L2). */
 interface Segment {
   readonly start: number;
   readonly end: number;
   readonly canonical: Canonical;
+  readonly marks: Marks;
   readonly endsSentence: boolean;
 }
 
@@ -565,7 +773,7 @@ function segmentsWithin(quote: string): Segment[] {
   const segments: Segment[] = [];
   let start = 0;
   const close = (end: number, endsSentence: boolean): void => {
-    const canonical = canonicalize(quote.slice(start, end));
+    const canonical = bareOf(canonicalize(quote.slice(start, end)));
     if (WORD_CHAR.test(canonical.text)) {
       segments.push({
         start,
@@ -575,6 +783,7 @@ function segmentsWithin(quote: string): Segment[] {
           from: canonical.from.map((o) => o + start),
           to: canonical.to.map((o) => o + start),
         },
+        marks: canonical.marks,
         endsSentence,
       });
     }
@@ -620,13 +829,17 @@ interface Part {
   readonly pieces: readonly Placed[];
 }
 
-/** Whether a piece fits at `at` of the canonical source: found there, at word and number edges. */
-function fitsAt(budget: Budget, hay: string, piece: string, at: number): boolean {
+/** Whether a piece fits at `at` of the canonical source: found there, at word and number edges, its
+ *  optional marks on the source's letters (§4). */
+function fitsAt(budget: Budget, source: Bare, piece: Segment, at: number): boolean {
+  const hay = source.text;
+  const text = piece.canonical.text;
   return (
     at >= 0 &&
-    budget.startsWith(hay, piece, at) &&
-    wordEdgesHold(hay, at, piece) &&
-    numberEdgesHold(hay, at, piece)
+    budget.startsWith(hay, text, at) &&
+    wordEdgesHold(hay, at, text) &&
+    numberEdgesHold(hay, at, text) &&
+    marksHold(source, at, piece.marks)
   );
 }
 
@@ -634,20 +847,21 @@ function fitsAt(budget: Budget, hay: string, piece: string, at: number): boolean
  *  space after it) join it into one part (Part S, rule 3). */
 function extend(
   budget: Budget,
-  hay: string,
+  source: Bare,
   segments: readonly Segment[],
   first: number,
   at: number,
 ): Part {
+  const hay = source.text;
   const pieces: Placed[] = [{ at, length: segments[first]!.canonical.text.length }];
   let end = at + segments[first]!.canonical.text.length;
   let last = first;
   for (let k = first + 1; k < segments.length; k++) {
-    const piece = segments[k]!.canonical.text;
+    const piece = segments[k]!;
     const next = hay[end] === ' ' ? end + 1 : end;
-    if (!fitsAt(budget, hay, piece, next)) break;
-    pieces.push({ at: next, length: piece.length });
-    end = next + piece.length;
+    if (!fitsAt(budget, source, piece, next)) break;
+    pieces.push({ at: next, length: piece.canonical.text.length });
+    end = next + piece.canonical.text.length;
     last = k;
   }
   return { first, last, at, end, pieces };
@@ -831,11 +1045,12 @@ function partStartHolds(source: string, start: number): boolean {
  *  `undefined` when a piece is found nowhere it may be. */
 function placeParts(
   budget: Budget,
-  hay: string,
+  source: Bare,
   segments: readonly Segment[],
   inOrder: boolean,
   startHolds: (at: number) => boolean,
 ): Part[] | undefined {
+  const hay = source.text;
   const parts: Part[] = [];
   let after = 0;
   for (let k = 0; k < segments.length;) {
@@ -845,9 +1060,10 @@ function placeParts(
       if (
         wordEdgesHold(hay, at, piece) &&
         numberEdgesHold(hay, at, piece) &&
+        marksHold(source, at, segments[k]!.marks) &&
         (k === 0 || startHolds(at))
       ) {
-        const part = extend(budget, hay, segments, k, at);
+        const part = extend(budget, source, segments, k, at);
         if (best === undefined || part.last > best.last) best = part;
         if (part.last === segments.length - 1) break;
       }
@@ -1048,7 +1264,9 @@ export function locateQuote(
   const budget = new Budget(QUOTE_SEARCH_BUDGET);
   const tiles: Tile[] = [];
   try {
-    return ladder(quote, quoteCanonical, source, canonical, view, budget, minPartChars, tiles);
+    // §4: the quote's canonical form with its optional marks left out, and the marks it carries
+    const quoteBare = bareOf(quoteCanonical);
+    return ladder(quote, quoteBare, source, canonical, view, budget, minPartChars, tiles);
   } catch (err) {
     if (err !== OUT_OF_BUDGET) throw err;
     const nearest = nearestOf(tiles, canonical);
@@ -1056,11 +1274,14 @@ export function locateQuote(
   }
 }
 
+/** The ladder. The canonical layer reads both texts with their optional marks left out (§4), and a
+ *  match holds only where every optional mark the quote (or the piece) carries is on the source's
+ *  letter; the literal layer reads the texts as written. */
 function ladder(
   quote: string,
-  quoteCanonical: Canonical,
+  quoteCanonical: Bare,
   source: string,
-  canonical: Canonical,
+  canonical: Bare,
   view: LiteralView,
   budget: Budget,
   minPartChars: number,
@@ -1072,7 +1293,10 @@ function ladder(
   const literal = findLiteral(budget, source, quote, view);
   if (literal >= 0) {
     // The whole quote occurs at least once (the literal match), whatever the canonical count says.
-    const occurrences = Math.max(1, countWithEdges(budget, canonical.text, canonicalQuote));
+    const occurrences = Math.max(
+      1,
+      countWithEdges(budget, canonical, canonicalQuote, quoteCanonical.marks),
+    );
     const end = literal + quote.length;
     // N7: the source has the quote's own closing `.` `!` `?`, so L2's test reads the character after.
     const last = quote[quote.length - 1];
@@ -1094,6 +1318,7 @@ function ladder(
     canonical.text,
     canonicalQuote,
     true,
+    (at) => marksHold(canonical, at, quoteCanonical.marks),
   );
   if (whole >= 0) {
     const span = trimmed(
@@ -1114,19 +1339,18 @@ function ladder(
     return {
       state: 'reformatted',
       parts: [span],
-      occurrences: countWithEdges(budget, canonical.text, canonicalQuote),
+      occurrences: countWithEdges(budget, canonical, canonicalQuote, quoteCanonical.marks),
       ...cutShort(cut),
     };
   }
 
   if (segments.length > 1) {
-    const hay = canonical.text;
     const startHolds = (at: number): boolean => partStartHolds(source, canonical.from[at]!);
-    const inOrder = placeParts(budget, hay, segments, true, startHolds);
+    const inOrder = placeParts(budget, canonical, segments, true, startHolds);
     const parts =
       inOrder !== undefined && inOrder.every((p) => p.end - p.at >= minPartChars)
         ? inOrder
-        : placeParts(budget, hay, segments, false, startHolds);
+        : placeParts(budget, canonical, segments, false, startHolds);
     if (parts !== undefined && parts.every((p) => p.end - p.at >= minPartChars)) {
       const ordered = parts.every((p, i) => i === 0 || p.at >= parts[i - 1]!.end);
       const spans = parts.map((p) => {

@@ -1760,9 +1760,12 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
     );
     // Correction 2 (03): the exact row's edges, run below (`exactMidWord`); correction 3 (03, D2):
     // the invisible character, run below (`exactInvisible`); the follow-up (§1): a format character
-    // (`Cf`) only, the combining ones run by its own cell.
+    // (`Cf`) only, the combining ones run by its own cell. The language unit re-pin (§5.1): a combining
+    // mark makes no word edge either, and a quote never splits a letter from its visible mark — run
+    // by locate-quote-language-0480.test.ts's §3 cells (Thai `ไม` in `ไม้`, the 263-mark sweep, the
+    // `the Tenant` control).
     expect(stateRow('exact')).toBe(
-      'The quote is in the document character for character, and starts and ends at word and number edges; an invisible format character (`Cf`) inside a word, such as a soft hyphen or a zero-width space, does not make a word edge (U+FEFF excepted: the canonical form reads it as a space); some other invisible characters, the combining ones (U+034F, a variation selector), still do.',
+      'The quote is in the document character for character, and starts and ends at word and number edges; an invisible format character (`Cf`) inside a word, such as a soft hyphen or a zero-width space, does not make a word edge (U+FEFF excepted: the canonical form reads it as a space), and neither does a combining mark, visible or not (an accent, U+034F, a variation selector); the quote never starts or ends between a letter and a visible mark on it.',
     );
     // Correction 2 (03): the kept list, its `±` and `☒` members run below.
     expect(stateRow('reformatted')).toContain(
@@ -1960,9 +1963,11 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       HANDLERS,
       '5. `not_found`: otherwise, with `nearest` when a piece of the quote holding a whole word is in `source`; it is absent when no whole word of the quote is found.',
     );
+    // The language unit re-pin (§5.3): a letter keeps its visible marks; the Arabic and Hebrew vowel
+    // marks a quote leaves out — run by locate-quote-language-0480.test.ts's §2 and §4 cells.
     claimOn(
       HANDLERS,
-      "with every dash and hyphen read as `-` (two hyphens outside the Basic Multilingual Plane excepted; a soft hyphen is not a dash: it is invisible, and makes no word edge), every punctuation mark and quotation mark dropped and spaces collapsed, keeping letters, digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits. A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands.",
+      "with every dash and hyphen read as `-` (two hyphens outside the Basic Multilingual Plane excepted; a soft hyphen is not a dash: it is invisible, and makes no word edge), every punctuation mark and quotation mark dropped and spaces collapsed, keeping letters with their visible combining marks (a mark is part of its letter, so a quote must carry it; an Arabic or Hebrew vowel mark a quote leaves out is optional, and one it writes must match), digits, `%`, `‰`, `°`, `‱`, currency signs, every mathematical sign (`<` `>` `≤` `≥` `+` `=` `±` …), primes (`′` `″`), ballot boxes and check marks (`☐` `☒` `✓` `✗`), superscripts and fractions (never folded into digits), a `-` directly before a digit, a `.` or `,` directly before a digit that follows no letter or digit, and the separators between two digits. A number written in digits is one unit: a digit never matches inside a longer number of `source`, or next to its letters, and a quote never starts or ends on a number's separator or beside a group of thousands.",
     );
     // (a) red when a mid-word quote or piece is found, a skip lands mid-sentence, a quote with no
     //     break stitches, a sign, a superscript, a dash or a leading decimal is folded, or a number
@@ -2109,8 +2114,10 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       'A true quote that stops before its sentence ends is found. It is marked `cut_short` only at a `.`, `!` or `?` the quote itself carries.',
       "An abbreviation that is not on the check's list (`e.g.`, `i.e.`, `etc.`, `No.`, `Nos.`, `cl.`, `para.`, `Sch.`, `Ltd.`, `Co.`, `Inc.`, `St.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, and an initial), before a capital letter or an opening mark, is read as a sentence end (`a.m. Monday`, `excl. VAT`, `U.S. The`, `U.K. The`, `U.S.A. The`, `U.S. (the`): a skip may land there.",
       'A grouped amount written with a letter prefix (`500 euro` in `EUR2 500 euro`), and a middle-dot decimal (`·5`).',
-      // The follow-up (§2): which enclosed letters read as letters, run by its own cell.
-      'Combining marks read as the letters they carry (`n̶o̶t̶` reads `not`), and so do circled, squared and parenthesised letters (`ⓃⓄⓉ` reads `not`). Negative squared and negative circled letters (`🅽🅾🆃`, `🅝🅞🅣`) and regional indicators are set aside like other symbols, so a quote reads found whether it carries them or leaves them out.',
+      // The follow-up (§2): which enclosed letters read as letters, run by its own cell. The language
+      // unit re-pin (§5.2): a mark on a letter stays with it, so the bullet keeps marks on digits and
+      // signs only (#845's 2.1 drops them).
+      'A combining mark on a digit or a sign is set aside (`5 degrees` reads found in `-́5 degrees`), and circled, squared and parenthesised letters read as letters (`ⓃⓄⓉ` reads `not`). Negative squared and negative circled letters (`🅽🅾🆃`, `🅝🅞🅣`) and regional indicators are set aside like other symbols, so a quote reads found whether it carries them or leaves them out.',
       'Symbols other than the kept ones (bullets, emoji) are set aside.',
       'A quote that starts or ends at a U+FEFF inside a word reads `reformatted` (`lawful use` in `un`, U+FEFF, `lawful use`), since the canonical form reads it as a space.',
     ])
@@ -2147,7 +2154,8 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
         state('is 5 percent higher', 'the rent is ·5 percent higher'),
       ],
       marks: [
-        state('The Tenant shall n̶o̶t̶ pay the Rent', 'The Tenant shall not pay the Rent late.'),
+        // the language unit re-pin: the bullet's own example (was `n̶o̶t̶`, which reads not_found now)
+        state('5 degrees', 'The reading is -́5 degrees today.'),
         state(
           'The Landlord shall 🅽🅾🆃 insure the Building',
           'The Landlord shall insure the Building.',
@@ -2284,18 +2292,23 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
     `${F} for its full reinstatement cost${join}${second} at the end of each year.`,
   ];
 
-  it('§1 the exact row: a format character (`Cf`) inside a word makes no word edge; a combining one (U+034F, a variation selector) still does', () => {
+  it('§1 the exact row: a format character (`Cf`) inside a word makes no word edge, and neither does a combining one (U+034F, a variation selector)', () => {
+    // The language unit re-pin (§5.1): the read before a match steps past every mark (§3).
     expect(stateRow('exact')).toContain(
-      'an invisible format character (`Cf`) inside a word, such as a soft hyphen or a zero-width space, does not make a word edge (U+FEFF excepted: the canonical form reads it as a space); some other invisible characters, the combining ones (U+034F, a variation selector), still do.',
+      'an invisible format character (`Cf`) inside a word, such as a soft hyphen or a zero-width space, does not make a word edge (U+FEFF excepted: the canonical form reads it as a space), and neither does a combining mark, visible or not (an accent, U+034F, a variation selector); the quote never starts or ends between a letter and a visible mark on it.',
     );
     const inside = (code: number) =>
       state(
         'lawful use of the Premises',
         `The Tenant shall not permit any un${ch(code)}lawful use of the Premises.`,
       );
-    // (a) red when a soft hyphen makes an edge, or the stated gap closes (a combining invisible
-    //     no longer makes one: then the row's last clause is false); (b) prints the three states.
-    expect([inside(0xad), inside(0x034f), inside(0xfe0f)]).toEqual(['not_found', 'exact', 'exact']);
+    // (a) red when a soft hyphen, U+034F or a variation selector makes an edge again (the read before
+    //     a match no longer stepping past marks); (b) prints the three states.
+    expect([inside(0xad), inside(0x034f), inside(0xfe0f)]).toEqual([
+      'not_found',
+      'not_found',
+      'not_found',
+    ]);
   });
 
   it('§1 the capital condition: an opening mark (`"` `“` `„` `«` `\'` `‘` `(` `[`), or right after one in the document; a list item may open with any word; `2. Send…` passes', () => {
@@ -2477,9 +2490,10 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   });
 
   it('§2 the enclosed letters: circled, squared and parenthesised read as letters; negative squared and circled letters and regional indicators are set aside', () => {
+    // The language unit re-pin (§5.2): the sentence's first clause names marks on digits and signs.
     claimOn(
       HANDLERS,
-      'Combining marks read as the letters they carry (`n̶o̶t̶` reads `not`), and so do circled, squared and parenthesised letters (`ⓃⓄⓉ` reads `not`). Negative squared and negative circled letters (`🅽🅾🆃`, `🅝🅞🅣`) and regional indicators are set aside like other symbols, so a quote reads found whether it carries them or leaves them out.',
+      'A combining mark on a digit or a sign is set aside (`5 degrees` reads found in `-́5 degrees`), and circled, squared and parenthesised letters read as letters (`ⓃⓄⓉ` reads `not`). Negative squared and negative circled letters (`🅽🅾🆃`, `🅝🅞🅣`) and regional indicators are set aside like other symbols, so a quote reads found whether it carries them or leaves them out.',
     );
     const without = `${F}.`;
     const kinds = {
@@ -3131,7 +3145,12 @@ describe("#855's correction: each sentence's members", () => {
     }).toEqual({ named: [], misses: [] });
   });
 
-  it('S3 a sign or a dash written right before a number belongs to it: every BMP `Sc` and `Sm` and every dash `isDash` reads, before `5`; a dash after `5` does not; a sign outside the BMP does not', () => {
+  it('S3 a sign or a dash written right before a number belongs to it: every BMP `Sc` and `Sm` and every dash `isDash` reads, before `5`; a dash after `5` does not; a sign outside the BMP does too, a hyphen outside it does not', () => {
+    // The language unit re-pin (§5.4): the sentence names the two astral hyphens only.
+    claimOn(
+      HANDLERS,
+      'A hyphen outside the Basic Multilingual Plane (U+10D6E, U+10EAD) does not belong to its number: `5` is found after it.',
+    );
     whole(SIGNS, /^[\p{Sc}\p{Sm}]$/u, 0, BMP);
     const astral = codePoints(/^[\p{Sc}\p{Sm}\p{Pd}]$/u, 0x10000);
     whole(astral, /^[\p{Sc}\p{Sm}\p{Pd}]$/u, 0x10000);
@@ -3145,8 +3164,13 @@ describe("#855's correction: each sentence's members", () => {
         read('reads 5', `The gauge reads 5${ch(d)} today.`),
         'exact',
       ]),
-      // `isNumberSymbol` reads one UTF-16 unit, so a sign outside the BMP is not a sign (#845).
-      ...astral.map((s): Row => [`${hex(s)} before 5`, before5(ch(s)), 'exact']),
+      // the language unit (§3): the character before a match is read by code point, so a sign outside
+      // the BMP is a sign; its two hyphens (U+10D6E, U+10EAD) are no number symbols and stay `exact`
+      ...astral.map((s): Row => [
+        `${hex(s)} before 5`,
+        before5(ch(s)),
+        /^\p{Pd}$/u.test(ch(s)) ? 'exact' : 'not_found',
+      ]),
     ];
     // (1) red when a member is left out of an iteration, currency signs leave `isNumberSymbol` (every
     //     `Sc` row), a dash after the number starts to bind, or a sign outside the BMP starts to;
@@ -3645,7 +3669,7 @@ describe("#855's correction: each sentence's members", () => {
     expect(misses(rows)).toEqual([]);
   });
 
-  it('§5 the exact row and T2 `u034f-inside-a-word`: every `Cf` (U+FEFF excepted) and the Hangul fillers make no word edge; every combining mark (`\\p{M}`, every plane, U+034F and the variation selectors among them) does', () => {
+  it('§5 the exact row and T2 `u034f-inside-a-word`: every `Cf` (U+FEFF excepted), the Hangul fillers and every combining mark (`\\p{M}`, every plane, U+034F and the variation selectors among them) make no word edge', () => {
     const marks = codePoints(/^\p{M}$/u);
     whole(CF, /^\p{Cf}$/u);
     whole(marks, /^\p{M}$/u);
@@ -3658,11 +3682,12 @@ describe("#855's correction: each sentence's members", () => {
       ...CF.map((c): Row => [hex(c), inside(c), c === 0xfeff ? 'reformatted' : 'not_found']),
       // The Hangul fillers are letters (`\p{Lo}`) that show nothing.
       ...[0x115f, 0x1160, 0x3164, 0xffa0].map((c): Row => [hex(c), inside(c), 'not_found']),
-      ...marks.map((c): Row => [hex(c), inside(c), 'exact']),
+      // the language unit re-pin (§3): the read before a match steps past every mark, by code point
+      ...marks.map((c): Row => [hex(c), inside(c), 'not_found']),
     ];
-    // (1) red when a member is left out of an iteration, the variation selectors read as format
-    //     characters (their rows), or a named one leaves its group; (2) prints the members missing and
-    //     each differing code point and state.
+    // (1) red when a member is left out of an iteration, a combining mark makes a word edge again (the
+    //     read before a match not stepping past it, or reading code units: the astral rows), or a named
+    //     one leaves its group; (2) prints the members missing and each differing code point and state.
     expect({
       named: [0x034f, 0xfe0f, 0xe0100].filter((c) => !marks.includes(c)).map(hex),
       misses: misses(rows),
