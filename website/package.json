@@ -18,7 +18,7 @@
     "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@noble/hashes": "1.8.0",
     "@sensigo/realm": "0.46.0",
     "@sensigo/realm-mcp": "0.46.0",
