@@ -41,10 +41,11 @@ All notable changes to this project are documented here.
   `cut_short_at`; an `exact` quote is marked when its last character is its `.`, `!` or `?` and the
   document goes on, past the closing marks `"` `'` `)` `]` `}` `»` `’` `”`, U+0020 and U+0009, with a
   lowercase letter (`\p{Ll}`) or a digit (`\p{Nd}`) of the Basic Multilingual Plane, and every other
-  state at each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace (`\s`) or the
-  quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the
-  document has no stop and goes on. The handlers reference lists what a crafted quote can still get
-  read as found, and what an honest quote is still refused ("What `check_quotes` does not catch").
+  state at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`,
+  that whitespace (`\s`) or the quote's end follows, unless it ends an abbreviation on the check's
+  list or an initial, where the document has no stop and goes on. The handlers reference lists what
+  a crafted quote can still get read as found, and what an honest quote is still refused ("What
+  `check_quotes` does not catch").
 - **`realm run inspect` prints a step's warning on a `Warn:` line (issue #760),** in full, with
   every control character written out. Core exports `controlEscape`, the one spelling of a control
   character a terminal line shows.
@@ -554,6 +555,12 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   the two builds run in turn, `realm run list --stuck` over 50 stuck runs took 2.2–2.8 s before
   this change and 0.6–0.7 s after. The exported `compileSchema` is unchanged: it compiles a fresh
   validator on every call.
+
+- A quote that differs from its source by a vowel sign or tone mark (Hindi, Thai and other scripts
+  that write vowels as marks; an Arabic or Hebrew vowel mark the quote leaves out is optional) no
+  longer reads as found; a character outside the Basic Multilingual Plane (for example a CJK
+  Extension-B letter) no longer shifts a found quote's position or makes an honest quote read not
+  found; a word cut from inside another word, after a combining mark, no longer reads found.
 
 ### Security
 

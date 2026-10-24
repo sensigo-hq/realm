@@ -8,11 +8,12 @@
 // by `plans/issue-760/correction-3-ia/derive-testset.mjs`), never typed by hand — except, by hand:
 // T2's rows of group `follow-up`, from the inputs of correction 3's review and its follow-up's audit
 // (`plans/issue-760/review/review-818c3-raw.md`, `walk-818c3-raw.md`, `audit-dt-raw.md`), one for
-// each case the docs' "can still read found" list names, and `u034f-inside-a-word`, which pins the gap
-// the docs' `exact` row states (a combining invisible character makes a word edge); and the `why` of
-// nine T2 rows, re-titled: `s3a-J1`, `s3a-J1@70`, `s3a-J2`, `s3a-J2@70`, `subject-to-payment`,
-// `x_neg_squared_not`, `x_strike_not`, `e_sq_no_break` and `feff-inside-a-word`. The script carries
-// both as data, so the fixture stays what it writes (#855's correction). Every quote is fictional
+// each case the docs' "can still read found" list names; and the `why` of eight T2 rows, re-titled:
+// `s3a-J1`, `s3a-J1@70`, `s3a-J2`, `s3a-J2@70`, `subject-to-payment`, `x_neg_squared_not`,
+// `e_sq_no_break` and `feff-inside-a-word`. The script carries both as data, so the fixture stays
+// what it writes (#855's correction). The language unit (#845's part before 0.48.0) moved two T2 rows
+// it closes to T1, each `not_found`: `x_strike_not` (a combining mark stays with its letter, so
+// `n̶o̶t̶` is no `not`) and `u034f-inside-a-word` (a combining mark makes no word edge). Every quote is fictional
 // and runs against the fictional lease (`fixtures/lease-public.txt`), its word-wrapped copies, or a
 // short constructed document held in its row.
 //
@@ -73,9 +74,10 @@ const sourceOf = (row: Row): string =>
       : row.source.doc!;
 
 describe('the permanent test set, T1: every trick found so far is not_found', () => {
-  it('holds the derived rows: 185 distinct named rows (195 named, 10 exact repeats dropped)', () => {
-    // (a) red when a row is lost or added without its derivation; (b) prints the count.
-    expect(SET.T1.length).toBe(185);
+  it('holds the derived rows: 187 distinct named rows (197 named, 10 exact repeats dropped)', () => {
+    // (a) red when a row is lost or added without its derivation; (b) prints the count. The language
+    //     unit: 185 → 187, `x_strike_not` and `u034f-inside-a-word` moved from T2.
+    expect(SET.T1.length).toBe(187);
   });
   for (const row of SET.T1) {
     it(`T1 ${row.group} ${row.id} → not_found`, () => {

@@ -1664,6 +1664,24 @@
         "doc": "The Tenant shall pay the rent in 2024.\nthe Landlord shall not raise it before then."
       },
       "expect": "not_found"
+    },
+    {
+      "group": "walk",
+      "id": "x_strike_not",
+      "quote": "The Tenant shall n̶o̶t̶ be responsible for repairs to the structure",
+      "source": {
+        "fixture": true
+      },
+      "expect": "not_found"
+    },
+    {
+      "group": "follow-up",
+      "id": "u034f-inside-a-word",
+      "quote": "lawful use of the Premises",
+      "source": {
+        "doc": "The Tenant shall not permit any un\u034flawful use of the Premises."
+      },
+      "expect": "not_found"
     }
   ],
   "T2": [
@@ -1797,17 +1815,6 @@
       },
       "expect": "reformatted",
       "why": "#822: negative squared letters are set aside like other symbols, so the quote reads found without the word they spell",
-      "cut_short": false
-    },
-    {
-      "group": "walk",
-      "id": "x_strike_not",
-      "quote": "The Tenant shall n̶o̶t̶ be responsible for repairs to the structure",
-      "source": {
-        "fixture": true
-      },
-      "expect": "reformatted",
-      "why": "#822: combining marks read as the letters they carry, and the lease says not",
       "cut_short": false
     },
     {
@@ -1951,17 +1958,6 @@
       },
       "expect": "reformatted",
       "why": "a quote that starts or ends at U+FEFF inside a word reads `reformatted`: the canonical form reads it as a space",
-      "cut_short": false
-    },
-    {
-      "group": "follow-up",
-      "id": "u034f-inside-a-word",
-      "quote": "lawful use of the Premises",
-      "source": {
-        "doc": "The Tenant shall not permit any un\u034flawful use of the Premises."
-      },
-      "expect": "exact",
-      "why": "inside a word, a format character (`Cf`, U+FEFF excepted) or a Hangul filler (U+115F, U+1160, U+3164, U+FFA0) makes no edge; a combining mark (U+034F) does",
       "cut_short": false
     },
     {
