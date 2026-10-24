@@ -92,6 +92,10 @@ git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+'
 
 **A review gate, never a zero-hits gate.** Print the hit count BESIDE the total added lines — a zero-hit sweep over a zero-line diff is self-refuting, and reporting only the numerator hides that. Realm's own render code legitimately writes to the console, so hits are expected. ENUMERATE them and adjudicate each as intentional production output; an unadjudicated hit blocks the release.
 
+**No accepted risk at tag time.** `audit-ci.jsonc` and `audit-ci.tier2.jsonc` must hold no entry
+recorded under SECURITY.md's triage item 4 (an accepted risk). If one is present, the tag waits for
+the change that removes it.
+
 **1. Create a release branch**
 
 ```bash
