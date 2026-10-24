@@ -45,7 +45,8 @@ export async function measureSwitchPaths(args: {
   const root = await lk.passwd('root');
   return [
     ...(await readSudo(lk, svc, root)),
-    ...(await readSu(lk, svc)),
+    // #819 Unit A, the capped correction (Part 3): su toward root too
+    ...(await readSu(lk, svc, root)),
     ...(await readDoas(lk)),
     ...(await readPolkit(lk)),
     ...readSsh(lk),

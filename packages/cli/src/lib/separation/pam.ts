@@ -80,7 +80,10 @@ const moduleName = (path: string): string | undefined =>
  *  argument reads unknown — `pam_wheel trust deny` (it grants NON-members) and `pam_u2f nouserok`
  *  (it lets a user with no key through) among them. A module not named takes none. */
 const ARGS: Record<string, RegExp> = {
-  pam_unix: /^nullok$/,
+  // #819 Unit A, the capped correction (Part 4): Rocky's stock `pam_unix.so try_first_pass nullok` —
+  // try_first_pass first tries a password an earlier module took, then asks; either way it checks the
+  // user's password. `use_first_pass` (never asks) stays unread
+  pam_unix: /^(?:nullok|try_first_pass)$/,
   pam_sss: /^forward_pass$/,
   pam_faildelay: /^delay=\d+$/,
   pam_faillock: /^(?:preauth|silent|authfail)$/,

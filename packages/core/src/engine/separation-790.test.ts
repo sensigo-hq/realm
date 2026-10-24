@@ -22,7 +22,9 @@ const r = (over: Partial<SwitchPathReading>): SwitchPathReading => ({
 });
 const words = (x: SwitchPathReading): string => `${x.path}: ${x.outcome}`;
 const letters = (rs: SwitchPathReading[]): string[] =>
-  switchClausesOf(rs).map((c) => (c.clause === 'a' ? `a:${c.whose}` : c.clause));
+  switchClausesOf(rs).map((c) =>
+    c.clause === 'a' ? `a:${c.whose}${c.user !== undefined ? `:${c.user}` : ''}` : c.clause,
+  );
 
 describe('#790 — condition 2 from the ways read (D13)', () => {
   it('no way found → measured "no", and it says where it looked (A §F15)', () => {
@@ -136,6 +138,26 @@ describe('#790 — the clause triggers (D11), each by its own reading', () => {
       polkit: letters([r({ path: 'polkit' })]),
       sudo: letters([r({ path: 'sudo' })]),
     }).toEqual({ polkit: ['d'], sudo: [] });
+  });
+
+  it('(a), #819 Unit A, the capped correction (Part 7): one clause per distinct named user, after an administrator’s, in order of first appearance', () => {
+    const rs = [
+      r({ outcome: 'needs_credential', whose: 'named_user', user: 'bob' }),
+      r({ path: 'polkit', outcome: 'needs_credential', whose: 'administrator' }),
+      r({ path: 'su', outcome: 'needs_credential', whose: 'named_user', user: 'alice' }),
+      r({ outcome: 'needs_credential', whose: 'named_user', user: 'bob' }),
+      r({ outcome: 'needs_credential', whose: 'this_login' }),
+      r({ outcome: 'yes', whose: 'named_user', user: 'carol' }),
+    ];
+    // (a) red when a named user gives no clause, one per reading, a clause for a yes, or the order
+    //     moves (before an administrator's, or by name); (b) prints the clauses.
+    expect(letters(rs)).toEqual([
+      'a:this_login',
+      'a:administrator',
+      'a:named_user:bob',
+      'a:named_user:alice',
+      'd',
+    ]);
   });
 
   it("(e): a way that needs a person's touch or key", () => {

@@ -1,6 +1,6 @@
 // su.ts — #790 (D6, 01b #14): su is never run. It is read from files and lookups only: Realm's
-// service user's passwd entry and shell (`getent passwd`; on macOS `dscl`), the shells files, and su's
-// PAM stacks through D7's scanner.
+// service user's passwd entry and shell, and root's (`getent passwd`; on macOS `dscl`; #819 Unit A, the
+// capped correction, Part 3), the shells files, and su's PAM stacks through D7's scanner.
 import type { SwitchPathReading } from '@sensigo/realm';
 import { basename } from 'node:path';
 import {
@@ -25,20 +25,22 @@ const NO_COMMAND_SHELLS = new Set([
 /** The shells files su reads: `/etc/shells`, and the vendor copy where it exists (F790-R2-01). */
 const SHELLS_FILES = ['/etc/shells', '/usr/etc/shells'] as const;
 
-/** ⟨svc⟩'s shell: from its passwd entry, or on macOS from `dscl . -read /Users/<svc> UserShell`. */
+/** A user's shell (⟨svc⟩'s, or root's: the capped correction, Part 3): from its passwd entry, or on
+ *  macOS from `dscl . -read /Users/<name> UserShell`. */
 async function shellOf(
   lk: Lookups,
+  name: string,
   entry: Found<PasswdEntry>,
 ): Promise<{ shell: string; how: string } | { unknown: string }> {
   if (!lk.darwin) {
-    if ('found' in entry) return { shell: entry.found.shell, how: `getent passwd ${lk.svc}` };
-    return 'unknown' in entry ? entry : { unknown: `${lk.svc} has no passwd entry` };
+    if ('found' in entry) return { shell: entry.found.shell, how: `getent passwd ${name}` };
+    return 'unknown' in entry ? entry : { unknown: `${name} has no passwd entry` };
   }
   const dscl = findTool(lk.probes, 'dscl');
   if (dscl === undefined) return { unknown: notFound('dscl') };
   if ('unknown' in dscl) return dscl;
-  const call = `${dscl.path} . -read /Users/${lk.svc} UserShell`;
-  const r = await lk.run([dscl.path, '.', '-read', `/Users/${lk.svc}`, 'UserShell']);
+  const call = `${dscl.path} . -read /Users/${name} UserShell`;
+  const r = await lk.run([dscl.path, '.', '-read', `/Users/${name}`, 'UserShell']);
   // The shape Apple's own zsh completion strips (`UserShell: <path>`); any other answer is not read.
   const m = 'exit' in r && r.exit === 0 ? /^UserShell: (\/\S*)\n?$/.exec(r.stdout) : null;
   return m !== null ? { shell: m[1]!, how: call } : { unknown: `${call} says: ${toolLine(r)}` };
@@ -75,46 +77,101 @@ function listed(lk: Lookups, shell: string): boolean | undefined {
 }
 
 /** D6: the su path — none when no su is on this host (01b #14). A person's touch beside the
- *  password module is its own reading, so the password's clause stays (D5's rule, for su). */
-export async function readSu(lk: Lookups, entry: Found<PasswdEntry>): Promise<SwitchPathReading[]> {
-  const one = await readSuOne(lk, entry);
-  return one === undefined ? [] : Array.isArray(one) ? one : [one];
-}
-
-async function readSuOne(
+ *  password module is its own reading, so the password's clause stays (D5's rule, for su). #819 Unit
+ *  A, the capped correction (Part 3; W-860-MA3-07): su is read toward root too — `su root` with root's
+ *  password exits 0 on all six images, and root then becomes ⟨svc⟩ — each target with its own entry
+ *  and shell, su's PAM stacks scanned once for both. With Realm's service user root, one target. */
+export async function readSu(
   lk: Lookups,
   entry: Found<PasswdEntry>,
-): Promise<SwitchPathReading | SwitchPathReading[] | undefined> {
+  root?: Found<PasswdEntry>,
+): Promise<SwitchPathReading[]> {
   const where = presence(lk.probes, 'su');
-  if (where === undefined) return undefined;
+  if (where === undefined) return [];
   if ('elsewhere' in where) {
-    return {
-      path: 'su',
-      outcome: 'unknown',
-      how: lookedFor('su'),
-      cause: `su at ${where.elsewhere} is not a root-owned system copy`,
-    };
+    return [
+      {
+        path: 'su',
+        outcome: 'unknown',
+        how: lookedFor('su'),
+        cause: `su at ${where.elsewhere} is not a root-owned system copy`,
+      },
+    ];
   }
   const su = where.system;
-  // B §9: on Linux, ⟨svc⟩'s entry not read is unknown, never "needs ⟨svc⟩'s password".
-  if (!lk.darwin && !('found' in entry)) {
-    const cause = 'unknown' in entry ? entry.unknown : `${lk.svc} has no passwd entry`;
-    return { path: 'su', tool: su, outcome: 'unknown', how: `getent passwd ${lk.svc}`, cause };
-  }
+  const targets: Target[] = [{ whose: 'svc', name: lk.svc, entry }];
+  if (root !== undefined && lk.svc !== 'root')
+    targets.push({ whose: 'root', name: 'root', entry: root });
   // B §11: BusyBox's su keeps a restricted shell only under a build option this check cannot see,
-  // so (c) is not read for it: it asks for ⟨svc⟩'s password (e).
+  // so (c) is not read for it: it asks for the target's password (e).
   const pamFile = ['/etc/pam.d/su', '/usr/lib/pam.d/su'].some((p) => lk.probes.exists(p));
   const busybox = basename(lk.probes.realPath(su) ?? su) === 'busybox' && !pamFile;
+  const own: (SwitchPathReading | undefined)[] = [];
+  for (const t of targets) own.push(await targetReading(lk, su, busybox, t));
+  const pamTargets = targets.filter((_, i) => own[i] === undefined);
+  const pam = pamTargets.length > 0 ? await readSuPam(lk, su) : undefined;
+  const out: SwitchPathReading[] = [];
+  let shared = false;
+  targets.forEach((t, i) => {
+    const r = own[i];
+    if (r !== undefined) out.push(r);
+    else if (pam !== undefined && 'once' in pam) {
+      // a grant, an unknown or an ssh agent's key: one reading, whoever the target
+      if (!shared) out.push(pam.once);
+      shared = true;
+    } else if (pam !== undefined && pam.password)
+      out.push({ path: 'su', tool: su, outcome: 'needs_credential', whose: t.whose, how: pam.how });
+  });
+  if (pam !== undefined && !('once' in pam)) {
+    if (pam.person)
+      out.push({
+        path: 'su',
+        tool: su,
+        outcome: 'needs_credential',
+        whose: 'person',
+        how: pam.how,
+      });
+    else if (!pam.password)
+      out.push({
+        path: 'su',
+        tool: su,
+        outcome: 'unknown',
+        how: pam.how,
+        cause: "su's PAM stacks name no password module this check reads",
+      });
+  }
+  return out;
+}
+
+/** One target of su: Realm's service user or root, with its passwd entry. */
+interface Target {
+  whose: 'svc' | 'root';
+  name: string;
+  entry: Found<PasswdEntry>;
+}
+
+/** What su reads toward one target before its PAM stacks — or `undefined`, where the stacks decide. */
+async function targetReading(
+  lk: Lookups,
+  su: string,
+  busybox: boolean,
+  t: Target,
+): Promise<SwitchPathReading | undefined> {
+  // B §9: on Linux, the target's entry not read is unknown, never "needs the target's password".
+  if (!lk.darwin && !('found' in t.entry)) {
+    const cause = 'unknown' in t.entry ? t.entry.unknown : `${t.name} has no passwd entry`;
+    return { path: 'su', tool: su, outcome: 'unknown', how: `getent passwd ${t.name}`, cause };
+  }
   // (c) before (b): a shell that runs no command runs nothing, even with an empty password.
-  const shell = await shellOf(lk, entry);
-  // #819 (08, B F5): B §9 on macOS too — svc's shell not read (dscl absent or failing) is unknown,
-  // never "needs svc's password" (BusyBox's su, which asks it whatever the shell, aside)
+  const shell = await shellOf(lk, t.name, t.entry);
+  // #819 (08, B F5): B §9 on macOS too — the target's shell not read (dscl absent or failing) is
+  // unknown, never "needs its password" (BusyBox's su, which asks it whatever the shell, aside)
   if (lk.darwin && !busybox && 'unknown' in shell) {
     return {
       path: 'su',
       tool: su,
       outcome: 'unknown',
-      how: `${lk.svc}'s shell`,
+      how: `${t.name}'s shell`,
       cause: shell.unknown,
     };
   }
@@ -125,17 +182,17 @@ async function readSuOne(
         path: 'su',
         tool: su,
         outcome: 'not_allowed',
-        how: `${shell.how} and the shells files read: ${lk.svc}'s shell ${shell.shell} runs no command`,
+        how: `${shell.how} and the shells files read: ${t.name}'s shell ${shell.shell} runs no command`,
       };
     }
   }
   // (b) the rare inline empty password (with shadow passwords, clause (a) carries the real case).
-  if ('found' in entry && entry.found.password === '') {
+  if ('found' in t.entry && t.entry.found.password === '') {
     return {
       path: 'su',
       tool: su,
       outcome: 'yes',
-      how: `getent passwd ${lk.svc}: its password field is empty`,
+      how: `getent passwd ${t.name}: its password field is empty`,
     };
   }
   // (e) BusyBox su reads no PAM stack and asks the target's password.
@@ -144,11 +201,21 @@ async function readSuOne(
       path: 'su',
       tool: su,
       outcome: 'needs_credential',
-      whose: 'svc',
-      how: `${su} is BusyBox's su, which reads no PAM stack and asks for ${lk.svc}'s password`,
+      whose: t.whose,
+      how: `${su} is BusyBox's su, which reads no PAM stack and asks for ${t.name}'s password`,
     };
   }
-  // (d) the PAM stacks: su, and su-l where su runs one (macOS su runs only "su": shell_cmds su.c).
+  return undefined;
+}
+
+/** (d) su's PAM stacks: su, and su-l where su runs one (macOS su runs only "su": shell_cmds su.c) —
+ *  read once, whatever the target (the capped correction, Part 3; W-UAC2R4-AUD-10): a grant, an
+ *  unknown or an ssh agent's key is one reading (`once`); else whether a password and a person's
+ *  touch are asked. */
+async function readSuPam(
+  lk: Lookups,
+  su: string,
+): Promise<{ once: SwitchPathReading } | { password: boolean; person: boolean; how: string }> {
   const scans = await Promise.all(
     (lk.darwin ? ['su'] : ['su', 'su-l']).map(async (s) => ({
       service: s,
@@ -164,43 +231,36 @@ async function readSuOne(
   const granted = read.find((s) => s.grant !== undefined);
   if (granted !== undefined) {
     return {
-      path: 'su',
-      tool: su,
-      outcome: 'yes',
-      how: `${how}: ${granted.service} grants it (${granted.grant})`,
+      once: {
+        path: 'su',
+        tool: su,
+        outcome: 'yes',
+        how: `${how}: ${granted.service} grants it (${granted.grant})`,
+      },
     };
   }
   const unknown = scans.find((s) => 'unknown' in s.scan);
   if (unknown !== undefined && 'unknown' in unknown.scan) {
     return {
-      path: 'su',
-      tool: su,
-      outcome: 'unknown',
-      how: `su's PAM stacks read`,
-      cause: unknown.scan.unknown,
+      once: {
+        path: 'su',
+        tool: su,
+        outcome: 'unknown',
+        how: `su's PAM stacks read`,
+        cause: unknown.scan.unknown,
+      },
     };
   }
   if (read.some((s) => s.sshAgent)) {
     return {
-      path: 'su',
-      tool: su,
-      outcome: 'unknown',
-      how,
-      cause: "su accepts an ssh agent's key",
+      once: {
+        path: 'su',
+        tool: su,
+        outcome: 'unknown',
+        how,
+        cause: "su accepts an ssh agent's key",
+      },
     };
   }
-  const person: SwitchPathReading[] = read.some((s) => s.person)
-    ? [{ path: 'su', tool: su, outcome: 'needs_credential', whose: 'person', how }]
-    : [];
-  if (read.some((s) => s.password)) {
-    return [{ path: 'su', tool: su, outcome: 'needs_credential', whose: 'svc', how }, ...person];
-  }
-  if (person.length > 0) return person;
-  return {
-    path: 'su',
-    tool: su,
-    outcome: 'unknown',
-    how,
-    cause: "su's PAM stacks name no password module this check reads",
-  };
+  return { password: read.some((s) => s.password), person: read.some((s) => s.person), how };
 }

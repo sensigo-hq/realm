@@ -16,7 +16,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { switchClausesOf, type SwitchPathReading } from '@sensigo/realm';
-import { measureSwitchPaths } from './index.js';
+import { lookups, measureSwitchPaths } from './index.js';
+import { scanPam } from './pam.js';
 import { defaultsValue, parseListing, sudoVersion } from './sudo.js';
 import { railOne } from './runner.js';
 import { SYSTEM_DIRS } from './lookup.js';
@@ -303,8 +304,9 @@ const T3: Record<string, string[]> = {
   'grp-nocase': ['not_allowed'],
   'grp-bygid': ['not_allowed'],
   'grp-fedora': ['not_allowed'],
+  // #819 Unit A, the capped correction re-pin (the walk's wording item): keep one of them
   'grp-fedora-nogid': [
-    'unknown sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid (change the stock line instead of adding a second)',
+    'unknown sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid (keep one of them; on Fedora and Rocky Linux, change the stock line instead of adding a second)',
   ],
   // a group plugin grants svc a group it is not a Unix member of: group_plugin stays unread
   plugin: [
@@ -313,15 +315,16 @@ const T3: Record<string, string[]> = {
   'plugin-colon': [
     'unknown sudo matches %:plugingrp only through its group plugin, which this check does not read',
   ],
-  // item 7 (A6): runas_default under runaspw, looked up as sudo looks it up
+  // item 7 (A6): runas_default under runaspw, looked up as sudo looks it up — the capped correction
+  // re-pin (the walk's wording item): "not as proof that no way works"
   'runaspw-nosuchuser': [
-    'unknown sudo finds no user nosuchuser and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+    'unknown sudo finds no user nosuchuser and refuses every command (Defaults runaspw); this check reads that as unknown, not as proof that no way works',
   ],
   'runaspw-ROOT': [
-    'unknown sudo finds no user ROOT and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+    'unknown sudo finds no user ROOT and refuses every command (Defaults runaspw); this check reads that as unknown, not as proof that no way works',
   ],
   'runaspw-hash0': [
-    'unknown sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+    'unknown sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as proof that no way works',
   ],
   // the Unit A correction re-pin (C4): the view now prints the clause letters — (a) svc's password,
   // (b) sudo's ticket
@@ -358,4 +361,59 @@ describe("#819 Unit A (A2) — T3: each real verdict, read by the check on that 
       });
     }
   }
+});
+
+describe("#819 Unit A, the capped correction (Part 4): Rocky's stock PAM line is read", () => {
+  it("Rocky 9's stock `pam_unix.so try_first_pass nullok`: sudo's and su's stacks read, a password rule needs this login's password — not unknown", async () => {
+    // Rocky's b3 scenario (sudo 1.9.17p2, its PAM files, nsswitch.conf and lookups), with two edits
+    // named here (the cut-capture standard): the scenario's last two Defaults items dropped
+    // (`passprompt=Password\,` and `!authenticate`), leaving Rocky's stock Defaults beside its two
+    // rules — `(nobody)` NOPASSWD and `(svc)` with a password; and su at /usr/bin/su (Rocky ships it;
+    // the corpus lists only the tools the sudo reader asks). Real sudo on rockylinux:9: `sudo -S -u
+    // svc` takes this login's password, and refuses a wrong one (plans/issue-627/w/unit-a/c2-ia2/probe).
+    const spec = corpusMachine('rockylinux-9', 'b3');
+    spec.programs!['/usr/bin/su'] = 0;
+    const machine = fixtureMachine(spec);
+    const run = machine.run;
+    const rs = await measureSwitchPaths({
+      probes: {
+        ...machine,
+        run: async (argv) => {
+          const r = await run(argv);
+          return argv.join(' ') === 'LC_ALL=C /usr/bin/sudo -n -ll' && 'exit' in r
+            ? {
+                ...r,
+                stdout: r.stdout.replace(', passprompt=Password\\,\n    !authenticate\n', '\n'),
+              }
+            : r;
+        },
+      },
+      svc: 'svc',
+    });
+    const lk = lookups(fixtureMachine(spec), 'svc');
+    const scans: Record<string, unknown> = {};
+    for (const service of ['sudo', 'sudo-i', 'su', 'su-l']) {
+      const scan = await scanPam(lk, service);
+      scans[service] = 'unknown' in scan ? scan.unknown : { password: scan.password };
+    }
+    // (a) red when Rocky's stock line is left unread again (each stack reads "a line this check does
+    //     not read: auth sufficient pam_unix.so try_first_pass nullok", and the reading unknown: the
+    //     strong sentence never prints on stock Rocky); (b) prints each stack's reading and the
+    //     readings, their whose and clause letters.
+    expect({ scans, readings: view(rs) }).toEqual({
+      scans: {
+        sudo: { password: true },
+        'sudo-i': { password: true },
+        su: { password: true },
+        'su-l': { password: true },
+      },
+      readings: [
+        'needs_credential this_login sudo_timestamp',
+        'needs_credential svc',
+        'needs_credential root',
+        // (a) once per whose — this login's, svc's, root's — and (b) sudo's ticket
+        'clauses aaab',
+      ],
+    });
+  });
 });

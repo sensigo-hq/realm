@@ -259,15 +259,25 @@ const groupBacked = (flags?: string): Promise<SwitchPathReading[]> => {
   });
 };
 
-/** A reading, compact: path, outcome, whose, cache, and classic sudo's "or not allowed". */
+/** A reading, compact: path, outcome, whose (and a named user's name: #819 Unit A, the capped
+ *  correction, Part 7), cache, and classic sudo's "or not allowed". */
 const view = (rs: SwitchPathReading[]): string[] =>
   rs.map((r) =>
-    [r.path, r.outcome, r.whose, r.cache, r.or_not_allowed === true ? 'or not allowed' : undefined]
+    [
+      r.path,
+      r.outcome,
+      r.whose,
+      r.user,
+      r.cache,
+      r.or_not_allowed === true ? 'or not allowed' : undefined,
+    ]
       .filter((x) => x !== undefined)
       .join(' '),
   );
 const clauses = (rs: SwitchPathReading[]): string[] =>
-  switchClausesOf(rs).map((c) => (c.clause === 'a' ? `a:${c.whose}` : c.clause));
+  switchClausesOf(rs).map((c) =>
+    c.clause === 'a' ? `a:${c.whose}${c.user !== undefined ? `:${c.user}` : ''}` : c.clause,
+  );
 
 describe('#790 — sudo, the listing and the refusals (D2, D3, D4, D5)', () => {
   it('classic sudo refused "a password is required" → needs this login\'s password or not allowed; clauses (a), (b), (c)', async () => {
@@ -666,22 +676,28 @@ describe('#790 — su, never run (D6, D7, 01b #11, #14)', () => {
   it("svc's shell /usr/sbin/nologin, in neither shells file → not allowed; no svc-password clause", async () => {
     const rs = await paths(linux(U24, su(U24)));
     // (a) red when a no-command shell goes on to the PAM scan; (b) prints readings and clauses.
+    // #819 Unit A, the capped correction (Part 3): su is read toward root too — root's shell runs
+    // commands, so su needs root's password
     expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
-      readings: ['su not_allowed'],
-      clauses: [],
+      readings: ['su not_allowed', 'su needs_credential root'],
+      clauses: ['a:root'],
     });
   });
 
   it('nologin and an empty password field in /etc/passwd → not allowed ((c) before (b))', async () => {
     const rs = await paths(linux(U24, su(U24, 'getent.passwd.svc.empty-pw-nologin')));
     // (a) red when the empty field is read before the shell (yes); (b) prints the readings.
-    expect(view(rs)).toEqual(['su not_allowed']);
+    // #819 Unit A, the capped correction (Part 3): su is read toward root too — root's shell runs
+    // commands, so su needs root's password
+    expect(view(rs)).toEqual(['su not_allowed', 'su needs_credential root']);
   });
 
   it('an empty password field and a shell that runs commands → yes', async () => {
     const rs = await paths(linux(U24, su(U24, 'getent.passwd.svc.empty-pw-sh')));
     // (a) red when the inline empty password is not read; (b) prints the readings.
-    expect(view(rs)).toEqual(['su yes']);
+    // #819 Unit A, the capped correction (Part 3): su is read toward root too — root's shell runs
+    // commands, so su needs root's password
+    expect(view(rs)).toEqual(['su yes', 'su needs_credential root']);
   });
 
   it("the real Ubuntu 24.04, Debian and Fedora su stacks → needs svc's password; macOS's, with svc's shell not read, → unknown (B F5)", async () => {
@@ -700,10 +716,11 @@ describe('#790 — su, never run (D6, D7, 01b #11, #14)', () => {
       [FED]: view(await paths(linux(FED, su(FED, 'getent.passwd.svc.bash')))),
       macos: view(mac),
     }).toEqual({
-      [U24]: ['su needs_credential svc'],
-      [DEB]: ['su needs_credential svc'],
-      [FED]: ['su needs_credential svc'],
-      macos: ['su unknown'],
+      // the capped correction (Part 3): toward root too; on macOS root's shell is not read either
+      [U24]: ['su needs_credential svc', 'su needs_credential root'],
+      [DEB]: ['su needs_credential svc', 'su needs_credential root'],
+      [FED]: ['su needs_credential svc', 'su needs_credential root'],
+      macos: ['su unknown', 'su unknown'],
     });
   });
 
@@ -759,16 +776,20 @@ describe('#790 — su, never run (D6, D7, 01b #11, #14)', () => {
     const rs = await paths(linux(U24, su(U24, 'getent.passwd.svc.local-bash')));
     // (a) red when any shell missing from the shells files reads "runs no command"; (b) prints
     //     readings and clauses.
+    // #819 Unit A, the capped correction (Part 3): su is read toward root too — root's shell runs
+    // commands, so su needs root's password
     expect({ readings: view(rs), clauses: clauses(rs) }).toEqual({
-      readings: ['su needs_credential svc'],
-      clauses: ['a:svc'],
+      readings: ['su needs_credential svc', 'su needs_credential root'],
+      clauses: ['a:svc', 'a:root'],
     });
   });
 
   it("svc's shell /usr/sbin/nologin listed in /etc/shells → the PAM scan", async () => {
     const rs = await paths(linux(U24, su(U24, 'getent.passwd.svc', 'shells.with-nologin')));
     // (a) red when the shells file is not read; (b) prints the readings.
-    expect(view(rs)).toEqual(['su needs_credential svc']);
+    // #819 Unit A, the capped correction (Part 3): su is read toward root too — root's shell runs
+    // commands, so su needs root's password
+    expect(view(rs)).toEqual(['su needs_credential svc', 'su needs_credential root']);
   });
 
   it("BusyBox su (Alpine, no PAM stack) → needs svc's password, whatever svc's shell (B §11)", async () => {
@@ -787,9 +808,10 @@ describe('#790 — su, never run (D6, D7, 01b #11, #14)', () => {
       sh: await alpine('getent.passwd.svc.sh'),
       nologin: await alpine('getent.passwd.svc'),
     }).toEqual({
-      sh: ['su needs_credential svc'],
+      // the capped correction (Part 3): BusyBox's su asks root's password toward root
+      sh: ['su needs_credential svc', 'su needs_credential root'],
       // B §11: BusyBox keeps a restricted shell only under a build option this check cannot see
-      nologin: ['su needs_credential svc'],
+      nologin: ['su needs_credential svc', 'su needs_credential root'],
     });
   });
 
@@ -1337,8 +1359,10 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     //     correction 1 C-10: (g) with no reading resting on a member list), or clause (c)'s old
     //     words come back; (b) prints the sentence.
     // #819 follow-up 2 re-pin: clause (c) also names tty_tickets, timestampdir and timestampowner (A S3)
+    // #819 Unit A, the capped correction re-pin (Part 3; W-860-MA3-13): root's clause gains "and it
+    // is not empty", read as this login's and svc's are
     expect(separationClaim(evidence(ways))).toBe(
-      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; nobody authenticates sudo as agent where the agent's processes run (it then waives the password for some minutes); and sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, no timestamp_type or tty_tickets setting shares one ticket across sessions, and no timestampdir or timestampowner setting lets agent write the tickets).`,
+      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password, and it is not empty; nobody authenticates sudo as agent where the agent's processes run (it then waives the password for some minutes); and sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, no timestamp_type or tty_tickets setting shares one ticket across sessions, and no timestampdir or timestampowner setting lets agent write the tickets).`,
     );
   });
 
@@ -1386,8 +1410,10 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     // #819 follow-up 2 re-pin: clause (c) as in W-x3a (A S3); clause (g) words what the branch read,
     // the members each group lists (A S1)
     // (a) red when a fired clause is left out of the sentence; (b) prints the sentence.
+    // #819 Unit A, the capped correction re-pin (Part 3; W-860-MA3-13): root's clause gains "and it
+    // is not empty"
     expect(separationClaim(evidence(ways))).toBe(
-      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password; the agent cannot obtain an administrator's password; nobody authenticates sudo or polkit as agent where the agent's processes run (each then waives the password for some minutes); sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, no timestamp_type or tty_tickets setting shares one ticket across sessions, and no timestampdir or timestampowner setting lets agent write the tickets); no polkit rule grants agent pkexec, run0 or systemd-run beyond what this check's own session was shown (polkit's admin rules are not read; its vendor rules are not read); no person approves a Touch ID, fingerprint or security-key prompt the agent raises; svc's authorized_keys holds none of agent's keys; and the members the system lists for each group read are all of its members (a member the system does not list is not seen).`,
+      `${HEAD}; and provided the agent cannot obtain agent's password, and it is not empty; the agent cannot obtain svc's password, and it is not empty; the agent cannot obtain root's password, and it is not empty; the agent cannot obtain an administrator's password; nobody authenticates sudo or polkit as agent where the agent's processes run (each then waives the password for some minutes); sudo turns off its password only through NOPASSWD tags (its listpw setting is the default, no Defaults!… or Defaults>… line sets !authenticate, no runaspw setting names a user other than root or svc, no pam_service, pam_login_service or pam_askpass_service setting names another PAM stack, no timestamp_type or tty_tickets setting shares one ticket across sessions, and no timestampdir or timestampowner setting lets agent write the tickets); no polkit rule grants agent pkexec, run0 or systemd-run beyond what this check's own session was shown (polkit's admin rules are not read; its vendor rules are not read); no person approves a Touch ID, fingerprint or security-key prompt the agent raises; svc's authorized_keys holds none of agent's keys; and the members the system lists for each group read are all of its members (a member the system does not list is not seen).`,
     );
   });
 
@@ -1402,7 +1428,10 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     }).toEqual({
       sentence:
         "An agent running as agent may still be able to answer a gate: whether it can become Realm's service user without a password is unknown.",
-      cause: 'sudo matches group names in any case, and no id was found in the system folders',
+      // #819 Unit A, the capped correction re-pin (the walk's wording item): the case cause names the
+      // user, the group, and what lets the check read the groups
+      cause:
+        'sudo matches group names in any case, so svc may be in svcgrp under another case, and no id was found in the system folders (a root-owned id in a system folder lets this check read the groups)',
     });
   });
 
@@ -1504,8 +1533,9 @@ describe('#790 — the sentence and the condition lines (D11, 01b #2, #3, #12)',
     //     two entries print its how again, not "as above"; (b) prints the line.
     // #819 Unit B re-pin: sudo's second and third entries were read as its first was — "; as above)"
     // #819 Unit A re-pin (A7): the cause names runaspw too, and whose password each asks for
+    // #819 Unit A, the capped correction re-pin (Part 3): su gains its entry toward root
     expect(conditionLine('become_service_user', evidence(ways))).toBe(
-      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command).",
+      "This login can become Realm's service user (svc) without a password: no (measured now) — sudo: needs this login's password or is not allowed (sudo does not say which; LC_ALL=C /usr/bin/sudo -n -l says: a password is required; /etc/pam.d/sudo, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session-noninteractive, /etc/pam.d/sudo-i, /etc/pam.d/common-session read); sudo: may need root's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); sudo: may need svc's password (sudo does not show its Defaults or whether a rule exists, so rootpw, targetpw or runaspw cannot be ruled out: rootpw asks for root's password, targetpw for the target user's, runaspw for its runas_default user's; as above); su: not allowed (getent passwd svc and the shells files read: svc's shell /usr/sbin/nologin runs no command); su: needs root's password (/etc/pam.d/su, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session, /etc/pam.d/su-l read).",
     );
   });
 
@@ -1685,7 +1715,8 @@ describe('#790 correction 1 — the review of PR #827, each finding its cell', (
     //     readings and how.
     expect({ readings: view(rs), how: rs[0]?.how }).toEqual({
       readings: ['sudo yes'],
-      how: 'LC_ALL=C /usr/bin/sudo.ws -n -l and -n -ll: its Defaults turn the password off (!authenticate)',
+      // #819 Unit A, the capped correction re-pin (Part 5): yes needs a rule that runs as svc or root
+      how: 'LC_ALL=C /usr/bin/sudo.ws -n -l and -n -ll: its Defaults turn the password off (!authenticate), and a rule runs as svc',
     });
   });
 
@@ -1965,9 +1996,11 @@ describe('#790 correction 1 — the review of PR #827, each finding its cell', (
     const rs = await paths(machine);
     // (a) red when su goes on to its PAM stack (needs svc's password); (b) prints readings and
     //     whether the cause is getent's.
+    // #819 Unit A, the capped correction re-pin (Part 3): root's entry is read, so su toward root
+    // needs root's password
     expect({ readings: view(rs), getent: rs[0]?.cause?.startsWith('getent passwd svc: ') }).toEqual(
       {
-        readings: ['su unknown'],
+        readings: ['su unknown', 'su needs_credential root'],
         getent: true,
       },
     );
@@ -2296,7 +2329,8 @@ describe("#819 (08) — #790's leftovers, each its cell", () => {
     );
     // (a) red when pam.conf counts while /etc/pam.d exists (Linux-PAM reads pam.conf only without
     //     it): every stack would read unknown; (b) prints the readings.
-    expect(view(rs)).toEqual(['su needs_credential svc']);
+    // #819 Unit A, the capped correction re-pin (Part 3): toward root too
+    expect(view(rs)).toEqual(['su needs_credential svc', 'su needs_credential root']);
   });
 
   it('B F6: `pam_wheel trust deny` for a login NOT in the group → unknown, never "needs svc\'s password"', async () => {
@@ -3262,8 +3296,10 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
         byGid: { readings: ['sudo not_allowed'], cause: undefined },
         twice: {
           readings: ['sudo unknown'],
+          // #819 Unit A, the capped correction re-pin (the walk's wording item): no stock line off
+          // Fedora and Rocky Linux
           cause:
-            'sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid (change the stock line instead of adding a second)',
+            'sudo listed a Defaults setting more than once, and does not show which one it applies: match_group_by_gid, !match_group_by_gid (keep one of them; on Fedora and Rocky Linux, change the stock line instead of adding a second)',
         },
       });
     });
@@ -3343,8 +3379,9 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
       expect(view(rs)).toEqual(['sudo yes']);
     });
     it('#819 follow-up 3 (A S1, the audit’s S3): runaspw with a `#0` runas_default → unknown — sudo looks #0 up as a user name and refuses every command', async () => {
+      // #819 Unit A, the capped correction re-pin (the walk's wording item): in plain words
       const CAUSE =
-        'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut';
+        'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as proof that no way works';
       // (a) the raw `#0` (a shape sudo never prints): red when `#0` is read as root's uid again
       //     (root's password, a false "cannot"-side reading); (b) the printed `\#0` (sudo's own
       //     listing, W-819F3-AUD-07): its outcome is unknown before and after this fix — a control,
@@ -3426,9 +3463,17 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
       expect({
         options: await read(third(runAs('svc', 'passprompt=Password\\, !authenticate'))),
         runAs: await read(third(runAs('alice\\, svc'))),
+        // #819 Unit A, the capped correction: the name alone, so "rail 1 refuses the name" stays pinned
+        alone: await read(third(runAs('alice\\'))),
       }).toEqual({
         options: { readings: ['sudo yes'], cause: undefined },
+        // the capped correction re-pin (Part 2; W-UAC2R4-AUD-12): the entry covers svc and needs a
+        // password, so under the default policy the token's unknown cannot change the reading
         runAs: {
+          readings: ['sudo needs_credential this_login sudo_timestamp'],
+          cause: undefined,
+        },
+        alone: {
           readings: ['sudo unknown'],
           cause: 'getent passwd alice\\: the check refused to run /usr/bin/getent passwd alice\\',
         },
@@ -3465,11 +3510,13 @@ describe('#819 follow-up 2 — the class: what the check reads, read as the syst
         commentFirst: await suWith('/bin/sh\n# /usr/sbin/nologin\n'),
         unlisted: await suWith('/bin/sh\n'),
       }).toEqual({
-        comment: ['su needs_credential svc'],
-        before: ['su needs_credential svc'],
-        bare: ['su needs_credential svc'],
-        commentFirst: ['su not_allowed'],
-        unlisted: ['su not_allowed'],
+        // #819 Unit A, the capped correction re-pin (Part 3): toward root too (root's shell runs
+        // commands)
+        comment: ['su needs_credential svc', 'su needs_credential root'],
+        before: ['su needs_credential svc', 'su needs_credential root'],
+        bare: ['su needs_credential svc', 'su needs_credential root'],
+        commentFirst: ['su not_allowed', 'su needs_credential root'],
+        unlisted: ['su not_allowed', 'su needs_credential root'],
       });
     });
   });
@@ -3849,8 +3896,9 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
         unknownVersion:
           "sudo listed a Defaults line's target this check cannot split: Defaults>svc ,nobody mailsub=x (sudo's version could not be read, and sudo separates targets differently before and after 1.9.8)",
         sameEither: [['svc']],
+        // #819 Unit A, the capped correction re-pin (the walk's wording item): "without a digest"
         digest:
-          "sudo listed a Defaults line's target this check cannot split: Defaults!sha224:0GomF8mNN3wlDt1HD9XldjJ3SNgpFdbjO1+NsQ== /usr/bin/realm !authenticate (sudo prints a digest with a space; name the command without one)",
+          "sudo listed a Defaults line's target this check cannot split: Defaults!sha224:0GomF8mNN3wlDt1HD9XldjJ3SNgpFdbjO1+NsQ== /usr/bin/realm !authenticate (sudo prints a digest with a space; name the command without a digest)",
         regex:
           "sudo listed a Defaults line's target this check cannot split: Defaults!^/usr/bin/realm .*$ !authenticate (name the command by its path)",
       });
@@ -3983,10 +4031,13 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
           clauses: switchClausesOf(r).map((c) => c.clause),
           ...(r[0]?.cause !== undefined ? { cause: r[0].cause } : {}),
         }));
-      const gap = (why: string) => ({
+      // #819 Unit A, the capped correction re-pin (the walk's wording item): the cause names the user
+      // and the group, and the remedy only where no root-owned `id` is there
+      const REMEDY = ' (a root-owned id in a system folder lets this check read the groups)';
+      const gap = (why: string, remedy = '') => ({
         readings: ['sudo unknown'],
         clauses: [],
-        cause: `sudo matches group names in any case, and ${why}`,
+        cause: `sudo matches group names in any case, so svc may be in svcgrp under another case, and ${why}${remedy}`,
       });
       // (1) red when a fallback condition is read as an answer (each would then cover svc: NEEDS),
       //     or as "not allowed" again (the walk's wrong "no"); (2) prints each reading, its clauses
@@ -4018,9 +4069,9 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
           ),
         ),
       }).toEqual({
-        absent: gap('no id was found in the system folders'),
+        absent: gap('no id was found in the system folders', REMEDY),
         refused: gap('the check refused to run id'),
-        notRoot: gap('id is not a root-owned system copy'),
+        notRoot: gap('id is not a root-owned system copy', REMEDY),
         exit1: gap('id -G svc exited 1'),
         empty: gap('id -G svc printed no list of groups'),
         noPrimary: gap("id -G svc did not list svc's primary group"),
@@ -4154,19 +4205,22 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
         unset: { readings: ['sudo needs_credential root sudo_timestamp'], cause: undefined },
         root: { readings: ['sudo needs_credential root sudo_timestamp'], cause: undefined },
         svc: { readings: ['sudo needs_credential svc sudo_timestamp'], cause: undefined },
+        // #819 Unit A, the capped correction re-pin (Part 7): sudo asks the runas_default user's
+        // password, and the check now names it (W-UAC2R4-AUD-09)
         other: {
-          readings: ['sudo unknown'],
-          cause: "sudo asks for nobody's password (Defaults runaspw)",
+          readings: ['sudo needs_credential named_user nobody sudo_timestamp'],
+          cause: undefined,
         },
+        // the capped correction re-pin (the walk's wording item): "not as proof that no way works"
         absent: {
           readings: ['sudo unknown'],
           cause:
-            'sudo finds no user Svc and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+            'sudo finds no user Svc and refuses every command (Defaults runaspw); this check reads that as unknown, not as proof that no way works',
         },
         hash: {
           readings: ['sudo unknown'],
           cause:
-            'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as a way shut',
+            'sudo looks #0 up as a user name, finds none and refuses every command (Defaults runaspw); this check reads that as unknown, not as proof that no way works',
         },
         digits: {
           readings: ['sudo unknown'],
@@ -4258,7 +4312,11 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
       (stdout: string) =>
       (argv: readonly string[], r: RunResult): RunResult =>
         argv[0] === ID && 'exit' in r ? { ...r, stdout } : r;
-    const GAP = 'sudo matches group names in any case, and';
+    // #819 Unit A, the capped correction re-pin (the walk's wording item): the case cause names the
+    // user and the group, and the remedy only where no root-owned `id` is there
+    const GAP =
+      'sudo matches group names in any case, so svc may be in svcgrp under another case, and';
+    const REMEDY = ' (a root-owned id in a system folder lets this check read the groups)';
     const fallback = async (rs: Promise<SwitchPathReading[]>) =>
       rs.then((r) => ({ readings: view(r), clauses: switchClausesOf(r).map((c) => c.clause) }));
     /** The tail of a reading's how: what decided it. */
@@ -4370,14 +4428,17 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
       };
       const got: Record<string, unknown> = {};
       for (const [k, rs] of Object.entries(kinds)) got[k] = await read(rs);
-      const gap = (why: string) => ({ readings: ['sudo unknown'], cause: `${GAP} ${why}` });
+      const gap = (why: string, remedy = '') => ({
+        readings: ['sudo unknown'],
+        cause: `${GAP} ${why}${remedy}`,
+      });
       // (1) red when a way `id -G` cannot be read falls back to "not allowed" again (9752398a: each
       //     reads not allowed, clause (g) — the walk's wrong "no", real rc 0), or names another
       //     reason; (2) prints each reading and cause.
       expect(got).toEqual({
-        absent: gap('no id was found in the system folders'),
+        absent: gap('no id was found in the system folders', REMEDY),
         refused: gap('the check refused to run id'),
-        notRoot: gap('id is not a root-owned system copy'),
+        notRoot: gap('id is not a root-owned system copy', REMEDY),
         writable: gap('id is root-owned, but this login can change it'),
         exit1: gap('id -G svc exited 1'),
         empty: gap('id -G svc printed no list of groups'),
@@ -4401,11 +4462,11 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
       }).toEqual({
         groupsHalf: {
           readings: ['sudo unknown'],
-          cause: `${GAP} no id was found in the system folders`,
+          cause: `${GAP} no id was found in the system folders${REMEDY}`,
         },
         target: {
           readings: ['sudo unknown'],
-          cause: `${GAP} no id was found in the system folders`,
+          cause: `${GAP} no id was found in the system folders${REMEDY}`,
         },
         gid: { readings: NOT, clauses: ['g'] },
       });
@@ -4549,6 +4610,858 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
       });
     });
   });
+
+  // ─── #819 Unit A, the capped correction (PR #860, correction 2): no password real sudo accepts is
+  // left out of the sentence. Real sudo first (plans/issue-627/w/unit-a/c2-ia2/probe/, two runs alike):
+  // each cell's expected state is what sudo gave, or an honest unknown where this check cannot see what
+  // sudo sees (the table pass, plans/issue-627/w/review-860/table-3a/TABLE-raw.md).
+
+  /** The secondary-SVCGRP world, each lookup captured (fixtures/ubuntu-24.04/, 2026-10-20…24): svc
+   *  999:1300 (svcown) and in SVCGRP (1500); svcgrp (1100) lists alice; wheel (1101) lists root;
+   *  alice and agent found, ghost absent. No `id`, unless `id` names svc's and root's captures. */
+  const world = (
+    id?: { svc: string; root: string },
+    over: Record<string, string> = {},
+  ): MachineSpec =>
+    merge(
+      calls({
+        'passwd svc': 'getent.passwd.svc.secondary-SVCGRP',
+        'passwd alice': 'getent.passwd.alice.secondary-SVCGRP',
+        'passwd agent': 'getent.passwd.agent.secondary-SVCGRP',
+        'passwd ghost': 'getent.passwd.ghost.absent',
+        'group 0': 'getent.group.0',
+        'group 1300': 'getent.group.1300.secondary-SVCGRP',
+        'group 1500': 'getent.group.1500.secondary-SVCGRP',
+        'group 1101': 'getent.group.1101.lists-root',
+        'group svcgrp': 'getent.group.svcgrp.secondary-SVCGRP',
+        'group svcown': 'getent.group.svcown.secondary-SVCGRP',
+        'group wheel': 'getent.group.wheel.lists-root.secondary-SVCGRP',
+        'group WHEEL': 'getent.group.WHEEL.absent',
+        ...over,
+      }),
+      id === undefined
+        ? {}
+        : {
+            programs: { [ID]: 0 },
+            calls: { [`${ID} -G svc`]: `${U24}/${id.svc}`, [`${ID} -G root`]: `${U24}/${id.root}` },
+          },
+    );
+  /** `id -G` read: svc in svcown and SVCGRP (1300 1500); root in wheel (0 1101). */
+  const IDS = { svc: 'id.G.svc.secondary-SVCGRP', root: 'id.G.root.in-wheel' };
+  /** The captured NOPASSWD rule for nobody (so the rules are never "listed without a password"). */
+  type Rule = [runas: string, options?: string | undefined, command?: string | undefined];
+  const NB: Rule = ['nobody', '!authenticate', '/bin/true'];
+  /** The captured listing's rules replaced by `entries` — each `[run-as, options?, command?]`, the
+   *  run-as `users` or `users : groups` — with the global Defaults items `items` added (the
+   *  cut-capture standard: the edit is named beside each cell). */
+  const rules =
+    (entries: Rule[], ...items: string[]) =>
+    (out: string): string => {
+      const head = out.slice(0, out.indexOf('User agent may run'));
+      const listed =
+        items.length > 0
+          ? head.replace('    use_pty\n', `    use_pty, ${items.join(', ')}\n`)
+          : head;
+      return `${listed}User agent may run the following commands on h:\n\n${entries
+        .map(([runas, options, command]) => {
+          const [users, groups] = runas.split(' : ');
+          return [
+            'Sudoers entry: /etc/sudoers.d/realm',
+            `    RunAsUsers: ${users}`,
+            ...(groups !== undefined ? [`    RunAsGroups: ${groups}`] : []),
+            ...(options !== undefined ? [`    Options: ${options}`] : []),
+            '    Commands:',
+            `\t${command ?? '/usr/bin/true'}`,
+            '',
+          ].join('\n');
+        })
+        .join('\n')}`;
+    };
+  /** The five policies (the prompt's grid rows), as the global Defaults items that set them. */
+  const POLICY: Record<string, string[]> = {
+    default: [],
+    rootpw: ['rootpw'],
+    targetpw: ['targetpw'],
+    'runaspw svc': ['runaspw', 'runas_default=svc'],
+    'runaspw nobody': ['runaspw', 'runas_default=nobody'],
+  };
+  /** A sudo reading and its password clauses — the strong sentence's (a) clauses, and (b) where a
+   *  ticket fires it. */
+  const judged = async (rs: Promise<SwitchPathReading[]>) =>
+    rs.then((r) => {
+      const sudo = r.filter((x) => x.path === 'sudo');
+      return { readings: view(sudo), clauses: clauses(sudo) };
+    });
+  /** A reading's code, as the expected tables write it: yes, unknown, no, or whose password(s). */
+  const N = (whose: string) => `sudo needs_credential ${whose} sudo_timestamp`;
+  const CODE: Record<string, { readings: string[]; clauses: string[] }> = {
+    yes: { readings: ['sudo yes'], clauses: [] },
+    unknown: { readings: ['sudo unknown'], clauses: [] },
+    no: { readings: ['sudo not_allowed'], clauses: [] },
+    this_login: { readings: [N('this_login')], clauses: ['a:this_login', 'b'] },
+    root: { readings: [N('root')], clauses: ['a:root', 'b'] },
+    svc: { readings: [N('svc')], clauses: ['a:svc', 'b'] },
+    'svc+root': { readings: [N('svc'), N('root')], clauses: ['a:svc', 'a:root', 'b'] },
+    nobody: {
+      readings: [N('named_user nobody')],
+      clauses: ['a:named_user:nobody', 'b'],
+    },
+  };
+  /** The tail of a reading's how: what decided it. */
+  const tail = async (rs: Promise<SwitchPathReading[]>) =>
+    rs.then((r) => {
+      const sudo = r.filter((x) => x.path === 'sudo');
+      return { readings: view(sudo), how: sudo[0]?.how.split(': ').slice(1).join(': ') };
+    });
+  /** The strong sentence for these ways (every other condition measured "no", --gate-answers
+   *  withheld on the line), as the sentence describe builds it. */
+  const NOC: ConditionReading = { basis: 'measured', answer: 'no' };
+  const claimOf = (ways: SwitchPathReading[]): string => {
+    const e: CheckEvidence = {
+      login: 'agent',
+      service_user: 'svc',
+      store_owned_by_other: true,
+      conditions: {
+        store_reach: NOC,
+        become_service_user: switchPathsReading(ways, 'svc'),
+        root_engine: NOC,
+        trust_root_writable: NOC,
+        other_answer_host: { basis: 'unknown', cause: 'one look' },
+        time_basis: { basis: 'measured', answer: 'fact', detail: 'clock' },
+        agent_sandbox: NOC,
+        economics_writable: { basis: 'measured', answer: 'fact', detail: 'none' },
+      },
+      switch_paths: ways,
+      value: { value: 'withheld', source: { kind: 'flag', ref: '--gate-answers' } },
+      store: '/home/svc/.realm',
+      store_found: true,
+      owns_store: false,
+      door: 'mcp',
+      extensions_unread: false,
+    };
+    return separationClaim(e);
+  };
+  /** Whose passwords a strong sentence names, in order — none when the sentence is not the strong one. */
+  const named = (s: string): string[] =>
+    s.includes('cannot record a gate answer')
+      ? [...s.matchAll(/the agent cannot obtain ([^;]+?)'s password/g)].map((m) => m[1]!)
+      : [];
+  const CASE =
+    'sudo matches group names in any case, so %s may be in %g under another case, and no id was found in the system folders (a root-owned id in a system folder lets this check read the groups)';
+  const caseCause = (user: string, group: string) => CASE.replace('%s', user).replace('%g', group);
+
+  describe("#819 Unit A, the capped correction: one target's cover never drops the other's unknown", () => {
+    /** The grid's columns: svc's state (NOPASSWD, a password, the case gap with a password or
+     *  NOPASSWD — svc is in SVCGRP, which `%svcgrp` names in another case — not covered) × root's,
+     *  through `(%wheel)` (NOPASSWD, a password, not covered). */
+    const SVC: Record<string, Rule[]> = {
+      sNP: [['svc', '!authenticate']],
+      sPW: [['svc']],
+      gapPW: [['%svcgrp']],
+      gapNP: [['%svcgrp', '!authenticate']],
+      sNone: [],
+    };
+    const ROOT: Record<string, Rule[]> = {
+      rNP: [['%wheel', '!authenticate']],
+      rPW: [['%wheel']],
+      rNone: [],
+    };
+    /** Real sudo's answer per cell, or an honest unknown (TABLE-raw.md, W-860-3A-07): under the
+     *  default policy, rootpw and runaspw sudo asks one password whatever `-u` names. */
+    const sameAsk = (w: string) => ({
+      sNP: ['yes', 'yes', 'yes'],
+      sPW: ['yes', w, w],
+      gapPW: ['yes', w, 'unknown'],
+      gapNP: ['yes', 'unknown', 'unknown'],
+      sNone: ['yes', w, 'no'],
+    });
+    const EXPECTED: Record<string, Record<string, string[]>> = {
+      default: sameAsk('this_login'),
+      rootpw: sameAsk('root'),
+      'runaspw svc': sameAsk('svc'),
+      'runaspw nobody': sameAsk('nobody'),
+      // targetpw: sudo asks the target's password, so an unknown cover of either target stays
+      targetpw: {
+        sNP: ['yes', 'yes', 'yes'],
+        sPW: ['yes', 'svc+root', 'svc'],
+        gapPW: ['yes', 'unknown', 'unknown'],
+        gapNP: ['yes', 'unknown', 'unknown'],
+        sNone: ['yes', 'unknown', 'no'],
+      },
+    };
+    for (const policy of Object.keys(POLICY)) {
+      it(`the grid, ${policy}: svc's state × root's through (%wheel), no id — each cell sudo's answer or an honest unknown, the sentence naming every password sudo asks`, async () => {
+        const got: Record<string, unknown> = {};
+        const want: Record<string, unknown> = {};
+        for (const [s, se] of Object.entries(SVC)) {
+          for (const [i, [r, re]] of Object.entries(ROOT).entries()) {
+            const cell = `${s} × ${r}`;
+            got[cell] = await judged(third(rules([NB, ...se, ...re], ...POLICY[policy]!), world()));
+            want[cell] = CODE[EXPECTED[policy]![s]![i]!];
+          }
+        }
+        // (a) red when one target's cover drops the other's unknown (`:1387`: targetpw sNone × rPW
+        //     reads root's password only — W-860CR-01's printout; `:1388`'s mirror), or a password
+        //     unknown is returned under a policy that asks one password whatever the target (default
+        //     gapPW × rPW reads unknown — W-860-3A-08's cost); (b) prints each cell's readings and
+        //     clauses.
+        expect(got).toEqual(want);
+      });
+    }
+
+    it('with id present, a spot row per policy: the gap and the mirror read as sudo gives them', async () => {
+      const spot = async (policy: string, entries: Rule[]) =>
+        judged(third(rules([NB, ...entries], ...POLICY[policy]!), world(IDS)));
+      // (a) red when `id -G` stops deciding (the gap read anyway: unknown) or a cover is lost;
+      //     (b) prints each.
+      expect({
+        default: await spot('default', [['%svcgrp'], ['%wheel']]),
+        rootpw: await spot('rootpw', [['%svcgrp'], ['%wheel']]),
+        targetpw: await spot('targetpw', [['%svcgrp'], ['%wheel']]),
+        targetpwRootOnly: await spot('targetpw', [['%wheel']]),
+        runaspwSvc: await spot('runaspw svc', [['%svcgrp'], ['%wheel']]),
+        runaspwNobody: await spot('runaspw nobody', [['%svcgrp'], ['%wheel']]),
+      }).toEqual({
+        default: CODE['this_login'],
+        rootpw: CODE['root'],
+        targetpw: CODE['svc+root'],
+        // svc is in neither wheel nor WHEEL by `id -G`: root's password only
+        targetpwRootOnly: CODE['root'],
+        runaspwSvc: CODE['svc'],
+        runaspwNobody: CODE['nobody'],
+      });
+    });
+
+    it('the audit’s `Defaults!` case (W-UAC2-AUD-03): a password rule whose command a `Defaults!` `!authenticate` line names keeps its unknown open', async () => {
+      const progs = { programs: { '/usr/bin/true': 0, '/usr/bin/false': 0 } };
+      const bang = (policy: string, extra: Rule[] = []) =>
+        read(
+          third(
+            both(
+              rules(
+                [
+                  NB,
+                  ['%svcgrp', undefined, '/usr/bin/true'],
+                  ['root', undefined, '/usr/bin/false'],
+                  ...extra,
+                ],
+                ...POLICY[policy]!,
+              ),
+              specific('    Defaults!/usr/bin/true !authenticate'),
+            ),
+            merge(world(), progs),
+          ),
+        );
+      const open = { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') };
+      // (a) red when the `Defaults!` open kind is dropped (each reads needs: default this_login,
+      //     rootpw root, runaspw svc, targetpw svc+root); (b) prints each reading and cause.
+      expect({
+        default: await bang('default'),
+        rootpw: await bang('rootpw'),
+        runaspwSvc: await bang('runaspw svc'),
+        targetpw: await bang('targetpw', [['svc, root', undefined, '/usr/bin/false']]),
+      }).toEqual({ default: open, rootpw: open, runaspwSvc: open, targetpw: open });
+    });
+
+    it('the guard and its mirror (W-UAC2R4-AUD-15): a `Defaults>` `!authenticate` target opens the kept unknown about the user it covers', async () => {
+      // `%WHEEL`: getent finds no group of that name, and sudo matches names in any case — root (or
+      // svc) may be in a wheel group of another case
+      const WHEEL =
+        'getent group WHEEL finds no group of that name, and sudo matches group names in any case (case_insensitive_group, on by default)';
+      // (a) red when a `Defaults>` target opens no kept unknown (each reads needs this_login, with
+      //     the strong sentence, while real sudo is passwordless if root — or svc — is in WHEEL),
+      //     or one svc tag stands for both targets (the guard reads needs this_login); (b) prints both.
+      expect({
+        guard: await read(
+          third(
+            both(rules([NB, ['svc'], ['%WHEEL']]), specific('    Defaults>root !authenticate')),
+            world(),
+          ),
+        ),
+        mirror: await read(
+          third(
+            both(rules([NB, ['root'], ['%WHEEL']]), specific('    Defaults>svc !authenticate')),
+            world(),
+          ),
+        ),
+      }).toEqual({
+        guard: { readings: ['sudo unknown'], cause: WHEEL },
+        mirror: { readings: ['sudo unknown'], cause: WHEEL },
+      });
+    });
+
+    it('rev 5.1 (IA 2’s finding, W-860-MA3-19): under targetpw a run-as group’s unknown beside a covering `(ALL)` is returned — the way it hides asks this login’s password, or a listed user’s', async () => {
+      const all = (group: string, policy: string, id?: typeof IDS) =>
+        read(third(rules([NB, ['ALL'], [`${group} : svcgrp`]], ...POLICY[policy]!), world(id)));
+      // Real sudo (probe-c2 set H, ubuntu:24.04 and ubuntu:20.04, two runs each): with `(ALL)` beside
+      // `(agent : svcgrp)` under targetpw, `sudo -S -g SVCGRP` takes this login's password; beside
+      // `(alice : svcgrp)`, `-u alice -g SVCGRP` takes alice's. Before this fix both read "needs
+      // svc's, root's" with the strong sentence.
+      // (a) red when the group token's unknown is dropped because the covers name svc and root (the
+      //     two `targetpw` cells read needs svc + root); (b) prints each reading and cause.
+      expect({
+        agent: await all('agent', 'targetpw'),
+        alice: await all('alice', 'targetpw'),
+        agentDefault: await all('agent', 'default'),
+        agentId: await all('agent', 'targetpw', IDS),
+        aliceId: await all('alice', 'targetpw', IDS),
+      }).toEqual({
+        agent: { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') },
+        alice: { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') },
+        // the default policy asks this login's password whatever the way: the unknown is dropped
+        agentDefault: { readings: NEEDS, cause: undefined },
+        agentId: { readings: [N('svc'), N('root'), N('this_login')], cause: undefined },
+        aliceId: {
+          readings: [N('svc'), N('root'), N('this_login'), N('named_user alice')],
+          cause: undefined,
+        },
+      });
+    });
+
+    it('W-860CR-05: a lookup that errs keeps the cover its token already read — `(svc)` NOPASSWD with `getent passwd svc` erring reads as `(svc, ALL)` does', async () => {
+      const errs = (argv: readonly string[], r: RunResult): RunResult =>
+        argv.join(' ') === `${GETENT} passwd svc`
+          ? { error: 'getent gave no answer within 5 s' }
+          : r;
+      // (a) red when the lookup's error zeroes the token's covers (unknown, W-860CR-05); (b) prints
+      //     both readings.
+      expect({
+        svc: (await tail(third(rules([['svc', '!authenticate']]), world(), errs))).readings,
+        svcAll: (await tail(third(rules([['svc, ALL', '!authenticate']]), world(), errs))).readings,
+      }).toEqual({ svc: ['sudo yes'], svcAll: ['sudo yes'] });
+    });
+
+    it('W-860CR-01, MIR1, MIR2, MIR4 read unknown under targetpw; W-860CR-01 under the default policy needs this login’s password; B, B2, C yes and H unknown, as before', async () => {
+      const errs0 = (argv: readonly string[], r: RunResult): RunResult =>
+        argv.join(' ') === `${GETENT} group 0` ? { error: 'getent gave no answer within 5 s' } : r;
+      const tpw = (entries: Rule[], over?: MachineSpec, wrap?: typeof errs0) =>
+        read(third(rules([NB, ...entries], 'targetpw'), over ?? world(), wrap));
+      // (a) red: CR-01 when root's cover drops svc's case gap (`:1387`: needs root, the strong
+      //     sentence without svc's clause — real sudo -u svc takes svc's password, W-860-MA3-05);
+      //     MIR1/MIR2/MIR4 when svc's cover drops root's unknown (`:1388`: needs svc only); CR-01d
+      //     when a password unknown is returned under the default policy; B, B2, C when an unknown
+      //     outranks a NOPASSWD rule; H when a `Defaults>` target's case gap or the rule's is dropped;
+      //     (b) prints each reading, its cause, and what decided it.
+      expect({
+        cr01: await tpw([['%wheel']]),
+        mir1: await tpw([['%svcown']]),
+        mir2: await tpw([['%svcgrp']], world(IDS), errs0),
+        mir4: await tpw(
+          [['%svcgrp']],
+          world(undefined, { 'group svcgrp': 'getent.group.svcgrp.lists-svc' }),
+        ),
+        cr01d: await read(third(rules([NB, ['%wheel']]), world())),
+        B: await tail(
+          third(
+            rules([
+              ['%svcgrp', '!authenticate', '/x'],
+              ['svc', '!authenticate', '/y'],
+            ]),
+            world(),
+          ),
+        ),
+        B2: await tail(
+          third(
+            rules([
+              ['svc', '!authenticate', '/y'],
+              ['%svcgrp', '!authenticate', '/x'],
+            ]),
+            world(),
+          ),
+        ),
+        C: await tail(third(rules([['%wheel', '!authenticate']]), world())),
+        H: await read(
+          third(
+            both(rules([NB, ['%svcgrp']]), specific('    Defaults>%svcgrp !authenticate')),
+            world(),
+          ),
+        ),
+      }).toEqual({
+        // the case cause names the user it was recorded for (the walk's wording item): svc here
+        cr01: { readings: ['sudo unknown'], cause: caseCause('svc', 'wheel') },
+        mir1: {
+          readings: ['sudo unknown'],
+          cause: 'getent group svcown lists no members, so whether root is in it is unknown',
+        },
+        mir2: {
+          readings: ['sudo unknown'],
+          cause: 'getent group 0: getent gave no answer within 5 s',
+        },
+        // and root here
+        mir4: { readings: ['sudo unknown'], cause: caseCause('root', 'svcgrp') },
+        cr01d: { readings: NEEDS, cause: undefined },
+        B: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as svc' },
+        B2: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as svc' },
+        C: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as root' },
+        // the table pass's H (W-860-3A-05): unknown at da485ce5 and after
+        H: { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') },
+      });
+    });
+
+    it('the walk’s wording item: a fallback that reads not allowed says why `id -G` could not be read', async () => {
+      // (a) red when the not-allowed how drops the reason (`Covers.idFails` not carried); (b) prints
+      //     each how's tail.
+      expect({
+        nocase: await tail(third(rules([NB, ['%svcgrp']], '!case_insensitive_group'), world())),
+        byGid: await tail(third(rules([NB, ['%svcgrp']], 'match_group_by_gid'), world())),
+      }).toEqual({
+        nocase: {
+          readings: NOT,
+          how: 'no rule runs as svc or root; id -G svc could not be read: no id was found in the system folders',
+        },
+        byGid: {
+          readings: NOT,
+          how: 'no rule runs as svc or root; id -G svc could not be read: no id was found in the system folders',
+        },
+      });
+    });
+  });
+
+  describe('#819 Unit A, the capped correction: su toward root', () => {
+    /** su at /usr/bin/su on Ubuntu 24.04, svc's shell runs commands (`getent.passwd.svc.bash`), root's
+     *  entry from `rootEntry`, and the over spec. */
+    const suRoot = (
+      rootEntry = 'getent.passwd.root',
+      over: MachineSpec = {},
+      svcEntry = 'getent.passwd.svc.bash',
+    ) =>
+      paths(
+        linux(
+          U24,
+          merge(
+            merge(su(U24, svcEntry), {
+              calls: { [`${GETENT} passwd root`]: `${U24}/${rootEntry}` },
+            }),
+            over,
+          ),
+        ),
+      ).then((rs) => rs.filter((r) => r.path === 'su'));
+    const hows = (rs: SwitchPathReading[]) =>
+      rs.map(
+        (r) => `${view([r])[0]} :: ${r.outcome === 'unknown' ? `${r.how} :: ${r.cause}` : r.how}`,
+      );
+
+    it('each su branch toward root, with svc’s reading beside it unchanged', async () => {
+      const noRoot = linux(U24, su(U24, 'getent.passwd.svc.bash'));
+      delete noRoot.calls![`${GETENT} passwd root`];
+      const mac = await paths({
+        platform: 'darwin',
+        programs: { '/usr/bin/su': 0 },
+        files: { '/etc/pam.d/su': { fixture: `${MAC}/pam.su` } },
+      });
+      const alpine = await paths({
+        programs: { [GETENT]: 0, '/bin/su': 0, '/bin/busybox': 0 },
+        links: { '/bin/su': '/bin/busybox' },
+        calls: {
+          [`${GETENT} passwd svc`]: `${ALP}/getent.passwd.svc.sh`,
+          [`${GETENT} passwd root`]: `${ALP}/getent.passwd.root`,
+        },
+        files: { '/etc/shells': { fixture: `${ALP}/shells` } },
+      });
+      const PAMREAD =
+        '/etc/pam.d/su, /etc/pam.d/common-auth, /etc/pam.d/common-account, /etc/pam.d/common-session, /etc/pam.d/su-l read';
+      // (a) red when su is read toward svc only again (each loses its second line), or a branch's
+      //     how names svc where it is about root; (b) prints each reading with its how (and cause).
+      expect({
+        entryUnread: hows((await paths(noRoot)).filter((r) => r.path === 'su')).map((h) =>
+          h.replace(/:: getent passwd root: .*$/, ':: getent passwd root: …'),
+        ),
+        nologin: hows(await suRoot('getent.passwd.root.nologin')),
+        emptyPassword: hows(await suRoot('getent.passwd.root.empty-pw')),
+        busybox: hows(alpine.filter((r) => r.path === 'su')),
+        mac: hows(mac.filter((r) => r.path === 'su')),
+      }).toEqual({
+        entryUnread: [
+          `su needs_credential svc :: ${PAMREAD}`,
+          'su unknown :: getent passwd root :: getent passwd root: …',
+        ],
+        nologin: [
+          `su needs_credential svc :: ${PAMREAD}`,
+          "su not_allowed :: getent passwd root and the shells files read: root's shell /usr/sbin/nologin runs no command",
+        ],
+        emptyPassword: [
+          `su needs_credential svc :: ${PAMREAD}`,
+          'su yes :: getent passwd root: its password field is empty',
+        ],
+        busybox: [
+          "su needs_credential svc :: /bin/su is BusyBox's su, which reads no PAM stack and asks for svc's password",
+          "su needs_credential root :: /bin/su is BusyBox's su, which reads no PAM stack and asks for root's password",
+        ],
+        mac: [
+          "su unknown :: svc's shell :: dscl was not found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH",
+          "su unknown :: root's shell :: dscl was not found in /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin, /bin, /sbin, /run/wrappers/bin, /run/setuid-programs or on PATH",
+        ],
+      });
+    });
+
+    it('su’s PAM stacks are scanned once: a grant, an unknown or an ssh agent’s key is one reading, a person’s touch one reading, the password one per target', async () => {
+      const withSu = (fixture: string) =>
+        suRoot('getent.passwd.root', {
+          files: { '/etc/pam.d/su': { fixture: `${U24}/${fixture}` } },
+        }).then(view);
+      // (a) red when a shared reading is given per target (two "su yes" or two "su unknown"), or the
+      //     person reading is given per target; (b) prints each.
+      expect({
+        grant: await suRoot('getent.passwd.root', {
+          files: { '/etc/pam.d/su-l': { fixture: `${U24}/variant.su-l-wheel-trust` } },
+          calls: { [`${GETENT} group wheel`]: `${U24}/getent.group.wheel` },
+        }).then(view),
+        unknown: await withSu('variant.su-succeed-if'),
+        // sudo's captured stacks with a person's key and with an ssh agent's key, given as su's
+        person: await withSu('variant.sudo-u2f'),
+        sshAgent: await withSu('variant.sudo-ssh-agent'),
+        password: await suRoot().then(view),
+      }).toEqual({
+        grant: ['su yes'],
+        unknown: ['su unknown'],
+        person: [
+          'su needs_credential svc',
+          'su needs_credential root',
+          'su needs_credential person',
+        ],
+        sshAgent: ['su unknown'],
+        password: ['su needs_credential svc', 'su needs_credential root'],
+      });
+    });
+
+    it('the differential’s shape: `(svc)` with a password under targetpw and su present — the sentence names root’s password too, and condition 2 lists su toward root', async () => {
+      const ways = await third(
+        defaults('targetpw'),
+        merge(su(U24, 'getent.passwd.svc.bash'), { programs: { '/usr/bin/su': 0 } }),
+      );
+      // (a) red when su is read toward svc only (the sentence then names svc's password only, while
+      //     `su root` with root's password exits 0 on all six images, W-860-MA3-07); (b) prints the
+      //     passwords the sentence names and condition 2's su entries.
+      expect({
+        named: named(claimOf(ways)),
+        su:
+          switchPathsReading(ways, 'svc').basis === 'measured'
+            ? ways
+                .filter((r) => r.path === 'su')
+                .map((r) => switchPathEntry(r, 'svc').split(' (')[0])
+            : 'not measured',
+      }).toEqual({
+        named: ['svc', 'root'],
+        su: ["su: needs svc's password", "su: needs root's password"],
+      });
+    });
+
+    it('the typical server with su present: the sentence is the same but for root’s clause, which gains "and it is not empty"; condition 2 gains su’s entry toward root', async () => {
+      const ways = await paths(linux(U24, merge(sudos(U24, 'password', ['sudo']), su(U24))));
+      const s = claimOf(ways);
+      // (a) red when root's clause keeps its old words, or su is read toward svc only; (b) prints
+      //     the clause test and the su entries.
+      expect({
+        rootClause: s.includes("the agent cannot obtain root's password, and it is not empty;"),
+        oldClause: s.includes("the agent cannot obtain root's password;"),
+        su: ways.filter((r) => r.path === 'su').map((r) => view([r])),
+      }).toEqual({
+        rootClause: true,
+        oldClause: false,
+        su: [['su not_allowed'], ['su needs_credential root']],
+      });
+    });
+
+    it('with Realm’s service user root, su is read once', async () => {
+      const rs = await paths(
+        linux(
+          U24,
+          merge(su(U24, 'getent.passwd.root'), {
+            calls: { [`${GETENT} passwd root`]: `${U24}/getent.passwd.root` },
+          }),
+        ),
+        'root',
+      );
+      // (a) red when root is read twice, as the user and as root; (b) prints the su readings.
+      expect(view(rs.filter((r) => r.path === 'su'))).toEqual(['su needs_credential svc']);
+    });
+  });
+
+  describe('#819 Unit A, the capped correction: Rocky’s PAM line, a global !authenticate, Defaults>', () => {
+    it('Part 4: a pam_unix line with use_first_pass still reads unknown (it never asks, and fails where no earlier module took a password)', async () => {
+      const lk = lookups(
+        fixtureMachine(
+          merge(linux(U24), {
+            // an authored stack (no capture holds one): Rocky's system-auth line, try_first_pass
+            // replaced by use_first_pass
+            files: {
+              '/etc/pam.d/su':
+                'auth required pam_env.so\nauth sufficient pam_unix.so use_first_pass nullok\nauth required pam_deny.so\n',
+            },
+          }),
+        ),
+        'svc',
+      );
+      const scan = await scanPam(lk, 'su');
+      // (a) red when use_first_pass is admitted with try_first_pass; (b) prints the scan.
+      expect(scan).toEqual({
+        unknown:
+          "su's PAM stack has a line this check does not read: auth sufficient pam_unix.so use_first_pass nullok",
+      });
+    });
+
+    it('Part 5: a global !authenticate reads yes only with a rule that runs as svc or root — with only (nobody) not allowed, with only a svc case gap unknown', async () => {
+      // (a) red when the global line reads yes before any rule is read (`(nobody)`: yes, while real
+      //     `sudo -n -u svc|root` exits 1 — probe-c2 P5); (b) prints each.
+      expect({
+        svc: await tail(third(rules([NB, ['svc']], '!authenticate'), world())),
+        nobody: await tail(
+          third(rules([['nobody', undefined, '/usr/bin/true']], '!authenticate'), world()),
+        ),
+        gap: await read(third(rules([['%svcgrp']], '!authenticate'), world())),
+      }).toEqual({
+        svc: {
+          readings: ['sudo yes'],
+          how: 'its Defaults turn the password off (!authenticate), and a rule runs as svc',
+        },
+        nobody: { readings: NOT, how: 'no rule runs as svc or root' },
+        gap: { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') },
+      });
+    });
+
+    it('Part 6: `Defaults>T !authenticate` counts only for a user a rule runs as', async () => {
+      const dgt = (entries: Rule[], over: MachineSpec, ...items: string[]) =>
+        third(both(rules(entries, ...items), specific('    Defaults>svc !authenticate')), over);
+      const gapEvery: Record<string, unknown> = {};
+      for (const policy of Object.keys(POLICY))
+        gapEvery[policy] = await read(dgt([NB, ['%svcgrp']], world(), ...POLICY[policy]!));
+      // (a) red: `cr09` and `wheelRoot` when a target that covers svc counts beside a rule that runs
+      //     as no svc (yes, W-860CR-09; real sudo -n -u svc and -u root exit 1); `group` when a rule
+      //     that reaches svc only through its run-as groups counts (yes, W-860-GPROBE-09); `gap`
+      //     when the guard is dropped (needs, while sudo may ask none); (b) prints each.
+      expect({
+        cr09: await judged(dgt([NB, ['root']], world())),
+        wheelRoot: await judged(dgt([NB, ['%wheel']], world(), '!case_insensitive_group')),
+        gap: gapEvery,
+        svc: (await read(dgt([NB, ['svc']], world()))).readings,
+        group: await judged(dgt([NB, ['agent : svcgrp']], world(IDS))),
+        bang: (
+          await read(
+            third(
+              both(
+                rules([NB, ['agent : svcgrp', undefined, '/usr/bin/true']]),
+                specific('    Defaults!/usr/bin/true !authenticate'),
+              ),
+              merge(world(IDS), { programs: { '/usr/bin/true': 0 } }),
+            ),
+          )
+        ).readings,
+      }).toEqual({
+        cr09: CODE['this_login'],
+        // under !case_insensitive_group svc's place in wheel rests on wheel's listed members: (g)
+        wheelRoot: { readings: CODE['this_login']!.readings, clauses: ['a:this_login', 'b', 'g'] },
+        gap: Object.fromEntries(
+          Object.keys(POLICY).map((p) => [
+            p,
+            { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') },
+          ]),
+        ),
+        svc: ['sudo yes'],
+        group: CODE['this_login'],
+        bang: ['sudo yes'],
+      });
+    });
+  });
+
+  describe('#819 Unit A, the capped correction: the runas_default user’s password', () => {
+    it('(svc) with a password under runaspw: the runas_default user’s password — nobody’s, alice’s, this login’s; svc’s and root’s as before; the sentence names it', async () => {
+      const as = (user: string) => third(defaults('runaspw', `runas_default=${user}`), world());
+      const nobody = await as('nobody');
+      // (a) red when another user reads unknown again (`runaspwCause`: "sudo asks for nobody's
+      //     password"; real sudo -S -u svc takes nobody's, probe-c2 P7), or this login is named as
+      //     another user; (b) prints each reading and the passwords the sentence names.
+      expect({
+        nobody: view(nobody.filter((r) => r.path === 'sudo')),
+        nobodySentence: claimOf(nobody).includes(
+          "the agent cannot obtain nobody's password, and it is not empty",
+        ),
+        alice: (await judged(as('alice'))).readings,
+        agent: (await judged(as('agent'))).readings,
+        svc: (await judged(as('svc'))).readings,
+        root: (await judged(as('root'))).readings,
+      }).toEqual({
+        nobody: [N('named_user nobody')],
+        nobodySentence: true,
+        alice: [N('named_user alice')],
+        agent: [N('this_login')],
+        svc: [N('svc')],
+        root: [N('root')],
+      });
+    });
+
+    it('one clause per named user, in order of first appearance, after an administrator’s', () => {
+      const r = (whose: SwitchPathReading['whose'], user?: string): SwitchPathReading => ({
+        path: 'sudo',
+        outcome: 'needs_credential',
+        how: 'h',
+        ...(whose !== undefined ? { whose } : {}),
+        ...(user !== undefined ? { user } : {}),
+      });
+      const s = claimOf([
+        r('named_user', 'bob'),
+        r('administrator'),
+        r('named_user', 'alice'),
+        r('named_user', 'bob'),
+      ]);
+      // (a) red when a named user is given no clause, a clause per reading, or the order moves;
+      //     (b) prints the passwords the sentence names, and whether each is "not empty".
+      expect({
+        named: named(s),
+        bob: s.includes("the agent cannot obtain bob's password, and it is not empty"),
+      }).toEqual({ named: ['an administrator', 'bob', 'alice'], bob: true });
+    });
+  });
+
+  describe('#819 Unit A, the capped correction: a run-as group is read as sudo reads it', () => {
+    it('(a) match_group_by_gid does not apply to a run-as group list: `(agent : svcgrp)` with `id -G` read, svc only in SVCGRP', async () => {
+      const g = (
+        policy: string,
+        extra: string[] = [],
+        options?: string,
+        runas = 'agent : svcgrp',
+        id: typeof IDS | undefined = IDS,
+      ) => judged(third(rules([NB, [runas, options]], ...POLICY[policy]!, ...extra), world(id)));
+      const BYGID = ['match_group_by_gid'];
+      // (a) red when the flag is applied to the group list again (each reads not allowed: real
+      //     `sudo -g SVCGRP` gives gid 2001, W-860-GPROBE-01); `exact` when !case_insensitive_group
+      //     stops deciding; `noId*` when the fallback stops reading the case gap; (b) prints each.
+      expect({
+        nopasswd: await g('default', BYGID, '!authenticate'),
+        password: await g('default', BYGID),
+        rootpw: await g('rootpw', BYGID),
+        runaspw: await g('runaspw svc', BYGID),
+        targetpw: await g('targetpw', BYGID),
+        exact: await g('default', [...BYGID, '!case_insensitive_group'], '!authenticate'),
+        gid: await g(
+          'default',
+          [...BYGID, '!case_insensitive_group'],
+          '!authenticate',
+          'agent : #1500',
+        ),
+        gidNoFlags: await g('default', [], '!authenticate', 'agent : #1500'),
+        noIdNopasswd: await read(
+          third(rules([NB, ['agent : svcgrp', '!authenticate']], ...BYGID), world()),
+        ),
+        noIdPassword: await read(third(rules([NB, ['agent : svcgrp']], ...BYGID), world())),
+      }).toEqual({
+        nopasswd: CODE['yes'],
+        password: CODE['this_login'],
+        rootpw: CODE['root'],
+        runaspw: CODE['svc'],
+        targetpw: CODE['this_login'],
+        exact: CODE['no'],
+        gid: CODE['yes'],
+        gidNoFlags: CODE['yes'],
+        noIdNopasswd: { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') },
+        noIdPassword: { readings: ['sudo unknown'], cause: caseCause('svc', 'svcgrp') },
+      });
+    });
+
+    it('(b) and Part 9: under targetpw a way through a run-as group asks the password of the user it runs as — this login’s, and each plain user name’s', async () => {
+      const t = (
+        runas: string,
+        extra: string[] = [],
+        over: Record<string, string> = {},
+        id = IDS,
+      ) => read(third(rules([NB, [runas]], 'targetpw', ...extra), world(id, over)));
+      const NOT_ROOT = { svc: IDS.svc, root: 'id.G.root' };
+      const alice = [N('this_login'), N('named_user alice')];
+      // (a) red: `agent` when a group-reached entry names svc's password (W-860-GPROBE-04: svc's
+      //     never works for it); `alice*` when a plain user name is not named (alice's password works
+      //     for `-u alice -g SVCGRP`, probe-c2) or reads unknown (Part 9's break); `wheel` when a
+      //     `%group` of other users is read as covering nobody (it reads no password, the safe side
+      //     lost); `ghost` when a name getent cannot find is skipped while names match in any case;
+      //     (b) prints each reading and cause.
+      expect({
+        agent: await t('agent : svcgrp'),
+        alice: await t('alice : svcgrp'),
+        agentAlice: await t('agent, alice : svcgrp'),
+        svcAlice: await t('svc, alice : svcgrp'),
+        wheel: await t('%wheel : svcgrp', [], { 'group wheel': 'getent.group.wheel' }, NOT_ROOT),
+        wheelHoldsRoot: await t('%wheel : svcgrp'),
+        root: await t('root : svcgrp'),
+        svc: await t('svc : svcgrp'),
+        all: await t('ALL : svcgrp'),
+        ghost: await t('ghost : svcgrp'),
+        ghostExact: await t('ghost : svcgrp', ['!case_insensitive_user']),
+      }).toEqual({
+        agent: { readings: [N('this_login')], cause: undefined },
+        alice: { readings: alice, cause: undefined },
+        agentAlice: { readings: alice, cause: undefined },
+        svcAlice: {
+          readings: [N('svc'), N('this_login'), N('named_user alice')],
+          cause: undefined,
+        },
+        wheel: {
+          readings: ['sudo unknown'],
+          cause:
+            "under targetpw sudo asks the password of the user a way runs as, and this rule's user list holds %wheel, whose password this check does not name",
+        },
+        // wheel lists root: `%wheel` covers root, and real sudo -u root -g SVCGRP takes root's
+        // password (probe-c2, 1.8.31 and 1.9.15p5)
+        wheelHoldsRoot: { readings: [N('root'), N('this_login')], cause: undefined },
+        root: { readings: [N('root'), N('this_login')], cause: undefined },
+        svc: { readings: [N('svc'), N('this_login')], cause: undefined },
+        // the limit: a user list of ALL — the other users' passwords are not named
+        all: { readings: [N('svc'), N('root'), N('this_login')], cause: undefined },
+        ghost: {
+          readings: ['sudo unknown'],
+          cause:
+            'getent passwd ghost finds no user of that exact case, and sudo matches user names in any case',
+        },
+        ghostExact: { readings: [N('this_login')], cause: undefined },
+      });
+    });
+
+    it('(b) the sentence names this login’s password for a group way, and alice’s for `(alice : svcgrp)`; the other policies are unchanged', async () => {
+      const ways = (runas: string, policy: string) =>
+        third(rules([NB, [runas]], ...POLICY[policy]!), world(IDS));
+      // (a) red when the group way's passwords leave the sentence, or a policy that asks one password
+      //     whatever the user starts naming the user list's; (b) prints each.
+      expect({
+        agentSentence: named(claimOf(await ways('agent : svcgrp', 'targetpw'))),
+        aliceSentence: named(claimOf(await ways('alice : svcgrp', 'targetpw'))),
+        aliceDefault: (await judged(ways('alice : svcgrp', 'default'))).readings,
+        aliceRootpw: (await judged(ways('alice : svcgrp', 'rootpw'))).readings,
+        aliceRunaspw: (await judged(ways('alice : svcgrp', 'runaspw svc'))).readings,
+      }).toEqual({
+        agentSentence: ['agent'],
+        aliceSentence: ['agent', 'alice'],
+        aliceDefault: [N('this_login')],
+        aliceRootpw: [N('root')],
+        aliceRunaspw: [N('svc')],
+      });
+    });
+
+    it('(c) the words: a rule that reaches svc only through its run-as groups runs "with a group that svc is in", never "as svc"', async () => {
+      const np = (runas: string, ...items: string[]) =>
+        tail(third(rules([NB, [runas, '!authenticate']], ...items), world(IDS)));
+      // (a) red when a group-reached entry says "runs as svc" again (real sudo refuses -u svc for
+      //     it), or a user cover's words are lost beside the group's; (b) prints each how's tail.
+      expect({
+        agent: await np('agent : svcgrp'),
+        root: await np('root : svcgrp'),
+        svcGroup: await np('svc : svcgrp'),
+        svc: await np('svc'),
+        noauth: await tail(third(rules([NB, ['agent : svcgrp']], '!authenticate'), world(IDS))),
+        why: (await third(rules([NB, ['agent : svcgrp']]), world(IDS)))[0]?.how.split('; ')[0],
+      }).toEqual({
+        agent: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs with a group that svc is in' },
+        root: {
+          readings: ['sudo yes'],
+          how: 'a NOPASSWD rule runs as root or with a group that svc is in',
+        },
+        svcGroup: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as svc' },
+        svc: { readings: ['sudo yes'], how: 'a NOPASSWD rule runs as svc' },
+        noauth: {
+          readings: ['sudo yes'],
+          how: 'its Defaults turn the password off (!authenticate), and a rule runs with a group that svc is in',
+        },
+        // a run-as group is read for svc only, so only svc's `id -G` is named
+        why: 'LC_ALL=C /usr/bin/sudo -n -l and -n -ll and id -G svc read: a rule runs with a group that svc is in with a password',
+      });
+    });
+  });
 });
 
 describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten separation section names its cell', () => {
@@ -4582,8 +5495,9 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // :: "`(svc) NOPASSWD: /usr/bin/realm` listed", :: "`Defaults!…`", :: "`Defaults>svc …`",
     // :: "A §F2: … `/usr/bin/realm mcp *`", :: "A §F10: run-as names compared by uid …".
     // #819 follow-up 2 (member 5): `#uid` and `%#gid` as numbers — :: "P1: `(#0999)` …", :: "Q2: `(%#01400)` …".
+    // #819 Unit A, the capped correction (Part 8 (c), Part 5): "or with a group that user is in" — :: "(c) the words …" (the NOPASSWD and global !authenticate yes), :: "Part 5: a global !authenticate reads yes only with a rule …".
     claim(
-      "A rule that runs as Realm's user or root without a password reads yes, whatever command it is limited to, and so does a `Defaults` line that may turn the password off for such a rule. A run-as name counts by its uid, so another name for root or for the user counts too; `#uid` and `%#gid` are read as the numbers sudo reads (`#0999` is uid 999).",
+      "A rule that runs as Realm's user or root, or with a group that user is in, without a password reads yes, whatever command it is limited to, and so does a `Defaults` line that may turn the password off for such a rule. A run-as name counts by its uid, so another name for root or for the user counts too; `#uid` and `%#gid` are read as the numbers sudo reads (`#0999` is uid 999).",
     );
     // :: "a listing with no NOPASSWD entry …", :: "A §F8: `exempt_group` … `listpw=all` …".
     // #819 follow-up 2 (member 4): :: "P2: `exempt_group=Sudo` …", :: "controls: under match_group_by_gid …".
@@ -4594,8 +5508,9 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // :: "classic sudo refused …", :: "sudo-rs "interactive authentication is required" …".
     // #819 Unit A re-pin (A8): the two sentences now hold A6's runaspw sentence between them (its own
     // claim, below); each is claimed apart.
+    // #819 Unit A, the capped correction (Part 7): "or a named user's under runaspw" — :: "(svc) with a password under runaspw: the runas_default user’s password …".
     claim(
-      "In the original sudo's listing, a rule that needs a password reads \"needs\" that password: this login's, or root's or the user's under `rootpw`, `targetpw` or `runaspw`.",
+      "In the original sudo's listing, a rule that needs a password reads \"needs\" that password: this login's, or root's or the user's under `rootpw`, `targetpw` or `runaspw`, or a named user's under `runaspw`.",
     );
     claim(
       "Where sudo shows no Defaults — sudo-rs's listings and either sudo's refusal — the password may be this login's, root's or the user's, and all three are read.",
@@ -4641,8 +5556,15 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // #819 Unit A (A3): "#819 Unit A" :: "by gid (match_group_by_gid) …" (an exact name's gid; absent
     // does not hold; all digits unknown), :: "by name …" (each gid named, any case, exactly under
     // !case_insensitive_group, a gid with no name skipped); sudo-corpus :: T3 grp-* (sudo's verdicts).
+    // #819 Unit A, the capped correction (Part 8 (a)): which list — a `%group` of a user list as before (:: "by gid (match_group_by_gid) …", :: "by name …"); a group after the `:` by name alone — :: "(a) match_group_by_gid does not apply to a run-as group list …" (nopasswd … exact, gid).
     claim(
-      "A run-as group is compared with the user's groups as sudo reads them, which `id -G` lists: under `match_group_by_gid`, by the gid of the group `getent` finds by that exact name (a name it finds no group for does not hold the user, and an all-digit name reads unknown); otherwise by the name `getent` gives each of those groups, in any case unless `!case_insensitive_group` is listed (a group with no name is skipped, as sudo skips it).",
+      "A run-as group is compared with the user's groups as sudo reads them, which `id -G` lists.",
+    );
+    claim(
+      "A `%group` in a rule's user list is compared as sudo's `user_in_group` compares it: under `match_group_by_gid`, by the gid of the group `getent` finds by that exact name (a name it finds no group for does not hold the user, and an all-digit name reads unknown); otherwise by the name `getent` gives each of those groups, in any case unless `!case_insensitive_group` is listed (a group with no name is skipped, as sudo skips it).",
+    );
+    claim(
+      "A group after the `:` of a rule's run-as list is compared by name alone, as sudo compares it: by the name `getent` gives each of those groups, in any case unless `!case_insensitive_group` is listed, whether or not `match_group_by_gid` is, and `#gid` as a number.",
     );
     // #819 Unit A (A3): :: "`%#gid` compared with the set as a number …" (and `%:name`).
     claim(
@@ -4653,20 +5575,35 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // absent …", "A B3: `%SVCGRP` …", "A S2: under match_group_by_gid …" (member 3), C-17's history.
     // The Unit A correction re-pin (C2): the sentence ends at the group `getent` finds; what a group
     // that does not hold the user reads is the next sentence.
+    // #819 Unit A, the capped correction (Part 8 (a)): match_group_by_gid only for a `%group` — :: "(a) …" (noIdNopasswd, noIdPassword: the any-case fallback for a run-as group under match_group_by_gid).
     claim(
-      "Where `id -G` gives no answer that holds the user's primary group, a run-as group is read from the groups' lists instead: unless `!case_insensitive_group` or `match_group_by_gid` is listed, either of which makes sudo match a group exactly, run-as group names are compared in any case with the user's primary group and with the group `getent` finds.",
+      "Where `id -G` gives no answer that holds the user's primary group, a run-as group is read from the groups' lists instead: unless `!case_insensitive_group` is listed, or `match_group_by_gid` for a `%group` in a user list, either of which makes sudo match a group exactly, run-as group names are compared in any case with the user's primary group and with the group `getent` finds.",
     );
     // The Unit A correction (C2, W-UA-MA3-02): "the Unit A correction" :: "C2: where `id -G` cannot be
     // read, the walk’s shape 3 reads unknown …" (each way), "C2’s scope …", "C2: no case gap …"
     // (either flag: as today), "C2: yes still beats unknown …"; "#819 Unit A" :: "each fallback …";
     // sudo-corpus :: T3 (grp-fedora-edited: the exact read decides).
+    // #819 Unit A, the capped correction (Parts 1, 2, 8 (b), 9; rev 5.1): the exception — :: "the grid, …" (each policy), :: "rev 5.1 (IA 2’s finding …)" (never for a group after the `:` under targetpw); targetpw's group way — :: "(b) and Part 9: under targetpw a way through a run-as group asks …" (agent, alice, agentAlice, svcAlice, wheel, ghost, ghostExact; all and wheelHoldsRoot: the limit), :: "(b) the sentence names this login’s password …"; real sudo: plans/issue-627/w/unit-a/c2-ia2/probe (1.8.31 and 1.9.15p5).
     claim(
-      'When `id -G` cannot be read, unless `!case_insensitive_group` or `match_group_by_gid` is listed, a run-as group that does not hold the user by its list or primary group reads unknown, since a secondary group named only in another case is not seen.',
+      "When `id -G` cannot be read, unless `!case_insensitive_group` is listed, or `match_group_by_gid` for a `%group` in a user list, a run-as group that does not hold the user by its list or primary group reads unknown, since a secondary group named only in another case is not seen — unless sudo already reads yes, or the rule needs a password, another rule runs as Realm's user or root, or with a group that user is in, and sudo would ask the same password either way (under the default, `rootpw` and `runaspw`; under `targetpw` only when rules already run as both, and never for a group after the `:`, whose way asks this login's password or a listed user's).",
+    );
+    claim(
+      'Under `targetpw` a way through a run-as group asks the password of the user it runs as.',
+    );
+    claim(
+      "`sudo -g` alone runs as this login (sudo 1.8.31 and 1.9.9 allow it for any rule with that group, newer sudo when the login is in the rule's user list), so this check names this login's password for every such rule, and also the password of every plain user name the rule's user list holds.",
+    );
+    claim(
+      'It reads unknown where that list holds a name `getent` cannot find, since names match in any case (unless `!case_insensitive_user` is listed), and where a rule that reaches the user only through its run-as groups lists a `%group` or a `+netgroup` that holds neither the user nor root, or a `#uid` of another user.',
+    );
+    claim(
+      "A user list of `ALL`, an alias or a negation, or a `%group` or `+netgroup` that holds the user or root, runs as other users too: for such a rule only this login's, the user's and root's passwords are named.",
     );
     // #819 Unit A (A6): :: "A6: runaspw — unset or root, the service user, another user, absent, `#…`,
     // all digits, a name the rail refuses"; sudo-corpus :: T3 runaspw-* (sudo refuses each).
+    // #819 Unit A, the capped correction (Part 7): another user needs that user's password — :: "A6: runaspw …" (other: nobody, re-pinned), :: "(svc) with a password under runaspw …"; the rest as before (A6's absent, hash, digits).
     claim(
-      'Under `runaspw`, `runas_default` is looked up by name, as sudo looks it up: another user, a name no user has, and `#0` or an all-digit name, which sudo reads as a name, read unknown.',
+      "Under `runaspw`, `runas_default` is looked up by name, as sudo looks it up: another user needs that user's password, and a name no user has, and `#0` or an all-digit name, which sudo reads as a name, read unknown.",
     );
     // :: "C-18 (f): the group source …" (its first cell: each source; (vi): this login's own groups).
     // #819 follow-up 2 (members 2, 8; A MINOR 5): :: "P4 …", "P5 …", "P6 …", "P7 …", "controls: one group and one initgroups line …", "no group line, or no file, with /var/run/nscd/socket there …"; C-18 (a member found from any source counts: its ldap row's unknown, never a "not in it").
@@ -4683,18 +5620,25 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // #819 (08, B F5): macOS's dscl too — :: "the real Ubuntu 24.04, Debian and Fedora su stacks …;
     // macOS's, with svc's shell not read, → unknown (B F5)".
     // #819 follow-up 2 (member 7): :: "a trailing comment after the shell, or text before its `/` …".
+    // #819 Unit A, the capped correction (Part 3): toward root too — :: "each su branch toward root, with svc’s reading beside it unchanged", :: "the differential’s shape …"; real su: `su root` with root's password exits 0 on all six images (unit-a/diff/out/su-probe-*.txt).
     claim(
-      "When `getent` cannot read the user's passwd entry, or on macOS `dscl` the user's shell, su reads unknown. When the user's shell runs no command (`/usr/sbin/nologin`, `/sbin/nologin`, `/bin/false` or `/usr/bin/false`) and no shells file lists it, each line read as `getusershell` reads it (from its first `/` to a space or a `#`), su reads not allowed.",
+      "su is read toward the user and toward root alike, since root can become the user: each needs that user's password, and each is read from its own passwd entry and shell.",
+    );
+    claim(
+      "When `getent` cannot read a target's passwd entry, or on macOS `dscl` its shell, su reads unknown toward it. When a target's shell runs no command (`/usr/sbin/nologin`, `/sbin/nologin`, `/bin/false` or `/usr/bin/false`) and no shells file lists it, each line read as `getusershell` reads it (from its first `/` to a space or a `#`), su reads not allowed toward it.",
     );
     // :: "an empty password field and a shell that runs commands".
-    claim("An empty password field in the user's passwd entry reads yes.");
+    // #819 Unit A, the capped correction (Part 3): :: "each su branch toward root …" (emptyPassword).
+    claim("An empty password field in a target's passwd entry reads yes.");
     // :: "the real Ubuntu 24.04, Debian, Fedora and macOS su stacks", :: "01b #11: su-l carries …".
+    // #819 Unit A, the capped correction (Part 3): once for both — :: "su’s PAM stacks are scanned once …".
     claim(
-      'Otherwise su\'s PAM stacks, `su` and `su-l`, are read: a password module reads "needs" the user\'s password, and a `pam_wheel.so trust` line for this login reads yes.',
+      'Otherwise su\'s PAM stacks, `su` and `su-l`, are read once for both: a password module reads "needs" each target\'s password, and a `pam_wheel.so trust` line for this login reads yes.',
     );
     // :: "BusyBox su (Alpine, no PAM stack) → needs svc's password, whatever svc's shell (B §11)".
+    // #819 Unit A, the capped correction (Part 3): :: "each su branch toward root …" (busybox), :: "BusyBox su (Alpine …)" (re-pinned).
     claim(
-      "BusyBox's su, which reads no PAM stack, needs the user's password, whatever the user's shell: whether it keeps a shell that runs no command depends on how it was built.",
+      "BusyBox's su, which reads no PAM stack, needs each target's password, whatever its shell: whether it keeps a shell that runs no command depends on how it was built.",
     );
     // :: "`permit nopass agent as svc cmd /usr/bin/realm` readable", :: "rules only in
     // /etc/doas.d/realm.conf", :: "`deny agent` …", :: "B §2: …" (two cells).
@@ -4719,8 +5663,9 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // :: "the pam_succeed_if recipe in su" (a rule), :: "Alpine as shipped" (a file), :: "a pkcheck
     // error" and :: "B §9" (a tool's error), :: "P0: a way that reads unknown keeps the stronger
     // sentence back".
+    // #819 Unit A, the capped correction (Part 2; rev 5.1): the exception — :: "the grid, …" (the default, rootpw and runaspw rows drop a password unknown; targetpw keeps it unless rules run as both), :: "rev 5.1 …", :: "the audit’s `Defaults!` case …", :: "the guard and its mirror …".
     claim(
-      "A rule the check does not recognise, a file it cannot read, or a tool's error reads unknown, with the tool's own line, and then the stronger sentence is not printed.",
+      "A rule the check does not recognise, a file it cannot read, or a tool's error reads unknown, with the tool's own line, and then the stronger sentence is not printed, unless sudo already reads yes, or the unknown is only whether a rule that needs a password runs as Realm's user or root, or with a group that user is in, another rule does, and sudo would ask the same password either way (under the default, `rootpw` and `runaspw`; under `targetpw` only when rules already run as both, and never for a group after the `:`).",
     );
     // #819 correction 1 (C-11): :: "C-2: a Defaults setting in no list …", :: "C-4", :: "C-7", :: "C-12"
     // (unknown), :: "C-6 (01b #6): an item not read never shadows a yes …" (unless yes), :: "C-13
@@ -4740,8 +5685,9 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     claim(
       'When every way needs a credential or is not allowed, the stronger sentence adds a condition for each thing no program can see from this login, and only for the ways it found:',
     );
+    // #819 Unit A, the capped correction (Parts 3, 7; W-860-MA3-13): a named user's, and "not empty" for all but an administrator's — :: "W-x3a", :: "W-x3b" (root's clause, re-pinned), :: "one clause per named user …"; core separation-790 :: "(a), #819 Unit A, the capped correction (Part 7) …".
     claim(
-      "the agent cannot obtain a password a way needs (this login's, the user's, root's or an administrator's); for this login's and the user's, that it is not empty, since an empty one sits where this login cannot read it;",
+      "the agent cannot obtain a password a way needs (this login's, the user's, root's, a named user's or an administrator's); for all but an administrator's, that it is not empty, since an empty one sits where this login cannot read it;",
     );
     claim(
       "nobody authenticates, as this login where the agent's processes run, those of sudo, doas and polkit whose password cache a way showed, because each then waives the password for some minutes;",

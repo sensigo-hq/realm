@@ -6,7 +6,7 @@
 // #819 correction 1 (SEP-00): every item of every list it reads — the Defaults, the `Defaults!…` and
 // `Defaults>…` lines, the long format's `Options:` — is acted on, known harmless (by name, with its
 // reason), or not read; an item not read makes every reading short of yes `unknown`.
-import type { SwitchPathReading } from '@sensigo/realm';
+import type { SwitchPathReading, SwitchWhose } from '@sensigo/realm';
 import {
   findTools,
   lookedFor,
@@ -458,8 +458,9 @@ function unreadItem(listing: Listing): string | undefined {
   }
   const repeated = [...forms.entries()].find(([, items]) => items.length > 1);
   if (repeated !== undefined)
-    // the Unit A correction (C6): Fedora's and Rocky's stock sudoers list match_group_by_gid
-    return `sudo listed a Defaults setting more than once, and does not show which one it applies: ${repeated[1].join(', ')}${repeated[0] === 'match_group_by_gid' ? ' (change the stock line instead of adding a second)' : ''}`;
+    // the Unit A correction (C6): Fedora's and Rocky's stock sudoers list match_group_by_gid; the capped
+    // correction (the walk's wording item): no other image has that stock line
+    return `sudo listed a Defaults setting more than once, and does not show which one it applies: ${repeated[1].join(', ')}${repeated[0] === 'match_group_by_gid' ? ' (keep one of them; on Fedora and Rocky Linux, change the stock line instead of adding a second)' : ''}`;
   for (const s of listing.specific) {
     const item = s.options.find((o) => specificKind(o) === 'unread');
     if (item !== undefined)
@@ -699,7 +700,7 @@ function entryHeader(
   if (odd !== undefined)
     return cannot(
       odd.startsWith('sha')
-        ? 'sudo prints a digest with a space; name the command without one'
+        ? 'sudo prints a digest with a space; name the command without a digest'
         : odd.startsWith('^')
           ? 'name the command by its path'
           : 'write the target without a space or a backslash',
@@ -1219,8 +1220,25 @@ function shortItems(
 
 /** Who a runas covers, of Realm's service user and root. `listed`: the token does not cover ⟨svc⟩,
  *  and that rested on a group's listed members (clause (g), #819 correction 1). `unknown`: what could
- *  not be read — carried beside the covers read (the Unit A correction, C2: only a yes outranks it). */
-type Covers = { svc: boolean; root: boolean; listed?: true; unknown?: string };
+ *  not be read — carried beside the covers read (the Unit A correction, C2: only a yes outranks it).
+ *  #819 Unit A, the capped correction (Part 1): `unknownOf` keeps each target's cause apart, so a cover
+ *  read for one target never drops the other's (`unknown` is the first of them, for `kept`); `byUsers`
+ *  and `byGroups`: ⟨svc⟩ is covered through the user list, or through the run-as group list (the
+ *  groups after the `:`); `idFails`: why `id -G` could not be read, where a fallback found no cover. */
+type Covers = {
+  svc: boolean;
+  root: boolean;
+  byUsers: boolean;
+  byGroups: boolean;
+  listed?: true;
+  unknown?: string;
+  unknownOf?: { svc?: string; root?: string };
+  /** Rev 5.1 (IA 2's finding, W-860-MA3-19): the first unknown a run-as GROUP token recorded (about
+   *  ⟨svc⟩, through the group list) — kept apart, since the way it hides asks this login's password, or
+   *  a listed user's, never ⟨svc⟩'s or root's. */
+  unknownFromGroups?: string;
+  idFails?: string;
+};
 
 /** (e): how sudo matches run-as names — case-insensitively unless `!case_insensitive_user` /
  *  `!case_insensitive_group` is listed (sudo's default, defaults.c; AUD-16). #819 follow-up 2
@@ -1277,6 +1295,13 @@ async function exactGroup(
 /** A sudoers alias's shape: upper case (sudo-rs lists runas aliases unexpanded). */
 const ALIAS = /^[A-Z][A-Z0-9_]*$/;
 
+/** The capped correction (the walk's wording item): the `id -G` reasons a root-owned `id` in a system
+ *  folder would remove — where an `id` is already there, no remedy is given. */
+const ID_REMEDY = new Set([
+  'no id was found in the system folders',
+  'id is not a root-owned system copy',
+]);
+
 /** D3: whether one runas token covers ⟨svc⟩ or root. Negations count as covering (the safe
  *  direction); so does an alias this check cannot expand. */
 async function tokenCovers(
@@ -1289,20 +1314,58 @@ async function tokenCovers(
   idRead?: Set<string>,
 ): Promise<Covers> {
   if (token === 'ALL' || token.startsWith('!') || (ALIAS.test(token) && token !== lk.svc)) {
-    return { svc: true, root: true };
+    return { svc: true, root: true, byUsers: !asGroup, byGroups: asGroup };
   }
+  // #819 Unit A, the capped correction (Part 8 (a)): a group after the `:` of a run-as list is matched
+  // by its name alone, as sudo's `group_matches` matches it — in any case unless
+  // `!case_insensitive_group` is listed, whatever `match_group_by_gid` says (W-860-PA-01); the flag
+  // governs only a `%group` of a user list
+  const m: NameMatch = asGroup ? { ...ci, byGid: false, group: ci.anyCaseGroup } : ci;
   const users = { svc, root };
   const out = { svc: false, root: false };
-  const none = (unknown: string): Covers => ({ svc: false, root: false, unknown });
-  // #819 (08, A Outside 2): a group whose members may be hidden reads unknown — and a cover already
-  // read outranks it (yes > unknown, 01b #6). A runas GROUP never makes the command run as root
-  // (`entryCovers`), so root is not judged for one.
-  let unread: string | undefined;
-  let gap: string | undefined;
+  /** The targets this token reads, in order: a runas GROUP never makes the command run as root
+   *  (`entryCovers`), so root is not judged for one. */
+  const targets = asGroup ? (['svc'] as const) : (['svc', 'root'] as const);
+  // #819 (08, A Outside 2): a group whose members may be hidden reads unknown. The capped correction
+  // (Part 1): each cause is recorded against the target it is about — what could not be read, and
+  // the case gap — so a cover read for one target never drops the other's
+  const unread: { svc?: string; root?: string } = {};
+  const gap: { svc?: string; root?: string } = {};
+  let idFails: string | undefined;
   let listed = false;
+  const result = (): Covers => {
+    // ⟨svc⟩'s unknown is reported unless the token covers ⟨svc⟩; root's unless it covers root, or is
+    // a run-as group; the covers the token read stay beside it
+    const unknownOf: { svc?: string; root?: string } = {};
+    const forSvc = unread.svc ?? gap.svc;
+    if (forSvc !== undefined && !out.svc) unknownOf.svc = forSvc;
+    const forRoot = unread.root ?? gap.root;
+    if (forRoot !== undefined && !out.root && !asGroup) unknownOf.root = forRoot;
+    const covers: Covers = { ...out, byUsers: out.svc && !asGroup, byGroups: out.svc && asGroup };
+    const unknown = unknownOf.svc ?? unknownOf.root;
+    if (unknown !== undefined)
+      return {
+        ...covers,
+        unknown,
+        unknownOf,
+        ...(asGroup && unknownOf.svc !== undefined ? { unknownFromGroups: unknownOf.svc } : {}),
+      };
+    if (out.svc) return covers;
+    return {
+      ...covers,
+      ...(listed ? { listed: true as const } : {}),
+      ...(idFails !== undefined ? { idFails } : {}),
+    };
+  };
+  // W-860CR-05: a lookup that errs keeps the covers this token already read; its cause is recorded
+  // for this target and for every target the token has not reached
+  const none = (cause: string, who: 'svc' | 'root'): Covers => {
+    for (const t of targets.slice(targets.findIndex((x) => x === who))) unread[t] ??= cause;
+    return result();
+  };
   const same = (a: string, b: string): boolean =>
-    ci.user ? a.toLowerCase() === b.toLowerCase() : a === b;
-  for (const who of asGroup ? (['svc'] as const) : (['svc', 'root'] as const)) {
+    m.user ? a.toLowerCase() === b.toLowerCase() : a === b;
+  for (const who of targets) {
     const entry = users[who];
     const name = who === 'svc' ? lk.svc : 'root';
     if (asGroup || token.startsWith('%')) {
@@ -1311,12 +1374,13 @@ async function tokenCovers(
       if (!('found' in entry)) {
         // #819 follow-up 2 (member 5): `%#0` as sudo reads it, a number (`%#00` too)
         if (who === 'root' && (group === 'root' || numericId(group) === 0)) out.root = true;
-        else if ('unknown' in entry) return none(entry.unknown);
+        else if ('unknown' in entry) return none(entry.unknown, who);
         continue;
       }
       // #819 Unit A (A3): `%:name` is matched only through sudo's group plugin
       if (group.startsWith(':')) {
-        unread ??= `sudo matches ${token} only through its group plugin, which this check does not read`;
+        unread[who] ??=
+          `sudo matches ${token} only through its group plugin, which this check does not read`;
         continue;
       }
       // #819 Unit A (A3): the user's groups as sudo reads them, where `id -G` gives them — that
@@ -1324,14 +1388,14 @@ async function tokenCovers(
       const read = lk.darwin ? undefined : await lk.groupsOf(entry.found);
       if (read !== undefined && 'gids' in read) {
         idRead?.add(entry.found.name);
-        const c = await exactGroup(lk, group, read.gids, ci);
+        const c = await exactGroup(lk, group, read.gids, m);
         if (c === true) out[who] = true;
-        else if (c !== false) unread ??= c.unknown;
+        else if (c !== false) unread[who] ??= c.unknown;
         continue;
       }
       // #819 correction 1 (e): sudo matches a group name in any case unless told otherwise, and
       // getent only exactly — a name it finds no group for may name one of another case
-      const anyCase = ci.group && !lk.darwin && !group.startsWith('#');
+      const anyCase = m.group && !lk.darwin && !group.startsWith('#');
       if (anyCase && who === 'svc') {
         // #819 follow-up 2 (member 3, the audit's S2): svc's primary group, named by its gid
         // (`getent group <gid>`, rail 1's call), matched in any case as sudo matches it
@@ -1340,29 +1404,39 @@ async function tokenCovers(
           out[who] = true;
           continue;
         }
-        if ('unknown' in primary) unread ??= primary.unknown;
+        if ('unknown' in primary) unread[who] ??= primary.unknown;
       }
       const exact = anyCase ? await lk.group(group) : undefined;
       if (exact !== undefined && 'absent' in exact) {
-        unread ??= `getent group ${group} finds no group of that name, and sudo matches group names in any case (case_insensitive_group, on by default)`;
+        unread[who] ??=
+          `getent group ${group} finds no group of that name, and sudo matches group names in any case (case_insensitive_group, on by default)`;
         continue;
       }
       const inGroup = await lk.userIn(entry.found, group);
-      if ('unknown' in inGroup) unread ??= inGroup.unknown;
+      if ('unknown' in inGroup) unread[who] ??= inGroup.unknown;
       else if ('found' in inGroup && inGroup.found) out[who] = true;
       // #819 follow-up 2 (member 3, A B3): a name of another case than its lower one may name, for
       // sudo, a group of another case that getent's exact answer is not — unknown unless it covers
       else if (anyCase && group !== group.toLowerCase())
-        unread ??= `getent group ${group} reads only the group of that exact case, and sudo matches group names in any case (case_insensitive_group, on by default)`;
+        unread[who] ??=
+          `getent group ${group} reads only the group of that exact case, and sudo matches group names in any case (case_insensitive_group, on by default)`;
       // the Unit A correction (C2, W-UA-MA3-02): where `id -G` cannot be read and sudo matches group
       // names in any case, a secondary group named only in another case is not seen — a group that
-      // holds neither user by its list or primary group reads unknown, not "no"
+      // holds neither user by its list or primary group reads unknown, not "no". The capped
+      // correction (the walk's wording item): the cause names the user, the group and, where one
+      // helps, what to do
       else if (anyCase && read !== undefined)
-        gap ??= `sudo matches group names in any case, and ${read.fails}`;
-      else if (who === 'svc' && 'listed' in inGroup) listed = true;
+        gap[who] ??=
+          `sudo matches group names in any case, so ${entry.found.name} may be in ${group} under another case, and ${read.fails}${ID_REMEDY.has(read.fails) ? ' (a root-owned id in a system folder lets this check read the groups)' : ''}`;
+      else {
+        if (who === 'svc' && 'listed' in inGroup) listed = true;
+        // the capped correction (the walk's wording item): a fallback that reads no cover says why
+        // `id -G` could not be read
+        if (who === 'svc' && read !== undefined) idFails ??= read.fails;
+      }
     } else if (token.startsWith('+')) {
       const net = await lk.netgroupUsers(token.slice(1));
-      if ('unknown' in net) return none(net.unknown);
+      if ('unknown' in net) return none(net.unknown, who);
       if ('found' in net && net.found.some((u) => u === '' || u === name)) out[who] = true;
     } else if (token.startsWith('#')) {
       const uid = who === 'root' ? 0 : uidOf(lk, entry);
@@ -1376,17 +1450,12 @@ async function tokenCovers(
     } else if (token !== lk.login) {
       // A §F10: another name may share svc's uid or root's (a `toor`): compared by uid
       const other = await lk.passwd(token);
-      if ('unknown' in other) return none(other.unknown);
+      if ('unknown' in other) return none(other.unknown, who);
       const uid = who === 'root' ? 0 : uidOf(lk, entry);
       if ('found' in other && (uid === undefined || other.found.uid === uid)) out[who] = true;
     }
   }
-  // #819 correction 1 (A MINOR 1): a cover read for root never drops ⟨svc⟩'s unknown — the Unit A
-  // correction (C2, the audit's S1): it is carried beside root's cover, so a NOPASSWD rule that runs
-  // as root still reads yes. The case gap reads unknown only where the group holds neither user.
-  const unknown = unread ?? (out.root ? undefined : gap);
-  if (unknown !== undefined && !out.svc) return { ...out, unknown };
-  return listed && !out.svc ? { ...out, listed: true } : out;
+  return result();
 }
 
 /**
@@ -1429,10 +1498,15 @@ async function entryCovers(
   ci: NameMatch,
   exact?: Set<string>,
 ): Promise<Covers> {
-  const out: { svc: boolean; root: boolean; listed?: true } = { svc: false, root: false };
+  const out: Covers = { svc: false, root: false, byUsers: false, byGroups: false };
   // the Unit A correction (C2, the audit's S1): a token that reads unknown no longer ends the entry —
-  // its first cause is kept beside what the other tokens cover
+  // its first cause is kept beside what the other tokens cover. The capped correction (Part 1): each
+  // target's first cause too, across the entry's tokens
   let unknown: string | undefined;
+  const unknownOf: { svc?: string; root?: string } = {};
+  let unknownFromGroups: string | undefined;
+  let listed = false;
+  let idFails: string | undefined;
   for (const [tokens, asGroup] of [
     [e.users, false],
     [e.groups, true],
@@ -1440,14 +1514,34 @@ async function entryCovers(
     for (const t of tokens) {
       const c = await tokenCovers(lk, t, svc, root, asGroup, ci, exact);
       unknown ??= c.unknown;
+      if (c.unknownOf?.svc !== undefined) unknownOf.svc ??= c.unknownOf.svc;
+      if (c.unknownOf?.root !== undefined) unknownOf.root ??= c.unknownOf.root;
+      unknownFromGroups ??= c.unknownFromGroups;
       out.svc ||= c.svc;
       // a runas group onto root's group does not make the command run as root
       if (!asGroup) out.root ||= c.root;
-      if (c.listed === true) out.listed = true;
+      out.byUsers ||= c.byUsers;
+      out.byGroups ||= c.byGroups;
+      if (c.listed === true) listed = true;
+      idFails ??= c.idFails;
     }
   }
-  const covers = out.svc ? { svc: out.svc, root: out.root } : out;
-  return unknown !== undefined ? { ...covers, unknown } : covers;
+  // as before: what the tokens listed stays beside an unknown, unless the entry covers ⟨svc⟩
+  const covers: Covers = out.svc
+    ? out
+    : {
+        ...out,
+        ...(listed ? { listed: true as const } : {}),
+        ...(idFails !== undefined ? { idFails } : {}),
+      };
+  return unknown !== undefined
+    ? {
+        ...covers,
+        unknown,
+        unknownOf,
+        ...(unknownFromGroups !== undefined ? { unknownFromGroups } : {}),
+      }
+    : covers;
 }
 
 /** Where a credential reading is composed: a listing, sudo-rs's refusal (both show a rule exists),
@@ -1665,24 +1759,60 @@ async function judge(
 }
 
 /**
- * #819 Unit A (A6): under `runaspw`, why sudo does not ask for the service user's password, for a
- * `runas_default` that is not root — or `undefined` when it is the service user (by exact name, and
- * found). `#…` is looked up as a name and found nowhere (rail 1's NAME refuses `#`, so it is not asked);
- * an all-digit name `getent` would read as a uid (`getpwuid`) where sudo reads a name, and a name the
- * rail refuses, cannot be looked up exactly.
+ * #819 Unit A (A6): under `runaspw`, whose password sudo asks for a `runas_default` that is not root —
+ * or why that is unknown. `#…` is looked up as a name and found nowhere (rail 1's NAME refuses `#`, so
+ * it is not asked); an all-digit name `getent` would read as a uid (`getpwnam` is what sudo calls), and
+ * a name the rail refuses, cannot be looked up exactly. The capped correction (Part 7): a user `getent`
+ * finds is the one whose password sudo asks — the service user's, this login's, or that user's.
  */
-async function runaspwCause(lk: Lookups, name: string): Promise<string | undefined> {
-  // the Unit A correction (C6): why a way sudo shuts reads unknown, said where it is
-  const shut = '; this check reads that as unknown, not as a way shut';
+async function runaspwUser(
+  lk: Lookups,
+  name: string,
+): Promise<{ cause: string } | { whose: 'svc' | 'this_login' } | { user: string }> {
+  // the Unit A correction (C6): why a way sudo shuts reads unknown, said where it is; the capped
+  // correction (the walk's wording item): in plain words
+  const shut = '; this check reads that as unknown, not as proof that no way works';
   if (name.startsWith('#'))
-    return `sudo looks ${name} up as a user name, finds none and refuses every command (Defaults runaspw)${shut}`;
+    return {
+      cause: `sudo looks ${name} up as a user name, finds none and refuses every command (Defaults runaspw)${shut}`,
+    };
   if (/^\d+$/.test(name) || !RAIL_NAME.test(name))
-    return `sudo looks ${name} up as a user name, which this check cannot look up exactly (Defaults runaspw)`;
+    return {
+      cause: `sudo looks ${name} up as a user name, which this check cannot look up exactly (Defaults runaspw)`,
+    };
   const found = await lk.passwd(name);
-  if ('unknown' in found) return found.unknown;
+  if ('unknown' in found) return { cause: found.unknown };
   if ('absent' in found)
-    return `sudo finds no user ${name} and refuses every command (Defaults runaspw)${shut}`;
-  return name === lk.svc ? undefined : `sudo asks for ${name}'s password (Defaults runaspw)`;
+    return {
+      cause: `sudo finds no user ${name} and refuses every command (Defaults runaspw)${shut}`,
+    };
+  if (name === lk.svc) return { whose: 'svc' };
+  if (name === lk.login) return { whose: 'this_login' };
+  return { user: found.found.name };
+}
+
+/** A §F2: whether a listed command and a `Defaults!` target differ — only two plain paths that differ
+ *  as strings and by their real files; a command, an alias, a folder or a glob counts. */
+function commandDiffers(lk: Lookups, cmd: string, target: string): boolean {
+  const plain = (p: string): boolean => /^\/[^\s*?[\]]*[^\s*?[\]/]$/.test(p);
+  const rp = (p: string): string | undefined => lk.probes.realPath(p);
+  return (
+    plain(cmd) &&
+    plain(target) &&
+    cmd !== target &&
+    rp(cmd) !== undefined &&
+    rp(target) !== undefined &&
+    rp(cmd) !== rp(target)
+  );
+}
+
+/** One covering entry, as `judgeListing` reads it (Part 1's fields). */
+interface Cover {
+  entry: Entry;
+  svc: boolean;
+  root: boolean;
+  byUsers: boolean;
+  byGroups: boolean;
 }
 
 /** D3: a listing's reading, before what the reader did not read is composed in (`judge`). */
@@ -1710,19 +1840,19 @@ async function judgeListing(
   };
   // Unit A (A1): a value the check acts on, as sudo stores it
   const value = (key: string): string | undefined => valueOf(listing.items, key, listing.version);
-  if (opts.has('!authenticate')) {
-    return [
-      reading({
-        outcome: 'yes',
-        how: `${how}: its Defaults turn the password off (!authenticate)`,
-      }),
-    ];
-  }
-  const covering: { entry: Entry; svc: boolean; root: boolean }[] = [];
+  // The capped correction (Part 5): a global `!authenticate` turns the password off for every rule,
+  // so every covering entry is read as NOPASSWD below — a yes needs a rule that runs as ⟨svc⟩ or
+  // root, or with a group ⟨svc⟩ is in (W-860-GPROBE-01's `noauth` rows); with none, not allowed
+  const noAuth = opts.has('!authenticate');
+  const open = (e: Entry): boolean => noAuth || e.nopasswd;
+  const covering: Cover[] = [];
   // the Unit A correction (C2, the audit's S1): an entry that reads unknown no longer ends the
-  // reading — the first cause is kept, every entry read, and only a covering NOPASSWD rule or a
-  // covering `!authenticate` line outranks it (yes > unknown, 01b #6)
+  // reading — every entry is read, and its cause kept (`kept`, the first, which the not-allowed branch
+  // reads). The capped correction (Part 2): each kept unknown with the entry it came from, so that only
+  // one that could change the reading is returned below
   let kept: string | undefined;
+  const unknowns: { entry: Entry; of: { svc?: string; root?: string }; fromGroups: boolean }[] = [];
+  let idFails: string | undefined;
   // the Unit A correction (C6): where the exact read was made, the reading names it
   const idRead = (seen.exact ??= new Set<string>());
   const named = (): string =>
@@ -1732,18 +1862,53 @@ async function judgeListing(
   for (const entry of listing.entries) {
     const c = await entryCovers(lk, entry, svc, root, ci, seen.exact);
     kept ??= c.unknown;
+    if (c.unknown !== undefined)
+      unknowns.push({
+        entry,
+        of: c.unknownOf ?? {},
+        fromGroups: c.unknownFromGroups !== undefined,
+      });
+    idFails ??= c.idFails;
     if (c.listed === true) seen.listed = true;
-    if (c.svc || c.root) covering.push({ entry, svc: c.svc, root: c.root });
+    if (c.svc || c.root)
+      covering.push({ entry, svc: c.svc, root: c.root, byUsers: c.byUsers, byGroups: c.byGroups });
   }
-  // #819 correction 1 (A MINOR 4): with Realm's service user root, it is named once
-  const runsAs = (c: { svc: boolean; root: boolean }) =>
-    c.svc && c.root ? (lk.svc === 'root' ? 'root' : `${lk.svc} or root`) : c.svc ? lk.svc : 'root';
-  const open = covering.find((c) => c.entry.nopasswd);
-  if (open !== undefined) {
+  // #819 correction 1 (A MINOR 4): with Realm's service user root, it is named once. The capped
+  // correction (Part 8 (c)): an entry that reaches ⟨svc⟩ only through its run-as groups runs "with a
+  // group that ⟨svc⟩ is in", never "as ⟨svc⟩" (real sudo refuses `-u ⟨svc⟩` for it); the whole phrase
+  const runsAs = (items: readonly Cover[]): string => {
+    const bySvc = items.some((c) => c.svc && c.byUsers);
+    const byRoot = items.some((c) => c.root);
+    const users =
+      bySvc && byRoot
+        ? lk.svc === 'root'
+          ? 'as root'
+          : `as ${lk.svc} or root`
+        : bySvc
+          ? `as ${lk.svc}`
+          : byRoot
+            ? 'as root'
+            : undefined;
+    const group = items.some((c) => c.byGroups && !c.byUsers)
+      ? `with a group that ${lk.svc} is in`
+      : undefined;
+    return users !== undefined && group !== undefined ? `${users} or ${group}` : (users ?? group)!;
+  };
+  const opened = covering.find((c) => open(c.entry));
+  if (opened !== undefined) {
     return [
-      reading({ outcome: 'yes', how: `${named()}: a NOPASSWD rule runs as ${runsAs(open)}` }),
+      reading({
+        outcome: 'yes',
+        how: noAuth
+          ? `${named()}: its Defaults turn the password off (!authenticate), and a rule runs ${runsAs(covering)}`
+          : `${named()}: a NOPASSWD rule runs ${runsAs([opened])}`,
+      }),
     ];
   }
+  // Part 2: a `Defaults>` `!authenticate` target opens the kept unknowns about the users it covers —
+  // both, where the target itself reads unknown (the guard); a target's own unknown is kept open
+  const userOpened = { svc: false, root: false };
+  let targetUnknown: string | undefined;
   for (const s of listing.specific) {
     if (!s.options.includes('!authenticate')) continue;
     for (const target of s.targets) {
@@ -1751,21 +1916,21 @@ async function judgeListing(
       if (s.kind === '>') {
         const c = await tokenCovers(lk, target, svc, root, false, ci, seen.exact);
         kept ??= c.unknown;
+        targetUnknown ??= c.unknown;
         if (c.listed === true) seen.listed = true;
-        hit = c.svc || c.root;
+        userOpened.svc ||= c.svc || c.unknown !== undefined;
+        userOpened.root ||= c.root || c.unknown !== undefined;
+        // the capped correction (Part 6): it counts only for a user a rule runs as — a rule that
+        // reaches ⟨svc⟩ only through its run-as groups never counts: real sudo applies no `Defaults>`
+        // line to a group-only way (W-860-GPROBE-08, -09)
+        hit =
+          (c.svc && covering.some((x) => x.svc && x.byUsers)) ||
+          (c.root && covering.some((x) => x.root));
       } else {
-        // A §F2: a command, an alias, a folder or a glob counts, unless both are plain paths that
-        // differ as strings and by their real files
-        const plain = (p: string): boolean => /^\/[^\s*?[\]]*[^\s*?[\]/]$/.test(p);
-        const rp = (p: string): string | undefined => lk.probes.realPath(p);
-        const differs = (cmd: string): boolean =>
-          plain(cmd) &&
-          plain(target) &&
-          cmd !== target &&
-          rp(cmd) !== undefined &&
-          rp(target) !== undefined &&
-          rp(cmd) !== rp(target);
-        hit = covering.some((c) => c.entry.commands.some((cmd) => !differs(cmd)));
+        // a command-bound line applies to a group-only way too (W-860-GPROBE-10)
+        hit = covering.some((c) =>
+          c.entry.commands.some((cmd) => !commandDiffers(lk, cmd, target)),
+        );
       }
       if (hit) {
         return [
@@ -1778,11 +1943,16 @@ async function judgeListing(
     }
   }
   // D3 reads the entries that run as ⟨svc⟩ or root: with none, the listing names no way, whatever
-  // let it be shown — unless an entry read unknown (the Unit A correction, C2: its kept cause)
+  // let it be shown — unless an entry read unknown (the Unit A correction, C2: its kept cause). The
+  // capped correction (the walk's wording item): a fallback that read no cover says why
   if (covering.length === 0) {
     if (kept !== undefined) return [reading({ outcome: 'unknown', how: named(), cause: kept })];
+    const id = idFails !== undefined ? `; id -G ${lk.svc} could not be read: ${idFails}` : '';
     return [
-      reading({ outcome: 'not_allowed', how: `${named()}: no rule runs as ${lk.svc} or root` }),
+      reading({
+        outcome: 'not_allowed',
+        how: `${named()}: no rule runs as ${lk.svc} or root${id}`,
+      }),
     ];
   }
   const exempt = listing.defaults.find((o) => o.startsWith('exempt_group='));
@@ -1816,9 +1986,40 @@ async function judgeListing(
       }),
     ];
   }
-  // the Unit A correction (C2): every yes above outranks an entry that read unknown (yes > unknown,
-  // 01b #6); the credential readings below do not — they return its kept cause
-  if (kept !== undefined) return [reading({ outcome: 'unknown', how: named(), cause: kept })];
+  // The capped correction (Part 2): every yes above outranks a kept unknown (yes > unknown, 01b #6);
+  // the credential readings below return it only where it could change the reading — an open one
+  // (from a NOPASSWD entry, an entry a `Defaults!` `!authenticate` line names, or a user a `Defaults>`
+  // `!authenticate` target covers); or one from an entry that needs a password, under targetpw in
+  // force, where the covers lack ⟨svc⟩ by its users or lack root — and, rev 5.1 (IA 2's finding,
+  // W-860-MA3-19), always where it came from a run-as group token: the way it hides is `sudo -g` alone
+  // (this login's password) or `-u ⟨listed user⟩ -g` (that user's), which no covering entry names. Under
+  // the default policy, rootpw and runaspw, sudo asks the same password whatever the way, so a
+  // password rule settles it
+  const policy = opts.has('rootpw')
+    ? 'rootpw'
+    : opts.has('runaspw')
+      ? 'runaspw'
+      : opts.has('targetpw')
+        ? 'targetpw'
+        : 'default';
+  const bangOpens = (e: Entry): boolean =>
+    listing.specific.some(
+      (s) =>
+        s.kind === '!' &&
+        s.options.includes('!authenticate') &&
+        s.targets.some((t) => e.commands.some((cmd) => !commandDiffers(lk, cmd, t))),
+    );
+  const isOpen = (u: (typeof unknowns)[number]): boolean =>
+    open(u.entry) ||
+    bangOpens(u.entry) ||
+    (userOpened.svc && u.of.svc !== undefined) ||
+    (userOpened.root && u.of.root !== undefined);
+  const openKept = targetUnknown !== undefined || unknowns.some(isOpen);
+  const passwordKept = unknowns.some((u) => !isOpen(u));
+  const groupKept = unknowns.some((u) => !isOpen(u) && u.fromGroups);
+  const settled = covering.some((c) => c.svc && c.byUsers) && covering.some((c) => c.root);
+  if (openKept || (policy === 'targetpw' && (groupKept || (passwordKept && !settled))))
+    return [reading({ outcome: 'unknown', how: named(), cause: kept! })];
   const runasDefault = value('runas_default');
   // #819 correction 1 (b): a non-zero timeout anywhere keeps a ticket — a `Defaults!…`/`Defaults>…`
   // line applies before sudo authenticates and governs the ticket (AUD-13); `=0` drops it only when
@@ -1831,65 +2032,97 @@ async function judgeListing(
     timeouts.every((o) => ZERO_TIMEOUT.test(o))
       ? {}
       : { cache: 'sudo_timestamp' as const };
-  const why = `${named()}: a rule runs as ${runsAs({ svc: covering.some((c) => c.svc), root: covering.some((c) => c.root) })} with a password`;
+  const why = `${named()}: a rule runs ${runsAs(covering)} with a password`;
+  const needs = (whose: SwitchWhose, how: string, user?: string): SwitchPathReading =>
+    reading({
+      outcome: 'needs_credential',
+      whose,
+      ...(user !== undefined ? { user } : {}),
+      ...cache,
+      how,
+    });
   let base: SwitchPathReading[];
-  if (opts.has('rootpw')) {
-    base = [
-      reading({
-        outcome: 'needs_credential',
-        whose: 'root',
-        ...cache,
-        how: `${why} (Defaults rootpw)`,
-      }),
-    ];
-  } else if (opts.has('runaspw')) {
+  if (policy === 'rootpw') {
+    base = [needs('root', `${why} (Defaults rootpw)`)];
+  } else if (policy === 'runaspw') {
     // #819 (08, A Outside 1): sudo's own order — rootpw, then runaspw, then targetpw (check.c:60-75)
     // #819 follow-up 3 (A S1; the audit's S3): sudo reads runas_default as a user NAME — `#0` (it
     // prints `\#0`) is looked up as a name, found nowhere, and every command is refused ("unknown
     // user #0"), so it is never root's or the service user's password
     // #819 Unit A (A6): runas_default, unescaped (A1), looked up as sudo looks it up — by name
-    // (`getpwnam`, exact; W-UA-L1-12): unset or `root` is root's password; the service user's is
-    // its; any other answer reads unknown
-    const runsAs = runasDefault;
-    let whose: 'root' | 'svc' = 'root';
-    if (runsAs !== undefined && runsAs !== 'root') {
-      const cause = await runaspwCause(lk, runsAs);
-      if (cause !== undefined) return [reading({ outcome: 'unknown', how: named(), cause })];
-      whose = 'svc';
+    // (`getpwnam`, exact; W-UA-L1-12): unset or `root` is root's password. The capped correction
+    // (Part 7): a user `getent` finds is the one whose password sudo asks (W-UAC2R4-AUD-09)
+    const how = `${why} (Defaults runaspw)`;
+    if (runasDefault === undefined || runasDefault === 'root') base = [needs('root', how)];
+    else {
+      const asked = await runaspwUser(lk, runasDefault);
+      if ('cause' in asked)
+        return [reading({ outcome: 'unknown', how: named(), cause: asked.cause })];
+      base = ['user' in asked ? needs('named_user', how, asked.user) : needs(asked.whose, how)];
     }
-    base = [
-      reading({
-        outcome: 'needs_credential',
-        whose,
-        ...cache,
-        how: `${why} (Defaults runaspw)`,
-      }),
-    ];
-  } else if (opts.has('targetpw')) {
-    base = [
-      ...(covering.some((c) => c.svc)
-        ? [
+  } else if (policy === 'targetpw') {
+    // The capped correction (Part 8 (b), Part 9): sudo asks the password of the user a way runs as —
+    // ⟨svc⟩'s for a rule whose users cover ⟨svc⟩, root's for one that covers root; a way through a
+    // run-as group runs as this login (`sudo -g` alone: sudo 1.8.31 and 1.9.9 for any rule with that
+    // group, newer sudo when the login is in the rule's user list) or as a user its list names
+    // (`-u ⟨T⟩ -g`): this login's password, and each plain user name's (W-860-GPROBE-04, -13, -17)
+    const how = `${why} (Defaults targetpw)`;
+    base = [];
+    if (covering.some((c) => c.svc && c.byUsers)) base.push(needs('svc', how));
+    if (covering.some((c) => c.root)) base.push(needs('root', how));
+    const grouped = covering.filter((c) => c.byGroups);
+    if (grouped.length > 0) base.push(needs('this_login', how));
+    const others: string[] = [];
+    const isLogin = (t: string): boolean =>
+      numericId(t) !== undefined
+        ? numericId(t) === lk.probes.uid()
+        : ci.user
+          ? t.toLowerCase() === lk.login.toLowerCase()
+          : t === lk.login;
+    for (const c of grouped) {
+      for (const t of c.entry.users) {
+        const tc = await tokenCovers(lk, t, svc, root, false, ci);
+        if (tc.svc || tc.root || isLogin(t)) continue;
+        if (/^[%+#]/.test(t)) {
+          // Part 8 (b): a group-reached entry's `%group`, `+netgroup` or `#uid` of another user — one
+          // user this check cannot name
+          if (c.byUsers) continue;
+          return [
             reading({
-              outcome: 'needs_credential',
-              whose: 'svc',
-              ...cache,
-              how: `${why} (Defaults targetpw)`,
+              outcome: 'unknown',
+              how: named(),
+              cause: `under targetpw sudo asks the password of the user a way runs as, and this rule's user list holds ${t}, whose password this check does not name`,
             }),
-          ]
-        : []),
-      ...(covering.some((c) => c.root)
-        ? [
+          ];
+        }
+        // Part 9: a plain user name, as `getent passwd` finds it
+        if (/^\d+$/.test(t))
+          return [
             reading({
-              outcome: 'needs_credential',
-              whose: 'root',
-              ...cache,
-              how: `${why} (Defaults targetpw)`,
+              outcome: 'unknown',
+              how: named(),
+              cause: `sudo looks ${t} up as a user name, which this check cannot look up exactly (Defaults targetpw)`,
             }),
-          ]
-        : []),
-    ];
+          ];
+        const p = await lk.passwd(t);
+        if ('unknown' in p)
+          return [reading({ outcome: 'unknown', how: named(), cause: p.unknown })];
+        if ('absent' in p) {
+          if (!ci.user) continue;
+          return [
+            reading({
+              outcome: 'unknown',
+              how: named(),
+              cause: `getent passwd ${t} finds no user of that exact case, and sudo matches user names in any case`,
+            }),
+          ];
+        }
+        if (!others.includes(p.found.name)) others.push(p.found.name);
+      }
+    }
+    for (const user of others) base.push(needs('named_user', how, user));
   } else {
-    const r = reading({ outcome: 'needs_credential', whose: 'this_login', ...cache, how: why });
+    const r = needs('this_login', why);
     base = flavour === 'rs' ? unseenDefaults(r) : [r];
   }
   const askpass = value('pam_askpass_service');
