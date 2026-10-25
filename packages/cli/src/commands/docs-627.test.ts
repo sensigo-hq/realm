@@ -1142,10 +1142,11 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
 describe('#627 W — the CHANGELOG’s lines are under their headings (Part L)', () => {
   it('BREAKING and Changed under Changed; the new parts under Added; none under Fixed', () => {
     const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const unreleased = text.slice(
-      text.indexOf('## [Unreleased]'),
-      text.indexOf('\n## [', text.indexOf('## [Unreleased]') + 5),
-    );
+    // the section that holds them: `[Unreleased]` until 0.48.0's release renames it, then `[0.48.0]`
+    const from = text.includes('\n## [0.48.0]')
+      ? text.indexOf('\n## [0.48.0]') + 1
+      : text.indexOf('## [Unreleased]');
+    const unreleased = text.slice(from, text.indexOf('\n## [', from + 5));
     const section = (h: string) => {
       const start = unreleased.indexOf(`### ${h}`);
       const end = unreleased.indexOf('\n### ', start + 4);
