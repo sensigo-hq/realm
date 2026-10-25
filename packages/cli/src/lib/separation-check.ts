@@ -259,9 +259,12 @@ export function switchPathsReading(
   return switchPathsCondition(shown, (r) => entries[shown.indexOf(r)]!, where);
 }
 
-/** 01b #2: whose credential a closed way needs, in words. */
-function whoseWords(whose: SwitchWhose | undefined, svc: string): string {
+/** 01b #2: whose credential a closed way needs, in words. #819 Unit A, the capped correction (Part 7):
+ *  a named user's, by its raw name (rail 5). */
+function whoseWords(whose: SwitchWhose | undefined, svc: string, user?: string): string {
   switch (whose) {
+    case 'named_user':
+      return `${user ?? 'another user'}'s password`;
     case 'svc':
       return `${svc}'s password`;
     case 'root':
@@ -288,12 +291,12 @@ export function switchPathEntry(r: SwitchPathReading, svc: string): string {
         : r.outcome === 'unknown'
           ? `unknown: ${r.cause ?? 'not read'}`
           : mayNeed
-            ? `may need ${whoseWords(r.whose, svc)} (${r.cause})`
+            ? `may need ${whoseWords(r.whose, svc, r.user)} (${r.cause})`
             : r.or_not_allowed === true
               ? "needs this login's password or is not allowed (sudo does not say which)"
               : r.path === 'ssh'
                 ? `needs a key ${svc} accepts`
-                : `needs ${whoseWords(r.whose, svc)}`;
+                : `needs ${whoseWords(r.whose, svc, r.user)}`;
   // W's friction: an outcome's own parenthetical and the how's merge into one — #819 (08, B F12):
   // only the parentheticals this renderer writes, never an unknown's cause
   const own = r.outcome === 'needs_credential' && (mayNeed || r.or_not_allowed === true);
@@ -798,13 +801,17 @@ function gapWords(g: SeparationGap, notObserved: readonly SeparationCondition[])
 function clauseWords(c: SwitchClause, login: string, svc: string): string {
   switch (c.clause) {
     case 'a':
+      // #819 Unit A, the capped correction (Parts 3, 7; W-860-MA3-13): every password but an
+      // administrator's may be empty, which pam_unix's nullok lets through
       return c.whose === 'this_login'
         ? `the agent cannot obtain ${login}'s password, and it is not empty`
         : c.whose === 'svc'
           ? `the agent cannot obtain ${svc}'s password, and it is not empty`
           : c.whose === 'root'
-            ? "the agent cannot obtain root's password"
-            : "the agent cannot obtain an administrator's password";
+            ? "the agent cannot obtain root's password, and it is not empty"
+            : c.whose === 'named_user'
+              ? `the agent cannot obtain ${c.user ?? 'another user'}'s password, and it is not empty`
+              : "the agent cannot obtain an administrator's password";
     case 'b':
       // B §10: only the tools whose cache fired
       return `nobody authenticates ${orList(c.tools)} as ${login} where the agent's processes run (${c.tools.length === 1 ? 'it then waives' : 'each then waives'} the password for some minutes)`;

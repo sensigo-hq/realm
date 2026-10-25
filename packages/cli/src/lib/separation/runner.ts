@@ -1,11 +1,11 @@
 // runner.ts — #790 (D1, rail 1): the one place in the separation check that starts a process. It
 // runs only the read-only calls rail 1 names — sudo's version and listing modes, doas's config-check
-// mode, polkit's check mode with no interaction, and the user and group lookups — and refuses every
-// other argv, which it never starts. A call runs with no stdin, a fixed PATH and no other variable
+// mode, polkit's check mode with no interaction, and the user and group lookups (#819 Unit A: with
+// `id -G`, a user's groups as sudo reads them) — and refuses every other argv, which it never starts. A call runs with no stdin, a fixed PATH and no other variable
 // of the caller's, so no tool can prompt, and none reads the agent's environment.
 import { spawn } from 'node:child_process';
 import { basename, dirname, isAbsolute } from 'node:path';
-import { SYSTEM_DIRS } from './lookup.js';
+import { RAIL_NAME as NAME, SYSTEM_DIRS } from './lookup.js';
 
 /** What one call gave: its exit status and output; a refusal (not one of rail 1's argv); or why it
  *  could not run. */
@@ -17,7 +17,6 @@ export type RunResult =
 export type Runner = (argv: readonly string[]) => Promise<RunResult>;
 
 const SUDO_NAMES = new Set(['sudo', 'sudo.ws', 'sudo-rs']);
-const NAME = /^[A-Za-z0-9_.][A-Za-z0-9_.@+-]*$/;
 const ACTION = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 /** The tool at `path`, when it is a program named one of `names` in one of D2's folders (A §F13). */
@@ -31,7 +30,9 @@ const tool = (path: string | undefined, names: ReadonlySet<string>): boolean =>
  * Whether `argv` is one of rail 1's calls, element by element:
  * `<sudo> -V` · `LC_ALL=C <sudo> -n -l` · `LC_ALL=C <sudo> -n -ll` ·
  * `<doas> -C <file> -u <target> <cmd> [args…]` · `<pkcheck> --action-id <A> --process <pid>` ·
- * `<getent> passwd|group|netgroup <name>` · `<dscl> . -read /Users/<name> UserShell`.
+ * `<getent> passwd|group|netgroup <name>` · `<id> -G <name>` (#819 Unit A, A3: the user's gids,
+ * primary first, as `getgrouplist` gives them — what sudo compares a run-as group with) ·
+ * `<dscl> . -read /Users/<name> UserShell`.
  */
 export function railOne(argv: readonly string[]): boolean {
   const [a, b, c, d, e, f] = argv;
@@ -71,6 +72,9 @@ export function railOne(argv: readonly string[]): boolean {
       c !== undefined &&
       NAME.test(c)
     );
+  }
+  if (tool(a, new Set(['id']))) {
+    return argv.length === 3 && b === '-G' && c !== undefined && NAME.test(c);
   }
   if (tool(a, new Set(['dscl']))) {
     return (

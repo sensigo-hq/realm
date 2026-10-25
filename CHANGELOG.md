@@ -91,25 +91,52 @@ All notable changes to this project are documented here.
   configured or unknown, and what that means for who can answer a gate. No server is started; a
   bad value exits 1. Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit
   (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up
-  with `getent` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files —
-  it never
-  switches user, never asks for a password and never opens a login connection; condition 3
+  with `getent` and a user's groups with `id -G` (on macOS, `dscl` for a user's shell), and reads
+  su's login rules from their files — it never switches user, never asks for a password and never
+  opens a login connection; condition 3
   (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus,
   Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an
   agent cannot record a gate answer only when every way it found needs a credential or is not
   allowed, and lists what no program can see from that login; a rule it does not recognise, a file
-  it cannot read, or a tool's error reads "unknown", and the sentence is not printed. A sudo
-  Defaults setting or long-format option the check does not read makes sudo's reading unknown,
-  unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed
-  twice with different values (issue #819); the stack `pam_askpass_service` names is read too;
-  run-as user names match in any case, as sudo matches them; unless `!case_insensitive_group` or
-  `match_group_by_gid` is listed, run-as group names are compared in any case with the service user's
-  primary group and with the group `getent` finds, and a secondary group named only in another case
-  is not seen; a run-as group that does not list the
-  service user is read as not holding it only when the `group` and `initgroups` lines of
-  `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds
-  that the members the system lists for each group read are all of its members. The header
-  says when no store was found, and when the store cannot be opened; condition 7's "no" names the
+  it cannot read, or a tool's error reads "unknown", and the sentence is not printed, unless sudo
+  already reads yes, or the unknown is only whether a rule that needs a password runs as the service
+  user or root, or with a group that user is in, another rule does, and sudo would ask the same
+  password either way (under the default, `rootpw` and `runaspw`; under `targetpw` only when rules
+  already run as both, and never for a group after the `:`). A sudo Defaults setting or long-format
+  option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with
+  sudo's own line, and so does a setting it acts on, listed twice with different values (issue
+  #819); the stack `pam_askpass_service` names is read too; sudo's listing is read as sudo prints it
+  on each version, and a Defaults setting it cannot split (a value with a space that ends in a
+  backslash, or holds a backslash before a quotation mark, prints the same as another setting) reads
+  unknown unless sudo already reads yes; under `runaspw`, `runas_default` is looked up by name, as
+  sudo looks it up, and another user's password is named; run-as user names match in any case, as
+  sudo matches them; a run-as group is compared with the service user's groups as sudo reads them,
+  which `id -G` lists — a `%group` in a rule's user list by gid under `match_group_by_gid` and by
+  name otherwise, a group after the `:` of its run-as list by name alone, each in any case unless
+  `!case_insensitive_group` is listed — and where `id -G` gives no answer that holds the service
+  user's primary group, with the service user's primary group and the group `getent` finds (unless
+  `!case_insensitive_group` is listed, or `match_group_by_gid` for a `%group`, in any case); when
+  `id -G` cannot be read, unless `!case_insensitive_group` is listed, or `match_group_by_gid` for a
+  `%group`, a run-as group that does not hold the user by its list or primary group reads unknown,
+  since a secondary group named only in another case is not seen, unless sudo would ask the same
+  password either way, as above; under `targetpw` a way through a run-as group asks the password of
+  the user it runs as — this login's for `sudo -g` alone, and each plain user name's the rule lists
+  — and the check names those passwords; a run-as group that does not list the service user is then
+  read as not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`, read
+  as glibc reads them, list local sources, and the sentence then adds that the members the system
+  lists for each group read are all of its members. su is read toward root as well as toward the
+  service user, since root can become that user, so condition 2 lists su toward root, and root's
+  condition in the sentence also says its password is not empty. In `@sensigo/realm`, `SWITCH_WHOSE`
+  gains `named_user`, and a switch-path reading and clause (a) gain an optional `user`: the password
+  of a user other than this login, the service user or root (`runaspw`'s `runas_default` user, or a
+  user a `targetpw` group way runs as). Rocky Linux's stock `pam_unix.so try_first_pass nullok` line
+  is read, so the stronger sentence prints on a stock Rocky Linux host. A global
+  `Defaults !authenticate` reads yes only beside a rule that runs as the service user or root, or
+  with a group the service user is in; with none it reads not allowed. A
+  `Defaults>user !authenticate` line counts only for a user a rule runs as: a rule that reaches the
+  service user only through its run-as groups never counts, since sudo applies no such line to a
+  group way. The "Measured for …" line says when no
+  store was found, and when the store cannot be opened; condition 7's "no" names the
   two settings files it looked at; the store's time basis is marked "(fact)"; a condition the check
   reads nothing for is "not measured"; the economics line says whether this login can change the
   `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder

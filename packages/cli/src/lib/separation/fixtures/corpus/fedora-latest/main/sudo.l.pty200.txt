@@ -1,0 +1,27 @@
+# captured 2026-10-23 · image fedora@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 · as the login agent through the check's spawn (a 50x200 terminal): LC_ALL=C /usr/bin/sudo -n -l
+exit 0
+--- stdout
+Matching Defaults entries for agent on 768267438f62:
+    !visiblepw, always_set_home, match_group_by_gid, always_query_group_plugin, env_reset, env_keep="COLORS DISPLAY HOSTNAME HISTSIZE KDEDIR LS_COLORS", env_keep+="MAIL QTDIR USERNAME LANG LC_ADDRESS
+    LC_CTYPE", env_keep+="LC_COLLATE LC_IDENTIFICATION LC_MEASUREMENT LC_MESSAGES", env_keep+="LC_MONETARY LC_NAME LC_NUMERIC LC_PAPER LC_TELEPHONE", env_keep+="LC_TIME LC_ALL LANGUAGE LINGUAS
+    _XKB_CHARSET XAUTHORITY", secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/var/lib/snapd/snap/bin, mailsub=\u0, mailfrom=u4\,m, mailerflags=u8\",
+    badpass_message=\=u12, passprompt=u16\#m, mailsub="u20 ", mailfrom="\q24 s", mailerflags="q28,m s", badpass_message="q32 s\"", passprompt="=q36 s", mailsub="q40#m s", mailfrom="q44 s ",
+    mailerflags=n48\,m, badpass_message=n52\#m, env_keep+="FOO_A FOO_B", passprompt=u1\m, mailsub=u5\,, mailfrom=\:u9, mailerflags=u13\=m, badpass_message=u17\#, passprompt="	u21", mailsub="q25\m s",
+    mailfrom="q29 s,", mailerflags=":q33 s", badpass_message="q37=m s", passprompt="q41 s#", mailsub="	q45 s", mailfrom=n49\:m, mailerflags=n53\m, env_keep-=FOO_C, mailsub="z w\"
+
+Runas and Command-specific defaults for agent:
+    Defaults>svc mailerflags=\,u3, badpass_message=u7\"m, passprompt=u11\:, mailsub=\#u15, mailfrom="u19 m", mailerflags="u23	", badpass_message=",q27 s", passprompt="q31\"m s", mailsub="q35 s:",
+    mailfrom="#q39 s", mailerflags="q43 m s", badpass_message="q47 s	", passprompt=n51\=m
+    Defaults>svc, nobody mailsub=rl1
+    Defaults>#1001 mailsub=rl2
+    Defaults>nobody mailsub="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa Defaults!/usr/bin/true !authenticate"
+    Defaults>alice passprompt=e1\
+    Defaults>root mailsub=e2\\"m
+    Defaults>%svcgrp mailsub=rl3    Defaults!/usr/bin/true badpass_message=u2\, passprompt=\"u6, mailsub=u10\:m, mailfrom=u14\=, mailerflags=" u18", badpass_message="u22	m", passprompt="q26 s\",
+    mailsub="\"q30 s", mailfrom="q34:m s", mailerflags="q38 s=", badpass_message=" q42 s", passprompt="q46	m s", mailsub=n50\"m
+    Defaults!/usr/bin/true, /usr/bin/false mailsub=tl1
+
+User agent may run the following commands on 768267438f62:
+    (svc, nobody, #1001, %svcgrp, %#0, a\,b, "a b", "c d", e\:f, g\=h, i\#j, k\"l, m\n, !alice, !"n m", +svcnet, %:plugingrp, ALL, "%g h", "x y\" : svcgrp, #2001, "g h", g\,i) NOPASSWD: /usr/bin/true
+    (nobody) NOPASSWD: /usr/bin/true, /usr/bin/false, /usr/bin/printf aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb cccccccccccccccc, /usr/bin/id
+--- stderr

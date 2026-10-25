@@ -1,0 +1,4 @@
+# captured 2026-10-23 · image debian@sha256:f7c6c9e4aba843dc41bac68bbf104773f71fabf53f74f8441049aaa56e50c4e2 · cat /etc/sudoers.d/t
+Defaults passprompt=x\ \"\,\ !authenticate\,\ mailsub\=w\\
+agent ALL=(svc) /usr/bin/true
+agent ALL=(nobody) NOPASSWD: /usr/bin/true
