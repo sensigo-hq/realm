@@ -1796,7 +1796,7 @@
         "fixture": true
       },
       "expect": "reformatted",
-      "why": "#822: enclosed letters",
+      "why": "#822: negative squared letters are set aside like other symbols, so the quote reads found without the word they spell",
       "cut_short": false
     },
     {
@@ -1807,7 +1807,7 @@
         "fixture": true
       },
       "expect": "reformatted",
-      "why": "#822: combining marks",
+      "why": "#822: combining marks read as the letters they carry, and the lease says not",
       "cut_short": false
     },
     {
@@ -1818,7 +1818,7 @@
         "fixture": true
       },
       "expect": "exact",
-      "why": "the walk's honest control",
+      "why": "the walk's honest control: the lease says it word for word",
       "cut_short": false
     },
     {
@@ -1829,7 +1829,7 @@
         "fixture": true
       },
       "expect": "stitched_out_of_order",
-      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to an earlier sentence)",
       "cut_short": false
     },
     {
@@ -1840,7 +1840,7 @@
         "wrap": 70
       },
       "expect": "stitched_out_of_order",
-      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to an earlier sentence)",
       "cut_short": false
     },
     {
@@ -1851,7 +1851,7 @@
         "fixture": true
       },
       "expect": "stitched_out_of_order",
-      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to an earlier sentence)",
       "cut_short": false
     },
     {
@@ -1862,7 +1862,7 @@
         "wrap": 70
       },
       "expect": "stitched_out_of_order",
-      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to an earlier sentence)",
       "cut_short": false
     },
     {
@@ -1873,7 +1873,7 @@
         "fixture": true
       },
       "expect": "stitched_out_of_order",
-      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to a later sentence)",
+      "why": "a known gap: the part before a skip may end mid-sentence (a clause joined to an earlier sentence)",
       "cut_short": false
     },
     {
@@ -1950,7 +1950,106 @@
         "doc": "The Tenant shall not permit any un\ufefflawful use of the Premises."
       },
       "expect": "reformatted",
-      "why": "U+FEFF inside a word: the canonical form reads it as a space",
+      "why": "a quote that starts or ends at U+FEFF inside a word reads `reformatted`: the canonical form reads it as a space",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "u034f-inside-a-word",
+      "quote": "lawful use of the Premises",
+      "source": {
+        "doc": "The Tenant shall not permit any un\u034flawful use of the Premises."
+      },
+      "expect": "exact",
+      "why": "inside a word, a format character (`Cf`, U+FEFF excepted) or a Hangul filler (U+115F, U+1160, U+3164, U+FFA0) makes no edge; a combining mark (U+034F) does",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "blank-line-mid-sentence",
+      "quote": "The Landlord shall insure the Building … not be responsible for repairs to the structure, roof, foundations or exterior of the Building",
+      "source": {
+        "doc": "The Landlord shall insure the Building for its full reinstatement cost. The Tenant shall\n\nnot be responsible for repairs to the structure, roof, foundations or exterior of the Building."
+      },
+      "expect": "stitched",
+      "why": "a blank line inside a sentence counts as a line start, as at a PDF page break",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "dotted-decimal-label",
+      "quote": "The Landlord shall insure the Building … Million euro is payable on completion",
+      "source": {
+        "doc": "The Landlord shall insure the Building for its full reinstatement cost:\n2.5 Million euro is payable on completion at the end of each year."
+      },
+      "expect": "stitched",
+      "why": "a dotted decimal before a capitalised word at a line start that counts reads as a clause label",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "format-character-in-a-number",
+      "quote": "the fee is 12",
+      "source": {
+        "doc": "the fee is 12\u00ad500 euro"
+      },
+      "expect": "reformatted",
+      "why": "an invisible format character inside a number: part of the number reads found",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "contraction-in-capitals",
+      "quote": "THE LANDLORD CAN",
+      "source": {
+        "doc": "THE LANDLORD CAN'T REFUSE CONSENT."
+      },
+      "expect": "exact",
+      "why": "a contraction in capitals: only a lowercase t after the apostrophe `'` or `’` is read (`can´t` is not read)",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "hyphen-at-a-line-break",
+      "quote": "paid twenty-one (21) days after becoming payable",
+      "source": {
+        "doc": "If any Rent is un-\npaid twenty-one (21) days after becoming payable."
+      },
+      "expect": "exact",
+      "why": "a quote that starts at a hyphen breaking a word across a line",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "us-before-a-capital",
+      "quote": "The Landlord shall insure the Building … Capital rules apply to the Tenant at all times",
+      "source": {
+        "doc": "The Landlord shall insure the Building for its cost in the U.S. Capital rules apply to the Tenant at all times."
+      },
+      "expect": "stitched",
+      "why": "U.S. before a capital letter is read as a sentence end",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "figure-space-group",
+      "quote": "the rent is 1\u2007200",
+      "source": {
+        "doc": "the rent is 1\u2007200\u2007000 euro"
+      },
+      "expect": "exact",
+      "why": "a group of thousands spaced with U+2007 is not read as one number",
+      "cut_short": false
+    },
+    {
+      "group": "follow-up",
+      "id": "colon-before-a-digit",
+      "quote": "The Landlord shall insure the Building … 30 minutes before the Tenant arrives at the Building",
+      "source": {
+        "doc": "The Landlord shall insure the Building for its cost at 9:\n30 minutes before the Tenant arrives at the Building."
+      },
+      "expect": "stitched",
+      "why": "a : at a line's end before a digit counts as a clause end",
       "cut_short": false
     }
   ],

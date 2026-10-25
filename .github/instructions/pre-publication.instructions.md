@@ -94,6 +94,10 @@ git diff <prev-tag>..main -- ':(glob)packages/*/src/**' | grep -cE '^\+'
 
 **The sudo corpus (issue #819).** When a new sudo version ships in a supported image (Ubuntu 20.04, 22.04 and 24.04, Debian stable, Fedora, Rocky Linux 9), re-run `scripts/capture-sudo-corpus.sh` (`DOCKER=docker.exe` on WSL) and commit its captures in `packages/cli/src/lib/separation/fixtures/corpus/`, so `sudo-corpus.test.ts` reads the new printouts and verdicts.
 
+**No accepted risk at tag time.** `audit-ci.jsonc` and `audit-ci.tier2.jsonc` must hold no entry
+recorded under SECURITY.md's triage item 4 (an accepted risk). If one is present, the tag waits for
+the change that removes it.
+
 **1. Create a release branch**
 
 ```bash
