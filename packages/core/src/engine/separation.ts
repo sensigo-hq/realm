@@ -55,8 +55,17 @@ export type SwitchPath = (typeof SWITCH_PATHS)[number];
 export const SWITCH_OUTCOMES = ['yes', 'needs_credential', 'not_allowed', 'unknown'] as const;
 export type SwitchOutcome = (typeof SWITCH_OUTCOMES)[number];
 
-/** Whose credential a closed way needs (D3, D5, D6, D9; `person` = a touch or a security key). */
-export const SWITCH_WHOSE = ['this_login', 'svc', 'root', 'administrator', 'person'] as const;
+/** Whose credential a closed way needs (D3, D5, D6, D9; `person` = a touch or a security key).
+ *  #819 Unit A, the capped correction (Part 7): `named_user` — another user's password, named by the
+ *  reading's `user` (sudo's `runaspw` with a `runas_default` user, `targetpw` with a run-as group). */
+export const SWITCH_WHOSE = [
+  'this_login',
+  'svc',
+  'root',
+  'administrator',
+  'person',
+  'named_user',
+] as const;
 export type SwitchWhose = (typeof SWITCH_WHOSE)[number];
 
 /** A credential cache that waives the password for some minutes once someone authenticates (D11 b). */
@@ -74,6 +83,9 @@ export interface SwitchPathReading {
   tool?: string;
   outcome: SwitchOutcome;
   whose?: SwitchWhose;
+  /** The capped correction (Part 7): the user whose password is needed, as its raw name (rail 5) —
+   *  present only with `whose: 'named_user'`. */
+  user?: string;
   cache?: SwitchCache;
   how: string;
   cause?: string;
@@ -139,7 +151,7 @@ export function switchPathsCondition(
  * reading that rested on a group's listed members (#819 correction 1).
  */
 export type SwitchClause =
-  | { clause: 'a'; whose: Exclude<SwitchWhose, 'person'> }
+  | { clause: 'a'; whose: Exclude<SwitchWhose, 'person'>; user?: string }
   | { clause: 'b'; tools: ('sudo' | 'doas' | 'polkit')[] }
   | { clause: 'c' }
   | ({ clause: 'd' } & NonNullable<SwitchPathReading['polkit']>)
@@ -150,13 +162,20 @@ export type SwitchClause =
 /** Which tool each credential cache belongs to (B §10: clause (b) names only those that fired). */
 const CACHE_TOOL = { sudo_timestamp: 'sudo', doas_persist: 'doas', polkit_keep: 'polkit' } as const;
 
-/** #790 (D11): the clauses `readings` fire, in the order (a)–(g); (a) once per whose. */
+/** #790 (D11): the clauses `readings` fire, in the order (a)–(g); (a) once per whose — and, the capped
+ *  correction (Part 7), once per distinct named user, after `administrator`'s, in order of first
+ *  appearance. */
 export function switchClausesOf(readings: readonly SwitchPathReading[]): SwitchClause[] {
   const closed = readings.filter((r) => r.outcome === 'needs_credential');
   const clauses: SwitchClause[] = [];
   for (const whose of ['this_login', 'svc', 'root', 'administrator'] as const) {
     if (closed.some((r) => r.whose === whose)) clauses.push({ clause: 'a', whose });
   }
+  const users: string[] = [];
+  for (const r of closed)
+    if (r.whose === 'named_user' && r.user !== undefined && !users.includes(r.user))
+      users.push(r.user);
+  for (const user of users) clauses.push({ clause: 'a', whose: 'named_user', user });
   const caches = (['sudo_timestamp', 'doas_persist', 'polkit_keep'] as const).filter((c) =>
     readings.some((r) => r.cache === c),
   );

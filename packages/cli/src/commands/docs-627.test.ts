@@ -388,9 +388,11 @@ describe('#627 W — gate-answers.md, sentence by sentence', () => {
     // store was not found)", "the separation check's first line"): "reads unknown (…), so the
     // separation check's first line reads "Separation: unknown"" — separation-check-627 :: "correction 1 (D1):
     // the mode is never guessed …" (the missing store) and "#819 Unit B: the words" :: "1. …".
+    // #819 Unit A re-pin (A8): the programs gain `id -G` — separation-790 :: the spy's shapes and
+    // "S3: the runner refuses …" (its id row), and "#819 Unit A" :: "A3: …" (each its id answer).
     claim(
       PAGE,
-      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the version, list and check modes of sudo, doas and polkit named below, and `getent`, which looks users and groups up (on macOS, `dscl . -read /Users/<user> UserShell`, for a user's shell). Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store of another user's that this login cannot open is measured out of its reach, a store this login owns is within its reach, and one that is not found reads unknown (Realm's store was not found), so the separation check's first line reads \"Separation: unknown\". The agent's own app settings are read from the login's own home, never from `HOME`.",
+      "`realm mcp --check` and `realm serve --check` print the value the server would start with and where it came from, then a separation check, and start no server; the only programs the check runs are the version, list and check modes of sudo, doas and polkit named below, `getent`, which looks users and groups up, and `id -G`, which lists a user's groups (on macOS, `dscl . -read /Users/<user> UserShell`, for a user's shell). Run it from the agent's own shell: it measures what that login can reach. With `HOME` set to the home of the user that runs Realm, it checks that user's store: a store of another user's that this login cannot open is measured out of its reach, a store this login owns is within its reach, and one that is not found reads unknown (Realm's store was not found), so the separation check's first line reads \"Separation: unknown\". The agent's own app settings are read from the login's own home, never from `HOME`.",
     );
     // Correction 1 (F6): ":56" is executed by separation-check-627 :: "correction 1 (D1): the mode is
     // never guessed" (the denied and the missing store) and :: "each condition line in its states"
@@ -1018,9 +1020,14 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     // (unknown, and the sentence not printed); separation-check-627 :: "the whole output" (no server).
     claim(C, 'No server is started; a bad value exits 1.');
     // #819 (08, B F10): sudo's three modes, `-V` included — the spy's shapes.
+    // #819 Unit A, the capped correction (Part 2; rev 5.1): the exception after "not printed" —
+    // separation-790 :: "the grid, …" (each policy), :: "rev 5.1 (IA 2’s finding …)", :: "the
+    // audit’s `Defaults!` case …", :: "the guard and its mirror …".
+    // #819 Unit A re-pin (A8): "and a user's groups with `id -G`" — separation-790 :: the spy's shapes
+    // and "S3 …" (its id row); "#819 Unit A" :: "A3: …".
     claim(
       C,
-      "Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up with `getent` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool's error reads \"unknown\", and the sentence is not printed.",
+      "Condition 2 asks sudo (`-V`, `-n -l` and `-n -ll`), doas (`-C`) and polkit (`pkcheck`, with no interaction) in their version, list and check modes, looks users and groups up with `getent` and a user's groups with `id -G` (on macOS, `dscl` for a user's shell), and reads su's login rules from their files — it never switches user, never asks for a password and never opens a login connection; condition 3 (`root_engine`) checks six engines that run containers or machines as root (Docker, LXD, Incus, Podman, libvirt and containerd) and the groups that reach them or the disks; the check says an agent cannot record a gate answer only when every way it found needs a credential or is not allowed, and lists what no program can see from that login; a rule it does not recognise, a file it cannot read, or a tool's error reads \"unknown\", and the sentence is not printed, unless sudo already reads yes, or the unknown is only whether a rule that needs a password runs as the service user or root, or with a group that user is in, another rule does, and sudo would ask the same password either way (under the default, `rootpw` and `runaspw`; under `targetpw` only when rules already run as both, and never for a group after the `:`).",
     );
     // #819 correction 1 (SEP-00 Words): separation-790 :: "C-2", "C-6 (01b #6) …", "C-13 (a) …"
     // (unknown unless yes, and twice), :: "C-1 (A BLOCKING 1) …" (askpass), :: "C-17 (e) …"
@@ -1028,17 +1035,61 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
     // #819 follow-up 2: separation-790 :: the "#819 follow-up 2 — the class …" cells (members 2 and 3, A B4), C-20 (clause (g)).
     // #819 follow-up 3 (A B4): the group-name clause — separation-790 :: "the audit’s S2 (Q1a) …"
     // (primary group, any case) and "the audit’s S2, recorded (Q1b) …" (a secondary group not seen).
+    // #819 Unit A re-pin (A8): the listing read as sudo prints it — sudo-corpus :: T1, separation-790
+    // "#819 Unit A" :: "A1: …"; "cannot split" — :: "P2 …", "A4: …"; runaspw by name — :: "A6: …";
+    // the exact read by gid and by name — :: "A3: … by gid …", "… by name …"; the fallback —
+    // :: "A3: … each fallback …", C-18, C-20 (the members the system lists).
+    // The Unit A correction re-pin: "on each version" — separation-790 "the Unit A correction" :: the
+    // three "C1: …" cells, sudo-corpus :: T1 rows I81, I82; "another setting" (C6) — :: "P2 …"; the
+    // fallback's case gap (C2) — :: "C2: where `id -G` cannot be read …", "C2’s scope …", "C2: no
+    // case gap …", "C2: yes still beats unknown …".
+    // #819 Unit A, the capped correction: runaspw's other user — separation-790 :: "(svc) with a
+    // password under runaspw …"; which list — :: "(a) match_group_by_gid does not apply to a run-as
+    // group list …"; the exception — :: "the grid, …"; targetpw's group way — :: "(b) and Part 9 …",
+    // :: "(b) the sentence names this login’s password …".
     claim(
       C,
-      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed twice with different values (issue #819); the stack `pam_askpass_service` names is read too; run-as user names match in any case, as sudo matches them; unless `!case_insensitive_group` or `match_group_by_gid` is listed, run-as group names are compared in any case with the service user's primary group and with the group `getent` finds, and a secondary group named only in another case is not seen; a run-as group that does not list the service user is read as not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds that the members the system lists for each group read are all of its members.",
+      "A sudo Defaults setting or long-format option the check does not read makes sudo's reading unknown, unless sudo already reads yes, with sudo's own line, and so does a setting it acts on, listed twice with different values (issue #819); the stack `pam_askpass_service` names is read too; sudo's listing is read as sudo prints it on each version, and a Defaults setting it cannot split (a value with a space that ends in a backslash, or holds a backslash before a quotation mark, prints the same as another setting) reads unknown unless sudo already reads yes; under `runaspw`, `runas_default` is looked up by name, as sudo looks it up, and another user's password is named; run-as user names match in any case, as sudo matches them; a run-as group is compared with the service user's groups as sudo reads them, which `id -G` lists — a `%group` in a rule's user list by gid under `match_group_by_gid` and by name otherwise, a group after the `:` of its run-as list by name alone, each in any case unless `!case_insensitive_group` is listed — and where `id -G` gives no answer that holds the service user's primary group, with the service user's primary group and the group `getent` finds (unless `!case_insensitive_group` is listed, or `match_group_by_gid` for a `%group`, in any case); when `id -G` cannot be read, unless `!case_insensitive_group` is listed, or `match_group_by_gid` for a `%group`, a run-as group that does not hold the user by its list or primary group reads unknown, since a secondary group named only in another case is not seen, unless sudo would ask the same password either way, as above; under `targetpw` a way through a run-as group asks the password of the user it runs as — this login's for `sudo -g` alone, and each plain user name's the rule lists — and the check names those passwords; a run-as group that does not list the service user is then read as not holding it only when the `group` and `initgroups` lines of `/etc/nsswitch.conf`, read as glibc reads them, list local sources, and the sentence then adds that the members the system lists for each group read are all of its members.",
+    );
+    // #819 Unit A, the capped correction: the su sentence — separation-790 :: "#819 Unit A, the capped
+    // correction: su toward root" (each branch, the stacks once, the differential's shape, the typical
+    // server); root's "not empty" — :: "W-x3a", :: "W-x3b" (re-pinned); the core change — core
+    // separation-790 :: "(a), #819 Unit A, the capped correction (Part 7) …", separation-790 :: "the
+    // runas_default user’s password" and "(b) and Part 9 …" (named_user readings).
+    claim(
+      C,
+      "su is read toward root as well as toward the service user, since root can become that user, so condition 2 lists su toward root, and root's condition in the sentence also says its password is not empty.",
+    );
+    claim(
+      C,
+      "In `@sensigo/realm`, `SWITCH_WHOSE` gains `named_user`, and a switch-path reading and clause (a) gain an optional `user`: the password of a user other than this login, the service user or root (`runaspw`'s `runas_default` user, or a user a `targetpw` group way runs as).",
+    );
+    // #819 Unit A correction 3 (C5; the review's §7): Rocky's line — sudo-corpus :: "#819 Unit A, the
+    // capped correction (Part 4): Rocky's stock PAM line is read"; the global !authenticate —
+    // separation-790 :: "Part 5: a global !authenticate reads yes only with a rule …", :: "(c) the words
+    // …" (the group way); `Defaults>` — separation-790 :: "Part 6: `Defaults>T !authenticate` counts
+    // only for a user a rule runs as"; real sudo: plans/issue-627/w/unit-a/c2-ia2/probe (P5, P6).
+    claim(
+      C,
+      "Rocky Linux's stock `pam_unix.so try_first_pass nullok` line is read, so the stronger sentence prints on a stock Rocky Linux host.",
+    );
+    claim(
+      C,
+      'A global `Defaults !authenticate` reads yes only beside a rule that runs as the service user or root, or with a group the service user is in; with none it reads not allowed.',
+    );
+    claim(
+      C,
+      'A `Defaults>user !authenticate` line counts only for a user a rule runs as: a rule that reaches the service user only through its run-as groups never counts, since sudo applies no such line to a group way.',
     );
     // separation-check-627 :: 8.5's header cell and #819's "C4: a store this login cannot open — the
     // header says so"; the condition lines (condition 7's two files); #819's "C4: the economics line
     // — …" (its three branches).
     // #819 follow-up 2 (walk --check wording): separation-check-627 :: the "#819 follow-up 2 — the walk’s --check wording …" cells.
+    // #819 Unit A re-pin (A9, W-856CR-06): "The header" → "The "Measured for …" line" — the tests call
+    // the first line "the header"; this is the line separation-check-627 :: "C4: …" pins.
     claim(
       C,
-      'The header says when no store was found, and when the store cannot be opened; condition 7\'s "no" names the two settings files it looked at; the store\'s time basis is marked "(fact)"; a condition the check reads nothing for is "not measured"; the economics line says whether this login can change the `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder that is not there reads unknown (no such folder).',
+      'The "Measured for …" line says when no store was found, and when the store cannot be opened; condition 7\'s "no" names the two settings files it looked at; the store\'s time basis is marked "(fact)"; a condition the check reads nothing for is "not measured"; the economics line says whether this login can change the `realm.yaml` it read, when that file names no `runner.cache.economics`, and a `--project` folder that is not there reads unknown (no such folder).',
     );
     // #819 Unit B: separation-check-627 :: "#819 Unit B: the words" — "1. the header …", "2. the
     // summary …" and "3. condition 2's line …" (a)–(h).

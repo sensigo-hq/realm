@@ -1,0 +1,5 @@
+# captured 2026-10-24 · image ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac · set up as root: groupadd -g 1100 svcgrp; groupadd -g 1300 svcown; groupadd -g 1500 SVCGRP; useradd -m -u 1001 -s /bin/sh agent; useradd -m -u 1002 -s /bin/sh alice; usermod -aG svcgrp alice; useradd -r -u 999 -g svcown -G SVCGRP -s /usr/sbin/nologin svc; groupadd -g 1101 wheel; gpasswd -a root wheel · then as the login agent: id -G root
+exit 0
+--- stdout
+0 1101
+--- stderr

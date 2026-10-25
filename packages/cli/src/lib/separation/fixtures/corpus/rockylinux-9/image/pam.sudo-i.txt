@@ -1,0 +1,7 @@
+# captured 2026-10-23 · image rockylinux@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6 · cat /etc/pam.d/sudo-i
+#%PAM-1.0
+auth       include      sudo
+account    include      sudo
+password   include      sudo
+session    optional     pam_keyinit.so force revoke
+session    include      sudo
