@@ -2135,6 +2135,9 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       // unit re-pin (§5.2): a mark on a letter stays with it, so the bullet keeps marks on digits and
       // signs only (#845's 2.1 drops them).
       'A combining mark on a digit or a sign is set aside (`5 degrees` reads found in `-́5 degrees`), and circled, squared and parenthesised letters read as letters (`ⓃⓄⓉ` reads `not`). Negative squared and negative circled letters (`🅽🅾🆃`, `🅝🅞🅣`) and regional indicators are set aside like other symbols, so a quote reads found whether it carries them or leaves them out.',
+      // The stray-mark line (the owner's yes, 2026-10-25): a mark on no letter is set aside — at a
+      // quote's start, after a space, after an invisible format character (#845 drops it in code).
+      "A combining mark on no letter is set aside too: at a quote's start (U+0301 then `lawful use of the Premises` is found in `lawful use of the Premises`), after a space, or after an invisible format character (`cafe` is found in `cafe`, U+200B, U+0301, and the other way round).",
       'Symbols other than the kept ones (bullets, emoji) are set aside.',
       'A quote that starts or ends at a U+FEFF inside a word reads `reformatted` (`lawful use` in `un`, U+FEFF, `lawful use`), since the canonical form reads it as a space.',
     ])
@@ -2178,6 +2181,18 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
           'The Landlord shall insure the Building.',
         ),
       ],
+      // the stray-mark line's four shapes: a mark on no letter is set aside, so each reads found —
+      // (a) red when such a mark is kept (#845's code half turns these `not_found`; then the line
+      //     goes too); (b) prints the four states
+      strayMarks: [
+        state(
+          `${ch(0x301)}lawful use of the Premises`,
+          'The Tenant shall make lawful use of the Premises.',
+        ),
+        state('the cafe', `the ${ch(0x301)}cafe here`),
+        state('cafe', `the cafe${ch(0x200b)}${ch(0x301)} here`),
+        state(`cafe${ch(0x200b)}${ch(0x301)}`, 'the cafe here'),
+      ],
       symbols: [
         state(
           'The Tenant shall pay the Rent and keep the Premises',
@@ -2193,6 +2208,7 @@ describe('#760 correction 3 — handlers.md: what check_quotes does not catch, a
       abbreviations: ['stitched', 'stitched'],
       amounts: ['exact', 'reformatted'],
       marks: ['reformatted', 'reformatted'],
+      strayMarks: ['reformatted', 'reformatted', 'reformatted', 'reformatted'],
       symbols: ['reformatted', 'reformatted'],
       feff: 'reformatted',
     });
