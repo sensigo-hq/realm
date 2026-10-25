@@ -1155,7 +1155,8 @@ function tilesOf(budget: Budget, quote: string, source: string, tiles: Tile[]): 
 }
 
 /** A7: the longest found tile, when it covers at least one whole word of the source (a word with a
- *  word edge at both ends inside the tile's span). */
+ *  word edge at both ends inside the tile's span) — a whole word, read by code point past marks (the
+ *  reads `wordEdgesHold` uses: a mark is part of its letter's word, never its edge). */
 function nearestOf(tiles: readonly Tile[], canonical: Canonical): QuoteSpan | undefined {
   let best: Tile | undefined;
   for (const t of tiles) {
@@ -1164,10 +1165,12 @@ function nearestOf(tiles: readonly Tile[], canonical: Canonical): QuoteSpan | un
   if (best === undefined) return undefined;
   const hay = canonical.text;
   const end = best.at + best.text.length;
-  for (let k = best.at; k < end; k++) {
-    if (!isAlnum(hay[k]) || (k > 0 && isAlnum(hay[k - 1]))) continue;
+  for (let k = best.at; k < end; k += cpAt(hay, k)!.length) {
+    // a word starts at a letter or digit whose neighbour before it, read past marks, is not one
+    if (!isAlnum(cpAt(hay, k)) || isAlnum(cpBefore(hay, pastMarks(hay, k)))) continue;
+    // it runs over letters, digits and marks; it is whole when it ends inside the tile
     let w = k;
-    while (w < hay.length && isAlnum(hay[w])) w++;
+    for (let d = cpAt(hay, w); isAlnum(d) || isMark(d); d = cpAt(hay, w)) w += d!.length;
     if (w <= end) return spanOf(canonical, best.at, best.text.length);
   }
   return undefined;

@@ -298,6 +298,50 @@ describe('check_quotes — the warning, only when a quote is not found', () => {
     }).toEqual({ none: true, oneLetter: undefined });
   });
 
+  it('the review’s correction (#866, C1): the warning carries the record’s `nearest`, read past marks — none for a piece inside `за\u0301мок`, `26–32` for `किराया`; the cut after the 80th character drops a vowel sign', async () => {
+    const doc = 'Это за\u0301мок на горе. मासिक किराया देय है।';
+    const { data, warn } = await run(
+      ctx(
+        [],
+        {},
+        {
+          doc: { text: doc },
+          extract: {
+            candidates: [
+              { field: 'ru', value: 'v', quote: 'замок' },
+              { field: 'hi', value: 'v', quote: 'किराया ज़्यादा है' },
+              { field: 'cut', value: 'v', quote: `${'x'.repeat(79)}किyy` },
+            ],
+          },
+        },
+      ),
+    );
+    const nearestOf = (i: number): string => {
+      const n = (data.results[i]!.quote_check as { nearest?: { start: number; end: number } })
+        .nearest;
+      return n === undefined ? 'none' : `${n.start}–${n.end}`;
+    };
+    /** The warning's own words for one value: its quote as given, then the offsets part. */
+    const entry = (field: string): string =>
+      (warn ?? '').match(new RegExp(`${field} — ("[^"]*" \\([^)]*\\))`))?.[1] ?? 'absent';
+    const shownCut = (warn ?? '').match(/cut — "([^"]*)"/)?.[1] ?? '';
+    const hex = (c: string): string =>
+      `U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`;
+    // (a) red when the word test stops at a mark's edge (`ru` keeps `7–10`, and the warning prints
+    //     it), the record and the warning disagree, or the cut keeps the vowel sign; (b) prints each
+    //     record's `nearest`, the warning's own words for `ru` and `hi`, and the cut's last two code
+    //     points.
+    expect({
+      ru: [nearestOf(0), entry('ru')],
+      hi: [nearestOf(1), entry('hi')],
+      cutTail: [...shownCut].slice(-2).map(hex),
+    }).toEqual({
+      ru: ['none', '"замок" (no nearby match)'],
+      hi: ['26–32', '"किराया ज़्यादा है" (nearest match at 26–32)'],
+      cutTail: ['U+0915', 'U+2026'],
+    });
+  });
+
   it('13 not found: ten named, then "and 3 more" from the true count', async () => {
     const thirteen = Array.from({ length: 13 }, (_, i) => INVENTED(`f${i + 1}`));
     const { warn } = await run(ctx(thirteen));

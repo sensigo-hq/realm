@@ -11,6 +11,8 @@
 // - §4: an Arabic or Hebrew vowel mark a quote leaves out is optional; one it writes must be on the
 //   source's letter.
 // - The docs: each new sentence quoted, then its examples run.
+// - The review's correction (#866 correction 1, C1): `nearest` finds a whole word by code point, past
+//   marks, as the word edges do.
 //
 // What a failing cell prints: states, counts and code points as `U+XXXX`, never a document's text.
 import { describe, it, expect } from 'vitest';
@@ -629,6 +631,75 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
       position: ['reformatted', true],
       honest: 'stitched',
       cutAfterMark: 'not_found',
+    });
+  });
+});
+
+describe('the review’s correction: nearest', () => {
+  // C1: `nearest` is the longest piece of the quote found in the document, kept only when it covers
+  // a whole word of the document — read by code point, past marks (`wordEdgesHold`'s reads), so a
+  // mark is part of its letter's word and never its edge.
+  const A = '\u0301';
+  /** The state and `nearest` as `start–end`, or `none`. */
+  const near = (quote: string, source: string): string => {
+    const { state: s, nearest: n } = locateQuote(quote, source);
+    return `${s} ${n === undefined ? 'none' : `${n.start}–${n.end}`}`;
+  };
+
+  it('absent: no whole word in the longest piece — a piece cut from inside a word, past its marks or next to an astral letter, has no `nearest`', () => {
+    // (a) red when a row keeps a `nearest`: the word's start read without stepping back past marks
+    //     (`мок`, `замок`, `राया`, `ไผ่`, the Thai near miss), a word that stops at a mark (`काम`),
+    //     a word read by code unit (`abc qq`), or a control that moves; (b) prints each row's state
+    //     and `nearest` as offsets, or `none`.
+    expect({
+      mok: near('мок', `Это за${A}мок на горе.`),
+      zamok: near('замок', `Это за${A}мок на горе.`),
+      raya: near('राया', 'मासिक किराया देय है।'),
+      kaam: near('काम', 'किराया कम है।'),
+      phai: near('ไผ่', 'บ้านไม้ไผ่ หลังนี้'),
+      astralAfter: near('abc qq', `the abc${ch(0x20000)} here`),
+      // the stated cost (problem 6): a near miss inside one Thai run loses its pointer
+      thaiNearMiss: near('บ้านไม้ไผ่หลังนี่', 'บ้านไม้ไผ่หลังนี้ใหญ่'),
+      // controls, unchanged: NFKC composes `e` + U+0301 into `é`; only the longest piece is read
+      cafe: near('cafe', `the cafe${A} here`),
+      longestOnly: near('abcdefgh rent', 'zabcdefghz and the rent'),
+    }).toEqual({
+      mok: 'not_found none',
+      zamok: 'not_found none',
+      raya: 'not_found none',
+      kaam: 'not_found none',
+      phai: 'not_found none',
+      astralAfter: 'not_found none',
+      thaiNearMiss: 'not_found none',
+      cafe: 'not_found none',
+      longestOnly: 'not_found none',
+    });
+  });
+
+  it('present: a whole word, marks and astral letters inside it — `किराया`, `за\u0301мок`, two CJK Extension-B letters; a longest piece may still start or end inside a word (controls)', () => {
+    // (a) red when a word holding a mark is never whole (`किराया`, `за\u0301мок новый`), the start test
+    //     reads a code unit (the astral word, the one kind C1 adds), or a control moves; (b) prints
+    //     each row's state and `nearest` as offsets, or `none`.
+    expect({
+      kiraya: near('किराया ज़्यादा है', 'मासिक किराया देय है।'),
+      zamokNovy: near(`за${A}мок новый`, `Это за${A}мок и старый дом.`),
+      astralWord: near(`${ch(0x20000)}${ch(0x20001)} qq`, `the ${ch(0x20000)}${ch(0x20001)} here`),
+      // controls, unchanged: Latin; the bare reading of Arabic (C2); a whole word with no mark; a
+      // longest piece that ends, or starts, inside a word (C2's words)
+      dueIn: near('due in 60 days', 'payment is due in 30 days'),
+      arabicBare: near('كُتِبَ', 'كَتَبَ الطالب'),
+      zamokStary: near('замок старый', `Это за${A}мок и старый дом.`),
+      staryZamok: near('старый замок', `Это старый за${A}мок.`),
+      ndlord: near('qqq ndlord shall repair', 'The Landlord shall repair the roof.'),
+    }).toEqual({
+      kiraya: 'not_found 6–12',
+      zamokNovy: 'not_found 4–10',
+      astralWord: 'not_found 4–8',
+      dueIn: 'not_found 11–17',
+      arabicBare: 'not_found 0–6',
+      zamokStary: 'not_found 13–19',
+      staryZamok: 'not_found 4–14',
+      ndlord: 'not_found 6–25',
     });
   });
 });
