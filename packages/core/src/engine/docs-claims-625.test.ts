@@ -1865,9 +1865,12 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       HANDLERS,
       'A number written in digits is one unit: a digit never matches inside a longer number or next to a letter, and a quote never starts or ends on a number\'s separator or beside a group of thousands. `clause 9` is not found in `clause 9a`, `9,20` not in `9,200`, `€48` not in `€48,000`, `18` and `18.` not in `18.5`, `1 200` not in `1 200 000`, and `75%` not in `.75%`. A currency or mathematical sign, or a dash, written right before a number belongs to it (the exceptions are listed under "What `check_quotes` does not catch"): `48,000` is not found in `€48,000`, and `5` not in `-5`. A number written in words is matched as words: `five hundred thousand euro` is found inside `six million five hundred thousand euro`.',
     );
+    // #866 correction 1 (C2): what `nearest` reads — run by locate-quote-language-0480.test.ts's
+    // "the review’s correction: nearest" cells (`كُتِبَ`, `abcdefgh rent`, `старый замок`,
+    // `qqq ndlord shall repair`)
     claimOn(
       HANDLERS,
-      '`nearest` is where the longest piece of the quote that is in the document lies; it is absent when no whole word of the quote is found.',
+      '`nearest` is where the longest piece of the quote that is in the document lies (an Arabic or Hebrew piece, and the document, read without their Arabic or Hebrew marks); it is absent when that piece holds no whole word, and it may start or end inside a word.',
     );
     claimOn(
       HANDLERS,
@@ -1914,9 +1917,21 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
   });
 
   it('the warning sentence — the quote as the model gave it, cut at 80, and offsets; never text read from the document', async () => {
+    // #866 correction 1 (C6): the warning's phrases and its cut. Each is run in check-quotes.test.ts:
+    // `no nearby match` by "a quote with nothing nearby says so…" (:287, asserted at :296; absent
+    // after no search, H3's `noSearchClaimed`, :606); `no quote given` and `the quote is not text` by
+    // "H3: a value with no quote says…" (:594, asserted at :604 and :605); the cut with `…` by "names
+    // each missing value…" (:246) and "H4: a quote head of 81 characters…" (:610); one line, with
+    // control characters written out, by "H2: the warning is one terminal-safe line…" (:569,
+    // `escWrittenOut`); a mark after the 80th character cut too by "the review’s correction (#866,
+    // C1)…" (:301, `cutTail`).
     claimOn(
       HANDLERS,
-      'It prints the quote as the model gave it, cut at 80 characters, and offsets; it never prints text it read from the document.',
+      "When any quote is not found, the step completes with a warning that names each one: its field, the quote's first 80 characters, and the offsets of its nearest match, or `no nearby match`; a value with no quote reads `no quote given`, and one whose quote is not a string `the quote is not text`.",
+    );
+    claimOn(
+      HANDLERS,
+      'It prints the quote as the model gave it, on one line, with control characters written out (`\\u001b`), and cut after its 80th character with `…` (a mark after the 80th character is cut too), and offsets; it never prints text it read from the document.',
     );
     const long = `${'The Landlord shall repaint every window each spring and every door each autumn'} and more`;
     // Correction 2 (ride-along, F760-C1R-B-09): the source spells the shared words its own way, so
@@ -1959,9 +1974,11 @@ describe('#760 correction 1 — handlers.md, sentence by sentence (05)', () => {
       "3. `stitched`: the quote's pieces, split where it breaks (`…` or `...`, a sentence end, `;`, a `:` not between two digits, a double quotation mark or a line break), are each found whole, at word edges, and in order; pieces next to each other in `source` count as one part, and every part is at least `options.minPartChars` long (default `20`, at least `4`). After each skip, the next piece starts where the document starts a sentence, a clause (after `;` or `:`) or a line. A line counts only after a blank line, or a line that ends a sentence, a clause or a table row (`|`); a clause number (`6.2`, `12.`, `(a)`, never bare digits such as `12`) or a list mark is skipped only at such a line start, and a clause number only before a capital letter or an opening mark (`\"` `“` `„` `«` `'` `‘` `(` `[`). After a full stop, `!` or `?`, on the same line or at the end of the line before, the next piece begins with a capital letter or an opening mark (`\"` `“` `„` `«` `'` `‘` `(` `[`), or starts right after one in the document; at a new line that counts, an item after a list mark (`-` `*` `•` `◦` `▪` `‣` `·` `–` `—` `|`, or a run of `#`) may open with any word, and a line quoted with its own clause number before a capital letter (`2. Send…`) passes. The piece before a skip may end mid-sentence. A quote with no break is never stitched.",
     );
     claimOn(HANDLERS, '4. `stitched_out_of_order`: the same, with the parts in another order.');
+    // #866 correction 1 (C2): only the longest piece is read, and Arabic and Hebrew are read bare —
+    // the same cells
     claimOn(
       HANDLERS,
-      '5. `not_found`: otherwise, with `nearest` when a piece of the quote holding a whole word is in `source`; it is absent when no whole word of the quote is found.',
+      '5. `not_found`: otherwise, with `nearest` when the longest piece of the quote that is in `source` holds a whole word (an Arabic or Hebrew piece, and `source`, read without their Arabic or Hebrew marks); otherwise it is absent.',
     );
     // The language unit re-pin (§5.3): a letter keeps its visible marks; the Arabic and Hebrew vowel
     // marks a quote leaves out — run by locate-quote-language-0480.test.ts's §2 and §4 cells.
@@ -2535,8 +2552,9 @@ describe('#760 follow-up — the words and tests: each changed sentence quoted, 
   it("§2 `cut_short`: an `exact` quote is marked when its last character is its stop and the document goes on with a lowercase letter or a digit, not when the quote carries a space after it (every member: #855's correction §1)", () => {
     claimOn(
       HANDLERS,
-      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, plain spaces and tabs, goes on with a lowercase letter or a digit (`approx. 412`); any other whitespace there, a `\\p{Ll}` or `\\p{Nd}` character outside the Basic Multilingual Plane, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...`, that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
+      "A quote that ends a sentence where the document's sentence goes on is marked `cut_short`, with where; the reviewer reads the rest. An `exact` quote is marked when its last character is its `.`, `!` or `?` and the document, past the closing marks `\"` `'` `)` `]` `}` `»` `’` `”`, plain spaces and tabs, goes on with a lowercase letter or a digit (`approx. 412`); any other whitespace there, a `\\p{Ll}` or `\\p{Nd}` character outside the Basic Multilingual Plane, or whitespace the quote carries after its stop, leaves it unmarked. In every other state, the mark falls at each `.`, `!` or `?` inside the quote, but the dots of `...` and a `.` right after `…`, that whitespace or the quote's end follows, unless it ends an abbreviation on the check's list or an initial, where the document has no stop and does not end its line or its text there; a space, tab or line break the quote carries changes nothing.",
     );
+    // #866 correction 1 (C4): the handlers paragraph carries the CHANGELOG's `….` words too.
     // the owner's word, 2026-10-24 ("i agree"): a `.` right after `…` is no sentence end inside a
     // quote — the `…` run takes it (locate-quote.ts, `segmentsWithin`); its row: B1 and M5
     claimOn(

@@ -19,7 +19,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canonicalMap, locateQuote } from './locate-quote.js';
+import { canonicalForm, canonicalMap, locateQuote } from './locate-quote.js';
 
 const ch = String.fromCodePoint;
 const hex = (c: number): string => `U+${c.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -565,14 +565,16 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
   };
   const HANDLERS = 'docs/reference/handlers.md';
 
-  it('"What reads not found although it is honest": a visible mark left out outside Arabic and Hebrew; Chinese, Japanese and Thai word for word only', () => {
+  it('"What reads not found although it is honest": a visible mark left out outside Arabic and Hebrew; Chinese, Japanese and Thai: a whole run, and what joins two runs', () => {
     claimOn(
       HANDLERS,
       '- A visible mark the quote leaves out makes another word, in every script but Arabic and Hebrew: `замок` is not found in `за́мок` (a stress mark), nor unpointed Syriac in pointed text.',
     );
+    // #866 correction 1 (C3): the line names every shape that fails — run by the rows and the
+    // sweeps below
     claimOn(
       HANDLERS,
-      '- In Chinese, Japanese and Thai text, a quote must be a whole run copied character for character, from punctuation to punctuation: part of a run, or a reformatted quote right after `。`, reads `not_found`; word boundaries for these scripts are designed later.',
+      "- In Chinese, Japanese and Thai text, a quote must be a whole run, between spaces, punctuation, symbols or the text's ends (an invisible format character joins the runs beside it, U+FEFF excepted, as the `exact` row says): part of a run reads `not_found`. A reformatted quote of a run that only a punctuation mark or a symbol the check sets aside joins to another run (`。` `、` `，` `「` `」` `,` `.` `★` …, with no space beside it) reads `not_found` too; a character Unicode turns into a space and a mark (`´`, `゛`) counts as a space. Quoted character for character, the run reads `exact`, and a number in it follows the number rule above. Word boundaries for these scripts are designed later.",
     );
     // (a) red when a sentence's example reads otherwise; (b) prints the states.
     expect({
@@ -588,6 +590,91 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
       partOfRun: 'not_found',
       afterStop: 'not_found',
     });
+    // C3's rows: the quote reformatted (`1` for the run's `１`), placed beside the run
+    const Q = '明天1日回上海';
+    const R = '明天１日回上海';
+    // (a) red when a set-aside punctuation mark or symbol stops joining two runs (the joined rows
+    //     read `reformatted`), a space joins them, or the number rule stops reading inside a run;
+    //     (b) prints each row's state.
+    expect({
+      joinedStopBefore: state(Q, `${R}。他说好。`),
+      joinedStopAfter: state(Q, `他说好。${R}`),
+      fullwidthComma: state(Q, `他说，${R}`),
+      asciiComma: state(Q, `他说,${R}`),
+      enumerationComma: state(Q, `他说、${R}`),
+      cornerBrackets: state(Q, `他说「${R}」好`),
+      asciiStop: state(Q, `他说.${R}`),
+      star: state(Q, `他说★${R}`),
+      partOfRun: state('回上海', `他说好。${R}。`),
+      exactAfterZwsp: state(R, `他说\u200b${R}`),
+      number: state('价格100', '价格100,200元'),
+      betweenSpaces: state(Q, `他说 ${R} 好`),
+      afterIdeographicSpace: state(Q, `他说\u3000${R}`),
+      // U+FEFF reads as a space, the run copied character for character or reformatted
+      afterFeff: [state(R, `他说\ufeff${R}`), state(Q, `他说\ufeff${R}`)],
+      afterPercent: state(Q, `他说%${R}`),
+      stopThenEnd: state(Q, `他说 ${R}。`),
+      stopThenSpace: state(Q, `${R}。 他说好`),
+      exactBetweenStops: state(R, `他说好。${R}。`),
+    }).toEqual({
+      joinedStopBefore: 'not_found',
+      joinedStopAfter: 'not_found',
+      fullwidthComma: 'not_found',
+      asciiComma: 'not_found',
+      enumerationComma: 'not_found',
+      cornerBrackets: 'not_found',
+      asciiStop: 'not_found',
+      star: 'not_found',
+      partOfRun: 'not_found',
+      exactAfterZwsp: 'not_found',
+      number: 'not_found',
+      betweenSpaces: 'reformatted',
+      afterIdeographicSpace: 'reformatted',
+      afterFeff: ['reformatted', 'reformatted'],
+      afterPercent: 'reformatted',
+      stopThenEnd: 'reformatted',
+      stopThenSpace: 'reformatted',
+      exactBetweenStops: 'exact',
+    });
+    // C3's sweeps, computed as the running Node reads Unicode (2,691, 35, 25 and 42 on Node 24.21):
+    // (A) every BMP punctuation mark or symbol the check sets aside, but those Unicode turns into a
+    // space and a mark, joins the runs; (A′) those it turns into a space and a mark do not; (B) no
+    // whitespace joins them; (C) every BMP format character but U+FEFF joins them, the run copied
+    // character for character.
+    const setAside = codePoints(/^[\p{P}\p{S}]$/u, 0, 0xffff).filter(
+      (c) => canonicalForm(ch(c)) === '',
+    );
+    const spaced = (c: number): boolean => /^\s/u.test(ch(c).normalize('NFKC'));
+    const between = (quote: string, c: number): string => state(quote, `他说${ch(c)}${R}`);
+    const sweep = (members: number[], quote: string, want: string, floor: number) => ({
+      // a guard prints the count it swept when it falls under its floor, never `true`/`false`
+      swept: members.length >= floor ? `at least ${floor}` : members.length,
+      otherwise: members.filter((c) => between(quote, c) !== want).map(hex),
+    });
+    // (a) red when a member reads otherwise (the kind map's break turns every A member
+    //     `reformatted`), or a sweep falls under its floor; (b) prints the counts swept and each
+    //     member that reads otherwise, as `U+XXXX`.
+    expect({
+      A: sweep(
+        setAside.filter((c) => !spaced(c)),
+        Q,
+        'not_found',
+        2_600,
+      ),
+      'A′': sweep(setAside.filter(spaced), Q, 'reformatted', 30),
+      B: sweep(codePoints(/^\s$/u, 0, 0xffff), Q, 'reformatted', 25),
+      C: sweep(
+        codePoints(/^\p{Cf}$/u, 0, 0xffff).filter((c) => c !== 0xfeff),
+        R,
+        'not_found',
+        40,
+      ),
+    }).toEqual({
+      A: { swept: 'at least 2600', otherwise: [] },
+      'A′': { swept: 'at least 30', otherwise: [] },
+      B: { swept: 'at least 25', otherwise: [] },
+      C: { swept: 'at least 40', otherwise: [] },
+    });
   });
 
   it('the number paragraph’s next one: an unvowelled Arabic word matches every vowelling of it', () => {
@@ -602,10 +689,12 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
     ]);
   });
 
-  it('the CHANGELOG’s Fixed bullet, each of its three sentences run', () => {
+  it('the CHANGELOG’s Fixed bullet, each of its clauses run', () => {
+    // #866 correction 1 (C5): the bullet's bold lead — its parts run below (`vowelSign`,
+    // `toneMark`, `stress`, `position`)
     claimOn(
       'CHANGELOG.md',
-      "- A quote that differs from its source by a vowel sign or tone mark (Hindi, Thai and other scripts that write vowels as marks; an Arabic or Hebrew vowel mark the quote leaves out is optional) no longer reads as found; a character outside the Basic Multilingual Plane (for example a CJK Extension-B letter) no longer shifts a found quote's position or makes an honest quote read not found; a word cut from inside another word, after a combining mark, no longer reads found.",
+      "- **`check_quotes` no longer reads a different word as found when a mark on a letter differs (a vowel sign, a tone mark, a stress mark), and no longer misplaces a quote after a character outside the Basic Multilingual Plane (#845).** A quote that differs from its source by a vowel sign or tone mark (Hindi, Thai and other scripts that write vowels as marks; an Arabic or Hebrew vowel mark the quote leaves out is optional) no longer reads as found; a character outside the Basic Multilingual Plane (for example a CJK Extension-B letter) no longer shifts a found quote's position or makes an honest quote read not found; a word cut from inside another word, after a combining mark, no longer reads found.",
     );
     const shifted = `${ch(0x20000)} The rent is "48,000" a year.`;
     const rent = locateQuote('the rent is 48,000 a year', shifted);
@@ -614,6 +703,7 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
     expect({
       vowelSign: state('काम', 'यह कम है'),
       toneMark: state('ไม่', 'ไม้'),
+      stress: state(`замо\u0301к`, `Это за\u0301мок на горе.`),
       optional: state('كتب الطالب', 'قال: كَتَبَ الطالب الدرس'),
       position: [
         rent.state,
@@ -627,6 +717,7 @@ describe('the language unit: the docs and the CHANGELOG, each new sentence quote
     }).toEqual({
       vowelSign: 'not_found',
       toneMark: 'not_found',
+      stress: 'not_found',
       optional: 'reformatted',
       position: ['reformatted', true],
       honest: 'stitched',

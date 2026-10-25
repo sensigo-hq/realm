@@ -556,7 +556,7 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   this change and 0.6–0.7 s after. The exported `compileSchema` is unchanged: it compiles a fresh
   validator on every call.
 
-- A quote that differs from its source by a vowel sign or tone mark (Hindi, Thai and other scripts
+- **`check_quotes` no longer reads a different word as found when a mark on a letter differs (a vowel sign, a tone mark, a stress mark), and no longer misplaces a quote after a character outside the Basic Multilingual Plane (#845).** A quote that differs from its source by a vowel sign or tone mark (Hindi, Thai and other scripts
   that write vowels as marks; an Arabic or Hebrew vowel mark the quote leaves out is optional) no
   longer reads as found; a character outside the Basic Multilingual Plane (for example a CJK
   Extension-B letter) no longer shifts a found quote's position or makes an honest quote read not
