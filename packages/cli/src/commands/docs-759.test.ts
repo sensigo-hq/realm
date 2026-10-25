@@ -375,7 +375,10 @@ describe('issue #759 — realm-run-reading.md (realm run attempts)', { timeout: 
 describe('issue #759 — CHANGELOG.md', () => {
   it('each bullet sits under its own heading of [Unreleased] (red: a bullet under the wrong heading)', () => {
     const text = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
-    const from = text.indexOf('## [Unreleased]');
+    // the section that holds them: `[Unreleased]` until 0.48.0's release renames it, then `[0.48.0]`
+    const from = text.includes('\n## [0.48.0]')
+      ? text.indexOf('\n## [0.48.0]') + 1
+      : text.indexOf('## [Unreleased]');
     const unreleased = text.slice(from, text.indexOf('\n## [', from + 1));
     const section = (heading: string): string => {
       const start = unreleased.indexOf(`\n### ${heading}\n`);

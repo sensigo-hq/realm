@@ -1602,9 +1602,12 @@ describe('#760 — handlers.md: check_quotes and locateQuote', () => {
     );
   });
 
-  it('CHANGELOG: the #760 bullets sit under [Unreleased] → Added and → Changed', () => {
+  it('CHANGELOG: the #760 bullets sit under [Unreleased], or [0.48.0] once released → Added and → Changed', () => {
     const log = raw('CHANGELOG.md');
-    const start = log.indexOf('## [Unreleased]');
+    // the section that holds them: `[Unreleased]` until 0.48.0's release renames it, then `[0.48.0]`
+    const start = log.includes('\n## [0.48.0]')
+      ? log.indexOf('\n## [0.48.0]') + 1
+      : log.indexOf('## [Unreleased]');
     const unreleased = log.slice(start, log.indexOf('\n## [', start + 1));
     const section = (h: string) => {
       const at = unreleased.indexOf(`\n### ${h}\n`);
