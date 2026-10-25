@@ -2018,7 +2018,13 @@ async function judgeListing(
   const passwordKept = unknowns.some((u) => !isOpen(u));
   const groupKept = unknowns.some((u) => !isOpen(u) && u.fromGroups);
   const settled = covering.some((c) => c.svc && c.byUsers) && covering.some((c) => c.root);
-  if (openKept || (policy === 'targetpw' && (groupKept || (passwordKept && !settled))))
+  // Unit A correction 3 (C3; the review's Y1): sudo-rs hides its Defaults, so the policy it runs under
+  // is not known — a targetpw may be in force there, and its kept unknowns are read as targetpw's are
+  // (before the capped correction every kept unknown returned on that path)
+  if (
+    openKept ||
+    ((policy === 'targetpw' || flavour === 'rs') && (groupKept || (passwordKept && !settled)))
+  )
     return [reading({ outcome: 'unknown', how: named(), cause: kept! })];
   const runasDefault = value('runas_default');
   // #819 correction 1 (b): a non-zero timeout anywhere keeps a ticket — a `Defaults!…`/`Defaults>…`
@@ -2084,9 +2090,9 @@ async function judgeListing(
         const tc = await tokenCovers(lk, t, svc, root, false, ci);
         if (tc.svc || tc.root || isLogin(t)) continue;
         if (/^[%+#]/.test(t)) {
-          // Part 8 (b): a group-reached entry's `%group`, `+netgroup` or `#uid` of another user — one
-          // user this check cannot name
-          if (c.byUsers) continue;
+          // Part 8 (b): a `%group`, `+netgroup` or `#uid` of another user in an entry with a run-as
+          // group — one user this check cannot name. Unit A correction 3 (C4; the review's Y2): in any
+          // such entry, also one whose other tokens cover svc, as `(svc, %ops : svcgrp)`
           return [
             reading({
               outcome: 'unknown',

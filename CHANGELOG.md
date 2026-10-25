@@ -128,7 +128,13 @@ All notable changes to this project are documented here.
   condition in the sentence also says its password is not empty. In `@sensigo/realm`, `SWITCH_WHOSE`
   gains `named_user`, and a switch-path reading and clause (a) gain an optional `user`: the password
   of a user other than this login, the service user or root (`runaspw`'s `runas_default` user, or a
-  user a `targetpw` group way runs as). The "Measured for …" line says when no
+  user a `targetpw` group way runs as). Rocky Linux's stock `pam_unix.so try_first_pass nullok` line
+  is read, so the stronger sentence prints on a stock Rocky Linux host. A global
+  `Defaults !authenticate` reads yes only beside a rule that runs as the service user or root, or
+  with a group the service user is in; with none it reads not allowed. A
+  `Defaults>user !authenticate` line counts only for a user a rule runs as: a rule that reaches the
+  service user only through its run-as groups never counts, since sudo applies no such line to a
+  group way. The "Measured for …" line says when no
   store was found, and when the store cannot be opened; condition 7's "no" names the
   two settings files it looked at; the store's time basis is marked "(fact)"; a condition the check
   reads nothing for is "not measured"; the economics line says whether this login can change the

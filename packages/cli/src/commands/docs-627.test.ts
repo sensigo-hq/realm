@@ -1064,6 +1064,23 @@ describe('#627 W correction 2 (Part 6) — the claims still missing', () => {
       C,
       "In `@sensigo/realm`, `SWITCH_WHOSE` gains `named_user`, and a switch-path reading and clause (a) gain an optional `user`: the password of a user other than this login, the service user or root (`runaspw`'s `runas_default` user, or a user a `targetpw` group way runs as).",
     );
+    // #819 Unit A correction 3 (C5; the review's §7): Rocky's line — sudo-corpus :: "#819 Unit A, the
+    // capped correction (Part 4): Rocky's stock PAM line is read"; the global !authenticate —
+    // separation-790 :: "Part 5: a global !authenticate reads yes only with a rule …", :: "(c) the words
+    // …" (the group way); `Defaults>` — separation-790 :: "Part 6: `Defaults>T !authenticate` counts
+    // only for a user a rule runs as"; real sudo: plans/issue-627/w/unit-a/c2-ia2/probe (P5, P6).
+    claim(
+      C,
+      "Rocky Linux's stock `pam_unix.so try_first_pass nullok` line is read, so the stronger sentence prints on a stock Rocky Linux host.",
+    );
+    claim(
+      C,
+      'A global `Defaults !authenticate` reads yes only beside a rule that runs as the service user or root, or with a group the service user is in; with none it reads not allowed.',
+    );
+    claim(
+      C,
+      'A `Defaults>user !authenticate` line counts only for a user a rule runs as: a rule that reaches the service user only through its run-as groups never counts, since sudo applies no such line to a group way.',
+    );
     // separation-check-627 :: 8.5's header cell and #819's "C4: a store this login cannot open — the
     // header says so"; the condition lines (condition 7's two files); #819's "C4: the economics line
     // — …" (its three branches).

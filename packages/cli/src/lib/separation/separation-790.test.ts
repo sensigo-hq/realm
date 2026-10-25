@@ -4918,6 +4918,68 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
       });
     });
 
+    it('correction 3 (C3; the review’s Y1): sudo-rs hides its Defaults, so a run-as group’s unknown beside a covering `(ALL)` is returned as under targetpw', async () => {
+      // Ubuntu 25.10's sudo-rs `group-only` capture, its rule line replaced (the cut-capture standard):
+      // `(nobody) NOPASSWD: /bin/true`, `(ALL) /usr/bin/true`, `(agent : sudo) /usr/bin/true`. svc
+      // (999:1100) is not in `sudo` by its list or primary group, and no `id` can be read, so the run-as
+      // group `sudo` reads the case gap: svc may be in it under another case.
+      const machine = fixtureMachine(
+        linux(
+          U25,
+          merge(sudos(U25, 'group-only', ['sudo-rs']), {
+            calls: {
+              [`${GETENT} group sudo`]: `${U25}/getent.group.sudo`,
+              [`${GETENT} group 1100`]: `${U25}/getent.group.1100`,
+            },
+          }),
+        ),
+      );
+      const run = machine.run;
+      const rs = await measureSwitchPaths({
+        probes: {
+          ...machine,
+          run: async (argv) => {
+            const r = await run(argv);
+            return argv.join(' ') === 'LC_ALL=C /usr/bin/sudo -n -l' && 'exit' in r
+              ? {
+                  ...r,
+                  stdout: r.stdout.replace(
+                    '    (agent : svcgrp) NOPASSWD: /usr/bin/true\n',
+                    '    (nobody) NOPASSWD: /bin/true\n    (ALL) /usr/bin/true\n    (agent : sudo) /usr/bin/true\n',
+                  ),
+                }
+              : r;
+          },
+        },
+        svc: 'svc',
+      });
+      // (a) red when sudo-rs's hidden policy is read as the default (the unknown is dropped: this
+      //     login's password, and root's and svc's "may need" — not the login's for the group way under
+      //     a hidden targetpw); (b) prints the reading and cause.
+      expect(await read(Promise.resolve(rs))).toEqual({
+        readings: ['sudo unknown'],
+        cause: caseCause('svc', 'sudo'),
+      });
+    });
+
+    it('correction 3 (C5; the review’s Y4): on macOS a run-as group reads unknown, unless another rule that needs a password settles the reading', async () => {
+      // the NOPASSWD helper runs as this login: on macOS getent reads no one, so a NOPASSWD rule for
+      // another user (`nobody`) would read its own open unknown
+      const SELF: Rule = ['agent', '!authenticate', '/bin/true'];
+      const mac = (entries: Rule[]) =>
+        read(third(rules([SELF, ...entries]), merge(world(), { platform: 'darwin' })));
+      // (a) red when a password unknown is returned under the default policy beside a covering rule
+      //     (the settled cell then reads unknown), or the group rule alone stops reading unknown; (b)
+      //     prints each reading and cause.
+      expect({
+        alone: (await mac([['%svcgrp']])).readings,
+        settled: await mac([['svc'], ['%svcgrp']]),
+      }).toEqual({
+        alone: ['sudo unknown'],
+        settled: { readings: NEEDS, cause: undefined },
+      });
+    });
+
     it('W-860CR-05: a lookup that errs keeps the cover its token already read — `(svc)` NOPASSWD with `getent passwd svc` erring reads as `(svc, ALL)` does', async () => {
       const errs = (argv: readonly string[], r: RunResult): RunResult =>
         argv.join(' ') === `${GETENT} passwd svc`
@@ -5289,6 +5351,15 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
       });
     });
 
+    it('correction 3 (C1; the review’s N1): nobody’s password renders on condition 2’s line, through the renderer', async () => {
+      const rs = await third(defaults('runaspw', 'runas_default=nobody'), world());
+      // (a) red when `whoseWords` loses its named-user words (the entry then reads "needs this
+      //     login's password"); (b) prints each sudo entry up to its how.
+      expect(
+        rs.filter((r) => r.path === 'sudo').map((r) => switchPathEntry(r, 'svc').split(' (')[0]),
+      ).toEqual(["sudo: needs nobody's password"]);
+    });
+
     it('one clause per named user, in order of first appearance, after an administrator’s', () => {
       const r = (whose: SwitchPathReading['whose'], user?: string): SwitchPathReading => ({
         path: 'sudo',
@@ -5430,6 +5501,77 @@ describe('#819 Unit A — the sudo reader built from real sudo’s printouts, an
         aliceDefault: [N('this_login')],
         aliceRootpw: [N('root')],
         aliceRunaspw: [N('svc')],
+      });
+    });
+
+    it('correction 3 (C1; the review’s N1): alice’s password renders on condition 2’s line, through the renderer', async () => {
+      const rs = await third(rules([NB, ['alice : svcgrp']], 'targetpw'), world(IDS));
+      // (a) red when `whoseWords` loses its named-user words (alice's entry then reads "needs this
+      //     login's password"); (b) prints each sudo entry up to its how.
+      expect(
+        rs.filter((r) => r.path === 'sudo').map((r) => switchPathEntry(r, 'svc').split(' (')[0]),
+      ).toEqual(["sudo: needs this login's password", "sudo: needs alice's password"]);
+    });
+
+    it('correction 3 (C2; the review’s N2): Part 9’s other branches — an all-digit name, a lookup that errs, a `+netgroup` and a `#uid` of another user, this login by its uid and by case', async () => {
+      const t = (
+        entries: Rule[],
+        over: Record<string, string> = {},
+        wrap?: (argv: readonly string[], r: RunResult) => RunResult,
+        ...items: string[]
+      ) => read(third(rules([NB, ...entries], 'targetpw', ...items), world(IDS, over), wrap));
+      const aliceErrs = (argv: readonly string[], r: RunResult): RunResult =>
+        argv.join(' ') === `${GETENT} passwd alice`
+          ? { error: 'getent gave no answer within 5 s' }
+          : r;
+      const OTHER = (token: string) =>
+        `under targetpw sudo asks the password of the user a way runs as, and this rule's user list holds ${token}, whose password this check does not name`;
+      // `getent passwd 1234`, `getent passwd Agent` and `getent netgroup ops` captured absent
+      // (2026-10-25). The lookup that errs: alice's, beside `(ALL)` — with nothing else covering svc by
+      // its users and root, alice's own token's unknown is returned first (Part 2), so Part 9's lookup
+      // is reached only where `(ALL)` settles the reading.
+      // (a) red: `digits` when the all-digit guard is deleted (getent's absent answer is then read as
+      //     no user: this login's password only); `errs` when Part 9 swallows the error (alice is then
+      //     skipped: svc's, root's, this login's); `netgroup`, `uid` when the `%`/`+`/`#` branch is
+      //     deleted (each is then looked up as a plain name: unknown with another cause); `uidLogin`,
+      //     `caseLogin` when `isLogin` compares names only (each then reads unknown); (b) prints each
+      //     reading and cause.
+      expect({
+        digits: await t([['1234 : svcgrp']], { 'passwd 1234': 'getent.passwd.1234.absent' }),
+        errs: await t([['ALL'], ['alice : svcgrp']], {}, aliceErrs),
+        netgroup: await t([['+ops : svcgrp']], { 'netgroup ops': 'getent.netgroup.ops.absent' }),
+        uid: await t([['#1234 : svcgrp']]),
+        uidLogin: await t([['#1001 : svcgrp']]),
+        caseLogin: await t([['Agent : svcgrp']], { 'passwd Agent': 'getent.passwd.Agent.absent' }),
+      }).toEqual({
+        digits: {
+          readings: ['sudo unknown'],
+          cause:
+            'sudo looks 1234 up as a user name, which this check cannot look up exactly (Defaults targetpw)',
+        },
+        errs: {
+          readings: ['sudo unknown'],
+          cause: 'getent passwd alice: getent gave no answer within 5 s',
+        },
+        netgroup: { readings: ['sudo unknown'], cause: OTHER('+ops') },
+        uid: { readings: ['sudo unknown'], cause: OTHER('#1234') },
+        uidLogin: { readings: [N('this_login')], cause: undefined },
+        caseLogin: { readings: [N('this_login')], cause: undefined },
+      });
+    });
+
+    it('correction 3 (C4; the review’s Y2): a `%group` of other users reads unknown beside a token that covers svc, as in `(svc, %ops : svcgrp)`', async () => {
+      // `%ops`: svc's groups (`id -G`: svcown, SVCGRP) and root's (root, wheel) hold no group of that
+      // name, so the token covers neither
+      // (a) red when a `%group` beside a covering token is skipped again (svc's and this login's
+      //     passwords, while ops's members' passwords work for `-u <member> -g SVCGRP`); (b) prints the
+      //     reading and cause.
+      expect(
+        await read(third(rules([NB, ['svc, %ops : svcgrp']], 'targetpw'), world(IDS))),
+      ).toEqual({
+        readings: ['sudo unknown'],
+        cause:
+          "under targetpw sudo asks the password of the user a way runs as, and this rule's user list holds %ops, whose password this check does not name",
       });
     });
 
@@ -5583,6 +5725,9 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     // read, the walk’s shape 3 reads unknown …" (each way), "C2’s scope …", "C2: no case gap …"
     // (either flag: as today), "C2: yes still beats unknown …"; "#819 Unit A" :: "each fallback …";
     // sudo-corpus :: T3 (grp-fedora-edited: the exact read decides).
+    // Unit A correction 3 (C2, C4): "a `%group`, a `+netgroup` or a `#uid` of another user in a rule with
+    // a group after the `:`" — :: "correction 3 (C2; …)" (netgroup, uid, digits, errs, uidLogin,
+    // caseLogin), :: "correction 3 (C4; …)" (`(svc, %ops : svcgrp)`).
     // #819 Unit A, the capped correction (Parts 1, 2, 8 (b), 9; rev 5.1): the exception — :: "the grid, …" (each policy), :: "rev 5.1 (IA 2’s finding …)" (never for a group after the `:` under targetpw); targetpw's group way — :: "(b) and Part 9: under targetpw a way through a run-as group asks …" (agent, alice, agentAlice, svcAlice, wheel, ghost, ghostExact; all and wheelHoldsRoot: the limit), :: "(b) the sentence names this login’s password …"; real sudo: plans/issue-627/w/unit-a/c2-ia2/probe (1.8.31 and 1.9.15p5).
     claim(
       "When `id -G` cannot be read, unless `!case_insensitive_group` is listed, or `match_group_by_gid` for a `%group` in a user list, a run-as group that does not hold the user by its list or primary group reads unknown, since a secondary group named only in another case is not seen — unless sudo already reads yes, or the rule needs a password, another rule runs as Realm's user or root, or with a group that user is in, and sudo would ask the same password either way (under the default, `rootpw` and `runaspw`; under `targetpw` only when rules already run as both, and never for a group after the `:`, whose way asks this login's password or a listed user's).",
@@ -5594,7 +5739,7 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
       "`sudo -g` alone runs as this login (sudo 1.8.31 and 1.9.9 allow it for any rule with that group, newer sudo when the login is in the rule's user list), so this check names this login's password for every such rule, and also the password of every plain user name the rule's user list holds.",
     );
     claim(
-      'It reads unknown where that list holds a name `getent` cannot find, since names match in any case (unless `!case_insensitive_user` is listed), and where a rule that reaches the user only through its run-as groups lists a `%group` or a `+netgroup` that holds neither the user nor root, or a `#uid` of another user.',
+      'It reads unknown where that list holds a name `getent` cannot find, since names match in any case (unless `!case_insensitive_user` is listed), and where it holds a `%group`, a `+netgroup` or a `#uid` of another user in a rule with a group after the `:`, that holds neither the user nor root.',
     );
     claim(
       "A user list of `ALL`, an alias or a negation, or a `%group` or `+netgroup` that holds the user or root, runs as other users too: for such a rule only this login's, the user's and root's passwords are named.",
@@ -5741,7 +5886,12 @@ describe('#790 — the docs (guardrail 7(f)): every sentence of the rewritten se
     );
     // :: "01b #9: macOS — a sudo rule whose runas is a group", :: "01b #9: macOS — a pam_wheel trust
     // line", :: "macOS as shipped …" and :: "macOS: Apple's published sudo stack, Touch ID turned on …".
-    claim('On macOS, a sudo rule whose runas is a group, and a `pam_wheel` line, read unknown.');
+    // Unit A correction 3 (C5; the review's Y4): "unless … another rule that needs a password settles the
+    // reading" — :: "correction 3 (C5; the review’s Y4): on macOS a run-as group reads unknown …" (alone,
+    // settled).
+    claim(
+      'On macOS, a sudo rule whose runas is a group, and a `pam_wheel` line, read unknown, unless sudo already reads yes or, for the group rule, another rule that needs a password settles the reading, as above.',
+    );
     claim(
       "Apple's sudo stack includes `sudo_local` and a smart-card module, which this check does not read, so sudo reads unknown on a Mac whenever it needs a password.",
     );
