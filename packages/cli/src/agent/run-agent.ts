@@ -33,8 +33,12 @@ import {
   type StepDefinition,
   type PendingGate,
   type EvidenceSnapshot,
-  discloseByTable,
-  PENDING_GATE_TABLE,
+  composeQuestionView,
+  discloseGate,
+  renderDisplay,
+  stripSpanMarks,
+  type DisclosureAudience,
+  type QuestionView,
   markersIn,
   inboundMarkerWarning,
   discloseValue,
@@ -86,10 +90,12 @@ import {
   RUN_PHASE_WORDS,
   questionSpan,
   recordWalk,
+  stdoutAudience,
   writerCtx,
   writerMode,
   writerSetFor,
 } from '../output/writer.js';
+import { cutWayLine, viewSetFor } from '../lib/holder-render.js';
 import {
   recordDriveFailure,
   buildEntry,
@@ -297,12 +303,7 @@ export interface AgentRunOptions {
   register?: boolean;
 }
 
-/**
- * Renders a display template against a flat vars object.
- * Syntax: {{ field }} or {{ nested.field }} — plain dot-path interpolation, no filters.
- * Missing paths render as empty string.
- */
-/** The `{{ path }}` expressions of a display template, as `renderDisplay` reads them. */
+/** The `{{ path }}` expressions of a display template, as core's `renderDisplay` reads them. */
 const DISPLAY_EXPRESSION = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 /**
@@ -342,23 +343,29 @@ function displayedFields(
   return out;
 }
 
-/** #729 PR-3: a gate as a log-mode drive shows it (a broadcast); as it is otherwise. */
-function shownForLog(gate: PendingGate, display?: string): PendingGate {
-  const set = writerMode() === 'broadcast' ? writerSetFor('broadcast') : undefined;
-  if (set === undefined) return gate;
-  // F10: the walk's hides and shapes join the drive's `Disclosure:` line. #729 PR-3 correction 2
-  // (C3): only what the print shows is walked and counted — the question when the gate has one,
-  // else the preview; never a preview it leaves out. Correction 3: with a display template, only
-  // the fields the template renders.
-  const printed =
-    gate.resolved_message !== undefined
-      ? { resolved_message: gate.resolved_message }
-      : {
-          preview: display !== undefined ? displayedFields(display, gate.preview) : gate.preview,
-        };
-  const walked = discloseByTable(printed, PENDING_GATE_TABLE, set, 'broadcast');
-  recordWalk(walked.tally);
-  return { ...gate, ...(walked.value as Partial<PendingGate>) };
+/**
+ * #729 PR-4 (03 #6): the gate as this drive's print shows it, composed by core's ONE composer. The gate
+ * is projected to the fields the print shows (C3) — the question when it has one, the preview (with a
+ * `display`, only the fields it renders), the facts the composer reads (`opened_at` keeps the gate's
+ * own table) — then disclosed ONCE for this stream's audience (a broadcast in log mode), the walk's
+ * hides and shapes joining the drive's `Disclosure:` line (F10). Nothing the print leaves out is
+ * walked or counted.
+ */
+function gateViewForPrint(gate: PendingGate, display?: string): QuestionView {
+  const audience: DisclosureAudience =
+    writerMode() === 'broadcast' ? 'broadcast' : (stdoutAudience() ?? 'private');
+  const printed: PendingGate = {
+    gate_id: gate.gate_id,
+    step_name: gate.step_name,
+    choices: gate.choices,
+    opened_at: gate.opened_at,
+    preview: display !== undefined ? displayedFields(display, gate.preview) : gate.preview,
+    ...(gate.resolved_message !== undefined ? { resolved_message: gate.resolved_message } : {}),
+  };
+  return composeQuestionView(
+    discloseGate(stripSpanMarks(printed), viewSetFor(audience), audience, { onTally: recordWalk }),
+    display,
+  );
 }
 
 /** #729 PR-3: a step's output as a log-mode drive shows it (its shapes); as it is otherwise. */
@@ -368,21 +375,6 @@ function outputForLog(output: Record<string, unknown>): Record<string, unknown> 
   const walked = discloseValue(output, set, 'broadcast');
   recordWalk(walked.tally);
   return walked.value as Record<string, unknown>;
-}
-
-function renderDisplay(template: string, vars: Record<string, unknown>): string {
-  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expr: string) => {
-    const parts = expr.trim().split('.');
-    let val: unknown = vars;
-    for (const part of parts) {
-      if (typeof val !== 'object' || val === null) {
-        val = undefined;
-        break;
-      }
-      val = (val as Record<string, unknown>)[part];
-    }
-    return val === undefined ? '' : typeof val === 'string' ? val : JSON.stringify(val);
-  });
 }
 
 /**
@@ -707,28 +699,23 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
 
           console.log(`\n⏸  Gate: ${gate.step_name} | ID: ${gate.gate_id}`);
           const gateStepDef = definition.steps[gate.step_name];
-          // #729 PR-3 (RECORD 05 "shaped sites"): in log mode the gate is shown as `discloseGate`
-          // shows a broadcast — the question at the declared tier, the preview fallback as its
-          // shapes. A question span wraps only the question, never the preview fallback.
-          // (The shown gate is bound to `gate` inside: the step-key registry's `display × auto`
-          // witness reads this render site by its spelling.)
+          // #729 PR-4 (03 #6): the view core's composer returns — the question at the declared tier
+          // in a question span, a blank line, the preview (`display` honoured); with no message the
+          // preview alone is the body ((f)). A cut view names the way to the whole output under it.
           const indent = (text: string): string =>
             text
               .trimEnd()
               .split('\n')
               .map((l) => `   ${l}`)
               .join('\n');
-          const indented = ((gate: PendingGate): string => {
-            const gateText =
-              gate.resolved_message ??
-              (gateStepDef?.display !== undefined
-                ? renderDisplay(gateStepDef.display, gate.preview)
-                : formatOutputForTerminal(gate.preview));
-            return gate.resolved_message !== undefined
-              ? questionSpan(indent(gateText))
-              : indent(gateText);
-          })(shownForLog(gate, gateStepDef?.display));
-          console.log('\n' + indented + '\n');
+          const view = gateViewForPrint(gate, gateStepDef?.display);
+          const shownBody =
+            view.question_text !== ''
+              ? questionSpan(indent(view.question_text)) +
+                (view.preview_text !== '' ? '\n\n' + indent(view.preview_text) : '')
+              : indent(view.preview_text);
+          console.log('\n' + shownBody + '\n');
+          if (view.cut !== undefined) console.log(`   ${cutWayLine(runId, writerCtx())}\n`);
 
           if (deps.gateHandler !== undefined) {
             await deps.gateHandler(runId, gate);
@@ -777,6 +764,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
         const advanced = await advanceRun(deps.store, definition, {
           runId,
           caller: 'agent',
+          // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
+          ...((set) => (set !== undefined ? { disclosure: set } : {}))(writerSetFor('private')),
           // decision C159: the line that says this call carried out an expired question, first.
           onExpiry: (line) => console.log(`⚠ ${line}`),
           registry: deps.registry,
@@ -915,6 +904,10 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
               exitReply = await executeEngineStep(deps.store, definition, {
                 runId,
                 step: first,
+                // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
+                ...((set) => (set !== undefined ? { disclosure: set } : {}))(
+                  writerSetFor('private'),
+                ),
                 // decision C151: an expiry this call carries out names `realm agent`.
                 caller: 'agent',
                 run: currentRun,
@@ -1770,6 +1763,8 @@ export async function runAgent(deps: AgentDeps, options: AgentRunOptions): Promi
           result = await executeChain(deps.store, definition, {
             runId,
             command: stepName,
+            // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
+            ...((set) => (set !== undefined ? { disclosure: set } : {}))(writerSetFor('private')),
             // decision C151: an expiry this call carries out names `realm agent`.
             caller: 'agent',
             input: stepInput,

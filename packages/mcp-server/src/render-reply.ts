@@ -254,8 +254,9 @@ export function mcpDoorPolicy(host: McpHost): DoorPolicy {
 
 /**
  * Where the question's text is, for a reply that carries no `gate` object (decision C125): the
- * opening reply's `gate.display` is the gate's message — else the step's prompt — and of the two,
- * only the message is kept on the record.
+ * opening reply's `gate.display` is the gate's message as minted when it opened (#729 PR-4: the
+ * declared tier, cut to the view budget when longer) — the text the record keeps; a gate that
+ * declares no message carries no `display`.
  */
 const QUESTION_TEXT_WHERE =
   "The question's text, when its gate declares a message, is get_run_state's pending_gate.resolved_message.";

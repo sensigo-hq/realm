@@ -425,6 +425,30 @@ function parseFilters(expr: string): Array<{ name: string; args: string[] }> {
 // ─── renderTemplate ────────────────────────────────────────────────────────────
 
 /**
+ * Matches {{ path }} and {{ path | filter | filter: arg }} — renderTemplate's own placeholder.
+ * [^{}]+ excludes both { and } from the expression body:
+ *   - Excluding } prevents the match from spanning past the closing }}.
+ *   - Excluding { prevents O(N²) backtracking on adversarial inputs like many repetitions of
+ *     "{{{{|" — where [^}]+ would try matching { chars repeatedly at each start position. Valid
+ *     template expressions never contain { or }. Whitespace is trimmed in code below via .trim().
+ * #729 PR-4: exported so the gate mint counts a message's placeholders, filtered ones included, by
+ * the same rule this function substitutes them by.
+ */
+export const TEMPLATE_PLACEHOLDER = /\{\{([^{}]+)\}\}/g;
+
+/** #729 PR-4: renderTemplate's options. */
+export interface RenderTemplateOptions {
+  strict?: boolean;
+  /**
+   * #729 PR-4 (01 (b)): called with each RESOLVED value, as rendered, and its path; its return is
+   * substituted instead. Never called for a placeholder left unresolved (an unknown path, a type
+   * mismatch, an unknown filter in lenient mode), which stays in the text as before — so a caller's
+   * scan for unresolved placeholders reads the same text it read before the hook.
+   */
+  onSubstitution?: (rendered: string, path: string) => string;
+}
+
+/**
  * Renders all {{ ... }} expressions in a template string against the provided context.
  * Supports pipe-filter syntax: {{ path | filter1: arg | filter2 }}
  *
@@ -446,16 +470,12 @@ export function renderTemplate(
       wrapper: ContextWrapperFormat;
     };
   },
-  options?: { strict?: boolean },
+  options?: RenderTemplateOptions,
 ): string {
-  // Matches {{ path }} and {{ path | filter | filter: arg }}.
-  // [^{}]+ excludes both { and } from the expression body:
-  //   - Excluding } prevents the match from spanning past the closing }}.
-  //   - Excluding { prevents O(N²) backtracking on adversarial inputs like
-  //     many repetitions of "{{{{|" — where [^}]+ would try matching { chars
-  //     repeatedly at each start position. Valid template expressions never
-  //     contain { or }. Whitespace is trimmed in code below via .trim().
-  return template.replace(/\{\{([^{}]+)\}\}/g, (_match, expr: string) => {
+  // A resolved value passes through the hook when one is given; an unresolved one never does.
+  const resolved = (rendered: string, path: string): string =>
+    options?.onSubstitution !== undefined ? options.onSubstitution(rendered, path) : rendered;
+  return template.replace(TEMPLATE_PLACEHOLDER, (_match, expr: string) => {
     const pipeIdx = expr.indexOf('|');
     const hasFilters = pipeIdx !== -1;
 
@@ -466,7 +486,8 @@ export function renderTemplate(
     // Workflow context namespace — handled before the generic path resolver.
     if (rawPath.startsWith('workflow.context.') && context.workflowContext) {
       if (!hasFilters) {
-        return resolveWorkflowContextRef(rawPath, context.workflowContext) ?? `{{ ${fullExpr} }}`;
+        const value = resolveWorkflowContextRef(rawPath, context.workflowContext);
+        return value === undefined ? `{{ ${fullExpr} }}` : resolved(value, rawPath);
       }
     }
 
@@ -483,8 +504,8 @@ export function renderTemplate(
     if (!hasFilters) {
       // Original coercion behaviour.
       if (rawValue === undefined) return `{{ ${fullExpr} }}`;
-      if (typeof rawValue === 'string') return rawValue;
-      return JSON.stringify(rawValue, null, 2);
+      if (typeof rawValue === 'string') return resolved(rawValue, rawPath);
+      return resolved(JSON.stringify(rawValue, null, 2), rawPath);
     }
 
     // Filter chain processing.
@@ -509,8 +530,8 @@ export function renderTemplate(
 
     // After filter chain — coerce to string.
     if (current === undefined || current === null) return `{{ ${fullExpr} }}`;
-    if (typeof current === 'string') return current;
-    return JSON.stringify(current, null, 2);
+    if (typeof current === 'string') return resolved(current, rawPath);
+    return resolved(JSON.stringify(current, null, 2), rawPath);
   });
 }
 

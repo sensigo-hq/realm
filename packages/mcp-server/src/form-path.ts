@@ -16,7 +16,6 @@ import {
   dueExpiry,
   loadSnapshot,
   outcomeOf,
-  pendingGateQuestion,
   readInstant,
   shownViewEvidence,
   submitHumanResponse,
@@ -30,6 +29,11 @@ import {
   type RunRecord,
   type RunStore,
   type WorkflowDefinition,
+  buildDisclosureSet,
+  composeQuestionView,
+  discloseGate,
+  stripSpanMarks,
+  type DisclosureSet,
 } from '@sensigo/realm';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { FORM_SETTLE_POLL_MS, FORM_WAIT_FLOOR_SECONDS, type McpDoor } from './door.js';
@@ -74,6 +78,9 @@ export interface FormDeps {
   registry?: ExtensionRegistry;
   driver?: Attributed;
   principal: Principal;
+  /** #729 PR-4: the door's set for this call, built before its engine call — the form's question is
+   *  composed over the gate it discloses. */
+  disclosure?: DisclosureSet;
 }
 
 /** The one required field of the form (W-f1). */
@@ -192,7 +199,7 @@ export async function sendQuestionForm(
     run_id: runId,
     gate_id: gate.gate_id,
     choices: [...gate.choices],
-    shown_text: questionText(deps.definition, snap.record),
+    shown_text: questionText(deps.definition, snap.record, deps.disclosure),
   };
   // Correction 1 (B11): Realm owns the form's timer. Each withdrawal aborts with its own plain reason,
   // which the SDK sends the client as the cancel's `reason`; the SDK's own timeout is set above
@@ -333,18 +340,35 @@ export const WITHDRAWN = {
 /** How far the SDK's own timeout sits above Realm's timer (so Realm's ends the wait). */
 export const SDK_TIMEOUT_MARGIN_MS = 5000;
 
-/** The form's message (correction 2, 2.1): the question through core's ONE composer,
- *  `pendingGateQuestion` — the gate's message, else its step's prompt rendered with what the step had
- *  when the gate opened — else a plain line. A prompt that cannot be rendered never throws here. */
-function questionText(definition: WorkflowDefinition, record: RunRecord): string {
+/** The form's message (correction 2, 2.1; #729 PR-4, 03 #3): the gate's question through core's ONE
+ *  composer, over the gate the door's set discloses — the question as stored when the gate opened —
+ *  else, for a gate that declares no message, a plain line (no surface invents a question). Without
+ *  the call's set the gate is disclosed with one that holds nothing: the question class shows the
+ *  declared tier only, and the form's send walks its text with the run's own set after. */
+function questionText(
+  definition: WorkflowDefinition,
+  record: RunRecord,
+  set: DisclosureSet | undefined,
+): string {
   const gate = record.pending_gate as PendingGate;
-  try {
-    const question = pendingGateQuestion(definition, record);
-    if (question !== undefined) return question;
-  } catch {
-    // a prompt the registered definition can no longer render: the plain line
-  }
-  return `The question on step '${gate.step_name}' is waiting for your answer.`;
+  const { question_text } = composeQuestionView(
+    discloseGate(
+      stripSpanMarks(gate),
+      set ??
+        buildDisclosureSet({
+          env: undefined,
+          declared: {},
+          declaredState: 'unknown',
+          declaredCause: 'embedder_none',
+          audience: 'agent',
+        }).set,
+      'agent',
+    ),
+    definition.steps[gate.step_name]?.display,
+  );
+  return question_text !== ''
+    ? question_text
+    : `The question on step '${gate.step_name}' is waiting for your answer.`;
 }
 
 /**

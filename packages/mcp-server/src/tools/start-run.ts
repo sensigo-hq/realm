@@ -29,6 +29,7 @@ import {
   type DisclosureClass,
   persistsField,
   startIdentityEntry,
+  type DisclosureSet,
 } from '@sensigo/realm';
 import type { McpDoor } from '../door.js';
 import { withQuestionForm, type FormCall, type FormDeps } from '../form-path.js';
@@ -106,6 +107,7 @@ export function formDepsOf(
   runStore: RunStore,
   definition: WorkflowDefinition,
   registry: ExtensionRegistry | undefined,
+  disclosure?: DisclosureSet,
 ): FormDeps | undefined {
   if (stores?.door === undefined || stores.elicit === undefined || !stores.door.sendsForms) {
     return undefined;
@@ -119,6 +121,7 @@ export function formDepsOf(
     ...(registry !== undefined ? { registry } : {}),
     ...(stores.driver !== undefined ? { driver: stores.driver } : {}),
     principal: principalOfStores(stores),
+    ...(disclosure !== undefined ? { disclosure } : {}),
   };
 }
 
@@ -188,7 +191,7 @@ export type FailedAttemptStoreLike = Pick<
   'append' | 'read' | 'deleteAllForRun' | 'listOrphans'
 >;
 
-export interface HandleRunStores {
+export interface HandleRunStores extends WithDoorDisclosure {
   /** Run store. Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
   runStore?: RunStore;
   workflowStore?: JsonWorkflowStore;
@@ -250,6 +253,8 @@ export async function handleStartRun(
   },
   stores?: HandleRunStores,
   call?: FormCall,
+  /** #729 PR-4: told the set this call built before its engine call (the door's reply reuses it). */
+  onDisclosureSet?: (set: DisclosureSet) => void,
 ): Promise<WithPersonBlock<McpEnvelope> & { deduped: boolean; rerun_of?: string }> {
   assertToolStores(stores, 'handleStartRun');
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
@@ -346,6 +351,12 @@ export async function handleStartRun(
   }
   const warnings: string[] = [...shownUnmet(unmet), ...otherWarnings];
 
+  // #729 PR-4 (01): the door's set, built BEFORE the engine call — a gate the call opens mints its
+  // question with it (stripped, masked, cut under a complete set) — and handed back, so the reply is
+  // disclosed with the same set.
+  const disclosure = await disclosureOfTool(stores).setFor(definition, run);
+  onDisclosureSet?.(disclosure);
+
   // issue #625 PR-2a (decision C1): ONLY the creating call runs work. A deduped match runs nothing
   // — an idempotent create has no side effect on a match — and its reply names what the run owes
   // (the agent steps, the advance act) through `buildNextActions` below.
@@ -362,6 +373,7 @@ export async function handleStartRun(
         ? { traceBufferStore: stores.traceBufferStore }
         : {}),
       ...(stores?.driver !== undefined ? { driver: stores.driver } : {}),
+      disclosure,
     });
     const ranSomething =
       result.status !== 'ok' ||
@@ -404,7 +416,7 @@ export async function handleStartRun(
       // #627 W (§5.2b): the run this call created reached a question — its form is sent here.
       const after = await withQuestionForm(
         ranReply,
-        formDepsOf(stores, runStore, definition, registry),
+        formDepsOf(stores, runStore, definition, registry, disclosure),
         call,
       );
       // Correction 1 (B7): the ended run's ways back in are read from the record as it stands after
@@ -506,17 +518,23 @@ export function registerStartRun(
     },
     safeTool(
       async (args, extra) => {
-        const result = await handleStartRun(args, opts, formCallOf(opts, extra));
+        let disclosure: DisclosureSet | undefined;
+        const result = await handleStartRun(args, opts, formCallOf(opts, extra), (set) => {
+          disclosure = set;
+        });
         // Override command to 'start_run': MCP callers invoked start_run, not the first auto step
         // executeChain may have run. The step a non-ok reply belongs to stays named in
         // `stopped_step` (issue #676 review).
         return toolContentOf(
           { ...result, command: 'start_run' },
           {
-            set: await setForSubject(
-              door,
-              await replySubject(opts, { runId: result.run_id, workflowId: args.workflow_id }),
-            ),
+            // #729 PR-4: the set the handler built before its engine call.
+            set:
+              disclosure ??
+              (await setForSubject(
+                door,
+                await replySubject(opts, { runId: result.run_id, workflowId: args.workflow_id }),
+              )),
             audience: 'agent',
             table: START_RUN_TABLE,
           },

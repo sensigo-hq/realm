@@ -38,6 +38,7 @@ export type {
   UnreadableRunFilesFacts,
   StoredFileClass,
   SideFileKind,
+  WorkflowCopyFault,
 } from './store/run-file.js';
 // issue #719: the one check that a value is a run record (admission's `run`, the store's reader).
 export { isRunRecordShape } from './types/run-record-shape.js';
@@ -788,6 +789,22 @@ export {
   discloseReply,
 } from './utils/disclosure-tables.js';
 export type { ShownGate } from './utils/disclosure-tables.js';
+// #729 PR-4: the ONE question composer — minted once at gate open (stripped, masked, then cut to the
+// view budget under a complete set), composed at read over PR-3's disclosed gate — the digest of the
+// frozen view, and the asked person's notice with its one duration producer.
+export {
+  composeQuestionView,
+  mintQuestionView,
+  viewDigest,
+  VIEW_BUDGET,
+  CUT_SENTENCE,
+  endsWithCutSentence,
+  renderDisplay,
+  stripSpanMarks,
+} from './engine/question-view.js';
+export type { QuestionView } from './engine/question-view.js';
+export { composePersonNotice, durationWords } from './engine/person-notice.js';
+export type { PersonNotice, PersonNoticeEvent } from './engine/person-notice.js';
 // decision C183 (issue #760, correction H2): the ONE spelling of a control character a terminal line
 // shows — the CLI's printers and the `check_quotes` warning share it.
 export { controlEscape } from './utils/redaction.js';

@@ -25,7 +25,9 @@ import {
   pendingCleanupLine,
   describeClaimHolder,
   classifyInProgressClaims,
-  pendingGateQuestion,
+  composeQuestionView,
+  discloseGate,
+  stripSpanMarks,
   classifyStop,
   isRaceStop,
   type NotRecordedKind,
@@ -47,6 +49,8 @@ import {
   goOnLine,
   resumeLine,
   outcomeNotRecordedLine,
+  cutWayLine,
+  viewSetFor,
 } from '../lib/holder-render.js';
 import { IN_FLIGHT_WATCH_MS } from '../agent/run-agent.js';
 import { renderLoadFailure } from '../lib/loader-warnings.js';
@@ -77,6 +81,7 @@ import {
   digestSpan,
   questionSpan,
   writerCtx,
+  writerSetFor,
   type RenderCtx,
 } from '../output/writer.js';
 
@@ -820,14 +825,19 @@ export const runCommand = new Command('run')
           if (run.pending_gate !== undefined) {
             const g = run.pending_gate;
             console.log(`  ⏸  Gate: ${g.step_name} | gate_id: ${g.gate_id}`);
-            // decisions C167, C175, C176: the question the person answers — from every source the
-            // gate's text comes from — each line as written.
-            const question = pendingGateQuestion(definition, run);
-            if (question !== undefined) {
-              // #729 PR-3 (P-9; R2): the question at the declared tier on every stream.
-              for (const line of questionLines(question)) console.log(questionSpan(line));
+            // decisions C167, C175; #729 PR-4 (03 #4): the question and the preview through core's ONE
+            // composer, over the gate disclosed for this terminal (`private`: the declared tier) —
+            // the question each line as written, at the declared tier on every stream (#729 PR-3,
+            // P-9; R2); a gate with no message shows its preview alone ((f)).
+            const view = composeQuestionView(
+              discloseGate(stripSpanMarks(g), viewSetFor('private'), 'private'),
+              definition.steps[g.step_name]?.display,
+            );
+            if (view.question_text !== '') {
+              for (const line of questionLines(view.question_text)) console.log(questionSpan(line));
             }
-            console.log(`  Preview: ${JSON.stringify(g.preview, null, 2)}`);
+            console.log(`  Preview: ${view.preview_text}`);
+            if (view.cut !== undefined) console.log(`  ${cutWayLine(runId, writerCtx())}`);
             // issue #291 (Deliverable 4e, Amendment 4): the ATTENDING-PROCESS enactment timer.
             // Races with another process are SAFE: if this timer fires having lost a race with
             // another settlement (a different terminal's `realm run respond`, `drain --expired`,
@@ -1172,6 +1182,8 @@ export const runCommand = new Command('run')
             // issue #197 PR-2: a FRESH nonce per step-attempt (never a caller-fixed value —
             // reusing one across attempts converts the honest caveat into false self-attribution).
             ...(mintWriterNonce ? { writerNonce: crypto.randomUUID() } : {}),
+            // #729 PR-4 (01): a question this call opens is minted with the writer's private set.
+            ...((set) => (set !== undefined ? { disclosure: set } : {}))(writerSetFor('private')),
           });
 
           // F7: a reply that is neither `ok` nor a question, read by core's classifier against the

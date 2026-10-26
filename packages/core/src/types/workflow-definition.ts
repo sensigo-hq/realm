@@ -507,8 +507,9 @@ export interface GateConfig {
    * Supports {{ context.resources.STEP.FIELD }} and {{ run.params.FIELD }} references.
    * Resolved from run data at gate-open time. Fail-fast: unresolvable references cause
    * a stop error rather than opening a gate with broken placeholder text.
-   * When absent, the Slack path falls back to formatGatePreviewForSlack(preview)
-   * and the MCP path falls back to step.prompt resolution (existing behavior).
+   * #729 PR-4: minted once, when the gate opens — at the declared tier, and cut to the view budget
+   * when longer (with a sentence saying so). When absent, no surface invents a question: every
+   * surface shows the step's output (through `display` when authored) as the gate's body.
    */
   message?: string;
   /**
@@ -793,14 +794,15 @@ export interface StepDefinition {
    */
   prompt?: string;
   /**
-   * Optional Jinja-style display template rendered by the CLI against this step's
-   * output_summary for human-readable terminal output. Uses {{ field }} syntax where
-   * field is a dot-path into the step's output object. When absent, the CLI falls
-   * back to the existing headline/message and JSON rendering behaviour.
-   * No engine evaluation — rendered client-side, on two surfaces only: the run-completion
-   * result render is AGENT-steps-only (the CLI filters on execution === 'agent'), and the
-   * gate-preview render fires only when this step opens a gate. On a gateless non-agent step
-   * the template is never read (issue #417 PR-2 — the consumption registry's display×auto row).
+   * Optional display template rendered against this step's output. Uses {{ field }} syntax where
+   * field is a dot-path into the step's output object. When absent, the output's headline/message,
+   * else its JSON, is shown.
+   * #729 PR-4: when this step opens a gate, the one question composer renders it as the gate's
+   * preview on every surface that shows one (the terminal, `realm run`, Slack, the MCP replies'
+   * view), whether or not the gate has a message. Elsewhere it is read once more: realm agent's
+   * run-completion result render, for AGENT steps only (the CLI filters on execution === 'agent').
+   * On a gateless non-agent step the template is never read (issue #417 PR-2 — the consumption
+   * registry's display×auto row).
    */
   display?: string;
   /**
