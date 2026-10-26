@@ -1,6 +1,6 @@
 {
   "name": "@sensigo/realm-testing",
-  "version": "0.47.2-dev.0",
+  "version": "0.48.1-dev.0",
   "publishConfig": {
     "access": "public"
   },
