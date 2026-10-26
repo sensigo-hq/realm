@@ -472,6 +472,33 @@ describe('#729 PR-3 — an inbound value carrying a marker (D1 D5)', () => {
       readmission: w.includes('An answer with no marker is recorded as sent.'),
     }).toEqual({ names: true, consequence: true, remedy: true, readmission: true });
   });
+
+  it('the zod 4 unit’s reply bounds (M6): the first ten markers named, then the count', () => {
+    const markers = (n: number) => Array.from({ length: n }, (_, i) => `[REDACTED]#${i}`);
+    const tail =
+      ': a value Realm hid when it showed it, sent back. ' +
+      'Realm records what was sent, the marker included, so the run now holds the marker, not the value. ' +
+      'Send the value itself, or leave the field out. ' +
+      'An answer with no marker is recorded as sent.';
+    const named = (n: number) =>
+      markers(n)
+        .map((m) => `'${m}'`)
+        .join(', ');
+    // (a) red when the sentence names every marker (40,000 → 789 KB), the count clause appears at
+    //     ten, or its singular reads as the plural; (b) prints the sentences (ten markers at most)
+    //     and a length check — never the 40,000.
+    expect({
+      ten: inboundMarkerWarning(markers(10)),
+      eleven: inboundMarkerWarning(markers(11)),
+      twelve: inboundMarkerWarning(markers(12)).slice(0, 200),
+      big: inboundMarkerWarning(markers(40_000)).length < 1500,
+    }).toEqual({
+      ten: `This answer holds ${named(10)}${tail}`,
+      eleven: `This answer holds ${named(10)}, and 1 more marker (11 in all)${tail}`,
+      twelve: `This answer holds ${named(10)}, and 2 more markers (12 in all)${tail}`.slice(0, 200),
+      big: true,
+    });
+  });
 });
 
 describe('#729 PR-3 — the pattern pass is linear in the text', () => {

@@ -36,19 +36,25 @@ import {
   ExtensionRegistry as RealmExtensionRegistry,
   runReadError,
 } from '@sensigo/realm';
+import { boundedLines, boundedRefusal, moreUnknownKeys } from './refusal-format.js';
 
 /** The arguments this tool takes. Anything else is named in the reply's `warnings`, not dropped. */
 const KNOWN_ARGS = ['run_id'] as const;
 
-/** One warning per argument this tool does not take (the house unknown-key warning). */
+/**
+ * One warning per argument this tool does not take (the house unknown-key warning) — the first ten,
+ * then the count (the zod 4 unit's reply bounds, M2).
+ */
 export function advanceRunUnknownKeyWarnings(args: Record<string, unknown>): string[] {
-  return Object.keys(args)
-    .filter((key) => !(KNOWN_ARGS as readonly string[]).includes(key))
-    .map((key) => `advance_run: unknown argument '${key}' was ignored.`);
+  return boundedLines(
+    Object.keys(args).filter((key) => !(KNOWN_ARGS as readonly string[]).includes(key)),
+    (key) => `advance_run: unknown argument '${key}' was ignored.`,
+    moreUnknownKeys,
+  );
 }
 
 /** The tool's input schema. Pass-through, so an unknown key reaches the handler and is named. */
-export const advanceRunArgsSchema = z.object({ run_id: z.string() }).passthrough();
+export const advanceRunArgsSchema = z.object({ run_id: z.string() }).loose();
 
 /** `advanceRun`'s reply as the MCP door renders it, plus who ran the steps: this server's driver. */
 export type AdvanceRunReply = WithPersonBlock<McpEnvelope> & {
@@ -136,7 +142,7 @@ export function registerAdvanceRun(
       ...toolMeta('advance_run'),
       description:
         "Run what a run owes the engine — an expired question's declared on_expiry, then its guards and automatic steps — in this server's environment. Call it when next_actions names it.",
-      inputSchema: advanceRunArgsSchema,
+      inputSchema: boundedRefusal(advanceRunArgsSchema),
     },
     safeTool(
       async (rawArgs, extra) => {

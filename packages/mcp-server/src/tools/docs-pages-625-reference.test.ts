@@ -463,7 +463,8 @@ describe('#625 PR-2a, C174 lane F — tools.md rows no cell quoted yet, over a r
     ]);
     expect(without).toEqual({
       _text:
-        'MCP error -32602: Input validation error: Invalid arguments for tool advance_run: Required at run_id',
+        // the zod 4 unit (Z4) re-pin, was `Required at run_id`: zod 4's wording names the expected type
+        'MCP error -32602: Input validation error: Invalid arguments for tool advance_run: Invalid input: expected string, received undefined at run_id',
       _isError: true,
     });
   });

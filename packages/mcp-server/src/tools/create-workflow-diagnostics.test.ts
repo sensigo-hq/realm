@@ -506,8 +506,12 @@ describe('create_workflow — the registration carries unknown keys to the handl
         additionalProperties?: unknown;
         properties?: { metadata?: { additionalProperties?: unknown } };
       };
-      expect(schema.additionalProperties).toBe(true);
-      expect(schema.properties?.metadata?.additionalProperties).toBe(true);
+      // The zod 4 unit (Z5) re-pin, was `true`: zod 4 advertises a loose object as
+      // `additionalProperties: {}`, an empty schema, which permits any value as `true` did. The schema
+      // pin cannot tell `.loose()` from a stripping object on its own (both may advertise this); the
+      // sweep's warnings above are the behaviour's cell: the server still carries the key to the handler.
+      expect(schema.additionalProperties).toEqual({});
+      expect(schema.properties?.metadata?.additionalProperties).toEqual({});
 
       // Guardrail 7, top-level half (the step half is the sweep further up this file): the
       // description tells an agent which fields exist, and it is the only place an agent reads

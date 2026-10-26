@@ -167,6 +167,28 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+      // The zod 4 unit (Z2b): zod 4 still ships the legacy `zod/v3` entry, whose array parse is the
+      // UNFIXED one (GHSA-mrhx-c7xc-m3w5). A schema built from it has no `_zod`, so the MCP SDK would
+      // parse a tool's arguments on that path, silently.
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'zod/v3',
+              message:
+                "zod/v3 is zod 3's unfixed array parse (GHSA-mrhx-c7xc-m3w5): import from 'zod' (zod 4).",
+            },
+          ],
+          patterns: [
+            {
+              group: ['zod/v3/*'],
+              message:
+                "zod/v3 is zod 3's unfixed array parse (GHSA-mrhx-c7xc-m3w5): import from 'zod' (zod 4).",
+            },
+          ],
+        },
+      ],
     },
   },
   // ---------------------------------------------------------------------------

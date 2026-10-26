@@ -87,6 +87,7 @@ import {
   markServedByTool,
   registryRole,
 } from './assert-tool-stores.js';
+import { boundedRefusal } from './refusal-format.js';
 
 /** issue #558 PR-T — the store's own classification, passed through to classifyRunHealth. */
 function toDefinitionError(err: unknown): { code: string; message: string; class?: string } {
@@ -1054,7 +1055,9 @@ export function registerGetRunState(
       description:
         'Get the current state summary of a workflow run. Pass include_steps: true for each ' +
         "step's model-call cost per attempt.",
-      inputSchema: { run_id: z.string(), include_steps: z.boolean().optional() },
+      inputSchema: boundedRefusal(
+        z.object({ run_id: z.string(), include_steps: z.boolean().optional() }),
+      ),
     },
     safeTool(
       async (args) => {

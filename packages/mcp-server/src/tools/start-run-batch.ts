@@ -35,8 +35,17 @@ import {
   SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
 import { toolMeta } from '../tool-annotations.js';
+import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbers } from './args-numbers.js';
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import { assertRegistryLine, ExtensionRegistry as RealmExtensionRegistry } from '@sensigo/realm';
+import { boundedLines, boundedRefusal, moreUnmetSteps } from './refusal-format.js';
+
+/**
+ * Z3 (the zod 4 unit): the most items one `start_run_batch` call may carry — the hard ceiling above
+ * the handler's own `max_items` (default 100). The size check comes FIRST, so zod 4.6.6+ refuses an
+ * over-long list before it parses a single item (GHSA-mrhx-c7xc-m3w5).
+ */
+export const MAX_BATCH_ITEMS = 1000;
 
 /** Lightweight structured telemetry. stderr is safe under the MCP stdio/SSE transport. */
 function logBatchDedup(fields: Record<string, unknown>): void {
@@ -165,9 +174,13 @@ export async function handleStartRunBatch(
   // and attach to every item. Caveated — a batch item may ultimately be driven by a DIFFERENT runner
   // than the one whose registry we see at creation time. The `?? createDefaultRegistry()` fallback is the
   // HARD invariant that stops a filesystem-only workflow from false-warning when no registry is supplied.
-  const capabilityWarnings = unmetCapabilities(definition, registry ?? createDefaultRegistry()).map(
+  // The zod 4 unit's reply bounds (M5): the list bounded once — ten named, then the count (no
+  // parenthetical on the count line) — then copied to every item.
+  const capabilityWarnings = boundedLines(
+    unmetCapabilities(definition, registry ?? createDefaultRegistry()),
     (req) =>
       `${capabilityWarning(req)} (Based on the creation-time registry; the driving runner may differ.)`,
+    moreUnmetSteps,
   );
 
   if (definition.params_schema !== undefined) {
@@ -202,6 +215,13 @@ export async function handleStartRunBatch(
       );
     }
   }
+
+  // The zod 4 unit, R2 (O2): every item first, before any run is created — a non-finite number in
+  // any item's params refuses the batch (ArgsNumbersRefusal, the door's own refusal shape); an
+  // integer beyond 2^53−1 draws a warning on its item.
+  const itemNumberWarnings = checkArgsNumbers(
+    args.items.map((item, i) => [`items[${i}].params`, item.params] as const),
+  );
 
   const started: StartRunBatchResult['started'] = [];
   const failed: StartRunBatchResult['failed'] = [];
@@ -244,7 +264,7 @@ export async function handleStartRunBatch(
     const deduped = !created;
     if (deduped) dedupHits++;
 
-    const warnings: string[] = [...capabilityWarnings];
+    const warnings: string[] = [...capabilityWarnings, ...itemNumberWarnings[i]!];
     // issue #279 (increment 2, PR-C — D-3 leg vi): the start_run_batch REUSE surface — a deduped
     // match can hit a GRANDFATHERED terminal-with-stale-gate record (the #282 class).
     const derivedPhase = deriveRunPhase(run);
@@ -305,19 +325,34 @@ export function registerStartRunBatch(
       ...toolMeta('start_run_batch'),
       description:
         "Atomically enqueue multiple runs of the same workflow. No step runs; each started entry's next_actions names its first call. All items are validated before any run is created. If idempotency keys are provided, duplicate runs are returned instead of created.",
-      inputSchema: {
-        workflow_id: z.string(),
-        items: z.array(
-          z.object({
-            params: z.record(z.unknown()),
-            idempotency_key: z.string().optional(),
-          }),
-        ),
-        parent_run_id: z.string().optional(),
-        max_items: z.number().int().positive().optional(),
-        on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
-        on_live_match: z.enum(['use_existing', 'fail']).optional(),
-      },
+      inputSchema: boundedRefusal(
+        z.object({
+          workflow_id: z.string(),
+          items: z
+            .array(
+              z.object({
+                params: z.record(z.string(), z.unknown()),
+                idempotency_key: z.string().optional(),
+              }),
+            )
+            .max(MAX_BATCH_ITEMS),
+          parent_run_id: z.string().optional(),
+          // The zod 4 unit, R2 (O1): realm's words for the one bound JSON cannot carry exactly; every
+          // other branch keeps zod's own words (`undefined`).
+          max_items: z
+            .number()
+            .int({
+              error: (iss) =>
+                iss.code === 'too_big' && iss.origin === 'int'
+                  ? 'max_items is above 9007199254740991 (2^53−1, the largest integer JSON carries exactly) — send a smaller integer'
+                  : undefined,
+            })
+            .positive()
+            .optional(),
+          on_terminal_match: z.enum(['reuse', 'reject', 'rerun_if_failed', 'rerun']).optional(),
+          on_live_match: z.enum(['use_existing', 'fail']).optional(),
+        }),
+      ),
     },
     safeTool(
       async (args) => {
@@ -335,6 +370,17 @@ export function registerStartRunBatch(
         );
       },
       async (err, args) => {
+        // The zod 4 unit, R2 (O2): a non-finite number in an item's params, in the door's own
+        // refusal shape; no run is created.
+        if (err instanceof ArgsNumbersRefusal)
+          return toolContentOf(argsNumbersEnvelope('start_run_batch', err), {
+            set: await setForSubject(
+              door,
+              await replySubject(opts, { workflowId: args.workflow_id }),
+            ),
+            audience: 'agent',
+            table: MCP_ENVELOPE_TABLE,
+          });
         const workflowErr =
           err instanceof WorkflowError
             ? err

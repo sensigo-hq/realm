@@ -25,6 +25,7 @@ import { toolMeta } from '../tool-annotations.js';
 import { mcpHostOf } from './start-run.js';
 import type { McpDoor } from '../door.js';
 import { assertToolStores } from './assert-tool-stores.js';
+import { boundedRefusal } from './refusal-format.js';
 
 export interface HandleAbandonRunStores {
   /** Any `RunStore` implementation (issue #188, PR-1 — was `JsonFileStore`-only). */
@@ -131,7 +132,7 @@ export function registerAbandonRun(
     {
       ...toolMeta('abandon_run'),
       description: ABANDON_RUN_DESCRIPTION,
-      inputSchema: { run_id: z.string(), reason: z.string().optional() },
+      inputSchema: boundedRefusal(z.object({ run_id: z.string(), reason: z.string().optional() })),
     },
     safeTool(
       async (args) => {

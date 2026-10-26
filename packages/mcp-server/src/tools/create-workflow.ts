@@ -36,8 +36,15 @@ import {
   SAFE_TOOL_CONSTANT_RUNLESS,
 } from '../render-reply.js';
 import { handleStartRun, type HandleRunStores } from './start-run.js';
+import { ArgsNumbersRefusal, checkArgsNumbersJoined } from './args-numbers.js';
 import { toolMeta } from '../tool-annotations.js';
 import { assertToolStores } from './assert-tool-stores.js';
+import {
+  boundedLines,
+  boundedRefusal,
+  MAX_PLACE_LINES,
+  moreUnknownKeys,
+} from './refusal-format.js';
 
 /**
  * The step-shape allow-list (issue #169): `Object.keys(stepSchema.shape)` is the single source
@@ -48,23 +55,58 @@ import { assertToolStores } from './assert-tool-stores.js';
  * enumerates the valid field set directly in the tool's parameter schema, so an agent learns the
  * shape upfront instead of only discovering a typo after submitting it.
  */
+/**
+ * Z3 (the zod 4 unit): the most steps one `create_workflow` call may carry. The size check comes
+ * FIRST on each array, so zod 4.6.6+ refuses an over-long array before it parses a single element
+ * (GHSA-mrhx-c7xc-m3w5; the early stop reads only leading size checks).
+ */
+export const MAX_WORKFLOW_STEPS = 200;
+
+/**
+ * The zod 4 unit, R3: the most `depends_on` names one step may list. The door builds a chain — each
+ * step waits for the step just before it (`buildWorkflowDefinition`, which writes
+ * `depends_on: [the previous step]` and never uses the names sent) — so one name, that step, is all
+ * it can honour; the engine itself takes any number (the DAG door, #554, raises this).
+ */
+export const MAX_CREATE_WORKFLOW_PREDECESSORS = 1;
+
 export const stepSchema = z
   .object({
     id: z.string(),
     description: z.string(),
-    depends_on: z.array(z.string()).optional(),
-    input_schema: z.record(z.unknown()).optional(),
+    depends_on: z
+      .array(z.string())
+      .max(MAX_CREATE_WORKFLOW_PREDECESSORS, {
+        error:
+          'depends_on lists more than one step; create_workflow takes at most one — the step just before this one (steps run in list order)',
+      })
+      .describe(
+        'Optional. At most one name: the step listed just before this one. create_workflow runs steps one at a time in list order, so each step already waits for every step above it.',
+      )
+      .optional(),
+    input_schema: z.record(z.string(), z.unknown()).optional(),
     // issue #412: `timeout_seconds` was REMOVED here, not renamed. Every step this tool mints is
     // `execution: 'agent'`, where nothing enforces it — the loader now rejects the same shape
     // (#402). `llm_timeout_seconds` is the key that actually bounds an agent step's model
     // request (#401), per ATTEMPT.
-    llm_timeout_seconds: z.number().optional(),
+    // The zod 4 unit, R2 (O1): realm's words for a non-finite number (`1e400` arrives as Infinity);
+    // every other branch keeps zod's own words (`undefined`).
+    llm_timeout_seconds: z
+      .number({
+        error: (iss) =>
+          iss.code === 'invalid_type' &&
+          typeof iss.input === 'number' &&
+          !Number.isFinite(iss.input)
+            ? 'llm_timeout_seconds is not a finite number (a value such as 1e400 arrives as Infinity) — send a finite number of seconds'
+            : undefined,
+      })
+      .optional(),
     // issue #236 (L0 prevention layer): opt in to Anthropic strict/grammar-constrained decoding
     // for this step's submit tool. Gated at PRE-register time by assessStructuredOutputEligibility
     // — see validateArgs below.
     structured_output: z.literal('strict').optional(),
   })
-  .passthrough()
+  .loose()
   .describe(
     'A single workflow step. Valid fields: id, description, depends_on, input_schema, ' +
       "llm_timeout_seconds (positive integer seconds; the PER-ATTEMPT ceiling on this step's " +
@@ -78,10 +120,10 @@ export const stepSchema = z
  * is the single source of truth for detecting unknown metadata keys, so the accepted fields and
  * the sweep can never drift apart.
  *
- * `.passthrough()` is load-bearing, not decoration. A nested plain `z.object` strips
- * independently of its parent: even under a passthrough top level, `metadata: { name, author }`
+ * `.loose()` is load-bearing, not decoration. A nested plain `z.object` strips
+ * independently of its parent: even under a loose top level, `metadata: { name, author }`
  * arrived at the handler as `{ name }` with `author` gone and nothing said. Metadata was a
- * SECOND silent surface; passthrough is what lets the sweep below ever see the key.
+ * SECOND silent surface; `.loose()` is what lets the sweep below ever see the key.
  */
 export const metadataSchema = z
   .object({
@@ -91,7 +133,7 @@ export const metadataSchema = z
     model: z.string().optional(),
     agent: z.string().optional(),
   })
-  .passthrough();
+  .loose();
 
 /**
  * The top-level argument allow-list (issue #419). Before this schema existed the tool passed a
@@ -100,18 +142,18 @@ export const metadataSchema = z
  * inside the SDK before the handler ran: `warnings: []`, a workflow registered under a minted id
  * the caller never saw, and a follow-up `start_run` with the self-chosen id failing
  * `STATE_WORKFLOW_NOT_FOUND` with no hint anywhere. The per-step sweep (#169) only ever worked
- * because `stepSchema` is `.passthrough()`; this is the same fix one level up.
+ * because `stepSchema` is `.loose()`; this is the same fix one level up.
  */
 export const createWorkflowArgsSchema = z
   .object({
-    steps: z.array(stepSchema).min(1),
+    steps: z.array(stepSchema).min(1).max(MAX_WORKFLOW_STEPS),
     metadata: metadataSchema.optional(),
     // Declared so a submitted value is NOT silently stripped by the schema — validateArgs
     // rejects it with an actionable "register-time, operator-only" error (mirrors the
     // per-step agent_profile rejection).
     extensions: z.unknown().optional(),
   })
-  .passthrough();
+  .loose();
 
 export interface CreateWorkflowStep {
   id: string;
@@ -298,28 +340,43 @@ function validateArgs(args: CreateWorkflowArgs): { errors: string[]; caveats: st
   const stepPositions = new Map<string, number>();
   args.steps.forEach((s, i) => stepPositions.set(s.id, i));
 
-  for (const step of args.steps) {
-    if (step.depends_on !== undefined) {
-      if (step.depends_on.length > 1) {
-        errors.push(
-          `Step '${step.id}': depends_on supports at most one predecessor (this engine is linear)`,
-        );
-      }
-      for (const ref of step.depends_on) {
-        if (!allIds.has(ref)) {
-          errors.push(`Step '${step.id}': depends_on references unknown step '${ref}'`);
-        } else {
-          const refPos = stepPositions.get(ref)!;
-          const myPos = stepPositions.get(step.id)!;
-          if (refPos >= myPos) {
-            errors.push(
-              `Step '${step.id}': depends_on must reference a step that appears earlier in the list`,
-            );
-          }
-        }
-      }
+  // The zod 4 unit, R3: one line per step. The door runs steps in list order (see
+  // MAX_CREATE_WORKFLOW_PREDECESSORS), so the only name it can honour is the step just before; any
+  // other is refused with the rewrite, never re-wired in silence.
+  args.steps.forEach((step, myPos) => {
+    if (step.depends_on === undefined || step.depends_on.length === 0) return;
+    if (step.depends_on.length > 1) {
+      // Unreachable through the door (the schema's `.max`); kept for direct callers.
+      errors.push(
+        `Step '${step.id}': depends_on supports at most one predecessor — the step just before it (create_workflow runs steps in list order)`,
+      );
+      return;
     }
-  }
+    const ref = step.depends_on[0]!;
+    if (myPos === 0) {
+      errors.push(
+        `Step '${step.id}' is the first step; nothing runs before it — leave depends_on out.`,
+      );
+      return;
+    }
+    if (!allIds.has(ref)) {
+      errors.push(`Step '${step.id}': depends_on references unknown step '${ref}'`);
+      return;
+    }
+    const refPos = stepPositions.get(ref)!;
+    if (refPos >= myPos) {
+      errors.push(
+        `Step '${step.id}': depends_on must reference a step that appears earlier in the list`,
+      );
+      return;
+    }
+    const previous = args.steps[myPos - 1]!.id;
+    if (ref !== previous) {
+      errors.push(
+        `Step '${step.id}': depends_on names '${ref}', but steps run in list order, so '${step.id}' runs right after '${previous}'. Name '${previous}', leave depends_on out, or move '${step.id}' to just below '${ref}'.`,
+      );
+    }
+  });
 
   return { errors, caveats };
 }
@@ -425,6 +482,17 @@ export async function handleCreateWorkflow(
   if (errors.length > 0) {
     return makeErrorEnvelope(errors);
   }
+  // The zod 4 unit, R2 (O2): before the id is derived and anything stored — a non-finite number in
+  // a step's input_schema is refused; an integer beyond 2^53−1 draws a warning.
+  let numberWarnings: string[];
+  try {
+    numberWarnings = checkArgsNumbersJoined(
+      args.steps.map((step, i) => [`steps[${i}].input_schema`, step.input_schema] as const),
+    );
+  } catch (err) {
+    if (err instanceof ArgsNumbersRefusal) return makeErrorEnvelope([...err.errors]);
+    throw err;
+  }
 
   const workflowStore = stores?.workflowStore ?? new JsonWorkflowStore();
   // Build the definition body first (with a placeholder id that is excluded from the hash).
@@ -437,7 +505,7 @@ export async function handleCreateWorkflow(
   await workflowStore.register(definition);
 
   // Issue #419 — the TOP-LEVEL sweep. Unknown keys survive to here now that
-  // `createWorkflowArgsSchema` is `.passthrough()`; before, the SDK stripped them before this
+  // `createWorkflowArgsSchema` is `.loose()`; before, the SDK stripped them before this
   // function ran and there was nothing to find. Same code as the step sweep
   // (UNKNOWN_CREATE_WORKFLOW_KEY), so #170 never flips it and create_workflow stays lenient for
   // agents forever — this only ever warns, never rejects.
@@ -482,7 +550,7 @@ export async function handleCreateWorkflow(
   });
 
   // Issue #419 — the METADATA sweep (the second silent surface: a nested plain object strips
-  // independently of its passthrough parent, so `metadata.author` used to vanish without a word).
+  // independently of its loose parent, so `metadata.author` used to vanish without a word).
   const metadataDiagnostics: LoaderWarning[] =
     args.metadata === undefined
       ? []
@@ -497,7 +565,7 @@ export async function handleCreateWorkflow(
           },
         );
 
-  // Issue #169: each raw submitted step's extra keys survive stepSchema's .passthrough() — find
+  // Issue #169: each raw submitted step's extra keys survive stepSchema's .loose() — find
   // them against the SAME allow-list the schema itself declares (Object.keys(stepSchema.shape),
   // the single source of truth, no hand-maintained list). Distinct code (UNKNOWN_CREATE_WORKFLOW_KEY)
   // from the loader's UNKNOWN_STEP_KEY — #170 never flips it, so create_workflow stays lenient for
@@ -538,6 +606,12 @@ export async function handleCreateWorkflow(
       return w;
     });
 
+  // The zod 4 unit's reply bounds (M1, M1′): the three sweeps' finds, joined in sweep order
+  // (top-level, metadata, the steps in order), are shown once — ten named, then the count — so a
+  // call with 40,000 unknown keys is answered in kilobytes, not 17 MB. `diagnostics`, the structured
+  // twin, carries the same first ten entries; the count is in `warnings`.
+  const ignored = [...topLevelDiagnostics, ...metadataDiagnostics, ...stepDiagnostics];
+
   const result = await handleStartRun(
     { workflow_id: workflowId, params: {} },
     {
@@ -556,17 +630,11 @@ export async function handleCreateWorkflow(
     // the payload nests. It is presentation only — nothing keys on the order across groups.
     warnings: [
       ...result.warnings,
-      ...topLevelDiagnostics.map(renderLoaderWarning),
-      ...metadataDiagnostics.map(renderLoaderWarning),
-      ...stepDiagnostics.map(renderLoaderWarning),
+      ...boundedLines(ignored, renderLoaderWarning, moreUnknownKeys),
       ...structuredOutputCaveats,
+      ...numberWarnings,
     ],
-    diagnostics: [
-      ...(result.diagnostics ?? []),
-      ...topLevelDiagnostics,
-      ...metadataDiagnostics,
-      ...stepDiagnostics,
-    ],
+    diagnostics: [...(result.diagnostics ?? []), ...ignored.slice(0, MAX_PLACE_LINES)],
   };
 }
 
@@ -580,20 +648,20 @@ export function registerCreateWorkflow(
   // for their annotations); the deviation was forced rather than stylistic. `server.tool()` accepts a
   // raw shape only: handed a full `z.object` it throws ("expected a Zod schema or
   // ToolAnnotations, but received an unrecognized object"), and a raw shape is exactly what the
-  // SDK wraps in a stripping `z.object`. Carrying `.passthrough()` to the handler therefore
+  // SDK wraps in a stripping `z.object`. Carrying `.loose()` to the handler therefore
   // requires `registerTool`, which takes the schema as given.
   //
-  // Second consequence, also intended: `tools/list` now advertises `additionalProperties: true`
-  // at the top level and under `metadata`. It read `false` before while the server accepted the
-  // key and dropped it — an advertised falsehood. The server was always lenient (#169); the
-  // advertisement now says so.
+  // Second consequence, also intended: `tools/list` now advertises `additionalProperties: {}` (zod 4:
+  // an empty schema, any value permitted; zod 3 wrote `true`) at the top level and under `metadata`.
+  // It read `false` before while the server accepted the key and dropped it — an advertised
+  // falsehood. The server was always lenient (#169); the advertisement now says so.
   server.registerTool(
     'create_workflow',
     {
       ...toolMeta('create_workflow'),
       description:
         'Create a dynamic Realm workflow at runtime and immediately start a run. Use this when you have a multi-step task and want to track your own execution plan. Returns next_action pointing at your first step — proceed with execute_step as normal. Top-level fields: steps, metadata, and extensions (extensions is register-time, operator-only, and rejected here); any other field is dropped and returned as a warning.',
-      inputSchema: createWorkflowArgsSchema,
+      inputSchema: boundedRefusal(createWorkflowArgsSchema),
     },
     safeTool(
       async (args) => {

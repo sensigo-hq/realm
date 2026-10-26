@@ -28,6 +28,7 @@ import {
 } from './start-run.js';
 import { withQuestionForm, type FormCall } from '../form-path.js';
 import { toolMeta } from '../tool-annotations.js';
+import { ArgsNumbersRefusal, argsNumbersEnvelope, checkArgsNumbersJoined } from './args-numbers.js';
 import {
   disclosureOfTool,
   mcpReplyOf,
@@ -45,9 +46,11 @@ import {
 import { assertToolStores, markServedByTool, registryRole } from './assert-tool-stores.js';
 import {
   assertRegistryLine,
+  BUFFER_LIMIT_COUNT,
   ExtensionRegistry as RealmExtensionRegistry,
   runReadError,
 } from '@sensigo/realm';
+import { boundedRefusal } from './refusal-format.js';
 
 /** Maximum `writer_nonce` length (issue #197 PR-2, design §6). */
 const WRITER_NONCE_MAX_LENGTH = 128;
@@ -212,7 +215,16 @@ async function emitFailedAttemptTelemetry(
 export const traceEntrySchema = z.object({
   event: z.string(),
   timestamp: z.string().optional(),
-  data: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  // The zod 4 unit, R1 (O3): the union's own words (a union raises `invalid_union` only, whose
+  // default words name no type).
+  data: z
+    .record(
+      z.string(),
+      z.union([z.string(), z.number(), z.boolean(), z.null()], {
+        error: 'expected a string, a number, a boolean or null',
+      }),
+    )
+    .optional(),
 });
 
 // For agent steps, the agent's params represent their work output. The dispatcher returns the
@@ -381,6 +393,13 @@ export async function handleExecuteStepTool(
     async () => {
       // F34: inside safeTool, so a store misconfiguration is a reply, never a raw throw to the SDK.
       assertToolStores(stores, 'handleExecuteStepTool');
+      // The zod 4 unit, R2 (O2): before the claim — a non-finite number in params is refused
+      // (ArgsNumbersRefusal, the door's own refusal shape); an integer beyond 2^53−1 in params or
+      // in a trace entry's data draws a warning.
+      const numberWarnings = checkArgsNumbersJoined([
+        ['params', args.params ?? {}],
+        ...(args.trace ?? []).map((entry, i) => [`trace[${i}].data`, entry.data] as const),
+      ]);
       const result = await handleExecuteStep(args, stores, call);
       // #729 PR-3 (D1 D5): an answer that sends a marker back is recorded as sent — and said so.
       const markers = markersIn(args.params ?? {});
@@ -389,8 +408,14 @@ export async function handleExecuteStepTool(
           ...result,
           data: {},
           evidence: [],
-          ...(markers.length > 0
-            ? { warnings: [...result.warnings, inboundMarkerWarning(markers)] }
+          ...(markers.length > 0 || numberWarnings.length > 0
+            ? {
+                warnings: [
+                  ...result.warnings,
+                  ...numberWarnings,
+                  ...(markers.length > 0 ? [inboundMarkerWarning(markers)] : []),
+                ],
+              }
             : {}),
         },
         {
@@ -401,6 +426,13 @@ export async function handleExecuteStepTool(
       );
     },
     async (err) => {
+      // The zod 4 unit, R2 (O2): a non-finite number in params, in the door's own refusal shape.
+      if (err instanceof ArgsNumbersRefusal)
+        return toolContentOf(argsNumbersEnvelope(args.command, err, args.run_id), {
+          set: await setForSubject(door, await replySubject(stores, { runId: args.run_id })),
+          audience: 'agent',
+          table: MCP_ENVELOPE_TABLE,
+        });
       const workflowErr =
         err instanceof WorkflowError
           ? err
@@ -448,16 +480,20 @@ export function registerExecuteStep(
         'reused nonce is worse than omitting one (it lets residue be adopted with no caveat, or',
         'silently folds a crashed attempt into this one).',
       ].join(' '),
-      inputSchema: {
-        run_id: z.string(),
-        command: z.string(),
-        params: z.record(z.unknown()).optional().default({}),
-        trace: z.array(traceEntrySchema).optional(),
-        // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
-        // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
-        // envelope refusal, never a bare zod/SDK error.
-        writer_nonce: z.string().optional(),
-      },
+      inputSchema: boundedRefusal(
+        z.object({
+          run_id: z.string(),
+          command: z.string(),
+          params: z.record(z.string(), z.unknown()).optional().default({}),
+          // Z3 (the zod 4 unit): at most the trace buffer's own `limit_count` entries in one call, the
+          // size check FIRST (zod 4.6.6+ then refuses before parsing an entry)
+          trace: z.array(traceEntrySchema).max(BUFFER_LIMIT_COUNT).optional(),
+          // issue #197 PR-2 (design §6): UNBOUNDED at the zod layer — every shape violation
+          // (empty/whitespace/too-long) routes through validateWriterNonceShape to ONE typed realm
+          // envelope refusal, never a bare zod/SDK error.
+          writer_nonce: z.string().optional(),
+        }),
+      ),
     },
     async (args, extra) => {
       return handleExecuteStepTool(args, opts, formCallOf(opts, extra));

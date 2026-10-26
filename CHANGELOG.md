@@ -714,6 +714,58 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
 
 ### Security
 
+- **`zod` 3.25.76 → 4.6.7 in `@sensigo/realm-mcp` — BREAKING for MCP clients.** HIGH
+  [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) / CVE-2023-54404: zod
+  before 4.6.6 checks every element of an array before it reports, so one `tools/call` holding a
+  long array of wrong values could make the MCP server hold hundreds of megabytes. zod 4.6.6 refuses
+  a list over its size bound before checking its items, so every list in a tool's parameters now
+  has one, and the whole call has a bound no parameter can forget:
+  - one call's arguments hold at most 50,000 array elements and object members, counted together;
+    a larger call is refused before any parameter is checked, with `Invalid arguments for tool
+start_run: arguments contain more than the maximum of 50000 elements`;
+  - `create_workflow` takes at most 200 steps, each with one `depends_on` — the step just before
+    it; `start_run_batch` at most 1,000 items; `append_trace` and `execute_step` at most 200 trace
+    entries in one call. A longer list is refused with `Too big: expected array to have <=200 items at steps`. An
+    `execute_step` trace of more than 200 entries was accepted and cut to 100; it is now refused.
+  - The refusal texts are zod 4's, and name the expected type: `Required` → `Invalid input:
+expected string, received undefined`; `Expected string, received number` → `Invalid input:
+expected string, received number`; `Invalid enum value. Expected 'a' | 'b', received 'c'` →
+    `Invalid option: expected one of "a"|"b"`; `Invalid literal value, expected "strict"` →
+    `Invalid input: expected "strict"`; `Array must contain at least 1 element(s)` → `Too small:
+expected array to have >=1 items`; `Expected object, received string` (a record) → `Invalid
+input: expected record, received string`; `Number must be greater than 0` → `Too small: expected
+number to be >0`; `Expected integer, received float` → `Invalid input: expected int, received
+number`. A trace entry's `data` value of another kind reads `expected a string, a number, a boolean
+or null`. No text shows the value it refused.
+  - One wrong parameter is refused with zod's line; two or more with one summary, under 4,000
+    characters, so a client that cuts a long text keeps the count: the count on its first line
+    (`2 problems in 2 places`), then up to 10 places, each a path and what it expected
+    (`run_id: expected string`; many problems in one record as
+    `trace[0].data: 10000 problems — expected a string, a number, a boolean or null (first: k0, k1, k2)`),
+    then `and N more places (T in all)`. A list over its bound, or a `max_items` that is not a whole
+    number, prints zod's lines.
+  - `Infinity` is now refused on `llm_timeout_seconds`, on a trace entry's `data` values and inside
+    `params` and `input_schema` (it was already refused on `max_items`; zod 3 accepted it in the
+    free-form records and stored `null`); a JavaScript client sends such a value as `null`, so this
+    reaches only raw-text callers; an integer beyond 2^53−1 is refused on `max_items` and warned
+    about inside the free-form records. In the non-finite refusal and in the warnings, the first ten
+    are named, then the count; `start_run_batch` counts each item's warnings on their own.
+  - In `warnings`, a reply's list of unknown keys, of steps that need a handler or adapter the
+    runner lacks, of inbound markers, or of numbers JSON cannot carry names the first ten, then the
+    count: `create_workflow`'s, `advance_run`'s and `submit_human_response`'s unknown keys
+    (`and 1 more unknown key was ignored (11 in all)`; a near miss of `claim_token` is named first),
+    `start_run`'s and `start_run_batch`'s steps that need a handler or adapter the runner lacks, and
+    `execute_step`'s inbound markers. `create_workflow`'s `diagnostics` keeps the first ten entries
+    (the count is in `warnings`). The CLI's inbound-marker warning (`realm run`, `realm agent`)
+    names the first ten markers too.
+  - `create_workflow` refuses a `depends_on` that is not the step just before (it used to accept and
+    silently re-wire it) and more than one name.
+  - `tools/list` no longer says `additionalProperties: false` on any tool, and the three tools that
+    keep unknown keys advertise `additionalProperties: {}` (was `true`); each list advertises its
+    bound (`maxItems`), and each record `propertyNames`. What the server accepts of unknown keys is
+    unchanged.
+  - The types of `./dist/tools/*` (`traceEntrySchema`) are zod 4's. Closes #324. The temporary
+    accepted risk for this advisory is retired from both `audit-ci` files.
 - **`@modelcontextprotocol/sdk` 1.31.0 → 1.32.0** — two advisories. HIGH
   [GHSA-22jm-h49p-29qw](https://github.com/advisories/GHSA-22jm-h49p-29qw) / CVE-2026-111767 (CVSS
   8.6): the SDK's experimental in-memory task store did not tie a task to the session that created
@@ -726,7 +778,8 @@ already ended (<phase>)`, who ended it when the record says, and the recorded re
   (`experimental/tasks/stores/in-memory.js`); realm's client side uses the stdio transport only and
   loads neither the HTTP client transports nor the OAuth client. Visible in realm: a `tools/call`
   that omits its arguments is now checked as if it sent `{}`, so every tool that takes parameters
-  still refuses it, and the refusal names each missing parameter (`Required at run_id`).
+  still refuses it, and the refusal names each missing parameter (`Invalid input: expected string,
+received undefined at run_id`).
 - **`body-parser` 2.3.0 → 2.4.0** (lockfile only; `content-type` 2.1.0, `iconv-lite` 0.7.3 and `qs`
   6.16.1 move with it) — HIGH
   [GHSA-27r3-jxmh-p828](https://github.com/advisories/GHSA-27r3-jxmh-p828) / CVE-2026-111181 (CVSS
