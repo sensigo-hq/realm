@@ -1,6 +1,6 @@
 {
   "name": "@sensigo/realm-cli",
-  "version": "0.48.0",
+  "version": "0.48.1-dev.0",
   "publishConfig": {
     "access": "public"
   },
